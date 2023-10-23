@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iomanip>
 #include <string>
+#include <cstdint>
 #include <vector>
 
 #include <zlib.h>
