@@ -1080,7 +1080,7 @@ UniqueCodeTier ModuleGenerator::finishCodeTier() {
 
 #if defined(DEBUG) && (defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86) ||   \
                        defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_ARM) || \
-                       defined(JS_CODEGEN_LOONG64))
+                       defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_MIPS64))
   // Check that each trapsite is associated with a plausible instruction.  The
   // required instruction kind depends on the trapsite kind.
   //
