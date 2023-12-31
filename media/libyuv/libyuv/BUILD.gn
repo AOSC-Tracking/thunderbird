@@ -69,6 +69,14 @@ group("libyuv") {
     deps += [ ":libyuv_msa" ]
   }
 
+  if (libyuv_use_lsx) {
+    deps += [ ":libyuv_lsx" ]
+  }
+
+  if (libyuv_use_lasx) {
+    deps += [ ":libyuv_lasx" ]
+  }
+
   if (!is_ios && !libyuv_disable_jpeg) {
     # Make sure that clients of libyuv link with libjpeg. This can't go in
     # libyuv_internal because in Windows x64 builds that will generate a clang
@@ -90,6 +98,7 @@ static_library("libyuv_internal") {
     "include/libyuv/convert_from.h",
     "include/libyuv/convert_from_argb.h",
     "include/libyuv/cpu_id.h",
+    "include/libyuv/loongson_intrinsics.h",
     "include/libyuv/mjpeg_decoder.h",
     "include/libyuv/planar_functions.h",
     "include/libyuv/rotate.h",
@@ -221,6 +230,34 @@ if (libyuv_use_msa) {
       "source/rotate_msa.cc",
       "source/row_msa.cc",
       "source/scale_msa.cc",
+    ]
+
+    deps = [ ":libyuv_internal" ]
+
+    public_configs = [ ":libyuv_config" ]
+  }
+}
+
+if (libyuv_use_lsx) {
+  static_library("libyuv_lsx") {
+    sources = [
+      # LSX Source Files
+      "source/rotate_lsx.cc",
+      "source/row_lsx.cc",
+      "source/scale_lsx.cc",
+    ]
+
+    deps = [ ":libyuv_internal" ]
+
+    public_configs = [ ":libyuv_config" ]
+  }
+}
+
+if (libyuv_use_lasx) {
+  static_library("libyuv_lasx") {
+    sources = [
+      # LASX Source Files
+      "source/row_lasx.cc",
     ]
 
     deps = [ ":libyuv_internal" ]
