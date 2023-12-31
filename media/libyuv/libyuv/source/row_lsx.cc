@@ -407,7 +407,7 @@ void ARGB1555ToUVRow_LSX(const uint8_t* src_argb1555,
   __m128i const_38 = __lsx_vldi(0x413);
   __m128i const_94 = __lsx_vldi(0x42F);
   __m128i const_18 = __lsx_vldi(0x409);
-  __m128i const_8080 = {0x8080808080808080, 0x8080808080808080};
+  __m128i const_8080 = {static_cast<long long>(0x8080808080808080), static_cast<long long>(0x8080808080808080)};
 
   for (x = 0; x < len; x++) {
     DUP4_ARG2(__lsx_vld, src_argb1555, 0, src_argb1555, 16, next_argb1555, 0,
@@ -516,7 +516,7 @@ void RGB565ToUVRow_LSX(const uint8_t* src_rgb565,
   __m128i const_38 = __lsx_vldi(0x413);
   __m128i const_94 = __lsx_vldi(0x42F);
   __m128i const_18 = __lsx_vldi(0x409);
-  __m128i const_8080 = {0x8080808080808080, 0x8080808080808080};
+  __m128i const_8080 = {static_cast<long long>(0x8080808080808080), static_cast<long long>(0x8080808080808080)};
 
   for (x = 0; x < len; x++) {
     DUP4_ARG2(__lsx_vld, src_rgb565, 0, src_rgb565, 16, next_rgb565, 0,
@@ -577,7 +577,7 @@ void RGB24ToUVRow_LSX(const uint8_t* src_rgb24,
   __m128i const_38 = __lsx_vldi(0x413);
   __m128i const_94 = __lsx_vldi(0x42F);
   __m128i const_18 = __lsx_vldi(0x409);
-  __m128i const_8080 = {0x8080808080808080, 0x8080808080808080};
+  __m128i const_8080 = {static_cast<long long>(0x8080808080808080), static_cast<long long>(0x8080808080808080)};
   __m128i shuff0_b = {0x15120F0C09060300, 0x00000000001E1B18};
   __m128i shuff1_b = {0x0706050403020100, 0x1D1A1714110A0908};
   __m128i shuff0_g = {0x1613100D0A070401, 0x00000000001F1C19};
@@ -630,7 +630,7 @@ void RAWToUVRow_LSX(const uint8_t* src_raw,
   __m128i const_38 = __lsx_vldi(0x413);
   __m128i const_94 = __lsx_vldi(0x42F);
   __m128i const_18 = __lsx_vldi(0x409);
-  __m128i const_8080 = {0x8080808080808080, 0x8080808080808080};
+  __m128i const_8080 = {static_cast<long long>(0x8080808080808080), static_cast<long long>(0x8080808080808080)};
   __m128i shuff0_r = {0x15120F0C09060300, 0x00000000001E1B18};
   __m128i shuff1_r = {0x0706050403020100, 0x1D1A1714110A0908};
   __m128i shuff0_g = {0x1613100D0A070401, 0x00000000001F1C19};
@@ -865,7 +865,7 @@ void BGRAToUVRow_LSX(const uint8_t* src_bgra,
   __m128i const_38 = __lsx_vldi(0x413);
   __m128i const_94 = __lsx_vldi(0x42F);
   __m128i const_18 = __lsx_vldi(0x409);
-  __m128i const_8080 = {0x8080808080808080, 0x8080808080808080};
+  __m128i const_8080 = {static_cast<long long>(0x8080808080808080), static_cast<long long>(0x8080808080808080)};
 
   for (x = 0; x < len; x++) {
     DUP4_ARG2(__lsx_vld, src_bgra, 0, src_bgra, 16, src_bgra, 32, src_bgra, 48,
@@ -913,7 +913,7 @@ void ABGRToUVRow_LSX(const uint8_t* src_abgr,
   __m128i const_38 = __lsx_vldi(0x413);
   __m128i const_94 = __lsx_vldi(0x42F);
   __m128i const_18 = __lsx_vldi(0x409);
-  __m128i const_8080 = {0x8080808080808080, 0x8080808080808080};
+  __m128i const_8080 = {static_cast<long long>(0x8080808080808080), static_cast<long long>(0x8080808080808080)};
 
   for (x = 0; x < len; x++) {
     DUP4_ARG2(__lsx_vld, src_abgr, 0, src_abgr, 16, src_abgr, 32, src_abgr, 48,
@@ -961,7 +961,7 @@ void RGBAToUVRow_LSX(const uint8_t* src_rgba,
   __m128i const_38 = __lsx_vldi(0x413);
   __m128i const_94 = __lsx_vldi(0x42F);
   __m128i const_18 = __lsx_vldi(0x409);
-  __m128i const_8080 = {0x8080808080808080, 0x8080808080808080};
+  __m128i const_8080 = {static_cast<long long>(0x8080808080808080), static_cast<long long>(0x8080808080808080)};
 
   for (x = 0; x < len; x++) {
     DUP4_ARG2(__lsx_vld, src_rgba, 0, src_rgba, 16, src_rgba, 32, src_rgba, 48,
@@ -1010,7 +1010,7 @@ void ARGBToUVJRow_LSX(const uint8_t* src_argb,
   __m128i const_21 = __lsx_vldi(0x415);
   __m128i const_53 = __lsx_vldi(0x435);
   __m128i const_10 = __lsx_vldi(0x40A);
-  __m128i const_8080 = {0x8080808080808080, 0x8080808080808080};
+  __m128i const_8080 = {static_cast<long long>(0x8080808080808080), static_cast<long long>(0x8080808080808080)};
 
   for (x = 0; x < len; x++) {
     DUP4_ARG2(__lsx_vld, src_argb, 0, src_argb, 16, src_argb, 32, src_argb, 48,
@@ -1388,7 +1388,7 @@ void ARGBBlendRow_LSX(const uint8_t* src_argb,
   __m128i const_256 = __lsx_vldi(0x500);
   __m128i zero = __lsx_vldi(0);
   __m128i alpha = __lsx_vldi(0xFF);
-  __m128i control = {0xFF000000FF000000, 0xFF000000FF000000};
+  __m128i control = {static_cast<long long>(0xFF000000FF000000), static_cast<long long>(0xFF000000FF000000)};
 
   for (x = 0; x < len; x++) {
     DUP4_ARG2(__lsx_vld, src_argb, 0, src_argb, 16, src_argb1, 0, src_argb1, 16,
@@ -1434,7 +1434,7 @@ void ARGBQuantizeRow_LSX(uint8_t* dst_argb,
   __m128i vec_offset = __lsx_vreplgr2vr_b(interval_offset);
   __m128i vec_scale = __lsx_vreplgr2vr_w(scale);
   __m128i zero = __lsx_vldi(0);
-  __m128i control = {0xFF000000FF000000, 0xFF000000FF000000};
+  __m128i control = {static_cast<long long>(0xFF000000FF000000), static_cast<long long>(0xFF000000FF000000)};
 
   for (x = 0; x < len; x++) {
     DUP4_ARG2(__lsx_vld, dst_argb, 0, dst_argb, 16, dst_argb, 32, dst_argb, 48,
@@ -1643,11 +1643,13 @@ void HalfFloatRow_LSX(const uint16_t* src,
   }
 }
 
+#ifndef RgbConstants
 struct RgbConstants {
   uint8_t kRGBToY[4];
   uint16_t kAddY;
   uint16_t pad;
 };
+#define RgbConstants RgbConstants
 
 // RGB to JPeg coefficients
 // B * 0.1140 coefficient = 29
@@ -1673,6 +1675,7 @@ static const struct RgbConstants kRgb24I601Constants = {{25, 129, 66, 0},
 static const struct RgbConstants kRawI601Constants = {{66, 129, 25, 0},
                                                       0x1080,
                                                       0};
+#endif  // RgbConstaints
 
 // ARGB expects first 3 values to contain RGB and 4th value is ignored.
 static void ARGBToYMatrixRow_LSX(const uint8_t* src_argb,
@@ -1852,6 +1855,13 @@ void RGB24ToYRow_LSX(const uint8_t* src_rgb24, uint8_t* dst_y, int width) {
 void RAWToYRow_LSX(const uint8_t* src_raw, uint8_t* dst_y, int width) {
   RGBToYMatrixRow_LSX(src_raw, dst_y, width, &kRawI601Constants);
 }
+
+// undef for unified sources build
+#undef YUVTORGB_SETUP
+#undef YUVTORGB
+#undef I444TORGB
+#undef STOREARGB
+#undef RGBTOUV
 
 #ifdef __cplusplus
 }  // extern "C"
