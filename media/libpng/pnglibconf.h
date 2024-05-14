@@ -75,6 +75,12 @@
 #  define PNG_POWERPC_VSX_OPT 0 /* Do not use VSX optimization */
 #endif
 
+#ifdef MOZ_PNG_USE_LOONGARCH_LSX
+#  undef PNG_LOONGARCH_LSX_OPT /* Let libpng decide */
+#else
+#  define PNG_LOONGARCH_LSX_OPT 0 /* Do not use LSX optimization */
+#endif
+
 #define PNG_READ_SUPPORTED
 #define PNG_PROGRESSIVE_READ_SUPPORTED
 #define PNG_READ_APNG_SUPPORTED
