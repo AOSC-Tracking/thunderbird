@@ -65,6 +65,13 @@ if CONFIG['HAVE_ALTIVEC']:
         'powerpc/powerpc_init.c'
     ]
 
+if CONFIG['TARGET_CPU'] == 'loongarch64':
+    DEFINES['MOZ_PNG_USE_LOONGARCH_LSX'] = True
+    UNIFIED_SOURCES += [
+        'loongarch/filter_lsx_intrinsics.c',
+        'loongarch/loongarch_lsx_init.c'
+    ]
+
 if CONFIG['MOZ_TREE_FREETYPE']:
     DEFINES['FT_CONFIG_OPTION_USE_PNG'] = True
 
