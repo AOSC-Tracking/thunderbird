@@ -442,9 +442,7 @@ nsFilePicker::Open(nsIFilePickerShownCallback* aCallback) {
   // If we have --enable-proxy-bypass-protection, then don't allow
   // remote URLs to be used.
 #ifndef MOZ_PROXY_BYPASS_PROTECTION
-  if (mAllowURLs) {
-    gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(file_chooser), FALSE);
-  }
+  gtk_file_chooser_set_local_only(GTK_FILE_CHOOSER(file_chooser), FALSE);
 #endif
 
   if (action == GTK_FILE_CHOOSER_ACTION_OPEN ||
