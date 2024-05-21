@@ -53,7 +53,7 @@ else:
         'yuv_row_other.cpp',
     ]
 
-if CONFIG['TARGET_CPU'] == 'arm' and CONFIG['HAVE_ARM_NEON']:
+if CONFIG['HAVE_ARM_NEON']:
     SOURCES += [
         'yuv_row_arm.s',
     ]
