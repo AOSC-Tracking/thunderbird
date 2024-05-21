@@ -1055,7 +1055,7 @@ class MOZ_STACK_CLASS CallMethodHelper final {
   MOZ_ALWAYS_INLINE bool GetOutParamSource(uint8_t paramIndex,
                                            MutableHandleValue srcp) const;
 
-  MOZ_ALWAYS_INLINE bool GatherAndConvertResults();
+  bool GatherAndConvertResults();
 
   MOZ_ALWAYS_INLINE bool QueryInterfaceFastPath();
 
@@ -1102,7 +1102,7 @@ class MOZ_STACK_CLASS CallMethodHelper final {
 
   ~CallMethodHelper();
 
-  MOZ_ALWAYS_INLINE bool Call();
+  bool Call();
 
   // Trace implementation so we can put our CallMethodHelper in a Rooted<T>.
   void trace(JSTracer* aTrc);
