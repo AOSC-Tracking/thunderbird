@@ -54,6 +54,7 @@
 #include "mozilla/PresShellForwards.h"
 #include "mozilla/ReflowOutput.h"
 #include "mozilla/RelativeTo.h"
+#include "mozilla/ScrollContainerFrame.h"
 #include "mozilla/ScrollTypes.h"
 #include "mozilla/ServoStyleConsts.h"
 #include "mozilla/ServoStyleConstsInlines.h"
@@ -163,7 +164,6 @@
 #include "nsIMemoryReporter.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptError.h"
-#include "nsIScrollableFrame.h"
 #include "nsISpeculativeConnect.h"
 #include "nsISupports.h"
 #include "nsISupportsUtils.h"
@@ -657,8 +657,8 @@ already_AddRefed<nsIHTMLCollection> Element::GetElementsByTagName(
   return NS_GetContentList(this, kNameSpaceID_Unknown, aLocalName);
 }
 
-nsIScrollableFrame* Element::GetScrollFrame(nsIFrame** aFrame,
-                                            FlushType aFlushType) {
+ScrollContainerFrame* Element::GetScrollContainerFrame(nsIFrame** aFrame,
+                                                       FlushType aFlushType) {
   nsIFrame* frame = GetPrimaryFrame(aFlushType);
   if (aFrame) {
     *aFrame = frame;
@@ -669,11 +669,12 @@ nsIScrollableFrame* Element::GetScrollFrame(nsIFrame** aFrame,
       return nullptr;
     }
 
-    if (nsIScrollableFrame* scrollFrame = frame->GetScrollTargetFrame()) {
+    if (ScrollContainerFrame* scrollContainerFrame =
+            frame->GetScrollTargetFrame()) {
       MOZ_ASSERT(!OwnerDoc()->IsScrollingElement(this),
-                 "How can we have a scrollframe if we're the "
+                 "How can we have a scroll container frame if we're the "
                  "scrollingElement for our document?");
-      return scrollFrame;
+      return scrollContainerFrame;
     }
   }
 
@@ -682,13 +683,15 @@ nsIScrollableFrame* Element::GetScrollFrame(nsIFrame** aFrame,
   // a quirks mode document.
   const bool isScrollingElement = doc->IsScrollingElement(this);
   if (isScrollingElement) {
-    // Our scroll info should map to the root scrollable frame if there is one.
+    // Our scroll info should map to the root scroll container frame if there is
+    // one.
     if (PresShell* presShell = doc->GetPresShell()) {
-      if ((frame = presShell->GetRootScrollFrame())) {
+      if (ScrollContainerFrame* rootScrollContainerFrame =
+              presShell->GetRootScrollContainerFrame()) {
         if (aFrame) {
-          *aFrame = frame;
+          *aFrame = rootScrollContainerFrame;
         }
-        return do_QueryFrame(frame);
+        return rootScrollContainerFrame;
       }
     }
   }
@@ -825,7 +828,7 @@ void Element::ScrollTo(const ScrollToOptions& aOptions) {
       (aOptions.mTop.WasPassed() && aOptions.mTop.Value() != 0.0);
 
   nsIFrame* frame;
-  nsIScrollableFrame* sf = GetScrollFrame(
+  ScrollContainerFrame* sf = GetScrollContainerFrame(
       &frame, needsLayoutFlush ? FlushType::Layout : FlushType::Frames);
   if (!sf) {
     return;
@@ -854,7 +857,7 @@ void Element::ScrollBy(double aXScrollDif, double aYScrollDif) {
 
 void Element::ScrollBy(const ScrollToOptions& aOptions) {
   nsIFrame* frame;
-  nsIScrollableFrame* sf = GetScrollFrame(&frame);
+  ScrollContainerFrame* sf = GetScrollContainerFrame(&frame);
   if (!sf) {
     return;
   }
@@ -897,14 +900,15 @@ void Element::SetScrollLeft(int32_t aScrollLeft) {
 }
 
 void Element::MozScrollSnap() {
-  if (nsIScrollableFrame* sf = GetScrollFrame(nullptr, FlushType::None)) {
+  if (ScrollContainerFrame* sf =
+          GetScrollContainerFrame(nullptr, FlushType::None)) {
     sf->ScrollSnap();
   }
 }
 
 nsRect Element::GetScrollRange() {
   nsIFrame* frame;
-  nsIScrollableFrame* sf = GetScrollFrame(&frame);
+  ScrollContainerFrame* sf = GetScrollContainerFrame(&frame);
   if (!sf) {
     return nsRect();
   }
@@ -952,7 +956,7 @@ static nsSize GetScrollRectSizeForOverflowVisibleFrame(nsIFrame* aFrame) {
 nsSize Element::GetScrollSize() {
   nsIFrame* frame;
   nsSize size;
-  if (nsIScrollableFrame* sf = GetScrollFrame(&frame)) {
+  if (ScrollContainerFrame* sf = GetScrollContainerFrame(&frame)) {
     size = sf->GetScrollRange().Size() + sf->GetScrollPortRect().Size();
   } else {
     size = GetScrollRectSizeForOverflowVisibleFrame(frame);
@@ -965,7 +969,7 @@ nsSize Element::GetScrollSize() {
 
 nsPoint Element::GetScrollOrigin() {
   nsIFrame* frame;
-  nsIScrollableFrame* sf = GetScrollFrame(&frame);
+  ScrollContainerFrame* sf = GetScrollContainerFrame(&frame);
   if (!sf) {
     return nsPoint();
   }
@@ -1000,17 +1004,16 @@ nsRect Element::GetClientAreaRect() {
   }
 
   nsIFrame* frame;
-  if (nsIScrollableFrame* sf = GetScrollFrame(&frame)) {
+  if (ScrollContainerFrame* sf = GetScrollContainerFrame(&frame)) {
     nsRect scrollPort = sf->GetScrollPortRect();
 
     if (!sf->IsRootScrollFrameOfDocument()) {
       MOZ_ASSERT(frame);
-      nsIFrame* scrollableAsFrame = do_QueryFrame(sf);
       // We want the offset to be relative to `frame`, not `sf`... Except for
       // the root scroll frame, which is an ancestor of frame rather than a
       // descendant and thus this wouldn't particularly make sense.
-      if (frame != scrollableAsFrame) {
-        scrollPort.MoveBy(scrollableAsFrame->GetOffsetTo(frame));
+      if (frame != sf) {
+        scrollPort.MoveBy(sf->GetOffsetTo(frame));
       }
     }
 
@@ -1055,6 +1058,14 @@ already_AddRefed<nsIScreen> Element::GetScreen() {
   return nullptr;
 }
 
+double Element::CurrentCSSZoom() {
+  nsIFrame* f = GetPrimaryFrame(FlushType::Frames);
+  if (!f) {
+    return 1.0;
+  }
+  return f->Style()->EffectiveZoom().ToFloat();
+}
+
 already_AddRefed<DOMRect> Element::GetBoundingClientRect() {
   RefPtr<DOMRect> rect = new DOMRect(ToSupports(OwnerDoc()));
 
@@ -1080,7 +1091,7 @@ already_AddRefed<DOMRectList> Element::GetClientRects() {
   nsLayoutUtils::RectListBuilder builder(rectList);
   nsLayoutUtils::GetAllInFlowRects(
       frame, nsLayoutUtils::GetContainingBlockForClientRect(frame), &builder,
-      nsLayoutUtils::RECTS_ACCOUNT_FOR_TRANSFORMS);
+      nsLayoutUtils::GetAllInFlowRectsFlag::AccountForTransforms);
   return rectList.forget();
 }
 
@@ -1233,15 +1244,14 @@ bool Element::CanAttachShadowDOM() const {
   return true;
 }
 
-// https://dom.spec.whatwg.org/commit-snapshots/1eadf0a4a271acc92013d1c0de8c730ac96204f9/#dom-element-attachshadow
-already_AddRefed<ShadowRoot> Element::AttachShadow(
-    const ShadowRootInit& aInit, ErrorResult& aError,
-    ShadowRootDeclarative aNewShadowIsDeclarative) {
+// https://dom.spec.whatwg.org/#dom-element-attachshadow
+already_AddRefed<ShadowRoot> Element::AttachShadow(const ShadowRootInit& aInit,
+                                                   ErrorResult& aError) {
   /**
    * Step 1, 2, and 3.
    */
   if (!CanAttachShadowDOM()) {
-    aError.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    aError.ThrowNotSupportedError("Unable to attach ShadowDOM");
     return nullptr;
   }
 
@@ -1249,21 +1259,27 @@ already_AddRefed<ShadowRoot> Element::AttachShadow(
    * 4. If element is a shadow host, then:
    */
   if (RefPtr<ShadowRoot> root = GetShadowRoot()) {
-    /*
-     * 1. If element’s shadow root’s declarative is false, then throw an
-     *    "NotSupportedError" DOMException.
+    /**
+     *  1. Let currentShadowRoot be element’s shadow root.
+     *
+     *  2. If any of the following are true:
+     *      currentShadowRoot’s declarative is false; or
+     *      currentShadowRoot’s mode is not mode,
+     *  then throw a "NotSupportedError" DOMException.
      */
-    if (!root->IsDeclarative()) {
-      aError.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+    if (!root->IsDeclarative() || root->Mode() != aInit.mMode) {
+      aError.ThrowNotSupportedError(
+          "Unable to re-attach to existing ShadowDOM");
       return nullptr;
     }
-    // https://github.com/whatwg/dom/issues/1235
-    root->SetIsDeclarative(aNewShadowIsDeclarative);
-    /*
-     * 2. Otherwise, remove all of element’s shadow root’s children, in tree
-     *    order, and return.
+    /**
+     * 3. Otherwise:
+     *      1. Remove all of currentShadowRoot’s children, in tree order.
+     *      2. Set currentShadowRoot’s declarative to false.
+     *      3. Return.
      */
     root->ReplaceChildren(nullptr, aError);
+    root->SetIsDeclarative(ShadowRootDeclarative::No);
     return root.forget();
   }
 
@@ -1274,13 +1290,13 @@ already_AddRefed<ShadowRoot> Element::AttachShadow(
   return AttachShadowWithoutNameChecks(
       aInit.mMode, DelegatesFocus(aInit.mDelegatesFocus), aInit.mSlotAssignment,
       ShadowRootClonable(aInit.mClonable),
-      ShadowRootDeclarative(aNewShadowIsDeclarative));
+      ShadowRootSerializable(aInit.mSerializable));
 }
 
 already_AddRefed<ShadowRoot> Element::AttachShadowWithoutNameChecks(
     ShadowRootMode aMode, DelegatesFocus aDelegatesFocus,
     SlotAssignmentMode aSlotAssignment, ShadowRootClonable aClonable,
-    ShadowRootDeclarative aDeclarative) {
+    ShadowRootSerializable aSerializable) {
   nsAutoScriptBlocker scriptBlocker;
 
   auto* nim = mNodeInfo->NodeInfoManager();
@@ -1304,9 +1320,9 @@ already_AddRefed<ShadowRoot> Element::AttachShadowWithoutNameChecks(
    *    context object's node document, host is context object,
    *    and mode is init's mode.
    */
-  RefPtr<ShadowRoot> shadowRoot =
-      new (nim) ShadowRoot(this, aMode, aDelegatesFocus, aSlotAssignment,
-                           aClonable, aDeclarative, nodeInfo.forget());
+  RefPtr<ShadowRoot> shadowRoot = new (nim)
+      ShadowRoot(this, aMode, aDelegatesFocus, aSlotAssignment, aClonable,
+                 aSerializable, ShadowRootDeclarative::No, nodeInfo.forget());
 
   if (NodeOrAncestorHasDirAuto()) {
     shadowRoot->SetAncestorHasDirAuto();
@@ -1336,6 +1352,22 @@ already_AddRefed<ShadowRoot> Element::AttachShadowWithoutNameChecks(
     dispatcher->PostDOMEvent();
   }
 
+  const LinkedList<AbstractRange>* ranges =
+      GetExistingClosestCommonInclusiveAncestorRanges();
+  if (ranges) {
+    for (const AbstractRange* range : *ranges) {
+      if (range->MayCrossShadowBoundary()) {
+        MOZ_ASSERT(range->IsDynamicRange());
+        CrossShadowBoundaryRange* crossBoundaryRange =
+            range->AsDynamicRange()->GetCrossShadowBoundaryRange();
+        MOZ_ASSERT(crossBoundaryRange);
+        // We may have previously selected this node before it
+        // becomes a shadow host, so we need to reset the values
+        // in RangeBoundaries to accommodate the change.
+        crossBoundaryRange->NotifyNodeBecomesShadowHost(this);
+      }
+    }
+  }
   /**
    * 10. Return shadow.
    */
@@ -1460,13 +1492,7 @@ void Element::GetAttribute(const nsAString& aName, DOMString& aReturn) {
   if (val) {
     val->ToString(aReturn);
   } else {
-    if (IsXULElement()) {
-      // XXX should be SetDOMStringToNull(aReturn);
-      // See bug 232598
-      // aReturn is already empty
-    } else {
-      aReturn.SetNull();
-    }
+    aReturn.SetNull();
   }
 }
 
@@ -1844,7 +1870,7 @@ void Element::GetElementsWithGrid(nsTArray<RefPtr<Element>>& aElements) {
 }
 
 bool Element::HasVisibleScrollbars() {
-  nsIScrollableFrame* scrollFrame = GetScrollFrame();
+  ScrollContainerFrame* scrollFrame = GetScrollContainerFrame();
   return scrollFrame && !scrollFrame->GetScrollbarVisibility().isEmpty();
 }
 
@@ -1930,9 +1956,7 @@ nsresult Element::BindToTree(BindContext& aContext, nsINode& aParent) {
   // This has to be here, rather than in nsGenericHTMLElement::BindToTree,
   //  because it has to happen after updating the parent pointer, but before
   //  recursively binding the kids.
-  if (IsHTMLElement()) {
-    SetDirOnBind(this, nsIContent::FromNode(aParent));
-  }
+  SetDirOnBind(this, nsIContent::FromNode(aParent));
 
   UpdateEditableState(false);
 
@@ -2145,9 +2169,7 @@ void Element::UnbindFromTree(UnbindContext& aContext) {
   // This has to be here, rather than in nsGenericHTMLElement::UnbindFromTree,
   //  because it has to happen after unsetting the parent pointer, but before
   //  recursively unbinding the kids.
-  if (IsHTMLElement()) {
-    ResetDir(this);
-  }
+  ResetDir(this);
 
   for (nsIContent* child = GetFirstChild(); child;
        child = child->GetNextSibling()) {
@@ -3272,7 +3294,7 @@ void Element::DispatchChromeOnlyLinkClickEvent(
       /* Cancelable */ true, nsGlobalWindowInner::Cast(doc->GetInnerWindow()),
       0, mouseEvent->CtrlKey(), mouseEvent->AltKey(), mouseEvent->ShiftKey(),
       mouseEvent->MetaKey(), mouseEvent->Button(), mouseDOMEvent,
-      mouseEvent->InputSource(), IgnoreErrors());
+      mouseEvent->InputSource(CallerType::System), IgnoreErrors());
   // Note: we're always trusted, but the event we pass as the `sourceEvent`
   // might not be. Frontend code will check that event's trusted property to
   // make that determination; doing it this way means we don't also start
@@ -3436,7 +3458,23 @@ nsresult Element::PostHandleEventForLinks(EventChainPostVisitor& aVisitor) {
   return rv;
 }
 
-void Element::GetLinkTarget(nsAString& aTarget) { aTarget.Truncate(); }
+// static
+void Element::SanitizeLinkOrFormTarget(nsAString& aTarget) {
+  // <https://html.spec.whatwg.org/multipage/semantics.html#get-an-element's-target>
+  // 2. If target is not null, and contains an ASCII tab or newline and a U+003C
+  // (<), then set target to "_blank".
+  if (!aTarget.IsEmpty() && aTarget.FindCharInSet(u"\t\n\r") != kNotFound &&
+      aTarget.Contains('<')) {
+    aTarget.AssignLiteral("_blank");
+  }
+}
+
+void Element::GetLinkTarget(nsAString& aTarget) {
+  GetLinkTargetImpl(aTarget);
+  SanitizeLinkOrFormTarget(aTarget);
+}
+
+void Element::GetLinkTargetImpl(nsAString& aTarget) { aTarget.Truncate(); }
 
 nsresult Element::CopyInnerTo(Element* aDst, ReparseAttributes aReparse) {
   nsresult rv = aDst->mAttrs.EnsureCapacityToClone(mAttrs);
@@ -5042,6 +5080,18 @@ void Element::SetHTML(const nsAString& aInnerHTML,
   mb.NodesAdded();
   nsContentUtils::FireMutationEventsForDirectParsing(doc, target,
                                                      oldChildCount);
+}
+
+void Element::GetHTML(const GetHTMLOptions& aOptions, nsAString& aResult) {
+  if (aOptions.mSerializableShadowRoots || !aOptions.mShadowRoots.IsEmpty()) {
+    nsContentUtils::SerializeNodeToMarkup<SerializeShadowRoots::Yes>(
+        this, true, aResult, aOptions.mSerializableShadowRoots,
+        aOptions.mShadowRoots);
+  } else {
+    nsContentUtils::SerializeNodeToMarkup<SerializeShadowRoots::No>(
+        this, true, aResult, aOptions.mSerializableShadowRoots,
+        aOptions.mShadowRoots);
+  }
 }
 
 bool Element::Translate() const {

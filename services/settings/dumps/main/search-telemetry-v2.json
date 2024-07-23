@@ -1,172 +1,7 @@
 {
   "data": [
     {
-      "schema": 1711474853858,
-      "components": [
-        {
-          "type": "ad_carousel",
-          "included": {
-            "parent": {
-              "selector": ".adsMvCarousel"
-            },
-            "related": {
-              "selector": ".cr"
-            },
-            "children": [
-              {
-                "selector": ".pa_item",
-                "countChildren": true
-              }
-            ]
-          }
-        },
-        {
-          "type": "ad_link",
-          "excluded": {
-            "parent": {
-              "selector": "aside"
-            }
-          },
-          "included": {
-            "parent": {
-              "selector": ".sb_adTA"
-            },
-            "children": [
-              {
-                "type": "ad_sitelink",
-                "selector": ".b_vlist2col"
-              }
-            ]
-          }
-        },
-        {
-          "type": "ad_sidebar",
-          "included": {
-            "parent": {
-              "selector": "aside"
-            },
-            "children": [
-              {
-                "selector": ".pa_item, .sb_adTA",
-                "countChildren": true
-              }
-            ]
-          }
-        },
-        {
-          "type": "incontent_searchbox",
-          "topDown": true,
-          "included": {
-            "parent": {
-              "selector": "form#sb_form"
-            },
-            "related": {
-              "selector": "#sw_as"
-            },
-            "children": [
-              {
-                "selector": "input[name='q']"
-              }
-            ]
-          }
-        },
-        {
-          "type": "cookie_banner",
-          "topDown": true,
-          "included": {
-            "parent": {
-              "selector": "div#bnp_cookie_banner"
-            },
-            "children": [
-              {
-                "selector": "button#bnp_btn_accept",
-                "eventListeners": [
-                  {
-                    "action": "clicked_accept",
-                    "eventType": "click"
-                  }
-                ]
-              },
-              {
-                "selector": "button#bnp_btn_reject",
-                "eventListeners": [
-                  {
-                    "action": "clicked_reject",
-                    "eventType": "click"
-                  }
-                ]
-              },
-              {
-                "selector": "a#bnp_btn_preference",
-                "eventListeners": [
-                  {
-                    "action": "clicked_more_options",
-                    "eventType": "click"
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "type": "ad_link",
-          "default": true
-        }
-      ],
-      "shoppingTab": {
-        "regexp": "^/shop?",
-        "selector": "#b-scopeListItem-shop a"
-      },
-      "taggedCodes": [
-        "MOZ2",
-        "MOZ4",
-        "MOZ5",
-        "MOZA",
-        "MOZB",
-        "MOZD",
-        "MOZE",
-        "MOZI",
-        "MOZL",
-        "MOZM",
-        "MOZO",
-        "MOZR",
-        "MOZT",
-        "MOZW",
-        "MOZX",
-        "MZSL01",
-        "MZSL02",
-        "MZSL03"
-      ],
-      "telemetryId": "bing",
-      "organicCodes": [],
-      "codeParamName": "pc",
-      "queryParamName": "q",
-      "followOnCookies": [
-        {
-          "host": "www.bing.com",
-          "name": "SRCHS",
-          "codeParamName": "PC",
-          "extraCodePrefixes": [
-            "QBRE"
-          ],
-          "extraCodeParamName": "form"
-        }
-      ],
-      "queryParamNames": [
-        "q"
-      ],
-      "searchPageRegexp": "^https://www\\.bing\\.com/search",
-      "nonAdsLinkRegexps": [
-        "^https://www.bing.com/ck/a"
-      ],
-      "extraAdServersRegexps": [
-        "^https://www\\.bing\\.com/acli?c?k"
-      ],
-      "id": "e1eec461-f1f3-40de-b94b-3b670b78108c",
-      "last_modified": 1711574102228
-    },
-    {
-      "schema": 1711137332320,
+      "schema": 1717765743694,
       "components": [
         {
           "type": "ad_carousel",
@@ -180,6 +15,23 @@
             "children": [
               {
                 "selector": "[data-dtld]",
+                "countChildren": true
+              }
+            ]
+          }
+        },
+        {
+          "type": "ad_carousel",
+          "included": {
+            "parent": {
+              "selector": ".sh-sr__shop-result-group"
+            },
+            "related": {
+              "selector": "g-right-button, g-left-button"
+            },
+            "children": [
+              {
+                "selector": ".sh-np__click-target",
                 "countChildren": true
               }
             ]
@@ -356,6 +208,12 @@
       "queryParamNames": [
         "q"
       ],
+      "signedInCookies": [
+        {
+          "host": "accounts.google.com",
+          "name": "SID"
+        }
+      ],
       "domainExtraction": {
         "ads": [
           {
@@ -368,10 +226,6 @@
               "dataAttributeKey": "dtld"
             },
             "selectors": "[data-dtld]"
-          },
-          {
-            "method": "href",
-            "selectors": "a.x0Sesd"
           }
         ],
         "nonAds": [
@@ -388,8 +242,11 @@
             "selectors": "a[jsname='UWckNb']"
           },
           {
-            "method": "href",
-            "selectors": "a.iGVLpd"
+            "method": "dataAttribute",
+            "options": {
+              "dataAttributeKey": "lpage"
+            },
+            "selectors": "[data-id='mosaic'] [data-lpage]"
           }
         ]
       },
@@ -411,12 +268,15 @@
       "extraAdServersRegexps": [
         "^https?://www\\.google(?:adservices)?\\.com/(?:pagead/)?aclk"
       ],
+      "nonAdsLinkQueryParamNames": [
+        "url"
+      ],
       "id": "635a3325-1995-42d6-be09-dbe4b2a95453",
-      "last_modified": 1711574102225
+      "last_modified": 1718041017650
     },
     {
       "isSPA": true,
-      "schema": 1707523204491,
+      "schema": 1712762409532,
       "components": [
         {
           "type": "ad_image_row",
@@ -482,10 +342,190 @@
       },
       "extraAdServersRegexps": [
         "^https://www\\.bing\\.com/acli?c?k",
-        "^https://api\\.qwant\\.com/v3/r/"
+        "^https://api\\.qwant\\.com/v3/r/",
+        "^https://fdn\\.qwant\\.com/v3/r/"
       ],
       "id": "19c434a3-d173-4871-9743-290ac92a3f6b",
-      "last_modified": 1707833261849
+      "last_modified": 1713187389066
+    },
+    {
+      "schema": 1712582517430,
+      "components": [
+        {
+          "type": "ad_carousel",
+          "included": {
+            "parent": {
+              "selector": ".adsMvCarousel"
+            },
+            "related": {
+              "selector": ".cr"
+            },
+            "children": [
+              {
+                "selector": ".pa_item",
+                "countChildren": true
+              }
+            ]
+          }
+        },
+        {
+          "type": "ad_link",
+          "excluded": {
+            "parent": {
+              "selector": "aside"
+            }
+          },
+          "included": {
+            "parent": {
+              "selector": ".sb_adTA"
+            },
+            "children": [
+              {
+                "type": "ad_sitelink",
+                "selector": ".b_vlist2col"
+              }
+            ]
+          }
+        },
+        {
+          "type": "ad_sidebar",
+          "included": {
+            "parent": {
+              "selector": "aside"
+            },
+            "children": [
+              {
+                "selector": ".pa_item, .sb_adTA",
+                "countChildren": true
+              }
+            ]
+          }
+        },
+        {
+          "type": "incontent_searchbox",
+          "topDown": true,
+          "included": {
+            "parent": {
+              "selector": "form#sb_form"
+            },
+            "related": {
+              "selector": "#sw_as"
+            },
+            "children": [
+              {
+                "selector": "input[name='q']"
+              }
+            ]
+          }
+        },
+        {
+          "type": "cookie_banner",
+          "topDown": true,
+          "included": {
+            "parent": {
+              "selector": "div#bnp_cookie_banner"
+            },
+            "children": [
+              {
+                "selector": "button#bnp_btn_accept",
+                "eventListeners": [
+                  {
+                    "action": "clicked_accept",
+                    "eventType": "click"
+                  }
+                ]
+              },
+              {
+                "selector": "button#bnp_btn_reject",
+                "eventListeners": [
+                  {
+                    "action": "clicked_reject",
+                    "eventType": "click"
+                  }
+                ]
+              },
+              {
+                "selector": "a#bnp_btn_preference",
+                "eventListeners": [
+                  {
+                    "action": "clicked_more_options",
+                    "eventType": "click"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "type": "ad_link",
+          "default": true
+        }
+      ],
+      "shoppingTab": {
+        "regexp": "^/shop?",
+        "selector": "#b-scopeListItem-shop a"
+      },
+      "taggedCodes": [
+        "MOZ2",
+        "MOZ4",
+        "MOZ5",
+        "MOZA",
+        "MOZB",
+        "MOZD",
+        "MOZE",
+        "MOZI",
+        "MOZL",
+        "MOZM",
+        "MOZO",
+        "MOZR",
+        "MOZT",
+        "MOZW",
+        "MOZX",
+        "MZSL01",
+        "MZSL02",
+        "MZSL03"
+      ],
+      "telemetryId": "bing",
+      "organicCodes": [],
+      "codeParamName": "pc",
+      "queryParamName": "q",
+      "followOnCookies": [
+        {
+          "host": "www.bing.com",
+          "name": "SRCHS",
+          "codeParamName": "PC",
+          "extraCodePrefixes": [
+            "QBRE"
+          ],
+          "extraCodeParamName": "form"
+        }
+      ],
+      "queryParamNames": [
+        "q"
+      ],
+      "domainExtraction": {
+        "ads": [
+          {
+            "method": "textContent",
+            "selectors": "#b_results .b_ad .b_attribution cite, .adsMvCarousel cite, aside cite"
+          }
+        ],
+        "nonAds": [
+          {
+            "method": "textContent",
+            "selectors": "#b_results .b_algo .b_attribution cite"
+          }
+        ]
+      },
+      "searchPageRegexp": "^https://www\\.bing\\.com/search",
+      "nonAdsLinkRegexps": [
+        "^https://www.bing.com/ck/a"
+      ],
+      "extraAdServersRegexps": [
+        "^https://www\\.bing\\.com/acli?c?k"
+      ],
+      "id": "e1eec461-f1f3-40de-b94b-3b670b78108c",
+      "last_modified": 1712762409389
     },
     {
       "schema": 1705363206938,
@@ -752,5 +792,5 @@
       "last_modified": 1698666532324
     }
   ],
-  "timestamp": 1711574102228
+  "timestamp": 1718041017650
 }
