@@ -1,0 +1,13 @@
+endian little
+wordsize 64
+
+family loongarch
+
+<aliases>
+loong64
+</aliases>
+
+<isa_extensions>
+lsx
+lasx
+</isa_extensions>
