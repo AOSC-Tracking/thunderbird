@@ -1,6 +1,6 @@
 # Tracking repository for Thunderbird
 
-## SOP
+## Standard Operation Procedure
 
 1. Download a source archive of Thunderbird from <https://archive.mozilla.org/pub/thunderbird/>. Normally the URL is <https://archive.mozilla.org/pub/thunderbird/releases/$VER/source/thunderbird-$VER.source.tar.xz>, replacing "$VER" with the version to be imported, like `128.0.1esr`.
 2. Switch to the `tarball` branch (`git checkout tarball`), then remove all files and directories in the working tree, including the hidden one, except the `.git` directory.
