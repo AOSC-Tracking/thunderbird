@@ -8,7 +8,7 @@
 4. Remove the `.gitignore` file.
 5. Update the index using all files in the entire working tree (`git add -A`), then create a new commit with message of "chore: import v$VER" (`git commit -m "chore: import v$VER"`).
 6. Create a lightweight tag with name of "v$VER" (`git tag "v$VER"`).
-7. Push the `tarball` branch and the tag just created to the remote (`git -c "push.autoSetupRemote=true" push; git push --tags`).
+7. Push the `tarball` branch and the tag just created to the remote (`git push; git push --tags`).
 8. Create a new branch with name of "aosc/v$VER", pointing to the current `HEAD`, then switch to it (`git checkout -b "aosc/v$VER"`).
 9. Apply all needed commits and/or patches.
 10. Create a lightweight tag with name of "aosc/v$PKGEPOCH%$PKGVER-$PKGREL" (`git tag "aosc/v$PKGEPOCH%$PKGVER-$PKGREL"`). If any of these variables equals zero, omit the related section and the corresponding separator. For the definition of these variables, refer to [autobuild4](https://github.com/AOSC-Dev/autobuild4).
