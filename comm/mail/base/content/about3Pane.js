@@ -4085,6 +4085,7 @@ var threadPaneHeader = {
     this.updateMessageCount(
       gFolder?.getTotalMessages(false) || gDBView?.numMsgsInView || 0
     );
+    this.updateSelectedCount();
     this.folderName.hidden = false;
     this.folderCount.hidden = false;
   },
@@ -4117,7 +4118,7 @@ var threadPaneHeader = {
     }
 
     const count = gDBView?.getSelectedMsgHdrs().length;
-    if (count < 2) {
+    if (count === undefined || count < 2) {
       this.selectedCount.hidden = true;
       return;
     }
