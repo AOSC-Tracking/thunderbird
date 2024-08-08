@@ -24,6 +24,7 @@
    GLIBCXX_3.4.27 is from gcc 10
    GLIBCXX_3.4.28 is from gcc 10
    GLIBCXX_3.4.29 is from gcc 11
+   GLIBCXX_3.4.30 is from gcc 12
 
 This file adds the necessary compatibility tricks to avoid symbols with
 version GLIBCXX_3.4.20 and bigger, keeping binary compatibility with
@@ -65,6 +66,19 @@ namespace std {
 
 /* This avoids the GLIBCXX_3.4.29 symbol version. */
 void __attribute__((weak)) __throw_bad_array_new_length() { MOZ_CRASH(); }
+
+}  // namespace std
+#endif
+
+#if _GLIBCXX_RELEASE >= 12
+namespace std {
+
+/* This avoids the GLIBCXX_3.4.30 symbol version. */
+void __attribute__((weak))
+__glibcxx_assert_fail(const char* __file, int __line, const char* __function,
+                      const char* __condition) {
+  MOZ_CRASH();
+}
 
 }  // namespace std
 #endif
