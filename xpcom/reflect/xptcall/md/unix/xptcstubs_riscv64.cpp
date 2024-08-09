@@ -140,7 +140,8 @@ extern "C" nsresult ATTRIBUTE_USED PrepareAndDispatch(nsXPTCStubBase* self,
       ".err   \"stub number "#n" >= 1000 not yet supported\"\n"                     \
       ".endif \n\t"                                                                 \
       "li      t0, "#n" \n\t"                                                       \
-      "j       SharedStub \n"                                                       \
+      "la      t1, SharedStub \n"                                                   \
+      "jr      t1 \n"                                                               \
       ".if "#n" < 10\n\t"                                                           \
       ".size   _ZN14nsXPTCStubBase5Stub"#n"Ev,.-_ZN14nsXPTCStubBase5Stub"#n"Ev\n\t" \
       ".elseif "#n" < 100\n\t"                                                      \
