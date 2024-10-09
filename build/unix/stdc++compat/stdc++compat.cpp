@@ -69,6 +69,19 @@ void __attribute__((weak)) __throw_bad_array_new_length() { MOZ_CRASH(); }
 }  // namespace std
 #endif
 
+#if _GLIBCXX_RELEASE >= 12
+namespace std {
+
+/* This avoids the GLIBCXX_3.4.30 symbol version. */
+void __attribute__((weak))
+__glibcxx_assert_fail(const char* __file, int __line, const char* __function,
+                      const char* __condition) {
+  MOZ_CRASH();
+}
+
+}  // namespace std
+#endif
+
 /* While we generally don't build with exceptions, we have some host tools
  * that do use them. libstdc++ from GCC 5.0 added exception constructors with
  * char const* argument. Older versions only have a constructor with
