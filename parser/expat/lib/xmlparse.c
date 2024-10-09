@@ -704,8 +704,7 @@ XML_ParserCreate(const XML_Char *encodingName)
 XML_Parser XMLCALL
 XML_ParserCreateNS(const XML_Char *encodingName, XML_Char nsSep)
 {
-  XML_Char tmp[2];
-  *tmp = nsSep;
+  XML_Char tmp[2] = {nsSep, 0};
   return XML_ParserCreate_MM(encodingName, NULL, tmp);
 }
 #endif
@@ -1288,8 +1287,7 @@ XML_ExternalEntityParserCreate(XML_Parser oldParser,
      would be otherwise.
   */
   if (ns) {
-    XML_Char tmp[2];
-    *tmp = namespaceSeparator;
+    XML_Char tmp[2] = {parser->m_namespaceSeparator, 0};
     parser = parserCreate(encodingName, &parser->m_mem, tmp, newDtd);
   }
   else {
@@ -3773,6 +3771,16 @@ addBinding(XML_Parser parser, PREFIX *prefix, const ATTRIBUTE_ID *attId,
     if (!mustBeXML && isXMLNS
         && (len > xmlnsLen || uri[len] != xmlnsNamespace[len]))
       isXMLNS = XML_FALSE;
+    // NOTE: While Expat does not validate namespace URIs against RFC 3986,
+    //       we have to at least make sure that the XML processor on top of
+    //       Expat (that is splitting tag names by namespace separator into
+    //       2- or 3-tuples (uri-local or uri-local-prefix)) cannot be confused
+    //       by an attacker putting additional namespace separator characters
+    //       into namespace declarations.  That would be ambiguous and not to
+    //       be expected.
+    if (parser->m_ns && (uri[len] == parser->m_namespaceSeparator)) {
+      return XML_ERROR_SYNTAX;
+    }
   }
   isXML = isXML && len == xmlLen;
   isXMLNS = isXMLNS && len == xmlnsLen;
