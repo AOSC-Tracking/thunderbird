@@ -52,6 +52,12 @@ nsMsgSearchDBView::Open(nsIMsgFolder* folder, nsMsgViewSortTypeValue sortType,
   nsresult rv = nsMsgDBView::Open(folder, sortType, sortOrder, viewFlags);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // For other view types this will happen in OpenWithHdrs called by
+  // RebuildView.
+  if (m_viewFlags & nsMsgViewFlagsType::kGroupBySort) {
+    SaveSortInfo(sortType, sortOrder);
+  }
+
   nsCOMPtr<nsIPrefBranch> prefBranch(
       do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -773,7 +779,17 @@ NS_IMETHODIMP nsMsgSearchDBView::DoCommand(nsMsgViewCommandTypeValue command) {
 
   nsresult rv = NS_OK;
   nsMsgViewIndexArray selection;
-  GetIndicesForSelection(selection);
+  if (command == nsMsgViewCommandType::markAllRead) {
+    command = nsMsgViewCommandType::markMessagesRead;
+    // Create a selection from all indices.
+    int32_t viewSize = GetSize();
+    selection.SetCapacity(viewSize);
+    for (int32_t index = 0; index < viewSize; index++) {
+      selection.AppendElement(index);
+    }
+  } else {
+    GetIndicesForSelection(selection);
+  }
 
   // We need to break apart the selection by folders, and then call
   // ApplyCommandToIndices with the command and the indices in the

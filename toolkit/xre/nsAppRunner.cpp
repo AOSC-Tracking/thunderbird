@@ -2715,6 +2715,10 @@ static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
   rv = xpcom.SetWindowCreator(aNative);
   NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
+#ifdef XP_MACOSX
+  InitializeMacApp();
+#endif
+
   {  // extra scoping is needed so we release these components before xpcom
      // shutdown
     nsCOMPtr<nsIStringBundleService> sbs =
@@ -4943,8 +4947,12 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
       // Try to remote the entire command line. If this fails, start up
       // normally.
 #  ifdef MOZ_WIDGET_GTK
-      const auto& startupToken =
+      auto& startupToken =
           GdkIsWaylandDisplay() ? mXDGActivationToken : mDesktopStartupID;
+#    ifdef MOZ_X11
+      if (GdkIsX11Display() && startupToken.IsEmpty())
+        startupToken = SynthesizeStartupToken();
+#    endif /* MOZ_X11 */
 #  else
       const nsCString startupToken;
 #  endif

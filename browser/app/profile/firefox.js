@@ -281,7 +281,7 @@ pref("browser.shell.defaultBrowserCheckCount", 0);
 pref("browser.shell.setDefaultBrowserUserChoice", true);
 // When setting default via UserChoice, temporarily rename an ancestor registry key to
 // prevent kernel drivers from locking the UserChoice subkeys.
-pref("browser.shell.setDefaultBrowserUserChoice.regRename", false);
+pref("browser.shell.setDefaultBrowserUserChoice.regRename", true);
 // When setting the default browser on Windows 10 using the UserChoice
 // registry keys, also try to set Firefox as the default PDF handler.
 pref("browser.shell.setDefaultPDFHandler", true);
@@ -430,9 +430,6 @@ pref("browser.urlbar.scotchBonnet.enableOverride", false);
 
 // Enable trending suggestions and recent searches.
 pref("browser.urlbar.trending.featureGate", true);
-#if defined(RELEASE_OR_BETA)
-pref("browser.urlbar.trending.enabledLocales", "en-US, en-CA");
-#endif
 pref("browser.urlbar.trending.requireSearchMode", false);
 pref("browser.urlbar.recentsearches.featureGate", true);
 
@@ -1197,18 +1194,12 @@ pref("network.manage-offline-status", true);
 
 // We want to make sure mail URLs are handled externally...
 pref("network.protocol-handler.external.mailto", true); // for mail
-pref("network.protocol-handler.external.news", true);   // for news
-pref("network.protocol-handler.external.snews", true);  // for secure news
-pref("network.protocol-handler.external.nntp", true);   // also news
 #ifdef XP_WIN
   pref("network.protocol-handler.external.ms-windows-store", true);
 #endif
 
 // ...without warning dialogs
 pref("network.protocol-handler.warn-external.mailto", false);
-pref("network.protocol-handler.warn-external.news", false);
-pref("network.protocol-handler.warn-external.snews", false);
-pref("network.protocol-handler.warn-external.nntp", false);
 #ifdef XP_WIN
   pref("network.protocol-handler.warn-external.ms-windows-store", false);
 #endif

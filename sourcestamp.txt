@@ -1,3 +1,3 @@
-20240730200333
-https://hg.mozilla.org/releases/comm-esr128/rev/fd08ed2b148ffec182e57d52cb15e0d424db832e
-https://hg.mozilla.org/releases/mozilla-esr128/rev/18b5deccfd5a73daddfc8a2ab5a6a41384ba8af5
+20240930164946
+https://hg.mozilla.org/releases/comm-esr128/rev/36457f5e26f4499fa630a7d1909613c5ec148383
+https://hg.mozilla.org/releases/mozilla-esr128/rev/e2cb3d9c8cfc18acad7f77add351416dc95b67c4

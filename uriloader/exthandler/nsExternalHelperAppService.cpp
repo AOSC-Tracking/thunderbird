@@ -678,14 +678,6 @@ nsresult nsExternalHelperAppService::DoContentContentProcessHelper(
   mozilla::net::LoadInfoArgs loadInfoArgs;
   MOZ_ALWAYS_SUCCEEDS(LoadInfoToLoadInfoArgs(loadInfo, &loadInfoArgs));
 
-  nsCOMPtr<nsIPropertyBag2> props(do_QueryInterface(aChannel));
-  // Determine whether a new window was opened specifically for this request
-  bool shouldCloseWindow = false;
-  if (props) {
-    props->GetPropertyAsBool(u"docshell.newWindowTarget"_ns,
-                             &shouldCloseWindow);
-  }
-
   // Now we build a protocol for forwarding our data to the parent.  The
   // protocol will act as a listener on the child-side and create a "real"
   // helperAppService listener on the parent-side, via another call to
@@ -694,7 +686,7 @@ nsresult nsExternalHelperAppService::DoContentContentProcessHelper(
   MOZ_ALWAYS_TRUE(child->SendPExternalHelperAppConstructor(
       childListener, uri, loadInfoArgs, nsCString(aMimeContentType), disp,
       contentDisposition, fileName, aForceSave, contentLength, wasFileChannel,
-      referrer, aContentContext, shouldCloseWindow));
+      referrer, aContentContext));
 
   NS_ADDREF(*aStreamListener = childListener);
 
@@ -976,13 +968,14 @@ nsExternalHelperAppService::LoadURI(nsIURI* aURI,
                                     nsIPrincipal* aRedirectPrincipal,
                                     BrowsingContext* aBrowsingContext,
                                     bool aTriggeredExternally,
-                                    bool aHasValidUserGestureActivation) {
+                                    bool aHasValidUserGestureActivation,
+                                    bool aNewWindowTarget) {
   NS_ENSURE_ARG_POINTER(aURI);
 
   if (XRE_IsContentProcess()) {
     mozilla::dom::ContentChild::GetSingleton()->SendLoadURIExternal(
         aURI, aTriggeringPrincipal, aRedirectPrincipal, aBrowsingContext,
-        aTriggeredExternally, aHasValidUserGestureActivation);
+        aTriggeredExternally, aHasValidUserGestureActivation, aNewWindowTarget);
     return NS_OK;
   }
 
@@ -1059,12 +1052,22 @@ nsExternalHelperAppService::LoadURI(nsIURI* aURI,
     WindowGlobalParent* wgp = bc->Canonical()->GetCurrentWindowGlobal();
     bool foundAccessibleFrame = false;
 
-    // Also allow this load if the target is a toplevel BC and contains a
-    // non-web-controlled about:blank document
-    if (bc->IsTop() && !bc->GetTopLevelCreatedByWebContent() && wgp) {
-      RefPtr<nsIURI> uri = wgp->GetDocumentURI();
-      foundAccessibleFrame =
-          uri && uri->GetSpecOrDefault().EqualsLiteral("about:blank");
+    // Don't block the load if it is the first load in a new window (e.g. due to
+    // a call to window.open, or a target=_blank link click).
+    if (aNewWindowTarget) {
+      MOZ_ASSERT(bc->IsTop());
+      foundAccessibleFrame = true;
+    }
+
+    // Also allow this load if the target is a toplevel BC which contains a
+    // non-web-controlled about:blank document.
+    // NOTE: This catches cases like shift-clicking a link which do not set
+    // `newWindowTarget`, but do open a link in a new window on behalf of web
+    // content.
+    if (!foundAccessibleFrame && bc->IsTop() &&
+        !bc->GetTopLevelCreatedByWebContent() && wgp) {
+      nsIURI* uri = wgp->GetDocumentURI();
+      foundAccessibleFrame = uri && NS_IsAboutBlank(uri);
     }
 
     while (!foundAccessibleFrame) {
@@ -1276,7 +1279,6 @@ nsExternalAppHandler::nsExternalAppHandler(
       mCanceled(false),
       mStopRequestIssued(false),
       mIsFileChannel(false),
-      mShouldCloseWindow(false),
       mHandleInternally(false),
       mDialogShowing(false),
       mReason(aReason),
@@ -1592,15 +1594,12 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
 
   if (mBrowsingContext) {
     mMaybeCloseWindowHelper = new MaybeCloseWindowHelper(mBrowsingContext);
-    mMaybeCloseWindowHelper->SetShouldCloseWindow(mShouldCloseWindow);
-    nsCOMPtr<nsIPropertyBag2> props(do_QueryInterface(request, &rv));
+
     // Determine whether a new window was opened specifically for this request
-    if (props) {
-      bool tmp = false;
-      if (NS_SUCCEEDED(
-              props->GetPropertyAsBool(u"docshell.newWindowTarget"_ns, &tmp))) {
-        mMaybeCloseWindowHelper->SetShouldCloseWindow(tmp);
-      }
+    if (aChannel) {
+      nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+      mMaybeCloseWindowHelper->SetShouldCloseWindow(
+          loadInfo->GetIsNewWindowTarget());
     }
   }
 
@@ -3668,12 +3667,14 @@ void nsExternalHelperAppService::SanitizeFileName(nsAString& aFileName,
     outFileName.Truncate(lastNonTrimmable);
   }
 
-  nsAutoString extension;
-  int32_t dotidx = outFileName.RFind(u".");
-  if (dotidx != -1) {
-    extension = Substring(outFileName, dotidx + 1);
-    extension.StripWhitespace();
-    outFileName = Substring(outFileName, 0, dotidx + 1) + extension;
+  if (!(aFlags & VALIDATE_ALLOW_DIRECTORY_NAMES)) {
+    nsAutoString extension;
+    int32_t dotidx = outFileName.RFind(u".");
+    if (dotidx != -1) {
+      extension = Substring(outFileName, dotidx + 1);
+      extension.StripWhitespace();
+      outFileName = Substring(outFileName, 0, dotidx + 1) + extension;
+    }
   }
 
 #ifdef XP_WIN

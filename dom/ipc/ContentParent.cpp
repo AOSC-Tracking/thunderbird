@@ -47,6 +47,7 @@
 #include "mozilla/AntiTrackingUtils.h"
 #include "mozilla/AppShutdown.h"
 #include "mozilla/AutoRestore.h"
+#include "mozilla/ClipboardContentAnalysisParent.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/BenchmarkStorageParent.h"
 #include "mozilla/Casting.h"
@@ -1218,6 +1219,38 @@ static nsIDocShell* GetOpenerDocShellHelper(Element* aFrameElement) {
   return docShell;
 }
 
+mozilla::ipc::IPCResult ContentParent::RecvCreateClipboardContentAnalysis(
+    Endpoint<PClipboardContentAnalysisParent>&& aParentEndpoint) {
+  if (mClipboardContentAnalysisCreated) {
+    return IPC_FAIL(this, "ClipboardContentAnalysisParent already created");
+  }
+  mClipboardContentAnalysisCreated = true;
+
+  if (!mClipboardContentAnalysisThread) {
+    nsresult rv = NS_NewNamedThread(
+        "BkgrndClipboard", getter_AddRefs(mClipboardContentAnalysisThread));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return IPC_FAIL(this, "NS_NewNamedThread failed");
+    }
+  }
+
+  // Bind the new endpoint to the backgroundClipboardContentAnalysis thread.
+  mClipboardContentAnalysisThread->Dispatch(
+      NS_NewRunnableFunction(
+          "Create ClipboardContentAnalysisParent",
+          [threadsafeHandle = RefPtr{ThreadsafeHandle()},
+           parentEndpoint = std::move(aParentEndpoint)]() mutable {
+            // Use a threadsafe handle here, so that it can
+            // be used to validate that the WindowContext comes from the
+            // correct content process.
+            RefPtr<ClipboardContentAnalysisParent> actor =
+                new ClipboardContentAnalysisParent(std::move(threadsafeHandle));
+            parentEndpoint.Bind(actor);
+          }),
+      NS_DISPATCH_NORMAL);
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult ContentParent::RecvCreateGMPService() {
   Endpoint<PGMPServiceParent> parent;
   Endpoint<PGMPServiceChild> child;
@@ -1526,18 +1559,18 @@ already_AddRefed<RemoteBrowser> ContentParent::CreateBrowser(
       new BrowserParent(constructorSender, tabId, aContext,
                         aBrowsingContext->Canonical(), chromeFlags);
 
+  ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
+  if (NS_WARN_IF(!cpm)) {
+    return nullptr;
+  }
+  cpm->RegisterRemoteFrame(browserParent);
+
   // Open a remote endpoint for our PBrowser actor.
   ManagedEndpoint<PBrowserChild> childEp =
       constructorSender->OpenPBrowserEndpoint(browserParent);
   if (NS_WARN_IF(!childEp.IsValid())) {
     return nullptr;
   }
-
-  ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
-  if (NS_WARN_IF(!cpm)) {
-    return nullptr;
-  }
-  cpm->RegisterRemoteFrame(browserParent);
 
   nsCOMPtr<nsIPrincipal> initialPrincipal =
       NullPrincipal::Create(aBrowsingContext->OriginAttributesRef());
@@ -2877,6 +2910,7 @@ ContentParent::ContentParent(const nsACString& aRemoteType)
       mIsInputPriorityEventEnabled(false),
       mIsInPool(false),
       mGMPCreated(false),
+      mClipboardContentAnalysisCreated(false),
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
       mBlockShutdownCalled(false),
 #endif
@@ -3468,10 +3502,8 @@ mozilla::ipc::IPCResult ContentParent::RecvSetClipboard(
   return IPC_OK();
 }
 
-namespace {
-
-static Result<nsCOMPtr<nsITransferable>, nsresult> CreateTransferable(
-    const nsTArray<nsCString>& aTypes) {
+/* static */ Result<nsCOMPtr<nsITransferable>, nsresult>
+ContentParent::CreateClipboardTransferable(const nsTArray<nsCString>& aTypes) {
   nsresult rv;
   nsCOMPtr<nsITransferable> trans =
       do_CreateInstance("@mozilla.org/widget/transferable;1", &rv);
@@ -3493,8 +3525,6 @@ static Result<nsCOMPtr<nsITransferable>, nsresult> CreateTransferable(
 
   return std::move(trans);
 }
-
-}  // anonymous namespace
 
 mozilla::ipc::IPCResult ContentParent::RecvGetClipboard(
     nsTArray<nsCString>&& aTypes, const int32_t& aWhichClipboard,
@@ -3524,7 +3554,7 @@ mozilla::ipc::IPCResult ContentParent::RecvGetClipboard(
   }
 
   // Create transferable
-  auto result = CreateTransferable(aTypes);
+  auto result = CreateClipboardTransferable(aTypes);
   if (result.isErr()) {
     *aTransferableDataOrError = result.unwrapErr();
     return IPC_OK();
@@ -4463,21 +4493,17 @@ mozilla::ipc::IPCResult ContentParent::RecvConstructPopupBrowser(
   auto parent = MakeRefPtr<BrowserParent>(this, aTabId, tc.GetTabContext(),
                                           browsingContext, chromeFlags);
 
+  // The creation of PBrowser was triggered from content process through
+  // window.open().
+  // We need to register remote frame with the child generated tab id.
+  ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
+  if (!cpm || !cpm->RegisterRemoteFrame(parent)) {
+    return IPC_FAIL(this, "RegisterRemoteFrame Failed");
+  }
+
   // Bind the created BrowserParent to IPC to actually link the actor.
   if (NS_WARN_IF(!BindPBrowserEndpoint(std::move(aBrowserEp), parent))) {
     return IPC_FAIL(this, "BindPBrowserEndpoint failed");
-  }
-
-  // XXX: Why are we checking these requirements? It seems we should register
-  // the created frame unconditionally?
-  if (openerTabId > 0) {
-    // The creation of PBrowser was triggered from content process through
-    // window.open().
-    // We need to register remote frame with the child generated tab id.
-    auto* cpm = ContentProcessManager::GetSingleton();
-    if (!cpm || !cpm->RegisterRemoteFrame(parent)) {
-      return IPC_FAIL(this, "RegisterRemoteFrame Failed");
-    }
   }
 
   if (NS_WARN_IF(!parent->BindPWindowGlobalEndpoint(std::move(aWindowEp),
@@ -4783,8 +4809,7 @@ ContentParent::AllocPExternalHelperAppParent(
     const uint32_t& aContentDispositionHint,
     const nsAString& aContentDispositionFilename, const bool& aForceSave,
     const int64_t& aContentLength, const bool& aWasFileChannel,
-    nsIURI* aReferrer, const MaybeDiscarded<BrowsingContext>& aContext,
-    const bool& aShouldCloseWindow) {
+    nsIURI* aReferrer, const MaybeDiscarded<BrowsingContext>& aContext) {
   RefPtr<ExternalHelperAppParent> parent = new ExternalHelperAppParent(
       uri, aContentLength, aWasFileChannel, aContentDisposition,
       aContentDispositionHint, aContentDispositionFilename);
@@ -4798,12 +4823,10 @@ mozilla::ipc::IPCResult ContentParent::RecvPExternalHelperAppConstructor(
     const uint32_t& aContentDispositionHint,
     const nsAString& aContentDispositionFilename, const bool& aForceSave,
     const int64_t& aContentLength, const bool& aWasFileChannel,
-    nsIURI* aReferrer, const MaybeDiscarded<BrowsingContext>& aContext,
-    const bool& aShouldCloseWindow) {
+    nsIURI* aReferrer, const MaybeDiscarded<BrowsingContext>& aContext) {
   BrowsingContext* context = aContext.IsDiscarded() ? nullptr : aContext.get();
   if (!static_cast<ExternalHelperAppParent*>(actor)->Init(
-          loadInfoArgs, aMimeContentType, aForceSave, aReferrer, context,
-          aShouldCloseWindow)) {
+          loadInfoArgs, aMimeContentType, aForceSave, aReferrer, context)) {
     return IPC_FAIL(this, "Init failed.");
   }
   return IPC_OK();
@@ -4911,7 +4934,8 @@ mozilla::ipc::IPCResult ContentParent::RecvLoadURIExternal(
     nsIURI* uri, nsIPrincipal* aTriggeringPrincipal,
     nsIPrincipal* aRedirectPrincipal,
     const MaybeDiscarded<BrowsingContext>& aContext,
-    bool aWasExternallyTriggered, bool aHasValidUserGestureActivation) {
+    bool aWasExternallyTriggered, bool aHasValidUserGestureActivation,
+    bool aNewWindowTarget) {
   if (aContext.IsDiscarded()) {
     return IPC_OK();
   }
@@ -4929,7 +4953,7 @@ mozilla::ipc::IPCResult ContentParent::RecvLoadURIExternal(
   BrowsingContext* bc = aContext.get();
   extProtService->LoadURI(uri, aTriggeringPrincipal, aRedirectPrincipal, bc,
                           aWasExternallyTriggered,
-                          aHasValidUserGestureActivation);
+                          aHasValidUserGestureActivation, aNewWindowTarget);
   return IPC_OK();
 }
 
@@ -5472,89 +5496,6 @@ bool ContentParent::DeallocPWebrtcGlobalParent(PWebrtcGlobalParent* aActor) {
   return true;
 }
 #endif
-
-void ContentParent::GetIPCTransferableData(
-    nsIDragSession* aSession, BrowserParent* aParent,
-    nsTArray<IPCTransferableData>& aIPCTransferables) {
-  RefPtr<DataTransfer> transfer = aSession->GetDataTransfer();
-  if (!transfer) {
-    // Pass eDrop to get DataTransfer with external
-    // drag formats cached.
-    transfer = new DataTransfer(nullptr, eDrop, true, -1);
-    aSession->SetDataTransfer(transfer);
-  }
-  // Note, even though this fills the DataTransfer object with
-  // external data, the data is usually transfered over IPC lazily when
-  // needed.
-  transfer->FillAllExternalData();
-  nsCOMPtr<nsILoadContext> lc = aParent ? aParent->GetLoadContext() : nullptr;
-  nsCOMPtr<nsIArray> transferables = transfer->GetTransferables(lc);
-  nsContentUtils::TransferablesToIPCTransferableDatas(
-      transferables, aIPCTransferables, false, this);
-}
-
-void ContentParent::MaybeInvokeDragSession(BrowserParent* aParent,
-                                           EventMessage aMessage) {
-  // dnd uses IPCBlob to transfer data to the content process and the IPC
-  // message is sent as normal priority. When sending input events with input
-  // priority, the message may be preempted by the later dnd events. To make
-  // sure the input events and the blob message are processed in time order
-  // on the content process, we temporarily send the input events with normal
-  // priority when there is an active dnd session.
-  SetInputPriorityEventEnabled(false);
-
-  nsCOMPtr<nsIDragService> dragService =
-      do_GetService("@mozilla.org/widget/dragservice;1");
-  if (!dragService) {
-    return;
-  }
-
-  if (dragService->MaybeAddChildProcess(this)) {
-    nsCOMPtr<nsIDragSession> session;
-    dragService->GetCurrentSession(getter_AddRefs(session));
-    if (session) {
-      // We need to send transferable data to child process.
-      nsTArray<IPCTransferableData> ipcTransferables;
-      GetIPCTransferableData(session, aParent, ipcTransferables);
-      uint32_t action;
-      session->GetDragAction(&action);
-
-      RefPtr<WindowContext> sourceWC;
-      session->GetSourceWindowContext(getter_AddRefs(sourceWC));
-      RefPtr<WindowContext> sourceTopWC;
-      session->GetSourceTopWindowContext(getter_AddRefs(sourceTopWC));
-      mozilla::Unused << SendInvokeDragSession(
-          sourceWC, sourceTopWC, std::move(ipcTransferables), action);
-    }
-    return;
-  }
-
-  if (dragService->MustUpdateDataTransfer(aMessage)) {
-    nsCOMPtr<nsIDragSession> session;
-    dragService->GetCurrentSession(getter_AddRefs(session));
-    if (session) {
-      // We need to send transferable data to child process.
-      nsTArray<IPCTransferableData> ipcTransferables;
-      GetIPCTransferableData(session, aParent, ipcTransferables);
-      mozilla::Unused << SendUpdateDragSession(std::move(ipcTransferables),
-                                               aMessage);
-    }
-  }
-}
-
-mozilla::ipc::IPCResult ContentParent::RecvUpdateDropEffect(
-    const uint32_t& aDragAction, const uint32_t& aDropEffect) {
-  nsCOMPtr<nsIDragSession> dragSession = nsContentUtils::GetDragSession();
-  if (dragSession) {
-    dragSession->SetDragAction(aDragAction);
-    RefPtr<DataTransfer> dt = dragSession->GetDataTransfer();
-    if (dt) {
-      dt->SetDropEffectInt(aDropEffect);
-    }
-    dragSession->UpdateDragEffect();
-  }
-  return IPC_OK();
-}
 
 PContentPermissionRequestParent*
 ContentParent::AllocPContentPermissionRequestParent(

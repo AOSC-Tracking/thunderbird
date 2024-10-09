@@ -13,6 +13,7 @@
 
 #include "CompositorWidget.h"
 #include "MozContainer.h"
+#include "MozContainerSurfaceLock.h"
 #include "VsyncSource.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/Maybe.h"
@@ -422,6 +423,8 @@ class nsWindow final : public nsBaseWidget {
 
   static nsWindow* GetFocusedWindow();
 
+  mozilla::UniquePtr<MozContainerSurfaceLock> LockSurface();
+
 #ifdef MOZ_WAYLAND
   // Use xdg-activation protocol to transfer focus from gFocusWindow to aWindow.
   static void TransferFocusToWaylandWindow(nsWindow* aWindow);
@@ -799,7 +802,7 @@ class nsWindow final : public nsBaseWidget {
 
   InputRegion mInputRegion;
 
-  static bool DragInProgress(void);
+  bool DragInProgress(void);
 
   void DispatchMissedButtonReleases(GdkEventCrossing* aGdkEvent);
 

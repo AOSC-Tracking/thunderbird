@@ -1861,12 +1861,9 @@ nsresult nsGlobalWindowInner::EnsureClientSource() {
 
     bool ignoreLoadInfo = false;
 
-    // Note, this is mostly copied from NS_IsAboutBlank().  Its duplicated
-    // here so we can efficiently check about:srcdoc as well.
     if (uri->SchemeIs("about")) {
-      nsCString spec = uri->GetSpecOrDefault();
-      ignoreLoadInfo = spec.EqualsLiteral("about:blank") ||
-                       spec.EqualsLiteral("about:srcdoc");
+      ignoreLoadInfo =
+          NS_IsAboutBlankAllowQueryAndFragment(uri) || NS_IsAboutSrcdoc(uri);
     } else {
       // Its not an about: URL, so now check for our other URL types.
       ignoreLoadInfo = uri->SchemeIs("data") || uri->SchemeIs("blob");
@@ -4457,14 +4454,15 @@ void nsGlobalWindowInner::SetReadyForFocus() {
   }
 }
 
-void nsGlobalWindowInner::PageHidden() {
+void nsGlobalWindowInner::PageHidden(bool aIsEnteringBFCacheInParent) {
   // the window is being hidden, so tell the focus manager that the frame is
   // no longer valid. Use the persisted field to determine if the document
   // is being destroyed.
 
   if (RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager()) {
     nsCOMPtr<nsPIDOMWindowOuter> outerWindow = GetOuterWindow();
-    fm->WindowHidden(outerWindow, nsFocusManager::GenerateFocusActionId());
+    fm->WindowHidden(outerWindow, nsFocusManager::GenerateFocusActionId(),
+                     aIsEnteringBFCacheInParent);
   }
 
   mNeedsFocus = true;

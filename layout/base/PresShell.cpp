@@ -779,7 +779,6 @@ PresShell::PresShell(Document* aDocument)
       mIsDocumentGone(false),
       mHaveShutDown(false),
       mPaintingSuppressed(false),
-      mLastRootReflowHadUnconstrainedBSize(false),
       mShouldUnsuppressPainting(false),
       mIgnoreFrameDestruction(false),
       mIsActive(true),
@@ -1927,6 +1926,7 @@ bool PresShell::SimpleResizeReflow(nscoord aWidth, nscoord aHeight) {
       wm.IsVertical() ? oldSize.width != aWidth : oldSize.height != aHeight;
   if (isBSizeChanging) {
     nsLayoutUtils::MarkIntrinsicISizesDirtyIfDependentOnBSize(rootFrame);
+    rootFrame->SetHasBSizeChange(true);
   }
   FrameNeedsReflow(rootFrame, IntrinsicDirty::None,
                    NS_FRAME_HAS_DIRTY_CHILDREN);
@@ -2037,6 +2037,9 @@ bool PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
   // intrinsic sizes can't depend on them. So the only other case is
   // viewport-controlled BSizes which we handle here.
   nsLayoutUtils::MarkIntrinsicISizesDirtyIfDependentOnBSize(rootFrame);
+  rootFrame->SetHasBSizeChange(true);
+  FrameNeedsReflow(rootFrame, IntrinsicDirty::None,
+                   NS_FRAME_HAS_DIRTY_CHILDREN);
 
   {
     nsAutoCauseReflowNotifier crNotifier(this);
@@ -2055,6 +2058,7 @@ bool PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight,
 
     if (reflowAgain) {
       mPresContext->SetVisibleArea(nsRect(0, 0, aWidth, aHeight));
+      rootFrame->SetHasBSizeChange(true);
       DoReflow(rootFrame, true, nullptr);
     }
   }
@@ -5769,7 +5773,13 @@ static BrowserBridgeChild* GetChildBrowser(nsView* aView) {
 
 void PresShell::ProcessSynthMouseMoveEvent(bool aFromScroll) {
   // If drag session has started, we shouldn't synthesize mousemove event.
-  nsCOMPtr<nsIDragSession> dragSession = nsContentUtils::GetDragSession();
+  nsView* rootView = mViewManager ? mViewManager->GetRootView() : nullptr;
+  if (!rootView || !rootView->HasWidget()) {
+    mSynthMouseMoveEvent.Forget();
+    return;
+  }
+  nsCOMPtr<nsIDragSession> dragSession =
+      nsContentUtils::GetDragSession(rootView->GetWidget());
   if (dragSession) {
     mSynthMouseMoveEvent.Forget();
     return;
@@ -5781,9 +5791,8 @@ void PresShell::ProcessSynthMouseMoveEvent(bool aFromScroll) {
     mSynthMouseMoveEvent.Forget();
   }
 
-  nsView* rootView = mViewManager ? mViewManager->GetRootView() : nullptr;
   if (mMouseLocation == nsPoint(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE) ||
-      !rootView || !rootView->HasWidget() || !mPresContext) {
+      !mPresContext) {
     mSynthMouseMoveEvent.Forget();
     return;
   }
@@ -8525,7 +8534,8 @@ bool PresShell::EventHandler::PrepareToDispatchEvent(
       return true;
     }
     case eDrop: {
-      nsCOMPtr<nsIDragSession> session = nsContentUtils::GetDragSession();
+      nsCOMPtr<nsIDragSession> session =
+          nsContentUtils::GetDragSession(GetPresContext());
       if (session) {
         bool onlyChromeDrop = false;
         session->GetOnlyChromeDrop(&onlyChromeDrop);
@@ -9785,21 +9795,6 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
 
   if (isRoot) {
     reflowInput.Init(mPresContext);
-
-    // When the root frame is being reflowed with unconstrained block-size
-    // (which happens when we're called from
-    // nsDocumentViewer::SizeToContent), we're effectively doing a
-    // resize in the block direction, since it changes the meaning of
-    // percentage block-sizes even if no block-sizes actually changed.
-    // The same applies when we reflow again after that computation. This is
-    // an unusual case, and isn't caught by ReflowInput::InitResizeFlags.
-    bool hasUnconstrainedBSize = size.BSize(wm) == NS_UNCONSTRAINEDSIZE;
-
-    if (hasUnconstrainedBSize || mLastRootReflowHadUnconstrainedBSize) {
-      reflowInput.SetBResize(true);
-    }
-
-    mLastRootReflowHadUnconstrainedBSize = hasUnconstrainedBSize;
   } else {
     // Initialize reflow input with current used border and padding,
     // in case this was set specially by the parent frame when the reflow root

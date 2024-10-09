@@ -1234,17 +1234,8 @@ var gPrivacyPane = {
         this.initOptOutStudyCheckbox();
       }
       this.initAddonRecommendationsCheckbox();
+      this.initPrivateAttributionCheckbox();
     }
-    dataCollectionCheckboxHandler({
-      checkbox: document.getElementById("privateAttribution"),
-      pref: PREF_PRIVATE_ATTRIBUTION_ENABLED,
-      matchPref() {
-        return AppConstants.MOZ_TELEMETRY_REPORTING;
-      },
-      isDisabled() {
-        return !AppConstants.MOZ_TELEMETRY_REPORTING;
-      },
-    });
 
     let signonBundle = document.getElementById("signonBundle");
     let pkiBundle = document.getElementById("pkiBundle");
@@ -1258,6 +1249,22 @@ var gPrivacyPane = {
     if (!PrivateBrowsingUtils.enabled) {
       document.getElementById("privateBrowsingAutoStart").hidden = true;
       document.querySelector("menuitem[value='dontremember']").hidden = true;
+    }
+
+    let privateBrowsingPref = Preferences.get(
+      "browser.privatebrowsing.autostart"
+    );
+
+    if (privateBrowsingPref.locked) {
+      // If permanent private browsing mode is locked to off,
+      // disable the "Never Remember History" option
+      document.querySelector("menuitem[value='dontremember']").disabled =
+        !privateBrowsingPref.value;
+
+      // If we're locked in permanent private browsing mode,
+      // disable the dropdown menu completely
+      document.getElementById("historyMode").disabled =
+        privateBrowsingPref.value;
     }
 
     /* init HTTPS-Only mode */
@@ -3516,6 +3523,19 @@ var gPrivacyPane = {
     dataCollectionCheckboxHandler({
       checkbox: document.getElementById("addonRecommendationEnabled"),
       pref: PREF_ADDON_RECOMMENDATIONS_ENABLED,
+    });
+  },
+
+  initPrivateAttributionCheckbox() {
+    dataCollectionCheckboxHandler({
+      checkbox: document.getElementById("privateAttribution"),
+      pref: PREF_PRIVATE_ATTRIBUTION_ENABLED,
+      matchPref() {
+        return AppConstants.MOZ_TELEMETRY_REPORTING;
+      },
+      isDisabled() {
+        return !AppConstants.MOZ_TELEMETRY_REPORTING;
+      },
     });
   },
 

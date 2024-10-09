@@ -577,6 +577,15 @@ var folderPaneContextMenu = {
     const isSmartVirtualFolder = FolderUtils.isSmartVirtualFolder(folder);
     const isSmartTagsFolder = FolderUtils.isSmartTagsFolder(folder);
     const serverType = server.type;
+    const hasNoSearchTerms = () => {
+      if (!isVirtual) {
+        return true;
+      }
+      const wrapper = VirtualFolderHelper.wrapVirtualFolder(folder);
+      const noSearchTerms = ["", "ALL"].includes(wrapper.searchString);
+      wrapper.cleanUpMessageDatabase();
+      return noSearchTerms;
+    };
 
     this._showMenuItem(
       "folderPaneContext-getMessages",
@@ -636,7 +645,10 @@ var folderPaneContextMenu = {
 
     this._showMenuItem(
       "folderPaneContext-markMailFolderAllRead",
-      !isServer && !isSmartTagsFolder && serverType != "nntp"
+      !isServer &&
+        !isSmartTagsFolder &&
+        hasNoSearchTerms() &&
+        serverType != "nntp"
     );
     this._showMenuItem(
       "folderPaneContext-markNewsgroupAllRead",
@@ -965,6 +977,11 @@ var folderPane = {
       },
 
       addFolder(parentFolder, childFolder) {
+        // Prevent "Empty Trash on Exit" for POP3 accounts from changing the
+        // collapsed state when the trash folder is replaced by an empty one.
+        if (MailServices.accounts.shutdownInProgress) {
+          return;
+        }
         FolderTreeProperties.setIsExpanded(childFolder.URI, this.name, true);
         if (
           childFolder.server.hidden ||
@@ -3378,10 +3395,8 @@ var folderPane = {
         );
       }
 
-      // We may be rebuilding a folder that is not the displayed one.
-      // TODO: Close any open views of this folder.
-
-      // Send a notification that we are triggering a database rebuild.
+      // The following notification causes all DBViewWrappers that include
+      // this folder to rebuild their views.
       MailServices.mfn.notifyFolderReindexTriggered(folder);
 
       folder.msgDatabase.summaryValid = false;
@@ -3389,7 +3404,14 @@ var folderPane = {
         const isIMAP = folder.server.type == "imap";
         let transferInfo = null;
         if (isIMAP) {
-          transferInfo = folder.dBTransferInfo;
+          transferInfo = folder.dBTransferInfo.QueryInterface(
+            Ci.nsIWritablePropertyBag2
+          );
+          transferInfo.setPropertyAsACString("numMsgs", "0");
+          transferInfo.setPropertyAsACString("numNewMsgs", "0");
+          // Reset UID validity so that nsImapMailFolder::UpdateImapMailboxInfo
+          // will recognize that a folder repair is in progress.
+          transferInfo.setPropertyAsACString("UIDValidity", "-1"); // == kUidUnknown
         }
         folder.closeAndBackupFolderDB("");
         if (isIMAP && transferInfo) {
@@ -3399,13 +3421,7 @@ var folderPane = {
         // In a failure, proceed anyway since we're dealing with problems
         folder.ForceDBClosed();
       }
-      if (gFolder == folder) {
-        gViewWrapper?.close();
-        folder.updateFolder(top.msgWindow);
-        folderTree.dispatchEvent(new CustomEvent("select"));
-      } else {
-        folder.updateFolder(top.msgWindow);
-      }
+      folder.updateFolder(top.msgWindow);
     }
 
     window.openDialog(
@@ -5228,6 +5244,7 @@ var threadPane = {
       // The order of the columns have changed, which warrants a rebuild of the
       // full table header.
       this.treeTable.setColumns(this.columns);
+      this.restoreSortIndicator();
     }
     this.treeTable.restoreColumnsWidths("messenger");
   },
@@ -6488,18 +6505,18 @@ var sortController = {
     // So, first set the desired sortType and sortOrder, then set viewFlags in
     // batch mode, then apply it all (open a new view) with endViewUpdate().
     gViewWrapper.beginViewUpdate();
-    // Note: this.dbView still remembers the last secondery sort, before group
-    // sort was entered. If we do not specify a secondary sort here, dbView.open()
-    // will use the new primary sort and the old (!) secondary sort. Let's push
-    // the current primary sort as the new secondary sort. The clocking mechanism
-    // in DBViewWrapper._createView() will then do the right thing.
-    const [curPrimarySort] = gViewWrapper._sort;
     gViewWrapper._sort = [
       [newSortType, Ci.nsMsgViewSortOrder.ascending, newSortColumnId],
-      curPrimarySort,
     ];
     gViewWrapper.showGroupedBySort = false;
     gViewWrapper.endViewUpdate();
+    // Virtual folders don't persist viewFlags well in the back end,
+    // due to a virtual folder being either 'real' or synthetic, so make
+    // sure it's done here.
+    if (gViewWrapper.isVirtual) {
+      gViewWrapper.dbView.viewFlags = gViewWrapper._viewFlags;
+    }
+
     return true;
   },
   reverseSortThreadPane() {
@@ -6569,6 +6586,12 @@ var sortController = {
     gViewWrapper.beginViewUpdate();
     gViewWrapper.showGroupedBySort = true;
     gViewWrapper.endViewUpdate();
+    // Virtual folders don't persist viewFlags well in the back end,
+    // due to a virtual folder being either 'real' or synthetic, so make
+    // sure it's done here.
+    if (gViewWrapper.isVirtual) {
+      gViewWrapper.dbView.viewFlags = gViewWrapper._viewFlags;
+    }
     threadPane.restoreThreadState(!gViewWrapper.isSingleFolder);
   },
   sortUnthreaded() {
@@ -6784,46 +6807,38 @@ commandController.registerCallback(
 commandController.registerCallback(
   "cmd_killThread",
   () => {
-    // Delaying to an animation frame to avoid synchronously flushing from the
-    // context menu.
-    window.requestAnimationFrame(() => {
-      threadPane.hideIgnoredMessageNotification();
-      const folder =
-        gViewWrapper.isVirtual && gViewWrapper.isSingleFolder
-          ? gViewWrapper._underlyingFolders[0]
-          : gFolder;
-      if (!folder.msgDatabase.isIgnored(gDBView.keyForFirstSelectedMessage)) {
-        threadPane.showIgnoredMessageNotification(
-          gDBView.getSelectedMsgHdrs(),
-          false
-        );
-      }
-      commandController._navigate(Ci.nsMsgNavigationType.toggleThreadKilled);
-      // Invalidation should be unnecessary but the back end doesn't notify us
-      // properly and resists attempts to fix this.
-      threadTree.reset();
-    });
+    threadPane.hideIgnoredMessageNotification();
+    const folder =
+      gViewWrapper.isVirtual && gViewWrapper.isSingleFolder
+        ? gViewWrapper._underlyingFolders[0]
+        : gFolder;
+    if (!folder.msgDatabase.isIgnored(gDBView.keyForFirstSelectedMessage)) {
+      threadPane.showIgnoredMessageNotification(
+        gDBView.getSelectedMsgHdrs(),
+        false
+      );
+    }
+    commandController._navigate(Ci.nsMsgNavigationType.toggleThreadKilled);
+    // Invalidation should be unnecessary but the back end doesn't notify us
+    // properly and resists attempts to fix this.
+    threadTree.reset();
   },
   () => gDBView?.numSelected >= 1 && gFolder && !gViewWrapper.isMultiFolder
 );
 commandController.registerCallback(
   "cmd_killSubthread",
   () => {
-    // Delaying to an animation frame to avoid synchronously flushing from the
-    // context menu.
-    window.requestAnimationFrame(() => {
-      threadPane.hideIgnoredMessageNotification();
-      if (!gDBView.hdrForFirstSelectedMessage.isKilled) {
-        threadPane.showIgnoredMessageNotification(
-          gDBView.getSelectedMsgHdrs(),
-          true
-        );
-      }
-      commandController._navigate(Ci.nsMsgNavigationType.toggleSubthreadKilled);
-      // Invalidation should be unnecessary but the back end doesn't notify us
-      // properly and resists attempts to fix this.
-      threadTree.reset();
-    });
+    threadPane.hideIgnoredMessageNotification();
+    if (!gDBView.hdrForFirstSelectedMessage.isKilled) {
+      threadPane.showIgnoredMessageNotification(
+        gDBView.getSelectedMsgHdrs(),
+        true
+      );
+    }
+    commandController._navigate(Ci.nsMsgNavigationType.toggleSubthreadKilled);
+    // Invalidation should be unnecessary but the back end doesn't notify us
+    // properly and resists attempts to fix this.
+    threadTree.reset();
   },
   () => gDBView?.numSelected >= 1 && gFolder && !gViewWrapper.isMultiFolder
 );

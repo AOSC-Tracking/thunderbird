@@ -3513,9 +3513,10 @@ CSSIntSize nsGlobalWindowOuter::GetOuterSize(CallerType aCallerType,
                                              ErrorResult& aError) {
   if (nsIGlobalObject::ShouldResistFingerprinting(aCallerType,
                                                   RFPTarget::WindowOuterSize)) {
-    CSSSize size;
-    aError = GetInnerSize(size);
-    return RoundedToInt(size);
+    if (BrowsingContext* bc = GetBrowsingContext()) {
+      return bc->Top()->GetTopInnerSizeForRFP();
+    }
+    return {};
   }
 
   // Windows showing documents in RDM panes and any subframes within them
@@ -6211,8 +6212,15 @@ nsGlobalWindowOuter* nsGlobalWindowOuter::EnterModalState() {
   // If there are any drag and drop operations in flight, try to end them.
   nsCOMPtr<nsIDragService> ds =
       do_GetService("@mozilla.org/widget/dragservice;1");
-  if (ds) {
-    ds->EndDragSession(true, 0);
+  if (ds && topWin->GetDocShell()) {
+    if (PresShell* presShell = topWin->GetDocShell()->GetPresShell()) {
+      if (nsViewManager* vm = presShell->GetViewManager()) {
+        RefPtr<nsIWidget> widget = vm->GetRootWidget();
+        if (nsCOMPtr<nsIDragSession> session = ds->GetCurrentSession(widget)) {
+          session->EndDragSession(true, 0);
+        }
+      }
+    }
   }
 
   // Clear the capturing content if it is under topDoc.
@@ -6611,8 +6619,8 @@ void nsGlobalWindowOuter::SetReadyForFocus() {
   FORWARD_TO_INNER_VOID(SetReadyForFocus, ());
 }
 
-void nsGlobalWindowOuter::PageHidden() {
-  FORWARD_TO_INNER_VOID(PageHidden, ());
+void nsGlobalWindowOuter::PageHidden(bool aIsEnteringBFCacheInParent) {
+  FORWARD_TO_INNER_VOID(PageHidden, (aIsEnteringBFCacheInParent));
 }
 
 already_AddRefed<nsICSSDeclaration>
