@@ -173,6 +173,9 @@ function getParentMsgInfo(msgHdr) {
 class WebExtMimeTreeEmitter extends MimeTreeEmitter {
   getAttachmentName(mimeTreePart) {
     const getName = header => {
+      if (!header) {
+        return "";
+      }
       const filename = lazy.MimeParser.getParameter(header, "filename");
       if (filename) {
         return filename;
@@ -189,20 +192,17 @@ class WebExtMimeTreeEmitter extends MimeTreeEmitter {
       return "";
     };
 
-    if (
-      mimeTreePart.headers &&
-      mimeTreePart.headers.has("content-disposition")
-    ) {
-      const contentDisposition = mimeTreePart.headers.get(
-        "content-disposition"
-      )[0];
+    const contentDisposition = mimeTreePart.headers.has("content-disposition")
+      ? mimeTreePart.headers.get("content-disposition")[0]
+      : undefined;
 
-      // Forwarded messages are sometimes inlined, but we consider them as
-      // attachments.
-      if (
-        /^inline/i.test(contentDisposition) &&
-        mimeTreePart.headers.contentType.type == "message/rfc822"
-      ) {
+    // Forwarded messages are sometimes not marked as attachments, but we always
+    // consider them as such.
+    if (
+      contentDisposition ||
+      mimeTreePart.headers.contentType.type == "message/rfc822"
+    ) {
+      if (mimeTreePart.headers.contentType.type == "message/rfc822") {
         return getName(contentDisposition) || "ForwardedMessage.eml";
       }
 
@@ -290,13 +290,11 @@ export class MsgHdrProcessor {
     const excludeAttachmentData =
       emitterOptions?.excludeAttachmentData ?? false;
     const decodeSubMessages = parserOptions?.decodeSubMessages ?? false;
-    // jsmime uses "$." as sub-message deliminator.
+    // The partNames of the messages API always start with "1." for the root part,
+    // jsmime however skips this root level. Adjust the provided pruneat value
+    // accordingly.
     const pruneat = parserOptions?.pruneat
-      ? parserOptions.pruneat
-          .split(".")
-          .slice(1)
-          .join(".")
-          .replaceAll(".1.", "$.")
+      ? parserOptions.pruneat.split(".").slice(1).join(".")
       : "";
 
     const emitter = new WebExtMimeTreeEmitter({
@@ -393,12 +391,29 @@ export class MsgHdrProcessor {
     const parentMsgInfo = getParentMsgInfo(this.#msgHdr);
     if (parentMsgInfo) {
       const msgHdrProcessor = new MsgHdrProcessor(parentMsgInfo.msgHdr);
-      const attachment = await msgHdrProcessor.getAttachmentPart(
-        parentMsgInfo.partName,
-        {
-          includeRaw: true,
+      let partName = parentMsgInfo.partName;
+
+      // The returned partName may need to be adjusted for jsmime x-ray vision,
+      // which needs nested messages to be identified by a $ in the partName.
+      if (partName.split(".").length > 2) {
+        const attachments = await msgHdrProcessor.getAttachmentParts({
+          includeNestedAttachments: true,
+        });
+        const adjustedPartNames = new Map(
+          attachments.map(attachment => [
+            attachment.partNum.replaceAll("$.", ".1."),
+            attachment.partNum,
+          ])
+        );
+        // Convert 1.2.1.3 to 1.2$.3, if 1.2$.3 exists.
+        if (adjustedPartNames.has(partName)) {
+          partName = adjustedPartNames.get(partName);
         }
-      );
+      }
+
+      const attachment = await msgHdrProcessor.getAttachmentPart(partName, {
+        includeRaw: true,
+      });
       this.#originalMessage = attachment.body;
       return this.#originalMessage;
     }
@@ -737,9 +752,9 @@ export class CachedMsgHeader {
 
     if (msgHdr) {
       // Cache all elements which are needed by MessageManager.convert().
-      this.author = msgHdr.mime2DecodedAuthor;
+      this.author = msgHdr.author;
       this.subject = msgHdr.mime2DecodedSubject;
-      this.recipients = msgHdr.mime2DecodedRecipients;
+      this.recipients = msgHdr.recipients;
       this.ccList = msgHdr.ccList;
       this.bccList = msgHdr.bccList;
       this.messageId = msgHdr.messageId;
@@ -792,14 +807,8 @@ export class CachedMsgHeader {
     this.mProperties[aProperty] = aVal.toString();
   }
   markHasAttachments() {}
-  get mime2DecodedAuthor() {
-    return this.author;
-  }
   get mime2DecodedSubject() {
     return this.subject;
-  }
-  get mime2DecodedRecipients() {
-    return this.recipients;
   }
 
   QueryInterface() {
@@ -1532,12 +1541,8 @@ export class MessageManager {
     const messageObject = {
       id: this._messageTracker.getId(cachedHdr),
       date: new Date(Math.round(cachedHdr.date / 1000)),
-      author:
-        parseEncodedAddrHeader(cachedHdr.mime2DecodedAuthor).shift() || "",
-      recipients: parseEncodedAddrHeader(
-        cachedHdr.mime2DecodedRecipients,
-        false
-      ),
+      author: parseEncodedAddrHeader(cachedHdr.author).shift() || "",
+      recipients: parseEncodedAddrHeader(cachedHdr.recipients, false),
       ccList: parseEncodedAddrHeader(cachedHdr.ccList, false),
       bccList: parseEncodedAddrHeader(cachedHdr.bccList, false),
       subject: cachedHdr.mime2DecodedSubject,
@@ -1907,7 +1912,7 @@ export class MessageQuery {
 
     // Check fromMe (case insensitive email address match).
     if (this.queryInfo.fromMe !== null) {
-      const authors = parseEncodedAddrHeader(msgHdr.mime2DecodedAuthor, true);
+      const authors = parseEncodedAddrHeader(msgHdr.author, true);
       if (
         this.queryInfo.fromMe !=
         authors.some(email =>
@@ -1922,7 +1927,7 @@ export class MessageQuery {
     if (
       this.queryInfo.author &&
       !isAddressMatch(this.queryInfo.author, [
-        { addr: msgHdr.mime2DecodedAuthor, doRfc2047: false },
+        { addr: msgHdr.author, doRfc2047: true },
       ])
     ) {
       return false;
@@ -1932,7 +1937,7 @@ export class MessageQuery {
     if (
       this.queryInfo.recipients &&
       !isAddressMatch(this.queryInfo.recipients, [
-        { addr: msgHdr.mime2DecodedRecipients, doRfc2047: false },
+        { addr: msgHdr.recipients, doRfc2047: true },
         { addr: msgHdr.ccList, doRfc2047: true },
         { addr: msgHdr.bccList, doRfc2047: true },
       ])
@@ -1946,9 +1951,9 @@ export class MessageQuery {
       const subjectMatches = msgHdr.mime2DecodedSubject.includes(
         this.queryInfo.fullText
       );
-      const authorMatches = msgHdr.mime2DecodedAuthor.includes(
-        this.queryInfo.fullText
-      );
+      const authorMatches = parseEncodedAddrHeader(msgHdr.author, false)
+        .shift()
+        .includes(this.queryInfo.fullText);
       fullTextBodySearchNeeded = !(subjectMatches || authorMatches);
     }
 

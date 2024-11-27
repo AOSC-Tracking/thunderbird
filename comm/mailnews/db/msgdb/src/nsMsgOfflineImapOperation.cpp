@@ -94,6 +94,7 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::ClearOperation(
       m_moveDestination.Truncate();
       break;
     case kMsgCopy:
+      NS_ENSURE_TRUE(m_copyDestinations.Length() > 0, NS_ERROR_UNEXPECTED);
       m_copyDestinations.RemoveElementAt(0);
       break;
   }
@@ -122,8 +123,9 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::GetSrcMessageKey(
 
 NS_IMETHODIMP nsMsgOfflineImapOperation::SetSrcMessageKey(
     nsMsgKey aMessageKey) {
-  m_messageKey = aMessageKey;
-  return m_mdb->SetUint32Property(m_mdbRow, PROP_SRC_MESSAGE_KEY, m_messageKey);
+  m_sourceMessageKey = aMessageKey;
+  return m_mdb->SetUint32Property(m_mdbRow, PROP_SRC_MESSAGE_KEY,
+                                  m_sourceMessageKey);
 }
 
 /* attribute imapMessageFlagsType flagOperation; */

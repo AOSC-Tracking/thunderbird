@@ -77,9 +77,7 @@ static PRTime gtimeOfLastPurgeCheck;  // variable to know when to check for
                                       // purge threshold
 
 #define PREF_MAIL_PROMPT_PURGE_THRESHOLD "mail.prompt_purge_threshhold"
-#define PREF_MAIL_PURGE_THRESHOLD "mail.purge_threshhold"
 #define PREF_MAIL_PURGE_THRESHOLD_MB "mail.purge_threshhold_mb"
-#define PREF_MAIL_PURGE_MIGRATED "mail.purge_threshold_migrated"
 #define PREF_MAIL_PURGE_ASK "mail.purge.ask"
 #define PREF_MAIL_WARN_FILTER_CHANGED "mail.warn_filter_changed"
 
@@ -747,28 +745,35 @@ nsMsgDBFolder::GetMsgInputStream(nsIMsgDBHdr* aMsgHdr,
   nsresult rv = GetMsgStore(getter_AddRefs(msgStore));
   NS_ENSURE_SUCCESS(rv, rv);
   nsCString storeToken;
-  rv = aMsgHdr->GetStringProperty("storeToken", storeToken);
+  rv = aMsgHdr->GetStoreToken(storeToken);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Handle legacy DB which has mbox offset but no storeToken.
-  // If this is still needed (open question), it should be done as separate
-  // migration pass, probably at folder creation when store and DB are set
-  // up (but that's tricky at the moment, because the DB is created
-  // on-demand).
+  uint32_t msgSize;
+  rv = aMsgHdr->GetMessageSize(&msgSize);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  uint32_t offlineMessageSize;
+  rv = aMsgHdr->GetOfflineMessageSize(&offlineMessageSize);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   if (storeToken.IsEmpty()) {
-    nsAutoCString storeType;
-    msgStore->GetStoreType(storeType);
-    if (!storeType.EqualsLiteral("mbox")) {
-      return NS_ERROR_FAILURE;  // DB is missing storeToken.
-    }
-    uint64_t offset;
-    aMsgHdr->GetMessageOffset(&offset);
-    storeToken = nsPrintfCString("%" PRIu64, offset);
-    rv = aMsgHdr->SetStringProperty("storeToken", storeToken);
-    NS_ENSURE_SUCCESS(rv, rv);
+    // DB is missing storeToken.
+    // We haven't got an offline copy (or we can't find it) so let's clear the
+    // offline flag. Hopefully the code calling this function will notice and
+    // download the message.
+    uint32_t flagsOut;
+    aMsgHdr->AndFlags(~nsMsgMessageFlags::Offline, &flagsOut);
+    return NS_ERROR_FAILURE;
   }
 
-  rv = msgStore->GetMsgInputStream(this, storeToken, aInputStream);
+  // Provide the recorded message size as a sanity check,
+  // with a 10% margin, and at least 512 bytes.
+  uint32_t failsafeSize = std::max(msgSize, offlineMessageSize);
+  failsafeSize += failsafeSize / 10;
+  failsafeSize = std::max((uint32_t)512, failsafeSize);
+
+  rv = msgStore->GetMsgInputStream(this, storeToken, failsafeSize, aInputStream);
+
   if (NS_FAILED(rv)) {
     NS_WARNING(nsPrintfCString(
                    "(debug) nsMsgDBFolder::GetMsgInputStream: msgStore->"
@@ -1112,6 +1117,57 @@ NS_IMETHODIMP nsMsgDBFolder::HasMsgOffline(nsMsgKey msgKey, bool* result) {
     // check if we already have this message body offline
     if ((msgFlags & nsMsgMessageFlags::Offline)) *result = true;
   }
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgDBFolder::DiscardOfflineMsg(nsMsgKey msgKey) {
+  GetDatabase();
+  if (!mDatabase) return NS_ERROR_FAILURE;
+
+  nsresult rv;
+  RefPtr<nsIMsgDBHdr> hdr;
+  rv = mDatabase->GetMsgHdrForKey(msgKey, getter_AddRefs(hdr));
+  if (NS_FAILED(rv)) return rv;
+  if (!hdr) {
+    return NS_ERROR_FAILURE;
+  }
+
+  // Tell the msgStore to ditch its local copy of the message.
+  // For maildir this is easy (just delete the file).
+  // But mbox doesn't delete anything, it just attempts to set the
+  // `Expunged` flag by rewriting X-Mozilla-* headers in-place,
+  // relying on a compaction later to actually remove the message.
+  //
+  // But it's likely the reason we're calling DiscardOfflineMsg() is because
+  // we suspect the storeToken is wrong, or the message is corrupt in some
+  // other way.
+  //
+  // In that case, attempting to edit the message headers is just
+  // going to be a world of pain.
+  //
+  // Maybe one day we can get rid of the X-Mozilla-* rewriting,
+  // and then the mbox DeleteMessages() can just be a nice clean
+  // no-op... but for now we're just going to bodge it and skip this step
+  // for mbox.
+  nsCOMPtr<nsIMsgPluggableStore> msgStore;
+  rv = GetMsgStore(getter_AddRefs(msgStore));
+  if (NS_SUCCEEDED(rv)) {
+    nsAutoCString t;
+    msgStore->GetStoreType(t);
+    if (!t.EqualsLiteral("mbox")) {
+      // Ignore failure - no useful recovery and better to keep going.
+      msgStore->DeleteMessages({hdr});
+    }
+  }
+
+  // Detach the database entry from the offline message.
+  // mDatabase->markOffline() should really also clear storeToken and
+  // size, but see Bug 1931217.
+  hdr->SetStoreToken(EmptyCString());
+  hdr->SetOfflineMessageSize(0);
+  mDatabase->MarkOffline(msgKey, false, this);
+
+  mDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
   return NS_OK;
 }
 
@@ -1494,6 +1550,7 @@ nsresult nsMsgDBFolder::EndNewOfflineMessage(nsresult status) {
   nsCOMPtr<nsISeekableStream> seekable;
   if (m_tempMessageStream) seekable = do_QueryInterface(m_tempMessageStream);
   if (seekable) {
+    nsCString storeToken;
     uint64_t messageOffset;
     uint32_t messageSize;
     int64_t curStorePos;
@@ -1501,7 +1558,9 @@ nsresult nsMsgDBFolder::EndNewOfflineMessage(nsresult status) {
 
     // N.B. This only works if we've set the offline flag for the message,
     // so be careful about moving the call to MarkOffline above.
-    m_offlineHeader->GetMessageOffset(&messageOffset);
+    m_offlineHeader->GetStoreToken(storeToken);
+    messageOffset = storeToken.ToInteger64(&rv);
+    NS_ENSURE_SUCCESS(rv, rv);
     curStorePos -= messageOffset;
     m_offlineHeader->GetMessageSize(&messageSize);
     messageSize += m_bytesAddedToLocalMsg;
@@ -1758,19 +1817,8 @@ nsresult nsMsgDBFolder::GetPurgeThreshold(int32_t* aThreshold) {
   nsCOMPtr<nsIPrefBranch> prefBranch =
       do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
   if (NS_SUCCEEDED(rv) && prefBranch) {
-    int32_t thresholdMB = 200;
-    bool thresholdMigrated = false;
+    int32_t thresholdMB = 500;
     prefBranch->GetIntPref(PREF_MAIL_PURGE_THRESHOLD_MB, &thresholdMB);
-    prefBranch->GetBoolPref(PREF_MAIL_PURGE_MIGRATED, &thresholdMigrated);
-    if (!thresholdMigrated) {
-      *aThreshold = 20480;
-      (void)prefBranch->GetIntPref(PREF_MAIL_PURGE_THRESHOLD, aThreshold);
-      if (*aThreshold / 1024 != thresholdMB) {
-        thresholdMB = std::max(1, *aThreshold / 1024);
-        prefBranch->SetIntPref(PREF_MAIL_PURGE_THRESHOLD_MB, thresholdMB);
-      }
-      prefBranch->SetBoolPref(PREF_MAIL_PURGE_MIGRATED, true);
-    }
     *aThreshold = thresholdMB * 1024;
   }
   return rv;

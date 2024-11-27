@@ -15,6 +15,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   EventEmitter: "resource://gre/modules/EventEmitter.sys.mjs",
   clearXULToolbarState: "resource:///modules/ToolbarMigration.sys.mjs",
+  MailUtils: "resource:///modules/MailUtils.sys.mjs",
   migrateMailnews: "resource:///modules/MailnewsMigrator.sys.mjs",
   migrateToolbarForSpace: "resource:///modules/ToolbarMigration.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
@@ -28,7 +29,7 @@ export var MailMigrator = {
   _migrateUI() {
     // The code for this was ported from
     // mozilla/browser/components/nsBrowserGlue.js
-    const UI_VERSION = 43;
+    const UI_VERSION = 46;
     const MESSENGER_DOCURL = "chrome://messenger/content/messenger.xhtml";
     const MESSENGERCOMPOSE_DOCURL =
       "chrome://messenger/content/messengercompose/messengercompose.xhtml";
@@ -274,6 +275,69 @@ export var MailMigrator = {
         });
       }
 
+      if (currentUIVersion < 44) {
+        // Upgrade all (former) tryStartTLS (==1) uses to alwaysStartTLS.
+        for (const account of MailServices.accounts.accounts) {
+          const server = account.incomingServer;
+          if (server.socketType == 1) {
+            server.socketType = Ci.nsMsgSocketType.alwaysSTARTTLS;
+          }
+        }
+        for (const server of MailServices.outgoingServer.servers) {
+          if (server.socketType == 1) {
+            server.socketType = Ci.nsMsgSocketType.alwaysSTARTTLS;
+          }
+        }
+      }
+
+      if (currentUIVersion < 45) {
+        // Fix bad hostName for feeds in anchient profiles.
+        // Newer profiles use a valid hostname which is Feeds, Feeds-2 etc.
+        // This migration is a bit of a hack and for proper functionality
+        // of these feeds, a restart will be required...
+        let i = 2;
+        const migrations = [];
+        for (const server of MailServices.accounts.accounts
+          .map(a => a.incomingServer)
+          .filter(s => s.type == "rss" && !s.hostName.startsWith("Feeds"))) {
+          server.QueryInterface(Ci.nsIRssIncomingServer);
+          const path = server.subscriptionsPath.path;
+          const migrateJSON = async () => {
+            const feeds = await IOUtils.readJSON(path);
+            let hostname = "Feeds"; // What the corrected hostname will be.
+            while (
+              MailServices.accounts.findServer("nobody", hostname, "rss")
+            ) {
+              // If "Feeds" exists, try "Feeds-2", then "Feeds-3", etc.
+              hostname = "Feeds-" + i++;
+            }
+            for (const feed of feeds) {
+              // Values are like "mailbox://nobody@RSS-News & Weblogs/comm-central%20Changelog"
+              feed.destFolder = feed.destFolder.replace(
+                /mailbox:\/\/([^@])+[^\/]+/,
+                `mailbox://nobody@${hostname}`
+              );
+            }
+            await IOUtils.writeJSON(path, feeds);
+            server.hostName = hostname;
+          };
+          migrations.push(migrateJSON());
+        }
+        if (migrations.length) {
+          // Restart after migrations, as the UI can't really handle this.
+          Promise.all(migrations).then(() => {
+            lazy.MailUtils.restartApplication();
+          });
+        }
+      }
+
+      if (currentUIVersion < 46) {
+        // Clean out an old default value that got stuck in a lot of profiles.
+        if (Services.prefs.getIntPref("mail.purge_threshhold_mb") == 20) {
+          Services.prefs.clearUserPref("mail.purge_threshhold_mb");
+        }
+      }
+
       // Migration tasks that may take a long time are not run immediately, but
       // added to the MigrationTasks object then run at the end.
       //
@@ -332,12 +396,92 @@ export var MailMigrator = {
   },
 
   /**
+   * Scan through a profile, removing 'nstmp' / 'nstmp-N'
+   * files left over from failed folder compactions.
+   * See Bug 1878541.
+   */
+  async _nstmpCleanup() {
+    // Latch to ensure this only ever runs once.
+    if (Services.prefs.getBoolPref("mail.nstmp_cleanup_completed", false)) {
+      return;
+    }
+
+    const logger = console.createInstance({
+      prefix: "nstmp cleanup",
+      maxLogLevel: "Log",
+    });
+    logger.log("Looking for left-over nstmp files to remove...");
+
+    // Go through all known folders, building up a list of the directories
+    // and all the potential mbox files in those directories.
+    // Each entry is a set of the potential mbox filenames in the dir.
+    const dirs = {};
+    for (const s of MailServices.accounts.allServers) {
+      if (s.msgStore.storeType != "mbox") {
+        continue;
+      }
+      // Don't process the root folder here (it shouldn't have an mbox).
+      for (const child of s.rootFolder.descendants) {
+        const mbox = child.filePath.path;
+        const d = PathUtils.parent(mbox);
+        if (!Object.hasOwn(dirs, d)) {
+          dirs[d] = new Set();
+        }
+        // We'll be doing case-insensitive compares.
+        dirs[d].add(PathUtils.filename(mbox).toLowerCase());
+      }
+    }
+
+    // For each directory, find nstmp files, excluding names of known folders.
+    const doomed = [];
+    for (const [dir, mboxes] of Object.entries(dirs)) {
+      const files = await IOUtils.getChildren(dir, { ignoreAbsent: true });
+      for (const file of files) {
+        // Skip anything that isn't a regular file.
+        const info = await IOUtils.stat(file);
+        if (info.type != "regular") {
+          continue;
+        }
+
+        // Looks like an nstmp file? (as created by createUnique()).
+        const bare = PathUtils.filename(file);
+        if (/^nstmp(-[0-9]{1,4})?$/.test(bare)) {
+          // Make sure it doesn't match any of the potential mbox files (case
+          // insensitive).
+          if (mboxes.has(bare.toLowerCase())) {
+            continue;
+          }
+          doomed.push(file);
+        }
+      }
+    }
+
+    if (doomed.length > 0) {
+      logger.log("Found left-over nstmp files to remove:", doomed);
+    }
+    for (const f of doomed) {
+      await IOUtils.remove(f);
+    }
+
+    Services.prefs.setBoolPref("mail.nstmp_cleanup_completed", true);
+    logger.log(`nstmp cleanup completed: ${doomed.length} files removed.`);
+  },
+
+  /**
    * Perform any migration work that needs to occur once the user profile has
    * been loaded.
    */
   migrateAtProfileStartup() {
     lazy.migrateMailnews();
     this._migrateUI();
+  },
+
+  /**
+   * Perform any migration work that needs to occur once everything is up and
+   * running.
+   */
+  async migrateAfterStartupComplete() {
+    await this._nstmpCleanup();
   },
 };
 

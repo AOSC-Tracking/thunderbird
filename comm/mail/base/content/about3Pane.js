@@ -964,6 +964,8 @@ var folderPane = {
    */
   _hideLocalFolders: false,
 
+  _autoExpandedRows: [],
+
   _modes: {
     all: {
       name: "all",
@@ -1653,6 +1655,7 @@ var folderPane = {
     folderTree.addEventListener("dragover", this);
     folderTree.addEventListener("dragleave", this);
     folderTree.addEventListener("drop", this);
+    folderTree.addEventListener("dragend", this);
 
     document.getElementById("folderPaneHeaderBar").hidden =
       XULStoreUtils.isItemHidden("messenger", "folderPaneHeaderBar");
@@ -1742,10 +1745,13 @@ var folderPane = {
         this._onDragOver(event);
         break;
       case "dragleave":
-        this._clearDropTarget(event);
+        this._onDragLeave(event);
         break;
       case "drop":
         this._onDrop(event);
+        break;
+      case "dragend":
+        this._onDragEnd(event);
         break;
     }
   },
@@ -3016,8 +3022,7 @@ var folderPane = {
   },
 
   _onDragOver(event) {
-    const copyKey =
-      AppConstants.platform == "macosx" ? event.altKey : event.ctrlKey;
+    const systemDropEffect = event.dataTransfer.dropEffect;
 
     event.dataTransfer.dropEffect = "none";
     event.preventDefault();
@@ -3027,6 +3032,7 @@ var folderPane = {
     if (!row) {
       return;
     }
+    this._clearCollapseTimer();
 
     const targetFolder = MailServices.folderLookup.getFolderForURL(row.uri);
     if (!targetFolder) {
@@ -3047,7 +3053,8 @@ var folderPane = {
           return;
         }
       }
-      event.dataTransfer.dropEffect = copyKey ? "copy" : "move";
+      event.dataTransfer.dropEffect =
+        systemDropEffect == "copy" ? "copy" : "move";
     } else if (types.includes("text/x-moz-folder")) {
       // If cannot create subfolders then don't allow drop here.
       if (!targetFolder.canCreateSubfolders) {
@@ -3064,7 +3071,10 @@ var folderPane = {
           return;
         }
         // Don't copy within same server.
-        if (sourceFolder.server == targetFolder.server && copyKey) {
+        if (
+          sourceFolder.server == targetFolder.server &&
+          systemDropEffect == "copy"
+        ) {
           return;
         }
         // Don't allow immediate child to be dropped onto its parent.
@@ -3092,7 +3102,8 @@ var folderPane = {
           return;
         }
       }
-      event.dataTransfer.dropEffect = copyKey ? "copy" : "move";
+      event.dataTransfer.dropEffect =
+        systemDropEffect == "copy" ? "copy" : "move";
     } else if (types.includes("application/x-moz-file")) {
       if (targetFolder.isServer || !targetFolder.canFileMessages) {
         return;
@@ -3143,6 +3154,12 @@ var folderPane = {
     row.classList.add("drop-target");
   },
 
+  _onDragLeave(event) {
+    this._timedExpand();
+    this._setCollapseTimer();
+    this._clearDropTarget(event);
+  },
+
   /**
    * Set a timer to expand `row` in 1000ms. If called again before the timer
    * expires and with a different row, the timer is cleared and a new one
@@ -3164,24 +3181,51 @@ var folderPane = {
     }
     this._expandRow = row;
     this._expandTimer = setTimeout(() => {
-      this._autoExpandedRow = this._expandRow;
+      this._autoExpandedRows.push(this._expandRow);
       folderTree.expandRow(this._expandRow);
       delete this._expandRow;
       delete this._expandTimer;
     }, 1000);
   },
 
+  /**
+   * Set a timer to collapse all auto-expanded rows in 1000ms.
+   */
+  _setCollapseTimer() {
+    this._collapseTimer = setTimeout(() => {
+      this._collapseAutoExpandedRows();
+      delete this._collapseTimer;
+    }, 1000);
+  },
+
+  /**
+   * Clear the timer to collapse all auto-expanded rows..
+   */
+  _clearCollapseTimer() {
+    if (this._collapseTimer) {
+      clearTimeout(this._collapseTimer);
+      delete this._collapseTimer;
+    }
+  },
+
   _clearDropTarget() {
     folderTree.querySelector(".drop-target")?.classList.remove("drop-target");
   },
 
+  _collapseAutoExpandedRows() {
+    while (this._autoExpandedRows.length) {
+      for (const row of this._autoExpandedRows) {
+        folderTree.collapseRow(row);
+      }
+      this._autoExpandedRows.length = 0;
+      this._clearCollapseTimer();
+    }
+  },
+
   _onDrop(event) {
     this._timedExpand();
-    if (this._autoExpandedRow) {
-      folderTree.collapseRow(this._autoExpandedRow);
-      delete this._autoExpandedRow;
-    }
     this._clearDropTarget();
+    this._autoExpandedRows.length = 0;
     if (event.dataTransfer.dropEffect == "none") {
       // Somehow this is possible. It should not be possible.
       return;
@@ -3306,6 +3350,14 @@ var folderPane = {
     }
 
     event.preventDefault();
+  },
+
+  _onDragEnd(event) {
+    if (event.dataTransfer.dropEffect != "none") {
+      return;
+    }
+    folderPane._timedExpand();
+    folderPane._collapseAutoExpandedRows();
   },
 
   /**
@@ -4294,6 +4346,7 @@ var threadPane = {
     threadTree.table.body.addEventListener("dragstart", this);
     threadTree.addEventListener("dragover", this);
     threadTree.addEventListener("drop", this);
+    threadTree.addEventListener("dragend", this);
     threadTree.addEventListener("expanded", this);
     threadTree.addEventListener("collapsed", this);
     threadTree.addEventListener("scroll", this);
@@ -4342,6 +4395,9 @@ var threadPane = {
         break;
       case "dragover":
         this._onDragOver(event);
+        break;
+      case "dragend":
+        this._onDragEnd(event);
         break;
       case "drop":
         this._onDrop(event);
@@ -4544,14 +4600,10 @@ var threadPane = {
       return;
     }
 
-    let messageURIs = gDBView.getURIsForSelection();
     if (!threadTree.selectedIndices.includes(row.index)) {
-      if (gViewWrapper.isGroupedByHeaderAtIndex(row.index)) {
-        event.preventDefault();
-        return;
-      }
-      messageURIs = [gDBView.getURIForViewIndex(row.index)];
+      threadTree.selectedIndex = row.index;
     }
+    const messageURIs = gDBView.getURIsForSelection();
 
     let noSubjectString = messengerBundle.GetStringFromName(
       "defaultSaveMessageAsFileName"
@@ -4703,6 +4755,17 @@ var threadPane = {
         );
       }
     }
+  },
+
+  /**
+   * Handle threadPane drag end events.
+   */
+  _onDragEnd(event) {
+    if (event.dataTransfer.dropEffect != "none") {
+      return;
+    }
+    folderPane._timedExpand();
+    folderPane._collapseAutoExpandedRows();
   },
 
   _onContextMenu(event, retry = false) {
@@ -4862,6 +4925,8 @@ var threadPane = {
           --tag-contrast-color: ${contrast};
         }`
       );
+      document.body.style.setProperty(`--tag-${key}-backcolor`, color);
+      document.body.style.setProperty(`--tag-${key}-forecolor`, contrast);
     }
   },
 
@@ -4973,7 +5038,7 @@ var threadPane = {
    *   another call of this function, unless all selections could already be
    *   restored in this run.
    * @param {boolean} [notify=true] - Whether a change in "select" event
-   *   should be fired.
+   *   should be fired and the current index should be scrolled into view.
    * @param {boolean} [expand=true] - Try to expand threads containing selected
    *   messages.
    */
@@ -5034,10 +5099,16 @@ var threadPane = {
     }
     threadTree.setSelectedIndices(indices.values(), !notify);
 
-    if (currentIndex != nsMsgViewIndex_None) {
+    if (currentIndex == nsMsgViewIndex_None) {
+      threadTree.currentIndex = -1;
+    } else if (notify) {
       threadTree.style.scrollBehavior = "auto"; // Avoid smooth scroll.
       threadTree.currentIndex = currentIndex;
       threadTree.style.scrollBehavior = null;
+    } else {
+      // Don't scroll at all.
+      threadTree._selection.currentIndex = currentIndex;
+      threadTree._updateCurrentIndexClasses();
     }
 
     // If all selections have already been restored, discard them as well.
@@ -5222,11 +5293,15 @@ var threadPane = {
   updateColumns(isSimple = false) {
     if (!this.rowTemplate) {
       this.rowTemplate = document.getElementById("threadPaneRowTemplate");
-      this.rowTemplate.content.append(
-        ...ThreadPaneColumns.getCustomColumns().map(column =>
-          this.makeCustomColumnCell(column)
-        )
-      );
+      for (const customColumn of ThreadPaneColumns.getCustomColumns()) {
+        if (this.columns.find(c => c.id == customColumn.id)) {
+          this.rowTemplate.content.appendChild(
+            this.makeCustomColumnCell(customColumn)
+          );
+        } else {
+          this.addCustomColumn(customColumn.id, false);
+        }
+      }
     }
 
     // Update the row template to match the column properties.
@@ -5267,9 +5342,11 @@ var threadPane = {
   /**
    * Adds a custom column to the thread pane.
    *
-   * @param {string} columnID - uniqe id of the custom column
+   * @param {string} columnID - Unique id of the custom column.
+   * @param {boolean} [update=true] - If the thread tree should be updated
+   *   as a result of this function.
    */
-  addCustomColumn(columnID) {
+  addCustomColumn(columnID, update = true) {
     const column = ThreadPaneColumns.getColumn(columnID);
     if (this.rowTemplate) {
       this.rowTemplate.content.appendChild(this.makeCustomColumnCell(column));
@@ -5277,15 +5354,20 @@ var threadPane = {
 
     this.columns.push(column);
     const columnStates =
-      gFolder.msgDatabase.dBFolderInfo.getCharProperty("columnStates");
+      gFolder?.msgDatabase?.dBFolderInfo?.getCharProperty("columnStates");
     if (columnStates) {
       this.applyPersistedColumnsState(JSON.parse(columnStates));
     }
 
     gViewWrapper?.dbView.addColumnHandler(column.id, column.handler);
-    this.updateColumns();
-    this.restoreSortIndicator();
-    threadTree.reset();
+    if (update && this.rowTemplate) {
+      // If update is false, we're being called by updateColumns.
+      // If rowTemplate is falsy, the message list has never loaded and
+      // updateColumns will be called soon.
+      this.updateColumns();
+      this.restoreSortIndicator();
+      threadTree.reset();
+    }
   },
 
   /**
@@ -6682,6 +6764,11 @@ function SwitchView(command) {
     case "cmd_viewIgnoredThreads":
       gViewWrapper.showIgnored = !gViewWrapper.showIgnored;
       break;
+  }
+  if (gViewWrapper.specialView) {
+    // Switching to a special view resets all search terms, so we need to
+    // reflect this in the quick filter bar.
+    goDoCommand("cmd_resetQuickFilterBar");
   }
 }
 

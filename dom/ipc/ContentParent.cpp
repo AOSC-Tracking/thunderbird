@@ -105,6 +105,7 @@
 #include "mozilla/dom/FileSystemSecurity.h"
 #include "mozilla/dom/GeolocationBinding.h"
 #include "mozilla/dom/GeolocationPositionError.h"
+#include "mozilla/dom/GeolocationSystem.h"
 #include "mozilla/dom/GetFilesHelper.h"
 #include "mozilla/dom/IPCBlobUtils.h"
 #include "mozilla/dom/JSActorService.h"
@@ -1430,7 +1431,14 @@ bool ContentParent::ValidatePrincipal(
 
   if (aPrincipal->SchemeIs("about")) {
     uint32_t flags = 0;
-    if (NS_FAILED(aPrincipal->GetAboutModuleFlags(&flags))) {
+    nsresult rv = aPrincipal->GetAboutModuleFlags(&flags);
+    if (rv == nsresult::NS_ERROR_FACTORY_NOT_REGISTERED) {
+      // This happens in our tests. There is a race between an about page
+      // getting unregistered and the content process unregistering a blob URL
+      // which it was using.
+      return true;
+    }
+    if (NS_FAILED(rv)) {
       return false;
     }
 
@@ -8234,6 +8242,26 @@ IPCResult ContentParent::RecvGetSystemIcon(nsIURI* aURI,
       "This message is currently implemented only on GTK and Windows "
       "platforms");
 #endif
+}
+
+IPCResult ContentParent::RecvGetSystemGeolocationPermissionBehavior(
+    GetSystemGeolocationPermissionBehaviorResolver&& aResolver) {
+  aResolver(Geolocation::GetLocationOSPermission());
+  return IPC_OK();
+}
+
+IPCResult ContentParent::RecvRequestGeolocationPermissionFromUser(
+    const MaybeDiscardedBrowsingContext& aBrowsingContext,
+    RequestGeolocationPermissionFromUserResolver&& aResolver) {
+  if (MOZ_UNLIKELY(aBrowsingContext.IsNullOrDiscarded())) {
+    aResolver(GeolocationPermissionStatus::Error);
+    return IPC_OK();
+  }
+  RefPtr<BrowsingContext> browsingContext = aBrowsingContext.get();
+
+  Geolocation::ReallowWithSystemPermissionOrCancel(browsingContext,
+                                                   std::move(aResolver));
+  return IPC_OK();
 }
 
 #ifdef FUZZING_SNAPSHOT

@@ -122,6 +122,7 @@
 #  include "mozilla/WindowsBCryptInitialization.h"
 #  include "mozilla/WindowsDllBlocklist.h"
 #  include "mozilla/WindowsMsctfInitialization.h"
+#  include "mozilla/WindowsOleAut32Initialization.h"
 #  include "mozilla/WindowsProcessMitigations.h"
 #  include "mozilla/WindowsVersion.h"
 #  include "mozilla/WinHeaderOnlyUtils.h"
@@ -5947,6 +5948,15 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
     MOZ_ASSERT(result);
   }
 #  endif  // _M_IX86 || _M_X64
+
+  // Bug 1924623: Detouring VariantClear resulted in a huge crash spike for
+  //              Thunderbird, so let's only do that for Firefox.
+#  ifdef MOZ_BUILD_APP_IS_BROWSER
+  {
+    DebugOnly<bool> result = WindowsOleAut32Initialization();
+    MOZ_ASSERT(result);
+  }
+#  endif  // MOZ_BUILD_APP_IS_BROWSER
 
 #endif  // defined(XP_WIN)
 

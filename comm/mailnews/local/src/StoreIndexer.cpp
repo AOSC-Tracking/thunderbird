@@ -107,7 +107,9 @@ NS_IMETHODIMP StoreIndexer::OnStartScan() { return NS_OK; }
 
 // nsIStoreScanListener.onStartMessage()
 // Called when a new message is about to start.
-NS_IMETHODIMP StoreIndexer::OnStartMessage(nsACString const& token) {
+NS_IMETHODIMP StoreIndexer::OnStartMessage(nsACString const& token,
+                                           nsACString const& envAddr,
+                                           PRTime envDate) {
   MOZ_ASSERT(!mParser);  // Can't be mid-message!
 
   mStoreToken = token;
@@ -118,6 +120,8 @@ NS_IMETHODIMP StoreIndexer::OnStartMessage(nsACString const& token) {
   NS_ENSURE_SUCCESS(rv, rv);
   rv = mParser->SetBackupMailDB(mBackupDB);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  mParser->SetEnvDetails(envAddr, envDate);
 
   mIsStupidlyLongLine = false;
   mCurrentMsgSize = 0;
@@ -230,27 +234,7 @@ NS_IMETHODIMP StoreIndexer::OnStopRequest(nsIRequest* req, nsresult status) {
     hdr->SetLineCount(mParser->m_body_lines);
 
     MOZ_ASSERT(!mStoreToken.IsEmpty());
-    hdr->SetStringProperty("storeToken", mStoreToken);
-    // HACK ALERT!
-    // Nasty mbox-specific hack until we can ditch .messageOffset.
-    // See Bug 1720047.
-    // A lot of code relies on .messageOffset, even if it makes no sense for
-    // maildir. So we'll set it here.
-    {
-      nsCOMPtr<nsIMsgPluggableStore> msgStore;
-      nsresult rv = mFolder->GetMsgStore(getter_AddRefs(msgStore));
-      if (NS_SUCCEEDED(rv)) {
-        int64_t msgOffset = 0;
-        nsAutoCString storeType;
-        msgStore->GetStoreType(storeType);
-        if (storeType.EqualsLiteral("mbox")) {
-          msgOffset = mStoreToken.ToInteger64(&rv);
-        }
-        MOZ_ASSERT(msgOffset >= 0);
-        hdr->SetMessageOffset((uint64_t)msgOffset);
-      }
-    }
-    // END HACK ALERT
+    hdr->SetStoreToken(mStoreToken);
 
     // Add hdr but don't notify - shouldn't be requiring notifications
     // during summary file rebuilding.

@@ -195,11 +195,15 @@ export class AttachmentInfo {
         }
       }
 
-      // Just use the old method for handling messages, it works.
-
       let { name, url } = this;
 
-      url += url.includes("?") ? "&outputformat=raw" : "?outputformat=raw";
+      if (
+        this.contentType == "message/rfc822" ||
+        /[?&]filename=.*\.eml(&|$)/.test(url)
+      ) {
+        url += url.includes("?") ? "&outputformat=raw" : "?outputformat=raw";
+      }
+
       const sourceURI = Services.io.newURI(url);
 
       async function saveToFile(path, isTmp = false) {
@@ -245,7 +249,16 @@ export class AttachmentInfo {
         let tempFile = this.#temporaryFiles.get(url);
         if (!tempFile?.exists()) {
           tempFile = Services.dirsvc.get("TmpD", Ci.nsIFile);
-          tempFile.append("subPart.eml");
+          // Try to use the name of the attachment for the temporary file, so
+          // that the name is included in the URI of the message that is
+          // opened, and possibly saved as a file later by the user.
+          let sanitizedName = lazy.DownloadPaths.sanitize(this.name);
+          if (!sanitizedName) {
+            sanitizedName = "message.eml";
+          } else if (!/\.eml$/i.test(sanitizedName)) {
+            sanitizedName += ".eml";
+          }
+          tempFile.append(sanitizedName);
           tempFile.createUnique(0, 0o600);
           await saveToFile(tempFile.path, true);
 

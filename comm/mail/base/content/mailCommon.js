@@ -25,7 +25,6 @@ ChromeUtils.defineESModuleGetters(this, {
   EnigmailPersistentCrypto:
     "chrome://openpgp/content/modules/persistentCrypto.sys.mjs",
 
-  EnigmailURIs: "chrome://openpgp/content/modules/uris.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   MessageArchiver: "resource:///modules/MessageArchiver.sys.mjs",
   TreeSelection: "chrome://messenger/content/TreeSelection.mjs",
@@ -285,26 +284,26 @@ var commandController = {
       }
     },
     cmd_deleteMessage() {
-      if (!MailUtils.confirmDelete(false, gDBView, gFolder)) {
-        return;
-      }
       if (parent.location.href == "about:3pane") {
         // If we're in about:message inside about:3pane, it's the parent
         // window that needs to advance to the next message.
         parent.commandController.doCommand("cmd_deleteMessage");
         return;
       }
+      if (!MailUtils.confirmDelete(false, gDBView, gFolder)) {
+        return;
+      }
       dbViewWrapperListener.threadPaneCommandUpdater.updateNextMessageAfterDelete();
       gViewWrapper.dbView.doCommand(Ci.nsMsgViewCommandType.deleteMsg);
     },
     cmd_shiftDeleteMessage() {
-      if (!MailUtils.confirmDelete(true, gDBView, gFolder)) {
-        return;
-      }
       if (parent.location.href == "about:3pane") {
         // If we're in about:message inside about:3pane, it's the parent
         // window that needs to advance to the next message.
         parent.commandController.doCommand("cmd_shiftDeleteMessage");
+        return;
+      }
+      if (!MailUtils.confirmDelete(true, gDBView, gFolder)) {
         return;
       }
       dbViewWrapperListener.threadPaneCommandUpdater.updateNextMessageAfterDelete();
@@ -537,8 +536,9 @@ var commandController = {
         }
         return false;
       case "cmd_viewPageSource":
-      case "cmd_saveAsTemplate":
         return numSelectedMessages == 1;
+      case "cmd_saveAsTemplate":
+        return numSelectedMessages == 1 && !isDummyMessage;
       case "cmd_reply":
       case "cmd_replySender":
       case "cmd_replyall":
@@ -586,9 +586,7 @@ var commandController = {
         if (numSelectedMessages == 1 && !isDummyMessage) {
           const msgURI = gDBView.URIForFirstSelectedMessage;
           if (msgURI) {
-            showDecrypt =
-              EnigmailURIs.isEncryptedUri(msgURI) ||
-              gEncryptedURIService.isEncrypted(msgURI);
+            showDecrypt = gEncryptedURIService.isEncrypted(msgURI);
           }
         }
         return showDecrypt;
@@ -874,9 +872,7 @@ var commandController = {
       );
       addedRowsByViewNavigate = gViewWrapper.dbView.rowCount - countBefore;
       if (resultIndex.value == nsMsgViewIndex_None) {
-        if (CrossFolderNavigation(navigationType)) {
-          this._navigate(navigationType);
-        }
+        CrossFolderNavigation(navigationType, this._navigate);
         return;
       }
       if (resultKey.value == nsMsgKey_None) {
@@ -1088,6 +1084,9 @@ var dbViewWrapperListener = {
       window.threadTree.reset();
       if (!newMessageFound && !window.threadPane.scrollDetected) {
         window.threadPane.scrollToLatestRowIfNoSelection();
+      }
+      if (all) {
+        window.dispatchEvent(new CustomEvent("allMessagesLoaded"));
       }
     }
     // To be consistent with the behavior in saved searches, update the message

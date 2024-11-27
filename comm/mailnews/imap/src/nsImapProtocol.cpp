@@ -508,7 +508,7 @@ nsImapProtocol::nsImapProtocol()
   m_prefAuthMethods = kCapabilityUndefined;
   m_failedAuthMethods = 0;
   m_currentAuthMethod = kCapabilityUndefined;
-  m_socketType = nsMsgSocketType::trySTARTTLS;
+  m_socketType = nsMsgSocketType::alwaysSTARTTLS;
   m_connectionStatus = NS_OK;
   m_safeToCloseConnection = false;
   m_hostSessionList = nullptr;
@@ -994,10 +994,6 @@ nsresult nsImapProtocol::SetupWithUrlCallback(nsIProxyInfo* aProxyInfo) {
     connectionType = "ssl";
   else if (m_socketType == nsMsgSocketType::alwaysSTARTTLS)
     connectionType = "starttls";
-  // This can go away once we think everyone is migrated
-  // away from the trySTARTTLS socket type.
-  else if (m_socketType == nsMsgSocketType::trySTARTTLS)
-    connectionType = "starttls";
 
   int32_t port = -1;
   nsCOMPtr<nsIURI> uri = do_QueryInterface(m_runningUrl, &rv);
@@ -1011,13 +1007,7 @@ nsresult nsImapProtocol::SetupWithUrlCallback(nsIProxyInfo* aProxyInfo) {
   rv = socketService->CreateTransport(connectionTypeArray, m_hostName, port,
                                       aProxyInfo, nullptr,
                                       getter_AddRefs(m_transport));
-  if (NS_FAILED(rv) && m_socketType == nsMsgSocketType::trySTARTTLS) {
-    connectionType = nullptr;
-    m_socketType = nsMsgSocketType::plain;
-    rv = socketService->CreateTransport(connectionTypeArray, m_hostName, port,
-                                        aProxyInfo, nullptr,
-                                        getter_AddRefs(m_transport));
-  }
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // remember so we can know whether we can issue a start tls or not...
   m_connectionType = connectionType;
@@ -1684,8 +1674,7 @@ void nsImapProtocol::EstablishServerConnection() {
     // We can skip sending a password and transition right into the
     // kAuthenticated state; but we won't if the user has configured STARTTLS.
     // (STARTTLS can only occur with the server in non-authenticated state.)
-    if (!(m_socketType == nsMsgSocketType::alwaysSTARTTLS ||
-          m_socketType == nsMsgSocketType::trySTARTTLS)) {
+    if (m_socketType != nsMsgSocketType::alwaysSTARTTLS) {
       GetServerStateParser().PreauthSetAuthenticatedState();
 
       if (GetServerStateParser().GetCapabilityFlag() == kCapabilityUndefined)
@@ -1872,11 +1861,7 @@ bool nsImapProtocol::ProcessCurrentURL() {
 
       SetConnectionStatus(NS_ERROR_FAILURE);  // stop netlib
     } else {
-      if ((m_connectionType.EqualsLiteral("starttls") &&
-           (m_socketType == nsMsgSocketType::trySTARTTLS &&
-            (GetServerStateParser().GetCapabilityFlag() &
-             kHasStartTLSCapability))) ||
-          m_socketType == nsMsgSocketType::alwaysSTARTTLS) {
+      if (m_socketType == nsMsgSocketType::alwaysSTARTTLS) {
         StartTLS();  // Send imap STARTTLS command
         if (GetServerStateParser().LastCommandSuccessful()) {
           NS_ENSURE_TRUE(m_transport, false);
@@ -1918,14 +1903,6 @@ bool nsImapProtocol::ProcessCurrentURL() {
             // the TLS negotiation handshakes.
             Capability();
 
-            // If user has set pref mail.server.serverX.socketType to 1
-            // (trySTARTTLS, now deprecated in UI) and Capability()
-            // succeeds, indicating TLS handshakes succeeded, set and
-            // latch the socketType to 2 (alwaysSTARTTLS) for this server.
-            if ((m_socketType == nsMsgSocketType::trySTARTTLS) &&
-                GetServerStateParser().LastCommandSuccessful())
-              m_imapServerSink->UpdateTrySTARTTLSPref(true);
-
             // Courier imap doesn't return STARTTLS capability if we've done
             // a STARTTLS! But we need to remember this capability so we'll
             // try to use STARTTLS next time.
@@ -1948,30 +1925,12 @@ bool nsImapProtocol::ProcessCurrentURL() {
             if (m_socketType == nsMsgSocketType::alwaysSTARTTLS) {
               SetConnectionStatus(rv);  // stop netlib
               if (m_transport) m_transport->Close(rv);
-            } else if (m_socketType == nsMsgSocketType::trySTARTTLS)
-              m_imapServerSink->UpdateTrySTARTTLSPref(false);
+            }
           }
         } else if (m_socketType == nsMsgSocketType::alwaysSTARTTLS) {
           SetConnectionStatus(NS_ERROR_FAILURE);  // stop netlib
           if (m_transport) m_transport->Close(rv);
-        } else if (m_socketType == nsMsgSocketType::trySTARTTLS) {
-          // STARTTLS failed, so downgrade socket type
-          m_imapServerSink->UpdateTrySTARTTLSPref(false);
         }
-      } else if (m_socketType == nsMsgSocketType::trySTARTTLS) {
-        // we didn't know the server supported TLS when we created
-        // the socket, so we're going to retry with a STARTTLS socket
-        if (GetServerStateParser().GetCapabilityFlag() &
-            kHasStartTLSCapability) {
-          ClearFlag(IMAP_CONNECTION_IS_OPEN);
-          TellThreadToDie();
-          SetConnectionStatus(NS_ERROR_FAILURE);
-          return RetryUrl();
-        }
-        // trySTARTTLS set, but server doesn't have TLS capability,
-        // so downgrade socket type
-        m_imapServerSink->UpdateTrySTARTTLSPref(false);
-        m_socketType = nsMsgSocketType::plain;
       }
       if (!DeathSignalReceived() && (NS_SUCCEEDED(GetConnectionStatus()))) {
         // Run TryToLogon() under the protection of the server's logon monitor.
@@ -2386,6 +2345,9 @@ NS_IMETHODIMP nsImapProtocol::LoadImapUrl(nsIURI* aURL,
     m_imapMailFolderSink = nullptr;
     rv = SetupWithUrl(aURL, aConsumer);
     m_lastActiveTime = PR_Now();
+    if (NS_FAILED(rv)) {
+      TellThreadToDie(true);
+    }
   }
   return rv;
 }
@@ -3756,8 +3718,14 @@ void nsImapProtocol::PostLineDownLoadEvent(const char* line,
 
     m_bytesToChannel += byteCount;
     if (m_imapMessageSink && line && echoLineToMessageSink &&
-        !GetPseudoInterrupted())
-      m_imapMessageSink->ParseAdoptedMsgLine(line, uidOfMessage, m_runningUrl);
+        !GetPseudoInterrupted()) {
+      nsresult rv = m_imapMessageSink->ParseAdoptedMsgLine(line, uidOfMessage,
+                                                           m_runningUrl);
+      if (NS_FAILED(rv)) {
+        // If the folder failed to accept the message, stop piping it across!
+        PseudoInterrupt(true);
+      }
+    }
   }
   // ***** We need to handle the pseudo interrupt here *****
 }
@@ -5709,14 +5677,24 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
                                    const nsString& aPassword,
                                    eIMAPCapabilityFlag flag) {
   nsresult rv;
-  // If we're shutting down, bail out.
+  // If we're shutting down, bail out (usually).
   nsCOMPtr<nsIMsgAccountManager> accountMgr =
       do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
   bool shuttingDown = false;
   (void)accountMgr->GetShutdownInProgress(&shuttingDown);
   if (shuttingDown) {
-    return NS_ERROR_ABORT;
+    MOZ_LOG(IMAP, LogLevel::Debug, ("AuthLogin() while shutdown in progress"));
+    nsImapAction imapAction;
+    rv = m_runningUrl->GetImapAction(&imapAction);
+    // If we're shutting down, and not running the kinds of urls we run at
+    // shutdown, then this should fail because running urls during
+    // shutdown will very likely fail and potentially hang.
+    if (NS_FAILED(rv) || (imapAction != nsIImapUrl::nsImapExpungeFolder &&
+                          imapAction != nsIImapUrl::nsImapDeleteAllMsgs &&
+                          imapAction != nsIImapUrl::nsImapDeleteFolder)) {
+      return NS_ERROR_ABORT;
+    }
   }
 
   ProgressEventFunctionUsingName("imapStatusSendingAuthLogin");
@@ -8714,6 +8692,7 @@ nsresult nsImapCacheStreamListener::Init(nsIStreamListener* aStreamListener,
   NS_ENSURE_ARG(aStreamListener);
   NS_ENSURE_ARG(aMockChannelToUse);
 
+  MOZ_ASSERT(NS_IsMainThread());
   mChannelToUse = aMockChannelToUse;
   mListener = aStreamListener;
   mCache2 = aCache2;
@@ -8724,6 +8703,7 @@ nsresult nsImapCacheStreamListener::Init(nsIStreamListener* aStreamListener,
 
 NS_IMETHODIMP
 nsImapCacheStreamListener::OnStartRequest(nsIRequest* request) {
+  MOZ_ASSERT(NS_IsMainThread());
   if (!mChannelToUse) {
     NS_ERROR("OnStartRequest called after OnStopRequest");
     return NS_ERROR_NULL_POINTER;
@@ -8737,6 +8717,7 @@ nsImapCacheStreamListener::OnStartRequest(nsIRequest* request) {
 NS_IMETHODIMP
 nsImapCacheStreamListener::OnStopRequest(nsIRequest* request,
                                          nsresult aStatus) {
+  MOZ_ASSERT(NS_IsMainThread());
   if (!mListener) {
     NS_ERROR("OnStopRequest called twice");
     return NS_ERROR_NULL_POINTER;
@@ -8783,6 +8764,7 @@ nsImapCacheStreamListener::OnDataAvailable(nsIRequest* request,
                                            nsIInputStream* aInStream,
                                            uint64_t aSourceOffset,
                                            uint32_t aCount) {
+  MOZ_ASSERT(NS_IsMainThread());
   if (mCache2 && mStarting) {
     // Peeker() does check of leading bytes and sets mGoodCache2.
     uint32_t numRead;
@@ -8806,6 +8788,86 @@ nsImapCacheStreamListener::OnDataAvailable(nsIRequest* request,
   return mListener->OnDataAvailable(mChannelToUse, aInStream, aSourceOffset,
                                     aCount);
 }
+
+//
+// ImapOfflineMsgStreamListener
+//
+// Listener wrapper, helper for ReadFromLocalCache().
+// It knows which offline message it's streaming out, and if the operation
+// fails it'll cause the local copy to be discarded (on the grounds that it's
+// likely damaged) before letting the underlying listener proceed with it's
+// own error handling.
+// Works on the Main thread.
+//
+// ***NOTE*** (BenC 2024-11-12):
+// We pass in the underlying channel to use as the request param to the
+// underlying listener callbacks. I'm not totally sure this is required.
+// It'd be nicer to just pass along whatever request that we're called
+// with.
+// But nsImapCacheStreamListener (which this is based upon) did it, so I'm
+// cargo-culting it. For now.
+//
+class ImapOfflineMsgStreamListener : public nsIStreamListener {
+ public:
+  NS_DECL_ISUPPORTS
+
+  ImapOfflineMsgStreamListener() = delete;
+  ImapOfflineMsgStreamListener(nsIMsgFolder* folder, nsMsgKey msgKey,
+                               nsIStreamListener* listener,
+                               nsIImapMockChannel* channel)
+      : mFolder(folder),
+        mMsgKey(msgKey),
+        mAlreadyStarted(false),
+        mListener(listener),
+        mChannel(channel) {
+    MOZ_RELEASE_ASSERT(mFolder);
+    MOZ_RELEASE_ASSERT(mListener);
+    MOZ_RELEASE_ASSERT(mChannel);
+  }
+
+  NS_IMETHOD OnStartRequest(nsIRequest* request) override {
+    MOZ_RELEASE_ASSERT(NS_IsMainThread());
+    MOZ_RELEASE_ASSERT(!mAlreadyStarted);
+    mAlreadyStarted = true;
+    return mListener->OnStartRequest(mChannel);
+  }
+
+  NS_IMETHOD OnDataAvailable(nsIRequest* request, nsIInputStream* stream,
+                             uint64_t offset, uint32_t count) override {
+    MOZ_RELEASE_ASSERT(NS_IsMainThread());
+    return mListener->OnDataAvailable(mChannel, stream, offset, count);
+  }
+
+  NS_IMETHOD OnStopRequest(nsIRequest* request, nsresult status) override {
+    MOZ_RELEASE_ASSERT(NS_IsMainThread());
+    nsresult rv = mListener->OnStopRequest(mChannel, status);
+    mListener = nullptr;
+    mChannel->Close();
+    mChannel = nullptr;
+    if (NS_FAILED(status)) {
+      // The streaming failed, discard the offline copy of the message.
+      mFolder->DiscardOfflineMsg(mMsgKey);
+    }
+    return rv;
+  }
+
+ protected:
+  virtual ~ImapOfflineMsgStreamListener() {}
+  // Remember the folder and key of the offline message we're streaming out,
+  // so if anything goes wrong we can discard it on the grounds that it's
+  // damaged.
+  nsCOMPtr<nsIMsgFolder> mFolder;
+  nsMsgKey mMsgKey;
+  bool mAlreadyStarted;
+  nsCOMPtr<nsIStreamListener> mListener;  // The listener we're wrapping.
+  nsCOMPtr<nsIImapMockChannel> mChannel;
+};
+
+NS_IMPL_ISUPPORTS(ImapOfflineMsgStreamListener, nsIStreamListener);
+
+//
+// nsImapMockChannel implementation
+//
 
 NS_IMPL_ISUPPORTS_INHERITED(nsImapMockChannel, nsHashPropertyBag,
                             nsIImapMockChannel, nsIMailChannel, nsIChannel,
@@ -9425,6 +9487,7 @@ NS_IMETHODIMP nsImapMockChannel::ReadFromImapConnection() {
 // that... If it's in the local cache, we return true and we can abort the
 // download because this method does the rest of the work.
 bool nsImapMockChannel::ReadFromLocalCache() {
+  MOZ_ASSERT(NS_IsMainThread());
   nsresult rv = NS_OK;
 
   nsCOMPtr<nsIImapUrl> imapUrl = do_QueryInterface(m_url);
@@ -9438,7 +9501,13 @@ bool nsImapMockChannel::ReadFromLocalCache() {
 
   nsAutoCString messageIdString;
 
+  // The following call may set a new/replacement m_channelListener.
   SetupPartExtractorListener(imapUrl, m_channelListener);
+
+  // The code below assumes that m_channelListener is non-null,
+  if (!m_channelListener) {
+    return false;
+  }
 
   imapUrl->GetListOfMessageIds(messageIdString);
   nsCOMPtr<nsIMsgFolder> folder;
@@ -9452,20 +9521,34 @@ bool nsImapMockChannel::ReadFromLocalCache() {
   nsCOMPtr<nsIMsgDBHdr> hdr;
   rv = folder->GetMessageHeader(msgKey, getter_AddRefs(hdr));
   NS_ENSURE_SUCCESS(rv, false);
+
+  // Attempt to open the local message and pump it out asynchronously.
+  // If any of this fails we assume the local message is damaged.
+  // In that case we'll discard it and tell the caller there is no local
+  // copy.
   nsCOMPtr<nsIInputStream> msgStream;
   rv = folder->GetLocalMsgStream(hdr, getter_AddRefs(msgStream));
   NS_ENSURE_SUCCESS(rv, false);
-  // dougt - This may break the ablity to "cancel" a read from offline
-  // mail reading. fileChannel->SetLoadGroup(m_loadGroup);
-  RefPtr<nsImapCacheStreamListener> cacheListener =
-      new nsImapCacheStreamListener();
-  cacheListener->Init(m_channelListener, this);
 
-  // create a stream pump that will async read the message.
+  // Create a stream pump that will async read the message.
   nsCOMPtr<nsIInputStreamPump> pump;
   rv = NS_NewInputStreamPump(getter_AddRefs(pump), msgStream.forget());
   NS_ENSURE_SUCCESS(rv, false);
-  rv = pump->AsyncRead(cacheListener);
+
+  // Wrap the listener with another one which knows which message offline
+  // message we're reading from. If the read fails, our wrapper will discard
+  // the offline copy as damaged.
+  // We use a wrapper around the real listener because we don't know who is
+  // consuming this data (A docshell, gloda indexing, calendar, whatever), so
+  // we don't have any control over how read errors are handled. This lets
+  // us intercept errors in OnStopRequest() and respond by discarding the
+  // offline copy on the grounds that it's likely damaged.
+  // Then the underlying listener can proceed with it's own OnStopRequest()
+  // handling.
+  RefPtr<ImapOfflineMsgStreamListener> offlineMsgListener =
+      new ImapOfflineMsgStreamListener(folder, msgKey, m_channelListener, this);
+
+  rv = pump->AsyncRead(offlineMsgListener);
   NS_ENSURE_SUCCESS(rv, false);
 
   // if the msg is unread, we should mark it read on the server. This lets
@@ -9475,6 +9558,8 @@ bool nsImapMockChannel::ReadFromLocalCache() {
 }
 
 NS_IMETHODIMP nsImapMockChannel::AsyncOpen(nsIStreamListener* aListener) {
+  MOZ_ASSERT(NS_IsMainThread(),
+             "nsIChannel methods must be called from main thread");
   nsCOMPtr<nsIStreamListener> listener = aListener;
   nsresult rv =
       nsContentSecurityManager::doContentSecurityCheck(this, listener);

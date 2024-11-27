@@ -6,6 +6,7 @@
 #include "FolderCompactor.h"
 
 #include "nsCOMPtr.h"
+#include "nsIAppStartup.h"
 #include "nsIDBFolderInfo.h"
 #include "nsIFile.h"
 #include "nsIMsgDatabase.h"
@@ -16,6 +17,8 @@
 #include "nsIMsgPluggableStore.h"
 #include "nsIMsgStatusFeedback.h"
 #include "nsIMsgWindow.h"
+#include "nsIObserver.h"
+#include "nsIObserverService.h"
 #include "nsIStringBundle.h"
 #include "nsIUrlListener.h"
 #include "nsMsgMessageFlags.h"
@@ -25,8 +28,12 @@
 #include "nsTStringHasher.h"  // IWYU pragma: keep, for mozilla::DefaultHasher<nsCString>
 #include "mozilla/Components.h"
 #include "mozilla/Logging.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/RefCounted.h"
+#include "mozilla/Services.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/Telemetry.h"
+#include "nsPrintfCString.h"
 
 mozilla::LazyLogModule gCompactLog("compact");
 using mozilla::LogLevel;
@@ -69,6 +76,19 @@ class FolderCompactor : public nsIStoreCompactListener {
   nsresult BeginCompacting(std::function<void(int)> progressFn,
                            std::function<void(nsresult, int64_t)> completionFn);
 
+  class ShutdownObserver final : public nsIObserver {
+   public:
+    ShutdownObserver();
+    NS_DECL_ISUPPORTS
+    NS_DECL_NSIOBSERVER
+    static bool IsShuttingDown();
+
+   protected:
+    ~ShutdownObserver() {}
+    static RefPtr<FolderCompactor::ShutdownObserver> sInstance;
+    bool mIsShuttingDown;
+  };
+
  private:
   virtual ~FolderCompactor();
 
@@ -93,9 +113,12 @@ class FolderCompactor : public nsIStoreCompactListener {
 
   // Running total of kept messages (for progress feedback).
   uint32_t mNumKept{0};
+
+  // Glean timer.
+  mozilla::TimeStamp mStart;
 };
 
-NS_IMPL_ISUPPORTS(FolderCompactor, nsIStoreCompactListener);
+NS_IMPL_ISUPPORTS(FolderCompactor, nsIStoreCompactListener)
 
 FolderCompactor::FolderCompactor(nsIMsgFolder* folder) : mFolder(folder) {}
 
@@ -168,6 +191,8 @@ nsresult FolderCompactor::BeginCompacting(
   // We don't really have a proper transaction system in the DB, so
   // for now let's just take a copy of the DB file before we start
   // so we can restore it if anything goes wrong.
+  rv = mDB->Commit(nsMsgDBCommitType::kLargeCommit);
+  NS_ENSURE_SUCCESS(rv, rv);
   rv = mFolder->GetSummaryFile(getter_AddRefs(mDBFile));
   NS_ENSURE_SUCCESS(rv, rv);
   rv = BackupFile(mDBFile, getter_AddRefs(mBackupDBFile));
@@ -308,7 +333,7 @@ static nsresult BuildKeepMap(nsIMsgDatabase* db,
 
     // No store token => No local copy of message.
     nsAutoCString token;
-    rv = hdr->GetStringProperty("storeToken", token);
+    rv = hdr->GetStoreToken(token);
     NS_ENSURE_SUCCESS(rv, rv);
     if (token.IsEmpty()) {
       continue;
@@ -324,7 +349,7 @@ static nsresult BuildKeepMap(nsIMsgDatabase* db,
     if (!pendingRemoval.IsEmpty()) {
       // Clear the storeToken and Offline flag to make it clear message is no
       // longer stored locally.
-      hdr->SetStringProperty("storeToken", EmptyCString());
+      hdr->SetStoreToken(EmptyCString());
       uint32_t resultFlags;
       hdr->AndFlags(~nsMsgMessageFlags::Offline, &resultFlags);
       continue;
@@ -342,7 +367,17 @@ static nsresult BuildKeepMap(nsIMsgDatabase* db,
 
 // nsIStoreCompactListener callback invoked when the compaction starts.
 NS_IMETHODIMP FolderCompactor::OnCompactionBegin() {
+  if (ShutdownObserver::IsShuttingDown()) {
+    return NS_ERROR_ABORT;
+  }
+
   MOZ_LOG(gCompactLog, LogLevel::Verbose, ("OnCompactionBegin()"));
+  mStart = mozilla::TimeStamp::Now();
+
+  PROFILER_MARKER_TEXT(
+      "FolderCompactor", OTHER,
+      mozilla::MarkerOptions(mozilla::MarkerTiming::IntervalStart()),
+      mFolder->URI());
   return NS_OK;
 }
 
@@ -353,6 +388,10 @@ NS_IMETHODIMP FolderCompactor::OnRetentionQuery(nsACString const& storeToken,
                                                 uint32_t* msgFlags,
                                                 nsACString& msgKeywords,
                                                 bool* keep) {
+  if (ShutdownObserver::IsShuttingDown()) {
+    return NS_ERROR_ABORT;
+  }
+
   MOZ_ASSERT(msgFlags);
   MOZ_ASSERT(keep);
   auto got = mMsgsToKeep.lookup(PromiseFlatCString(storeToken));
@@ -400,6 +439,10 @@ NS_IMETHODIMP FolderCompactor::OnRetentionQuery(nsACString const& storeToken,
 NS_IMETHODIMP FolderCompactor::OnMessageRetained(nsACString const& oldToken,
                                                  nsACString const& newToken,
                                                  int64_t newSize) {
+  if (ShutdownObserver::IsShuttingDown()) {
+    return NS_ERROR_ABORT;
+  }
+
   MOZ_LOG(gCompactLog, LogLevel::Debug,
           ("OnMessageRetained(oldToken='%s' newToken='%s' newSize=%" PRId64 ")",
            PromiseFlatCString(oldToken).get(),
@@ -418,13 +461,7 @@ NS_IMETHODIMP FolderCompactor::OnMessageRetained(nsACString const& oldToken,
   nsCOMPtr<nsIMsgDBHdr> hdr;
   nsresult rv = mDB->GetMsgHdrForKey(key, getter_AddRefs(hdr));
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = hdr->SetStringProperty("storeToken", newToken);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Just until Bug 1720047 is out of the way...
-  // For mbox the storeToken is a file offset.
-  uint64_t offset = ParseUint64Str(PromiseFlatCString(newToken).get());
-  rv = hdr->SetMessageOffset(offset);
+  rv = hdr->SetStoreToken(newToken);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // For IMAP and news, .offlineMessageSize is the local size.
@@ -463,6 +500,19 @@ NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status,
            " newSize=%" PRId64 ")",
            (uint32_t)status, oldSize, newSize));
 
+  nsPrintfCString statusStr("%x", (uint32_t)status);
+  mozilla::Telemetry::ScalarAdd(mozilla::Telemetry::ScalarID::TB_COMPACT_RESULT,
+                                NS_ConvertASCIItoUTF16(statusStr), 1);
+  if (mStart) {
+    mozilla::Telemetry::AccumulateTimeDelta(
+        mozilla::Telemetry::TB_COMPACT_DURATION, mStart,
+        mozilla::TimeStamp::Now());
+  }
+  PROFILER_MARKER_TEXT(
+      "FolderCompactor", OTHER,
+      mozilla::MarkerOptions(mozilla::MarkerTiming::IntervalEnd()),
+      mFolder->URI());
+
   if (NS_SUCCEEDED(status)) {
     // Commit all the changes.
     nsresult rv = mDB->Commit(nsMsgDBCommitType::kCompressCommit);
@@ -478,6 +528,8 @@ NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status,
         dbFolderInfo->SetExpungedBytes(0);
       }
       mDB->SetSummaryValid(true);
+      mozilla::Telemetry::Accumulate(
+          mozilla::Telemetry::TB_COMPACT_BYTES_RECOVERED, oldSize - newSize);
     } else {
       NS_ERROR("Failed to commit changes to DB!");
       status = rv;  // Make sure our completion fn hears about the failure.
@@ -520,6 +572,45 @@ NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status,
   mFolder->NotifyCompactCompleted();  // Sigh. Would be nice to ditch this.
 
   return NS_OK;
+}
+
+NS_IMPL_ISUPPORTS(FolderCompactor::ShutdownObserver, nsIObserver)
+
+RefPtr<FolderCompactor::ShutdownObserver>
+    FolderCompactor::ShutdownObserver::sInstance;
+
+FolderCompactor::ShutdownObserver::ShutdownObserver() {
+  nsCOMPtr<nsIAppStartup> appStartup(
+      mozilla::components::AppStartup::Service());
+  appStartup->GetShuttingDown(&mIsShuttingDown);
+
+  if (!mIsShuttingDown) {
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    obs->AddObserver(this, "profile-before-change", false);
+    obs->AddObserver(this, "test-profile-before-change", false);
+  }
+}
+
+NS_IMETHODIMP
+FolderCompactor::ShutdownObserver::Observe(nsISupports* aSubject,
+                                           const char* aTopic,
+                                           const char16_t* aData) {
+  if (!strcmp(aTopic, "profile-before-change") ||
+      !strcmp(aTopic, "test-profile-before-change")) {
+    mIsShuttingDown = true;
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    obs->RemoveObserver(this, "profile-before-change");
+    obs->RemoveObserver(this, "test-profile-before-change");
+  }
+  return NS_OK;
+}
+
+// static
+bool FolderCompactor::ShutdownObserver::IsShuttingDown() {
+  if (!sInstance) {
+    sInstance = new FolderCompactor::ShutdownObserver();
+  }
+  return sInstance->mIsShuttingDown;
 }
 
 /**
@@ -626,12 +717,14 @@ void BatchCompactor::OnDone(nsresult status, int64_t bytesRecovered) {
     MOZ_LOG(gCompactLog, LogLevel::Error,
             ("Failed to compact folder='%s', status=0x%" PRIx32 "",
              folder->URI().get(), (uint32_t)status));
-    if (status == NS_ERROR_FILE_NO_DEVICE_SPACE) {
-      folder->ThrowAlertMsg("compactFolderInsufficientSpace", mWindow);
-    } else if (status == NS_MSG_FOLDER_BUSY) {
-      folder->ThrowAlertMsg("compactFolderDeniedLock", mWindow);
-    } else {
-      folder->ThrowAlertMsg("compactFolderWriteFailed", mWindow);
+    if (!FolderCompactor::ShutdownObserver::IsShuttingDown()) {
+      if (status == NS_ERROR_FILE_NO_DEVICE_SPACE) {
+        folder->ThrowAlertMsg("compactFolderInsufficientSpace", mWindow);
+      } else if (status == NS_MSG_FOLDER_BUSY) {
+        folder->ThrowAlertMsg("compactFolderDeniedLock", mWindow);
+      } else {
+        folder->ThrowAlertMsg("compactFolderWriteFailed", mWindow);
+      }
     }
   }
 

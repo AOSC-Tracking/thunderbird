@@ -96,7 +96,7 @@ nsresult MboxScanner::BeginScan(nsIFile* mboxFile,
   // Note: The pump doesn't close the stream when complete.
   // This is important because we want to use Continue() to move on to
   // the next message.
-  RefPtr<MboxMsgInputStream> mboxStream = new MboxMsgInputStream(raw);
+  RefPtr<MboxMsgInputStream> mboxStream = new MboxMsgInputStream(raw, 0);
   mMboxStream = mboxStream;
   nsCOMPtr<nsIInputStreamPump> pump;
   rv = NS_NewInputStreamPump(getter_AddRefs(pump), mboxStream.forget());
@@ -149,7 +149,8 @@ NS_IMETHODIMP MboxScanner::OnStartRequest(nsIRequest* req) {
 
   nsAutoCString token;
   token.AppendInt(msgOffset);
-  rv = mScanListener->OnStartMessage(token);
+  rv = mScanListener->OnStartMessage(token, mMboxStream->EnvAddr(),
+                                     mMboxStream->EnvDate());
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -350,7 +351,9 @@ NS_IMETHODIMP MboxCompactor::OnStartScan() {
 }
 
 // nsIStoreScanListener callback called at the start of each message.
-NS_IMETHODIMP MboxCompactor::OnStartMessage(nsACString const& storeToken) {
+NS_IMETHODIMP MboxCompactor::OnStartMessage(nsACString const& storeToken,
+                                            nsACString const& envAddr,
+                                            PRTime envDate) {
   MOZ_ASSERT(mCurToken.IsEmpty());  // We should _not_ be processing a msg yet!
 
   // Ask compactListener if we should keep this message.
@@ -369,6 +372,8 @@ NS_IMETHODIMP MboxCompactor::OnStartMessage(nsACString const& storeToken) {
     MOZ_ASSERT(mDestStream);
     MOZ_ASSERT(!mMsgOut);
     mMsgOut = new MboxMsgOutputStream(mDestStream, false);
+    // Preserve metadata on the "From " line.
+    mMsgOut->SetEnvelopeDetails(envAddr, envDate);
   }
 
   return NS_OK;
@@ -473,7 +478,12 @@ NS_IMETHODIMP MboxCompactor::OnStopScan(nsresult status) {
     nsCOMPtr<nsISafeOutputStream> safe = do_QueryInterface(mDestStream, &rv);
     if (NS_SUCCEEDED(rv)) {
       rv = safe->Finish();
+    } else {
+      // How did we get here? This should never happen.
+      rv = mDestStream->Close();
     }
+  } else if (mDestStream) {
+    mDestStream->Close();  // Clean up temporary file.
   }
 
   int64_t finalSize = 0;
@@ -1236,8 +1246,7 @@ nsresult nsMsgBrkMBoxStore::InternalGetNewMsgOutputStream(
     rv = seekable->Tell(&filePos);
     NS_ENSURE_SUCCESS(rv, rv);
     nsCString storeToken = nsPrintfCString("%" PRId64, filePos);
-    (*aNewMsgHdr)->SetStringProperty("storeToken", storeToken);
-    (*aNewMsgHdr)->SetMessageOffset(filePos);
+    (*aNewMsgHdr)->SetStoreToken(storeToken);
     MOZ_LOG(gMboxLog, LogLevel::Info,
             ("nsMsgBrkMBoxStore::InternalGetNewMsgOutputStream(): %s "
              "filePos=%" PRIi64 "",
@@ -1324,6 +1333,7 @@ nsMsgBrkMBoxStore::MoveNewlyDownloadedMessage(nsIMsgDBHdr* aNewHdr,
 NS_IMETHODIMP
 nsMsgBrkMBoxStore::GetMsgInputStream(nsIMsgFolder* aMsgFolder,
                                      const nsACString& aMsgToken,
+                                     uint32_t aMaxAllowedSize,
                                      nsIInputStream** aResult) {
   NS_ENSURE_ARG_POINTER(aMsgFolder);
   NS_ENSURE_ARG_POINTER(aResult);
@@ -1339,8 +1349,14 @@ nsMsgBrkMBoxStore::GetMsgInputStream(nsIMsgFolder* aMsgFolder,
   nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(rawMboxStream));
   rv = seekable->Seek(PR_SEEK_SET, offset);
   NS_ENSURE_SUCCESS(rv, rv);
-  // Stream to return a single message, hiding all "From "-separator guff.
-  RefPtr<MboxMsgInputStream> msgStream = new MboxMsgInputStream(rawMboxStream);
+  // Build stream to return a single message from the msgStore.
+  // NOTE: It turns out that Seek()ing way past the end of the file doesn't
+  // cause an error. And reading from there doesn't return an error either
+  // (just an EOF).
+  // But it's OK - MboxMsgInputStream will handle that case, and its Read()
+  // method will safely return an error (NS_MSG_ERROR_MBOX_MALFORMED).
+  RefPtr<MboxMsgInputStream> msgStream =
+      new MboxMsgInputStream(rawMboxStream, aMaxAllowedSize);
   msgStream.forget(aResult);
   return NS_OK;
 }
@@ -1424,8 +1440,10 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::ChangeFlags(
     }
 
     // Rewrite flags into X-Mozilla-Status headers.
-    uint64_t msgOffset;
-    rv = msgHdr->GetMessageOffset(&msgOffset);
+    nsAutoCString storeToken;
+    rv = msgHdr->GetStoreToken(storeToken);
+    NS_ENSURE_SUCCESS(rv, rv);
+    uint64_t msgOffset = storeToken.ToInteger64(&rv);
     NS_ENSURE_SUCCESS(rv, rv);
     seekable->Seek(nsISeekableStream::NS_SEEK_SET, msgOffset);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -1460,8 +1478,11 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::ChangeKeywords(
   NS_ENSURE_SUCCESS(rv, rv);
 
   for (auto msgHdr : aHdrArray) {
-    uint64_t msgStart;
-    msgHdr->GetMessageOffset(&msgStart);
+    nsAutoCString storeToken;
+    rv = msgHdr->GetStoreToken(storeToken);
+    NS_ENSURE_SUCCESS(rv, rv);
+    uint64_t msgStart = storeToken.ToInteger64(&rv);
+    NS_ENSURE_SUCCESS(rv, rv);
     seekable->Seek(nsISeekableStream::NS_SEEK_SET, msgStart);
     NS_ENSURE_SUCCESS(rv, rv);
 

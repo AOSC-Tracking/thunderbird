@@ -123,6 +123,8 @@ pref("app.update.service.enabled", true);
 pref("app.update.BITS.enabled", false);
 #endif
 
+pref("app.update.langpack.enabled", true);
+
 // Release notes URL
 pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?locale=%LOCALE%&version=%VERSION%&channel=%CHANNEL%&os=%OS%&buildid=%APPBUILDID%");
 
@@ -172,6 +174,11 @@ pref("extensions.logging.enabled", false);
 pref("extensions.overlayloader.loglevel", "warn");
 
 pref("extensions.abuseReport.enabled", false);
+
+// Delay opening of action popups until the browser is fully loaded.
+// This is needed on Wayland systems, but can be enabled for other
+// systems for debug purposes as well. See Bug 1905622.
+pref("extensions.openPopupDelayedFullyLoaded.enabled", false);
 
 // Strict compatibility makes add-ons incompatible by default.
 #ifndef RELEASE_OR_BETA
@@ -1381,9 +1388,9 @@ pref("services.sync.engine.servers", true);
 #endif
 
 // Donation appeal.
-pref("app.donation.eoy.version", 6);
+pref("app.donation.eoy.version", 7);
 pref("app.donation.eoy.version.viewed", 0);
-pref("app.donation.eoy.url", "https://www.thunderbird.net/thunderbird/128.0/appeal/");
+pref("app.donation.eoy.url", "https://updates.thunderbird.net/thunderbird/128.0/nov24/");
 
 // IMAP-JS disabled, Bug 1707547.
 pref("mailnews.imap.jsmodule", false);

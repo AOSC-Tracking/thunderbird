@@ -235,13 +235,20 @@ function updateUnifinderFilterText() {
   const filteredView = getUnifinderView();
 
   const searchBox = document.getElementById("unifinder-search-field");
-  if (searchBox.value) {
-    const normalize = str => str.normalize().toLowerCase();
-    const normalValue = normalize(searchBox.value);
-    filteredView.setFilterFunction(item => normalize(item.title).includes(normalValue));
-  } else {
-    filteredView.clearFilter();
+  if (!searchBox.value) {
+    filteredView.clearFiltering();
+    return;
   }
+
+  // @see calFilter.textFilter()
+
+  const normalize = str => str.normalize().toLowerCase();
+  const normalValue = normalize(searchBox.value);
+  filteredView.applyFiltering(item =>
+    ["SUMMARY", "DESCRIPTION", "LOCATION", "URL"]
+      .map(p => item.getProperty(p))
+      .some(v => v && normalize(v).includes(normalValue))
+  );
 }
 
 /**
@@ -293,6 +300,13 @@ function refreshUnifinderFilterInterval() {
       startDate = today;
       endDate = today.clone();
       endDate.month += 12;
+      break;
+    case "future":
+      // Use next 100 yrs instead of unbounded values, to avoid performance
+      // issues with recurring events.
+      startDate = today.clone();
+      endDate = today.clone();
+      endDate.year += 100;
       break;
     case "thisCalendarMonth":
       startDate = today.startOfMonth;

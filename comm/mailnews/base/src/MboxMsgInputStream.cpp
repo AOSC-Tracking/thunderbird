@@ -7,6 +7,7 @@
 #include "nsString.h"
 #include "nsMsgUtils.h"
 #include "nsTArray.h"
+#include "mozilla/Telemetry.h"
 #include "mozilla/Logging.h"
 #include <algorithm>
 
@@ -62,8 +63,15 @@ class MboxParser {
    * via Drain().
    */
   bool IsFinished() const {
-    return Available() == 0 && (mState == eEOF || mState == eMessageComplete);
+    return Available() == 0 && (mState == eEOF || mState == eMessageComplete ||
+                                mState == eMalformed);
   }
+
+  /**
+   * Returns true if the parser has decided the mbox is malformed and refuses
+   * to proceed (e.g. Missing a "From " line at the beginning).
+   */
+  bool IsMalformed() const { return mState == eMalformed; }
 
   /**
    * Returns true when the end of the mbox has been reached (and the last
@@ -75,13 +83,13 @@ class MboxParser {
    * MinChunk is the minimum amount of data callers should pass into Feed().
    * If less than MinChunk is passed in, Feed() knows that there will be no
    * more data to come (i.e. EOF).
-   * It is chosen to be a reasonable minimum for our end-of-message
-   * heuristic (A "From " line followed by a couple of likely-looking header
-   * lines).
+   * It is chosen to be a reasonable minimum for our end-of-message heuristic:
+   * A "From " line followed by a couple of likely-looking header lines.
+   *
    * Note: This is just a guideline minimum value for callers. In practice,
    * sensible callers would aim to feed in chunks much larger than this.
    */
-  static constexpr size_t MinChunk = 128;
+  static constexpr size_t MinChunk = 512;
 
   /**
    * Feed a chunk of data into the parser for processing.
@@ -113,7 +121,8 @@ class MboxParser {
     while (true) {
       // If a message is complete (or the mbox is finished), then
       // we stall.
-      if (mState == eMessageComplete || mState == eEOF) {
+      if (mState == eMessageComplete || mState == eEOF ||
+          mState == eMalformed) {
         break;
       }
 
@@ -165,9 +174,28 @@ class MboxParser {
   void Kick() {
     MOZ_ASSERT(IsFinished());
     if (mState == eMessageComplete) {
-      mState = eExpectFromLine;
+      mEnvAddr.Truncate();
+      mEnvDate = 0;
+      // This time around an EOF would also be acceptable.
+      mState = eExpectFromLineOrEOF;
     }
   }
+
+  /**
+   * If the "From " line contained a sender, it can be accessed here.
+   * Otherwise an empty string will be returned.
+   * NOTE: you can guarantee the "From " line parsing is complete by the
+   * time data becomes available via Available()/Drain().
+   */
+  nsCString EnvAddr() { return mEnvAddr; }
+
+  /**
+   * If the "From " line contained a timestamp, it can be accessed here.
+   * Otherwise 0 will be returned.
+   * NOTE: you can guarantee the "From " line parsing is complete by the
+   * time data becomes available via Available()/Drain().
+   */
+  PRTime EnvDate() { return mEnvDate; }
 
  private:
   // Processed data is stored here, ready to be read out by Drain().
@@ -176,6 +204,10 @@ class MboxParser {
   size_t mCursor{0};
   // Number of '>' characters at start of line, for eCountQuoting state.
   int mQuoteCnt{0};
+
+  // Values potentially extracted by parsing the "From " line.
+  nsAutoCString mEnvAddr;  // Empty = none.
+  PRTime mEnvDate{0};      // 0 = none.
 
   // Our states. In general, the Expect* states don't consume any data -
   // they just sniff data and move to a new state accordingly.
@@ -190,7 +222,9 @@ class MboxParser {
     eEmitQuoting,
     eEmitBodyLine,
     eMessageComplete,  // Message is complete (or ended prematurely).
-    eEOF,              // End of mbox.
+    eMalformed,        // Error. No initial "From " line was found.
+    eExpectFromLineOrEOF,
+    eEOF,  // End of mbox.
   } mState{eExpectFromLine};
 
   // handle_<state>() functions consume as much data as they need, and
@@ -209,6 +243,8 @@ class MboxParser {
                                  "eEmitQuoting",
                                  "eEmitBodyLine",
                                  "eMessageComplete",
+                                 "eMalformed",
+                                 "eExpectFromLineOrEOF",
                                  "eEOF"};
       MOZ_LOG(gMboxLog, LogLevel::Verbose,
               ("MboxParser - handle %s (%zu bytes: '%s')", stateName[mState],
@@ -236,6 +272,10 @@ class MboxParser {
         return handle_eEmitBodyLine(data);
       case eMessageComplete:
         return handle_eMessageComplete(data);
+      case eMalformed:
+        return handle_eMalformed(data);
+      case eExpectFromLineOrEOF:
+        return handle_eExpectFromLineOrEOF(data);
       case eEOF:
         return handle_eEOF(data);
       default:
@@ -243,19 +283,85 @@ class MboxParser {
     }
   }
 
-  // We're expecting a new message to start, or an EOF.
-  span handle_eExpectFromLine(span data) {
-    if (data.Length() < 5) {  // Enough to check for "From "?
-      mState = eEOF;          // no more messages.
-      return span();          // discard data
+  // Attempt to parse a "From " line to extract sender and timestamp.
+  // e.g. "From bob@example.com Tue Dec 09 15:30:45 2014"
+  // Will always set both envAddr AND envDate, or neither.
+  static void ParseFromLine(span line, nsACString& envAddr, PRTime& envDate) {
+    MOZ_ASSERT(IsFromLine(line));
+    auto p = line.begin();
+    auto end = line.end();
+    if (line.Length() < 5) {
+      return;
     }
+    // Skip "From ".
+    p += 5;
+    // Skip extra spaces.
+    while (p != end && *p == ' ') ++p;
+
+    // Address is everything up to next space.
+    auto addrBegin = p;
+    p = std::find(p, end, ' ');
+    if (p == end) {
+      return;  // No space delimiter found.
+    }
+    span addrSpan(addrBegin, p);
+    if (addrSpan.Length() > 254) {
+      // Too big for an email address.
+      // (https://www.rfc-editor.org/errata_search.php?rfc=3696)
+      // Doesn't have to be an email address (eg "MAILER-DAEMON"), but using
+      // the email length limit seems reasonable.
+      return;
+    }
+
+    // Skip space.
+    while (p != end && *p == ' ') ++p;
+
+    // Assume everything else is date.
+    span dateSpan(p, end);
+
+    // Parse the timestamp, assuming GMT.
+    nsAutoCString tmp(dateSpan.Elements(), dateSpan.Length());
+    // Date _should_ be exactly 24 chars, but allow some wiggle-room.
+    if (dateSpan.Length() < 22 || dateSpan.Length() > 32) {
+      return;
+    }
+    PRTime tmpDate;
+    if (PR_ParseTimeString(tmp.get(), true, &tmpDate) != PR_SUCCESS) {
+      return;
+    }
+
+    // If we got this far we have valid sender and date to return - yay!
+    envAddr.Assign(addrSpan.Elements(), addrSpan.Length());
+    envDate = tmpDate;
+  }
+
+  // We expect a message. If we dont find one, it's a malformed mbox.
+  // NOTE: It turns out that if you Seek() way past the end of a file,
+  // performing reads will just return an EOF, rather than an error.
+  // If a storeToken is corrupted and we're actually positioned out
+  // past the end of the mbox file, the resulting EOF will safely cause
+  // us to be kicked out into eMalformed state which will correctly return
+  // an error.
+  span handle_eExpectFromLine(span data) {
     if (IsFromLine(data)) {
+      // The "From " line could have an email address (up to 254 bytes) and a
+      // date string (24 bytes). MinChunk is tuned to avoid spliting up long
+      // (but plausible) "From " lines.
+      auto eol = std::find(data.begin(), data.end(), '\n');
+      if (eol != data.end()) {
+        // We've got a whole line - try and extract sender/date info.
+        if (eol > data.begin() && *(eol - 1) == '\r') {
+          --eol;
+        }
+        MOZ_ASSERT(mEnvAddr.IsEmpty());
+        MOZ_ASSERT(mEnvDate == 0);
+        ParseFromLine(span(data.begin(), eol), mEnvAddr, mEnvDate);
+      }
       mState = eDiscardFromLine;
     } else {
-      MOZ_LOG(gMboxLog, LogLevel::Warning,
+      MOZ_LOG(gMboxLog, LogLevel::Error,
               ("MboxParser - Missing 'From ' separator"));
-      // Just jump straight to header phase.
-      mState = eExpectHeaderLine;
+      mState = eMalformed;
     }
     return data;
   }
@@ -424,11 +530,27 @@ class MboxParser {
     return data;
   }
 
-  // All done, so this is a no-op.
+  // All done, so this is a no-op - just kick us into next state.
   span handle_eMessageComplete(span data) {
     if (data.IsEmpty()) {
       mState = eEOF;
     } else {
+      mState = eExpectFromLineOrEOF;
+    }
+    return data;
+  }
+
+  // Halt parsing, So this is a no-op.
+  span handle_eMalformed(span data) { return data; }
+
+  // We've finished a message and been Kick()ed back into life, so now expect
+  // another message or an EOF.
+  span handle_eExpectFromLineOrEOF(span data) {
+    if (data.Length() == 0) {
+      // All done. No more messages.
+      mState = eEOF;
+    } else {
+      // Not yet EOF, so we expect next message.
       mState = eExpectFromLine;
     }
     return data;
@@ -447,7 +569,7 @@ class MboxParser {
     // We don't go directly to eEOF.
     // Going to eMessageComplete holds parsing up until the output
     // has all been drained.
-    // After this, eExpectFromLine will move us into eEOF.
+    // After this, eExpectFromLineOrEOF will move us into eEOF.
     mState = eMessageComplete;
     Emit(data);
     return data.Last<0>();
@@ -604,7 +726,8 @@ class MboxParser {
 
 NS_IMPL_ISUPPORTS(MboxMsgInputStream, nsIInputStream);
 
-MboxMsgInputStream::MboxMsgInputStream(nsIInputStream* mboxStream)
+MboxMsgInputStream::MboxMsgInputStream(nsIInputStream* mboxStream,
+                                       uint32_t maxAllowedSize)
     : mRawStream(mboxStream),
       mStatus(NS_OK),
       mBuf(8192),
@@ -612,7 +735,15 @@ MboxMsgInputStream::MboxMsgInputStream(nsIInputStream* mboxStream)
       mUnused(0),
       mTotalUsed(0),
       mMsgOffset(0),
-      mParser(new MboxParser()) {}
+      mLimitOutputBytes(maxAllowedSize),
+      mOutputBytes(0),
+      mOverflow(false),
+      mParser(new MboxParser()) {
+  // Ensure the first chunk is read and parsed.
+  // This should include the "From " line, so EnvAddr()/EnvDate()
+  // can be used right away.
+  mStatus = PumpData();
+}
 
 MboxMsgInputStream::~MboxMsgInputStream() { Close(); }
 
@@ -654,6 +785,10 @@ nsresult MboxMsgInputStream::Continue(bool& more) {
   return NS_OK;
 }
 
+nsCString MboxMsgInputStream::EnvAddr() { return mParser->EnvAddr(); }
+
+PRTime MboxMsgInputStream::EnvDate() { return mParser->EnvDate(); }
+
 // Throw NS_BASE_STREAM_CLOSED if closed.
 // Return 0 if EOF but not closed.
 // Else return available bytes.
@@ -669,11 +804,17 @@ NS_IMETHODIMP MboxMsgInputStream::Available(uint64_t* result) {
 
 NS_IMETHODIMP MboxMsgInputStream::StreamStatus() { return mStatus; }
 
-// Returns a count of 0 if EOF or closed.
+// Returns a count, or 0 if EOF or closed.
 // Never throws NS_BASE_STREAM_CLOSED
 NS_IMETHODIMP MboxMsgInputStream::Read(char* buf, uint32_t count,
                                        uint32_t* result) {
   *result = 0;
+  if (mOverflow) {
+    mozilla::Telemetry::ScalarAdd(
+        mozilla::Telemetry::ScalarID::TB_MAILS_MBOX_READ_ERRORS,
+        u"unexpected_size"_ns, 1);
+    return NS_MSG_ERROR_UNEXPECTED_SIZE;
+  }
   if (mStatus == NS_BASE_STREAM_CLOSED) {
     return NS_OK;
   }
@@ -682,7 +823,7 @@ NS_IMETHODIMP MboxMsgInputStream::Read(char* buf, uint32_t count,
   }
 
   // We just keep feeding data into the parser and copying out its output.
-  while (count > 0) {
+  while (count > 0 && !mOverflow) {
     mStatus = PumpData();
     if (NS_FAILED(mStatus)) {
       return mStatus;
@@ -692,9 +833,24 @@ NS_IMETHODIMP MboxMsgInputStream::Read(char* buf, uint32_t count,
       break;  // Nothing more in this message. Return EOF.
     }
     MOZ_ASSERT(n <= UINT32_MAX);
-    buf += n;
-    count -= (uint32_t)n;
-    *result += n;
+
+    const size_t use =
+        !mLimitOutputBytes
+            ? n
+            : std::min(n, (size_t)(mLimitOutputBytes - mOutputBytes));
+
+    if (use < n) {
+      // We want the current read to return success (because we're
+      // returning up to the requested amount of bytes),
+      // but future calls to Read() should return failure.
+      mOverflow = true;
+    }
+
+    mOutputBytes += use;
+
+    buf += use;
+    count -= (uint32_t)use;
+    *result += use;
   }
   return NS_OK;
 }
@@ -755,6 +911,13 @@ nsresult MboxMsgInputStream::PumpData() {
     mTotalUsed += consumed;
     mUsed += consumed;
     mUnused -= consumed;
+  }
+
+  if (mParser->IsMalformed()) {
+    mozilla::Telemetry::ScalarAdd(
+        mozilla::Telemetry::ScalarID::TB_MAILS_MBOX_READ_ERRORS,
+        u"missing_from"_ns, 1);
+    return NS_MSG_ERROR_MBOX_MALFORMED;
   }
 
   return NS_OK;

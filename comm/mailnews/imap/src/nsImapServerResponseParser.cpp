@@ -785,7 +785,7 @@ void nsImapServerResponseParser::mailbox(nsImapMailboxSpec* boxSpec) {
     if (xlistInbox) PR_Free(CreateAstring());
     AdvanceToNextToken();
   } else {
-    boxname = nsDependentCString(CreateAstring());
+    boxname.Adopt(CreateAstring());
     AdvanceToNextToken();
   }
 

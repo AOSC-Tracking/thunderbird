@@ -333,8 +333,7 @@ void nsMsgMailboxParser::PublishMsgHeader(nsIMsgWindow* msgWindow) {
   FinishHeader();
   if (m_newMsgHdr) {
     nsCString storeToken = nsPrintfCString("%" PRIu64, m_envelope_pos);
-    m_newMsgHdr->SetStringProperty("storeToken", storeToken);
-    m_newMsgHdr->SetMessageOffset(m_envelope_pos);
+    m_newMsgHdr->SetStoreToken(storeToken);
 
     uint32_t flags;
     (void)m_newMsgHdr->GetFlags(&flags);
@@ -400,6 +399,7 @@ NS_IMPL_ISUPPORTS(nsParseMailMessageState, nsIMsgParseMailMsgState,
                   nsIDBChangeListener)
 
 nsParseMailMessageState::nsParseMailMessageState() {
+  m_EnvDate = 0;
   m_position = 0;
   m_new_key = nsMsgKey_None;
   m_state = nsIMsgParseMailMsgState::ParseHeadersState;
@@ -448,6 +448,8 @@ nsParseMailMessageState::~nsParseMailMessageState() {
 }
 
 NS_IMETHODIMP nsParseMailMessageState::Clear() {
+  m_EnvAddr.Truncate();
+  m_EnvDate = 0;
   m_message_id.length = 0;
   m_references.length = 0;
   m_date.length = 0;
@@ -459,8 +461,6 @@ NS_IMETHODIMP nsParseMailMessageState::Clear() {
   m_status.length = 0;
   m_mozstatus.length = 0;
   m_mozstatus2.length = 0;
-  m_envelope_from.length = 0;
-  m_envelope_date.length = 0;
   m_priority.length = 0;
   m_keywords.length = 0;
   m_mdn_dnt.length = 0;
@@ -478,7 +478,6 @@ NS_IMETHODIMP nsParseMailMessageState::Clear() {
   ClearAggregateHeader(m_toList);
   ClearAggregateHeader(m_ccList);
   m_headers.ResetWritePos();
-  m_envelope.ResetWritePos();
   m_receivedTime = 0;
   m_receivedValue.Truncate();
   for (uint32_t i = 0; i < m_customDBHeaders.Length(); i++) {
@@ -968,8 +967,7 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
 
   // clang-format off
   sender       = (m_from.length          ? &m_from          :
-                  m_sender.length        ? &m_sender        :
-                  m_envelope_from.length ? &m_envelope_from : 0);
+                  m_sender.length        ? &m_sender        : 0);
   recipient    = (to.length              ? &to              :
                   cc.length              ? &cc              :
                   m_newsgroups.length    ? &m_newsgroups    : 0);
@@ -981,8 +979,7 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
   statush      = (m_status.length        ? &m_status        : 0);
   mozstatus    = (m_mozstatus.length     ? &m_mozstatus     : 0);
   mozstatus2   = (m_mozstatus2.length    ? &m_mozstatus2    : 0);
-  date         = (m_date.length          ? &m_date          :
-                  m_envelope_date.length ? &m_envelope_date : 0);
+  date         = (m_date.length          ? &m_date          : 0);
   deliveryDate = (m_delivery_date.length ? &m_delivery_date : 0);
   priority     = (m_priority.length      ? &m_priority      : 0);
   keywords     = (m_keywords.length      ? &m_keywords      : 0);
@@ -1196,13 +1193,11 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
         // Therefore, the fall-thru order for 'Received' is:
         // Received: -> Delivery-date: -> date
         // 'Date' uses:
-        // date -> 'Received' -> PR_Now()
-        //
-        // date is:
-        // Date: -> m_envelope_date
+        // date -> 'Received' -> EnvDate -> PR_Now()
+        // (where EnvDate was passed in from outside via SetEnvDetails()).
 
         uint32_t rcvTimeSecs = 0;
-        PRTime datePRTime = 0;
+        PRTime datePRTime = m_EnvDate;
         if (date) {
           // Date:
           if (PR_ParseTimeString(date->value, false, &datePRTime) ==
@@ -1539,7 +1534,7 @@ void nsParseNewMailState::ApplyFilters(bool* pMoved, nsIMsgWindow* msgWindow) {
       char* headers = m_headers.GetBuffer();
       uint32_t headersSize = m_headers.GetBufferPos();
       nsAutoCString tok;
-      msgHdr->GetStringProperty("storeToken", tok);
+      msgHdr->GetStoreToken(tok);
       if (m_filterList) {
         MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
                 ("(Local) Running filters on 1 message (%s)", tok.get()));
