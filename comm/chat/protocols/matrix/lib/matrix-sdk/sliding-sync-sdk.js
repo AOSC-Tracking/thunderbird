@@ -4,19 +4,20 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.SlidingSyncSdk = void 0;
-var _room = require("./models/room");
-var _logger = require("./logger");
-var _utils = require("./utils");
-var _eventTimeline = require("./models/event-timeline");
-var _client = require("./client");
-var _sync = require("./sync");
-var _httpApi = require("./http-api");
-var _slidingSync = require("./sliding-sync");
-var _event = require("./@types/event");
-var _roomState = require("./models/room-state");
-var _roomMember = require("./models/room-member");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+var _room = require("./models/room.js");
+var _logger = require("./logger.js");
+var _utils = require("./utils.js");
+var _eventTimeline = require("./models/event-timeline.js");
+var _client = require("./client.js");
+var _sync = require("./sync.js");
+var _index = require("./http-api/index.js");
+var _slidingSync = require("./sliding-sync.js");
+var _event = require("./@types/event.js");
+var _roomState = require("./models/room-state.js");
+var _roomMember = require("./models/room-member.js");
+var _membership = require("./@types/membership.js");
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2022 The Matrix.org Foundation C.I.C.
 
@@ -146,7 +147,7 @@ class ExtensionAccountData {
       enabled: true
     };
   }
-  onResponse(data) {
+  async onResponse(data) {
     if (data.global && data.global.length > 0) {
       this.processGlobalAccountData(data.global);
     }
@@ -203,7 +204,7 @@ class ExtensionTyping {
       enabled: true
     };
   }
-  onResponse(data) {
+  async onResponse(data) {
     if (!data?.rooms) {
       return;
     }
@@ -230,7 +231,7 @@ class ExtensionReceipts {
     }
     return undefined; // don't send a JSON object for subsequent requests, we don't need to.
   }
-  onResponse(data) {
+  async onResponse(data) {
     if (!data?.rooms) {
       return;
     }
@@ -316,9 +317,9 @@ class SlidingSyncSdk {
         if (err) {
           this.failCount += 1;
           this.updateSyncState(this.failCount > FAILED_SYNC_ERROR_THRESHOLD ? _sync.SyncState.Error : _sync.SyncState.Reconnecting, {
-            error: new _httpApi.MatrixError(err)
+            error: new _index.MatrixError(err)
           });
-          if (this.shouldAbortSync(new _httpApi.MatrixError(err))) {
+          if (this.shouldAbortSync(new _index.MatrixError(err))) {
             return; // shouldAbortSync actually stops syncing too so we don't need to do anything.
           }
         } else {
@@ -343,7 +344,7 @@ class SlidingSyncSdk {
    * @returns A promise which resolves once the room has been added to the
    * store.
    */
-  async peek(_roomId) {
+  async peek(roomId) {
     return null; // TODO
   }
 
@@ -512,7 +513,7 @@ class SlidingSyncSdk {
       inviteStateEvents.forEach(e => {
         this.client.emit(_client.ClientEvent.Event, e);
       });
-      room.updateMyMembership("invite");
+      room.updateMyMembership(_membership.KnownMembership.Invite);
       return;
     }
     if (roomData.initial) {
@@ -575,7 +576,7 @@ class SlidingSyncSdk {
 
     // local fields must be set before any async calls because call site assumes
     // synchronous execution prior to emitting SlidingSyncState.Complete
-    room.updateMyMembership("join");
+    room.updateMyMembership(_membership.KnownMembership.Join);
     room.recalculate();
     if (roomData.initial) {
       client.store.storeRoom(room);
@@ -691,7 +692,7 @@ class SlidingSyncSdk {
     const client = this.client;
     // For each invited room member we want to give them a displayname/avatar url
     // if they have one (the m.room.member invites don't contain this).
-    room.getMembersWithMembership("invite").forEach(function (member) {
+    room.getMembersWithMembership(_membership.KnownMembership.Invite).forEach(function (member) {
       if (member.requestedProfileInfo) return;
       member.requestedProfileInfo = true;
       // try to get a cached copy first.
@@ -710,7 +711,7 @@ class SlidingSyncSdk {
         // the code paths remain the same between invite/join display name stuff
         // which is a worthy trade-off for some minor pollution.
         const inviteEvent = member.events.member;
-        if (inviteEvent.getContent().membership !== "invite") {
+        if (inviteEvent.getContent().membership !== _membership.KnownMembership.Invite) {
           // between resolving and now they have since joined, so don't clobber
           return;
         }

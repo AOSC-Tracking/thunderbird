@@ -48,12 +48,28 @@ function messagePaneOnResize() {
     return;
   }
 
-  for (const img of doc.images) {
-    img.toggleAttribute(
-      "overflowing",
-      img.clientWidth - doc.body.offsetWidth >= 0 &&
-        (img.clientWidth <= img.naturalWidth || !img.naturalWidth)
-    );
+  const availableWidth = Math.max(
+    document.body.scrollWidth,
+    window.visualViewport.width
+  );
+
+  for (const img of doc.querySelectorAll(
+    "img:is([shrinktofit],[overflowing])"
+  )) {
+    if (!img.complete || img.closest("[href]")) {
+      continue;
+    }
+    if (img.hasAttribute("shrinktofit")) {
+      // Determine if the image could be enlarged.
+      img.toggleAttribute("overflowing", img.naturalWidth > img.clientWidth);
+    } else if (
+      img.hasAttribute("overflowing") &&
+      img.clientWidth < availableWidth
+    ) {
+      // Handle zoomed images that are no longer overflowing after a resize.
+      img.removeAttribute("overflowing");
+      img.setAttribute("shrinktofit", "true");
+    }
   }
 }
 
@@ -121,6 +137,21 @@ window.addEventListener("DOMContentLoaded", event => {
         top.msgWindow.statusFeedback,
         Ci.nsIWebProgress.NOTIFY_ALL
       );
+  }
+
+  if (Services.prefs.getBoolPref("mail.advance_on_spacebar")) {
+    getMessagePaneBrowser().addEventListener("keydown", ev => {
+      if (
+        ev.key == " " &&
+        !ev.altKey &&
+        !ev.ctrlKey &&
+        !ev.metaKey &&
+        ev.target.localName == "body"
+      ) {
+        ev.preventDefault();
+        top.goDoCommand("cmd_space", ev);
+      }
+    });
   }
 
   window.dispatchEvent(
@@ -222,7 +253,8 @@ function displayMessage(uri, viewWrapper) {
     currentIndex: null,
   });
 
-  if (gMessage.flags & Ci.nsMsgMessageFlags.HasRe) {
+  const flags = gMessage.flags;
+  if (flags & Ci.nsMsgMessageFlags.HasRe) {
     document.title = `Re: ${gMessage.mime2DecodedSubject || ""}`;
   } else {
     document.title = gMessage.mime2DecodedSubject;
@@ -253,7 +285,7 @@ function displayMessage(uri, viewWrapper) {
       );
   }
 
-  if (gMessage.flags & Ci.nsMsgMessageFlags.Partial) {
+  if (flags & Ci.nsMsgMessageFlags.Partial) {
     document.body.classList.add("partial-message");
   } else if (document.body.classList.contains("partial-message")) {
     document.body.classList.remove("partial-message");
@@ -272,6 +304,12 @@ function displayMessage(uri, viewWrapper) {
         // Show error page if needed.
         HideMessageHeaderPane();
         MailE10SUtils.loadURI(getMessagePaneBrowser(), url.seeOtherURI);
+      }
+      if (flags & Ci.nsMsgMessageFlags.New) {
+        // Close any notification we might have about this message.
+        Cc["@mozilla.org/system-alerts-service;1"]
+          .getService(Ci.nsIAlertsService)
+          .closeAlert(uri);
       }
     },
   };

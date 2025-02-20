@@ -4,11 +4,11 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.NoAuthFlowFoundError = exports.InteractiveAuth = exports.AuthType = void 0;
-var _logger = require("./logger");
-var _utils = require("./utils");
-var _httpApi = require("./http-api");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+var _logger = require("./logger.js");
+var _utils = require("./utils.js");
+var _index = require("./http-api/index.js");
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2016 OpenMarket Ltd
 Copyright 2017 Vector Creations Ltd
@@ -60,10 +60,6 @@ let AuthType = exports.AuthType = /*#__PURE__*/function (AuthType) {
  * The parameters which are submitted as the `auth` dict in a UIA request
  *
  * @see https://spec.matrix.org/v1.6/client-server-api/#authentication-types
- */
-/**
- * Backwards compatible export
- * @deprecated in favour of AuthDict
  */
 class NoAuthFlowFoundError extends Error {
   constructor(m,
@@ -211,15 +207,13 @@ class InteractiveAuth {
           sid: this.emailSid,
           client_secret: this.clientSecret
         };
-        const idServerParsedUrl = new URL(this.matrixClient.getIdentityServerUrl());
-        creds.id_server = idServerParsedUrl.host;
+        const isUrl = this.matrixClient.getIdentityServerUrl();
+        if (isUrl) {
+          creds.id_server = new URL(isUrl).host;
+        }
         authDict = {
           type: EMAIL_STAGE_TYPE,
-          // TODO: Remove `threepid_creds` once servers support proper UIA
-          // See https://github.com/matrix-org/synapse/issues/5665
-          // See https://github.com/matrix-org/matrix-doc/issues/2220
-          threepid_creds: creds,
-          threepidCreds: creds
+          threepid_creds: creds
         };
       }
     }
@@ -286,7 +280,7 @@ class InteractiveAuth {
     while (this.submitPromise) {
       try {
         await this.submitPromise;
-      } catch (e) {}
+      } catch {}
     }
 
     // use the sessionid from the last request, if one is present.
@@ -350,7 +344,7 @@ class InteractiveAuth {
       this.attemptAuthDeferred.resolve(result);
       this.attemptAuthDeferred = null;
     } catch (error) {
-      const matrixError = error instanceof _httpApi.MatrixError ? error : null;
+      const matrixError = error instanceof _index.MatrixError ? error : null;
 
       // sometimes UI auth errors don't come with flows
       const errorFlows = matrixError?.data?.flows ?? null;

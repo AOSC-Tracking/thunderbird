@@ -4,25 +4,26 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.OtherUserSpeakingError = exports.GroupCallUnknownDeviceError = exports.GroupCallType = exports.GroupCallTerminationReason = exports.GroupCallStatsReportEvent = exports.GroupCallState = exports.GroupCallIntent = exports.GroupCallEvent = exports.GroupCallErrorCode = exports.GroupCallError = exports.GroupCall = void 0;
-var _typedEventEmitter = require("../models/typed-event-emitter");
-var _callFeed = require("./callFeed");
-var _call = require("./call");
-var _roomState = require("../models/room-state");
-var _logger = require("../logger");
-var _ReEmitter = require("../ReEmitter");
-var _callEventTypes = require("./callEventTypes");
-var _event = require("../@types/event");
-var _callEventHandler = require("./callEventHandler");
-var _groupCallEventHandler = require("./groupCallEventHandler");
-var _utils = require("../utils");
-var _groupCallStats = require("./stats/groupCallStats");
-var _statsReport = require("./stats/statsReport");
-var _summaryStatsReportGatherer = require("./stats/summaryStatsReportGatherer");
-var _callFeedStatsReporter = require("./stats/callFeedStatsReporter");
+var _typedEventEmitter = require("../models/typed-event-emitter.js");
+var _callFeed = require("./callFeed.js");
+var _call = require("./call.js");
+var _roomState = require("../models/room-state.js");
+var _logger = require("../logger.js");
+var _ReEmitter = require("../ReEmitter.js");
+var _callEventTypes = require("./callEventTypes.js");
+var _event = require("../@types/event.js");
+var _callEventHandler = require("./callEventHandler.js");
+var _groupCallEventHandler = require("./groupCallEventHandler.js");
+var _utils = require("../utils.js");
+var _groupCallStats = require("./stats/groupCallStats.js");
+var _statsReport = require("./stats/statsReport.js");
+var _summaryStatsReportGatherer = require("./stats/summaryStatsReportGatherer.js");
+var _callFeedStatsReporter = require("./stats/callFeedStatsReporter.js");
+var _membership = require("../@types/membership.js");
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); }
 let GroupCallIntent = exports.GroupCallIntent = /*#__PURE__*/function (GroupCallIntent) {
   GroupCallIntent["Ring"] = "m.ring";
@@ -98,6 +99,8 @@ class OtherUserSpeakingError extends Error {
     super("Cannot unmute: another user is speaking");
   }
 }
+
+// XXX: this hasn't made it into the MSC yet
 exports.OtherUserSpeakingError = OtherUserSpeakingError;
 let GroupCallState = exports.GroupCallState = /*#__PURE__*/function (GroupCallState) {
   GroupCallState["LocalCallFeedUninitialized"] = "local_call_feed_uninitialized";
@@ -759,7 +762,7 @@ class GroupCall extends _typedEventEmitter.TypedEventEmitter {
           return false;
         }
       }
-    } catch (e) {
+    } catch {
       /* istanbul ignore next */
       _logger.logger.log(`GroupCall ${this.groupCallId} setMicrophoneMuted() no device or permission to receive local stream, muted=${muted}`);
       return false;
@@ -787,7 +790,7 @@ class GroupCall extends _typedEventEmitter.TypedEventEmitter {
         await this.updateLocalUsermediaStream(stream);
         this.localCallFeed.setAudioVideoMuted(null, muted);
         (0, _call.setTracksEnabled)(this.localCallFeed.stream.getVideoTracks(), !muted);
-      } catch (_) {
+      } catch {
         // No permission to video device
         /* istanbul ignore next */
         _logger.logger.log(`GroupCall ${this.groupCallId} setLocalVideoMuted() no device or permission to receive local stream, muted=${muted}`);
@@ -1106,7 +1109,7 @@ class GroupCall extends _typedEventEmitter.TypedEventEmitter {
       }
 
       // Must have a connected device and be joined to the room
-      if (validDevices.length > 0 && member?.membership === "join") {
+      if (validDevices.length > 0 && member?.membership === _membership.KnownMembership.Join) {
         const deviceMap = new Map();
         participants.set(member, deviceMap);
         for (const d of validDevices) {

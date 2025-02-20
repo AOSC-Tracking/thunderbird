@@ -118,9 +118,10 @@ pref("app.update.staging.enabled", true);
 pref("app.update.service.enabled", true);
 #endif
 
-#ifdef XP_WIN
-// This pref prevents BITS from being used by Thunderbird to download updates.
-pref("app.update.BITS.enabled", false);
+#ifdef MOZ_BITS_DOWNLOAD
+  // If set to true, the Update Service will attempt to use Windows BITS to
+  // download updates and will fallback to downloading internally if that fails.
+  pref("app.update.BITS.enabled", true);
 #endif
 
 pref("app.update.langpack.enabled", true);
@@ -1388,9 +1389,9 @@ pref("services.sync.engine.servers", true);
 #endif
 
 // Donation appeal.
-pref("app.donation.eoy.version", 7);
+pref("app.donation.eoy.version", 8);
 pref("app.donation.eoy.version.viewed", 0);
-pref("app.donation.eoy.url", "https://updates.thunderbird.net/thunderbird/128.0/nov24/");
+pref("app.donation.eoy.url", "https://updates.thunderbird.net/thunderbird/128.0/dec24/");
 
 // IMAP-JS disabled, Bug 1707547.
 pref("mailnews.imap.jsmodule", false);

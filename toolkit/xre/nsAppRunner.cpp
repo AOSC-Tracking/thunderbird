@@ -2143,7 +2143,7 @@ static void DumpHelp() {
       "  --dbus-service <launcher>  Run as DBus service for "
       "org.freedesktop.Application and\n"
       "                             set a launcher (usually /usr/bin/appname "
-      "script) for it.");
+      "script) for it.\n");
 #endif
 
   // this works, but only after the components have registered.  so if you drop
@@ -2657,6 +2657,10 @@ static nsresult ProfileMissingDialog(nsINativeAppSupport* aNative) {
   rv = xpcom.SetWindowCreator(aNative);
   NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
+#  ifdef XP_MACOSX
+  InitializeMacApp();
+#  endif
+
   {  // extra scoping is needed so we release these components before xpcom
      // shutdown
     nsCOMPtr<nsIStringBundleService> sbs =
@@ -2687,7 +2691,7 @@ static nsresult ProfileMissingDialog(nsINativeAppSupport* aNative) {
 
     return NS_ERROR_ABORT;
   }
-#endif    // MOZ_WIDGET_ANDROID
+#endif  // MOZ_WIDGET_ANDROID
 }
 
 static ReturnAbortOnError ProfileLockedDialog(nsIFile* aProfileDir,
@@ -3240,6 +3244,10 @@ static ReturnAbortOnError CheckDowngrade(nsIFile* aProfileDir,
 
     rv = xpcom.SetWindowCreator(aNative);
     NS_ENSURE_SUCCESS(rv, rv);
+
+#  ifdef XP_MACOSX
+    InitializeMacApp();
+#  endif
 
     {  // extra scoping is needed so we release these components before xpcom
        // shutdown

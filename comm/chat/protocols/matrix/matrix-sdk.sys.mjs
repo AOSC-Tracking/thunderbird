@@ -28,6 +28,7 @@ const KNOWN_INDEX_JS = new Set([
   "sdp_transform",
   "unhomoglyph",
   "matrix_sdk/crypto",
+  "matrix_sdk/crypto_api",
   "matrix_sdk/crypto/algorithms",
   "matrix_sdk/http_api",
   "matrix_sdk/oidc",
@@ -74,6 +75,10 @@ const loaderGlobal = {
   ...globals,
 };
 const loader = Loader({
+  // Custom path maps, add things here if:
+  //
+  // * The path has hyphens (map them to underscores).
+  // * The path should be mapped to the "empty" file.
   paths: {
     // Matrix SDK files.
     "matrix-sdk": matrixPath + "matrix_sdk",
@@ -83,12 +88,9 @@ const loader = Loader({
     "matrix-sdk/@types/IIdentityServerProvider": matrixPath + "empty.js",
     "matrix-sdk/@types/local_notifications": matrixPath + "empty.js",
     "matrix-sdk/@types/registration": matrixPath + "empty.js",
-    "matrix-sdk/@types/requests": matrixPath + "empty.js",
     "matrix-sdk/@types/uia": matrixPath + "empty.js",
-    // The entire directory can't be mapped from crypto-api to crypto_api since
-    // there's also a matrix-sdk/crypto-api.js.
-    "matrix-sdk/crypto-api/verification":
-      matrixPath + "matrix_sdk/crypto_api/verification.js",
+    "matrix-sdk/common-crypto": matrixPath + "matrix_sdk/common_crypto",
+    "matrix-sdk/crypto-api": matrixPath + "matrix_sdk/crypto_api",
     "matrix-sdk/crypto-api/keybackup": matrixPath + "empty.js",
     "matrix-sdk/http-api": matrixPath + "matrix_sdk/http_api",
     "matrix-sdk/rust-crypto": matrixPath + "matrix_sdk/rust_crypto",
@@ -116,6 +118,7 @@ const loader = Loader({
     "matrix-widget-api": matrixPath + "matrix_widget_api",
     "matrix-widget-api/interfaces/CapabilitiesAction": matrixPath + "empty.js",
     "matrix-widget-api/interfaces/ContentLoadedAction": matrixPath + "empty.js",
+    "matrix-widget-api/interfaces/DownloadFileAction": matrixPath + "empty.js",
     "matrix-widget-api/interfaces/GetMediaConfigAction":
       matrixPath + "empty.js",
     "matrix-widget-api/interfaces/ICustomWidgetData": matrixPath + "empty.js",
@@ -227,6 +230,7 @@ globals.Buffer = loader.globals.Buffer;
 export const MatrixSDK = require("matrix-sdk/browser-index.js");
 
 // Helper enums not exposed on MatrixSDK.
-export const MatrixCrypto = require("matrix-sdk/crypto");
 export const OlmLib = require("matrix-sdk/crypto/olmlib");
 export const { ReceiptType } = require("matrix-sdk/@types/read_receipts");
+export const { VerificationMethod } = require("matrix-sdk/types");
+export const { CryptoEvent, VerifierEvent } = require("matrix-sdk/crypto-api");

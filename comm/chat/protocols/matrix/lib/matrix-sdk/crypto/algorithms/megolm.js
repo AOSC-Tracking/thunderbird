@@ -6,19 +6,22 @@ Object.defineProperty(exports, "__esModule", {
 exports.MegolmEncryption = exports.MegolmDecryption = void 0;
 exports.isRoomSharedHistory = isRoomSharedHistory;
 var _uuid = require("uuid");
-var _logger = require("../../logger");
-var olmlib = _interopRequireWildcard(require("../olmlib"));
-var _base = require("./base");
-var _OlmDevice = require("../OlmDevice");
-var _event = require("../../@types/event");
-var _OutgoingRoomKeyRequestManager = require("../OutgoingRoomKeyRequestManager");
-var _utils = require("../../utils");
+var _logger = require("../../logger.js");
+var olmlib = _interopRequireWildcard(require("../olmlib.js"));
+var _base = require("./base.js");
+var _OlmDevice = require("../OlmDevice.js");
+var _event = require("../../@types/event.js");
+var _OutgoingRoomKeyRequestManager = require("../OutgoingRoomKeyRequestManager.js");
+var _utils = require("../../utils.js");
+var _membership = require("../../@types/membership.js");
+var _index = require("../../crypto-api/index.js");
+var _CryptoBackend = require("../../common-crypto/CryptoBackend.js");
 function _getRequireWildcardCache(e) { if ("function" != typeof WeakMap) return null; var r = new WeakMap(), t = new WeakMap(); return (_getRequireWildcardCache = function (e) { return e ? t : r; })(e); }
-function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && Object.prototype.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
+function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && {}.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2015 - 2021, 2023 The Matrix.org Foundation C.I.C.
 
@@ -761,7 +764,7 @@ class MegolmEncryption extends _base.EncryptionAlgorithm {
       // (https://github.com/matrix-org/matrix-js-sdk/issues/1255)
       try {
         await this.encryptionPreparation.promise;
-      } catch (e) {
+      } catch {
         // ignore any errors -- if the preparation failed, we'll just
         // restart everything here
       }
@@ -974,7 +977,7 @@ class MegolmDecryption extends _base.DecryptionAlgorithm {
   async decryptEvent(event) {
     const content = event.getWireContent();
     if (!content.sender_key || !content.session_id || !content.ciphertext) {
-      throw new _base.DecryptionError("MEGOLM_MISSING_FIELDS", "Missing fields in input");
+      throw new _CryptoBackend.DecryptionError(_index.DecryptionFailureCode.MEGOLM_MISSING_FIELDS, "Missing fields in input");
     }
 
     // we add the event to the pending list *before* we start decryption.
@@ -991,12 +994,12 @@ class MegolmDecryption extends _base.DecryptionAlgorithm {
         // re-throw decryption errors as-is
         throw e;
       }
-      let errorCode = "OLM_DECRYPT_GROUP_MESSAGE_ERROR";
+      let errorCode = _index.DecryptionFailureCode.OLM_DECRYPT_GROUP_MESSAGE_ERROR;
       if (e?.message === "OLM.UNKNOWN_MESSAGE_INDEX") {
         this.requestKeysForEvent(event);
-        errorCode = "OLM_UNKNOWN_MESSAGE_INDEX";
+        errorCode = _index.DecryptionFailureCode.OLM_UNKNOWN_MESSAGE_INDEX;
       }
-      throw new _base.DecryptionError(errorCode, e instanceof Error ? e.message : "Unknown Error: Error is undefined", {
+      throw new _CryptoBackend.DecryptionError(errorCode, e instanceof Error ? e.message : "Unknown Error: Error is undefined", {
         session: content.sender_key + "|" + content.session_id
       });
     }
@@ -1021,11 +1024,11 @@ class MegolmDecryption extends _base.DecryptionAlgorithm {
         if (problem.fixed) {
           problemDescription += " Trying to create a new secure channel and re-requesting the keys.";
         }
-        throw new _base.DecryptionError("MEGOLM_UNKNOWN_INBOUND_SESSION_ID", problemDescription, {
+        throw new _CryptoBackend.DecryptionError(_index.DecryptionFailureCode.MEGOLM_UNKNOWN_INBOUND_SESSION_ID, problemDescription, {
           session: content.sender_key + "|" + content.session_id
         });
       }
-      throw new _base.DecryptionError("MEGOLM_UNKNOWN_INBOUND_SESSION_ID", "The sender's device has not sent us the keys for this message.", {
+      throw new _CryptoBackend.DecryptionError(_index.DecryptionFailureCode.MEGOLM_UNKNOWN_INBOUND_SESSION_ID, "The sender's device has not sent us the keys for this message.", {
         session: content.sender_key + "|" + content.session_id
       });
     }
@@ -1043,7 +1046,7 @@ class MegolmDecryption extends _base.DecryptionAlgorithm {
     // (this is somewhat redundant, since the megolm session is scoped to the
     // room, so neither the sender nor a MITM can lie about the room_id).
     if (payload.room_id !== event.getRoomId()) {
-      throw new _base.DecryptionError("MEGOLM_BAD_ROOM", "Message intended for room " + payload.room_id);
+      throw new _CryptoBackend.DecryptionError(_index.DecryptionFailureCode.MEGOLM_BAD_ROOM, "Message intended for room " + payload.room_id);
     }
     return {
       clearEvent: payload,
@@ -1278,7 +1281,7 @@ class MegolmDecryption extends _base.DecryptionAlgorithm {
       return false;
     }
     const memberEvent = room?.getMember(this.userId)?.events.member;
-    const fromInviter = memberEvent?.getSender() === senderKeyUser || memberEvent?.getUnsigned()?.prev_sender === senderKeyUser && memberEvent?.getPrevContent()?.membership === "invite";
+    const fromInviter = memberEvent?.getSender() === senderKeyUser || memberEvent?.getUnsigned()?.prev_sender === senderKeyUser && memberEvent?.getPrevContent()?.membership === _membership.KnownMembership.Invite;
     if (room && fromInviter) {
       return true;
     } else {
@@ -1594,7 +1597,7 @@ class MegolmDecryption extends _base.DecryptionAlgorithm {
           isRetry: true,
           forceRedecryptIfUntrusted
         });
-      } catch (e) {
+      } catch {
         // don't die if something goes wrong
       }
     }));
@@ -1613,7 +1616,7 @@ class MegolmDecryption extends _base.DecryptionAlgorithm {
       await Promise.all([...pending].map(async ev => {
         try {
           await ev.attemptDecryption(this.crypto);
-        } catch (e) {
+        } catch {
           // don't die if something goes wrong
         }
       }));

@@ -4,11 +4,11 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.PerSessionKeyBackupDownloader = void 0;
-var _httpApi = require("../http-api");
-var _matrix = require("../matrix");
-var _utils = require("../utils");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+var _index = require("../crypto-api/index.js");
+var _index2 = require("../http-api/index.js");
+var _utils = require("../utils.js");
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2023 The Matrix.org Foundation C.I.C.
 
@@ -53,7 +53,11 @@ class KeyDownloadRateLimitError extends Error {
 
 /** Details of a megolm session whose key we are trying to fetch. */
 
-/** Holds the current backup decryptor and version that should be used. */
+/** Holds the current backup decryptor and version that should be used.
+ *
+ * This is intended to be used as an immutable object (a new instance should be created if the configuration changes),
+ * and some of the logic relies on that, so the properties are marked as `readonly`.
+ */
 
 /**
  * Used when an 'unable to decrypt' error occurs. It attempts to download the key from the backup.
@@ -79,7 +83,11 @@ class PerSessionKeyBackupDownloader {
     this.http = http;
     this.backupManager = backupManager;
     _defineProperty(this, "stopped", false);
-    /** The version and decryption key to use with current backup if all set up correctly */
+    /**
+     * The version and decryption key to use with current backup if all set up correctly.
+     *
+     * Will not be set unless `hasConfigurationProblem` is `false`.
+     */
     _defineProperty(this, "configuration", null);
     /** We remember when a session was requested and not found in backup to avoid query again too soon.
      * Map of session_id to timestamp */
@@ -110,9 +118,27 @@ class PerSessionKeyBackupDownloader {
       });
     });
     this.logger = logger.getChild("[PerSessionKeyBackupDownloader]");
-    backupManager.on(_matrix.CryptoEvent.KeyBackupStatus, this.onBackupStatusChanged);
-    backupManager.on(_matrix.CryptoEvent.KeyBackupFailed, this.onBackupStatusChanged);
-    backupManager.on(_matrix.CryptoEvent.KeyBackupDecryptionKeyCached, this.onBackupStatusChanged);
+    backupManager.on(_index.CryptoEvent.KeyBackupStatus, this.onBackupStatusChanged);
+    backupManager.on(_index.CryptoEvent.KeyBackupFailed, this.onBackupStatusChanged);
+    backupManager.on(_index.CryptoEvent.KeyBackupDecryptionKeyCached, this.onBackupStatusChanged);
+  }
+
+  /**
+   * Check if key download is successfully configured and active.
+   *
+   * @return `true` if key download is correctly configured and active; otherwise `false`.
+   */
+  isKeyBackupDownloadConfigured() {
+    return this.configuration !== null;
+  }
+
+  /**
+   * Return the details of the latest backup on the server, when we last checked.
+   *
+   * This is just a convenience method to expose {@link RustBackupManager.getServerBackupInfo}.
+   */
+  async getServerBackupInfo() {
+    return await this.backupManager.getServerBackupInfo();
   }
 
   /**
@@ -154,9 +180,9 @@ class PerSessionKeyBackupDownloader {
   }
   stop() {
     this.stopped = true;
-    this.backupManager.off(_matrix.CryptoEvent.KeyBackupStatus, this.onBackupStatusChanged);
-    this.backupManager.off(_matrix.CryptoEvent.KeyBackupFailed, this.onBackupStatusChanged);
-    this.backupManager.off(_matrix.CryptoEvent.KeyBackupDecryptionKeyCached, this.onBackupStatusChanged);
+    this.backupManager.off(_index.CryptoEvent.KeyBackupStatus, this.onBackupStatusChanged);
+    this.backupManager.off(_index.CryptoEvent.KeyBackupFailed, this.onBackupStatusChanged);
+    this.backupManager.off(_index.CryptoEvent.KeyBackupDecryptionKeyCached, this.onBackupStatusChanged);
   }
   /** Returns true if the megolm session is already queued for download. */
   isAlreadyInQueue(roomId, megolmSessionId) {
@@ -190,7 +216,7 @@ class PerSessionKeyBackupDownloader {
   async getBackupDecryptionKey() {
     try {
       return await this.olmMachine.getBackupKeys();
-    } catch (e) {
+    } catch {
       return null;
     }
   }
@@ -207,10 +233,10 @@ class PerSessionKeyBackupDownloader {
       $roomId: roomId,
       $sessionId: sessionId
     });
-    return await this.http.authedRequest(_httpApi.Method.Get, path, {
+    return await this.http.authedRequest(_index2.Method.Get, path, {
       version
     }, undefined, {
-      prefix: _httpApi.ClientPrefix.V3
+      prefix: _index2.ClientPrefix.V3
     });
   }
   async downloadKeysLoop() {
@@ -291,7 +317,7 @@ class PerSessionKeyBackupDownloader {
     } catch (e) {
       if (this.stopped) throw new KeyDownloadError(KeyDownloadErrorCode.STOPPED);
       this.logger.info(`No luck requesting key backup for session ${targetSessionId}: ${e}`);
-      if (e instanceof _httpApi.MatrixError) {
+      if (e instanceof _index2.MatrixError) {
         const errCode = e.data.errcode;
         if (errCode == "M_NOT_FOUND") {
           // Unfortunately the spec doesn't give us a way to differentiate between a missing key and a wrong version.
@@ -325,7 +351,7 @@ class PerSessionKeyBackupDownloader {
     for (const k of keys) {
       k.room_id = sessionInfo.roomId;
     }
-    await this.backupManager.importBackedUpRoomKeys(keys);
+    await this.backupManager.importBackedUpRoomKeys(keys, configuration.backupVersion);
   }
 
   /**
@@ -363,7 +389,7 @@ class PerSessionKeyBackupDownloader {
   async internalCheckFromServer() {
     let currentServerVersion = null;
     try {
-      currentServerVersion = await this.backupManager.requestKeyBackupVersion();
+      currentServerVersion = await this.backupManager.getServerBackupInfo();
     } catch (e) {
       this.logger.debug(`Backup: error while checking server version: ${e}`);
       this.hasConfigurationProblem = true;
@@ -387,7 +413,6 @@ class PerSessionKeyBackupDownloader {
       this.hasConfigurationProblem = true;
       return null;
     }
-    const authData = currentServerVersion.auth_data;
     const backupKeys = await this.getBackupDecryptionKey();
     if (!backupKeys?.decryptionKey) {
       this.logger.debug(`Not checking key backup for session (no decryption key)`);
@@ -399,8 +424,9 @@ class PerSessionKeyBackupDownloader {
       this.hasConfigurationProblem = true;
       return null;
     }
+    const authData = currentServerVersion.auth_data;
     if (authData.public_key != backupKeys.decryptionKey.megolmV1PublicKey.publicKeyBase64) {
-      this.logger.debug(`getBackupDecryptor key mismatch error`);
+      this.logger.debug(`Key backup on server does not match our decryption key`);
       this.hasConfigurationProblem = true;
       return null;
     }

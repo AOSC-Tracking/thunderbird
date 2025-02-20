@@ -5,16 +5,18 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.RoomWidgetClient = void 0;
 var _matrixWidgetApi = require("matrix-widget-api");
-var _event = require("./models/event");
-var _event2 = require("./@types/event");
-var _logger = require("./logger");
-var _client = require("./client");
-var _sync = require("./sync");
-var _slidingSyncSdk = require("./sliding-sync-sdk");
-var _user = require("./models/user");
-var _utils = require("./utils");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+var _event = require("./models/event.js");
+var _event2 = require("./@types/event.js");
+var _logger = require("./logger.js");
+var _client = require("./client.js");
+var _sync = require("./sync.js");
+var _slidingSyncSdk = require("./sliding-sync-sdk.js");
+var _user = require("./models/user.js");
+var _utils = require("./utils.js");
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2022 The Matrix.org Foundation C.I.C.
 
@@ -36,7 +38,17 @@ limitations under the License.
  * @experimental This class is considered unstable!
  */
 class RoomWidgetClient extends _client.MatrixClient {
-  constructor(widgetApi, capabilities, roomId, opts) {
+  /**
+   *
+   * @param widgetApi - The widget api to use for communication.
+   * @param capabilities - The capabilities the widget client will request.
+   * @param roomId - The room id the widget is associated with.
+   * @param opts - The configuration options for this client.
+   * @param sendContentLoaded - Whether to send a content loaded widget action immediately after initial setup.
+   *   Set to `false` if the widget uses `waitForIFrameLoad=true` (in this case the client does not expect a content loaded action at all),
+   *   or if the the widget wants to send the `ContentLoaded` action at a later point in time after the initial setup.
+   */
+  constructor(widgetApi, capabilities, roomId, opts, sendContentLoaded) {
     super(opts);
     this.widgetApi = widgetApi;
     this.capabilities = capabilities;
@@ -106,6 +118,12 @@ class RoomWidgetClient extends _client.MatrixClient {
     }) => widgetApi.requestCapabilityToReceiveState(eventType, stateKey));
     capabilities.sendToDevice?.forEach(eventType => widgetApi.requestCapabilityToSendToDevice(eventType));
     capabilities.receiveToDevice?.forEach(eventType => widgetApi.requestCapabilityToReceiveToDevice(eventType));
+    if (capabilities.sendDelayedEvents && (capabilities.sendEvent?.length || capabilities.sendMessage === true || Array.isArray(capabilities.sendMessage) && capabilities.sendMessage.length || capabilities.sendState?.length)) {
+      widgetApi.requestCapability(_matrixWidgetApi.MatrixCapabilities.MSC4157SendDelayedEvent);
+    }
+    if (capabilities.updateDelayedEvents) {
+      widgetApi.requestCapability(_matrixWidgetApi.MatrixCapabilities.MSC4157UpdateDelayedEvent);
+    }
     if (capabilities.turnServers) {
       widgetApi.requestCapability(_matrixWidgetApi.MatrixCapabilities.MSC3846TurnServers);
     }
@@ -119,7 +137,7 @@ class RoomWidgetClient extends _client.MatrixClient {
     // does *not* (yes, that is the right way around) wait for this event. Let's
     // start sending this, then once this has rolled out, we can change element-web to
     // use waitForIFrameLoad=false and have a widget API that's less racy.
-    widgetApi.sendContentLoaded();
+    if (sendContentLoaded) widgetApi.sendContentLoaded();
   }
   async startClient(opts = {}) {
     this.lifecycle = new AbortController();
@@ -158,6 +176,12 @@ class RoomWidgetClient extends _client.MatrixClient {
         _logger.logger.info(`Backfilled event ${event.getId()} ${event.getType()} ${event.getStateKey()}`);
       });
     }) ?? []);
+    if (opts.clientWellKnownPollPeriod !== undefined) {
+      this.clientWellKnownIntervalID = setInterval(() => {
+        this.fetchClientWellKnown();
+      }, 1000 * opts.clientWellKnownPollPeriod);
+      this.fetchClientWellKnown();
+    }
     this.setSyncState(_sync.SyncState.Syncing);
     _logger.logger.info("Finished backfilling events");
     this.matrixRTC.start();
@@ -175,21 +199,71 @@ class RoomWidgetClient extends _client.MatrixClient {
     if (roomIdOrAlias === this.roomId) return this.room;
     throw new Error(`Unknown room: ${roomIdOrAlias}`);
   }
-  async encryptAndSendEvent(room, event) {
+  async encryptAndSendEvent(room, event, delayOpts) {
+    // We need to extend the content with the redacts parameter
+    // The js sdk uses event.redacts but the widget api uses event.content.redacts
+    // This will be converted back to event.redacts in the widget driver.
+    const content = event.event.redacts ? _objectSpread(_objectSpread({}, event.getContent()), {}, {
+      redacts: event.event.redacts
+    }) : event.getContent();
+    if (delayOpts) {
+      // TODO: updatePendingEvent for delayed events?
+      const response = await this.widgetApi.sendRoomEvent(event.getType(), content, room.roomId, "delay" in delayOpts ? delayOpts.delay : undefined, "parent_delay_id" in delayOpts ? delayOpts.parent_delay_id : undefined);
+      return this.validateSendDelayedEventResponse(response);
+    }
     let response;
     try {
-      response = await this.widgetApi.sendRoomEvent(event.getType(), event.getContent(), room.roomId);
+      response = await this.widgetApi.sendRoomEvent(event.getType(), content, room.roomId);
     } catch (e) {
       this.updatePendingEventStatus(room, event, _event.EventStatus.NOT_SENT);
       throw e;
     }
+
+    // This also checks for an event id on the response
     room.updatePendingEvent(event, _event.EventStatus.SENT, response.event_id);
     return {
       event_id: response.event_id
     };
   }
   async sendStateEvent(roomId, eventType, content, stateKey = "") {
-    return await this.widgetApi.sendStateEvent(eventType, stateKey, content, roomId);
+    const response = await this.widgetApi.sendStateEvent(eventType, stateKey, content, roomId);
+    if (response.event_id === undefined) {
+      throw new Error("'event_id' absent from response to an event request");
+    }
+    return {
+      event_id: response.event_id
+    };
+  }
+
+  /**
+   * @experimental This currently relies on an unstable MSC (MSC4140).
+   */
+  // eslint-disable-next-line
+  async _unstable_sendDelayedStateEvent(roomId, delayOpts, eventType, content, stateKey = "") {
+    if (!(await this.doesServerSupportUnstableFeature(_client.UNSTABLE_MSC4140_DELAYED_EVENTS))) {
+      throw Error("Server does not support the delayed events API");
+    }
+    const response = await this.widgetApi.sendStateEvent(eventType, stateKey, content, roomId, "delay" in delayOpts ? delayOpts.delay : undefined, "parent_delay_id" in delayOpts ? delayOpts.parent_delay_id : undefined);
+    return this.validateSendDelayedEventResponse(response);
+  }
+  validateSendDelayedEventResponse(response) {
+    if (response.delay_id === undefined) {
+      throw new Error("'delay_id' absent from response to a delayed event request");
+    }
+    return {
+      delay_id: response.delay_id
+    };
+  }
+
+  /**
+   * @experimental This currently relies on an unstable MSC (MSC4140).
+   */
+  // eslint-disable-next-line
+  async _unstable_updateDelayedEvent(delayId, action) {
+    if (!(await this.doesServerSupportUnstableFeature(_client.UNSTABLE_MSC4140_DELAYED_EVENTS))) {
+      throw Error("Server does not support the delayed events API");
+    }
+    return await this.widgetApi.updateDelayedEvent(delayId, action);
   }
   async sendToDevice(eventType, contentMap) {
     await this.widgetApi.sendToDevice(eventType, false, (0, _utils.recursiveMapToObject)(contentMap));

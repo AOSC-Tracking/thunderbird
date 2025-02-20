@@ -8,15 +8,16 @@ exports.isVerificationEvent = isVerificationEvent;
 exports.verificationMethodIdentifierToMethod = verificationMethodIdentifierToMethod;
 var _matrixSdkCryptoWasm = _interopRequireWildcard(require("@matrix-org/matrix-sdk-crypto-wasm"));
 var RustSdkCryptoJs = _matrixSdkCryptoWasm;
-var _verification = require("../crypto-api/verification");
-var _typedEventEmitter = require("../models/typed-event-emitter");
-var _ReEmitter = require("../ReEmitter");
-var _event = require("../@types/event");
-var _utils = require("../utils");
+var _verification = require("../crypto-api/verification.js");
+var _typedEventEmitter = require("../models/typed-event-emitter.js");
+var _ReEmitter = require("../ReEmitter.js");
+var _event = require("../@types/event.js");
+var _utils = require("../utils.js");
+var _types = require("../types.js");
 function _getRequireWildcardCache(e) { if ("function" != typeof WeakMap) return null; var r = new WeakMap(), t = new WeakMap(); return (_getRequireWildcardCache = function (e) { return e ? t : r; })(e); }
-function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && Object.prototype.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && {}.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2023 The Matrix.org Foundation C.I.C.
 
@@ -60,26 +61,38 @@ class RustVerificationRequest extends _typedEventEmitter.TypedEventEmitter {
     _defineProperty(this, "_cancelling", false);
     _defineProperty(this, "_verifier", void 0);
     this.reEmitter = new _ReEmitter.TypedReEmitter(this);
-    const onChange = async () => {
-      const verification = this.inner.getVerification();
 
-      // Set the _verifier object (wrapping the rust `Verification` as a js-sdk Verifier) if:
-      // - we now have a `Verification` where we lacked one before
-      // - we have transitioned from QR to SAS
-      // - we are verifying with SAS, but we need to replace our verifier with a new one because both parties
-      //   tried to start verification at the same time, and we lost the tie breaking
-      if (verification instanceof RustSdkCryptoJs.Sas) {
-        if (this._verifier === undefined || this._verifier instanceof RustQrCodeVerifier) {
-          this.setVerifier(new RustSASVerifier(verification, this, outgoingRequestProcessor));
-        } else if (this._verifier instanceof RustSASVerifier) {
-          this._verifier.replaceInner(verification);
-        }
-      } else if (verification instanceof RustSdkCryptoJs.Qr && this._verifier === undefined) {
-        this.setVerifier(new RustQrCodeVerifier(verification, outgoingRequestProcessor));
+    // Obviously, the Rust object maintains a reference to the callback function. If the callback function maintains
+    // a reference to the Rust object, then we have a reference cycle which means that `RustVerificationRequest`
+    // will never be garbage-collected, and hence the underlying rust object will never be freed.
+    //
+    // To avoid this reference cycle, use a weak reference in the callback function. If the `RustVerificationRequest`
+    // gets garbage-collected, then there is nothing to update!
+    const weakThis = new WeakRef(this);
+    inner.registerChangesCallback(async () => weakThis.deref()?.onChange());
+  }
+
+  /**
+   * Hook which is called when the underlying rust class notifies us that there has been a change.
+   */
+  onChange() {
+    const verification = this.inner.getVerification();
+
+    // Set the _verifier object (wrapping the rust `Verification` as a js-sdk Verifier) if:
+    // - we now have a `Verification` where we lacked one before
+    // - we have transitioned from QR to SAS
+    // - we are verifying with SAS, but we need to replace our verifier with a new one because both parties
+    //   tried to start verification at the same time, and we lost the tie breaking
+    if (verification instanceof RustSdkCryptoJs.Sas) {
+      if (this._verifier === undefined || this._verifier instanceof RustQrCodeVerifier) {
+        this.setVerifier(new RustSASVerifier(verification, this, this.outgoingRequestProcessor));
+      } else if (this._verifier instanceof RustSASVerifier) {
+        this._verifier.replaceInner(verification);
       }
-      this.emit(_verification.VerificationRequestEvent.Change);
-    };
-    inner.registerChangesCallback(onChange);
+    } else if (verification instanceof RustSdkCryptoJs.Qr && this._verifier === undefined) {
+      this.setVerifier(new RustQrCodeVerifier(verification, this.outgoingRequestProcessor));
+    }
+    this.emit(_verification.VerificationRequestEvent.Change);
   }
   setVerifier(verifier) {
     // if we already have a verifier, unsubscribe from its events
@@ -211,9 +224,9 @@ class RustVerificationRequest extends _typedEventEmitter.TypedEventEmitter {
     if (this.phase !== _verification.VerificationPhase.Started) return null;
     const verification = this.inner.getVerification();
     if (verification instanceof RustSdkCryptoJs.Sas) {
-      return "m.sas.v1";
+      return _types.VerificationMethod.Sas;
     } else if (verification instanceof RustSdkCryptoJs.Qr) {
-      return "m.reciprocate.v1";
+      return _types.VerificationMethod.Reciprocate;
     } else {
       return null;
     }
@@ -312,7 +325,7 @@ class RustVerificationRequest extends _typedEventEmitter.TypedEventEmitter {
    * @param method - the name of the verification method to use.
    */
   async startVerification(method) {
-    if (method !== "m.sas.v1") {
+    if (method !== _types.VerificationMethod.Sas) {
       throw new Error(`Unsupported verification method ${method}`);
     }
 
@@ -435,9 +448,12 @@ class BaseRustVerifer extends _typedEventEmitter.TypedEventEmitter {
     /** A deferred which completes when the verification completes (or rejects when it is cancelled/fails) */
     _defineProperty(this, "completionDeferred", void 0);
     this.completionDeferred = (0, _utils.defer)();
-    inner.registerChangesCallback(async () => {
-      this.onChange();
-    });
+
+    // As with RustVerificationRequest, we need to avoid a reference cycle.
+    // See the comments in RustVerificationRequest.
+    const weakThis = new WeakRef(this);
+    inner.registerChangesCallback(async () => weakThis.deref()?.onChange());
+
     // stop the runtime complaining if nobody catches a failure
     this.completionDeferred.promise.catch(() => null);
   }
@@ -520,7 +536,9 @@ class RustQrCodeVerifier extends BaseRustVerifer {
     // application to prompt the user to confirm their side.
     if (this.callbacks === null && this.inner.hasBeenScanned()) {
       this.callbacks = {
-        confirm: () => this.confirmScanning(),
+        confirm: () => {
+          this.confirmScanning();
+        },
         cancel: () => this.cancel()
       };
     }
@@ -651,10 +669,16 @@ class RustSASVerifier extends BaseRustVerifer {
           }
         },
         mismatch: () => {
-          throw new Error("impl");
+          const request = this.inner.cancelWithCode("m.mismatched_sas");
+          if (request) {
+            this.outgoingRequestProcessor.makeOutgoingRequest(request);
+          }
         },
         cancel: () => {
-          throw new Error("impl");
+          const request = this.inner.cancelWithCode("m.user");
+          if (request) {
+            this.outgoingRequestProcessor.makeOutgoingRequest(request);
+          }
         }
       };
       this.emit(_verification.VerifierEvent.ShowSas, this.callbacks);
@@ -687,9 +711,12 @@ class RustSASVerifier extends BaseRustVerifer {
   replaceInner(inner) {
     if (this.inner != inner) {
       this.inner = inner;
-      inner.registerChangesCallback(async () => {
-        this.onChange();
-      });
+
+      // As with RustVerificationRequest, we need to avoid a reference cycle.
+      // See the comments in RustVerificationRequest.
+      const weakThis = new WeakRef(this);
+      inner.registerChangesCallback(async () => weakThis.deref()?.onChange());
+
       // replaceInner will only get called if we started the verification at the same time as the other side, and we lost
       // the tie breaker.  So we need to re-accept their verification.
       this.sendAccept();
@@ -701,10 +728,10 @@ class RustSASVerifier extends BaseRustVerifer {
 /** For each specced verification method, the rust-side `VerificationMethod` corresponding to it */
 exports.RustSASVerifier = RustSASVerifier;
 const verificationMethodsByIdentifier = {
-  "m.sas.v1": RustSdkCryptoJs.VerificationMethod.SasV1,
-  "m.qr_code.scan.v1": RustSdkCryptoJs.VerificationMethod.QrCodeScanV1,
-  "m.qr_code.show.v1": RustSdkCryptoJs.VerificationMethod.QrCodeShowV1,
-  "m.reciprocate.v1": RustSdkCryptoJs.VerificationMethod.ReciprocateV1
+  [_types.VerificationMethod.Sas]: RustSdkCryptoJs.VerificationMethod.SasV1,
+  [_types.VerificationMethod.ScanQrCode]: RustSdkCryptoJs.VerificationMethod.QrCodeScanV1,
+  [_types.VerificationMethod.ShowQrCode]: RustSdkCryptoJs.VerificationMethod.QrCodeShowV1,
+  [_types.VerificationMethod.Reciprocate]: RustSdkCryptoJs.VerificationMethod.ReciprocateV1
 };
 
 /**

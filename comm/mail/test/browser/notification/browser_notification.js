@@ -36,19 +36,23 @@ var gMsgMinutes = 9000;
 
 // We'll use this mock alerts service to capture notification events
 var gMockAlertsService = {
-  _doFail: false,
   _doClick: false,
 
   QueryInterface: ChromeUtils.generateQI(["nsIAlertsService"]),
 
+  promiseShown() {
+    this._shownDeferred = Promise.withResolvers();
+    return this._shownDeferred.promise;
+  },
+
+  promiseClosed() {
+    this._closedDeferred = Promise.withResolvers();
+    return this._closedDeferred.promise;
+  },
+
   showAlert(alertInfo, alertListener) {
+    info(`showAlert: ${alertInfo.name}`);
     const { imageURL, title, text, textClickable, cookie, name } = alertInfo;
-    // Setting the _doFail flag allows us to revert to the newmailalert.xhtml
-    // notification
-    if (this._doFail) {
-      SimpleTest.expectUncaughtException(true);
-      throw Components.Exception("", Cr.NS_ERROR_FAILURE);
-    }
     this._didNotify = true;
     this._imageUrl = imageURL;
     this._title = title;
@@ -58,6 +62,9 @@ var gMockAlertsService = {
     this._alertListener = alertListener;
     this._name = name;
 
+    this._alertListener.observe(null, "alertshow", alert.cookie);
+    this._shownDeferred?.resolve();
+    this._shownDeferred = null;
     if (this._doClick) {
       // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
       setTimeout(
@@ -65,8 +72,15 @@ var gMockAlertsService = {
           this._alertListener.observe(null, "alertclickcallback", this._cookie),
         100
       );
-    } else {
+    }
+  },
+
+  closeAlert(name) {
+    info(`closeAlert: ${name}`);
+    if (name == this._name) {
       this._alertListener.observe(null, "alertfinished", this._cookie);
+      this._closedDeferred?.resolve();
+      this._closedDeferred = null;
     }
   },
 
@@ -85,7 +99,6 @@ var gMockAlertsService = {
       this._alertListener.observe(null, "alertfinished", this._cookie);
     }
 
-    this._doFail = false;
     this._doClick = false;
     this._didNotify = false;
     this._imageUrl = null;
@@ -158,7 +171,6 @@ registerCleanupFunction(function () {
 function setupTest() {
   gFolder.markAllMessagesRead(null);
   gMockAlertsService._reset();
-  gMockAlertsService._doFail = false;
   gFolder.biffState = Ci.nsIMsgFolder.nsMsgBiffState_NoMail;
   gFolder2.biffState = Ci.nsIMsgFolder.nsMsgBiffState_NoMail;
 
@@ -693,22 +705,34 @@ add_task(async function test_click_on_notification() {
 });
 
 /**
- * Test that we revert to newmailalert.xhtml if there is no system notification
- * service present.
- *
- * NOTE: this test should go last because if
- * nsIAlertsService.showAlertNotification failed for once, we always fallback to
- * newmailalert.xhtml afterwards.
+ * Test what happens when loading a message when there's a notification about
+ * it. The notification should be removed.
+ */
+add_task(async function test_load_message_closes_notification() {
+  gMockAlertsService._reset();
+
+  const shownPromise = gMockAlertsService.promiseShown();
+  await make_gradually_newer_sets_in_folder([gFolder], [{ count: 1 }]);
+  await shownPromise;
+
+  const closedPromise = gMockAlertsService.promiseClosed();
+
+  const tabmail = document.getElementById("tabmail");
+  const about3Pane = tabmail.currentAbout3Pane;
+  about3Pane.restoreState({ folderURI: gFolder.URI, messagePaneVisible: true });
+  about3Pane.threadTree.selectedIndex = 0;
+
+  await closedPromise;
+});
+
+/**
+ * Test that the custom notification (newmailalert.xhtml) works if the
+ * preference is set.
  */
 add_task(async function test_revert_to_newmailalert() {
   setupTest();
-  // Set up the gMockAlertsService so that it fails to send a notification.
-  gMockAlertsService._doFail = true;
 
-  if (AppConstants.platform == "macosx") {
-    // newmailalert.xhtml doesn't work on macOS.
-    return;
-  }
+  Services.prefs.setBoolPref("mail.biff.use_system_alert", false);
 
   // We expect the newmailalert.xhtml window.
   const alertPromise = promise_new_window("alert:alert");
@@ -716,4 +740,4 @@ add_task(async function test_revert_to_newmailalert() {
   const win = await alertPromise;
   // The alert closes itself.
   await BrowserTestUtils.domWindowClosed(win);
-});
+}).skip(AppConstants.platform == "macosx"); // newmailalert.xhtml doesn't work on macOS.

@@ -6,15 +6,15 @@ Object.defineProperty(exports, "__esModule", {
 exports.RustBackupManager = exports.RustBackupDecryptor = void 0;
 exports.requestKeyBackupVersion = requestKeyBackupVersion;
 var RustSdkCryptoJs = _interopRequireWildcard(require("@matrix-org/matrix-sdk-crypto-wasm"));
-var _logger = require("../logger");
-var _httpApi = require("../http-api");
-var _crypto = require("../crypto");
-var _typedEventEmitter = require("../models/typed-event-emitter");
-var _utils = require("../utils");
+var _logger = require("../logger.js");
+var _index = require("../http-api/index.js");
+var _typedEventEmitter = require("../models/typed-event-emitter.js");
+var _utils = require("../utils.js");
+var _index2 = require("../crypto-api/index.js");
 function _getRequireWildcardCache(e) { if ("function" != typeof WeakMap) return null; var r = new WeakMap(), t = new WeakMap(); return (_getRequireWildcardCache = function (e) { return e ? t : r; })(e); }
-function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && Object.prototype.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && {}.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2023 The Matrix.org Foundation C.I.C.
 
@@ -48,6 +48,14 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
     this.outgoingRequestProcessor = outgoingRequestProcessor;
     /** Have we checked if there is a backup on the server which we can use */
     _defineProperty(this, "checkedForBackup", false);
+    /**
+     * The latest backup version on the server, when we last checked.
+     *
+     * If there was no backup on the server, `null`. If our attempt to check resulted in an error, `undefined`.
+     *
+     * Note that the backup was not necessarily verified.
+     */
+    _defineProperty(this, "serverBackupInfo", undefined);
     _defineProperty(this, "activeBackupVersion", null);
     _defineProperty(this, "stopped", false);
     /** whether {@link backupKeysLoop} is currently running */
@@ -70,6 +78,21 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
   async getActiveBackupVersion() {
     if (!(await this.olmMachine.isBackupEnabled())) return null;
     return this.activeBackupVersion;
+  }
+
+  /**
+   * Return the details of the latest backup on the server, when we last checked.
+   *
+   * This normally returns a cached value, but if we haven't yet made a request to the server, it will fire one off.
+   * It will always return the details of the active backup if key backup is enabled.
+   *
+   * If there was no backup on the server, `null`. If our attempt to check resulted in an error, `undefined`.
+   */
+  async getServerBackupInfo() {
+    // Do a validity check if we haven't already done one. The check is likely to fail if we don't yet have the
+    // backup keys -- but as a side-effect, it will populate `serverBackupInfo`.
+    await this.checkKeyBackupAndEnable(false);
+    return this.serverBackupInfo;
   }
 
   /**
@@ -145,7 +168,7 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
     await this.olmMachine.saveBackupDecryptionKey(backupDecryptionKey, version);
     // Emit an event that we have a new backup decryption key, so that the sdk can start
     // importing keys from backup if needed.
-    this.emit(_crypto.CryptoEvent.KeyBackupDecryptionKeyCached, version);
+    this.emit(_index2.CryptoEvent.KeyBackupDecryptionKeyCached, version);
   }
 
   /**
@@ -182,7 +205,7 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
   /**
    * Implementation of {@link CryptoBackend#importBackedUpRoomKeys}.
    */
-  async importBackedUpRoomKeys(keys, opts) {
+  async importBackedUpRoomKeys(keys, backupVersion, opts) {
     const keysByRoom = new Map();
     for (const key of keys) {
       const roomId = new RustSdkCryptoJs.RoomId(key.room_id);
@@ -199,22 +222,25 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
         failures: Number(failures)
       };
       opts?.progressCallback?.(importOpt);
-    });
+    }, backupVersion);
   }
   /** Helper for `checkKeyBackup` */
   async doCheckKeyBackup() {
     _logger.logger.log("Checking key backup status...");
-    let backupInfo = null;
+    let backupInfo;
     try {
       backupInfo = await this.requestKeyBackupVersion();
     } catch (e) {
       _logger.logger.warn("Error checking for active key backup", e);
+      this.serverBackupInfo = undefined;
       return null;
     }
     this.checkedForBackup = true;
     if (backupInfo && !backupInfo.version) {
       _logger.logger.warn("active backup lacks a useful 'version'; ignoring it");
+      backupInfo = undefined;
     }
+    this.serverBackupInfo = backupInfo;
     const activeVersion = await this.getActiveBackupVersion();
     if (!backupInfo) {
       if (activeVersion !== null) {
@@ -259,7 +285,7 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
     // we also checked it has a valid `version`.
     await this.olmMachine.enableBackupV1(backupInfo.auth_data.public_key, backupInfo.version);
     this.activeBackupVersion = backupInfo.version;
-    this.emit(_crypto.CryptoEvent.KeyBackupStatus, true);
+    this.emit(_index2.CryptoEvent.KeyBackupStatus, true);
     this.backupKeysLoop();
   }
 
@@ -276,7 +302,7 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
   async disableKeyBackup() {
     await this.olmMachine.disableBackup();
     this.activeBackupVersion = null;
-    this.emit(_crypto.CryptoEvent.KeyBackupStatus, false);
+    this.emit(_index2.CryptoEvent.KeyBackupStatus, false);
   }
   async backupKeysLoop(maxDelay = 10000) {
     if (this.backupKeysLoopRunning) {
@@ -313,7 +339,7 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
           _logger.logger.log(`Backup: Ending loop for version ${this.activeBackupVersion}.`);
           if (!request) {
             // nothing more to upload
-            this.emit(_crypto.CryptoEvent.KeyBackupSessionsRemaining, 0);
+            this.emit(_index2.CryptoEvent.KeyBackupSessionsRemaining, 0);
           }
           return;
         }
@@ -340,7 +366,7 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
             }
           }
           if (remainingToUploadCount !== null) {
-            this.emit(_crypto.CryptoEvent.KeyBackupSessionsRemaining, remainingToUploadCount);
+            this.emit(_index2.CryptoEvent.KeyBackupSessionsRemaining, remainingToUploadCount);
             const keysCountInBatch = this.keysCountInBatch(request);
             // `OlmMachine.roomKeyCounts` is called only once for the current backupKeysLoop. But new
             // keys could be added during the current loop (after a sync for example).
@@ -352,7 +378,7 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
         } catch (err) {
           numFailures++;
           _logger.logger.error("Backup: Error processing backup request for rust crypto-sdk", err);
-          if (err instanceof _httpApi.MatrixError) {
+          if (err instanceof _index.MatrixError) {
             const errCode = err.data.errcode;
             if (errCode == "M_NOT_FOUND" || errCode == "M_WRONG_ROOM_KEYS_VERSION") {
               _logger.logger.log(`Backup: Failed to upload keys to current vesion: ${errCode}.`);
@@ -361,7 +387,7 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
               } catch (error) {
                 _logger.logger.error("Backup: An error occurred while disabling key backup:", error);
               }
-              this.emit(_crypto.CryptoEvent.KeyBackupFailed, err.data.errcode);
+              this.emit(_index2.CryptoEvent.KeyBackupFailed, err.data.errcode);
               // There was an active backup and we are out of sync with the server
               // force a check server side
               this.backupKeysLoopRunning = false;
@@ -406,6 +432,7 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
     }
     return count;
   }
+
   /**
    * Get information about the current key backup from the server
    *
@@ -434,11 +461,11 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
       public_key: pubKey.publicKeyBase64
     };
     await signObject(authData);
-    const res = await this.http.authedRequest(_httpApi.Method.Post, "/room_keys/version", undefined, {
+    const res = await this.http.authedRequest(_index.Method.Post, "/room_keys/version", undefined, {
       algorithm: pubKey.algorithm,
       auth_data: authData
     }, {
-      prefix: _httpApi.ClientPrefix.V3
+      prefix: _index.ClientPrefix.V3
     });
     await this.saveBackupDecryptionKey(randomKey, res.version);
     return {
@@ -475,8 +502,8 @@ class RustBackupManager extends _typedEventEmitter.TypedEventEmitter {
     const path = (0, _utils.encodeUri)("/room_keys/version/$version", {
       $version: version
     });
-    await this.http.authedRequest(_httpApi.Method.Delete, path, undefined, undefined, {
-      prefix: _httpApi.ClientPrefix.V3
+    await this.http.authedRequest(_index.Method.Delete, path, undefined, undefined, {
+      prefix: _index.ClientPrefix.V3
     });
   }
 
@@ -543,8 +570,8 @@ class RustBackupDecryptor {
 exports.RustBackupDecryptor = RustBackupDecryptor;
 async function requestKeyBackupVersion(http) {
   try {
-    return await http.authedRequest(_httpApi.Method.Get, "/room_keys/version", undefined, undefined, {
-      prefix: _httpApi.ClientPrefix.V3
+    return await http.authedRequest(_index.Method.Get, "/room_keys/version", undefined, undefined, {
+      prefix: _index.ClientPrefix.V3
     });
   } catch (e) {
     if (e.errcode === "M_NOT_FOUND") {

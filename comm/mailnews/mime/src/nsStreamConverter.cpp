@@ -62,9 +62,12 @@ void bridge_set_output_type(void* bridgeStream, nsMimeOutputType aType) {
   nsMIMESession* session = (nsMIMESession*)bridgeStream;
 
   if (session) {
-    // BAD ASSUMPTION!!!! NEED TO CHECK aType
-    mime_stream_data* msd = (mime_stream_data*)session->data_object;
-    if (msd) msd->format_out = aType;  // output format type
+    mime_stream_data* msd = session->data_object.AsMimeStreamData();
+    if (!msd) {
+      return;
+    }
+
+    msd->format_out = aType;  // output format type
   }
 }
 
@@ -81,16 +84,15 @@ nsresult bridge_new_new_uri(void* bridgeStream, nsIURI* aURI,
 
       if ((aOutputType == nsMimeOutput::nsMimeMessageDraftOrTemplate) ||
           (aOutputType == nsMimeOutput::nsMimeMessageEditorTemplate)) {
-        mime_draft_data* mdd = (mime_draft_data*)session->data_object;
-        if (mdd->options) {
+        mime_draft_data* mdd = session->data_object.AsMimeDraftData();
+        if (mdd && mdd->options) {
           default_charset = &(mdd->options->default_charset);
           override_charset = &(mdd->options->override_charset);
           url_name = &(mdd->url_name);
         }
       } else {
-        mime_stream_data* msd = (mime_stream_data*)session->data_object;
-
-        if (msd->options) {
+        mime_stream_data* msd = session->data_object.AsMimeStreamData();
+        if (msd && msd->options) {
           default_charset = &(msd->options->default_charset);
           override_charset = &(msd->options->override_charset);
           url_name = &(msd->url_name);
@@ -142,12 +144,15 @@ nsresult bridge_new_new_uri(void* bridgeStream, nsIURI* aURI,
   return NS_OK;
 }
 
-static int mime_headers_callback(void* closure, MimeHeaders* headers) {
-  // We get away with this because this doesn't get called on draft operations.
-  mime_stream_data* msd = (mime_stream_data*)closure;
+static int mime_headers_callback(MimeClosure closure, MimeHeaders* headers) {
+  NS_ASSERTION(closure && headers, "null mime stream data or headers");
+  if (!closure || !headers) return 0;
 
-  NS_ASSERTION(msd && headers, "null mime stream data or headers");
-  if (!msd || !headers) return 0;
+  // This doesn't get called on draft operations.
+  mime_stream_data* msd = closure.AsMimeStreamData();
+  if (!msd) {
+    return 0;
+  }
 
   NS_ASSERTION(!msd->headers, "non-null mime stream data headers");
   msd->headers = MimeHeaders_copy(headers);
@@ -162,8 +167,8 @@ nsresult bridge_set_mime_stream_converter_listener(
   if ((session) && (session->data_object)) {
     if ((aOutputType == nsMimeOutput::nsMimeMessageDraftOrTemplate) ||
         (aOutputType == nsMimeOutput::nsMimeMessageEditorTemplate)) {
-      mime_draft_data* mdd = (mime_draft_data*)session->data_object;
-      if (mdd->options) {
+      mime_draft_data* mdd = session->data_object.AsMimeDraftData();
+      if (mdd && mdd->options) {
         if (listener) {
           mdd->options->caller_need_root_headers = true;
           mdd->options->decompose_headers_info_fn = mime_headers_callback;
@@ -173,9 +178,8 @@ nsresult bridge_set_mime_stream_converter_listener(
         }
       }
     } else {
-      mime_stream_data* msd = (mime_stream_data*)session->data_object;
-
-      if (msd->options) {
+      mime_stream_data* msd = session->data_object.AsMimeStreamData();
+      if (msd && msd->options) {
         if (listener) {
           msd->options->caller_need_root_headers = true;
           msd->options->decompose_headers_info_fn = mime_headers_callback;
@@ -811,11 +815,15 @@ nsresult nsStreamConverter::OnStopRequest(nsIRequest* request,
 
       if ((mOutputType == nsMimeOutput::nsMimeMessageDraftOrTemplate) ||
           (mOutputType == nsMimeOutput::nsMimeMessageEditorTemplate)) {
-        mime_draft_data* mdd = (mime_draft_data*)tSession->data_object;
-        if (mdd) workHeaders = &(mdd->headers);
+        mime_draft_data* mdd = tSession->data_object.AsMimeDraftData();
+        if (mdd) {
+          workHeaders = &(mdd->headers);
+        }
       } else {
-        mime_stream_data* msd = (mime_stream_data*)tSession->data_object;
-        if (msd) workHeaders = &(msd->headers);
+        mime_stream_data* msd = tSession->data_object.AsMimeStreamData();
+        if (msd) {
+          workHeaders = &(msd->headers);
+        }
       }
 
       if (workHeaders) {

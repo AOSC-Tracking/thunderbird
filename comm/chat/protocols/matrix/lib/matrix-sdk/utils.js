@@ -9,7 +9,6 @@ exports.averageBetweenStrings = averageBetweenStrings;
 exports.baseToString = baseToString;
 exports.checkObjectHasKeys = checkObjectHasKeys;
 exports.chunkPromises = chunkPromises;
-exports.compare = compare;
 exports.decodeParams = decodeParams;
 exports.deepCompare = deepCompare;
 exports.deepCopy = deepCopy;
@@ -49,13 +48,13 @@ exports.stringToBase = stringToBase;
 exports.unsafeProp = unsafeProp;
 var _unhomoglyph = _interopRequireDefault(require("unhomoglyph"));
 var _pRetry = _interopRequireDefault(require("p-retry"));
-var _location = require("./@types/location");
-var _read_receipts = require("./@types/read_receipts");
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+var _location = require("./@types/location.js");
+var _read_receipts = require("./@types/read_receipts.js");
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2015, 2016, 2019, 2023 The Matrix.org Foundation C.I.C.
 
@@ -437,9 +436,12 @@ async function logDuration(logger, name, block) {
 
 /**
  * Promise/async version of {@link setImmediate}.
+ *
+ * Implementation is based on `setTimeout` for wider compatibility.
+ * @deprecated Use {@link sleep} instead.
  */
 function immediate() {
-  return new Promise(setImmediate);
+  return new Promise(resolve => setTimeout(resolve));
 }
 function isNullOrUndefined(val) {
   return val === null || val === undefined;
@@ -660,15 +662,6 @@ function lexicographicCompare(a, b) {
     return 0;
   }
 }
-const collator = new Intl.Collator();
-/**
- * Performant language-sensitive string comparison
- * @param a - the first string to compare
- * @param b - the second string to compare
- */
-function compare(a, b) {
-  return collator.compare(a, b);
-}
 
 /**
  * This function is similar to Object.assign() but it assigns recursively and
@@ -749,7 +742,7 @@ function safeSet(obj, prop, value) {
   obj[prop] = value;
 }
 function noUnsafeEventProps(event) {
-  return !(unsafeProp(event.room_id) || unsafeProp(event.sender) || unsafeProp(event.user_id) || unsafeProp(event.event_id));
+  return !(unsafeProp(event.room_id) || unsafeProp(event.sender) || unsafeProp(event.event_id));
 }
 class MapWithDefault extends Map {
   constructor(createDefault) {

@@ -5,20 +5,22 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.algorithmsByName = exports.LibOlmBackupDecryptor = exports.DefaultAlgorithm = exports.Curve25519 = exports.BackupManager = exports.Aes256 = void 0;
 exports.backupTrustInfoFromLegacyTrustInfo = backupTrustInfoFromLegacyTrustInfo;
-var _client = require("../client");
-var _logger = require("../logger");
-var _olmlib = require("./olmlib");
-var _key_passphrase = require("./key_passphrase");
-var _utils = require("../utils");
-var _indexeddbCryptoStore = require("./store/indexeddb-crypto-store");
-var _recoverykey = require("./recoverykey");
-var _aes = require("./aes");
-var _NamespacedValue = require("../NamespacedValue");
-var _index = require("./index");
-var _crypto = require("./crypto");
-var _httpApi = require("../http-api");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+var _client = require("../client.js");
+var _logger = require("../logger.js");
+var _olmlib = require("./olmlib.js");
+var _key_passphrase = require("./key_passphrase.js");
+var _utils = require("../utils.js");
+var _indexeddbCryptoStore = require("./store/indexeddb-crypto-store.js");
+var _NamespacedValue = require("../NamespacedValue.js");
+var _index = require("./index.js");
+var _index2 = require("../http-api/index.js");
+var _index3 = require("../crypto-api/index.js");
+var _decryptAESSecretStorageItem = _interopRequireDefault(require("../utils/decryptAESSecretStorageItem.js"));
+var _encryptAESSecretStorageItem = _interopRequireDefault(require("../utils/encryptAESSecretStorageItem.js"));
+var _secretStorage = require("../secret-storage.js");
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2021 The Matrix.org Foundation C.I.C.
 
@@ -140,7 +142,7 @@ class BackupManager {
       throw new Error("Unknown backup algorithm");
     }
     const [privateKey, authData] = await Algorithm.prepare(key);
-    const recoveryKey = (0, _recoverykey.encodeRecoveryKey)(privateKey);
+    const recoveryKey = (0, _index3.encodeRecoveryKey)(privateKey);
     return {
       algorithm: Algorithm.algorithmName,
       auth_data: authData,
@@ -176,8 +178,8 @@ class BackupManager {
     const path = (0, _utils.encodeUri)("/room_keys/version/$version", {
       $version: version
     });
-    await this.baseApis.http.authedRequest(_httpApi.Method.Delete, path, undefined, undefined, {
-      prefix: _httpApi.ClientPrefix.V3
+    await this.baseApis.http.authedRequest(_index2.Method.Delete, path, undefined, undefined, {
+      prefix: _index2.ClientPrefix.V3
     });
   }
 
@@ -389,7 +391,7 @@ class BackupManager {
         } catch (err) {
           numFailures++;
           _logger.logger.log("Key backup request failed", err);
-          if (err instanceof _httpApi.MatrixError) {
+          if (err instanceof _index2.MatrixError) {
             const errCode = err.data.errcode;
             if (errCode == "M_NOT_FOUND" || errCode == "M_WRONG_ROOM_KEYS_VERSION") {
               // Set to false now as `checkKeyBackup` might schedule a backupsend before this one ends.
@@ -575,7 +577,7 @@ class Curve25519 {
     try {
       const backupPubKey = decryption.init_with_private_key(privKey);
       if (backupPubKey !== this.authData.public_key) {
-        throw new _httpApi.MatrixError({
+        throw new _index2.MatrixError({
           errcode: _client.MatrixClient.RESTORE_BACKUP_ERROR_BAD_KEY
         });
       }
@@ -612,7 +614,7 @@ exports.Curve25519 = Curve25519;
 _defineProperty(Curve25519, "algorithmName", "m.megolm_backup.v1.curve25519-aes-sha2");
 function randomBytes(size) {
   const buf = new Uint8Array(size);
-  _crypto.crypto.getRandomValues(buf);
+  globalThis.crypto.getRandomValues(buf);
   return buf;
 }
 const UNSTABLE_MSC3270_NAME = new _NamespacedValue.UnstableValue("m.megolm_backup.v1.aes-hmac-sha2", "org.matrix.msc3270.v1.aes-hmac-sha2");
@@ -629,7 +631,7 @@ class Aes256 {
     if (authData.mac) {
       const {
         mac
-      } = await (0, _aes.calculateKeyCheck)(key, authData.iv);
+      } = await (0, _secretStorage.calculateKeyCheck)(key, authData.iv);
       if (authData.mac.replace(/=+$/g, "") !== mac.replace(/=+/g, "")) {
         throw new Error("Key does not match");
       }
@@ -652,7 +654,7 @@ class Aes256 {
     const {
       iv,
       mac
-    } = await (0, _aes.calculateKeyCheck)(outKey);
+    } = await (0, _secretStorage.calculateKeyCheck)(outKey);
     authData.iv = iv;
     authData.mac = mac;
     return [outKey, authData];
@@ -670,13 +672,13 @@ class Aes256 {
     delete plainText.session_id;
     delete plainText.room_id;
     delete plainText.first_known_index;
-    return (0, _aes.encryptAES)(JSON.stringify(plainText), this.key, data.session_id);
+    return (0, _encryptAESSecretStorageItem.default)(JSON.stringify(plainText), this.key, data.session_id);
   }
   async decryptSessions(sessions) {
     const keys = [];
     for (const [sessionId, sessionData] of Object.entries(sessions)) {
       try {
-        const decrypted = JSON.parse(await (0, _aes.decryptAES)(sessionData.session_data, this.key, sessionId));
+        const decrypted = JSON.parse(await (0, _decryptAESSecretStorageItem.default)(sessionData.session_data, this.key, sessionId));
         decrypted.session_id = sessionId;
         keys.push(decrypted);
       } catch (e) {
@@ -689,7 +691,7 @@ class Aes256 {
     if (this.authData.mac) {
       const {
         mac
-      } = await (0, _aes.calculateKeyCheck)(key, this.authData.iv);
+      } = await (0, _secretStorage.calculateKeyCheck)(key, this.authData.iv);
       return this.authData.mac.replace(/=+$/g, "") === mac.replace(/=+/g, "");
     } else {
       // if we have no information, we have to assume the key is right
@@ -706,6 +708,10 @@ const algorithmsByName = exports.algorithmsByName = {
   [Curve25519.algorithmName]: Curve25519,
   [Aes256.algorithmName]: Aes256
 };
+
+// the linter doesn't like this but knip does
+// eslint-disable-next-line tsdoc/syntax
+/** @alias */
 const DefaultAlgorithm = exports.DefaultAlgorithm = Curve25519;
 
 /**

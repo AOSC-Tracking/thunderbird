@@ -4,18 +4,19 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.RoomStateEvent = exports.RoomState = void 0;
-var _roomMember = require("./room-member");
-var _logger = require("../logger");
-var _utils = require("../utils");
-var _event = require("../@types/event");
-var _event2 = require("./event");
-var _partials = require("../@types/partials");
-var _typedEventEmitter = require("./typed-event-emitter");
-var _beacon = require("./beacon");
-var _ReEmitter = require("../ReEmitter");
-var _beacon2 = require("../@types/beacon");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+var _roomMember = require("./room-member.js");
+var _logger = require("../logger.js");
+var _utils = require("../utils.js");
+var _event = require("../@types/event.js");
+var _event2 = require("./event.js");
+var _partials = require("../@types/partials.js");
+var _typedEventEmitter = require("./typed-event-emitter.js");
+var _beacon = require("./beacon.js");
+var _ReEmitter = require("../ReEmitter.js");
+var _beacon2 = require("../@types/beacon.js");
+var _membership = require("../@types/membership.js");
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2015 - 2021 The Matrix.org Foundation C.I.C.
 
@@ -75,13 +76,25 @@ class RoomState extends _typedEventEmitter.TypedEventEmitter {
    * As the timeline might get reset while they are loading, this state needs to be inherited
    * and shared when the room state is cloned for the new timeline.
    * This should only be passed from clone.
+   * @param isStartTimelineState - Optional. This state is marked as a start state.
+   * This is used to skip state insertions that are
+   * in the wrong order. The order is determined by the `replaces_state` id.
+   *
+   * Example:
+   * A current state events `replaces_state` value is `1`.
+   * Trying to insert a state event with `event_id` `1` in its place would fail if isStartTimelineState = false.
+   *
+   * A current state events `event_id` is `2`.
+   * Trying to insert a state event where its `replaces_state` value is `2` would fail if isStartTimelineState = true.
    */
+
   constructor(roomId, oobMemberFlags = {
     status: OobStatus.NotStarted
-  }) {
+  }, isStartTimelineState = false) {
     super();
     this.roomId = roomId;
     this.oobMemberFlags = oobMemberFlags;
+    this.isStartTimelineState = isStartTimelineState;
     _defineProperty(this, "reEmitter", new _ReEmitter.TypedReEmitter(this));
     _defineProperty(this, "sentinels", {});
     // userId: RoomMember
@@ -127,7 +140,7 @@ class RoomState extends _typedEventEmitter.TypedEventEmitter {
     }
     if (this.joinedMemberCount === null) {
       this.joinedMemberCount = this.getMembers().reduce((count, m) => {
-        return m.membership === "join" ? count + 1 : count;
+        return m.membership === _membership.KnownMembership.Join ? count + 1 : count;
       }, 0);
     }
     return this.joinedMemberCount;
@@ -151,7 +164,7 @@ class RoomState extends _typedEventEmitter.TypedEventEmitter {
     }
     if (this.invitedMemberCount === null) {
       this.invitedMemberCount = this.getMembers().reduce((count, m) => {
-        return m.membership === "invite" ? count + 1 : count;
+        return m.membership === _membership.KnownMembership.Invite ? count + 1 : count;
       }, 0);
     }
     return this.invitedMemberCount;
@@ -217,11 +230,14 @@ class RoomState extends _typedEventEmitter.TypedEventEmitter {
   /**
    * Get state events from the state of the room.
    * @param eventType - The event type of the state event.
-   * @param stateKey - Optional. The state_key of the state event. If
-   * this is `undefined` then all matching state events will be
-   * returned.
-   * @returns A list of events if state_key was
-   * `undefined`, else a single event (or null if no match found).
+   * @returns A list of events
+   */
+
+  /**
+   * Get state events from the state of the room.
+   * @param eventType - The event type of the state event.
+   * @param stateKey - The state_key of the state event.
+   * @returns A single event (or null if no match found).
    */
 
   getStateEvents(eventType, stateKey) {
@@ -311,7 +327,7 @@ class RoomState extends _typedEventEmitter.TypedEventEmitter {
    * Fires {@link RoomStateEvent.Events}
    * Fires {@link RoomStateEvent.Marker}
    */
-  setStateEvents(stateEvents, markerFoundOptions) {
+  setStateEvents(stateEvents, options) {
     this.updateModifiedTime();
 
     // update the core event dict
@@ -321,6 +337,21 @@ class RoomState extends _typedEventEmitter.TypedEventEmitter {
         this.setBeacon(event);
       }
       const lastStateEvent = this.getStateEventMatching(event);
+
+      // Safety measure to not update the room (and emit the update) with older state.
+      // The sync loop really should not send old events but it does very regularly.
+      // Logging on return in those two conditions results in a large amount of logging. (on startup and when running element)
+      const lastReplaceId = lastStateEvent?.event.unsigned?.replaces_state;
+      const lastId = lastStateEvent?.event.event_id;
+      const newReplaceId = event.event.unsigned?.replaces_state;
+      const newId = event.event.event_id;
+      if (this.isStartTimelineState) {
+        // Add an event to the start of the timeline. Its replace id should not be the same as the one of the current/last start state event.
+        if (newReplaceId && lastId && newReplaceId === lastId) return;
+      } else {
+        // Add an event to the end of the timeline. It should not be the same as the one replaced by the current/last end state event.
+        if (lastReplaceId && newId && lastReplaceId === newId) return;
+      }
       this.setStateEvent(event);
       if (event.getType() === _event.EventType.RoomMember) {
         this.updateDisplayNameCache(event.getStateKey(), event.getContent().displayname ?? "");
@@ -341,7 +372,7 @@ class RoomState extends _typedEventEmitter.TypedEventEmitter {
         // leave events apparently elide the displayname or avatar_url,
         // so let's fake one up so that we don't leak user ids
         // into the timeline
-        if (event.getContent().membership === "leave" || event.getContent().membership === "ban") {
+        if (event.getContent().membership === _membership.KnownMembership.Leave || event.getContent().membership === _membership.KnownMembership.Ban) {
           event.getContent().avatar_url = event.getContent().avatar_url || event.getPrevContent().avatar_url;
           event.getContent().displayname = event.getContent().displayname || event.getPrevContent().displayname;
         }
@@ -370,7 +401,7 @@ class RoomState extends _typedEventEmitter.TypedEventEmitter {
         // assume all our sentinels are now out-of-date
         this.sentinels = {};
       } else if (_event.UNSTABLE_MSC2716_MARKER.matches(event.getType())) {
-        this.emit(RoomStateEvent.Marker, event, markerFoundOptions);
+        this.emit(RoomStateEvent.Marker, event, options);
       }
     });
     this.emit(RoomStateEvent.Update, this);
@@ -648,7 +679,7 @@ class RoomState extends _typedEventEmitter.TypedEventEmitter {
    */
   maySendRedactionForEvent(mxEvent, userId) {
     const member = this.getMember(userId);
-    if (!member || member.membership === "leave") return false;
+    if (!member || member.membership === _membership.KnownMembership.Leave) return false;
     if (mxEvent.status || mxEvent.isRedacted()) return false;
 
     // The user may have been the sender, but they can't redact their own message

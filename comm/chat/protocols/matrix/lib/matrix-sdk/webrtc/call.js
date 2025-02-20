@@ -10,20 +10,20 @@ exports.setTracksEnabled = setTracksEnabled;
 exports.supportsMatrixCall = supportsMatrixCall;
 var _uuid = require("uuid");
 var _sdpTransform = require("sdp-transform");
-var _logger = require("../logger");
-var _utils = require("../utils");
-var _event = require("../@types/event");
-var _randomstring = require("../randomstring");
-var _callEventTypes = require("./callEventTypes");
-var _callFeed = require("./callFeed");
-var _typedEventEmitter = require("../models/typed-event-emitter");
-var _deviceinfo = require("../crypto/deviceinfo");
-var _groupCall = require("./groupCall");
-var _httpApi = require("../http-api");
+var _logger = require("../logger.js");
+var _utils = require("../utils.js");
+var _event = require("../@types/event.js");
+var _randomstring = require("../randomstring.js");
+var _callEventTypes = require("./callEventTypes.js");
+var _callFeed = require("./callFeed.js");
+var _typedEventEmitter = require("../models/typed-event-emitter.js");
+var _deviceinfo = require("../crypto/deviceinfo.js");
+var _groupCall = require("./groupCall.js");
+var _index = require("../http-api/index.js");
 function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
 function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : String(i); }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
 function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
 Copyright 2015, 2016 OpenMarket Ltd
 Copyright 2017 New Vector Ltd
@@ -1094,7 +1094,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
   /**
    * Starts/stops screensharing
    * @param enabled - the desired screensharing state
-   * @param desktopCapturerSourceId - optional id of the desktop capturer source to use
+   * @param opts - screen sharing options
    * @returns new screensharing state
    */
   async setScreensharingEnabled(enabled, opts) {
@@ -1140,7 +1140,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
    * Starts/stops screensharing
    * Should be used ONLY if the opponent doesn't support SDPStreamMetadata
    * @param enabled - the desired screensharing state
-   * @param desktopCapturerSourceId - optional id of the desktop capturer source to use
+   * @param opts - screen sharing options
    * @returns new screensharing state
    */
   async setScreensharingEnabledWithoutMetadataSupport(enabled, opts) {
@@ -1434,7 +1434,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
     } catch (error) {
       // We've failed to answer: back to the ringing state
       this.state = CallState.Ringing;
-      if (error instanceof _httpApi.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
+      if (error instanceof _index.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
       let code = CallErrorCode.SendAnswer;
       let message = "Failed to send answer";
       if (error.name == "UnknownDeviceError") {
@@ -1688,6 +1688,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
         await this.peerConn.setLocalDescription(answer);
         _logger.logger.debug(`Call ${this.callId} onNegotiateReceived() create an answer`);
         this.sendVoipEvent(_event.EventType.CallNegotiate, {
+          lifetime: CALL_TIMEOUT_MS,
           description: this.peerConn.localDescription?.toJSON(),
           [_callEventTypes.SDPStreamMetadataKey]: this.getLocalSDPStreamMetadata(true)
         });
@@ -1814,7 +1815,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
       await this.sendVoipEvent(eventType, content);
     } catch (error) {
       _logger.logger.error(`Call ${this.callId} gotLocalOffer() failed to send invite`, error);
-      if (error instanceof _httpApi.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
+      if (error instanceof _index.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
       let code = CallErrorCode.SignallingFailed;
       let message = "Signalling failed";
       if (this.state === CallState.CreateOffer) {
@@ -1860,24 +1861,38 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
   getRidOfRTXCodecs() {
     // RTCRtpReceiver.getCapabilities and RTCRtpSender.getCapabilities don't seem to be supported on FF before v113
     if (!RTCRtpReceiver.getCapabilities || !RTCRtpSender.getCapabilities) return;
+    const screenshareVideoTransceiver = this.transceivers.get(getTransceiverKey(_callEventTypes.SDPStreamMetadataPurpose.Screenshare, "video"));
+
+    // setCodecPreferences isn't supported on FF (as of v113)
+    if (!screenshareVideoTransceiver || !screenshareVideoTransceiver.setCodecPreferences) return;
     const recvCodecs = RTCRtpReceiver.getCapabilities("video").codecs;
     const sendCodecs = RTCRtpSender.getCapabilities("video").codecs;
-    const codecs = [...sendCodecs, ...recvCodecs];
-    for (const codec of codecs) {
-      if (codec.mimeType === "video/rtx") {
-        const rtxCodecIndex = codecs.indexOf(codec);
-        codecs.splice(rtxCodecIndex, 1);
+    const codecs = [];
+    for (const codec of [...recvCodecs, ...sendCodecs]) {
+      if (codec.mimeType !== "video/rtx") {
+        codecs.push(codec);
+        try {
+          screenshareVideoTransceiver.setCodecPreferences(codecs);
+        } catch (e) {
+          // Specifically, Chrome around version 125 and Electron 30 (which is Chromium 124) return an H.264 codec in
+          // the sender's capabilities but throw when you try to set it. Hence... this mess.
+          // Specifically, that codec is:
+          // {
+          //   clockRate: 90000,
+          //   mimeType: "video/H264",
+          //   sdpFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640034",
+          // }
+          _logger.logger.info("Working around buggy WebRTC impl: claimed to support codec but threw when setting codec preferences", codec, e);
+          codecs.pop();
+        }
       }
     }
-    const screenshareVideoTransceiver = this.transceivers.get(getTransceiverKey(_callEventTypes.SDPStreamMetadataPurpose.Screenshare, "video"));
-    // setCodecPreferences isn't supported on FF (as of v113)
-    screenshareVideoTransceiver?.setCodecPreferences?.(codecs);
   }
   /**
    * @internal
    */
   async sendVoipEvent(eventType, content) {
-    const realContent = Object.assign({}, content, {
+    const realContent = _objectSpread(_objectSpread({}, content), {}, {
       version: VOIP_PROTO_VERSION,
       call_id: this.callId,
       party_id: this.ourPartyId,
@@ -2133,7 +2148,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
     } catch (error) {
       // don't retry this event: we'll send another one later as we might
       // have more candidates by then.
-      if (error instanceof _httpApi.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
+      if (error instanceof _index.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
 
       // put all the candidates we failed to send back in the queue
       this.candidateSendQueue.push(...candidates);

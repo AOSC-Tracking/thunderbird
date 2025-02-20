@@ -692,8 +692,15 @@ extern "C" nsresult SetMailCharacterSetToMsgWindow(MimeObject* obj,
   nsresult rv = NS_OK;
 
   if (obj && obj->options) {
-    mime_stream_data* msd = (mime_stream_data*)(obj->options->stream_closure);
-    if (msd) {
+    if (obj->options->stream_closure) {
+      mime_stream_data* msd =
+          obj->options->stream_closure.IsMimeDraftData()
+              ? nullptr
+              : obj->options->stream_closure.AsMimeStreamData();
+      if (!msd) {
+        return NS_ERROR_UNEXPECTED;
+      }
+
       nsCOMPtr<nsIMailChannel> mailChannel = do_QueryInterface(msd->channel);
       if (mailChannel) {
         if (!PL_strcasecmp(aCharacterSet, "us-ascii")) {
@@ -708,7 +715,7 @@ extern "C" nsresult SetMailCharacterSetToMsgWindow(MimeObject* obj,
   return rv;
 }
 
-static char* mime_file_type(const char* filename, void* stream_closure) {
+static char* mime_file_type(const char* filename, MimeClosure stream_closure) {
   char* retType = nullptr;
   char* ext = nullptr;
   nsresult rv;
@@ -761,14 +768,20 @@ int ConvertToUTF8(const char* stringToUse, int32_t inLength,
 static int mime_convert_charset(const char* input_line, int32_t input_length,
                                 const char* input_charset,
                                 nsACString& convertedString,
-                                void* stream_closure) {
+                                MimeClosure stream_closure) {
   return ConvertToUTF8(input_line, input_length, input_charset,
                        convertedString);
 }
 
-static int mime_output_fn(const char* buf, int32_t size, void* stream_closure) {
+static int mime_output_fn(const char* buf, int32_t size,
+                          MimeClosure stream_closure) {
   uint32_t written = 0;
-  mime_stream_data* msd = (mime_stream_data*)stream_closure;
+
+  mime_stream_data* msd = stream_closure.AsMimeStreamData();
+  if (!msd) {
+    return -1;
+  }
+
   if ((!msd->pluginObj2) && (!msd->output_emitter)) return -1;
 
   // Fire pending start request
@@ -791,18 +804,28 @@ static int mime_output_fn(const char* buf, int32_t size, void* stream_closure) {
 
 extern "C" int mime_display_stream_write(nsMIMESession* stream, const char* buf,
                                          int32_t size) {
-  mime_stream_data* msd =
-      (mime_stream_data*)((nsMIMESession*)stream)->data_object;
+  if (!stream->data_object) {
+    return -1;
+  }
 
-  MimeObject* obj = (msd ? msd->obj : 0);
+  mime_stream_data* msd = stream->data_object.AsMimeStreamData();
+  if (!msd) {
+    return -1;
+  }
+
+  MimeObject* obj = msd->obj;
   if (!obj) return -1;
 
-  return obj->clazz->parse_buffer((char*)buf, size, obj);
+  return obj->clazz->parse_buffer((char*)buf, size,
+                                  MimeClosure(MimeClosure::isMimeObject, obj));
 }
 
 extern "C" void mime_display_stream_complete(nsMIMESession* stream) {
-  mime_stream_data* msd =
-      (mime_stream_data*)((nsMIMESession*)stream)->data_object;
+  mime_stream_data* msd = stream->data_object.AsMimeStreamData();
+  if (!msd) {
+    return;
+  }
+
   MimeObject* obj = (msd ? msd->obj : 0);
   if (obj) {
     int status;
@@ -854,8 +877,10 @@ extern "C" void mime_display_stream_complete(nsMIMESession* stream) {
 }
 
 extern "C" void mime_display_stream_abort(nsMIMESession* stream, int status) {
-  mime_stream_data* msd =
-      (mime_stream_data*)((nsMIMESession*)stream)->data_object;
+  mime_stream_data* msd = stream->data_object.AsMimeStreamData();
+  if (!msd) {
+    return;
+  }
 
   MimeObject* obj = (msd ? msd->obj : 0);
   if (obj) {
@@ -883,8 +908,11 @@ extern "C" void mime_display_stream_abort(nsMIMESession* stream, int status) {
 static int mime_output_init_fn(const char* type, const char* charset,
                                const char* name, const char* x_mac_type,
                                const char* x_mac_creator,
-                               void* stream_closure) {
-  mime_stream_data* msd = (mime_stream_data*)stream_closure;
+                               MimeClosure stream_closure) {
+  mime_stream_data* msd = stream_closure.AsMimeStreamData();
+  if (!msd) {
+    return -1;
+  }
 
   // Now, all of this stream creation is done outside of libmime, so this
   // is just a check of the pluginObj member and returning accordingly.
@@ -894,12 +922,13 @@ static int mime_output_init_fn(const char* type, const char* charset,
     return 0;
 }
 
-static void* mime_image_begin(const char* image_url, const char* content_type,
-                              void* stream_closure);
-static void mime_image_end(void* image_closure, int status);
-static char* mime_image_make_image_html(void* image_data);
+static mime_image_stream_data* mime_image_begin(const char* image_url,
+                                                const char* content_type,
+                                                MimeClosure stream_closure);
+static void mime_image_end(MimeClosure image_closure, int status);
+static char* mime_image_make_image_html(MimeClosure image_data);
 static int mime_image_write_buffer(const char* buf, int32_t size,
-                                   void* image_closure);
+                                   MimeClosure image_closure);
 
 /* Interface between libmime and inline display of images: the abomination
    that is known as "internal-external-reconnect".
@@ -919,9 +948,14 @@ mime_image_stream_data::mime_image_stream_data() {
   msd = nullptr;
 }
 
-static void* mime_image_begin(const char* image_url, const char* content_type,
-                              void* stream_closure) {
-  mime_stream_data* msd = (mime_stream_data*)stream_closure;
+static mime_image_stream_data* mime_image_begin(const char* image_url,
+                                                const char* content_type,
+                                                MimeClosure stream_closure) {
+  mime_stream_data* msd = stream_closure.AsMimeStreamData();
+  if (!msd) {
+    return nullptr;
+  }
+
   class mime_image_stream_data* mid;
 
   mid = new mime_image_stream_data;
@@ -939,21 +973,27 @@ static void* mime_image_begin(const char* image_url, const char* content_type,
   return mid;
 }
 
-static void mime_image_end(void* image_closure, int status) {
-  mime_image_stream_data* mid = (mime_image_stream_data*)image_closure;
+static void mime_image_end(MimeClosure image_closure, int status) {
+  PR_ASSERT(image_closure);
+  if (!image_closure) return;
 
-  PR_ASSERT(mid);
-  if (!mid) return;
+  mime_image_stream_data* mid = image_closure.AsMimeImageStreamData();
+  if (!mid) {
+    return;
+  }
 
   PR_FREEIF(mid->url);
   delete mid;
 }
 
-static char* mime_image_make_image_html(void* image_closure) {
-  mime_image_stream_data* mid = (mime_image_stream_data*)image_closure;
+static char* mime_image_make_image_html(MimeClosure image_closure) {
+  PR_ASSERT(image_closure);
+  if (!image_closure) return 0;
 
-  PR_ASSERT(mid);
-  if (!mid) return 0;
+  mime_image_stream_data* mid = image_closure.AsMimeImageStreamData();
+  if (!mid) {
+    return nullptr;
+  }
 
   /* Internal-external-reconnect only works when going to the screen. */
   if (!mid->istream)
@@ -1005,8 +1045,12 @@ static char* mime_image_make_image_html(void* image_closure) {
 }
 
 static int mime_image_write_buffer(const char* buf, int32_t size,
-                                   void* image_closure) {
-  mime_image_stream_data* mid = (mime_image_stream_data*)image_closure;
+                                   MimeClosure image_closure) {
+  mime_image_stream_data* mid = image_closure.AsMimeImageStreamData();
+  if (!mid) {
+    return -1;
+  }
+
   mime_stream_data* msd = mid->msd;
 
   if (((!msd->output_emitter)) && ((!msd->pluginObj2))) return -1;
@@ -1139,14 +1183,14 @@ MimeDisplayOptions::MimeDisplayOptions() {
   default_charset = nullptr;
   override_charset = false;
   force_user_charset = false;
-  stream_closure = nullptr;
+  stream_closure = MimeClosure::zero();
 
   /* For setting up the display stream, so that the MIME parser can inform
    the caller of the type of the data it will be getting. */
   output_init_fn = nullptr;
   output_fn = nullptr;
 
-  output_closure = nullptr;
+  output_closure = MimeClosure::zero();
 
   charset_conversion_fn = nullptr;
   rfc1522_conversion_p = false;
@@ -1155,7 +1199,7 @@ MimeDisplayOptions::MimeDisplayOptions() {
 
   passwd_prompt_fn = nullptr;
 
-  html_closure = nullptr;
+  html_closure = MimeClosure::zero();
 
   generate_header_html_fn = nullptr;
   generate_post_header_html_fn = nullptr;
@@ -1376,7 +1420,8 @@ extern "C" void* mime_bridge_create_display_stream(
   msd->options->charset_conversion_fn = mime_convert_charset;
   msd->options->rfc1522_conversion_p = true;
   msd->options->file_type_fn = mime_file_type;
-  msd->options->stream_closure = msd;
+  msd->options->stream_closure =
+      MimeClosure(MimeClosure::isMimeStreamData, msd);
   msd->options->passwd_prompt_fn = 0;
 
   msd->options->image_begin = mime_image_begin;
@@ -1419,7 +1464,7 @@ extern "C" void* mime_bridge_create_display_stream(
   stream->complete = mime_display_stream_complete;
   stream->abort = mime_display_stream_abort;
   stream->put_block = mime_display_stream_write;
-  stream->data_object = msd;
+  stream->data_object = MimeClosure(MimeClosure::isMimeStreamData, msd);
 
   status = obj->clazz->initialize(obj);
   if (status >= 0) status = obj->clazz->parse_begin(obj);
@@ -1438,8 +1483,12 @@ extern "C" void* mime_bridge_create_display_stream(
 // Emitter Wrapper Routines!
 //
 nsIMimeEmitter* GetMimeEmitter(MimeDisplayOptions* opt) {
-  mime_stream_data* msd = (mime_stream_data*)opt->stream_closure;
-  if (!msd) return NULL;
+  if (!opt->stream_closure) return NULL;
+
+  mime_stream_data* msd = opt->stream_closure.AsMimeStreamData();
+  if (!msd) {
+    return nullptr;
+  }
 
   nsIMimeEmitter* ptr = (nsIMimeEmitter*)(msd->output_emitter);
   return ptr;
@@ -1447,8 +1496,8 @@ nsIMimeEmitter* GetMimeEmitter(MimeDisplayOptions* opt) {
 
 mime_stream_data* GetMSD(MimeDisplayOptions* opt) {
   if (!opt) return nullptr;
-  mime_stream_data* msd = (mime_stream_data*)opt->stream_closure;
-  return msd;
+
+  return opt->stream_closure.AsMimeStreamData();
 }
 
 bool NoEmitterProcessing(nsMimeOutputType format_out) {
@@ -1671,7 +1720,7 @@ extern "C" nsresult mimeEmitterStartHeader(MimeDisplayOptions* opt,
 extern "C" nsresult mimeSetNewURL(nsMIMESession* stream, char* url) {
   if ((!stream) || (!url) || (!*url)) return NS_ERROR_FAILURE;
 
-  mime_stream_data* msd = (mime_stream_data*)stream->data_object;
+  mime_stream_data* msd = stream->data_object.AsMimeStreamData();
   if (!msd) return NS_ERROR_FAILURE;
 
   char* tmpPtr = strdup(url);
@@ -1717,10 +1766,15 @@ extern "C" char* MimeGetStringByName(const char16_t* stringName) {
 
 void ResetChannelCharset(MimeObject* obj) {
   if (obj->options && obj->options->stream_closure &&
-      obj->options->default_charset && obj->headers) {
-    mime_stream_data* msd = (mime_stream_data*)(obj->options->stream_closure);
+      obj->options->default_charset && obj->headers &&
+      obj->options->stream_closure) {
+    mime_stream_data* msd = obj->options->stream_closure.AsMimeStreamData();
+    if (!msd) {
+      return;
+    }
+
     char* ct = MimeHeaders_get(obj->headers, HEADER_CONTENT_TYPE, false, false);
-    if (ct && msd && msd->channel) {
+    if (ct && msd->channel) {
       char* cSet = MimeHeaders_get_parameter(ct, "charset", nullptr, nullptr);
       if (cSet) {
         // The content-type does specify a charset. First, setup the channel.

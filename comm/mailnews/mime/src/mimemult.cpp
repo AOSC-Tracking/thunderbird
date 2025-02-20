@@ -462,11 +462,14 @@ static int MimeMultipart_create_child(MimeObject* obj) {
     /* if we are saving an apple double attachment, we need to set correctly the
      * content type of the channel */
     if (mime_typep(obj, (MimeObjectClass*)&mimeMultipartAppleDoubleClass)) {
-      mime_stream_data* msd = (mime_stream_data*)body->options->stream_closure;
-      if (!body->options->write_html_p && body->content_type &&
-          !PL_strcasecmp(body->content_type, APPLICATION_APPLEFILE)) {
-        if (msd && msd->channel)
-          msd->channel->SetContentType(nsLiteralCString(APPLICATION_APPLEFILE));
+      mime_stream_data* msd = body->options->stream_closure.AsMimeStreamData();
+      if (msd) {
+        if (!body->options->write_html_p && body->content_type &&
+            !PL_strcasecmp(body->content_type, APPLICATION_APPLEFILE)) {
+          if (msd->channel)
+            msd->channel->SetContentType(
+                nsLiteralCString(APPLICATION_APPLEFILE));
+        }
       }
     }
 #endif
@@ -598,12 +601,14 @@ static int MimeMultipart_parse_child_line(MimeObject* obj, const char* line,
   if (!first_line_p) {
     /* Push out a preceding newline... */
     char nl[] = MSG_LINEBREAK;
-    status = kid->clazz->parse_buffer(nl, MSG_LINEBREAK_LEN, kid);
+    status = kid->clazz->parse_buffer(
+        nl, MSG_LINEBREAK_LEN, MimeClosure(MimeClosure::isMimeObject, kid));
     if (status < 0) return status;
   }
 
   /* Now push out the line sans trailing newline. */
-  return kid->clazz->parse_buffer(line, length, kid);
+  return kid->clazz->parse_buffer(line, length,
+                                  MimeClosure(MimeClosure::isMimeObject, kid));
 }
 
 static int MimeMultipart_parse_eof(MimeObject* obj, bool abort_p) {

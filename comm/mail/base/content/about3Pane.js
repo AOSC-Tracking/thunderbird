@@ -157,6 +157,11 @@ window.addEventListener("DOMContentLoaded", async event => {
   // (triggered by `folderPane.init` and possibly `restoreState`) are ignored
   // to avoid unnecessarily loading the thread tree or Account Central.
   folderTree.addEventListener("select", folderPane);
+
+  // Delay inital folder selection until after the message list's resize
+  // observer has had a chance to respond to layout changes. Otherwise we
+  // might end up scrolling to the wrong part of the list.
+  await new Promise(resolve => setTimeout(resolve));
   folderTree.dispatchEvent(new CustomEvent("select"));
 
   // Attach the progress listener for the webBrowser. For the messageBrowser this
@@ -1068,7 +1073,7 @@ var folderPane = {
       },
 
       regenerateMode() {
-        if (this._smartServer) {
+        if (this._smartMailbox) {
           SmartMailboxUtils.removeAll(true);
         }
         this.init();
@@ -1646,6 +1651,7 @@ var folderPane = {
     Services.obs.addObserver(this, "server-color-preview");
     Services.obs.addObserver(this, "search-folders-changed");
     Services.obs.addObserver(this, "folder-properties-changed");
+    Services.obs.addObserver(this, "folder-needs-repair");
 
     folderTree.addEventListener("auxclick", this);
     folderTree.addEventListener("contextmenu", this);
@@ -1717,6 +1723,7 @@ var folderPane = {
     Services.obs.removeObserver(this, "server-color-preview");
     Services.obs.removeObserver(this, "search-folders-changed");
     Services.obs.removeObserver(this, "folder-properties-changed");
+    Services.obs.removeObserver(this, "folder-needs-repair");
   },
 
   handleEvent(event) {
@@ -1790,6 +1797,12 @@ var folderPane = {
       case "server-color-preview":
         this._changeServerRow(subject, row => row.setIconColor(data));
         break;
+      case "folder-needs-repair": {
+        const folder = subject.QueryInterface(Ci.nsIMsgFolder);
+        console.warn("caught folder-needs-repair for " + folder.URI);
+        this.rebuildFolderSummary(folder);
+        break;
+      }
     }
   },
 
@@ -3409,6 +3422,47 @@ var folderPane = {
     );
   },
 
+  async rebuildFolderSummary(folder) {
+    if (folder.locked) {
+      folder.throwAlertMsg("operationFailedFolderBusy", top.msgWindow);
+      return;
+    }
+    if (folder.supportsOffline) {
+      // Remove the offline store, if any.
+      await IOUtils.remove(folder.filePath.path, { recursive: true }).catch(
+        console.error
+      );
+    }
+
+    // The following notification causes all DBViewWrappers that include
+    // this folder to rebuild their views.
+    MailServices.mfn.notifyFolderReindexTriggered(folder);
+
+    folder.msgDatabase.summaryValid = false;
+    try {
+      const isIMAP = folder.server.type == "imap";
+      let transferInfo = null;
+      if (isIMAP) {
+        transferInfo = folder.dBTransferInfo.QueryInterface(
+          Ci.nsIWritablePropertyBag2
+        );
+        transferInfo.setPropertyAsACString("numMsgs", "0");
+        transferInfo.setPropertyAsACString("numNewMsgs", "0");
+        // Reset UID validity so that nsImapMailFolder::UpdateImapMailboxInfo
+        // will recognize that a folder repair is in progress.
+        transferInfo.setPropertyAsACString("UIDValidity", "-1"); // == kUidUnknown
+      }
+      folder.closeAndBackupFolderDB("");
+      if (isIMAP && transferInfo) {
+        folder.dBTransferInfo = transferInfo;
+      }
+    } catch (e) {
+      // In a failure, proceed anyway since we're dealing with problems
+      folder.ForceDBClosed();
+    }
+    folder.updateFolder(top.msgWindow);
+  },
+
   /**
    * Opens the dialog to edit the properties for a folder
    *
@@ -3435,47 +3489,6 @@ var folderPane = {
       }
     }
 
-    async function rebuildSummary() {
-      if (folder.locked) {
-        folder.throwAlertMsg("operationFailedFolderBusy", top.msgWindow);
-        return;
-      }
-      if (folder.supportsOffline) {
-        // Remove the offline store, if any.
-        await IOUtils.remove(folder.filePath.path, { recursive: true }).catch(
-          console.error
-        );
-      }
-
-      // The following notification causes all DBViewWrappers that include
-      // this folder to rebuild their views.
-      MailServices.mfn.notifyFolderReindexTriggered(folder);
-
-      folder.msgDatabase.summaryValid = false;
-      try {
-        const isIMAP = folder.server.type == "imap";
-        let transferInfo = null;
-        if (isIMAP) {
-          transferInfo = folder.dBTransferInfo.QueryInterface(
-            Ci.nsIWritablePropertyBag2
-          );
-          transferInfo.setPropertyAsACString("numMsgs", "0");
-          transferInfo.setPropertyAsACString("numNewMsgs", "0");
-          // Reset UID validity so that nsImapMailFolder::UpdateImapMailboxInfo
-          // will recognize that a folder repair is in progress.
-          transferInfo.setPropertyAsACString("UIDValidity", "-1"); // == kUidUnknown
-        }
-        folder.closeAndBackupFolderDB("");
-        if (isIMAP && transferInfo) {
-          folder.dBTransferInfo = transferInfo;
-        }
-      } catch (e) {
-        // In a failure, proceed anyway since we're dealing with problems
-        folder.ForceDBClosed();
-      }
-      folder.updateFolder(top.msgWindow);
-    }
-
     window.openDialog(
       "chrome://messenger/content/folderProps.xhtml",
       "",
@@ -3488,7 +3501,7 @@ var folderPane = {
         okCallback: editFolderCallback,
         tabID,
         name: folder.prettyName,
-        rebuildSummaryCallback: rebuildSummary,
+        rebuildSummaryCallback: this.rebuildFolderSummary,
       }
     );
   },
@@ -4437,8 +4450,10 @@ var threadPane = {
         threadTree.invalidate();
         break;
       case "custom-column-refreshed":
-        // Invalidate only the column specified in data.
-        threadTree.invalidate(data);
+        // Invalidate the whole thing. This used to refresh just the column,
+        // but now that filling the cells happens asynchronously, that's too
+        // complicated. Kept for add-on compatibility.
+        threadTree.invalidate();
         break;
       case "custom-column-added":
         this.addCustomColumn(data);
@@ -4940,7 +4955,7 @@ var threadPane = {
     const cardClass = customElements.get("thread-card");
     const currentFontSize = UIFontSize.size;
     const cardRows = 3;
-    const cardRowConstant = Math.round(1.43 * cardRows * currentFontSize); // subject line-height * line-height * cardRows * current font-size
+    const cardRowConstant = Math.round(1.5 * cardRows * currentFontSize); // subject line-height * cardRows * current font-size
     let rowHeight = Math.ceil(currentFontSize * 1.4);
     let lineGap;
     let densityPaddingConstant;

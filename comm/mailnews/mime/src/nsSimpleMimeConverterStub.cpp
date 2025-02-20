@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "prlog.h"
 #include "mimecth.h"
 #include "mimetext.h"
 #include "mimemoz2.h"
@@ -73,8 +74,11 @@ static int EndGather(MimeObject* obj, bool abort_p) {
 
   if (ssobj->buffer->IsEmpty()) return 0;
 
-  mime_stream_data* msd = (mime_stream_data*)(obj->options->stream_closure);
-  nsIChannel* channel = msd->channel;  // note the lack of ref counting...
+  mime_stream_data* msd = obj->options->stream_closure.IsMimeDraftData()
+                              ? nullptr
+                              : obj->options->stream_closure.AsMimeStreamData();
+  nsIChannel* channel = msd ? msd->channel.get() : nullptr;
+
   if (channel) {
     nsCOMPtr<nsIURI> uri;
     channel->GetURI(getter_AddRefs(uri));
