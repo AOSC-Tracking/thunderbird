@@ -42,7 +42,7 @@
 #include "nsIMsgFolder.h"
 #include "nsMsgMessageFlags.h"
 #include "nsIMsgIncomingServer.h"
-
+#include "nsIMsgImapMailFolder.h"
 #include "nsIMsgMessageService.h"
 
 #include "nsIMsgHdr.h"
@@ -77,6 +77,8 @@
 #include "nsIChannel.h"
 #include "nsIOutputStream.h"
 #include "nsIPrincipal.h"
+
+#include "nsString.h"
 
 #include "mozilla/dom/BrowserParent.h"
 
@@ -340,15 +342,6 @@ nsresult nsMessenger::PromptIfFileExists(nsIFile* file) {
 
   // reset the file to point to the new path
   return file->InitWithFile(localFile);
-}
-
-NS_IMETHODIMP nsMessenger::SaveAttachmentToFile(nsIFile* aFile,
-                                                const nsACString& aURL,
-                                                const nsACString& aMessageUri,
-                                                const nsACString& aContentType,
-                                                nsIUrlListener* aListener) {
-  return SaveAttachment(aFile, aURL, aMessageUri, aContentType, nullptr,
-                        aListener);
 }
 
 NS_IMETHODIMP
@@ -793,7 +786,7 @@ nsMessenger::SaveAs(const nsACString& aURI, bool aAsFile,
       // A null saveAsFile means that the user canceled the save as
       if (NS_FAILED(rv) || !saveAsFile) goto done;
     } else {
-      saveAsFile = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
+      saveAsFile = new nsLocalFile();
       rv = saveAsFile->InitWithPath(aMsgFilename);
       if (NS_FAILED(rv)) goto done;
       if (StringEndsWith(aMsgFilename,
@@ -1095,9 +1088,7 @@ nsMessenger::SaveMessages(const nsTArray<nsString>& aFilenameArray,
     return NS_OK;
 
   for (uint32_t i = 0; i < aFilenameArray.Length(); i++) {
-    nsCOMPtr<nsIFile> saveToFile =
-        do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIFile> saveToFile = new nsLocalFile();
     rv = saveToFile->InitWithFile(saveDir);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1169,17 +1160,17 @@ nsMessenger::MsgHdrFromURI(const nsACString& aUri, nsIMsgDBHdr** aMsgHdr) {
 
 NS_IMETHODIMP nsMessenger::GetUndoTransactionType(uint32_t* txnType) {
   NS_ENSURE_TRUE(txnType && mTxnMgr, NS_ERROR_NULL_POINTER);
-
-  nsresult rv;
   *txnType = nsMessenger::eUnknown;
   nsCOMPtr<nsITransaction> txn;
-  rv = mTxnMgr->PeekUndoStack(getter_AddRefs(txn));
-  if (NS_SUCCEEDED(rv) && txn) {
-    nsCOMPtr<nsIPropertyBag2> propertyBag = do_QueryInterface(txn, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    return propertyBag->GetPropertyAsUint32(u"type"_ns, txnType);
+  nsresult rv = mTxnMgr->PeekUndoStack(getter_AddRefs(txn));
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!txn) {
+    return NS_OK;  // Nothing to undo.
   }
-  return rv;
+  // Manager holds nsITransactions, but txnType is added by nsIMsgTxn.
+  nsCOMPtr<nsIMsgTxn> msgTxn = do_QueryInterface(txn, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+  return msgTxn->GetTxnType(txnType);
 }
 
 NS_IMETHODIMP nsMessenger::CanUndo(bool* bValue) {
@@ -1196,16 +1187,17 @@ NS_IMETHODIMP nsMessenger::CanUndo(bool* bValue) {
 NS_IMETHODIMP nsMessenger::GetRedoTransactionType(uint32_t* txnType) {
   NS_ENSURE_TRUE(txnType && mTxnMgr, NS_ERROR_NULL_POINTER);
 
-  nsresult rv;
   *txnType = nsMessenger::eUnknown;
   nsCOMPtr<nsITransaction> txn;
-  rv = mTxnMgr->PeekRedoStack(getter_AddRefs(txn));
-  if (NS_SUCCEEDED(rv) && txn) {
-    nsCOMPtr<nsIPropertyBag2> propertyBag = do_QueryInterface(txn, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    return propertyBag->GetPropertyAsUint32(u"type"_ns, txnType);
+  nsresult rv = mTxnMgr->PeekRedoStack(getter_AddRefs(txn));
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!txn) {
+    return NS_OK;  // Nothing to redo.
   }
-  return rv;
+  // Manager holds nsITransactions, but txnType is added by nsIMsgTxn.
+  nsCOMPtr<nsIMsgTxn> msgTxn = do_QueryInterface(txn, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+  return msgTxn->GetTxnType(txnType);
 }
 
 NS_IMETHODIMP nsMessenger::CanRedo(bool* bValue) {
@@ -1487,8 +1479,11 @@ nsSaveMsgListener::OnStopRequest(nsIRequest* request, nsresult status) {
       // Yes, start on the next attachment.
       uint32_t i = state->m_curIndex;
       nsString unescapedName;
-      RefPtr<nsLocalFile> localFile =
-          new nsLocalFile(nsTDependentString<PathChar>(state->m_directoryName));
+      nsCOMPtr<nsIFile> localFile;
+      rv =
+          NS_NewPathStringLocalFile(DependentPathString(state->m_directoryName),
+                                    getter_AddRefs(localFile));
+      if (NS_FAILED(rv)) goto done;
       if (localFile->NativePath().IsEmpty()) {
         rv = NS_ERROR_FAILURE;
         goto done;
@@ -2047,9 +2042,10 @@ nsresult AttachmentDeleter::DeleteOriginalMessage() {
 NS_IMETHODIMP
 AttachmentDeleter::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
   nsresult rv = NS_OK;
-  if (mOriginalMessage && m_state == eUpdatingFolder)
+  if (mOriginalMessage && m_state == eUpdatingFolder) {
+    // DeleteOriginalMessage will set m_state eDeletingOldMessage.
     rv = DeleteOriginalMessage();
-
+  }
   return rv;
 }
 
@@ -2117,20 +2113,21 @@ AttachmentDeleter::OnStopCopy(nsresult aStatus) {
     return NS_OK;
   }
 
-  // For non-IMAP messages, the original is deleted here, for IMAP messages
-  // that happens in `OnStopRunningUrl()` which isn't called for non-IMAP
-  // messages.
   const nsACString& messageUri = mAttach->mAttachmentArray[0].mMessageUri;
   if (mOriginalMessage &&
       !Substring(messageUri, 0, 13).EqualsLiteral("imap-message:")) {
+    // For non-IMAP messages, the original is deleted here.
     return DeleteOriginalMessage();
-  } else {
-    // Arrange for the message to be deleted in the next `OnStopRunningUrl()`
-    // call.
-    m_state = eUpdatingFolder;
   }
 
-  return NS_OK;
+  // For imap, that happens in `OnStopRunningUrl()` which isn't called for
+  // pop3 messages.
+
+  // Arrange for the message to be deleted in the next `OnStopRunningUrl()`
+  // call.
+  m_state = eUpdatingFolder;
+  nsCOMPtr<nsIMsgImapMailFolder> imapFolder = do_QueryInterface(mMessageFolder);
+  return imapFolder->UpdateFolderWithListener(nullptr, this);
 }
 
 //

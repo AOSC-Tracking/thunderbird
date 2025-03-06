@@ -18,6 +18,10 @@ REQUIRE_GPU = False
 if "REQUIRE_GPU" in os.environ:
     REQUIRE_GPU = os.environ["REQUIRE_GPU"] == "1"
 
+USE_HARDWARE = False
+if "USE_HARDWARE" in os.environ:
+    USE_HARDWARE = os.environ["USE_HARDWARE"] == "1"
+
 PYWIN32 = "pywin32==306"
 
 XPCSHELL_NAME = "xpcshell.exe"
@@ -44,7 +48,7 @@ config = {
     "installer_path": INSTALLER_PATH,
     "binary_path": BINARY_PATH,
     "xpcshell_name": XPCSHELL_NAME,
-    "virtualenv_modules": [PYWIN32, "six==1.13.0", "vcversioner==2.16.0.0"],
+    "virtualenv_modules": [PYWIN32, "six==1.16.0", "vcversioner==2.16.0.0"],
     "virtualenv_path": "venv",
     "exe_suffix": EXE_SUFFIX,
     "run_file_names": {
@@ -167,6 +171,10 @@ config = {
         ],
         "mochitest-browser-a11y": ["--flavor=browser", "--subsuite=a11y"],
         "mochitest-browser-media": ["--flavor=browser", "--subsuite=media-bc"],
+        "mochitest-browser-translations": [
+            "--flavor=browser",
+            "--subsuite=translations",
+        ],
         "mochitest-a11y": ["--flavor=a11y", "--disable-e10s"],
         "mochitest-remote": ["--flavor=browser", "--subsuite=remote"],
     },
@@ -232,15 +240,129 @@ config = {
                     "external_tools",
                     "machine-configuration.json",
                 ),
-                "--platform=win10-vm"
-                if REQUIRE_GPU and (platform.uname().version == "10.0.19045")
-                else "--platform=win11-hw"
-                if REQUIRE_GPU and (platform.uname().version == "10.0.22621")
-                else "--platform=win7",
+                (
+                    "--platform=win10-vm"
+                    if REQUIRE_GPU and (platform.uname().version == "10.0.19045")
+                    else (
+                        "--platform=win11-hw"
+                        if REQUIRE_GPU and (platform.uname().version == "10.0.22621")
+                        else "--platform=win7"
+                    )
+                ),
             ],
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": True,
             "enabled": ADJUST_MOUSE_AND_SCREEN,
+        },
+        {
+            "name": "enable microphone access for msix",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefoxNightly_5x4grbbqzn2q4" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefoxNightly_5x4grbbqzn2q4 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix (central)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefoxNightly_jag0gd4e3s9p2" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key (central)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefoxNightly_jag0gd4e3s9p2 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix (beta)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefoxBeta_5x4grbbqzn2q4" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key (beta)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefoxBeta_5x4grbbqzn2q4 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix (release)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefox_jag0gd4e3s9p2" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key (release)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefox_jag0gd4e3s9p2 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix (esr)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefox_5x4grbbqzn2q4" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key (esr)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefox_5x4grbbqzn2q4 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
         },
         {
             "name": "disable windows security and maintenance notifications",
@@ -310,7 +432,7 @@ config = {
             ],
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": True,
-            "enabled": True,
+            "enabled": False,
         },
         {
             "name": "ensure proper graphics driver",
@@ -321,7 +443,19 @@ config = {
             ],
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": True,
-            "enabled": True if REQUIRE_GPU else False,
+            "enabled": True if REQUIRE_GPU and not USE_HARDWARE else False,
+            "fatal_exit_code": 4,
+        },
+        {
+            "name": "ensure display refresh rate == 60",
+            "cmd": [
+                "powershell",
+                "-command",
+                'if (-Not ((Get-WmiObject win32_videocontroller).CurrentRefreshRate | Out-String).contains("60")) { echo "Screen refresh rate != 60: " + ((Get-WmiObject win32_videocontroller).CurrentRefreshRate | Out-String); exit 4; }',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True if REQUIRE_GPU and USE_HARDWARE else False,
             "fatal_exit_code": 4,
         },
     ],

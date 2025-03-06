@@ -7,6 +7,9 @@
 
 /* import-globals-from aboutDialog.js */
 
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
@@ -190,8 +193,7 @@ appUpdater.prototype = {
    * Sets the panel of the updateDeck and the visibility of icons
    * in the #icons element.
    *
-   * @param  aChildID
-   *         The id of the deck's child to select, e.g. "apply".
+   * @param {string} aChildID - The id of the deck's child to select, e.g. "apply".
    */
   selectPanel(aChildID) {
     const panel = document.getElementById(aChildID);
@@ -308,13 +310,10 @@ appUpdater.prototype = {
 };
 
 window.addEventListener("load", () => {
-  const protocolSvc = Cc[
-    "@mozilla.org/uriloader/external-protocol-service;1"
-  ].getService(Ci.nsIExternalProtocolService);
   for (const link of document.querySelectorAll(".download-link")) {
     link.addEventListener("click", event => {
       event.preventDefault();
-      protocolSvc.loadURI(Services.io.newURI(event.target.href));
+      openLinkExternally(event.target.href, { addToHistory: false });
     });
   }
 });

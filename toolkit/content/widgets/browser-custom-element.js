@@ -43,6 +43,13 @@
     "unloadTimeoutMs",
     "dom.beforeunload_timeout_ms"
   );
+  XPCOMUtils.defineLazyPreferenceGetter(
+    lazyPrefs,
+    "_contentAnalysisDragDropEnabled",
+    "browser.contentanalysis.interception_point.drag_and_drop.enabled",
+    true
+  );
+
   Object.defineProperty(lazy, "ProcessHangMonitor", {
     configurable: true,
     get() {
@@ -166,7 +173,10 @@
       this.addEventListener(
         "drop",
         event => {
-          if (lazy.contentAnalysis.isActive) {
+          if (
+            lazy.contentAnalysis.isActive &&
+            lazyPrefs._contentAnalysisDragDropEnabled
+          ) {
             let dragService = Cc[
               "@mozilla.org/widget/dragservice;1"
             ].getService(Ci.nsIDragService);
@@ -241,6 +251,7 @@
                 caPromises.push(
                   lazy.contentAnalysis.analyzeContentRequest(
                     {
+                      reason: Ci.nsIContentAnalysisRequest.eDragAndDrop,
                       requestToken: Services.uuid.generateUUID().toString(),
                       resources: [],
                       url: lazy.contentAnalysis.getURIForDropEvent(event),
@@ -476,6 +487,10 @@
       return this.webNavigation.canGoBack;
     }
 
+    get canGoBackIgnoringUserInteraction() {
+      return this.webNavigation.canGoBackIgnoringUserInteraction;
+    }
+
     get canGoForward() {
       return this.webNavigation.canGoForward;
     }
@@ -543,6 +558,9 @@
     }
 
     set docShellIsActive(val) {
+      if (!this.browsingContext) {
+        return;
+      }
       this.browsingContext.isActive = val;
       if (this.isRemoteBrowser) {
         let remoteTab = this.frameLoader?.remoteTab;
@@ -689,9 +707,11 @@
     }
 
     get contentTitle() {
-      return this.isRemoteBrowser
-        ? this.browsingContext?.currentWindowGlobal?.documentTitle
-        : this.contentDocument.title;
+      return (
+        (this.isRemoteBrowser
+          ? this.browsingContext?.currentWindowGlobal?.documentTitle
+          : this.contentDocument.title) ?? ""
+      );
     }
 
     forceEncodingDetection() {
@@ -893,7 +913,11 @@
         .navigationRequireUserInteraction
     ) {
       var webNavigation = this.webNavigation;
-      if (webNavigation.canGoBack) {
+      if (
+        requireUserInteraction
+          ? webNavigation.canGoBack
+          : webNavigation.canGoBackIgnoringUserInteraction
+      ) {
         this._wrapURIChangeCall(() =>
           webNavigation.goBack(requireUserInteraction)
         );
@@ -1247,13 +1271,19 @@
       }
     }
 
-    updateWebNavigationForLocationChange(aCanGoBack, aCanGoForward) {
+    updateWebNavigationForLocationChange(
+      aCanGoBack,
+      aCanGoBackIgnoringUserInteraction,
+      aCanGoForward
+    ) {
       if (
         this.isRemoteBrowser &&
         this.messageManager &&
         !Services.appinfo.sessionHistoryInParent
       ) {
         this._remoteWebNavigation._canGoBack = aCanGoBack;
+        this._remoteWebNavigation._canGoBackIgnoringUserInteraction =
+          aCanGoBackIgnoringUserInteraction;
         this._remoteWebNavigation._canGoForward = aCanGoForward;
       }
     }
@@ -1300,6 +1330,7 @@
     purgeSessionHistory() {
       if (this.isRemoteBrowser && !Services.appinfo.sessionHistoryInParent) {
         this._remoteWebNavigation._canGoBack = false;
+        this._remoteWebNavigation._canGoBackIgnoringUserInteraction = false;
         this._remoteWebNavigation._canGoForward = false;
       }
 

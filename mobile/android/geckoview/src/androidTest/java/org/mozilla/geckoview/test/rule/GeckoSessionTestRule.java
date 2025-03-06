@@ -2735,21 +2735,6 @@ public class GeckoSessionTestRule implements TestRule {
     void setArgs(JSONObject object) throws JSONException;
   }
 
-  /**
-   * Sets value to the given scalar.
-   *
-   * @param id the scalar to be set.
-   * @param value the value to set.
-   */
-  public <T> void setScalar(final String id, final T value) {
-    webExtensionApiCall(
-        "SetScalar",
-        args -> {
-          args.put("id", id);
-          args.put("value", value);
-        });
-  }
-
   /** Invokes nsIDOMWindowUtils.setResolutionAndScaleTo. */
   public void setResolutionAndScaleTo(final GeckoSession session, final float resolution) {
     webExtensionApiCall(
@@ -2763,6 +2748,11 @@ public class GeckoSessionTestRule implements TestRule {
   /** Invokes nsIDOMWindowUtils.flushApzRepaints. */
   public void flushApzRepaints(final GeckoSession session) {
     webExtensionApiCall(session, "FlushApzRepaints", null);
+  }
+
+  /** Invokes nsIDOMWindowUtils.zoomToFocusedInput. */
+  public void zoomToFocusedInput(final GeckoSession session) {
+    webExtensionApiCall(session, "ZoomToFocusedInput", null);
   }
 
   /** Invokes a simplified version of promiseAllPaintsDone in paint_listener.js. */
@@ -2788,6 +2778,16 @@ public class GeckoSessionTestRule implements TestRule {
   /** Clears sites from the HSTS list. */
   public void clearHSTSState() {
     webExtensionApiCall("ClearHSTSState", null);
+  }
+
+  /** Checks if SHIP is running. */
+  public boolean isSessionHistoryInParentRunning() {
+    return (Boolean) webExtensionApiCall("IsSessionHistoryInParentRunning", null);
+  }
+
+  /** Checks if fission is running. */
+  public boolean isFissionRunning() {
+    return (Boolean) webExtensionApiCall("IsFissionRunning", null);
   }
 
   private Object webExtensionApiCall(

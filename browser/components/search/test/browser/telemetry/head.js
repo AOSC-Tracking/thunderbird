@@ -23,6 +23,7 @@ ChromeUtils.defineESModuleGetters(this, {
   TELEMETRY_CATEGORIZATION_KEY:
     "resource:///modules/SearchSERPTelemetry.sys.mjs",
   TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.sys.mjs",
+  VISIBILITY_THRESHOLD: "resource:///actors/SearchSERPTelemetryChild.sys.mjs",
 });
 
 ChromeUtils.defineLazyGetter(this, "UrlbarTestUtils", () => {
@@ -63,6 +64,11 @@ SearchTestUtils.init(this);
 
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function sleep(ms) {
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 // sharedData messages are only passed to the child on idle. Therefore
 // we wait for a few idles to try and ensure the messages have been able
@@ -511,7 +517,15 @@ registerCleanupFunction(async () => {
   await PlacesUtils.history.clear();
 });
 
-async function mockRecordWithAttachment({ id, version, filename, mapping }) {
+async function mockRecordWithAttachment({
+  id,
+  version,
+  filename,
+  mapping,
+  includeRegions,
+  excludeRegions,
+  isDefault = true,
+}) {
   // Get the bytes of the file for the hash and size for attachment metadata.
   let buffer = new TextEncoder().encode(JSON.stringify(mapping)).buffer;
   let stream = Cc["@mozilla.org/io/arraybuffer-input-stream;1"].createInstance(
@@ -533,6 +547,9 @@ async function mockRecordWithAttachment({ id, version, filename, mapping }) {
   let record = {
     id,
     version,
+    includeRegions,
+    excludeRegions,
+    isDefault,
     attachment: {
       hash,
       location: `main-workspace/search-categorization/${filename}`,
@@ -591,6 +608,9 @@ async function insertRecordIntoCollection() {
     version: 1,
     filename: "domain_category_mappings.json",
     mapping: CONVERTED_ATTACHMENT_VALUES,
+    includeRegions: [],
+    excludeRegions: [],
+    isDefault: true,
   });
   await db.create(record);
   await client.attachments.cacheImpl.set(record.id, attachment);
@@ -694,4 +714,14 @@ async function initSinglePageAppTest() {
       SPA_ADLINK_CHECK_TIMEOUT_MS
     );
   });
+}
+
+async function resizeWindow(win, width, height) {
+  let promise = BrowserTestUtils.waitForEvent(win, "resize");
+  win.resizeTo(width, height);
+  await promise;
+
+  // Wait two frames in hopes resizing is done.
+  await new Promise(resolve => win.requestAnimationFrame(resolve));
+  await new Promise(resolve => win.requestAnimationFrame(resolve));
 }

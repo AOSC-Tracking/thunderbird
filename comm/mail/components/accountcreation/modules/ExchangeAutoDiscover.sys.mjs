@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { AccountCreationUtils } from "resource:///modules/accountcreation/AccountCreationUtils.sys.mjs";
+import { OAuth2Module } from "resource:///modules/OAuth2Module.sys.mjs";
 
 const lazy = {};
 
@@ -52,14 +53,14 @@ function startFetchWithAuth(call, url, username, password, callArgs) {
   // Creates a new FetchHTTP object with the given arguments, registers it with
   // the abortable call, and initiates the fetch.
   function setUpAndStart(args) {
-    const fetch = new lazy.FetchHTTP(
+    const fetchHttp = new lazy.FetchHTTP(
       url,
       args,
       call.successCallback(),
       call.errorCallback()
     );
-    call.setAbortable(fetch);
-    fetch.start();
+    call.setAbortable(fetchHttp);
+    fetchHttp.start();
   }
 
   // Start a fetch with Basic auth using the credentials provided by the
@@ -72,14 +73,16 @@ function startFetchWithAuth(call, url, username, password, callArgs) {
     setUpAndStart(args);
   }
 
-  const oauth2Module = Cc["@mozilla.org/mail/oauth2-module;1"].createInstance(
-    Ci.msgIOAuth2Module
-  );
+  const oauth2Module = new OAuth2Module();
 
   // Initialize an OAuth2 module and determine whether we support a provider
   // associated with the provided domain.
   const uri = Services.io.newURI(url);
-  const isOAuth2Available = oauth2Module.initFromHostname(uri.host, username);
+  const isOAuth2Available = oauth2Module.initFromHostname(
+    uri.host,
+    username,
+    "exchange"
+  );
   if (isOAuth2Available) {
     oauth2Module.getAccessToken({
       onSuccess: token => {
@@ -119,20 +122,22 @@ function startFetchWithAuth(call, url, username, password, callArgs) {
  *
  * @param {string} domain - The domain part of the user's email address
  * @param {string} emailAddress - The user's email address
- * @param {string} username - (Optional) The user's login name.
- *         If null, email address will be used.
+ * @param {?string} username - (Optional) The user's login name.
+ *   If null, email address will be used.
  * @param {string} password - The user's password for that email address
- * @param {Function(domain, okCallback, cancelCallback)} confirmCallback - A
- *        callback that will be called to confirm redirection to another domain.
- * @param {Function(config {AccountConfig})} successCallback - A callback that
- *         will be called when we could retrieve a configuration.
- *         The AccountConfig object will be passed in as first parameter.
- * @param {Function(ex)} errorCallback - A callback that
- *         will be called when we could not retrieve a configuration,
- *         for whatever reason. This is expected (e.g. when there's no config
- *         for this domain at this location),
- *         so do not unconditionally show this to the user.
- *         The first parameter will be an exception object or error string.
+ * @param {function(string,Function,Function):void} confirmCallback - A callback
+ *   Function(domain, okCallback, cancelCallback) that will be called to confirm
+ *   redirection to another domain.
+ * @param {function(AccountConfig):void} successCallback - A callback function
+ *   {Function(config {AccountConfig})} that
+ *   will be called when we could retrieve a configuration.
+ *   The AccountConfig object will be passed in as first parameter.
+ * @param {function(Error):void} errorCallback - A callback that
+ *   will be called when we could not retrieve a configuration,
+ *   for whatever reason. This is expected (e.g. when there's no config
+ *   for this domain at this location),
+ *   so do not unconditionally show this to the user.
+ *   The first parameter will be an exception object or error string.
  */
 export function fetchConfigFromExchange(
   domain,
@@ -186,8 +191,6 @@ export function fetchConfigFromExchange(
     },
     allowAuthPrompt: false,
   };
-  let call;
-
   const successive = new SuccessiveAbortable();
   const priority = new PriorityOrderAbortable(function (xml, call) {
     // success
@@ -208,22 +211,22 @@ export function fetchConfigFromExchange(
 
   const authUsername = username || emailAddress;
 
-  call = priority.addCall();
-  call.foundMsg = "url1";
-  startFetchWithAuth(call, url1, authUsername, password, callArgs);
+  const call1 = priority.addCall();
+  call1.foundMsg = "url1";
+  startFetchWithAuth(call1, url1, authUsername, password, callArgs);
 
-  call = priority.addCall();
-  call.foundMsg = "url2";
-  startFetchWithAuth(call, url2, authUsername, password, callArgs);
+  const call2 = priority.addCall();
+  call2.foundMsg = "url2";
+  startFetchWithAuth(call2, url2, authUsername, password, callArgs);
 
-  call = priority.addCall();
-  call.foundMsg = "url3";
-  const call3ErrorCallback = call.errorCallback();
+  const call3 = priority.addCall();
+  call3.foundMsg = "url3";
+  const call3ErrorCallback = call3.errorCallback();
   // url3 is HTTP (not HTTPS), so don't authenticate. Even MS spec demands so.
   const fetch3 = new lazy.FetchHTTP(
     url3,
     callArgs,
-    call.successCallback(),
+    call3.successCallback(),
     ex => {
       gAccountSetupLogger.debug("HTTP request failed with: " + ex);
       // url3 is an HTTP URL that will redirect to the real one, usually a
@@ -281,9 +284,9 @@ export function fetchConfigFromExchange(
                 // Remove the dialog from the call stack.
                 dialogCall.errorCallback()(new Exception("Proceed to fetch"));
               },
-              ex => {
+              e => {
                 // User rejected, or action cancelled otherwise.
-                dialogCall.errorCallback()(ex);
+                dialogCall.errorCallback()(e);
               }
             );
             // Account for a slow server response.
@@ -298,7 +301,7 @@ export function fetchConfigFromExchange(
     }
   );
   fetch3.start();
-  call.setAbortable(fetch3);
+  call3.setAbortable(fetch3);
 
   successive.current = priority;
   return successive;
@@ -307,8 +310,16 @@ export function fetchConfigFromExchange(
 var gLoopCounter = 0;
 
 /**
- * @param {JXON} xml - The Exchange server AutoDiscover response
- * @param {Function(config {AccountConfig})} successCallback - @see accountConfig.js
+ * @param {object} autoDiscoverXML - The Exchange server AutoDiscover response, as JXON.
+ * @param {Abortable} successive
+ * @param {string} emailAddress - Email address.
+ * @param {string} username - Username.
+ * @param {string} password - Password.
+ * @param {function(string,Function,Function):void} confirmCallback - A callback
+ *   Function(domain, okCallback, cancelCallback) that will be called to confirm
+ *   redirection to another domain.
+ * @param {function(AccountConfig):void} successCallback - @see accountConfig.js
+ * @param {function(Error):void} errorCallback - @see accountConfig.js
  */
 function readAutoDiscoverResponse(
   autoDiscoverXML,
@@ -361,11 +372,11 @@ function readAutoDiscoverResponse(
 
 /* eslint-disable complexity */
 /**
- * @param {JXON} xml - The Exchange server AutoDiscover response
- * @param {string} username - (Optional) The user's login name
- *     If null, email address placeholder will be used.
+ * @param {object} autoDiscoverXML - The Exchange server AutoDiscover response,
+ *  as JXON.
+ * @param {?string} username - (Optional) The user's login name
+ *   If null, email address placeholder will be used.
  * @returns {AccountConfig} - @see accountConfig.js
- *
  * @see <https://www.msxfaq.de/exchange/autodiscover/autodiscover_xml.htm>
  */
 function readAutoDiscoverXML(autoDiscoverXML, username) {
@@ -519,18 +530,6 @@ function readAutoDiscoverXML(autoDiscoverXML, username) {
     }
   }
 
-  // OAuth2 settings, so that createInBackend() doesn't bail out
-  if (config.incoming.owaURL || config.incoming.ewsURL) {
-    config.incoming.oauthSettings = {
-      issuer: config.incoming.hostname,
-      scope: config.incoming.owaURL || config.incoming.ewsURL,
-    };
-    config.outgoing.oauthSettings = {
-      issuer: config.incoming.hostname,
-      scope: config.incoming.owaURL || config.incoming.ewsURL,
-    };
-  }
-
   return config;
 }
 
@@ -540,7 +539,7 @@ function readAutoDiscoverXML(autoDiscoverXML, username) {
  * Ask server which addons can handle this config.
  *
  * @param {AccountConfig} config
- * @param {Function(config {AccountConfig})} successCallback
+ * @param {function(AccountConfig):void} successCallback
  * @returns {Abortable}
  */
 export function getAddonsList(config, successCallback, errorCallback) {
@@ -556,7 +555,7 @@ export function getAddonsList(config, successCallback, errorCallback) {
     errorCallback(new Exception("no URL for addons list configured"));
     return new Abortable();
   }
-  const fetch = new lazy.FetchHTTP(
+  const fetchHttp = new lazy.FetchHTTP(
     url,
     { allowCache: true, timeout: 10000 },
     function (json) {
@@ -586,8 +585,8 @@ export function getAddonsList(config, successCallback, errorCallback) {
     },
     errorCallback
   );
-  fetch.start();
-  return fetch;
+  fetchHttp.start();
+  return fetchHttp;
 }
 
 /**
@@ -596,7 +595,7 @@ export function getAddonsList(config, successCallback, errorCallback) {
  * It also chooses the right language etc..
  *
  * @param {JSON} json - the addons.json file contents
- * @returns {Array of AddonInfo} - @see AccountConfig.addons
+ * @returns {AddonInfo[]} - @see AccountConfig.addons
  *
  * accountTypes are listed in order of decreasing preference.
  * Languages are 2-letter codes. If a language is not available,
@@ -686,7 +685,7 @@ function readAddonsJSON(json) {
  *
  * @param {AccountConfig} config - The initial detected Exchange configuration.
  * @param {string} domain - The domain part of the user's email address
- * @param {Function(config {AccountConfig})} successCallback - A callback that
+ * @param {function(AccountConfig):void} successCallback - A callback that
  *   will be called when we found an appropriate configuration.
  *   The AccountConfig object will be passed in as first parameter.
  */

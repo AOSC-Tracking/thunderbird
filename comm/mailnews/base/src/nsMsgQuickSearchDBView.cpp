@@ -88,9 +88,7 @@ NS_IMETHODIMP nsMsgQuickSearchDBView::DoCommand(
                                   false);
 
     for (uint32_t i = 0; NS_SUCCEEDED(rv) && i < GetSize(); i++) {
-      nsCOMPtr<nsIMsgDBHdr> msgHdr;
-      m_db->GetMsgHdrForKey(m_keys[i], getter_AddRefs(msgHdr));
-      rv = m_db->MarkHdrRead(msgHdr, true, nullptr);
+      rv = m_db->MarkRead(m_keys[i], true, nullptr);
     }
 
     m_folder->EnableNotifications(nsIMsgFolder::allMessageCountNotifications,
@@ -353,6 +351,7 @@ nsMsgQuickSearchDBView::OnNewSearch() {
   // this needs to happen after we remove all the keys, since RowCountChanged()
   // will call our GetRowCount()
   if (mTree) mTree->RowCountChanged(0, -oldSize);
+  if (mJSTree) mJSTree->RowCountChanged(0, -oldSize);
   uint32_t folderFlags = 0;
   if (m_viewFolder) m_viewFolder->GetFlags(&folderFlags);
   // check if it's a virtual folder - if so, we should get the cached hits

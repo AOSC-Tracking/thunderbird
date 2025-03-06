@@ -18,6 +18,7 @@
 #include "jit/InlineList.h"
 #include "jit/JitAllocPolicy.h"
 #include "jit/LIROpsGenerated.h"
+#include "jit/MIR-wasm.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
 #include "jit/Registers.h"
@@ -879,6 +880,15 @@ class LInstruction : public LNode,
     *getOperand(index) = a;
   }
 
+  LBoxAllocation getBoxOperand(size_t index) const {
+#ifdef JS_NUNBOX32
+    return LBoxAllocation(*getOperand(index + TYPE_INDEX),
+                          *getOperand(index + PAYLOAD_INDEX));
+#else
+    return LBoxAllocation(*getOperand(index));
+#endif
+  }
+
   void initOperandsOffset(size_t offset) {
     MOZ_ASSERT(nonPhiOperandsOffset_ == 0);
     MOZ_ASSERT(offset >= sizeof(LInstruction));
@@ -1102,11 +1112,7 @@ class LInstructionFixedDefsTempsHelper : public LInstruction {
 #endif
   }
 
-  // Default accessors, assuming a single input and output, respectively.
-  const LAllocation* input() {
-    MOZ_ASSERT(numOperands() == 1);
-    return getOperand(0);
-  }
+  // Default accessor, assuming a single output.
   const LDefinition* output() {
     MOZ_ASSERT(numDefs() == 1);
     return getDef(0);
@@ -1159,7 +1165,18 @@ class LInstructionHelper
   // Override the methods in LInstruction with more optimized versions
   // for when we know the exact instruction type.
   LAllocation* getOperand(size_t index) { return &operands_[index]; }
+  const LAllocation* getOperand(size_t index) const {
+    return &operands_[index];
+  }
   void setOperand(size_t index, const LAllocation& a) { operands_[index] = a; }
+  LBoxAllocation getBoxOperand(size_t index) const {
+#ifdef JS_NUNBOX32
+    return LBoxAllocation(operands_[index + TYPE_INDEX],
+                          operands_[index + PAYLOAD_INDEX]);
+#else
+    return LBoxAllocation(operands_[index]);
+#endif
+  }
   void setBoxOperand(size_t index, const LBoxAllocation& alloc) {
 #ifdef JS_NUNBOX32
     operands_[index + TYPE_INDEX] = alloc.type();
@@ -1176,7 +1193,7 @@ class LInstructionHelper
     operands_[index] = alloc.value();
 #endif
   }
-  const LInt64Allocation getInt64Operand(size_t offset) {
+  LInt64Allocation getInt64Operand(size_t offset) const {
 #if JS_BITS_PER_WORD == 32
     return LInt64Allocation(operands_[offset + INT64HIGH_INDEX],
                             operands_[offset + INT64LOW_INDEX]);
@@ -1215,21 +1232,28 @@ class LCallInstructionHelper
   }
 };
 
-template <size_t Defs, size_t Temps>
-class LBinaryCallInstructionHelper
-    : public LCallInstructionHelper<Defs, 2, Temps> {
+// Base class for control instructions (goto, branch, etc.)
+template <size_t Succs, size_t Operands, size_t Temps>
+class LControlInstructionHelper
+    : public LInstructionHelper<0, Operands, Temps> {
+  mozilla::Array<MBasicBlock*, Succs> successors_;
+
  protected:
-  explicit LBinaryCallInstructionHelper(LNode::Opcode opcode)
-      : LCallInstructionHelper<Defs, 2, Temps>(opcode) {}
+  explicit LControlInstructionHelper(LNode::Opcode opcode)
+      : LInstructionHelper<0, Operands, Temps>(opcode) {}
 
  public:
-  const LAllocation* lhs() { return this->getOperand(0); }
-  const LAllocation* rhs() { return this->getOperand(1); }
+  size_t numSuccessors() const { return Succs; }
+  MBasicBlock* getSuccessor(size_t i) const { return successors_[i]; }
+
+  void setSuccessor(size_t i, MBasicBlock* successor) {
+    successors_[i] = successor;
+  }
 };
 
 class LRecoverInfo : public TempObject {
  public:
-  typedef Vector<MNode*, 2, JitAllocPolicy> Instructions;
+  using Instructions = Vector<MNode*, 2, JitAllocPolicy>;
 
  private:
   // List of instructions needed to recover the stack frames.
@@ -1431,8 +1455,8 @@ class LSafepoint : public TempObject {
   using NunboxEntry = SafepointNunboxEntry;
 
  public:
-  typedef Vector<SlotEntry, 0, JitAllocPolicy> SlotList;
-  typedef Vector<NunboxEntry, 0, JitAllocPolicy> NunboxList;
+  using SlotList = Vector<SlotEntry, 0, JitAllocPolicy>;
+  using NunboxList = Vector<NunboxEntry, 0, JitAllocPolicy>;
 
  private:
   // The information in a safepoint describes the registers and gc related
@@ -1914,17 +1938,22 @@ class LIRGraph {
   // Values is safe because it is only used within the scope of an
   // AutoSuppressGC (in IonCompile), which inhibits GC.
   mozilla::Vector<Value, 0, JitAllocPolicy> constantPool_;
-  typedef HashMap<Value, uint32_t, ValueHasher, JitAllocPolicy> ConstantPoolMap;
+  using ConstantPoolMap = HashMap<Value, uint32_t, ValueHasher, JitAllocPolicy>;
   ConstantPoolMap constantPoolMap_;
   Vector<LInstruction*, 0, JitAllocPolicy> safepoints_;
   Vector<LInstruction*, 0, JitAllocPolicy> nonCallSafepoints_;
   uint32_t numVirtualRegisters_;
   uint32_t numInstructions_;
 
+  // Number of call-instructions in this LIR graph.
+  uint32_t numCallInstructions_ = 0;
+
   // Size of stack slots needed for local spills.
   uint32_t localSlotsSize_;
   // Number of JS::Value stack slots needed for argument construction for calls.
   uint32_t argumentSlotCount_;
+  // Count the number of extra times a single safepoint would be encoded.
+  uint32_t extraSafepointUses_;
 
   MIRGraph& mir_;
 
@@ -1954,6 +1983,10 @@ class LIRGraph {
   }
   uint32_t getInstructionId() { return numInstructions_++; }
   uint32_t numInstructions() const { return numInstructions_; }
+
+  void incNumCallInstructions() { numCallInstructions_++; }
+  uint32_t numCallInstructions() const { return numCallInstructions_; }
+
   void setLocalSlotsSize(uint32_t localSlotsSize) {
     localSlotsSize_ = localSlotsSize;
   }
@@ -1962,6 +1995,8 @@ class LIRGraph {
     argumentSlotCount_ = argumentSlotCount;
   }
   uint32_t argumentSlotCount() const { return argumentSlotCount_; }
+  void addExtraSafepointUses(uint32_t extra) { extraSafepointUses_ += extra; }
+  uint32_t extraSafepointUses() const { return extraSafepointUses_; }
   [[nodiscard]] bool addConstantToPool(const Value& v, uint32_t* index);
   size_t numConstants() const { return constantPool_.length(); }
   Value* constantPool() { return &constantPool_[0]; }

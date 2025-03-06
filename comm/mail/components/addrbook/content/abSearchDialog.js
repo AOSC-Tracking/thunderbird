@@ -20,8 +20,9 @@ var { PluralForm } = ChromeUtils.importESModule(
 var { UIDensity } = ChromeUtils.importESModule(
   "resource:///modules/UIDensity.sys.mjs"
 );
-
-UIDensity.registerWindow(window);
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
 
 window.addEventListener("load", searchOnLoad);
 window.addEventListener("unload", searchOnUnload);
@@ -38,7 +39,6 @@ var gSearchStopButton;
 var gPropertiesCmd;
 var gComposeCmd;
 var gDeleteCmd;
-var gSearchPhoneticName = "false";
 
 var gSearchAbViewListener = {
   onSelectionChanged() {
@@ -60,6 +60,9 @@ var gSearchAbViewListener = {
 };
 
 function searchOnLoad() {
+  UIDensity.registerWindow(window);
+  UIFontSize.registerWindow(window);
+
   initializeSearchWidgets();
   initializeSearchWindowWidgets();
 
@@ -80,12 +83,6 @@ function searchOnLoad() {
   gSearchSession = Cc[searchSessionContractID].createInstance(
     Ci.nsIMsgSearchSession
   );
-
-  // initialize a flag for phonetic name search
-  gSearchPhoneticName = Services.prefs.getComplexValue(
-    "mail.addr_book.show_phonetic_fields",
-    Ci.nsIPrefLocalizedString
-  ).data;
 
   if (window.arguments && window.arguments[0]) {
     SelectDirectory(window.arguments[0].directory);
@@ -302,25 +299,13 @@ function onSearch() {
 
     switch (searchTerm.attrib) {
       case Ci.nsMsgSearchAttrib.Name:
-        if (gSearchPhoneticName != "true") {
-          attrs = [
-            "DisplayName",
-            "FirstName",
-            "LastName",
-            "NickName",
-            "_AimScreenName",
-          ];
-        } else {
-          attrs = [
-            "DisplayName",
-            "FirstName",
-            "LastName",
-            "NickName",
-            "_AimScreenName",
-            "PhoneticFirstName",
-            "PhoneticLastName",
-          ];
-        }
+        attrs = [
+          "DisplayName",
+          "FirstName",
+          "LastName",
+          "NickName",
+          "_AimScreenName",
+        ];
         break;
       case Ci.nsMsgSearchAttrib.DisplayName:
         attrs = ["DisplayName"];

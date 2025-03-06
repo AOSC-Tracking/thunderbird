@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 const lazy = {};
-
 ChromeUtils.defineESModuleGetters(lazy, {
   AccountConfig: "resource:///modules/accountcreation/AccountConfig.sys.mjs",
   AccountCreationUtils:
@@ -25,9 +24,9 @@ import { OAuth2Providers } from "resource:///modules/OAuth2Providers.sys.mjs";
  * The XML format is documented at
  * <https://wiki.mozilla.org/Thunderbird:Autoconfiguration:ConfigFileFormat>
  *
- * @param clientConfigXML {JXON} - The <clientConfig> node.
- * @param source {String} - Used for the subSource field of AccountConfig.
- * @returns AccountConfig   object filled with the data from XML
+ * @param {object} clientConfigXML - The <clientConfig> node as JXON.
+ * @param {string} subSource - Used for the subSource field of AccountConfig.
+ * @returns {AccountConfig} AccountConfig object filled with the data from XML.
  */
 export function readFromXML(clientConfigXML, subSource) {
   function array_or_undef(value) {
@@ -112,7 +111,7 @@ export function readFromXML(clientConfigXML, subSource) {
       }
       exception = null;
 
-      iO.auth = readAuthentication(iX.$authentication, iO.hostname, {
+      iO.auth = readAuthentication(iX.$authentication, iO.hostname, iO.type, {
         "password-cleartext": Ci.nsMsgAuthMethod.passwordCleartext,
         // @deprecated TODO remove
         plain: Ci.nsMsgAuthMethod.passwordCleartext,
@@ -146,10 +145,6 @@ export function readFromXML(clientConfigXML, subSource) {
         } catch (e) {
           console.error(e);
         }
-        iO.oauthSettings = {
-          issuer: iO.hostname,
-          scope: iO.owaURL || iO.ewsURL || iO.easURL,
-        };
       }
       // defaults are in accountConfig.js
       if (iO.type == "pop3" && "pop3" in iX) {
@@ -235,7 +230,7 @@ export function readFromXML(clientConfigXML, subSource) {
       }
       exception = null;
 
-      oO.auth = readAuthentication(oX.$authentication, oO.hostname, {
+      oO.auth = readAuthentication(oX.$authentication, oO.hostname, oO.type, {
         // open relay
         none: Ci.nsMsgAuthMethod.none,
         // inside ISP or corp network
@@ -317,7 +312,7 @@ export function readFromXML(clientConfigXML, subSource) {
 }
 /* eslint-enable complexity */
 
-function readAuthentication(authenticationValues, hostname, mapping) {
+function readAuthentication(authenticationValues, hostname, type, mapping) {
   let exception;
   for (const authenticationValue of authenticationValues || []) {
     try {
@@ -325,7 +320,7 @@ function readAuthentication(authenticationValues, hostname, mapping) {
 
       if (
         authMethod === Ci.nsMsgAuthMethod.OAuth2 &&
-        !OAuth2Providers.getHostnameDetails(hostname)
+        !OAuth2Providers.getHostnameDetails(hostname, type)
       ) {
         throw new Error(`Lacking OAuth2 config for ${hostname}`);
       }

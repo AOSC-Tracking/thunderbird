@@ -31,134 +31,160 @@
 //!     the new suggestion in their results, and return `Suggestion::T` variants
 //!     as needed.
 
-use std::{borrow::Cow, fmt};
+use std::fmt;
 
-use remote_settings::{Attachment, GetItemsOptions, RemoteSettingsRecord, RsJsonObject, SortOrder};
+use remote_settings::{Attachment, RemoteSettingsRecord};
 use serde::{Deserialize, Deserializer};
 
-use crate::{error::Error, provider::SuggestionProvider, Result};
+use crate::{
+    db::SuggestDao, error::Error, provider::SuggestionProvider,
+    query::full_keywords_to_fts_content, Result,
+};
 
-/// The Suggest Remote Settings collection name.
-pub(crate) const REMOTE_SETTINGS_COLLECTION: &str = "quicksuggest";
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Collection {
+    Quicksuggest,
+    Fakespot,
+}
 
-/// The maximum number of suggestions in a Suggest record's attachment.
-///
-/// This should be the same as the `BUCKET_SIZE` constant in the
-/// `mozilla-services/quicksuggest-rs` repo.
-pub(crate) const SUGGESTIONS_PER_ATTACHMENT: u64 = 200;
-
-/// A list of default record types to download if nothing is specified.
-/// This currently defaults to all of the record types.
-pub(crate) const DEFAULT_RECORDS_TYPES: [SuggestRecordType; 9] = [
-    SuggestRecordType::Icon,
-    SuggestRecordType::AmpWikipedia,
-    SuggestRecordType::Amo,
-    SuggestRecordType::Pocket,
-    SuggestRecordType::Yelp,
-    SuggestRecordType::Mdn,
-    SuggestRecordType::Weather,
-    SuggestRecordType::GlobalConfig,
-    SuggestRecordType::AmpMobile,
-];
+impl Collection {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Quicksuggest => "quicksuggest",
+            Self::Fakespot => "fakespot-suggest-products",
+        }
+    }
+}
 
 /// A trait for a client that downloads suggestions from Remote Settings.
 ///
 /// This trait lets tests use a mock client.
 pub(crate) trait Client {
-    /// Fetch a list of records and attachment data
-    fn get_records(&self, request: RecordRequest) -> Result<Vec<Record>>;
+    /// Get all records from the server
+    ///
+    /// We use this plus client-side filtering rather than any server-side filtering, as
+    /// recommended by the remote settings docs
+    /// (https://remote-settings.readthedocs.io/en/stable/client-specifications.html). This is
+    /// relatively inexpensive since we use a cache and don't fetch attachments until after the
+    /// client-side filtering.
+    ///
+    /// Records that can't be parsed as [SuggestRecord] are ignored.
+    fn get_records(&self, collection: Collection, dao: &mut SuggestDao) -> Result<Vec<Record>>;
+
+    fn download_attachment(&self, record: &Record) -> Result<Vec<u8>>;
 }
 
-impl Client for remote_settings::Client {
-    fn get_records(&self, request: RecordRequest) -> Result<Vec<Record>> {
-        let options = request.into();
-        self.get_records_with_options(&options)?
-            .records
-            .into_iter()
-            .map(|record| {
-                let attachment_data = record
-                    .attachment
-                    .as_ref()
-                    .map(|a| self.get_attachment(&a.location))
-                    .transpose()?;
-                Ok(Record::new(record, attachment_data))
-            })
-            .collect()
+/// Implements the [Client] trait using a real remote settings client
+pub struct RemoteSettingsClient {
+    // Create a separate client for each collection name
+    quicksuggest_client: remote_settings::RemoteSettings,
+    fakespot_client: remote_settings::RemoteSettings,
+}
+
+impl RemoteSettingsClient {
+    pub fn new(
+        server: Option<remote_settings::RemoteSettingsServer>,
+        bucket_name: Option<String>,
+        server_url: Option<String>,
+    ) -> Result<Self> {
+        Ok(Self {
+            quicksuggest_client: remote_settings::RemoteSettings::new(
+                remote_settings::RemoteSettingsConfig {
+                    server: server.clone(),
+                    bucket_name: bucket_name.clone(),
+                    collection_name: "quicksuggest".to_owned(),
+                    server_url: server_url.clone(),
+                },
+            )?,
+            fakespot_client: remote_settings::RemoteSettings::new(
+                remote_settings::RemoteSettingsConfig {
+                    server,
+                    bucket_name,
+                    collection_name: "fakespot-suggest-products".to_owned(),
+                    server_url,
+                },
+            )?,
+        })
+    }
+
+    fn client_for_collection(&self, collection: Collection) -> &remote_settings::RemoteSettings {
+        match collection {
+            Collection::Fakespot => &self.fakespot_client,
+            Collection::Quicksuggest => &self.quicksuggest_client,
+        }
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct RecordRequest {
-    pub record_type: Option<String>,
-    pub last_modified: Option<u64>,
-    pub limit: Option<u64>,
-}
-
-impl From<RecordRequest> for GetItemsOptions {
-    fn from(value: RecordRequest) -> Self {
-        let mut options = GetItemsOptions::new();
-
-        // Remote Settings returns records in descending modification order
-        // (newest first), but we want them in ascending order (oldest first),
-        // so that we can eventually resume downloading where we left off.
-        options.sort("last_modified", SortOrder::Ascending);
-
-        if let Some(record_type) = value.record_type {
-            options.filter_eq("type", record_type);
+impl Client for RemoteSettingsClient {
+    fn get_records(&self, collection: Collection, dao: &mut SuggestDao) -> Result<Vec<Record>> {
+        // For now, handle the cache manually.  Once 6328 is merged, we should be able to delegate
+        // this to remote_settings.
+        let client = self.client_for_collection(collection);
+        let cache = dao.read_cached_rs_data(collection.name());
+        let last_modified = match &cache {
+            Some(response) => response.last_modified,
+            None => 0,
+        };
+        let response = match cache {
+            None => client.get_records()?,
+            Some(cache) => remote_settings::cache::merge_cache_and_response(
+                cache,
+                client.get_records_since(last_modified)?,
+            ),
+        };
+        if last_modified != response.last_modified {
+            dao.write_cached_rs_data(collection.name(), &response);
         }
 
-        if let Some(last_modified) = value.last_modified {
-            options.filter_gt("last_modified", last_modified.to_string());
-        }
+        Ok(response
+            .records
+            .into_iter()
+            .filter_map(|r| Record::new(r, collection).ok())
+            .collect())
+    }
 
-        if let Some(limit) = value.limit {
-            // Each record's attachment has 200 suggestions, so download enough
-            // records to cover the requested maximum.
-            options.limit((limit.saturating_sub(1) / SUGGESTIONS_PER_ATTACHMENT) + 1);
+    fn download_attachment(&self, record: &Record) -> Result<Vec<u8>> {
+        match &record.attachment {
+            Some(a) => Ok(self
+                .client_for_collection(record.collection)
+                .get_attachment(&a.location)?),
+            None => Err(Error::MissingAttachment(record.id.to_string())),
         }
-        options
     }
 }
 
 /// Remote settings record for suggest.
 ///
-/// This is `remote_settings::RemoteSettingsRecord`, plus the downloaded attachment data.
-#[derive(Clone, Debug, Default)]
-pub struct Record {
-    pub id: String,
+/// This is a `remote_settings::RemoteSettingsRecord` parsed for suggest.
+#[derive(Clone, Debug)]
+pub(crate) struct Record {
+    pub id: SuggestRecordId,
     pub last_modified: u64,
-    pub deleted: bool,
     pub attachment: Option<Attachment>,
-    pub fields: RsJsonObject,
-    pub attachment_data: Option<Vec<u8>>,
+    pub payload: SuggestRecord,
+    pub collection: Collection,
 }
 
 impl Record {
-    pub fn new(record: RemoteSettingsRecord, attachment_data: Option<Vec<u8>>) -> Self {
-        Self {
-            id: record.id,
-            deleted: record.deleted,
-            fields: record.fields,
+    pub fn new(record: RemoteSettingsRecord, collection: Collection) -> Result<Self> {
+        Ok(Self {
+            id: SuggestRecordId::new(record.id),
             last_modified: record.last_modified,
             attachment: record.attachment,
-            attachment_data,
-        }
+            payload: serde_json::from_value(serde_json::Value::Object(record.fields))?,
+            collection,
+        })
     }
 
-    /// Get the attachment data for this record, returning an error if it's not present.
-    ///
-    /// This is indented to be used in cases where the attachment data is required.
-    pub fn require_attachment_data(&self) -> Result<&[u8]> {
-        self.attachment_data
-            .as_deref()
-            .ok_or_else(|| Error::MissingAttachment(self.id.clone()))
+    pub fn record_type(&self) -> SuggestRecordType {
+        (&self.payload).into()
     }
 }
 
 /// A record in the Suggest Remote Settings collection.
 ///
-/// Except for the type, Suggest records don't carry additional fields. All
-/// suggestions are stored in each record's attachment.
+/// Most Suggest records don't carry inline fields except for `type`.
+/// Suggestions themselves are typically stored in each record's attachment.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type")]
 pub(crate) enum SuggestRecord {
@@ -175,17 +201,23 @@ pub(crate) enum SuggestRecord {
     #[serde(rename = "mdn-suggestions")]
     Mdn,
     #[serde(rename = "weather")]
-    Weather(DownloadedWeatherData),
+    Weather,
     #[serde(rename = "configuration")]
     GlobalConfig(DownloadedGlobalConfig),
     #[serde(rename = "amp-mobile-suggestions")]
     AmpMobile,
+    #[serde(rename = "fakespot-suggestions")]
+    Fakespot,
+    #[serde(rename = "exposure-suggestions")]
+    Exposure(DownloadedExposureRecord),
+    #[serde(rename = "geonames")]
+    Geonames,
 }
 
 /// Enum for the different record types that can be consumed.
 /// Extracting this from the serialization enum so that we can
 /// extend it to get type metadata.
-#[derive(Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum SuggestRecordType {
     Icon,
     AmpWikipedia,
@@ -196,44 +228,80 @@ pub enum SuggestRecordType {
     Weather,
     GlobalConfig,
     AmpMobile,
+    Fakespot,
+    Exposure,
+    Geonames,
 }
 
-impl From<SuggestRecord> for SuggestRecordType {
-    fn from(suggest_record: SuggestRecord) -> Self {
+impl From<&SuggestRecord> for SuggestRecordType {
+    fn from(suggest_record: &SuggestRecord) -> Self {
         match suggest_record {
             SuggestRecord::Amo => Self::Amo,
             SuggestRecord::AmpWikipedia => Self::AmpWikipedia,
             SuggestRecord::Icon => Self::Icon,
             SuggestRecord::Mdn => Self::Mdn,
             SuggestRecord::Pocket => Self::Pocket,
-            SuggestRecord::Weather(_) => Self::Weather,
+            SuggestRecord::Weather => Self::Weather,
             SuggestRecord::Yelp => Self::Yelp,
             SuggestRecord::GlobalConfig(_) => Self::GlobalConfig,
             SuggestRecord::AmpMobile => Self::AmpMobile,
+            SuggestRecord::Fakespot => Self::Fakespot,
+            SuggestRecord::Exposure(_) => Self::Exposure,
+            SuggestRecord::Geonames => Self::Geonames,
         }
     }
 }
 
 impl fmt::Display for SuggestRecordType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Icon => write!(f, "icon"),
-            Self::AmpWikipedia => write!(f, "data"),
-            Self::Amo => write!(f, "amo-suggestions"),
-            Self::Pocket => write!(f, "pocket-suggestions"),
-            Self::Yelp => write!(f, "yelp-suggestions"),
-            Self::Mdn => write!(f, "mdn-suggestions"),
-            Self::Weather => write!(f, "weather"),
-            Self::GlobalConfig => write!(f, "configuration"),
-            Self::AmpMobile => write!(f, "amp-mobile-suggestions"),
-        }
+        write!(f, "{}", self.as_str())
     }
 }
 
 impl SuggestRecordType {
-    /// Return the meta key for the last ingested record.
-    pub fn last_ingest_meta_key(&self) -> String {
-        format!("last_quicksuggest_ingest_{}", self)
+    /// Get all record types to iterate over
+    ///
+    /// Currently only used by tests
+    #[cfg(test)]
+    pub fn all() -> &'static [SuggestRecordType] {
+        &[
+            Self::Icon,
+            Self::AmpWikipedia,
+            Self::Amo,
+            Self::Pocket,
+            Self::Yelp,
+            Self::Mdn,
+            Self::Weather,
+            Self::GlobalConfig,
+            Self::AmpMobile,
+            Self::Fakespot,
+            Self::Exposure,
+            Self::Geonames,
+        ]
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Icon => "icon",
+            Self::AmpWikipedia => "data",
+            Self::Amo => "amo-suggestions",
+            Self::Pocket => "pocket-suggestions",
+            Self::Yelp => "yelp-suggestions",
+            Self::Mdn => "mdn-suggestions",
+            Self::Weather => "weather",
+            Self::GlobalConfig => "configuration",
+            Self::AmpMobile => "amp-mobile-suggestions",
+            Self::Fakespot => "fakespot-suggestions",
+            Self::Exposure => "exposure-suggestions",
+            Self::Geonames => "geonames",
+        }
+    }
+
+    pub fn collection(&self) -> Collection {
+        match self {
+            Self::Fakespot => Collection::Fakespot,
+            _ => Collection::Quicksuggest,
+        }
     }
 }
 
@@ -264,9 +332,13 @@ impl<T> SuggestAttachment<T> {
 /// The ID of a record in the Suggest Remote Settings collection.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub(crate) struct SuggestRecordId<'a>(Cow<'a, str>);
+pub(crate) struct SuggestRecordId(String);
 
-impl<'a> SuggestRecordId<'a> {
+impl SuggestRecordId {
+    pub fn new(id: String) -> Self {
+        Self(id)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -281,12 +353,9 @@ impl<'a> SuggestRecordId<'a> {
     }
 }
 
-impl<'a, T> From<T> for SuggestRecordId<'a>
-where
-    T: Into<Cow<'a, str>>,
-{
-    fn from(value: T) -> Self {
-        Self(value.into())
+impl fmt::Display for SuggestRecordId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -369,6 +438,10 @@ impl DownloadedSuggestionCommonDetails {
                 full_keyword,
             },
         )
+    }
+
+    pub fn full_keywords_fts_column(&self) -> String {
+        full_keywords_to_fts_content(self.full_keywords.iter().map(|(s, _)| s.as_str()))
     }
 }
 
@@ -476,19 +549,98 @@ pub(crate) struct DownloadedMdnSuggestion {
     pub score: f64,
 }
 
-/// Weather data to ingest from a weather record
+/// A Fakespot suggestion to ingest from an attachment
 #[derive(Clone, Debug, Deserialize)]
-pub(crate) struct DownloadedWeatherData {
-    pub weather: DownloadedWeatherDataInner,
+pub(crate) struct DownloadedFakespotSuggestion {
+    pub fakespot_grade: String,
+    pub product_id: String,
+    pub keywords: String,
+    pub product_type: String,
+    pub rating: f64,
+    pub score: f64,
+    pub title: String,
+    pub total_reviews: i64,
+    pub url: String,
 }
+
+/// An exposure suggestion record's inline data
 #[derive(Clone, Debug, Deserialize)]
-pub(crate) struct DownloadedWeatherDataInner {
-    pub min_keyword_length: i32,
-    pub keywords: Vec<String>,
-    // Remote settings doesn't support floats in record JSON so we use a
-    // stringified float instead. If a float can't be parsed, this will be None.
-    #[serde(default, deserialize_with = "de_stringified_f64")]
-    pub score: Option<f64>,
+pub(crate) struct DownloadedExposureRecord {
+    pub suggestion_type: String,
+}
+
+/// An exposure suggestion to ingest from an attachment
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct DownloadedExposureSuggestion {
+    keywords: Vec<FullOrPrefixKeywords<String>>,
+}
+
+impl DownloadedExposureSuggestion {
+    /// Iterate over all keywords for this suggestion. Iteration may contain
+    /// duplicate keywords depending on the structure of the data, so do not
+    /// assume keywords are unique. Duplicates are not filtered out because
+    /// doing so would require O(number of keywords) space, and the number of
+    /// keywords can be very large. If you are inserting into the store, rely on
+    /// uniqueness constraints and use `INSERT OR IGNORE`.
+    pub fn keywords(&self) -> impl Iterator<Item = String> + '_ {
+        self.keywords.iter().flat_map(|e| e.keywords())
+    }
+}
+
+/// A single full keyword or a `(prefix, suffixes)` tuple representing multiple
+/// prefix keywords. Prefix keywords are enumerated by appending to `prefix`
+/// each possible prefix of each suffix, including the full suffix. The prefix
+/// is also enumerated by itself. Examples:
+///
+/// `FullOrPrefixKeywords::Full("some full keyword")`
+/// => "some full keyword"
+///
+/// `FullOrPrefixKeywords::Prefix(("sug", vec!["gest", "arplum"]))`
+/// => "sug"
+///    "sugg"
+///    "sugge"
+///    "sugges"
+///    "suggest"
+///    "suga"
+///    "sugar"
+///    "sugarp"
+///    "sugarpl"
+///    "sugarplu"
+///    "sugarplum"
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum FullOrPrefixKeywords<T> {
+    Full(T),
+    Prefix((T, Vec<T>)),
+}
+
+impl<T> From<T> for FullOrPrefixKeywords<T> {
+    fn from(full_keyword: T) -> Self {
+        Self::Full(full_keyword)
+    }
+}
+
+impl<T> From<(T, Vec<T>)> for FullOrPrefixKeywords<T> {
+    fn from(prefix_suffixes: (T, Vec<T>)) -> Self {
+        Self::Prefix(prefix_suffixes)
+    }
+}
+
+impl FullOrPrefixKeywords<String> {
+    pub fn keywords(&self) -> Box<dyn Iterator<Item = String> + '_> {
+        match self {
+            FullOrPrefixKeywords::Full(kw) => Box::new(std::iter::once(kw.to_owned())),
+            FullOrPrefixKeywords::Prefix((prefix, suffixes)) => Box::new(
+                std::iter::once(prefix.to_owned()).chain(suffixes.iter().flat_map(|suffix| {
+                    let mut kw = prefix.clone();
+                    suffix.chars().map(move |c| {
+                        kw.push(c);
+                        kw.clone()
+                    })
+                })),
+            ),
+        }
+    }
 }
 
 /// Global Suggest configuration data to ingest from a configuration record
@@ -503,11 +655,13 @@ pub(crate) struct DownloadedGlobalConfigInner {
     pub show_less_frequently_cap: i32,
 }
 
-fn de_stringified_f64<'de, D>(deserializer: D) -> std::result::Result<Option<f64>, D::Error>
+pub(crate) fn deserialize_f64_or_default<'de, D>(
+    deserializer: D,
+) -> std::result::Result<f64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    String::deserialize(deserializer).map(|s| s.parse().ok())
+    String::deserialize(deserializer).map(|s| s.parse().ok().unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -625,36 +779,123 @@ mod test {
         );
     }
 
-    #[test]
-    fn test_remote_settings_limits() {
-        fn check_limit(suggestion_limit: Option<u64>, expected_record_limit: Option<&str>) {
-            let request = RecordRequest {
-                limit: suggestion_limit,
-                ..RecordRequest::default()
-            };
-            let options: GetItemsOptions = request.into();
-            let actual_record_limit = options
-                .iter_query_pairs()
-                .find_map(|(name, value)| (name == "_limit").then(|| value.to_string()));
-            assert_eq!(
-                actual_record_limit.as_deref(),
-                expected_record_limit,
-                "expected record limit = {:?} for suggestion limit {:?}; actual = {:?}",
-                expected_record_limit,
-                suggestion_limit,
-                actual_record_limit
-            );
-        }
+    fn full_or_prefix_keywords_to_owned(
+        kws: Vec<FullOrPrefixKeywords<&str>>,
+    ) -> Vec<FullOrPrefixKeywords<String>> {
+        kws.iter()
+            .map(|val| match val {
+                FullOrPrefixKeywords::Full(s) => FullOrPrefixKeywords::Full(s.to_string()),
+                FullOrPrefixKeywords::Prefix((prefix, suffixes)) => FullOrPrefixKeywords::Prefix((
+                    prefix.to_string(),
+                    suffixes.iter().map(|s| s.to_string()).collect(),
+                )),
+            })
+            .collect()
+    }
 
-        check_limit(None, None);
-        // 200 suggestions per record, so test with numbers around that
-        // boundary.
-        check_limit(Some(0), Some("1"));
-        check_limit(Some(199), Some("1"));
-        check_limit(Some(200), Some("1"));
-        check_limit(Some(201), Some("2"));
-        check_limit(Some(300), Some("2"));
-        check_limit(Some(400), Some("2"));
-        check_limit(Some(401), Some("3"));
+    #[test]
+    fn test_exposure_keywords() {
+        let suggestion = DownloadedExposureSuggestion {
+            keywords: full_or_prefix_keywords_to_owned(vec![
+                "no suffixes".into(),
+                ("empty suffixes", vec![]).into(),
+                ("empty string suffix", vec![""]).into(),
+                ("choco", vec!["", "bo", "late"]).into(),
+                "duplicate 1".into(),
+                "duplicate 1".into(),
+                ("dup", vec!["licate 1", "licate 2"]).into(),
+                ("dup", vec!["lo", "licate 2", "licate 3"]).into(),
+                ("duplic", vec!["ate 3", "ar", "ate 4"]).into(),
+                ("du", vec!["plicate 4", "plicate 5", "nk"]).into(),
+            ]),
+        };
+
+        assert_eq!(
+            Vec::from_iter(suggestion.keywords()),
+            vec![
+                "no suffixes",
+                "empty suffixes",
+                "empty string suffix",
+                "choco",
+                "chocob",
+                "chocobo",
+                "chocol",
+                "chocola",
+                "chocolat",
+                "chocolate",
+                "duplicate 1",
+                "duplicate 1",
+                "dup",
+                "dupl",
+                "dupli",
+                "duplic",
+                "duplica",
+                "duplicat",
+                "duplicate",
+                "duplicate ",
+                "duplicate 1",
+                "dupl",
+                "dupli",
+                "duplic",
+                "duplica",
+                "duplicat",
+                "duplicate",
+                "duplicate ",
+                "duplicate 2",
+                "dup",
+                "dupl",
+                "duplo",
+                "dupl",
+                "dupli",
+                "duplic",
+                "duplica",
+                "duplicat",
+                "duplicate",
+                "duplicate ",
+                "duplicate 2",
+                "dupl",
+                "dupli",
+                "duplic",
+                "duplica",
+                "duplicat",
+                "duplicate",
+                "duplicate ",
+                "duplicate 3",
+                "duplic",
+                "duplica",
+                "duplicat",
+                "duplicate",
+                "duplicate ",
+                "duplicate 3",
+                "duplica",
+                "duplicar",
+                "duplica",
+                "duplicat",
+                "duplicate",
+                "duplicate ",
+                "duplicate 4",
+                "du",
+                "dup",
+                "dupl",
+                "dupli",
+                "duplic",
+                "duplica",
+                "duplicat",
+                "duplicate",
+                "duplicate ",
+                "duplicate 4",
+                "dup",
+                "dupl",
+                "dupli",
+                "duplic",
+                "duplica",
+                "duplicat",
+                "duplicate",
+                "duplicate ",
+                "duplicate 5",
+                "dun",
+                "dunk",
+            ],
+        );
     }
 }

@@ -36,7 +36,8 @@ var { openLinkExternally } = ChromeUtils.importESModule(
  * If the clicked element was a HTMLInputElement or HTMLButtonElement
  * we return the form action.
  *
- * @returns [href, linkText] the url and the text for the link being clicked.
+ * @returns {[]} a tuple [href, linkText] the url and the text for the link
+ *   being clicked.
  */
 function hRefForClickEvent(aEvent) {
   const target =
@@ -88,8 +89,8 @@ function hRefForClickEvent(aEvent) {
  * Check whether the click target's or its ancestor's href
  * points to an anchor on the page.
  *
- * @param HTMLElement aTargetNode - the element node.
- * @returns - true if link pointing to anchor.
+ * @param {HTMLElement} aTargetNode - The element node..
+ * @returns {boolean} true if link pointing to anchor.
  */
 function isLinkToAnchorOnPage(aTargetNode) {
   const url = aTargetNode.ownerDocument.URL;
@@ -145,14 +146,7 @@ function contentAreaClick(aEvent) {
 
       // Is it an image?
       if (target.localName == "img" && target.hasAttribute("overflowing")) {
-        if (target.hasAttribute("shrinktofit")) {
-          // Currently shrunk to fit, so unshrink it.
-          target.removeAttribute("shrinktofit");
-        } else {
-          // User wants to shrink now.
-          target.setAttribute("shrinktofit", true);
-        }
-
+        target.toggleAttribute("shrinktofit");
         return false;
       }
     }

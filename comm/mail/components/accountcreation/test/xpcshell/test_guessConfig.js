@@ -156,8 +156,13 @@ add_task(async function testSocketUtilIMAPExpiredCert1() {
     Ci.nsMsgSocketType.SSL,
     imapCommands
   );
-  const response = await promise;
-  Assert.equal(response, null);
+  await Assert.rejects(
+    promise,
+    ({ message }) =>
+      message.includes("Connection to expired.test.test:993 failed") &&
+      message.includes("Peer\u2019s Certificate has expired"),
+    "TLS connection error should cause an exception"
+  );
   Assert.ok(!sslErrors._gotCertError);
 
   Assert.ok(
@@ -248,8 +253,15 @@ add_task(async function testSocketUtilIMAPMistmatchedCert1() {
     Ci.nsMsgSocketType.SSL,
     imapCommands
   );
-  const response = await promise;
-  Assert.equal(response, null);
+  await Assert.rejects(
+    promise,
+    ({ message }) =>
+      message.includes("Connection to mitm.test.test:993 failed") &&
+      message.includes(
+        "domain name does not match the server\u2019s certificate"
+      ),
+    "TLS connection error should cause an exception"
+  );
   Assert.ok(!sslErrors._gotCertError);
 
   Assert.ok(
@@ -368,6 +380,7 @@ const expectedSMTPResponse = [
   "250-8BITMIME",
   "250-SIZE",
   "250-CLIENTID",
+  "250-DSN",
   "250-AUTH CRAM-MD5 PLAIN LOGIN",
   "250 HELP",
   "221 done",
@@ -403,7 +416,7 @@ add_task(async function testSocketUtilSMTPStartTLS() {
   );
   const response = await promise;
   const expectedResponse = expectedSMTPResponse.slice();
-  expectedResponse.splice(5, 0, "250-STARTTLS");
+  expectedResponse.splice(6, 0, "250-STARTTLS");
   Assert.deepEqual(response.join("").split("\r\n"), expectedResponse);
   Assert.ok(!sslErrors._gotCertError);
 });

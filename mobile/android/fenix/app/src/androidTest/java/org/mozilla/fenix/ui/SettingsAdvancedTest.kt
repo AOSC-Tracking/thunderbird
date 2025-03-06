@@ -17,6 +17,7 @@ import org.mozilla.fenix.helpers.TestAssetHelper
 import org.mozilla.fenix.helpers.TestHelper
 import org.mozilla.fenix.helpers.TestHelper.exitMenu
 import org.mozilla.fenix.helpers.TestHelper.mDevice
+import org.mozilla.fenix.helpers.TestHelper.waitForAppWindowToBeUpdated
 import org.mozilla.fenix.helpers.TestSetup
 import org.mozilla.fenix.ui.robots.clickPageObject
 import org.mozilla.fenix.ui.robots.homeScreen
@@ -35,7 +36,7 @@ class SettingsAdvancedTest : TestSetup() {
     @get:Rule
     val activityIntentTestRule = HomeActivityIntentTestRule.withDefaultSettingsOverrides()
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2092699
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2092699
     // Walks through settings menu and sub-menus to ensure all items are present
     @Test
     fun verifyAdvancedSettingsSectionItemsTest() {
@@ -47,7 +48,7 @@ class SettingsAdvancedTest : TestSetup() {
             verifyAdvancedHeading()
             verifyAddons()
             verifyOpenLinksInAppsButton()
-            verifySettingsOptionSummary("Open links in apps", "Never")
+            verifySettingsOptionSummary("Open links in apps", "Ask before opening")
             verifyExternalDownloadManagerButton()
             verifyExternalDownloadManagerToggle(false)
             verifyLeakCanaryButton()
@@ -59,20 +60,20 @@ class SettingsAdvancedTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2121046
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2121046
     // Assumes Youtube is installed and enabled
     @SmokeTest
     @Test
-    fun neverOpenLinkInAppTest() {
+    fun askBeforeOpeningOpenLinkInAppTest() {
         val externalLinksPage = TestAssetHelper.getExternalLinksAsset(mockWebServer)
 
         homeScreen {
         }.openThreeDotMenu {
         }.openSettings {
             verifyOpenLinksInAppsButton()
-            verifySettingsOptionSummary("Open links in apps", "Never")
+            verifySettingsOptionSummary("Open links in apps", "Ask before opening")
         }.openOpenLinksInAppsMenu {
-            verifyOpenLinksInAppsView("Never")
+            verifyOpenLinksInAppsView("Ask before opening")
         }
 
         exitMenu()
@@ -80,15 +81,14 @@ class SettingsAdvancedTest : TestSetup() {
         navigationToolbar {
         }.enterURLAndEnterToBrowser(externalLinksPage.url) {
             clickPageObject(playStoreLink)
-            waitForPageToLoad()
             verifyUrl(playStoreUrl)
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2121052
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2121052
     // Assumes Youtube is installed and enabled
     @Test
-    fun privateBrowsingNeverOpenLinkInAppTest() {
+    fun privateBrowsingAskBeforeOpeningOpenLinkInAppTest() {
         val externalLinksPage = TestAssetHelper.getExternalLinksAsset(mockWebServer)
 
         homeScreen {
@@ -98,9 +98,9 @@ class SettingsAdvancedTest : TestSetup() {
         }.openThreeDotMenu {
         }.openSettings {
             verifyOpenLinksInAppsButton()
-            verifySettingsOptionSummary("Open links in apps", "Never")
+            verifySettingsOptionSummary("Open links in apps", "Ask before opening")
         }.openOpenLinksInAppsMenu {
-            verifyPrivateOpenLinksInAppsView("Never")
+            verifyPrivateOpenLinksInAppsView("Ask before opening")
         }
 
         exitMenu()
@@ -108,12 +108,11 @@ class SettingsAdvancedTest : TestSetup() {
         navigationToolbar {
         }.enterURLAndEnterToBrowser(externalLinksPage.url) {
             clickPageObject(playStoreLink)
-            waitForPageToLoad()
             verifyUrl(playStoreUrl)
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2121045
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2121045
     // Assumes Youtube is installed and enabled
     @SmokeTest
     @Test
@@ -124,10 +123,9 @@ class SettingsAdvancedTest : TestSetup() {
         }.openThreeDotMenu {
         }.openSettings {
             verifyOpenLinksInAppsButton()
-            verifySettingsOptionSummary("Open links in apps", "Never")
+            verifySettingsOptionSummary("Open links in apps", "Ask before opening")
         }.openOpenLinksInAppsMenu {
-            verifyOpenLinksInAppsView("Never")
-            clickOpenLinkInAppOption("Ask before opening")
+            verifyOpenLinksInAppsView("Ask before opening")
             verifySelectedOpenLinksInAppOption("Ask before opening")
         }.goBack {
             verifySettingsOptionSummary("Open links in apps", "Ask before opening")
@@ -144,7 +142,7 @@ class SettingsAdvancedTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2288347
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2288347
     // Assumes Youtube is installed and enabled
     @SmokeTest
     @Test
@@ -155,10 +153,9 @@ class SettingsAdvancedTest : TestSetup() {
         }.openThreeDotMenu {
         }.openSettings {
             verifyOpenLinksInAppsButton()
-            verifySettingsOptionSummary("Open links in apps", "Never")
+            verifySettingsOptionSummary("Open links in apps", "Ask before opening")
         }.openOpenLinksInAppsMenu {
-            verifyOpenLinksInAppsView("Never")
-            clickOpenLinkInAppOption("Ask before opening")
+            verifyOpenLinksInAppsView("Ask before opening")
             verifySelectedOpenLinksInAppOption("Ask before opening")
         }.goBack {
             verifySettingsOptionSummary("Open links in apps", "Ask before opening")
@@ -170,13 +167,14 @@ class SettingsAdvancedTest : TestSetup() {
         }.enterURLAndEnterToBrowser(externalLinksPage.url) {
             clickPageObject(youTubeSchemaLink)
             verifyOpenLinkInAnotherAppPrompt()
+            waitForAppWindowToBeUpdated()
             clickPageObject(itemWithResIdAndText("android:id/button1", "OPEN"))
             mDevice.waitForIdle()
             assertYoutubeAppOpens()
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2121051
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2121051
     // Assumes Youtube is installed and enabled
     @Test
     fun privateBrowsingAskBeforeOpeningLinkInAppCancelTest() {
@@ -190,10 +188,9 @@ class SettingsAdvancedTest : TestSetup() {
         }.openThreeDotMenu {
         }.openSettings {
             verifyOpenLinksInAppsButton()
-            verifySettingsOptionSummary("Open links in apps", "Never")
+            verifySettingsOptionSummary("Open links in apps", "Ask before opening")
         }.openOpenLinksInAppsMenu {
-            verifyPrivateOpenLinksInAppsView("Never")
-            clickOpenLinkInAppOption("Ask before opening")
+            verifyPrivateOpenLinksInAppsView("Ask before opening")
             verifySelectedOpenLinksInAppOption("Ask before opening")
         }.goBack {
             verifySettingsOptionSummary("Open links in apps", "Ask before opening")
@@ -213,7 +210,7 @@ class SettingsAdvancedTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2288350
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2288350
     // Assumes Youtube is installed and enabled
     @Test
     fun privateBrowsingAskBeforeOpeningLinkInAppOpenTest() {
@@ -226,10 +223,9 @@ class SettingsAdvancedTest : TestSetup() {
         }.openThreeDotMenu {
         }.openSettings {
             verifyOpenLinksInAppsButton()
-            verifySettingsOptionSummary("Open links in apps", "Never")
+            verifySettingsOptionSummary("Open links in apps", "Ask before opening")
         }.openOpenLinksInAppsMenu {
-            verifyPrivateOpenLinksInAppsView("Never")
-            clickOpenLinkInAppOption("Ask before opening")
+            verifyPrivateOpenLinksInAppsView("Ask before opening")
             verifySelectedOpenLinksInAppOption("Ask before opening")
         }.goBack {
             verifySettingsOptionSummary("Open links in apps", "Ask before opening")
@@ -244,13 +240,14 @@ class SettingsAdvancedTest : TestSetup() {
                 url = "youtube",
                 pageObject = youTubeSchemaLink,
             )
+            waitForAppWindowToBeUpdated()
             clickPageObject(itemWithResIdAndText("android:id/button1", "OPEN"))
             mDevice.waitForIdle()
             assertYoutubeAppOpens()
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/1058618
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/1058618
     // Assumes Youtube is installed and enabled
     @Test
     fun alwaysOpenLinkInAppTest() {
@@ -260,9 +257,9 @@ class SettingsAdvancedTest : TestSetup() {
         }.openThreeDotMenu {
         }.openSettings {
             verifyOpenLinksInAppsButton()
-            verifySettingsOptionSummary("Open links in apps", "Never")
+            verifySettingsOptionSummary("Open links in apps", "Ask before opening")
         }.openOpenLinksInAppsMenu {
-            verifyOpenLinksInAppsView("Never")
+            verifyOpenLinksInAppsView("Ask before opening")
             clickOpenLinkInAppOption("Always")
             verifySelectedOpenLinksInAppOption("Always")
         }.goBack {
@@ -279,32 +276,61 @@ class SettingsAdvancedTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/1058617
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/1058617
     @Test
     fun dismissOpenLinksInAppCFRTest() {
         activityIntentTestRule.applySettingsExceptions {
             it.isOpenInAppBannerEnabled = true
         }
 
+        homeScreen {
+        }.openThreeDotMenu {
+        }.openSettings {
+            verifyOpenLinksInAppsButton()
+            verifySettingsOptionSummary("Open links in apps", "Ask before opening")
+        }.openOpenLinksInAppsMenu {
+            verifyOpenLinksInAppsView("Ask before opening")
+            clickOpenLinkInAppOption("Never")
+            verifySelectedOpenLinksInAppOption("Never")
+        }.goBack {
+            verifySettingsOptionSummary("Open links in apps", "Never")
+        }
+
+        exitMenu()
         navigationToolbar {
         }.enterURLAndEnterToBrowser("https://m.youtube.com/".toUri()) {
-            waitForPageToLoad()
+            verifyPageContent("youtube")
             verifyOpenLinksInAppsCFRExists(true)
             clickOpenLinksInAppsDismissCFRButton()
             verifyOpenLinksInAppsCFRExists(false)
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2288331
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2288331
     @Test
     fun goToSettingsFromOpenLinksInAppCFRTest() {
         activityIntentTestRule.applySettingsExceptions {
             it.isOpenInAppBannerEnabled = true
         }
 
+        homeScreen {
+        }.openThreeDotMenu {
+        }.openSettings {
+            verifyOpenLinksInAppsButton()
+            verifySettingsOptionSummary("Open links in apps", "Ask before opening")
+        }.openOpenLinksInAppsMenu {
+            verifyOpenLinksInAppsView("Ask before opening")
+            clickOpenLinkInAppOption("Never")
+            verifySelectedOpenLinksInAppOption("Never")
+        }.goBack {
+            verifySettingsOptionSummary("Open links in apps", "Never")
+        }
+
+        exitMenu()
+
         navigationToolbar {
         }.enterURLAndEnterToBrowser("https://m.youtube.com/".toUri()) {
-            waitForPageToLoad()
+            verifyPageContent("youtube")
             verifyOpenLinksInAppsCFRExists(true)
         }.clickOpenLinksInAppsGoToSettingsCFRButton {
             verifyOpenLinksInAppsButton()

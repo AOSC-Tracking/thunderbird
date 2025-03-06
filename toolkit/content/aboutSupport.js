@@ -148,8 +148,6 @@ var snapshotFormatters = {
     } catch (e) {}
 
     const STATUS_STRINGS = {
-      experimentControl: "fission-status-experiment-control",
-      experimentTreatment: "fission-status-experiment-treatment",
       disabledByE10sEnv: "fission-status-disabled-by-e10s-env",
       enabledByEnv: "fission-status-enabled-by-env",
       disabledByEnv: "fission-status-disabled-by-env",
@@ -158,7 +156,6 @@ var snapshotFormatters = {
       enabledByUserPref: "fission-status-enabled-by-user-pref",
       disabledByUserPref: "fission-status-disabled-by-user-pref",
       disabledByE10sOther: "fission-status-disabled-by-e10s-other",
-      enabledByRollout: "fission-status-enabled-by-rollout",
     };
 
     let statusTextId = STATUS_STRINGS[data.fissionDecisionStatus];
@@ -1450,7 +1447,33 @@ var snapshotFormatters = {
       let keyStrId = toFluentID(key);
       let th = $.new("th", null, "column");
       document.l10n.setAttributes(th, keyStrId);
-      tbody.appendChild($.new("tr", [th, $.new("td", data[key])]));
+      let td = $.new("td", data[key]);
+      // Warning not applicable to Flatpak (see Bug 1882881), Snap or
+      // any "Packaged App" (eg. Debian package)
+      const isPackagedApp = Services.sysinfo.getPropertyAsBool("isPackagedApp");
+      if (key === "hasUserNamespaces" && !data[key] && !isPackagedApp) {
+        td = $.new("td", "");
+        td.classList.add("feature-unavailable");
+        let span = document.createElement("span");
+        document.l10n.setAttributes(
+          span,
+          "support-user-namespaces-unavailable",
+          {
+            status: data[key],
+          }
+        );
+        let supportLink = document.createElement("a", {
+          is: "moz-support-link",
+        });
+        supportLink.classList.add("user-namespaces-unavailabe-support-link");
+        supportLink.setAttribute(
+          "support-page",
+          "install-firefox-linux#w_install-firefox-from-mozilla-builds"
+        );
+        td.appendChild(span);
+        td.appendChild(supportLink);
+      }
+      tbody.appendChild($.new("tr", [th, td]));
     }
 
     if ("syscallLog" in data) {

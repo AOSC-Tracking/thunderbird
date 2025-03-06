@@ -30,6 +30,8 @@ class nsMsgComposeService : public nsIMsgComposeService,
  private:
   virtual ~nsMsgComposeService();
 
+  nsresult GetTo3PaneWindow();
+
   nsresult LoadDraftOrTemplate(
       const nsACString& aMsgURI, nsMimeOutputType aOutType,
       nsIMsgIdentity* aIdentity, const nsACString& aOriginalMsgURI,
@@ -50,7 +52,6 @@ class nsMsgComposeService : public nsIMsgComposeService,
   // When doing a reply and the settings are enabled, get the HTML of the
   // selected text in the original message window so that it can be quoted
   // instead of the entire message.
-  nsresult GetOrigWindowSelection(MSG_ComposeType type,
-                                  mozilla::dom::Selection* selection,
+  nsresult GetOrigWindowSelection(mozilla::dom::Selection* selection,
                                   nsACString& aSelHTML);
 };

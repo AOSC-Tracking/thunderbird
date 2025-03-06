@@ -192,12 +192,12 @@ async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
 
       //Check space and url.
       const space = window.gSpacesToolbar.spaces.find(
-        space => space.name == `spaces_toolbar_mochi_test-spacesButton-${id}`
+        s => s.name == `spaces_toolbar_mochi_test-spacesButton-${id}`
       );
       Assert.ok(space, "The space of this button should exists");
       Assert.equal(
         url,
-        space.url,
+        space.tabProperties.url,
         "The stored url of the space should be correct"
       );
     }
@@ -234,7 +234,7 @@ add_task(async function test_add_update_remove() {
     browser.test.log("addButton(): With empty properties.");
     await browser.test.assertRejects(
       browser.spacesToolbar.addButton("button_1", {}),
-      /Failed to add button to the spaces toolbar: Invalid url./,
+      /Failed to add button to the spaces toolbar: Missing URL/,
       "addButton() without a url should throw."
     );
 
@@ -243,7 +243,7 @@ add_task(async function test_add_update_remove() {
       browser.spacesToolbar.addButton("button_1", {
         url: "invalid://url",
       }),
-      /Failed to add button to the spaces toolbar: Invalid url./,
+      `Failed to add button to the spaces toolbar: Invalid URL: invalid://url`,
       "addButton() with an invalid url should throw."
     );
 
@@ -352,7 +352,7 @@ add_task(async function test_add_update_remove() {
       browser.spacesToolbar.updateButton("button_2", {
         url: "invalid://url",
       }),
-      /Failed to update button in the spaces toolbar: Invalid url./,
+      `Failed to update button in the spaces toolbar: Invalid URL: invalid://url`,
       "updateButton() with invalid url should throw."
     );
 

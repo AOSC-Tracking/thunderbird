@@ -8,6 +8,7 @@ import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
   FeedUtils: "resource:///modules/FeedUtils.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   MimeParser: "resource:///modules/mimeParser.sys.mjs",
@@ -112,6 +113,7 @@ async function getOrOpen3PaneWindow() {
 
 /**
  * Open the given uri.
+ *
  * @param {nsIURI} uri - The uri to open.
  */
 export function openURI(uri) {
@@ -310,15 +312,18 @@ export class MessengerContentHandler {
                 );
                 args.appendElement(argstring);
                 args.appendElement(cmdLine);
-                getOrOpen3PaneWindow().then(win =>
+                getOrOpen3PaneWindow().then(win => {
+                  if (!MailServices.accounts.defaultAccount) {
+                    return; // No account yet; can't compose.
+                  }
                   Services.ww.openWindow(
                     win,
                     "chrome://messenger/content/messengercompose/messengercompose.xhtml",
                     "_blank",
                     "chrome,dialog=no,all",
                     args
-                  )
-                );
+                  );
+                });
                 break;
               }
               default:
@@ -740,9 +745,7 @@ export class MessengerContentHandler {
   }
 
   openInExternal(uri) {
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(uri);
+    lazy.openLinkExternally(uri, { addToHistory: false });
   }
 
   /** @see {nsIContentHandler} */

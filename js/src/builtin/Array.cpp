@@ -32,7 +32,7 @@
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"
 #include "util/Poison.h"
-#include "util/StringBuffer.h"
+#include "util/StringBuilder.h"
 #include "util/Text.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/EqualityOperations.h"
@@ -66,7 +66,6 @@ using mozilla::Abs;
 using mozilla::CeilingLog2;
 using mozilla::CheckedInt;
 using mozilla::DebugOnly;
-using mozilla::IsAsciiDigit;
 using mozilla::Maybe;
 using mozilla::SIMD;
 
@@ -239,7 +238,7 @@ static MOZ_ALWAYS_INLINE bool GetLengthPropertyInlined(JSContext* cx,
  * "08" or "4.0" as array indices, which they are not.
  *
  */
-JS_PUBLIC_API bool js::StringIsArrayIndex(JSLinearString* str,
+JS_PUBLIC_API bool js::StringIsArrayIndex(const JSLinearString* str,
                                           uint32_t* indexp) {
   if (!str->isIndex(indexp)) {
     return false;
@@ -650,6 +649,88 @@ struct ReverseIndexComparator {
   }
 };
 
+// Fast path to remove all elements with index >= newLen when setting the
+// .length property of an array to a smaller value.
+static bool TryFastDeleteElementsForNewLength(JSContext* cx,
+                                              Handle<ArrayObject*> arr,
+                                              uint32_t newLen, bool* success) {
+  MOZ_ASSERT(newLen < arr->length());
+
+  // If there might be an active for-in iterator for this array we have to use
+  // the generic code path because it supports suppressing deleted properties.
+  // Keys deleted before being reached during the iteration must not be visited.
+  if (arr->denseElementsMaybeInIteration()) {
+    *success = false;
+    return true;
+  }
+
+  // Sealed elements are non-configurable and shouldn't be removed.
+  if (arr->denseElementsAreSealed()) {
+    *success = false;
+    return true;
+  }
+
+  if (arr->isIndexed()) {
+    // This fast path doesn't suppress deleted properties from active iterators.
+    if (arr->compartment()->objectMaybeInIteration(arr)) {
+      *success = false;
+      return true;
+    }
+
+    // First add all sparse indexes we want to remove to a vector and check for
+    // non-configurable elements.
+    JS::RootedVector<PropertyKey> keys(cx);
+    for (ShapePropertyIter<NoGC> iter(arr->shape()); !iter.done(); iter++) {
+      uint32_t index;
+      if (!IdIsIndex(iter->key(), &index)) {
+        continue;
+      }
+      if (index < newLen) {
+        continue;
+      }
+      // Non-configurable elements shouldn't be removed.
+      if (!iter->configurable()) {
+        *success = false;
+        return true;
+      }
+      if (!keys.append(iter->key())) {
+        return false;
+      }
+    }
+
+    // Remove the sparse elements. Note that this starts at the most recently
+    // added property because this is most efficient when removing many
+    // elements.
+    //
+    // The rest of this function must be infallible (other than OOM).
+    for (size_t i = 0, len = keys.length(); i < len; i++) {
+      MOZ_ASSERT(arr->containsPure(keys[i]), "must still be a sparse element");
+      if (!NativeObject::removeProperty(cx, arr, keys[i])) {
+        MOZ_ASSERT(cx->isThrowingOutOfMemory());
+        return false;
+      }
+    }
+  }
+
+  // Remove dense elements.
+  uint32_t oldCapacity = arr->getDenseCapacity();
+  uint32_t oldInitializedLength = arr->getDenseInitializedLength();
+  MOZ_ASSERT(oldCapacity >= oldInitializedLength);
+  if (oldInitializedLength > newLen) {
+    arr->setDenseInitializedLengthMaybeNonExtensible(cx, newLen);
+  }
+  if (oldCapacity > newLen) {
+    if (arr->isExtensible()) {
+      arr->shrinkElements(cx, newLen);
+    } else {
+      MOZ_ASSERT(arr->getDenseInitializedLength() == arr->getDenseCapacity());
+    }
+  }
+
+  *success = true;
+  return true;
+}
+
 /* ES6 draft rev 34 (2015 Feb 20) 9.4.2.4 ArraySetLength */
 bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
                         Handle<PropertyDescriptor> desc,
@@ -729,41 +810,14 @@ bool js::ArraySetLength(JSContext* cx, Handle<ArrayObject*> arr, HandleId id,
       break;
     }
 
-    // Attempt to propagate dense-element optimization tricks, if possible,
-    // and avoid the generic (and accordingly slow) deletion code below.
-    // We can only do this if there are only densely-indexed elements.
-    // Once there's a sparse indexed element, there's no good way to know,
-    // save by enumerating all the properties to find it.  But we *have* to
-    // know in case that sparse indexed element is non-configurable, as
-    // that element must prevent any deletions below it.  Bug 586842 should
-    // fix this inefficiency by moving indexed storage to be entirely
-    // separate from non-indexed storage.
-    // A second reason for this optimization to be invalid is an active
-    // for..in iteration over the array. Keys deleted before being reached
-    // during the iteration must not be visited, and suppressing them here
-    // would be too costly.
-    // This optimization is also invalid when there are sealed
-    // (non-configurable) elements.
-    if (!arr->isIndexed() && !arr->denseElementsMaybeInIteration() &&
-        !arr->denseElementsAreSealed()) {
-      uint32_t oldCapacity = arr->getDenseCapacity();
-      uint32_t oldInitializedLength = arr->getDenseInitializedLength();
-      MOZ_ASSERT(oldCapacity >= oldInitializedLength);
-      if (oldInitializedLength > newLen) {
-        arr->setDenseInitializedLengthMaybeNonExtensible(cx, newLen);
-      }
-      if (oldCapacity > newLen) {
-        if (arr->isExtensible()) {
-          arr->shrinkElements(cx, newLen);
-        } else {
-          MOZ_ASSERT(arr->getDenseInitializedLength() ==
-                     arr->getDenseCapacity());
-        }
-      }
+    bool success;
+    if (!TryFastDeleteElementsForNewLength(cx, arr, newLen, &success)) {
+      return false;
+    }
 
-      // We've done the work of deleting any dense elements needing
-      // deletion, and there are no sparse elements.  Thus we can skip
-      // straight to defining the length.
+    if (success) {
+      // We've done the work of deleting any elements needing deletion.
+      // Thus we can skip straight to defining the length.
       break;
     }
 
@@ -1152,7 +1206,7 @@ static bool array_toSource(JSContext* cx, unsigned argc, Value* vp) {
 template <typename SeparatorOp>
 static bool ArrayJoinDenseKernel(JSContext* cx, SeparatorOp sepOp,
                                  Handle<NativeObject*> obj, uint64_t length,
-                                 StringBuffer& sb, uint32_t* numProcessed) {
+                                 StringBuilder& sb, uint32_t* numProcessed) {
   // This loop handles all elements up to initializedLength. If
   // length > initLength we rely on the second loop to add the
   // other elements.
@@ -1176,11 +1230,11 @@ static bool ArrayJoinDenseKernel(JSContext* cx, SeparatorOp sepOp,
         return false;
       }
     } else if (elem.isNumber()) {
-      if (!NumberValueToStringBuffer(elem, sb)) {
+      if (!NumberValueToStringBuilder(elem, sb)) {
         return false;
       }
     } else if (elem.isBoolean()) {
-      if (!BooleanToStringBuffer(elem.toBoolean(), sb)) {
+      if (!BooleanToStringBuilder(elem.toBoolean(), sb)) {
         return false;
       }
     } else if (elem.isObject() || elem.isSymbol()) {
@@ -1214,7 +1268,7 @@ static bool ArrayJoinDenseKernel(JSContext* cx, SeparatorOp sepOp,
 
 template <typename SeparatorOp>
 static bool ArrayJoinKernel(JSContext* cx, SeparatorOp sepOp, HandleObject obj,
-                            uint64_t length, StringBuffer& sb) {
+                            uint64_t length, StringBuilder& sb) {
   // Step 6.
   uint32_t numProcessed = 0;
 
@@ -1240,7 +1294,7 @@ static bool ArrayJoinKernel(JSContext* cx, SeparatorOp sepOp, HandleObject obj,
 
       // Steps 7.c-d.
       if (!v.isNullOrUndefined()) {
-        if (!ValueToStringBuffer(cx, v, sb)) {
+        if (!ValueToStringBuilder(cx, v, sb)) {
           return false;
         }
       }
@@ -1346,7 +1400,7 @@ bool js::array_join(JSContext* cx, unsigned argc, Value* vp) {
 
   // Various optimized versions of steps 6-7.
   if (seplen == 0) {
-    auto sepOp = [](StringBuffer&) { return true; };
+    auto sepOp = [](StringBuilder&) { return true; };
     if (!ArrayJoinKernel(cx, sepOp, obj, length, sb)) {
       return false;
     }
@@ -1354,19 +1408,21 @@ bool js::array_join(JSContext* cx, unsigned argc, Value* vp) {
     char16_t c = sepstr->latin1OrTwoByteChar(0);
     if (c <= JSString::MAX_LATIN1_CHAR) {
       Latin1Char l1char = Latin1Char(c);
-      auto sepOp = [l1char](StringBuffer& sb) { return sb.append(l1char); };
+      auto sepOp = [l1char](StringBuilder& sb) { return sb.append(l1char); };
       if (!ArrayJoinKernel(cx, sepOp, obj, length, sb)) {
         return false;
       }
     } else {
-      auto sepOp = [c](StringBuffer& sb) { return sb.append(c); };
+      auto sepOp = [c](StringBuilder& sb) { return sb.append(c); };
       if (!ArrayJoinKernel(cx, sepOp, obj, length, sb)) {
         return false;
       }
     }
   } else {
     Handle<JSLinearString*> sepHandle = sepstr;
-    auto sepOp = [sepHandle](StringBuffer& sb) { return sb.append(sepHandle); };
+    auto sepOp = [sepHandle](StringBuilder& sb) {
+      return sb.append(sepHandle);
+    };
     if (!ArrayJoinKernel(cx, sepOp, obj, length, sb)) {
       return false;
     }
@@ -1731,9 +1787,9 @@ struct StringifiedElement {
 
 struct SortComparatorStringifiedElements {
   JSContext* const cx;
-  const StringBuffer& sb;
+  const StringBuilder& sb;
 
-  SortComparatorStringifiedElements(JSContext* cx, const StringBuffer& sb)
+  SortComparatorStringifiedElements(JSContext* cx, const StringBuilder& sb)
       : cx(cx), sb(sb) {}
 
   bool operator()(const StringifiedElement& a, const StringifiedElement& b,
@@ -1920,7 +1976,7 @@ static bool SortLexicographically(JSContext* cx,
                                   size_t len) {
   MOZ_ASSERT(vec.length() >= len);
 
-  StringBuffer sb(cx);
+  StringBuilder sb(cx);
   Vector<StringifiedElement, 0, TempAllocPolicy> strElements(cx);
 
   /* MergeSort uses the upper half as scratch space. */
@@ -1935,7 +1991,7 @@ static bool SortLexicographically(JSContext* cx,
       return false;
     }
 
-    if (!ValueToStringBuffer(cx, vec[i], sb)) {
+    if (!ValueToStringBuilder(cx, vec[i], sb)) {
       return false;
     }
 
@@ -2412,6 +2468,7 @@ bool js::array_sort(JSContext* cx, unsigned argc, Value* vp) {
 
 ArraySortResult js::ArraySortFromJit(JSContext* cx,
                                      jit::TrampolineNativeFrameLayout* frame) {
+  AutoJSMethodProfilerEntry pseudoFrame(cx, "Array.prototype", "sort");
   // Initialize the ArraySortData class stored in the trampoline frame.
   void* dataUninit = frame->getFrameData<ArraySortData>();
   auto* data = new (dataUninit) ArraySortData(cx);
@@ -3034,8 +3091,8 @@ static bool GetActualDeleteCount(JSContext* cx, const CallArgs& args,
 
     // Step 10.b. Let actualDeleteCount be the result of clamping dc between 0
     // and len - actualStart.
-    *actualDeleteCount = uint64_t(
-        std::min(std::max(0.0, deleteCount), double(len - actualStart)));
+    *actualDeleteCount =
+        uint64_t(std::clamp(deleteCount, 0.0, double(len - actualStart)));
     MOZ_ASSERT(*actualDeleteCount <= len);
 
     // Step 11. Let newLen be len + insertCount - actualDeleteCount.
@@ -4250,11 +4307,6 @@ static bool array_of(JSContext* cx, unsigned argc, Value* vp) {
     return ArrayFromCallArgs(cx, args);
   }
 
-  if (!ReportUsageCounter(cx, nullptr, SUBCLASSING_ARRAY,
-                          SUBCLASSING_TYPE_II)) {
-    return false;
-  }
-
   // Step 4.
   RootedObject obj(cx);
   {
@@ -5117,9 +5169,11 @@ static const JSFunctionSpec array_methods[] = {
 
     JS_SELF_HOSTED_FN("toReversed", "ArrayToReversed", 0, 0),
     JS_SELF_HOSTED_FN("toSorted", "ArrayToSorted", 1, 0),
-    JS_FN("toSpliced", array_toSpliced, 2, 0), JS_FN("with", array_with, 2, 0),
+    JS_FN("toSpliced", array_toSpliced, 2, 0),
+    JS_FN("with", array_with, 2, 0),
 
-    JS_FS_END};
+    JS_FS_END,
+};
 
 static const JSFunctionSpec array_static_methods[] = {
     JS_INLINABLE_FN("isArray", array_isArray, 1, 0, ArrayIsArray),
@@ -5127,10 +5181,13 @@ static const JSFunctionSpec array_static_methods[] = {
     JS_SELF_HOSTED_FN("fromAsync", "ArrayFromAsync", 3, 0),
     JS_FN("of", array_of, 0, 0),
 
-    JS_FS_END};
+    JS_FS_END,
+};
 
 const JSPropertySpec array_static_props[] = {
-    JS_SELF_HOSTED_SYM_GET(species, "$ArraySpecies", 0), JS_PS_END};
+    JS_SELF_HOSTED_SYM_GET(species, "$ArraySpecies", 0),
+    JS_PS_END,
+};
 
 static inline bool ArrayConstructorImpl(JSContext* cx, CallArgs& args,
                                         bool isConstructor) {
@@ -5191,7 +5248,8 @@ bool js::array_construct(JSContext* cx, unsigned argc, Value* vp) {
 
 ArrayObject* js::ArrayConstructorOneArg(JSContext* cx,
                                         Handle<ArrayObject*> templateObject,
-                                        int32_t lengthInt) {
+                                        int32_t lengthInt,
+                                        gc::AllocSite* site) {
   // JIT code can call this with a template object from a different realm when
   // calling another realm's Array constructor.
   Maybe<AutoRealm> ar;
@@ -5207,7 +5265,8 @@ ArrayObject* js::ArrayConstructorOneArg(JSContext* cx,
   }
 
   uint32_t length = uint32_t(lengthInt);
-  ArrayObject* res = NewDensePartlyAllocatedArray(cx, length);
+  ArrayObject* res =
+      NewDensePartlyAllocatedArray(cx, length, GenericObject, site);
   MOZ_ASSERT_IF(res, res->realm() == templateObject->realm());
   return res;
 }
@@ -5251,7 +5310,7 @@ static MOZ_ALWAYS_INLINE ArrayObject* NewArrayWithShape(
   AutoSetNewObjectMetadata metadata(cx);
   ArrayObject* arr = ArrayObject::create(
       cx, allocKind, GetInitialHeap(newKind, &ArrayObject::class_, site), shape,
-      length, slotSpan, metadata);
+      length, slotSpan, metadata, site);
   if (!arr) {
     return nullptr;
   }
@@ -5406,12 +5465,15 @@ static const ClassSpec ArrayObjectClassSpec = {
     array_static_props,
     array_methods,
     nullptr,
-    array_proto_finish};
+    array_proto_finish,
+};
 
 const JSClass ArrayObject::class_ = {
     "Array",
     JSCLASS_HAS_CACHED_PROTO(JSProto_Array) | JSCLASS_DELAY_METADATA_BUILDER,
-    &ArrayObjectClassOps, &ArrayObjectClassSpec};
+    &ArrayObjectClassOps,
+    &ArrayObjectClassSpec,
+};
 
 ArrayObject* js::NewDenseEmptyArray(JSContext* cx) {
   return NewArray<0>(cx, 0, GenericObject);
@@ -5428,9 +5490,10 @@ ArrayObject* js::NewDenseFullyAllocatedArray(
 }
 
 ArrayObject* js::NewDensePartlyAllocatedArray(
-    JSContext* cx, uint32_t length,
-    NewObjectKind newKind /* = GenericObject */) {
-  return NewArray<ArrayObject::EagerAllocationMaxLength>(cx, length, newKind);
+    JSContext* cx, uint32_t length, NewObjectKind newKind /* = GenericObject */,
+    gc::AllocSite* site /* = nullptr */) {
+  return NewArray<ArrayObject::EagerAllocationMaxLength>(cx, length, newKind,
+                                                         site);
 }
 
 ArrayObject* js::NewDensePartlyAllocatedArrayWithProto(JSContext* cx,

@@ -30,7 +30,10 @@ t.step(function() {
   const kTexts = [
     'UNAVAILABLE',
     '🏁🎶🏁',
-    '）（あ）（'
+    '）（あ）（',
+    '-abcd_',
+    'اين المكتبة؟',
+    'bidiالرياضيات'
   ]
 
   for (const text of kTexts) {

@@ -5,7 +5,6 @@
 const { FeedUtils } = ChromeUtils.importESModule(
   "resource:///modules/FeedUtils.sys.mjs"
 );
-
 const { MessageGenerator } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
@@ -75,6 +74,7 @@ const folderPaneContextData = {
   ],
   "folderPaneContext-markAllFoldersRead": [...servers],
   "folderPaneContext-settings": [...servers],
+  "folderPaneContext-filters": [...servers],
   "folderPaneContext-manageTags": ["tags"],
 };
 
@@ -87,6 +87,7 @@ const context = about3Pane.document.getElementById("folderPaneContext");
 let account;
 let rootFolder,
   plainFolder,
+  inheritFolder,
   inboxFolder,
   inboxSubfolder,
   junkFolder,
@@ -113,6 +114,21 @@ add_setup(async function () {
   plainFolder = rootFolder
     .createLocalSubfolder("folderPaneContextFolder")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
+  inheritFolder = rootFolder
+    .createLocalSubfolder("inheritFolder")
+    .QueryInterface(Ci.nsIMsgLocalMailFolder);
+  // Set some flags to non-default so we can test inheriance.
+  inheritFolder.msgDatabase.dBFolderInfo.viewFlags &=
+    ~Ci.nsMsgViewFlagsType.kThreadedDisplay;
+  inheritFolder.msgDatabase.dBFolderInfo.sortType =
+    Ci.nsMsgViewSortType.bySubject;
+  inheritFolder.msgDatabase.dBFolderInfo.sortOrder =
+    Ci.nsMsgViewSortOrder.descending;
+  inheritFolder.msgDatabase.dBFolderInfo.setCharProperty(
+    "columnStates",
+    '{ "abc": true }'
+  );
+
   inboxFolder = rootFolder
     .createLocalSubfolder("folderPaneContextInbox")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
@@ -267,7 +283,7 @@ add_task(async function testOpen() {
   async function promiseWindowOpenAndReady() {
     const win = await BrowserTestUtils.domWindowOpenedAndLoaded(
       undefined,
-      win => win.location.href == "chrome://messenger/content/messenger.xhtml"
+      wind => wind.location.href == "chrome://messenger/content/messenger.xhtml"
     );
     // Wait for about:3pane and the folder to load.
     await TestUtils.topicObserved("mail-idle-startup-tasks-finished");
@@ -415,6 +431,7 @@ add_task(async function testNewRenameDelete() {
           parentInput.menupopup,
           "shown"
         );
+        // Create it under the rootFolder.
         const rootFolderMenu = [...parentInput.menupopup.children].find(
           m => m._folder == rootFolder
         );
@@ -435,6 +452,7 @@ add_task(async function testNewRenameDelete() {
       },
     }
   );
+
   leftClickOn(plainFolder);
   await rightClickAndActivate(plainFolder, "folderPaneContext-new");
   await newFolderPromise;
@@ -444,6 +462,67 @@ add_task(async function testNewRenameDelete() {
   await TestUtils.waitForCondition(
     () => about3Pane.folderPane.getRowForFolder(newFolder, "all"),
     "waiting for folder to appear in the folder tree"
+  );
+
+  const newSubFolderPromise = BrowserTestUtils.promiseAlertDialog(
+    undefined,
+    "chrome://messenger/content/newFolderDialog.xhtml",
+    {
+      async callback(win) {
+        await SimpleTest.promiseFocus(win);
+
+        const doc = win.document;
+        const nameInput = doc.getElementById("name");
+        const parentInput = doc.getElementById("msgNewFolderPicker");
+        const acceptButton = doc.querySelector("dialog").getButton("accept");
+
+        Assert.equal(doc.activeElement, nameInput);
+        Assert.equal(nameInput.value, "");
+        Assert.equal(parentInput.value, inheritFolder.URI);
+        Assert.ok(acceptButton.disabled);
+
+        EventUtils.sendString("inheritA", win);
+        Assert.ok(!acceptButton.disabled);
+        Assert.equal(nameInput.value, "inheritA");
+        acceptButton.click();
+      },
+    }
+  );
+
+  leftClickOn(inheritFolder);
+  await rightClickAndActivate(inheritFolder, "folderPaneContext-new");
+  await newSubFolderPromise;
+
+  const newSubFolder = inheritFolder.getChildNamed("inheritA");
+  Assert.ok(newSubFolder);
+  await TestUtils.waitForCondition(
+    () => about3Pane.folderPane.getRowForFolder(newSubFolder, "all"),
+    "waiting for folder to appear in the folder tree"
+  );
+
+  // Check parent views were set on the subfolder.
+  const parentInfo = inheritFolder.msgDatabase.dBFolderInfo;
+  const newInfo = newSubFolder.msgDatabase.dBFolderInfo;
+
+  Assert.equal(
+    newInfo.viewFlags,
+    parentInfo.viewFlags,
+    "viewFlags should be inherited"
+  );
+  Assert.equal(
+    newInfo.sortType,
+    parentInfo.sortType,
+    "sortType should be inherited"
+  );
+  Assert.equal(
+    newInfo.sortOrder,
+    parentInfo.sortOrder,
+    "sortOrder should be inherited"
+  );
+  Assert.equal(
+    newInfo.getCharProperty("columnStates"),
+    parentInfo.getCharProperty("columnStates"),
+    "columnStates should be inherited"
   );
 
   const renameFolderPromise = BrowserTestUtils.promiseAlertDialog(
@@ -494,9 +573,13 @@ add_task(async function testNewRenameDelete() {
 });
 
 /**
- * Tests "Properties" (folders) and "Settings" (servers).
+ * Tests "Properties" (folders), "Settings" and "Message Filters" (servers).
  */
-add_task(async function testPropertiesSettings() {
+add_task(async function testPropertiesSettingsFilters() {
+  // Open a folder that isn't the subject of this test. This proves that these
+  // menu commands used the right-clicked-on folder, not the current folder.
+  leftClickOn(inboxFolder);
+
   const folderPropsPromise = BrowserTestUtils.promiseAlertDialog(
     undefined,
     "chrome://messenger/content/folderProps.xhtml",
@@ -516,7 +599,6 @@ add_task(async function testPropertiesSettings() {
       },
     }
   );
-  leftClickOn(plainFolder);
   await rightClickAndActivate(plainFolder, "folderPaneContext-properties");
   await folderPropsPromise;
 
@@ -543,7 +625,6 @@ add_task(async function testPropertiesSettings() {
       },
     }
   );
-  leftClickOn(virtualFolder);
   await rightClickAndActivate(virtualFolder, "folderPaneContext-properties");
   await virtualPropsPromise;
 
@@ -551,7 +632,6 @@ add_task(async function testPropertiesSettings() {
     tabmail.tabContainer,
     "TabOpen"
   );
-  leftClickOn(rootFolder);
   await rightClickAndActivate(rootFolder, "folderPaneContext-settings");
   const {
     detail: { tabInfo },
@@ -575,6 +655,27 @@ add_task(async function testPropertiesSettings() {
     "account should be selected"
   );
   tabmail.closeTab(tabInfo);
+
+  const filtersPromise = BrowserTestUtils.promiseAlertDialog(
+    undefined,
+    "chrome://messenger/content/FilterListDialog.xhtml",
+    {
+      async callback(win) {
+        await SimpleTest.promiseFocus(win);
+
+        const doc = win.document;
+        const serverMenu = doc.getElementById("serverMenu");
+
+        Assert.equal(serverMenu.value, rootFolder.URI);
+
+        EventUtils.synthesizeKey("KEY_Escape", {}, win);
+      },
+    }
+  );
+  await rightClickAndActivate(rootFolder, "folderPaneContext-filters");
+  await filtersPromise;
+
+  await SimpleTest.promiseFocus(window);
 });
 
 /**

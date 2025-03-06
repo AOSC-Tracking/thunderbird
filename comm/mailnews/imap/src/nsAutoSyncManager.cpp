@@ -132,22 +132,15 @@ NS_IMETHODIMP nsDefaultAutoSyncFolderStrategy::Sort(
   // Follow this order;
   // INBOX > DRAFTS > SUBFOLDERS > TRASH
 
-  // test whether the folder is opened by the user.
-  // we give high priority to the folders explicitly opened by
-  // the user.
-  nsresult rv;
+  // We give high priority to the open folders.
   bool folderAOpen = false;
+  aFolderA->GetDatabaseOpen(&folderAOpen);
   bool folderBOpen = false;
-  nsCOMPtr<nsIMsgMailSession> session =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  if (NS_SUCCEEDED(rv) && session) {
-    session->IsFolderOpenInWindow(aFolderA, &folderAOpen);
-    session->IsFolderOpenInWindow(aFolderB, &folderBOpen);
-  }
+  aFolderB->GetDatabaseOpen(&folderBOpen);
 
   if (folderAOpen == folderBOpen) {
-    // if both of them or none of them are opened by the user
-    // make your decision based on the folder type
+    // If both of them or none of them are opened make your decision based on
+    // the folder type.
     if (isInbox2 || (isDrafts2 && !isInbox1) || isTrash1) {
       *aDecision = nsAutoSyncStrategyDecisions::Higher;
     } else if (isInbox1 || (isDrafts1 && !isDrafts2) || isTrash2) {
@@ -681,7 +674,7 @@ nsresult nsAutoSyncManager::StartIdleProcessing() {
 
       HandleDownloadErrorFor(autoSyncStateObj, rv);
     }  // endif
-  }    // endfor
+  }  // endfor
 
   // remove folders with no pending messages from the priority queue
   elemCount = foldersToBeRemoved.Count();
@@ -911,8 +904,8 @@ nsresult nsAutoSyncManager::AutoUpdateFolders() {
           }
         }
       }  // endfor
-    }    // endif
-  }      // endfor
+    }  // endif
+  }  // endfor
 
   // lazily create the timer if there is something to process in the queue
   // when timer is done, it will self destruct

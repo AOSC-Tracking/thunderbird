@@ -21,8 +21,8 @@ var { ExtensionParent } = ChromeUtils.importESModule(
 var { MailE10SUtils } = ChromeUtils.importESModule(
   "resource:///modules/MailE10SUtils.sys.mjs"
 );
-var { PlacesUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PlacesUtils.sys.mjs"
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
 );
 
 function tabProgressListener(aTab, aStartsBlank) {
@@ -203,15 +203,16 @@ tabProgressListener.prototype = {
       this.mProgressListener.onSecurityChange(aWebProgress, aRequest, aState);
     }
 
-    const wpl = Ci.nsIWebProgressListener;
     const wpl_security_bits =
-      wpl.STATE_IS_SECURE | wpl.STATE_IS_BROKEN | wpl.STATE_IS_INSECURE;
+      Ci.nsIWebProgressListener.STATE_IS_SECURE |
+      Ci.nsIWebProgressListener.STATE_IS_BROKEN |
+      Ci.nsIWebProgressListener.STATE_IS_INSECURE;
     let level = "";
     switch (aState & wpl_security_bits) {
-      case wpl.STATE_IS_SECURE:
+      case Ci.nsIWebProgressListener.STATE_IS_SECURE:
         level = "high";
         break;
-      case wpl.STATE_IS_BROKEN:
+      case Ci.nsIWebProgressListener.STATE_IS_BROKEN:
         level = "broken";
         break;
     }
@@ -347,7 +348,7 @@ var DOMLinkHandler = {
 var contentTabBaseType = {
   // List of URLs that will receive special treatment when opened in a tab.
   // Note that about:preferences is loaded via a different mechanism.
-  inContentWhitelist: [
+  inContentAllowList: [
     "about:addons",
     "about:addressbook",
     "about:blank",
@@ -357,7 +358,7 @@ var contentTabBaseType = {
 
   // Code to run if a particular document is loaded in a tab.
   // The array members (functions) are for the respective document URLs
-  // as specified in inContentWhitelist.
+  // as specified in inContentAllowList.
   inContentOverlays: [
     // about:addons
     function (aDocument) {
@@ -480,10 +481,10 @@ var contentTabBaseType = {
       const url = doc.defaultView.location.href;
 
       // If this document has an overlay defined, run it now.
-      let ind = self.inContentWhitelist.indexOf(url);
+      let ind = self.inContentAllowList.indexOf(url);
       if (ind < 0) {
         // Try a wildcard.
-        ind = self.inContentWhitelist.indexOf(url.replace(/:.*/, ":*"));
+        ind = self.inContentAllowList.indexOf(url.replace(/:.*/, ":*"));
       }
       if (ind >= 0) {
         const overlayFunction = self.inContentOverlays[ind];
@@ -660,8 +661,8 @@ class SecurityIcon {
   /**
    * Set the security level of the page.
    *
-   * @param {"high"|"broken"|""} - The security level for the page, or empty if
-   *   it is to be ignored.
+   * @param {"high"|"broken"|""} securityLevel - The security level for the
+   *   page, or empty if it is to be ignored.
    */
   setSecurityLevel(securityLevel) {
     if (this.securityLevel !== securityLevel) {
@@ -676,8 +677,7 @@ class SecurityIcon {
     let l10nId;
     let secure = false;
     if (this.loading) {
-      src = "chrome://global/skin/icons/loading.png";
-      srcSet = "chrome://global/skin/icons/loading@2x.png 2x";
+      src = "chrome://messenger/skin/icons/spinning.svg";
       l10nId = "content-tab-page-loading-icon";
     } else {
       switch (this.securityLevel) {
@@ -712,12 +712,6 @@ class SecurityIcon {
 
 var specialTabs = {
   _kAboutRightsVersion: 1,
-  get _protocolSvc() {
-    delete this._protocolSvc;
-    return (this._protocolSvc = Cc[
-      "@mozilla.org/uriloader/external-protocol-service;1"
-    ].getService(Ci.nsIExternalProtocolService));
-  },
 
   get msgNotificationBar() {
     if (!this._notificationBox) {
@@ -774,6 +768,7 @@ var specialTabs = {
      * This is the internal function used by content tabs to open a new tab. To
      * open a contentTab, use specialTabs.openTab("contentTab", aArgs)
      *
+     * @param {TabInfo} aTab - The tab.
      * @param {object} aArgs - The options that content tabs accept.
      * @param {string} aArgs.url - The URL that is to be opened
      * @param {nsIOpenWindowInfo} [aArgs.openWindowInfo] - The opener window
@@ -892,7 +887,10 @@ var specialTabs = {
 
       if (aArgs.linkHandler == "single-page") {
         aTab.browser.setAttribute("messagemanagergroup", "single-page");
-      } else if (aArgs.linkHandler === null) {
+      } else if (
+        aArgs.linkHandler === null ||
+        aArgs.linkHandler == "browsers"
+      ) {
         aTab.browser.setAttribute("messagemanagergroup", "browsers");
       } else {
         aTab.browser.setAttribute("messagemanagergroup", "single-site");
@@ -1024,7 +1022,7 @@ var specialTabs = {
    *
    * @see {BrowserContentHandler.needHomepageOverride}
    */
-  showWhatsNewPage() {
+  async showWhatsNewPage() {
     const old_mstone = Services.prefs.getCharPref(
       "mailnews.start_page_override.mstone",
       ""
@@ -1039,9 +1037,13 @@ var specialTabs = {
       const um = Cc["@mozilla.org/updates/update-manager;1"].getService(
         Ci.nsIUpdateManager
       );
-      const update = um.updateInstalledAtStartup;
+      const update = await um.lastUpdateInstalled();
 
-      if (update && Services.vc.compare(update.appVersion, old_mstone) > 0) {
+      if (
+        update &&
+        Services.vc.compare(update.appVersion, old_mstone) > 0 &&
+        Services.vc.compare(update.appVersion, mstone) <= 0
+      ) {
         let overridePage = Services.urlFormatter.formatURLPref(
           "mailnews.start_page.override_url"
         );
@@ -1256,7 +1258,8 @@ var specialTabs = {
   /**
    * Determine if we should load fav icons or not.
    *
-   * @param aURI  An nsIURI containing the current url.
+   * @param {nsIURI} aURI - An nsIURI containing the current url.
+   * @returns {boolean} true if we should load.
    */
   _shouldLoadFavIcon(aURI) {
     return (
@@ -1289,19 +1292,13 @@ var specialTabs = {
    * page shown in the browser. It is assumed that the preferences have already
    * been checked before calling this function appropriately.
    *
-   * @param aTab  The tab to set the icon for.
-   * @param aIcon A string based URL of the icon to try and load.
+   * @param {object} aTab - The tab (tabInfo) to set the icon for.
+   * @param {string} aIcon - A string based URL of the icon to try and load.
    */
-  setFavIcon(aTab, aIcon) {
-    if (aIcon) {
-      PlacesUtils.favicons.setAndFetchFaviconForPage(
-        aTab.browser.currentURI,
-        Services.io.newURI(aIcon),
-        false,
-        PlacesUtils.favicons.FAVICON_LOAD_NON_PRIVATE,
-        null,
-        aTab.browser.contentPrincipal
-      );
+  async setFavIcon(aTab, aIcon) {
+    if (aIcon && aTab.browser.currentURI.spec.startsWith("http")) {
+      const iconURI = Services.io.newURI(aIcon);
+      await MailUtils.setFaviconForPage(aTab.browser.currentURI, iconURI);
     }
     document
       .getElementById("tabmail")

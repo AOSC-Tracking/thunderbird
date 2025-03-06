@@ -9,8 +9,6 @@
 // Wrap in a block to prevent leaking to window scope.
 {
   var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
-  var { PluralForm } = ChromeUtils.importESModule("resource:///modules/PluralForm.sys.mjs");
-
   /**
    * A calendar-notifications-setting provides controls to config notifications
    * times of a calendar.
@@ -40,11 +38,11 @@
         .join(",");
     }
 
-    set value(value) {
+    set value(v) {
       // An array of notifications times, each item is in the form of [5, "M",
       // "before-start"], i.e. a triple of time, unit and relation.
       const items = [];
-      const durations = value?.split(",") || [];
+      const durations = v?.split(",") || [];
       for (let dur of durations) {
         dur = dur.trim();
         if (!dur) {
@@ -185,13 +183,13 @@
           </menulist>
           <menulist class="relation-menu" crop="none" value="${relation}">
             <menupopup class="reminder-relation-origin-menupopup">
-              <menuitem data-id="reminderCustomOriginBeginBeforeEvent"
+              <menuitem data-l10n-id="reminder-custom-origin-begin-before-event-dom"
                         value="before-START"/>
-              <menuitem data-id="reminderCustomOriginBeginAfterEvent"
+              <menuitem data-l10n-id="reminder-custom-origin-begin-after-event-dom"
                         value="after-START"/>
-              <menuitem data-id="reminderCustomOriginEndBeforeEvent"
+              <menuitem data-l10n-id="reminder-custom-origin-end-before-event-dom"
                         value="before-END"/>
-              <menuitem data-id="reminderCustomOriginEndAfterEvent"
+              <menuitem data-l10n-id="reminder-custom-origin-end-after-event-dom"
                         value="after-END"/>
             </menupopup>
           </menulist>
@@ -222,28 +220,25 @@
       for (const row of this._elList.children) {
         const input = row.querySelector("input");
         const menulist = row.querySelector(".unit-menu");
-        this._updateMenuList(input.value, menulist);
-        for (const menuItem of row.querySelectorAll(".relation-menu menuitem")) {
-          menuItem.label = cal.l10n.getString("calendar-alarms", menuItem.dataset.id);
-        }
+        this._updateMenuList(Number(input.value), menulist);
       }
     }
 
     /**
      * Update the plurality of a menulist (unit) options to the input value (time).
      */
-    _updateMenuList(length, menu) {
+    _updateMenuList(count, menu) {
       const getUnitEntry = unit =>
         ({
-          M: "unitMinutes",
-          H: "unitHours",
-          D: "unitDays",
-        }[unit] || "unitMinutes");
+          M: "event-duration-menuitem-minutes",
+          H: "event-duration-menuitem-hours",
+          D: "event-duration-menuitem-days",
+        })[unit] || "event-duration-menuitem-minutes";
 
       for (const menuItem of menu.getElementsByTagName("menuitem")) {
-        menuItem.label = PluralForm.get(length, cal.l10n.getCalString(getUnitEntry(menuItem.value)))
-          .replace("#1", "")
-          .trim();
+        document.l10n.setAttributes(menuItem, getUnitEntry(menuItem.value), {
+          count,
+        });
       }
     }
 

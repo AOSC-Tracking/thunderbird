@@ -6,14 +6,23 @@
 
 use crate::std::{fs::File, io::Read, path::Path};
 use anyhow::{Context, Result};
-use zip::read::ZipArchive;
+use zip::read::{ArchiveOffset, Config as ZipConfig, ZipArchive};
 
 /// A firefox archive file.
 pub type Archive = ZipArchive<File>;
 
 /// Read a zip file.
 pub fn read_zip(path: &Path) -> Result<Archive> {
-    ZipArchive::new(
+    ZipArchive::with_config(
+        ZipConfig {
+            // The archive starts at the beginning of the file (it's a standard zip file, no
+            // prefix data).
+            //
+            // Without this explicit offset, the default behavior will not work for omnijar files
+            // (which have the central directory at the beginning of the file, rather than just
+            // before the end of central directory maker).
+            archive_offset: ArchiveOffset::Known(0),
+        },
         File::open(&path).with_context(|| format!("failed to open {}", path.display()))?,
     )
     .with_context(|| format!("failed to read zip archive in {}", path.display()))

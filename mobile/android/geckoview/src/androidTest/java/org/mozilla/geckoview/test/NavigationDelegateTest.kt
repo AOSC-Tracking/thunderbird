@@ -695,8 +695,11 @@ class NavigationDelegateTest : BaseSessionTest() {
     }
 
     @Test fun loadHSTSBadCert() {
-        val httpsFirstPref = "dom.security.https_first"
-        assertThat("https pref should be false", sessionRule.getPrefs(httpsFirstPref)[0] as Boolean, equalTo(false))
+        sessionRule.setPrefsUntilTestEnd(
+            mapOf(
+                "dom.security.https_first" to false,
+            ),
+        )
 
         // load secure url with hsts header
         val uri = "https://example.com/tests/junit/hsts_header.sjs"
@@ -780,8 +783,7 @@ class NavigationDelegateTest : BaseSessionTest() {
     }
 
     @Setting(key = Setting.Key.USE_TRACKING_PROTECTION, value = "true")
-    @Ignore
-    // TODO: Bug 1564373
+    @Ignore // Bug 1564373
     @Test
     fun trackingProtection() {
         val category = ContentBlocking.AntiTracking.TEST
@@ -2586,12 +2588,17 @@ class NavigationDelegateTest : BaseSessionTest() {
 
         sessionRule.delegateUntilTestEnd(object : WebExtensionController.PromptDelegate {
             @AssertCalled
-            override fun onInstallPrompt(
+            override fun onInstallPromptRequest(
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
-            ): GeckoResult<AllowOrDeny> {
-                return GeckoResult.allow()
+            ): GeckoResult<WebExtension.PermissionPromptResponse>? {
+                return GeckoResult.fromValue(
+                    WebExtension.PermissionPromptResponse(
+                        true, // isPermissionsGranted
+                        false, // isPrivateModeGranted
+                    ),
+                )
             }
         })
 
@@ -2636,14 +2643,10 @@ class NavigationDelegateTest : BaseSessionTest() {
 
     @Test
     fun mainProcessSwitching() {
-        processSwitchingTest("about:config")
+        processSwitchingTest("about:about")
     }
 
     private fun processSwitchingTest(url: String) {
-        val settings = sessionRule.runtime.settings
-        val aboutConfigEnabled = settings.aboutConfigEnabled
-        settings.aboutConfigEnabled = true
-
         var currentUrl: String? = null
         mainSession.delegateUntilTestEnd(object : NavigationDelegate {
             override fun onLocationChange(
@@ -2717,8 +2720,6 @@ class NavigationDelegateTest : BaseSessionTest() {
             mainSession.active,
             equalTo(true),
         )
-
-        settings.aboutConfigEnabled = aboutConfigEnabled
     }
 
     @Test fun setLocationHash() {
@@ -2778,14 +2779,6 @@ class NavigationDelegateTest : BaseSessionTest() {
     }
 
     @Test fun purgeHistory() {
-        // TODO: Bug 1884334
-        val geckoPrefs = sessionRule.getPrefs(
-            "fission.disableSessionHistoryInParent",
-        )
-        assumeThat(geckoPrefs[0] as Boolean, equalTo(true))
-        // TODO: Bug 1837551
-        assumeThat(sessionRule.env.isFission, equalTo(false))
-
         mainSession.loadUri("$TEST_ENDPOINT$HELLO_HTML_PATH")
         sessionRule.waitUntilCalled(object : HistoryDelegate, NavigationDelegate {
             @AssertCalled(count = 1)
@@ -3163,9 +3156,6 @@ class NavigationDelegateTest : BaseSessionTest() {
     }
 
     @Test fun goBackFromHistory() {
-        // TODO: Bug 1837551
-        assumeThat(sessionRule.env.isFission, equalTo(false))
-
         mainSession.loadTestPath(HELLO_HTML_PATH)
 
         mainSession.waitUntilCalled(object : HistoryDelegate, ContentDelegate {

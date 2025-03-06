@@ -11,7 +11,12 @@ var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUti
 ChromeUtils.defineESModuleGetters(this, {
   CalRecurrenceInfo: "resource:///modules/CalRecurrenceInfo.sys.mjs",
 });
-
+var lazy = {};
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["calendar/calendar.ftl", "calendar/calendar-recurrence-dialog.ftl"], true)
+);
 var gIsReadOnly = false;
 var gStartTime = null;
 var gEndTime = null;
@@ -71,10 +76,12 @@ const RecurrencePreview = {
   },
   /**
    * Updates preview of #recurrencePreview node.
+   *
+   * @param {calIRecurrenceInfo} recurrenceInfo
    */
   updatePreview(recurrenceInfo) {
-    const minimonth = this.node.querySelector("calendar-minimonth");
-    this.node.style.minHeight = minimonth.getBoundingClientRect().height + "px";
+    const calMinimonth = this.node.querySelector("calendar-minimonth");
+    this.node.style.minHeight = calMinimonth.getBoundingClientRect().height + "px";
 
     this.mRecurrenceInfo = recurrenceInfo;
     const start = this.dateTime.clone();
@@ -290,8 +297,7 @@ const DaypickerWeekday = {
       if (dow >= 7) {
         dow -= 7;
       }
-      const day = cal.l10n.getString("dateFormat", `day.${dow + 1}.Mmm`);
-      child.label = day;
+      child.label = cal.dtz.formatter.shortWeekdayNames[dow];
       child.calendar = mainbox;
     }
   },
@@ -350,11 +356,7 @@ const DaypickerMonthday = {
         child.calendar = mainbox;
       }
     }
-    const labelLastDay = cal.l10n.getString(
-      "calendar-event-dialog",
-      "eventRecurrenceMonthlyLastDayLabel"
-    );
-    child.setAttribute("label", labelLastDay);
+    document.l10n.setAttributes(child, "event-recurrence-monthly-last-day-label");
   },
   /**
    * Setter for days property.
@@ -421,6 +423,7 @@ function onLoad() {
   RecurrencePreview.init();
   DaypickerWeekday.init();
   DaypickerMonthday.init();
+  initRecurrencePatternWidgets();
   changeWidgetsOrder();
 
   const args = window.arguments[0];
@@ -1043,7 +1046,7 @@ function checkUntilDate() {
       Services.prompt.alert(
         null,
         document.title,
-        cal.l10n.getCalString("warningUntilDateBeforeStart")
+        lazy.l10n.formatValueSync("warning-until-date-before-start")
       );
       checkUntilDate.warning = false;
     };
@@ -1090,6 +1093,45 @@ function updateRecurrenceControls() {
   updateRecurrenceRange();
   updatePreview();
   window.sizeToContent();
+}
+
+/**
+ * Initialize the weekday and month pickers to have localized strings, and
+ * start with the first day of the week.
+ */
+function initRecurrencePatternWidgets() {
+  let popup = document.getElementById("monthly-weekday-menupopup");
+  const first = Services.prefs.getIntPref("calendar.week.start");
+  for (let i = first; i < first + 7; i++) {
+    const item = document.createXULElement("menuitem");
+    item.label = cal.dtz.formatter.weekdayNames[i % 7];
+    item.value = (i % 7) + 1;
+    popup.insertBefore(item, popup.lastElementChild);
+  }
+
+  popup = document.getElementById("yearly-month-ordinal-menupopup");
+  for (let i = 0; i < 12; i++) {
+    const item = document.createXULElement("menuitem");
+    item.label = cal.dtz.formatter.monthNames[i];
+    item.value = i + 1;
+    popup.appendChild(item);
+  }
+
+  popup = document.getElementById("yearly-weekday-menupopup");
+  for (let i = first; i < first + 7; i++) {
+    const item = document.createXULElement("menuitem");
+    item.label = cal.dtz.formatter.weekdayNames[i % 7];
+    item.value = (i % 7) + 1;
+    popup.insertBefore(item, popup.lastElementChild);
+  }
+
+  popup = document.getElementById("yearly-month-rule-menupopup");
+  for (let i = 0; i < 12; i++) {
+    const item = document.createXULElement("menuitem");
+    item.label = cal.dtz.formatter.monthNames[i];
+    item.value = i + 1;
+    popup.appendChild(item);
+  }
 }
 
 /**
@@ -1173,64 +1215,56 @@ function updateRecurrencePattern() {
  * This is needed for some locales that expect a different wording order.
  *
  * @param {string} aPropKey - The locale property key to get the order from
- * @param {string[]} aPropParams - An array of ids to be passed to the locale
+ * @param {object} aPropParams - An object of parameters to be passed to the locale
  *   property. These should be the ids of the elements to change the order for.
  */
 function changeOrderForElements(aPropKey, aPropParams) {
-  let localeOrder;
   const parents = {};
-
+  const aPropParamsLength = Object.keys(aPropParams).length;
   for (const key in aPropParams) {
     // Save original parents so that the nodes to reorder get appended to
     // the correct parent nodes.
-    parents[key] = document.getElementById(aPropParams[key]).parentNode;
+    parents[aPropParams[key]] = document.getElementById(aPropParams[key]).parentNode;
   }
+  const localeOrder = lazy.l10n.formatValueSync(aPropKey, aPropParams).split(" ");
 
-  try {
-    localeOrder = cal.l10n.getString("calendar-event-dialog", aPropKey, aPropParams).split(" ");
-  } catch (ex) {
-    const msg =
-      "The key " +
-      aPropKey +
-      " in calendar-event-dialog.prop" +
-      "erties has incorrect number of params. Expected " +
-      aPropParams.length +
-      " params.";
-    console.error(msg + " " + ex);
+  if (!localeOrder || aPropParamsLength != localeOrder.length) {
+    console.error(
+      `The key ${aPropKey} in calendar-recurrence-dialog.ftl has incorrect number of params. Expected ${aPropParamsLength} params.`
+    );
     return;
   }
 
-  // Add elements in the right order, removing them from their old parent
-  for (let i = 0; i < aPropParams.length; i++) {
-    const newEl = document.getElementById(localeOrder[i]);
-    if (newEl) {
-      parents[i].appendChild(newEl);
-    } else {
+  // Add elements in the right order, removing them from their old parent.
+  for (const id of localeOrder) {
+    const element = document.getElementById(id);
+    if (!element) {
       cal.ERROR(
-        "Localization error, could not find node '" +
-          localeOrder[i] +
-          "'. Please have your localizer check the string '" +
-          aPropKey +
-          "'"
+        `Localization error, could not find node "${id}". Please have your localizer check the string "${aPropKey}"`
       );
+      continue;
     }
+    parents[id].appendChild(element);
   }
 }
 
 /**
- * Change locale-specific widget order for Edit Recurrence window
+ * Change locale-specific widget order for Edit Recurrence window.
  */
 function changeWidgetsOrder() {
-  changeOrderForElements("monthlyOrder", ["monthly-ordinal", "monthly-weekday"]);
-  changeOrderForElements("yearlyOrder", [
-    "yearly-days",
-    "yearly-period-of-month-label",
-    "yearly-month-ordinal",
-  ]);
-  changeOrderForElements("yearlyOrder2", [
-    "yearly-ordinal",
-    "yearly-weekday",
-    "yearly-period-of-label",
-    "yearly-month-rule",
-  ]);
+  changeOrderForElements("monthly-order", {
+    day: "monthly-weekday",
+    ordinal: "monthly-ordinal",
+  });
+  changeOrderForElements("yearly-order-day", {
+    day: "yearly-days",
+    article: "yearly-period-of-month-label",
+    month: "yearly-month-ordinal",
+  });
+  changeOrderForElements("yearly-order-ordinal", {
+    ordinal: "yearly-ordinal",
+    day: "yearly-weekday",
+    article: "yearly-period-of-label",
+    month: "yearly-month-rule",
+  });
 }

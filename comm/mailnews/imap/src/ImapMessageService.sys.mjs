@@ -241,7 +241,7 @@ class BaseMessageService {
     const headersStream = Cc[
       "@mozilla.org/io/string-input-stream;1"
     ].createInstance(Ci.nsIStringInputStream);
-    headersStream.setData(headers, headers.length);
+    headersStream.setByteStringData(headers);
     const pump = Cc["@mozilla.org/network/input-stream-pump;1"].createInstance(
       Ci.nsIInputStreamPump
     );
@@ -277,7 +277,7 @@ class BaseMessageService {
       client.onData = uids => {
         for (const uid of uids) {
           const msgHdr = folder.msgDatabase.getMsgHdrForKey(uid);
-          searchSession.runningAdapter.AddResultElement(msgHdr);
+          searchSession.runningAdapter.addResultElement(msgHdr);
         }
       };
     });
@@ -286,8 +286,12 @@ class BaseMessageService {
   /**
    * Parse a message uri to hostname, folder and message key.
    *
-   * @param {string} uri - The imap-message:// url to parse.
-   * @returns {serverURI: string, folder: nsIMsgFolder, folderName: string, key: string}
+   * @param {string} messageUri - The imap-message:// url to parse.
+   * @returns {object} object
+   * @returns {string} object.serverURI
+   * @returns {nsIMsgFolder} object.folder
+   * @returns {string} object.folderName
+   * @returns {string} object.key
    */
   _decomposeMessageUri(messageUri) {
     const matches = /imap-message:\/\/([^:/]+)\/(.+)#(\d+)/.exec(messageUri);

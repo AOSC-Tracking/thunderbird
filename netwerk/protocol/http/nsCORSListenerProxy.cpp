@@ -54,7 +54,7 @@
 #include "mozilla/dom/nsHTTPSOnlyUtils.h"
 #include "mozilla/dom/ReferrerInfo.h"
 #include "mozilla/dom/RequestBinding.h"
-#include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/glean/NetwerkProtocolHttpMetrics.h"
 #include <algorithm>
 
 using namespace mozilla;
@@ -308,7 +308,7 @@ nsPreflightCache::CacheEntry* nsPreflightCache::GetEntry(
   // This is a new entry, allocate and insert into the table now so that any
   // failures don't cause items to be removed from a full cache.
   auto newEntry =
-      MakeUnique<CacheEntry>(key, aOriginAttributes.mPrivateBrowsingId != 0);
+      MakeUnique<CacheEntry>(key, aOriginAttributes.IsPrivateBrowsing());
 
   NS_ASSERTION(mTable.Count() <= PREFLIGHT_CACHE_SIZE,
                "Something is borked, too many entries in the cache!");
@@ -1742,18 +1742,16 @@ void nsCORSListenerProxy::LogBlockedCORSRequest(
   // the error to the browser console.
   if (aInnerWindowID > 0) {
     rv = scriptError->InitWithSanitizedSource(aMessage,
-                                              u""_ns,  // sourceName
-                                              u""_ns,  // sourceLine
-                                              0,       // lineNumber
-                                              0,       // columnNumber
+                                              ""_ns,  // sourceName
+                                              0,      // lineNumber
+                                              0,      // columnNumber
                                               errorFlag, aCategory,
                                               aInnerWindowID);
   } else {
     rv = scriptError->Init(aMessage,
-                           u""_ns,  // sourceName
-                           u""_ns,  // sourceLine
-                           0,       // lineNumber
-                           0,       // columnNumber
+                           ""_ns,  // sourceName
+                           0,      // lineNumber
+                           0,      // columnNumber
                            errorFlag, aCategory, aPrivateBrowsing,
                            aFromChromeContext);  // From chrome context
   }

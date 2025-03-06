@@ -133,9 +133,25 @@ export const UIFontSize = {
    * @param {Window} win - The window to be registered.
    */
   registerWindow(win) {
+    if (registeredWindows.has(win)) {
+      console.error(
+        "Trying to register the same window twice",
+        win.location.pathname
+      );
+      return;
+    }
+
     // Fetch the default font size defined by the OS as soon as we register the
     // first window. Don't do it again if we already have a value.
     if (!this.osValue) {
+      if (win.document.readyState == "loading") {
+        console.error(
+          "Trying to register a window before it is fully loaded",
+          win.location.pathname
+        );
+        return;
+      }
+
       const style = win
         .getComputedStyle(win.document.documentElement)
         .getPropertyValue("font-size");

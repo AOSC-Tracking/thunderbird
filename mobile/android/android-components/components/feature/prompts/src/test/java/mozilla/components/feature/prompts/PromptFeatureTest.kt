@@ -13,7 +13,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
-import android.view.View
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentTransaction
@@ -45,7 +44,8 @@ import mozilla.components.concept.storage.Login
 import mozilla.components.concept.storage.LoginEntry
 import mozilla.components.feature.prompts.address.AddressDelegate
 import mozilla.components.feature.prompts.address.AddressPicker
-import mozilla.components.feature.prompts.concept.SelectablePromptView
+import mozilla.components.feature.prompts.concept.AutocompletePrompt
+import mozilla.components.feature.prompts.concept.PasswordPromptView
 import mozilla.components.feature.prompts.creditcard.CreditCardDelegate
 import mozilla.components.feature.prompts.creditcard.CreditCardPicker
 import mozilla.components.feature.prompts.creditcard.CreditCardSaveDialogFragment
@@ -58,6 +58,8 @@ import mozilla.components.feature.prompts.facts.CreditCardAutofillDialogFacts
 import mozilla.components.feature.prompts.file.FilePicker.Companion.FILE_PICKER_ACTIVITY_REQUEST_CODE
 import mozilla.components.feature.prompts.login.LoginDelegate
 import mozilla.components.feature.prompts.login.LoginPicker
+import mozilla.components.feature.prompts.login.StrongPasswordPromptViewListener
+import mozilla.components.feature.prompts.login.SuggestStrongPasswordDelegate
 import mozilla.components.feature.prompts.share.ShareDelegate
 import mozilla.components.feature.session.SessionUseCases
 import mozilla.components.support.base.Component
@@ -166,6 +168,27 @@ class PromptFeatureTest {
     }
 
     @Test
+    fun `PromptFeatures must cancel promptRequest when there is an active permission`() {
+        val feature = spy(
+            PromptFeature(
+                fragment = mock(),
+                fileUploadsDirCleaner = mock(),
+                store = store,
+                tabsUseCases = mock(),
+                fragmentManager = fragmentManager,
+            ) { },
+        )
+
+        feature.start()
+
+        val promptRequest = SingleChoice(arrayOf(), {}, {})
+        store.dispatch(ContentAction.UpdatePermissionsRequest(tabId, mock())).joinBlocking()
+        store.dispatch(ContentAction.UpdatePromptRequestAction(tabId, promptRequest)).joinBlocking()
+
+        verify(feature).onCancel(tabId, promptRequest.uid)
+    }
+
+    @Test
     fun `PromptFeature acts on the selected session if there is no custom tab ID`() {
         val feature = spy(
             PromptFeature(
@@ -234,11 +257,13 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = mock(),
-                tabsUseCases = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
-            ) { }
+                tabsUseCases = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         feature.start()
         verify(fragment).feature = feature
     }
@@ -257,10 +282,12 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
+                fragmentManager = fragmentManager,
                 tabsUseCases = mock(),
                 fileUploadsDirCleaner = mock(),
-                fragmentManager = fragmentManager,
-            ) { }
+                onNeedToRequestPermissions = { },
+
+            )
         feature.start()
 
         verify(fragment, never()).feature = feature
@@ -286,10 +313,12 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
+                fragmentManager = fragmentManager,
                 tabsUseCases = mock(),
                 fileUploadsDirCleaner = mock(),
-                fragmentManager = fragmentManager,
-            ) { }
+                onNeedToRequestPermissions = { },
+
+            )
         feature.start()
 
         verify(fragment, never()).feature = feature
@@ -303,10 +332,12 @@ class PromptFeatureTest {
             PromptFeature(
                 mock<Activity>(),
                 store,
+                fragmentManager = fragmentManager,
                 tabsUseCases = mock(),
                 fileUploadsDirCleaner = mock(),
-                fragmentManager = fragmentManager,
-            ) { },
+                onNeedToRequestPermissions = { },
+
+            ),
         )
 
         feature.stop()
@@ -317,23 +348,24 @@ class PromptFeatureTest {
     @Test
     fun `GIVEN loginPickerView is visible WHEN dismissSelectPrompts THEN dismissCurrentLoginSelect called and true returned`() {
         // given
-        val loginPickerView: SelectablePromptView<Login> = mock()
+        val loginPickerView: AutocompletePrompt<Login> = mock()
         val feature = spy(
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
                 loginDelegate = object : LoginDelegate {
                     override val loginPickerView = loginPickerView
                     override val onManageLogins = {}
                 },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            ),
         )
         val selectLoginPrompt = mock<PromptRequest.SelectLoginPrompt>()
-        whenever(loginPickerView.asView()).thenReturn(mock())
-        whenever(loginPickerView.asView().visibility).thenReturn(View.VISIBLE)
+        whenever(loginPickerView.isPromptDisplayed).thenReturn(true)
         feature.loginPicker = loginPicker
         feature.activePromptRequest = selectLoginPrompt
 
@@ -342,6 +374,40 @@ class PromptFeatureTest {
 
         // then
         verify(feature.loginPicker!!).dismissCurrentLoginSelect(selectLoginPrompt)
+        assertEquals(true, result)
+    }
+
+    @Test
+    fun `GIVEN strongPasswordPromptView is visible WHEN dismissSelectPrompts THEN dismissCurrentSuggestStrongPassword called and true returned`() {
+        // given
+        val strongPasswordPromptViewListener: StrongPasswordPromptViewListener = mock()
+        val strongPasswordPromptViewListenerView: PasswordPromptView = mock()
+        val feature = spy(
+            PromptFeature(
+                mock<Activity>(),
+                store,
+                fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
+                suggestStrongPasswordDelegate = object : SuggestStrongPasswordDelegate {
+                    override val strongPasswordPromptViewListenerView =
+                        strongPasswordPromptViewListenerView
+                },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
+        )
+        val selectLoginPrompt = mock<PromptRequest.SelectLoginPrompt>()
+        whenever(strongPasswordPromptViewListenerView.isPromptDisplayed).thenReturn(true)
+        feature.strongPasswordPromptViewListener = strongPasswordPromptViewListener
+        feature.activePromptRequest = selectLoginPrompt
+
+        // when
+        val result = feature.dismissSelectPrompts()
+
+        // then
+        verify(feature.strongPasswordPromptViewListener!!).dismissCurrentSuggestStrongPassword(
+            selectLoginPrompt,
+        )
         assertEquals(true, result)
     }
 
@@ -364,13 +430,15 @@ class PromptFeatureTest {
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-                isSaveLoginEnabled = { true },
                 loginValidationDelegate = mock(),
-            ) { },
+                isSaveLoginEnabled = { true },
+                hideUpdateFragmentAfterSavingGeneratedPassword = { _, _ -> false },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
 
         feature.start()
@@ -399,11 +467,12 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 isSaveLoginEnabled = { false },
-            ) {},
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = {},
+            ),
         )
         val session = tab()!!
 
@@ -411,6 +480,40 @@ class PromptFeatureTest {
 
         store.waitUntilIdle()
 
+        verify(feature).dismissDialogRequest(promptRequest, session)
+    }
+
+    @Test
+    fun `GIVEN hideUpdateFragmentAfterSavingGeneratedPassword is true WHEN saveLoginPrompt request is handled THEN dismiss saveLoginPrompt`() {
+        val loginUsername = "username"
+        val loginPassword = "password"
+        val entry: LoginEntry = mock()
+        `when`(entry.username).thenReturn(loginUsername)
+        `when`(entry.password).thenReturn(loginPassword)
+        val promptRequest = PromptRequest.SaveLoginPrompt(2, listOf(entry), { }, { })
+
+        var onRemoveLastSavedPasswordCalled = false
+        val feature = spy(
+            PromptFeature(
+                activity = mock(),
+                store = store,
+                fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
+                loginValidationDelegate = mock(),
+                isSaveLoginEnabled = { true },
+                hideUpdateFragmentAfterSavingGeneratedPassword = { _, _ -> true },
+                removeLastSavedGeneratedPassword = { onRemoveLastSavedPasswordCalled = true },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = {},
+            ),
+        )
+        val session = tab()!!
+
+        feature.handleDialogsRequest(promptRequest, session)
+
+        store.waitUntilIdle()
+
+        assertTrue(onRemoveLastSavedPasswordCalled)
         verify(feature).dismissDialogRequest(promptRequest, session)
     }
 
@@ -428,11 +531,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 isSaveLoginEnabled = { true },
-            ) {},
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = {},
+
+            ),
         )
         val session = tab()!!
 
@@ -460,10 +565,11 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = mock(),
             store = store,
-            fileUploadsDirCleaner = mock(),
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
-        ) {}
+            tabsUseCases = mock(),
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = {},
+        )
 
         var onDismissWasCalled = false
         val promptRequest = PromptRequest.SaveLoginPrompt(
@@ -484,23 +590,24 @@ class PromptFeatureTest {
     @Test
     fun `GIVEN loginPickerView is not visible WHEN dismissSelectPrompts THEN dismissCurrentLoginSelect called and false returned`() {
         // given
-        val loginPickerView: SelectablePromptView<Login> = mock()
+        val loginPickerView: AutocompletePrompt<Login> = mock()
         val feature = spy(
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 loginDelegate = object : LoginDelegate {
                     override val loginPickerView = loginPickerView
                     override val onManageLogins = {}
                 },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            ),
         )
         val selectLoginPrompt = mock<PromptRequest.SelectLoginPrompt>()
-        whenever(loginPickerView.asView()).thenReturn(mock())
-        whenever(loginPickerView.asView().visibility).thenReturn(View.GONE)
+        whenever(loginPickerView.isPromptDisplayed).thenReturn(false)
         feature.loginPicker = loginPicker
         feature.activePromptRequest = selectLoginPrompt
 
@@ -514,23 +621,24 @@ class PromptFeatureTest {
     @Test
     fun `GIVEN PromptFeature WHEN onBackPressed THEN dismissSelectPrompts is called`() {
         // given
-        val loginPickerView: SelectablePromptView<Login> = mock()
+        val loginPickerView: AutocompletePrompt<Login> = mock()
         val feature = spy(
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
                 loginDelegate = object : LoginDelegate {
                     override val loginPickerView = loginPickerView
                     override val onManageLogins = {}
                 },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            ),
         )
         val selectLoginPrompt = mock<PromptRequest.SelectLoginPrompt>()
-        whenever(loginPickerView.asView()).thenReturn(mock())
-        whenever(loginPickerView.asView().visibility).thenReturn(View.VISIBLE)
+        whenever(loginPickerView.isPromptDisplayed).thenReturn(true)
         feature.loginPicker = loginPicker
         feature.activePromptRequest = selectLoginPrompt
 
@@ -544,23 +652,24 @@ class PromptFeatureTest {
 
     @Test
     fun `Calling dismissSelectPrompts should dismiss the login picker if the login prompt is active`() {
-        val loginPickerView: SelectablePromptView<Login> = mock()
+        val loginPickerView: AutocompletePrompt<Login> = mock()
         val feature = spy(
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 loginDelegate = object : LoginDelegate {
                     override val loginPickerView = loginPickerView
                     override val onManageLogins = {}
                 },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            ),
         )
         val selectLoginPrompt = mock<PromptRequest.SelectLoginPrompt>()
-        whenever(loginPickerView.asView()).thenReturn(mock())
-        whenever(loginPickerView.asView().visibility).thenReturn(View.VISIBLE)
+        whenever(loginPickerView.isPromptDisplayed).thenReturn(true)
 
         feature.loginPicker = loginPicker
         feature.activePromptRequest = mock<SingleChoice>()
@@ -575,27 +684,28 @@ class PromptFeatureTest {
 
     @Test
     fun `GIVEN creditCardPickerView is visible WHEN dismissSelectPrompts is called THEN dismissSelectCreditCardRequest returns true`() {
-        val creditCardPickerView: SelectablePromptView<CreditCardEntry> = mock()
+        val creditCardPickerView: AutocompletePrompt<CreditCardEntry> = mock()
         val feature = spy(
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
                 creditCardDelegate = object : CreditCardDelegate {
                     override val creditCardPickerView = creditCardPickerView
                     override val onSelectCreditCard = {}
                     override val onManageCreditCards = {}
                 },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            ),
         )
         val selectCreditCardRequest = mock<PromptRequest.SelectCreditCard>()
         feature.creditCardPicker = creditCardPicker
         feature.activePromptRequest = selectCreditCardRequest
 
-        whenever(creditCardPickerView.asView()).thenReturn(mock())
-        whenever(creditCardPickerView.asView().visibility).thenReturn(View.VISIBLE)
+        whenever(creditCardPickerView.isPromptDisplayed).thenReturn(true)
 
         val result = feature.dismissSelectPrompts()
 
@@ -605,27 +715,28 @@ class PromptFeatureTest {
 
     @Test
     fun `GIVEN creditCardPickerView is not visible WHEN dismissSelectPrompts is called THEN dismissSelectPrompt returns false`() {
-        val creditCardPickerView: SelectablePromptView<CreditCardEntry> = mock()
+        val creditCardPickerView: AutocompletePrompt<CreditCardEntry> = mock()
         val feature = spy(
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
                 creditCardDelegate = object : CreditCardDelegate {
                     override val creditCardPickerView = creditCardPickerView
                     override val onSelectCreditCard = {}
                     override val onManageCreditCards = {}
                 },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            ),
         )
         val selectCreditCardRequest = mock<PromptRequest.SelectCreditCard>()
         feature.creditCardPicker = creditCardPicker
         feature.activePromptRequest = selectCreditCardRequest
 
-        whenever(creditCardPickerView.asView()).thenReturn(mock())
-        whenever(creditCardPickerView.asView().visibility).thenReturn(View.GONE)
+        whenever(creditCardPickerView.isPromptDisplayed).thenReturn(false)
 
         val result = feature.dismissSelectPrompts()
 
@@ -634,27 +745,28 @@ class PromptFeatureTest {
 
     @Test
     fun `GIVEN an active select credit card request WHEN onBackPressed is called THEN dismissSelectPrompts is called`() {
-        val creditCardPickerView: SelectablePromptView<CreditCardEntry> = mock()
+        val creditCardPickerView: AutocompletePrompt<CreditCardEntry> = mock()
         val feature = spy(
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
                 creditCardDelegate = object : CreditCardDelegate {
                     override val creditCardPickerView = creditCardPickerView
                     override val onSelectCreditCard = {}
                     override val onManageCreditCards = {}
                 },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            ),
         )
         val selectCreditCardRequest = mock<PromptRequest.SelectCreditCard>()
         feature.creditCardPicker = creditCardPicker
         feature.activePromptRequest = selectCreditCardRequest
 
-        whenever(creditCardPickerView.asView()).thenReturn(mock())
-        whenever(creditCardPickerView.asView().visibility).thenReturn(View.VISIBLE)
+        whenever(creditCardPickerView.isPromptDisplayed).thenReturn(true)
 
         val result = feature.onBackPressed()
 
@@ -664,26 +776,27 @@ class PromptFeatureTest {
 
     @Test
     fun `WHEN dismissSelectPrompts is called THEN the active credit card picker should be dismissed`() {
-        val creditCardPickerView: SelectablePromptView<CreditCardEntry> = mock()
+        val creditCardPickerView: AutocompletePrompt<CreditCardEntry> = mock()
         val feature = spy(
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 creditCardDelegate = object : CreditCardDelegate {
                     override val creditCardPickerView = creditCardPickerView
                     override val onSelectCreditCard = {}
                     override val onManageCreditCards = {}
                 },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            ),
         )
         feature.creditCardPicker = creditCardPicker
         feature.activePromptRequest = mock<SingleChoice>()
 
-        whenever(creditCardPickerView.asView()).thenReturn(mock())
-        whenever(creditCardPickerView.asView().visibility).thenReturn(View.VISIBLE)
+        whenever(creditCardPickerView.isPromptDisplayed).thenReturn(true)
 
         feature.dismissSelectPrompts()
         verify(feature.creditCardPicker!!, never()).dismissSelectCreditCardRequest(any())
@@ -698,24 +811,25 @@ class PromptFeatureTest {
 
     @Test
     fun `WHEN dismissSelectPrompts is called THEN the active addressPicker dismiss should be called`() {
-        val addressPickerView: SelectablePromptView<Address> = mock()
+        val addressPickerView: AutocompletePrompt<Address> = mock()
         val addressDelegate: AddressDelegate = mock()
         val feature = spy(
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 addressDelegate = addressDelegate,
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            ),
         )
         feature.addressPicker = addressPicker
         feature.activePromptRequest = mock<SingleChoice>()
 
         whenever(addressDelegate.addressPickerView).thenReturn(addressPickerView)
-        whenever(addressPickerView.asView()).thenReturn(mock())
-        whenever(addressPickerView.asView().visibility).thenReturn(View.VISIBLE)
+        whenever(addressPickerView.isPromptDisplayed).thenReturn(true)
 
         feature.dismissSelectPrompts()
         verify(feature.addressPicker!!, never()).dismissSelectAddressRequest(any())
@@ -733,25 +847,26 @@ class PromptFeatureTest {
 
     @Test
     fun `GIVEN addressPickerView is not visible WHEN dismissSelectPrompts is called THEN dismissSelectPrompts returns false`() {
-        val addressPickerView: SelectablePromptView<Address> = mock()
+        val addressPickerView: AutocompletePrompt<Address> = mock()
         val addressDelegate: AddressDelegate = mock()
         val feature = spy(
             PromptFeature(
                 mock<Activity>(),
                 store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 addressDelegate = addressDelegate,
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            ),
         )
         val selectAddressRequest = mock<PromptRequest.SelectAddress>()
         feature.addressPicker = addressPicker
         feature.activePromptRequest = selectAddressRequest
 
         whenever(addressDelegate.addressPickerView).thenReturn(addressPickerView)
-        whenever(addressPickerView.asView()).thenReturn(mock())
-        whenever(addressPickerView.asView().visibility).thenReturn(View.GONE)
+        whenever(addressPickerView.isPromptDisplayed).thenReturn(false)
 
         val result = feature.dismissSelectPrompts()
 
@@ -764,10 +879,12 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-            ) { }
+                tabsUseCases = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
 
         val singleChoiceRequest = SingleChoice(arrayOf(), {}, {})
         store.dispatch(ContentAction.UpdatePromptRequestAction(tabId, singleChoiceRequest))
@@ -787,11 +904,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         feature.start()
 
         val singleChoiceRequest = SingleChoice(arrayOf(), {}, {})
@@ -812,11 +931,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         feature.start()
 
         val menuChoiceRequest = MenuChoice(arrayOf(), {}, {})
@@ -837,11 +958,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         feature.start()
 
         val multipleChoiceRequest = MultipleChoice(arrayOf(), {}, {})
@@ -862,11 +985,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
 
         var onShowNoMoreAlertsWasCalled = false
         var onDismissWasCalled = false
@@ -899,11 +1024,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         var onDismissWasCalled = false
         val promptRequest = Alert("title", "message", false, {}, { onDismissWasCalled = true })
 
@@ -921,12 +1048,14 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         var onConfirmWasCalled = false
         var onDismissWasCalled = false
 
@@ -959,12 +1088,14 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         var onDismissWasCalled = false
 
         val promptRequest = TextPrompt(
@@ -998,12 +1129,14 @@ class PromptFeatureTest {
         timeSelectionTypes.forEach { type ->
             val feature = PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
             var onClearWasCalled = false
             var selectedDate: Date? = null
             val promptRequest = PromptRequest.TimeSelection(
@@ -1042,11 +1175,13 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 store = store,
                 fragmentManager = fragmentManager,
-            ) { }
+                tabsUseCases = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         feature.handleDialogsRequest(mock<PromptRequest.File>(), mock())
     }
 
@@ -1066,11 +1201,13 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = activity,
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-            ) { }
+                tabsUseCases = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         val intent = Intent()
 
         intent.data = mock()
@@ -1099,11 +1236,13 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = activity,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 store = store,
                 fragmentManager = fragmentManager,
-            ) { }
+                tabsUseCases = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         val intent = Intent()
 
         intent.clipData = mock()
@@ -1138,10 +1277,12 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-            ) { }
+                tabsUseCases = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         val intent = Intent()
 
         store.dispatch(ContentAction.UpdatePromptRequestAction(tabId, filePickerRequest))
@@ -1155,21 +1296,23 @@ class PromptFeatureTest {
 
     @Test
     fun `WHEN onActivityResult is called with PIN_REQUEST and RESULT_OK THEN onAuthSuccess) is called`() {
-        val creditCardPickerView: SelectablePromptView<CreditCardEntry> = mock()
+        val creditCardPickerView: AutocompletePrompt<CreditCardEntry> = mock()
         val feature =
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
+                isCreditCardAutofillEnabled = { true },
                 creditCardDelegate = object : CreditCardDelegate {
                     override val creditCardPickerView = creditCardPickerView
                     override val onSelectCreditCard = {}
                     override val onManageCreditCards = {}
                 },
-                isCreditCardAutofillEnabled = { true },
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         feature.creditCardPicker = creditCardPicker
         val intent = Intent()
 
@@ -1180,21 +1323,23 @@ class PromptFeatureTest {
 
     @Test
     fun `WHEN onActivityResult is called with PIN_REQUEST and RESULT_CANCELED THEN onAuthFailure is called`() {
-        val creditCardPickerView: SelectablePromptView<CreditCardEntry> = mock()
+        val creditCardPickerView: AutocompletePrompt<CreditCardEntry> = mock()
         val feature =
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
+                isCreditCardAutofillEnabled = { true },
                 creditCardDelegate = object : CreditCardDelegate {
                     override val creditCardPickerView = creditCardPickerView
                     override val onSelectCreditCard = {}
                     override val onManageCreditCards = {}
                 },
-                isCreditCardAutofillEnabled = { true },
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         feature.creditCardPicker = creditCardPicker
         val intent = Intent()
 
@@ -1205,21 +1350,23 @@ class PromptFeatureTest {
 
     @Test
     fun `GIVEN user successfully authenticates by biometric prompt WHEN onBiometricResult is called THEN onAuthSuccess is called`() {
-        val creditCardPickerView: SelectablePromptView<CreditCardEntry> = mock()
+        val creditCardPickerView: AutocompletePrompt<CreditCardEntry> = mock()
         val feature =
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
+                isCreditCardAutofillEnabled = { true },
                 creditCardDelegate = object : CreditCardDelegate {
                     override val creditCardPickerView = creditCardPickerView
                     override val onSelectCreditCard = {}
                     override val onManageCreditCards = {}
                 },
-                isCreditCardAutofillEnabled = { true },
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         feature.creditCardPicker = creditCardPicker
 
         feature.onBiometricResult(isAuthenticated = true)
@@ -1229,21 +1376,23 @@ class PromptFeatureTest {
 
     @Test
     fun `GIVEN user fails to authenticate by biometric prompt WHEN onBiometricResult is called THEN onAuthFailure) is called`() {
-        val creditCardPickerView: SelectablePromptView<CreditCardEntry> = mock()
+        val creditCardPickerView: AutocompletePrompt<CreditCardEntry> = mock()
         val feature =
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
+                isCreditCardAutofillEnabled = { true },
                 creditCardDelegate = object : CreditCardDelegate {
                     override val creditCardPickerView = creditCardPickerView
                     override val onSelectCreditCard = {}
                     override val onManageCreditCards = {}
                 },
-                isCreditCardAutofillEnabled = { true },
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         feature.creditCardPicker = creditCardPicker
 
         feature.onBiometricResult(isAuthenticated = false)
@@ -1335,12 +1484,14 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
 
         var onConfirmWasCalled = false
         var onDismissWasCalled = false
@@ -1406,6 +1557,7 @@ class PromptFeatureTest {
             title = "title",
             onLeave = { onLeaveWasCalled = true },
             onStay = { },
+            onDismiss = { },
         )
 
         feature.start()
@@ -1423,12 +1575,14 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+
+            )
         var onDismissWasCalled = false
 
         val promptRequest = Authentication(
@@ -1462,11 +1616,12 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            )
 
         var onConfirmWasCalled = false
         var onDismissWasCalled = false
@@ -1592,9 +1747,12 @@ class PromptFeatureTest {
             ) { }
         var onCancelWasCalled = false
 
-        val promptRequest = PromptRequest.BeforeUnload("http://www.test.com/", { }) {
-            onCancelWasCalled = true
-        }
+        val promptRequest = PromptRequest.BeforeUnload(
+            title = "http://www.test.com/",
+            onLeave = { },
+            onStay = { onCancelWasCalled = true },
+            onDismiss = { },
+        )
 
         feature.start()
 
@@ -1611,12 +1769,13 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            )
         var onPositiveButtonWasCalled = false
         var onNegativeButtonWasCalled = false
         var onNeutralButtonWasCalled = false
@@ -1673,12 +1832,13 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            )
         var onCancelWasCalled = false
 
         val onConfirm: (Boolean) -> Unit = { }
@@ -1715,12 +1875,13 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            )
         var onDismissWasCalled: Boolean
         val onDismiss = { onDismissWasCalled = true }
         val alertRequest = Alert("", "", false, {}, onDismiss)
@@ -1746,12 +1907,13 @@ class PromptFeatureTest {
         val feature =
             PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            )
         var onDismissWasCalled = false
         val onDismiss = { onDismissWasCalled = true }
         val alertRequest = Alert("", "", false, {}, onDismiss)
@@ -1778,11 +1940,12 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = Robolectric.buildActivity(Activity::class.java).setup().get(),
             store = store,
-            fileUploadsDirCleaner = mock(),
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
+            tabsUseCases = mock(),
             exitFullscreenUsecase = mock(),
-        ) { }
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
 
         var onDenyCalled = false
         val onDeny = { onDenyCalled = true }
@@ -1806,7 +1969,7 @@ class PromptFeatureTest {
 
     @Test
     fun `WHEN login autofill is enabled THEN the select login prompt is shown`() {
-        val loginPickerView: SelectablePromptView<Login> = mock()
+        val loginPickerView: AutocompletePrompt<Login> = mock()
 
         val login =
             Login(guid = "A", origin = "origin", username = "user123", password = "password123")
@@ -1815,16 +1978,17 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock<Activity>(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
+                isLoginAutofillEnabled = { true },
                 loginDelegate = object : LoginDelegate {
                     override val loginPickerView = loginPickerView
                     override val onManageLogins = {}
                 },
-                isLoginAutofillEnabled = { true },
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            )
         feature.loginPicker = loginPicker
         val onLoginDismiss: () -> Unit = {}
         val onLoginConfirm: (Login) -> Unit = {}
@@ -1841,7 +2005,7 @@ class PromptFeatureTest {
 
     @Test
     fun `WHEN login autofill is disabled THEN the select login prompt is not shown`() {
-        val loginPickerView: SelectablePromptView<Login> = mock()
+        val loginPickerView: AutocompletePrompt<Login> = mock()
 
         val login =
             Login(guid = "A", origin = "origin", username = "user123", password = "password123")
@@ -1850,15 +2014,16 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock<Activity>(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
                 loginDelegate = object : LoginDelegate {
                     override val loginPickerView = loginPickerView
                     override val onManageLogins = {}
                 },
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            )
         feature.loginPicker = loginPicker
         val onLoginDismiss: () -> Unit = {}
         val onLoginConfirm: (Login) -> Unit = {}
@@ -1874,21 +2039,22 @@ class PromptFeatureTest {
 
     @Test
     fun `When page is refreshed login dialog is dismissed`() {
-        val loginPickerView: SelectablePromptView<Login> = mock()
+        val loginPickerView: AutocompletePrompt<Login> = mock()
         val feature =
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
+                isLoginAutofillEnabled = { true },
                 loginDelegate = object : LoginDelegate {
                     override val loginPickerView = loginPickerView
                     override val onManageLogins = {}
                 },
-                isLoginAutofillEnabled = { true },
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            )
         feature.loginPicker = loginPicker
         val onLoginDismiss: () -> Unit = {}
         val onLoginConfirm: (Login) -> Unit = {}
@@ -1897,8 +2063,7 @@ class PromptFeatureTest {
         val selectLoginRequest =
             PromptRequest.SelectLoginPrompt(listOf(login), null, onLoginConfirm, onLoginDismiss)
 
-        whenever(loginPickerView.asView()).thenReturn(mock())
-        whenever(loginPickerView.asView().visibility).thenReturn(View.VISIBLE)
+        whenever(loginPickerView.isPromptDisplayed).thenReturn(true)
 
         feature.start()
         store.dispatch(ContentAction.UpdatePromptRequestAction(tabId, selectLoginRequest))
@@ -1914,22 +2079,23 @@ class PromptFeatureTest {
 
     @Test
     fun `WHEN page is refreshed THEN credit card prompt is dismissed`() {
-        val creditCardPickerView: SelectablePromptView<CreditCardEntry> = mock()
+        val creditCardPickerView: AutocompletePrompt<CreditCardEntry> = mock()
         val feature =
             PromptFeature(
                 activity = mock(),
                 store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
+                isCreditCardAutofillEnabled = { true },
                 creditCardDelegate = object : CreditCardDelegate {
                     override val creditCardPickerView = creditCardPickerView
                     override val onSelectCreditCard = {}
                     override val onManageCreditCards = {}
                 },
-                isCreditCardAutofillEnabled = { true },
-            ) { }
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            )
         feature.creditCardPicker = creditCardPicker
         val onDismiss: () -> Unit = {}
         val onConfirm: (CreditCardEntry) -> Unit = {}
@@ -1944,8 +2110,7 @@ class PromptFeatureTest {
         val selectCreditCardRequest =
             PromptRequest.SelectCreditCard(listOf(creditCard), onConfirm, onDismiss)
 
-        whenever(creditCardPickerView.asView()).thenReturn(mock())
-        whenever(creditCardPickerView.asView().visibility).thenReturn(View.VISIBLE)
+        whenever(creditCardPickerView.isPromptDisplayed).thenReturn(true)
 
         feature.start()
         store.dispatch(ContentAction.UpdatePromptRequestAction(tabId, selectCreditCardRequest))
@@ -1967,12 +2132,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity,
                 store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 customTabId = "custom-tab",
-                shareDelegate = delegate,
                 fragmentManager = fragmentManager,
-            ) { },
+                tabsUseCases = mock(),
+                shareDelegate = delegate,
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.start()
 
@@ -1995,12 +2161,13 @@ class PromptFeatureTest {
             PromptFeature(
                 mock<Activity>(),
                 store,
-                tabsUseCases = mock(),
                 customTabId = "custom-tab",
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
                 isCreditCardAutofillEnabled = { true },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.creditCardPicker = creditCardPicker
         feature.start()
@@ -2019,12 +2186,13 @@ class PromptFeatureTest {
             PromptFeature(
                 mock<Activity>(),
                 store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 customTabId = "custom-tab",
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 isCreditCardAutofillEnabled = { true },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.creditCardPicker = creditCardPicker
         feature.start()
@@ -2043,12 +2211,13 @@ class PromptFeatureTest {
             PromptFeature(
                 mock<Activity>(),
                 store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
                 customTabId = "custom-tab",
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 isCreditCardAutofillEnabled = { false },
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.creditCardPicker = creditCardPicker
         feature.start()
@@ -2150,12 +2319,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
                 creditCardValidationDelegate = mock(),
                 isCreditCardAutofillEnabled = { false },
-            ) {},
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = {},
+            ),
         )
         val session = tab()!!
 
@@ -2187,12 +2357,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
                 creditCardValidationDelegate = null,
                 isCreditCardAutofillEnabled = { true },
-            ) {},
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = {},
+            ),
         )
         val session = tab()!!
 
@@ -2226,12 +2397,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 creditCardValidationDelegate = mock(),
-                fileUploadsDirCleaner = mock(),
                 isCreditCardAutofillEnabled = { true },
-            ) {},
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = {},
+            ),
         )
         val session = tab()!!
 
@@ -2248,12 +2420,13 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = mock(),
             store = store,
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
-            fileUploadsDirCleaner = mock(),
-            exitFullscreenUsecase = mock(),
+            tabsUseCases = mock(),
             shareDelegate = delegate,
-        ) { }
+            exitFullscreenUsecase = mock(),
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
         feature.start()
 
         var onSuccessCalled = false
@@ -2281,12 +2454,13 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = mock(),
             store = store,
-            tabsUseCases = mock(),
-            fileUploadsDirCleaner = mock(),
             fragmentManager = fragmentManager,
-            exitFullscreenUsecase = mock(),
+            tabsUseCases = mock(),
             shareDelegate = delegate,
-        ) { }
+            exitFullscreenUsecase = mock(),
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
         feature.start()
 
         var onDismissCalled = false
@@ -2314,12 +2488,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
-                exitFullscreenUsecase = mock(),
+                tabsUseCases = mock(),
                 shareDelegate = mock(),
-            ) { },
+                exitFullscreenUsecase = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.start()
 
@@ -2356,12 +2531,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
-                exitFullscreenUsecase = mock(),
+                tabsUseCases = mock(),
                 shareDelegate = mock(),
-            ) { },
+                exitFullscreenUsecase = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.start()
 
@@ -2391,12 +2567,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
-                exitFullscreenUsecase = mock(),
+                tabsUseCases = mock(),
                 shareDelegate = mock(),
-            ) { },
+                exitFullscreenUsecase = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.start()
 
@@ -2431,13 +2608,14 @@ class PromptFeatureTest {
             PromptFeature(
                 mock<Activity>(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
                 exitFullscreenUsecase = mock(),
-                isSaveLoginEnabled = { true },
                 loginValidationDelegate = mock(),
-            ) { },
+                isSaveLoginEnabled = { true },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.start()
 
@@ -2463,13 +2641,14 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                fileUploadsDirCleaner = mock(),
+                tabsUseCases = mock(),
+                shareDelegate = mock(),
                 exitFullscreenUsecase = mock(),
                 isSaveLoginEnabled = { true },
-                shareDelegate = mock(),
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.start()
 
@@ -2485,13 +2664,15 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = mock(),
             store = store,
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
-            fileUploadsDirCleaner = mock(),
+            tabsUseCases = mock(),
             shareDelegate = mock(),
-            isSaveLoginEnabled = { true },
             loginValidationDelegate = mock(),
-        ) { }
+            isSaveLoginEnabled = { true },
+            hideUpdateFragmentAfterSavingGeneratedPassword = { _, _ -> false },
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
         val loginUsername = "username"
         val loginPassword = "password"
         val entry: LoginEntry = mock()
@@ -2526,11 +2707,12 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 shareDelegate = mock(),
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.start()
 
@@ -2544,15 +2726,16 @@ class PromptFeatureTest {
 
         val fragment = spy(
             SaveLoginDialogFragment.newInstance(
-                tabId,
-                shareRequest.uid,
-                false,
-                0,
-                LoginEntry(
+                sessionId = tabId,
+                promptRequestUID = shareRequest.uid,
+                shouldDismissOnLoad = false,
+                hint = 0,
+                entry = LoginEntry(
                     origin = "https://www.mozilla.org",
                     username = "username",
                     password = "password",
                 ),
+                onShowSnackbarAfterLoginChange = { _ -> },
             ),
         )
         feature.activePrompt = WeakReference(fragment)
@@ -2570,11 +2753,12 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
                 shareDelegate = mock(),
-            ) { },
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.start()
 
@@ -2603,13 +2787,14 @@ class PromptFeatureTest {
             // Proper activity here to allow for the feature to properly execute "container.context.getString"
             activity = Robolectric.buildActivity(Activity::class.java).setup().get(),
             store = store,
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
-            fileUploadsDirCleaner = mock(),
+            tabsUseCases = mock(),
             shareDelegate = mock(),
-            isSaveLoginEnabled = { true },
             loginValidationDelegate = mock(),
-        ) { }
+            isSaveLoginEnabled = { true },
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
         val repostPromptRequest: PromptRequest.Repost = mock()
         doReturn("uid").`when`(repostPromptRequest).uid
 
@@ -2633,11 +2818,12 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = Robolectric.buildActivity(Activity::class.java).setup().get(),
             store = store,
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
-            fileUploadsDirCleaner = mock(),
+            tabsUseCases = mock(),
             exitFullscreenUsecase = mock(),
-        ) { }
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
         feature.start()
 
         var acceptCalled = false
@@ -2663,11 +2849,12 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = Robolectric.buildActivity(Activity::class.java).setup().get(),
             store = store,
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
-            fileUploadsDirCleaner = mock(),
+            tabsUseCases = mock(),
             exitFullscreenUsecase = mock(),
-        ) { }
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
         feature.start()
 
         var dismissCalled = false
@@ -2693,13 +2880,14 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = mock(),
             store = store,
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
+            tabsUseCases = mock(),
             exitFullscreenUsecase = mock(),
-            fileUploadsDirCleaner = mock(),
-            isCreditCardAutofillEnabled = { true },
             creditCardValidationDelegate = mock(),
-        ) { }
+            isCreditCardAutofillEnabled = { true },
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
         val creditCardEntry = CreditCardEntry(
             guid = "1",
             name = "Banana Apple",
@@ -2780,12 +2968,13 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = mock(),
             store = store,
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
-            fileUploadsDirCleaner = mock(),
-            isCreditCardAutofillEnabled = { true },
+            tabsUseCases = mock(),
             creditCardValidationDelegate = mock(),
-        ) { }
+            isCreditCardAutofillEnabled = { true },
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
         val creditCardEntry = CreditCardEntry(
             guid = "1",
             name = "Banana Apple",
@@ -2844,13 +3033,14 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = mock(),
             store = store,
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
+            tabsUseCases = mock(),
             exitFullscreenUsecase = mock(),
-            fileUploadsDirCleaner = mock(),
-            isCreditCardAutofillEnabled = { true },
             creditCardValidationDelegate = mock(),
-        ) { }
+            isCreditCardAutofillEnabled = { true },
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
 
         feature.start()
         feature.activePrompt = WeakReference(dialogFragment)
@@ -2867,12 +3057,13 @@ class PromptFeatureTest {
         val feature = PromptFeature(
             activity = mock(),
             store = store,
-            tabsUseCases = mock(),
             fragmentManager = fragmentManager,
-            fileUploadsDirCleaner = mock(),
-            isCreditCardAutofillEnabled = { true },
+            tabsUseCases = mock(),
             creditCardValidationDelegate = mock(),
-        ) { }
+            isCreditCardAutofillEnabled = { true },
+            fileUploadsDirCleaner = mock(),
+            onNeedToRequestPermissions = { },
+        )
         val creditCardEntry = CreditCardEntry(
             guid = "1",
             name = "CC",
@@ -2912,12 +3103,13 @@ class PromptFeatureTest {
             PromptFeature(
                 activity = mock(),
                 store = store,
-                tabsUseCases = mock(),
-                fileUploadsDirCleaner = mock(),
                 fragmentManager = fragmentManager,
-                exitFullscreenUsecase = mock(),
+                tabsUseCases = mock(),
                 shareDelegate = mock(),
-            ) { },
+                exitFullscreenUsecase = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.start()
 
@@ -2942,13 +3134,14 @@ class PromptFeatureTest {
         val feature = spy(
             PromptFeature(
                 activity = mock(),
-                fileUploadsDirCleaner = mock(),
                 store = store,
-                tabsUseCases = mock(),
                 fragmentManager = fragmentManager,
-                exitFullscreenUsecase = mock(),
+                tabsUseCases = mock(),
                 shareDelegate = mock(),
-            ) { },
+                exitFullscreenUsecase = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
         )
         feature.start()
 
@@ -2982,14 +3175,14 @@ class PromptFeatureTest {
                 onDismissWasCalled = true
             }
 
-        val feature =
-            PromptFeature(
-                activity = mock(),
-                store = store,
-                fileUploadsDirCleaner = mock(),
-                tabsUseCases = mock(),
-                fragmentManager = fragmentManager,
-            ) { }
+        val feature = PromptFeature(
+            activity = mock(),
+            store = store,
+            fileUploadsDirCleaner = mock(),
+            tabsUseCases = mock(),
+            fragmentManager = fragmentManager,
+            onNeedToRequestPermissions = { },
+        )
 
         store.dispatch(ContentAction.UpdatePromptRequestAction(tabId, filePickerRequest))
             .joinBlocking()
@@ -2999,6 +3192,30 @@ class PromptFeatureTest {
 
         assertFalse(onDismissWasCalled)
         assertTrue(tab()!!.content.promptRequests.isNotEmpty())
+    }
+
+    @Test
+    fun `WHEN onAndroidPhotoPickerResult is called THEN it calls filePicker with correct argument`() {
+        val feature = spy(
+            PromptFeature(
+                activity = mock(),
+                store = store,
+                fragmentManager = fragmentManager,
+                tabsUseCases = mock(),
+                shareDelegate = mock(),
+                exitFullscreenUsecase = mock(),
+                fileUploadsDirCleaner = mock(),
+                onNeedToRequestPermissions = { },
+            ),
+        )
+
+        feature.filePicker = mock()
+
+        val uris = arrayOf(Uri.parse("content://path/to/file1"), Uri.parse("content://path/to/file2"))
+
+        feature.onAndroidPhotoPickerResult(uris)
+
+        verify(feature.filePicker).onAndroidPhotoPickerResult(uris)
     }
 
     private fun mockFragmentManager(): FragmentManager {

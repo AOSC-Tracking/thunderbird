@@ -1,4 +1,4 @@
-// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2018 Bloomberg LP. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -55,8 +55,8 @@ function compareFormatToPartsSnapshot(isoString, expected) {
 compareFormatToPartsSnapshot("2000-01-01T00:00Z", {
   iso8601: {
     year: 2000,
-    month: 1,
-    day: 1,
+    month: "01",
+    day: "01",
   },
   buddhist: {
     year: 2543,
@@ -171,7 +171,7 @@ compareFormatToPartsSnapshot("2000-01-01T00:00Z", {
 // sensitive to other bugs that may crop up.
 const yearOneDay = new Map(
   ["iso8601", "gregory", "roc", "buddhist", "japanese"].map(calendar => {
-    hasGregorianSwitchoverBug = new Date("+001001-01-01T00:00Z")
+    const hasGregorianSwitchoverBug = new Date("+001001-01-01T00:00Z")
       .toLocaleDateString(`en-US-u-ca-${calendar}`, { timeZone: "UTC" })
       .startsWith("12");
     return [calendar, hasGregorianSwitchoverBug ? 3 : 1]
@@ -179,8 +179,8 @@ const yearOneDay = new Map(
 compareFormatToPartsSnapshot("0001-01-01T00:00Z", {
   iso8601: {
     year: 1,
-    month: 1,
-    day: yearOneDay.get("iso8601"),
+    month: "01",
+    day: "0" + yearOneDay.get("iso8601"),
   },
   buddhist: {
     year: 544,
@@ -1268,7 +1268,6 @@ var daysInMonthCases = {
     ]
   }
 };
-totalNow = 0;
 for (var id of Object.keys(daysInMonthCases)) {
   var {year, leap, days} = daysInMonthCases[id];
   var date = hasOutdatedChineseIcuData && (id === "chinese" || id === "dangi") ? undefined : Temporal.PlainDate.from({

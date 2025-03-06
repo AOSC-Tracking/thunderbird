@@ -15,6 +15,11 @@ ChromeUtils.defineLazyGetter(lazy, "gMailBundle", function () {
     "chrome://messenger/locale/messenger.properties"
   );
 });
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["calendar/calendar.ftl"], true)
+);
 
 if (AppConstants.NIGHTLY_BUILD) {
   ChromeUtils.defineLazyGetter(
@@ -27,6 +32,7 @@ if (AppConstants.NIGHTLY_BUILD) {
 ChromeUtils.defineESModuleGetters(lazy, {
   ActorManagerParent: "resource://gre/modules/ActorManagerParent.sys.mjs",
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  BuiltInThemes: "resource:///modules/BuiltInThemes.sys.mjs",
   cal: "resource:///modules/calendar/calUtils.sys.mjs",
   ChatCore: "resource:///modules/chatHandler.sys.mjs",
   ExtensionSupport: "resource:///modules/ExtensionSupport.sys.mjs",
@@ -90,6 +96,20 @@ if (AppConstants.MOZ_UPDATER) {
 }
 
 const PREF_PDFJS_ISDEFAULT_CACHE_STATE = "pdfjs.enabledCache.state";
+
+const JSPROCESSACTORS = {
+  // Miscellaneous stuff that needs to be initialized per process.
+  BrowserProcess: {
+    child: {
+      esModuleURI: "resource:///actors/BrowserProcessChild.sys.mjs",
+      observers: [
+        // WebRTC related notifications. WebRTC is not support by Thunderbird and
+        // notifications are only handled to properly deny requests.
+        "PeerConnection:request",
+      ],
+    },
+  },
+};
 
 const JSWINDOWACTORS = {
   ChatAction: {
@@ -233,6 +253,20 @@ const JSWINDOWACTORS = {
     allFrames: true,
   },
 
+  RelaxedLinkClickHandler: {
+    parent: {
+      esModuleURI: "resource:///actors/LinkClickHandlerParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource:///actors/LinkClickHandlerChild.sys.mjs",
+      events: {
+        click: {},
+      },
+    },
+    messageManagerGroups: ["browsers"],
+    allFrames: true,
+  },
+
   StrictLinkClickHandler: {
     parent: {
       esModuleURI: "resource:///actors/LinkClickHandlerParent.sys.mjs",
@@ -327,6 +361,7 @@ MailGlue.prototype = {
     ChromeUtils.unregisterWindowActor("FindBar");
     ChromeUtils.unregisterWindowActor("LoginManager");
 
+    lazy.ActorManagerParent.addJSProcessActors(JSPROCESSACTORS);
     lazy.ActorManagerParent.addJSWindowActors(JSWINDOWACTORS);
   },
 
@@ -557,16 +592,8 @@ MailGlue.prototype = {
       );
     }
 
-    lazy.AddonManager.maybeInstallBuiltinAddon(
-      "thunderbird-compact-light@mozilla.org",
-      "1.2",
-      "resource://builtin-themes/light/"
-    );
-    lazy.AddonManager.maybeInstallBuiltinAddon(
-      "thunderbird-compact-dark@mozilla.org",
-      "1.2",
-      "resource://builtin-themes/dark/"
-    );
+    // This returns a Promise, but we cannot await it here.
+    lazy.BuiltInThemes.ensureBuiltInThemes();
 
     if (AppConstants.MOZ_UPDATER) {
       listeners.init();
@@ -632,27 +659,24 @@ MailGlue.prototype = {
     // updates.
     const currentVersion = Services.appinfo.version;
     if (this.previousVersion != "0" && this.previousVersion != currentVersion) {
-      const { AddonManager } = ChromeUtils.importESModule(
-        "resource://gre/modules/AddonManager.sys.mjs"
-      );
       const { XPIDatabase } = ChromeUtils.importESModule(
         "resource://gre/modules/addons/XPIDatabase.sys.mjs"
       );
       const addons = XPIDatabase.getAddons();
-      for (const addon of addons) {
-        if (addon.permissions() & AddonManager.PERM_CAN_UPGRADE) {
-          AddonManager.getAddonByID(addon.id).then(addon => {
-            if (!AddonManager.shouldAutoUpdate(addon)) {
+      for (const dbAddon of addons) {
+        if (dbAddon.permissions() & lazy.AddonManager.PERM_CAN_UPGRADE) {
+          lazy.AddonManager.getAddonByID(dbAddon.id).then(addon => {
+            if (!lazy.AddonManager.shouldAutoUpdate(addon)) {
               return;
             }
             addon.findUpdates(
               {
                 onUpdateFinished() {},
-                onUpdateAvailable(addon, install) {
+                onUpdateAvailable(_addon, install) {
                   install.install();
                 },
               },
-              AddonManager.UPDATE_WHEN_NEW_APP_INSTALLED
+              lazy.AddonManager.UPDATE_WHEN_NEW_APP_INSTALLED
             );
           });
         }
@@ -824,6 +848,14 @@ MailGlue.prototype = {
           Services.prefs.clearUserPref("mail.storybook.openTab");
         },
       },
+      // FOG doesn't need to be initialized _too_ early because it has a
+      // pre-init buffer.
+      {
+        name: "initializeFOG",
+        task: () => {
+          Services.fog.initializeFOG(undefined, "thunderbird.desktop");
+        },
+      },
       {
         task() {
           // Use idleDispatch a second time to run this after the per-window
@@ -890,6 +922,7 @@ MailGlue.prototype = {
         reportAccountTypes();
         reportAddressBookTypes();
         reportAccountSizes();
+        reportAccountPreferences();
         await reportCalendars();
         reportPreferences();
         reportUIConfiguration();
@@ -967,13 +1000,7 @@ function reportAccountTypes() {
     im_odnoklassniki: 0,
   };
 
-  const providerReport = {
-    google: 0,
-    microsoft: 0,
-    yahoo_aol: 0,
-    other: 0,
-  };
-
+  const accountsByOauthProviders = new Map(); // issuer -> count
   for (const account of lazy.MailServices.accounts.accounts) {
     const incomingServer = account.incomingServer;
 
@@ -1001,43 +1028,27 @@ function reportAccountTypes() {
     // providers.
     if (incomingServer.authMethod == Ci.nsMsgAuthMethod.OAuth2) {
       const hostnameDetails = lazy.OAuth2Providers.getHostnameDetails(
-        incomingServer.hostName
+        incomingServer.hostName,
+        incomingServer.type
       );
 
-      if (!hostnameDetails || hostnameDetails.length == 0) {
+      if (!hostnameDetails) {
         // Not a valid OAuth2 configuration; skip it
         continue;
       }
 
-      const host = hostnameDetails[0];
-
-      switch (host) {
-        case "accounts.google.com":
-          providerReport.google++;
-          break;
-        case "login.microsoftonline.com":
-          providerReport.microsoft++;
-          break;
-        case "login.yahoo.com":
-        case "login.aol.com":
-          providerReport.yahoo_aol++;
-          break;
-        default:
-          providerReport.other++;
-      }
+      const issuer = hostnameDetails.issuer;
+      let count = accountsByOauthProviders.get(issuer) || 0;
+      accountsByOauthProviders.set(issuer, ++count);
     }
   }
 
   for (const [type, count] of Object.entries(report)) {
-    Services.telemetry.keyedScalarSet("tb.account.count", type, count);
+    Glean.mail.accountCount[type].set(count);
   }
 
-  for (const [provider, count] of Object.entries(providerReport)) {
-    Services.telemetry.keyedScalarSet(
-      "tb.account.oauth2_provider_count",
-      provider,
-      count
-    );
+  for (const [issuer, count] of accountsByOauthProviders.entries()) {
+    Glean.mail.oauth2ProviderCount[issuer].set(count);
   }
 }
 
@@ -1056,11 +1067,15 @@ function reportAccountSizes() {
     "Queue",
   ];
   for (const key of keys) {
-    Services.telemetry.keyedScalarSet("tb.account.total_messages", key, 0);
+    Glean.mail.folderTotalMessages[key].set(0);
   }
-  Services.telemetry.keyedScalarSet("tb.account.total_messages", "Other", 0);
-  Services.telemetry.keyedScalarSet("tb.account.total_messages", "Total", 0);
+  Glean.mail.folderTotalMessages.Other.set(0);
+  Glean.mail.folderTotalMessages.Total.set(0);
 
+  const typeMessageCount = new Map();
+  const typeSizeOnDisk = new Map();
+  let totalMessages = 0;
+  let totalSizeOnDisk = 0;
   for (const server of lazy.MailServices.accounts.allServers) {
     if (
       server instanceof Ci.nsIPop3IncomingServer &&
@@ -1073,34 +1088,90 @@ function reportAccountSizes() {
     for (const folder of server.rootFolder.descendants) {
       const key =
         keys.find(x => folder.getFlag(Ci.nsMsgFolderFlags[x])) || "Other";
-      const totalMessages = folder.getTotalMessages(false);
-      if (totalMessages > 0) {
-        Services.telemetry.keyedScalarAdd(
-          "tb.account.total_messages",
-          key,
-          totalMessages
-        );
-        Services.telemetry.keyedScalarAdd(
-          "tb.account.total_messages",
-          "Total",
-          totalMessages
-        );
+      const messageCount = folder.getTotalMessages(false);
+      if (messageCount > 0) {
+        let typeTotal = typeMessageCount.get(key) || 0;
+        typeTotal += messageCount;
+        typeMessageCount.set(key, typeTotal);
+
+        totalMessages += messageCount;
       }
       const sizeOnDisk = folder.sizeOnDisk;
       if (sizeOnDisk > 0) {
-        Services.telemetry.keyedScalarAdd(
-          "tb.account.size_on_disk",
-          key,
-          sizeOnDisk
-        );
-        Services.telemetry.keyedScalarAdd(
-          "tb.account.size_on_disk",
-          "Total",
-          sizeOnDisk
-        );
+        let typeTotal = typeSizeOnDisk.get(key) || 0;
+        typeTotal += sizeOnDisk;
+        typeSizeOnDisk.set(key, typeTotal);
+
+        totalSizeOnDisk += sizeOnDisk;
       }
     }
   }
+  for (const [type, messageCount] of typeMessageCount.entries()) {
+    Glean.mail.folderTotalMessages[type].set(messageCount);
+  }
+  for (const [type, sizeOnDisk] of typeSizeOnDisk.entries()) {
+    Glean.mail.folderSizeOnDisk[type].set(sizeOnDisk);
+  }
+  Glean.mail.folderTotalMessages.Total.set(totalMessages);
+  Glean.mail.folderSizeOnDisk.Total.set(totalSizeOnDisk);
+}
+
+/**
+ * Report the basic preferences of each incoming server to telemetry.
+ */
+function reportAccountPreferences() {
+  const accounts = [];
+  for (const server of lazy.MailServices.accounts.allServers) {
+    const type = server.type;
+    if (!["imap", "nntp", "pop3"].includes(type)) {
+      continue;
+    }
+
+    const account = {
+      protocol: type,
+      socket_type: server.socketType,
+      auth_method: server.authMethod,
+      store_type: server.msgStore.storeType,
+      login_at_startup: server.getBoolValue("login_at_startup"),
+      check_new_mail: server.getBoolValue("check_new_mail"),
+    };
+    if (account.check_new_mail) {
+      account.check_time = server.getIntValue("check_time");
+    }
+
+    if (type == "imap") {
+      account.delete_model = server.getIntValue("delete_model");
+      account.use_idle = server.getBoolValue("use_idle");
+      account.cleanup_inbox_on_exit = server.getBoolValue(
+        "cleanup_inbox_on_exit"
+      );
+      account.empty_trash_on_exit = server.getBoolValue("empty_trash_on_exit");
+    } else if (type == "nntp") {
+      if (server.getBoolValue("notify.on")) {
+        account.notify_max_articles = server.getIntValue("max_articles");
+      }
+      account.always_authenticate = server.getBoolValue("always_authenticate");
+    } else if (type == "pop3") {
+      account.download_on_biff = server.getBoolValue("download_on_biff");
+      account.headers_only = server.getBoolValue("headers_only");
+      account.leave_on_server = server.getBoolValue("leave_on_server");
+      if (account.leave_on_server) {
+        account.delete_by_age_from_server = server.getBoolValue(
+          "delete_by_age_from_server"
+        );
+        if (server.getBoolValue("delete_mail_left_on_server")) {
+          account.num_days_to_leave_on_server = server.getIntValue(
+            "num_days_to_leave_on_server"
+          );
+        }
+      }
+      account.empty_trash_on_exit = server.getBoolValue("empty_trash_on_exit");
+    }
+
+    accounts.push(account);
+  }
+
+  Glean.mail.accountPreferences.set(accounts);
 }
 
 /**
@@ -1129,16 +1200,8 @@ function reportAddressBookTypes() {
   }
 
   for (const [type, { count, contactCount }] of Object.entries(report)) {
-    Services.telemetry.keyedScalarSet(
-      "tb.addressbook.addressbook_count",
-      type,
-      count
-    );
-    Services.telemetry.keyedScalarSet(
-      "tb.addressbook.contact_count",
-      type,
-      contactCount
-    );
+    Glean.addrbook.addressbookCount[type].set(count);
+    Glean.addrbook.contactCount[type].set(contactCount);
   }
 }
 
@@ -1147,60 +1210,7 @@ function reportAddressBookTypes() {
  */
 async function reportCalendars() {
   const telemetryReport = {};
-  const home = lazy.cal.l10n.getCalString("homeCalendarName");
-  const googleTokenTypes = {
-    // With a username in prefs:
-    username_usernameToken: 0,
-    // Token username is calendar id.
-    username_idToken: 0,
-    // Old client id, token origin and username are calendar id.
-    username_idOrigin: 0,
-    // Has a username but no token.
-    username_noToken: 0,
-
-    // With a session id in prefs:
-    // Token username is session id.
-    session_sessionToken: 0,
-    // Old client id, token origin and username are session id.
-    session_sessionOrigin: 0,
-    // Has a session id but no token.
-    session_noToken: 0,
-
-    // With neither:
-    // Token username is calendar id.
-    id_idToken: 0,
-    // Old client id, token origin and username are calendar id.
-    id_idOrigin: 0,
-    // Has no token.
-    id_noToken: 0,
-  };
-
-  function hasPassword(origin, username) {
-    for (const login of Services.logins.findLogins(origin, null, "")) {
-      if (login.username != username) {
-        continue;
-      }
-      if (
-        origin == "oauth://accounts.google.com" &&
-        login.httpRealm.includes("https://www.googleapis.com/auth/calendar")
-      ) {
-        return true;
-      }
-      if (
-        origin == "oauth://test.test" &&
-        login.httpRealm.includes("test_scope")
-      ) {
-        return true;
-      }
-      if (
-        origin.startsWith("oauth:") &&
-        login.httpRealm == "Google CalDAV v2"
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
+  const home = lazy.l10n.formatValueSync("home-calendar-name");
 
   for (const calendar of lazy.cal.manager.getCalendars()) {
     if (calendar.name == home && calendar.type == "storage") {
@@ -1226,72 +1236,22 @@ async function reportCalendars() {
     if (calendar.readOnly) {
       telemetryReport[calendar.type].readOnlyCount++;
     }
-
-    // Collect data on the storage of OAuth tokens for Google calendars.
-    if (calendar.type != "caldav") {
-      continue;
-    }
-    let loginOrigin;
-    if (calendar.uri.host == "apidata.googleusercontent.com") {
-      loginOrigin = "oauth://accounts.google.com";
-    } else if (calendar.uri.host == "mochi.test") {
-      loginOrigin = "oauth://test.test";
-    } else {
-      continue;
-    }
-
-    let label;
-    const username = calendar.getProperty("username");
-    const session = calendar.getProperty("sessionId");
-    if (username) {
-      label = "username";
-    } else if (session) {
-      label = "session";
-    } else {
-      label = "id";
-    }
-
-    if (username && hasPassword(loginOrigin, username)) {
-      label += "_usernameToken";
-    } else if (session && hasPassword(loginOrigin, session)) {
-      label += "_sessionToken";
-    } else if (hasPassword(loginOrigin, calendar.id)) {
-      label += "_idToken";
-    } else if (hasPassword(`oauth:${session}`, session)) {
-      label += "_sessionOrigin";
-    } else if (hasPassword(`oauth:${calendar.id}`, calendar.id)) {
-      label += "_idOrigin";
-    } else {
-      label += "_noToken";
-    }
-
-    googleTokenTypes[label]++;
   }
 
   for (const [type, { count, readOnlyCount }] of Object.entries(
     telemetryReport
   )) {
-    Services.telemetry.keyedScalarSet(
-      "tb.calendar.calendar_count",
-      type.toLowerCase(),
-      count
-    );
-    Services.telemetry.keyedScalarSet(
-      "tb.calendar.read_only_calendar_count",
-      type.toLowerCase(),
-      readOnlyCount
-    );
-  }
-
-  for (const [label, count] of Object.entries(googleTokenTypes)) {
-    Services.telemetry.keyedScalarSet(
-      "tb.calendar.google_token_type",
-      label,
-      count
-    );
+    Glean.calendar.calendarCount[type.toLowerCase()].set(count);
+    Glean.calendar.readOnlyCalendarCount[type.toLowerCase()].set(readOnlyCount);
   }
 }
 
+/**
+ * Telemetry probes to record boolean and integer preference values.
+ *
+ * Note: These probes can handle up to 100 labels each. If you add a preference
+ * to these lists, you MUST also update the relevant metrics.yaml.
+ */
 function reportPreferences() {
   const booleanPrefs = [
     // General
@@ -1310,6 +1270,9 @@ function reportPreferences() {
     "mail.purge.ask",
     "mail.addressDisplayFormat",
     "mail.showCondensedAddresses",
+    "mail.threadpane.table.horizontal_scroll",
+    "mail.dark-reader.enabled",
+    "mail.dark-reader.show-toggle",
     "mailnews.database.global.indexer.enabled",
     "mailnews.mark_message_read.auto",
     "mailnews.mark_message_read.delay",
@@ -1371,6 +1334,7 @@ function reportPreferences() {
     "pref.privacy.disable_button.view_cookies",
     "pref.privacy.disable_button.view_passwords",
     "privacy.donottrackheader.enabled",
+    "privacy.globalprivacycontrol.enabled",
     "security.disable_button.openCertManager",
     "security.disable_button.openDeviceManager",
 
@@ -1386,6 +1350,11 @@ function reportPreferences() {
     "purple.logging.log_ims",
     "purple.logging.log_system",
 
+    // Unlisted
+    "mail.operate_on_msgs_in_collapsed_threads",
+  ];
+
+  const calendarBooleanPrefs = [
     // Calendar views
     "calendar.view.showLocation",
     "calendar.view-minimonth.showWeekNumber",
@@ -1406,9 +1375,6 @@ function reportPreferences() {
     "calendar.alarms.playsound",
     "calendar.alarms.show",
     "calendar.alarms.showmissed",
-
-    // Unlisted
-    "mail.operate_on_msgs_in_collapsed_threads",
   ];
 
   const integerPrefs = [
@@ -1457,25 +1423,25 @@ function reportPreferences() {
     booleanPrefs.push("browser.crashReports.unsubmittedCheck.autoSubmit2");
   }
 
+  // Nightly experimental prefs.
+  if (AppConstants.NIGHTLY_BUILD) {
+    booleanPrefs.push("mail.thread.conversation.enabled");
+  }
+
   // Fetch and report preference values
   for (const prefName of booleanPrefs) {
     const prefValue = Services.prefs.getBoolPref(prefName, false);
+    Glean.mail.preferencesBoolean[prefName].set(prefValue);
+  }
 
-    Services.telemetry.keyedScalarSet(
-      "tb.preferences.boolean",
-      prefName,
-      prefValue
-    );
+  for (const prefName of calendarBooleanPrefs) {
+    const prefValue = Services.prefs.getBoolPref(prefName, false);
+    Glean.calendar.preferencesBoolean[prefName].set(prefValue);
   }
 
   for (const prefName of integerPrefs) {
     const prefValue = Services.prefs.getIntPref(prefName, 0);
-
-    Services.telemetry.keyedScalarSet(
-      "tb.preferences.integer",
-      prefName,
-      prefValue
-    );
+    Glean.mail.preferencesInteger[prefName].set(prefValue);
   }
 }
 
@@ -1494,10 +1460,8 @@ function reportUIConfiguration() {
     if (folderTreeCompact === "true") {
       folderTreeMode += " (compact)";
     }
-    Services.telemetry.scalarSet(
-      "tb.ui.configuration.folder_tree_modes",
-      folderTreeMode
-    );
+
+    Glean.mail.uiConfigurationFolderTreeModes.set(folderTreeMode.split(","));
   }
 
   let headerLayout = lazy.XULStoreUtils.getValue(
@@ -1507,15 +1471,8 @@ function reportUIConfiguration() {
   );
   if (headerLayout) {
     headerLayout = JSON.parse(headerLayout);
-    for (let [key, value] of Object.entries(headerLayout)) {
-      if (key == "buttonStyle") {
-        value = { default: 0, "only-icons": 1, "only-text": 2 }[value];
-      }
-      Services.telemetry.keyedScalarSet(
-        "tb.ui.configuration.message_header",
-        key,
-        value
-      );
+    for (const [key, value] of Object.entries(headerLayout)) {
+      Glean.mail.uiConfigurationMessageHeader[key].set(value);
     }
   }
 }
@@ -1527,6 +1484,7 @@ function reportUIConfiguration() {
 export var MailTelemetryForTests = {
   reportAccountTypes,
   reportAccountSizes,
+  reportAccountPreferences,
   reportAddressBookTypes,
   reportCalendars,
   reportPreferences,

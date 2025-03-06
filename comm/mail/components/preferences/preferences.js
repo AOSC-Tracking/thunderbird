@@ -25,9 +25,6 @@ var { calendarDeactivator } = ChromeUtils.importESModule(
   "resource:///modules/calendar/calCalendarDeactivator.sys.mjs"
 );
 
-var paneDeck = document.getElementById("paneDeck");
-var defaultPane = "paneGeneral";
-
 ChromeUtils.defineESModuleGetters(this, {
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
   UIDensity: "resource:///modules/UIDensity.sys.mjs",
@@ -38,6 +35,7 @@ ChromeUtils.defineESModuleGetters(
   this,
   {
     qrExportPane: "chrome://messenger/content/preferences/qrExport.mjs",
+    appearancePane: "chrome://messenger/content/preferences/appearance.mjs",
   },
   { global: "current" }
 );
@@ -138,6 +136,7 @@ function register_module(categoryName, categoryObject) {
 
 function init() {
   register_module("paneGeneral", gGeneralPane);
+  register_module("paneAppearance", appearancePane);
   register_module("paneCompose", gComposePane);
   register_module("panePrivacy", gPrivacyPane);
   register_module("paneCalendar", gCalendarPane);
@@ -406,9 +405,10 @@ function scrollContentTo(element) {
 /**
  * Selects the specified preferences pane
  *
- * @param paneID              ID of prefpane to select
- * @param scrollPaneTo        ID of the element to scroll into view
- * @param otherArgs.subdialog ID of button to activate, opening a subdialog
+ * @param {string} paneID - ID of prefpane to select.
+ * @param {string} scrollPaneTo - ID of the element to scroll into view.
+ * @param {object} otherArgs
+ * @param {string} otherArgs.subdialog - ID of button to activate, opening a subdialog
  */
 function selectPrefPane(paneID, scrollPaneTo, otherArgs) {
   if (paneID) {
@@ -424,8 +424,8 @@ function selectPrefPane(paneID, scrollPaneTo, otherArgs) {
 /**
  * Select the specified tab
  *
- * @param scrollPaneTo ID of the element to scroll into view
- * @param subdialogID  ID of button to activate, opening a subdialog
+ * @param {string} scrollPaneTo - ID of the element to scroll into view.
+ * @param {string} subdialogID - ID of button to activate, opening a subdialog.
  */
 function showTab(scrollPaneTo, subdialogID) {
   setTimeout(function () {
@@ -455,9 +455,8 @@ async function getAvailableLocales() {
   // for lastFallbackLocale for it to be useful.
   if (defaultLocale != lastFallbackLocale) {
     const lastFallbackId = `langpack-${lastFallbackLocale}@thunderbird.mozilla.org`;
-    const lastFallbackInstalled = await AddonManager.getAddonByID(
-      lastFallbackId
-    );
+    const lastFallbackInstalled =
+      await AddonManager.getAddonByID(lastFallbackId);
     if (!lastFallbackInstalled) {
       return availableLocales.filter(locale => locale != lastFallbackLocale);
     }

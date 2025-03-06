@@ -236,6 +236,21 @@ class Accessible {
   }
 
   /**
+   * Return the closest common ancestor of `this` and `aAcc`, potentially
+   * including `this`. That is, if `aAcc` is `this` or a descendant, this method
+   * will return `this`.
+   */
+  const Accessible* GetClosestCommonInclusiveAncestor(
+      const Accessible* aAcc) const;
+
+  Accessible* GetClosestCommonInclusiveAncestor(Accessible* aAcc) {
+    const Accessible* common =
+        const_cast<const Accessible*>(this)->GetClosestCommonInclusiveAncestor(
+            aAcc);
+    return const_cast<Accessible*>(common);
+  }
+
+  /**
    * Used by ChildAtPoint() method to get direct or deepest child at point.
    */
   enum class EWhichChildAtPoint { DirectChild, DeepestChild };
@@ -585,6 +600,8 @@ class Accessible {
 
   bool IsHTMLRadioButton() const { return mType == eHTMLRadioButtonType; }
 
+  bool IsHTMLSpinner() const { return mType == eHTMLSpinnerType; }
+
   bool IsHTMLTable() const { return mType == eHTMLTableType; }
   bool IsHTMLTableCell() const { return mType == eHTMLTableCellType; }
   bool IsHTMLTableRow() const { return mType == eHTMLTableRowType; }
@@ -712,7 +729,16 @@ class Accessible {
   /**
    * Return the localized string for the given key.
    */
-  static void TranslateString(const nsString& aKey, nsAString& aStringOut);
+  static void TranslateString(const nsString& aKey, nsAString& aStringOut,
+                              const nsTArray<nsString>& aParams = {});
+
+  /*
+   * Return calculated group level based on accessible hierarchy.
+   *
+   * @param aFast  [in] Don't climb up tree. Calculate level from aria and
+   *                    roles.
+   */
+  virtual int32_t GetLevel(bool aFast) const;
 
  protected:
   // Some abstracted group utility methods.
@@ -732,14 +758,6 @@ class Accessible {
    * Return group info or create and update.
    */
   virtual AccGroupInfo* GetOrCreateGroupInfo() = 0;
-
-  /*
-   * Return calculated group level based on accessible hierarchy.
-   *
-   * @param aFast  [in] Don't climb up tree. Calculate level from aria and
-   *                    roles.
-   */
-  virtual int32_t GetLevel(bool aFast) const;
 
   /**
    * Calculate position in group and group size ('posinset' and 'setsize') based

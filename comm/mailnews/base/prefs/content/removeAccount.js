@@ -106,12 +106,13 @@ function showInfo() {
 }
 
 function removeAccount() {
-  const removeAccount = document.getElementById("removeAccount").checked;
+  const removeAccountCheckbox =
+    document.getElementById("removeAccount").checked;
   const removeData = document.getElementById("removeData").checked;
   let account = window.arguments[0].account;
   try {
     // Remove the requested account data.
-    if (removeAccount) {
+    if (removeAccountCheckbox) {
       try {
         // Remove password information first.
         account.incomingServer.forgetPassword();
@@ -133,7 +134,7 @@ function removeAccount() {
     document.getElementById("success").hidden = false;
   } catch (ex) {
     document.getElementById("failure").hidden = false;
-    console.error("Failure to remove account: " + ex);
+    console.error("Failure to remove account: ", ex);
     window.arguments[0].result = false;
   }
   document.getElementById("progress").hidden = true;

@@ -22,8 +22,10 @@
 #include "mozilla/dom/ErrorEvent.h"
 #include "mozilla/dom/ErrorEventBinding.h"
 #include "mozilla/dom/WorkerScope.h"
+#include "mozilla/dom/Promise.h"
 #include "mozilla/dom/RootedDictionary.h"
 #include "mozilla/dom/quota/Assertions.h"
+#include "mozilla/dom/quota/PromiseUtils.h"
 #include "mozilla/dom/quota/ResultExtensions.h"
 #include "mozilla/intl/LocaleCanonicalizer.h"
 #include "mozilla/ipc/BackgroundChild.h"
@@ -118,6 +120,17 @@ namespace {
 // Anything larger is compressed and stored outside the database.
 const int32_t kDefaultDataThresholdBytes = 1024 * 1024;  // 1MB
 
+// The maximum size of a structured clone that can be transferred through IPC.
+// Originally planned as 1024 MB, but adjusted to 1042 MB based on the
+// following considerations:
+// - The largest model at https://whisper.ggerganov.com is 1030 MB.
+// - Chrome's limit varies between 1030–1050 MB depending on the platform.
+// Keeping the limit at 1042 MB ensures better compatibility with both use
+// cases.
+//
+// This limit might be increased after bug 1944231 and bug 1942995 are fixed.
+const int32_t kDefaultMaxStructuredCloneSize = 1042 * 1024 * 1024;  // 1042 MB
+
 // The maximal size of a serialized object to be transfered through IPC.
 const int32_t kDefaultMaxSerializedMsgSize = IPC::Channel::kMaximumMessageSize;
 
@@ -132,6 +145,8 @@ const int32_t kDefaultMaxPreloadExtraRecords = 64;
 #define IDB_PREF_BRANCH_ROOT "dom.indexedDB."
 
 const char kDataThresholdPref[] = IDB_PREF_BRANCH_ROOT "dataThreshold";
+const char kPrefMaxStructuredCloneSize[] =
+    IDB_PREF_BRANCH_ROOT "maxStructuredCloneSize";
 const char kPrefMaxSerilizedMsgSize[] =
     IDB_PREF_BRANCH_ROOT "maxSerializedMsgSize";
 const char kPrefMaxPreloadExtraRecords[] =
@@ -154,6 +169,7 @@ bool gInitialized MOZ_GUARDED_BY(gDBManagerMutex) = false;
 bool gClosed MOZ_GUARDED_BY(gDBManagerMutex) = false;
 
 Atomic<int32_t> gDataThresholdBytes(0);
+Atomic<int32_t> gMaxStructuredCloneSize(0);
 Atomic<int32_t> gMaxSerializedMsgSize(0);
 Atomic<int32_t> gMaxPreloadExtraRecords(0);
 
@@ -171,6 +187,17 @@ void DataThresholdPrefChangedCallback(const char* aPrefName, void* aClosure) {
   }
 
   gDataThresholdBytes = dataThresholdBytes;
+}
+
+void MaxStructuredCloneSizePrefChangeCallback(const char* aPrefName,
+                                              void* aClosure) {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(!strcmp(aPrefName, kPrefMaxStructuredCloneSize));
+  MOZ_ASSERT(!aClosure);
+
+  gMaxStructuredCloneSize =
+      Preferences::GetInt(aPrefName, kDefaultMaxStructuredCloneSize);
+  MOZ_ASSERT(gMaxStructuredCloneSize > 0);
 }
 
 void MaxSerializedMsgSizePrefChangeCallback(const char* aPrefName,
@@ -215,7 +242,8 @@ auto DatabaseFilePathMatchPredicate(const nsAString* const aDatabaseFilePath) {
 
 }  // namespace
 
-IndexedDatabaseManager::IndexedDatabaseManager() : mBackgroundActor(nullptr) {
+IndexedDatabaseManager::IndexedDatabaseManager()
+    : mLocaleInitialized(false), mBackgroundActor(nullptr) {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 }
 
@@ -281,6 +309,13 @@ IndexedDatabaseManager* IndexedDatabaseManager::Get() {
   return gDBManager;
 }
 
+// static
+already_AddRefed<IndexedDatabaseManager>
+IndexedDatabaseManager::FactoryCreate() {
+  RefPtr<IndexedDatabaseManager> indexedDatabaseManager = GetOrCreate();
+  return indexedDatabaseManager.forget();
+}
+
 nsresult IndexedDatabaseManager::Init() {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 
@@ -303,6 +338,9 @@ nsresult IndexedDatabaseManager::Init() {
 
   Preferences::RegisterCallbackAndCall(DataThresholdPrefChangedCallback,
                                        kDataThresholdPref);
+
+  Preferences::RegisterCallbackAndCall(MaxStructuredCloneSizePrefChangeCallback,
+                                       kPrefMaxStructuredCloneSize);
 
   Preferences::RegisterCallbackAndCall(MaxSerializedMsgSizePrefChangeCallback,
                                        kPrefMaxSerilizedMsgSize);
@@ -338,10 +376,37 @@ void IndexedDatabaseManager::Destroy() {
   Preferences::UnregisterCallback(DataThresholdPrefChangedCallback,
                                   kDataThresholdPref);
 
+  Preferences::UnregisterCallback(MaxStructuredCloneSizePrefChangeCallback,
+                                  kPrefMaxStructuredCloneSize);
+
   Preferences::UnregisterCallback(MaxSerializedMsgSizePrefChangeCallback,
                                   kPrefMaxSerilizedMsgSize);
 
   delete this;
+}
+
+nsresult IndexedDatabaseManager::EnsureBackgroundActor() {
+  if (mBackgroundActor) {
+    return NS_OK;
+  }
+
+  PBackgroundChild* bgActor = BackgroundChild::GetForCurrentThread();
+  if (NS_WARN_IF(!bgActor)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  {
+    BackgroundUtilsChild* actor = new BackgroundUtilsChild(this);
+
+    mBackgroundActor = static_cast<BackgroundUtilsChild*>(
+        bgActor->SendPBackgroundIndexedDBUtilsConstructor(actor));
+
+    if (NS_WARN_IF(!mBackgroundActor)) {
+      return NS_ERROR_FAILURE;
+    }
+  }
+
+  return NS_OK;
 }
 
 // static
@@ -450,6 +515,16 @@ uint32_t IndexedDatabaseManager::DataThreshold() {
              "DataThreshold() called before indexedDB has been initialized!");
 
   return gDataThresholdBytes;
+}
+
+// static
+uint32_t IndexedDatabaseManager::MaxStructuredCloneSize() {
+  MOZ_ASSERT(
+      Get(),
+      "MaxStructuredCloneSize() called before indexedDB has been initialized!");
+  MOZ_ASSERT(gMaxStructuredCloneSize > 0);
+
+  return gMaxStructuredCloneSize;
 }
 
 // static
@@ -596,27 +671,7 @@ nsresult IndexedDatabaseManager::BlockAndGetFileReferences(
     return NS_ERROR_UNEXPECTED;
   }
 
-  if (!mBackgroundActor) {
-    PBackgroundChild* bgActor = BackgroundChild::GetForCurrentThread();
-    if (NS_WARN_IF(!bgActor)) {
-      return NS_ERROR_FAILURE;
-    }
-
-    BackgroundUtilsChild* actor = new BackgroundUtilsChild(this);
-
-    // We don't set event target for BackgroundUtilsChild because:
-    // 1. BackgroundUtilsChild is a singleton.
-    // 2. SendGetFileReferences is a sync operation to be returned asap if
-    // unlabeled.
-    // 3. The rest operations like DeleteMe/__delete__ only happens at shutdown.
-    // Hence, we should keep it unlabeled.
-    mBackgroundActor = static_cast<BackgroundUtilsChild*>(
-        bgActor->SendPBackgroundIndexedDBUtilsConstructor(actor));
-  }
-
-  if (NS_WARN_IF(!mBackgroundActor)) {
-    return NS_ERROR_FAILURE;
-  }
+  QM_TRY(MOZ_TO_RESULT(EnsureBackgroundActor()));
 
   if (!mBackgroundActor->SendGetFileReferences(
           aPersistenceType, nsCString(aOrigin), nsString(aDatabaseName),
@@ -643,6 +698,48 @@ nsresult IndexedDatabaseManager::FlushPendingFileDeletions() {
     return NS_ERROR_FAILURE;
   }
 
+  return NS_OK;
+}
+
+NS_IMPL_ADDREF(IndexedDatabaseManager)
+NS_IMPL_RELEASE_WITH_DESTROY(IndexedDatabaseManager, Destroy())
+NS_IMPL_QUERY_INTERFACE(IndexedDatabaseManager, nsIIndexedDatabaseManager)
+
+NS_IMETHODIMP
+IndexedDatabaseManager::DoMaintenance(JSContext* aContext, Promise** _retval) {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(_retval);
+
+  if (NS_WARN_IF(!StaticPrefs::dom_indexedDB_testing())) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  QM_TRY(MOZ_TO_RESULT(EnsureBackgroundActor()));
+
+  RefPtr<Promise> promise;
+  nsresult rv = CreatePromise(aContext, getter_AddRefs(promise));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  mBackgroundActor->SendDoMaintenance()->Then(
+      GetCurrentSerialEventTarget(), __func__,
+      [promise](const PBackgroundIndexedDBUtilsChild::DoMaintenancePromise::
+                    ResolveOrRejectValue& aValue) {
+        if (aValue.IsReject()) {
+          promise->MaybeReject(NS_ERROR_FAILURE);
+          return;
+        }
+
+        if (NS_FAILED(aValue.ResolveValue())) {
+          promise->MaybeReject(aValue.ResolveValue());
+          return;
+        }
+
+        promise->MaybeResolveWithUndefined();
+      });
+
+  promise.forget(_retval);
   return NS_OK;
 }
 
@@ -677,7 +774,11 @@ void IndexedDatabaseManager::LoggingModePrefChangedCallback(
 }
 
 nsresult IndexedDatabaseManager::EnsureLocale() {
-  MOZ_ASSERT(NS_IsMainThread());
+  AssertIsOnMainThread();
+
+  if (mLocaleInitialized) {
+    return NS_OK;
+  }
 
   nsAutoCString acceptLang;
   Preferences::GetLocalizedCString("intl.accept_languages", acceptLang);
@@ -697,6 +798,8 @@ nsresult IndexedDatabaseManager::EnsureLocale() {
   if (mLocale.IsEmpty()) {
     mLocale.AssignLiteral("en_US");
   }
+
+  mLocaleInitialized = true;
 
   return NS_OK;
 }

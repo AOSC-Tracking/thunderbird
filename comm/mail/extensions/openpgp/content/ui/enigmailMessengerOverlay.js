@@ -13,6 +13,9 @@
 // TODO: check if this is safe
 /* eslint-disable no-unsanitized/property */
 
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
@@ -168,7 +171,11 @@ Enigmail.msg = {
     ReloadMessage();
   },
 
-  messageCleanup() {
+  /**
+   * Handle messagePane "unload" event.
+   */
+  messageFrameUnload() {
+    Enigmail.msg.savedHeaders = null;
     for (const value of [
       "decryptInlinePGReminder",
       "decryptInlinePG",
@@ -206,8 +213,6 @@ Enigmail.msg = {
 
     Enigmail.msg.keyCollectCandidates = new Map();
 
-    EnigmailKeyRing.emailAddressesWithSecretKey = null;
-
     Enigmail.msg.attachedKeys = [];
     Enigmail.msg.attachedSenderEmailKeysIndex = [];
 
@@ -217,11 +222,6 @@ Enigmail.msg = {
     Enigmail.msg.unhideMissingSigKeyBoxIsTODO = false;
     Enigmail.msg.missingSigKey = null;
     Enigmail.msg.buggyMailType = null;
-  },
-
-  messageFrameUnload() {
-    Enigmail.msg.savedHeaders = null;
-    Enigmail.msg.messageCleanup();
   },
 
   getCurrentMsgUriSpec() {
@@ -763,10 +763,10 @@ Enigmail.msg = {
         const p = Cc["@mozilla.org/parserutils;1"].createInstance(
           Ci.nsIParserUtils
         );
-        const de = Ci.nsIDocumentEncoder;
         msgText = p.convertToPlainText(
           topElement.innerHTML,
-          de.OutputRaw | de.OutputBodyOnly,
+          Ci.nsIDocumentEncoder.OutputRaw |
+            Ci.nsIDocumentEncoder.OutputBodyOnly,
           0
         );
       } else {
@@ -2080,20 +2080,14 @@ Enigmail.msg = {
           } catch (ex) {
             // if the attachment file type is unknown, an exception is thrown,
             // so let it be handled by a browser window
-            Enigmail.msg.loadExternalURL(outFileUri.asciiSpec);
+            openLinkExternally(outFileUri.asciiSpec, { addToHistory: false });
           }
         } else {
           // open the attachment using an external application
-          Enigmail.msg.loadExternalURL(outFileUri.asciiSpec);
+          openLinkExternally(outFileUri.asciiSpec, { addToHistory: false });
         }
       }
     }
-  },
-
-  loadExternalURL(url) {
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(Services.io.newURI(url));
   },
 
   /**
@@ -2154,41 +2148,6 @@ Enigmail.msg = {
       event.currentTarget.parentNode.headerField?.emailAddress,
       true
     );
-  },
-
-  onUnloadEnigmail() {
-    window.removeEventListener(
-      "unload-enigmail",
-      Enigmail.msg.onUnloadEnigmail
-    );
-    window.removeEventListener("load-enigmail", Enigmail.msg.messengerStartup);
-
-    this.messageCleanup();
-
-    if (this.messagePane) {
-      this.messagePane.removeEventListener(
-        "unload",
-        Enigmail.msg.messageFrameUnload,
-        true
-      );
-    }
-
-    for (const c of this.changedAttributes) {
-      const elem = document.getElementById(c.id);
-      if (elem) {
-        elem.setAttribute(c.attrib, c.value);
-      }
-    }
-
-    if (Enigmail.columnHandler) {
-      Enigmail.columnHandler.onUnloadEnigmail();
-    }
-    if (Enigmail.hdrView) {
-      Enigmail.hdrView.onUnloadEnigmail();
-    }
-
-    // eslint-disable-next-line no-global-assign
-    Enigmail = undefined;
   },
 
   /**
@@ -3001,12 +2960,3 @@ Enigmail.msg = {
       !showExtraKeysList;
   },
 };
-
-window.addEventListener(
-  "load-enigmail",
-  Enigmail.msg.messengerStartup.bind(Enigmail.msg)
-);
-window.addEventListener(
-  "unload-enigmail",
-  Enigmail.msg.onUnloadEnigmail.bind(Enigmail.msg)
-);

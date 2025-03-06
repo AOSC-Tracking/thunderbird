@@ -424,36 +424,6 @@ AddrBookCard.prototype = {
     }
     return this._vCardProperties.toVCard();
   },
-  generatePhoneticName(lastNameFirst) {
-    if (lastNameFirst) {
-      return (
-        this.getProperty("PhoneticLastName", "") +
-        this.getProperty("PhoneticFirstName", "")
-      );
-    }
-    return (
-      this.getProperty("PhoneticFirstName", "") +
-      this.getProperty("PhoneticLastName", "")
-    );
-  },
-  generateChatName() {
-    for (const name of [
-      "_GoogleTalk",
-      "_AimScreenName",
-      "_Yahoo",
-      "_Skype",
-      "_QQ",
-      "_MSN",
-      "_ICQ",
-      "_JabberId",
-      "_IRC",
-    ]) {
-      if (this._properties.has(name)) {
-        return this._properties.get(name);
-      }
-    }
-    return "";
-  },
   copy() {
     throw Components.Exception(
       "nsIAbCard.copy() not implemented",

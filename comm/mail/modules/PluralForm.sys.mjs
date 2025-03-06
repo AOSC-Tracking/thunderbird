@@ -173,8 +173,8 @@ var gFunctions = [
       n % 10 == 1 && n % 100 != 11
         ? 0
         : n % 10 >= 2 && (n % 100 < 10 || n % 100 >= 20)
-        ? 2
-        : 1,
+          ? 2
+          : 1,
   ],
   // 7: Russian
   [
@@ -183,8 +183,8 @@ var gFunctions = [
       n % 10 == 1 && n % 100 != 11
         ? 0
         : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)
-        ? 1
-        : 2,
+          ? 1
+          : 2,
   ],
   // 8: Slovak
   [3, n => (n == 1 ? 0 : n >= 2 && n <= 4 ? 1 : 2)],
@@ -195,8 +195,8 @@ var gFunctions = [
       n == 1
         ? 0
         : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)
-        ? 1
-        : 2,
+          ? 1
+          : 2,
   ],
   // 10: Slovenian
   [
@@ -205,10 +205,10 @@ var gFunctions = [
       n % 100 == 1
         ? 0
         : n % 100 == 2
-        ? 1
-        : n % 100 == 3 || n % 100 == 4
-        ? 2
-        : 3,
+          ? 1
+          : n % 100 == 3 || n % 100 == 4
+            ? 2
+            : 3,
   ],
   // 11: Irish Gaeilge
   [
@@ -217,12 +217,12 @@ var gFunctions = [
       n == 1
         ? 0
         : n == 2
-        ? 1
-        : n >= 3 && n <= 6
-        ? 2
-        : n >= 7 && n <= 10
-        ? 3
-        : 4,
+          ? 1
+          : n >= 3 && n <= 6
+            ? 2
+            : n >= 7 && n <= 10
+              ? 3
+              : 4,
   ],
   // 12: Arabic
   [
@@ -231,14 +231,14 @@ var gFunctions = [
       n == 0
         ? 5
         : n == 1
-        ? 0
-        : n == 2
-        ? 1
-        : n % 100 >= 3 && n % 100 <= 10
-        ? 2
-        : n % 100 >= 11 && n % 100 <= 99
-        ? 3
-        : 4,
+          ? 0
+          : n == 2
+            ? 1
+            : n % 100 >= 3 && n % 100 <= 10
+              ? 2
+              : n % 100 >= 11 && n % 100 <= 99
+                ? 3
+                : 4,
   ],
   // 13: Maltese
   [
@@ -247,10 +247,10 @@ var gFunctions = [
       n == 1
         ? 0
         : n == 0 || (n % 100 > 0 && n % 100 <= 10)
-        ? 1
-        : n % 100 > 10 && n % 100 < 20
-        ? 2
-        : 3,
+          ? 1
+          : n % 100 > 10 && n % 100 < 20
+            ? 2
+            : 3,
   ],
   // 14: Unused
   [3, n => (n % 10 == 1 ? 0 : n % 10 == 2 ? 1 : 2)],
@@ -263,21 +263,21 @@ var gFunctions = [
       n % 10 == 1 && n % 100 != 11 && n % 100 != 71 && n % 100 != 91
         ? 0
         : n % 10 == 2 && n % 100 != 12 && n % 100 != 72 && n % 100 != 92
-        ? 1
-        : (n % 10 == 3 || n % 10 == 4 || n % 10 == 9) &&
-          n % 100 != 13 &&
-          n % 100 != 14 &&
-          n % 100 != 19 &&
-          n % 100 != 73 &&
-          n % 100 != 74 &&
-          n % 100 != 79 &&
-          n % 100 != 93 &&
-          n % 100 != 94 &&
-          n % 100 != 99
-        ? 2
-        : n % 1000000 == 0 && n != 0
-        ? 3
-        : 4,
+          ? 1
+          : (n % 10 == 3 || n % 10 == 4 || n % 10 == 9) &&
+              n % 100 != 13 &&
+              n % 100 != 14 &&
+              n % 100 != 19 &&
+              n % 100 != 73 &&
+              n % 100 != 74 &&
+              n % 100 != 79 &&
+              n % 100 != 93 &&
+              n % 100 != 94 &&
+              n % 100 != 99
+            ? 2
+            : n % 1000000 == 0 && n != 0
+              ? 3
+              : 4,
   ],
   // 17: Shuar
   [2, n => (n != 0 ? 1 : 0)],
@@ -293,8 +293,8 @@ var gFunctions = [
       n % 10 == 1 && n % 100 != 11
         ? 0
         : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)
-        ? 1
-        : 2,
+          ? 1
+          : 2,
   ],
 ];
 
@@ -302,13 +302,9 @@ var gFunctions = [
 
 export var PluralForm = {
   /**
-   * Get the correct plural form of a word based on the number
+   * Get the correct plural form getter.
    *
-   * @param aNum
-   *        The number to decide which plural form to use
-   * @param aWords
-   *        A semi-colon (;) separated string of words to pick the plural form
-   * @returns The appropriate plural form of the word
+   * @returns {Function} The appropriate plural form getter.
    */
   get get() {
     // This method will lazily load to avoid perf when it is first needed and
@@ -330,9 +326,8 @@ export var PluralForm = {
   /**
    * Create a pair of plural form functions for the given plural rule number.
    *
-   * @param aRuleNum
-   *        The plural rule number to create functions
-   * @returns A pair: [function that gets the right plural form,
+   * @param {integer} aRuleNum - The plural rule number to create functions.
+   * @returns {Function[]} a pair: [function that gets the right plural form,
    *                  function that returns the number of plural forms]
    */
   makeGetter(aRuleNum) {
@@ -388,9 +383,9 @@ export var PluralForm = {
   },
 
   /**
-   * Get the number of forms for the current plural rule
+   * Get the number of forms for the current plural rule.
    *
-   * @returns The number of forms
+   * @returns {integer} The number of forms.
    */
   get numForms() {
     // We lazily load numForms, so trigger the init logic with get()
@@ -401,7 +396,7 @@ export var PluralForm = {
   /**
    * Get the plural rule number for the current app locale
    *
-   * @returns The plural rule number
+   * @returns {integer} The plural rule number.
    */
   get ruleNum() {
     return LOCALE_PLURAL_NUMBER[Services.locale.appLocaleAsBCP47] ?? 0;
@@ -409,10 +404,9 @@ export var PluralForm = {
 };
 
 /**
- * Private helper function to log errors to the error console and command line
+ * Private helper function to log errors to the error console and command line.
  *
- * @param aMsg
- *        Error message to log or an array of strings to concat
+ * @param {string} aMsg - Error message to log or an array of strings to concat.
  */
 function log(aMsg) {
   const msg = "PluralForm.sys.mjs: " + (aMsg.join ? aMsg.join("") : aMsg);

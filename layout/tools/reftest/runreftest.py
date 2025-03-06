@@ -6,7 +6,6 @@
 Runs the reftest test harness.
 """
 import json
-import multiprocessing
 import os
 import platform
 import posixpath
@@ -61,10 +60,12 @@ here = os.path.abspath(os.path.dirname(__file__))
 
 try:
     from mozbuild.base import MozbuildObject
+    from mozbuild.util import cpu_count
 
     build_obj = MozbuildObject.from_environment(cwd=here)
 except ImportError:
     build_obj = None
+    from multiprocessing import cpu_count
 
 
 def categoriesToRegex(categoryList):
@@ -333,12 +334,17 @@ class RefTest(object):
         if not platform.system() == "Linux":
             return ""
 
-        theme_cmd = "gsettings get org.gnome.desktop.interface gtk-theme"
-        theme = subprocess.check_output(theme_cmd, shell=True, universal_newlines=True)
-        if theme:
-            theme = theme.strip("\n")
-            theme = theme.strip("'")
-        return theme.strip()
+        try:
+            theme_cmd = "gsettings get org.gnome.desktop.interface gtk-theme"
+            theme = subprocess.check_output(
+                theme_cmd, shell=True, universal_newlines=True
+            )
+            if theme:
+                theme = theme.strip("\n")
+                theme = theme.strip("'")
+            return theme.strip()
+        except subprocess.CalledProcessError:
+            return ""
 
     def getFullPath(self, path):
         "Get an absolute path relative to self.oldcwd."
@@ -469,13 +475,8 @@ class RefTest(object):
         prefs["gfx.bundled-fonts.activate"] = 1
         # Disable dark scrollbars because it's semi-transparent.
         prefs["widget.disable-dark-scrollbar"] = True
-        prefs["reftest.isCoverageBuild"] = mozinfo.info.get("ccov", False)
-
-        # config specific flags
-        prefs["sandbox.apple_silicon"] = mozinfo.info.get("apple_silicon", False)
 
         prefs["sandbox.mozinfo"] = json.dumps(mozinfo.info)
-        prefs["sandbox.os_version"] = mozinfo.info.get("os_version", "")
 
         # Set tests to run or manifests to parse.
         if tests:
@@ -485,6 +486,11 @@ class RefTest(object):
             prefs["reftest.tests"] = testlist
         elif manifests:
             prefs["reftest.manifests"] = json.dumps(manifests)
+
+        # Avoid unncessary recursion when MOZHARNESS_TEST_PATHS is set
+        prefs["reftest.mozharness_test_paths"] = (
+            len(os.environ.get("MOZHARNESS_TEST_PATHS", "")) > 0
+        )
 
         # default fission to True
         prefs["fission.autostart"] = True
@@ -703,7 +709,7 @@ class RefTest(object):
         if not getattr(options, "runTestsInParallel", False):
             return self.runSerialTests(manifests, options, cmdargs)
 
-        cpuCount = multiprocessing.cpu_count()
+        cpuCount = cpu_count()
 
         # We have the directive, technology, and machine to run multiple test instances.
         # Experimentation says that reftests are not overly CPU-intensive, so we can run

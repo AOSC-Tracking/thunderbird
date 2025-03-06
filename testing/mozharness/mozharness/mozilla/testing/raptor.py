@@ -464,15 +464,6 @@ class Raptor(
                 },
             ],
             [
-                ["--noinstall"],
-                {
-                    "dest": "noinstall",
-                    "action": "store_true",
-                    "default": False,
-                    "help": "Do not offer to install Android APK.",
-                },
-            ],
-            [
                 ["--disable-e10s"],
                 {
                     "dest": "e10s",
@@ -626,6 +617,15 @@ class Raptor(
                     "dest": "screenshot_on_failure",
                     "default": False,
                     "help": "Take a screenshot when the test fails.",
+                },
+            ],
+            [
+                ["--power-test"],
+                {
+                    "action": "store_true",
+                    "dest": "power_test",
+                    "default": False,
+                    "help": "Run power usage testing on mobile tests using a USB power meter.",
                 },
             ],
         ]
@@ -1114,6 +1114,8 @@ class Raptor(
             or os.environ.get("MOZ_AUTOMATION", None) is not None
         ):
             options.extend(["--screenshot-on-failure"])
+        if self.config.get("power_test", False):
+            options.extend(["--power-test"])
 
         for (arg,), details in Raptor.browsertime_options:
             # Allow overriding defaults on the `./mach raptor-test ...` command-line
@@ -1164,6 +1166,7 @@ class Raptor(
     def download_and_extract(self, extract_dirs=None, suite_categories=None):
         # Use in-tree wptserve for Python 3.10 compatibility
         extract_dirs = [
+            "bin/*",
             "tools/wptserve/*",
             "tools/wpt_third_party/h2/*",
             "tools/wpt_third_party/pywebsocket3/*",
@@ -1305,7 +1308,7 @@ class Raptor(
             )
 
     def install(self):
-        if not self.config.get("noinstall", False):
+        if not self.config.get("no_install", False):
             if self.app in self.firefox_android_browsers:
                 self.device.uninstall_app(self.binary_path)
 
@@ -1364,6 +1367,18 @@ class Raptor(
         # mitmproxy needs path to mozharness when installing the cert, and tooltool
         env["SCRIPTSPATH"] = scripts_path
         env["EXTERNALTOOLSPATH"] = external_tools_path
+        env["XPCSHELL_PATH"] = os.path.join(
+            self.query_abs_dirs()["abs_test_install_dir"], "bin", "xpcshell.exe"
+        )
+        if os.path.exists(env["XPCSHELL_PATH"]) and not self.run_local:
+            dest = os.path.join(
+                self.query_abs_dirs()["abs_work_dir"],
+                "application",
+                "firefox",
+                "xpcshell.exe",
+            )
+            copyfile(env["XPCSHELL_PATH"], dest)
+            env["XPCSHELL_PATH"] = dest
 
         # Needed to load unsigned Raptor WebExt on release builds
         if self.is_release_build:
@@ -1503,5 +1518,15 @@ class RaptorOutputParser(OutputParser):
             )
             return  # skip base parse_single_line
         if line.startswith("raptor-browsertime Info: "):
-            SystemResourceMonitor.record_event(line[len("raptor-browsertime Info: ") :])
+            raptor_line = line[len("raptor-browsertime Info: ") :]
+            if raptor_line.startswith("BEGIN: "):
+                SystemResourceMonitor.begin_marker(
+                    "test", raptor_line[len("BEGIN: ") :]
+                )
+                return
+            elif raptor_line.startswith("END: "):
+                SystemResourceMonitor.end_marker("test", raptor_line[len("END: ") :])
+                return
+            else:
+                SystemResourceMonitor.record_event(raptor_line)
         super(RaptorOutputParser, self).parse_single_line(line)

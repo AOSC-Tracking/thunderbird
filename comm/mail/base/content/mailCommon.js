@@ -90,7 +90,11 @@ var commandController = {
       );
     },
     cmd_reply(event) {
-      if (gFolder?.flags & Ci.nsMsgFolderFlags.Newsgroup) {
+      if (
+        gFolder?.flags & Ci.nsMsgFolderFlags.Newsgroup ||
+        (window.messageBrowser?.contentWindow ?? window).currentHeaderData
+          ?.newsgroups
+      ) {
         commandController.doCommand("cmd_replyGroup", event);
       } else {
         commandController.doCommand("cmd_replySender", event);
@@ -603,7 +607,11 @@ var commandController = {
           folder()?.isSpecialFolder(Ci.nsMsgFolderFlags.Templates, true)
         );
       case "cmd_replyGroup":
-        return isNewsgroup();
+        return (
+          isNewsgroup() ||
+          (window.messageBrowser?.contentWindow ?? window).currentHeaderData
+            ?.newsgroups
+        );
       case "cmd_markAsRead":
         return (
           numSelectedMessages >= 1 &&
@@ -754,8 +762,8 @@ var commandController = {
    * Calls the ComposeMessage function with the desired type, and proper default
    * based on the event that fired it.
    *
-   * @param composeType  the nsIMsgCompType to pass to the function
-   * @param event (optional) the event that triggered the call
+   * @param {nsIMsgCompType} composeType - The nsIMsgCompType type to pass.
+   * @param {Event} [event] - The event that triggered the call.
    */
   _composeMsgByType(composeType, event) {
     // If we're the hidden window, then we're not going to have a gFolderDisplay
@@ -947,7 +955,6 @@ var dbViewWrapperListener = {
       "nsISupportsWeakReference",
     ]),
     updateCommandStatus() {},
-    displayMessageChanged() {},
     updateNextMessageAfterDelete() {
       dbViewWrapperListener._nextViewIndexAfterDelete = gDBView
         ? gDBView.msgToSelectAfterDelete

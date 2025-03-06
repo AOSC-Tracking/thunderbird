@@ -14,6 +14,10 @@ pane-general-title = General
 category-general =
     .tooltiptext = { pane-general-title }
 
+pane-appearance-title = Appearance
+category-appearance =
+    .tooltiptext = { pane-appearance-title }
+
 pane-compose-title = Composition
 category-compose =
     .tooltiptext = Composition
@@ -538,6 +542,41 @@ condensed-addresses-label =
     .label = Show only display name for people in my address book
     .accesskey = S
 
+table-layout-legend = Table View
+
+table-layout-horizontal-scroll-label =
+    .label = Allow horizontal scroll
+    .accesskey = h
+
+conversation-view-legend = Conversation view
+
+conversation-view-checkbox-label =
+    .label = Enable conversation view
+    .accesskey = c
+conversation-view-checkbox-description = Experimental feature based on Gloda, use it at your own risk
+
+label-experiment = Experimental
+
+dark-message-mode-legend = Message reader style
+
+dark-message-mode-checkbox-label =
+    .label = Enable dark message mode
+    .accesskey = d
+dark-message-mode-checkbox-description = Experimental feature to make the message body follow dark themes
+
+dark-message-mode-toggle-label =
+    .label = Show dark message mode toggle
+    .accesskey = t
+dark-message-mode-toggle-description = Show a toggle in the message header to quickly disable the dark message mode
+
+account-hub-legend = Account hub
+
+account-hub-checkbox-label =
+    .label = Create accounts in the new Account Hub
+    .accesskey = C
+
+account-hub-checkbox-description = Experimental new mail account creation flow
+
 ## Compose Tab
 
 forward-label =
@@ -732,12 +771,16 @@ cookies-button =
     .label = Show Cookies…
     .accesskey = S
 
-do-not-track-label =
-    .label = Send websites a “Do Not Track” signal that you don’t want to be tracked
+# Do not translate.
+# "Global Privacy Control" or "GPC" are a web platform feature name and abbreviation
+# included to facilitate power-user search of the about:preferences page.
+global-privacy-control-search = Global Privacy Control (GPC)
+
+global-privacy-control-description =
+    .label = Tell websites not to sell or share my data
     .accesskey = n
 
-dnt-learn-more-button =
-    .value = Learn more
+do-not-track-removal = We no longer support the “Do Not Track” signal
 
 passwords-description = { -brand-short-name } can remember passwords for all of your accounts.
 
@@ -1135,3 +1178,123 @@ qr-export-summary-passwords-included = Passwords included
 qr-export-summary-passwords-excluded = Passwords excluded
 
 qr-export-more-accounts = Export more accounts
+
+## Appearance Tab
+
+appearance-category-header = Appearance
+
+default-message-list-legend = Message List
+
+default-message-list-description = Define the default sorting and threading options for newly created folders.
+
+default-flag-label =
+    .value = Default Threading:
+
+default-flag-unthreaded =
+    .label = Unthreaded
+
+default-flag-threaded =
+    .label = Threaded
+
+default-flag-grouped =
+    .label = Grouped by Sort
+
+default-sort-label = Default Sort by:
+
+default-sort-date =
+    .label = Date
+
+default-sort-subject =
+    .label = Subject
+
+default-sort-from =
+    .label = From
+
+default-sort-id =
+    .label = ID
+
+default-sort-thread =
+    .label = Thread
+
+default-sort-priority =
+    .label = Priority
+
+default-sort-status =
+    .label = Status
+
+default-sort-size =
+    .label = Size
+
+default-sort-star =
+    .label = Star
+
+default-sort-unread =
+    .label = Read
+
+default-sort-recipient =
+    .label = Recipient
+
+default-sort-location =
+    .label = Location
+
+default-sort-tags =
+    .label = Tags
+
+default-sort-spam =
+    .label = Spam Status
+
+default-sort-attachments =
+    .label = Attachments
+
+default-sort-account =
+    .label = Account
+
+default-sort-received =
+    .label = Order Received
+
+default-sort-correspondents =
+    .label = Correspondents
+
+default-order-label = Default Sort Order:
+
+default-sort-ascending =
+    .label = Ascending
+
+default-sort-ascending-description = New messages at the bottom
+
+default-sort-descending =
+    .label = Descending
+
+default-sort-descending-description = New messages at the top
+
+apply-sort-label = Apply these settings to:
+
+apply-sort-to-all-button =
+    .label = All existing folders
+    .accesskey = A
+
+choose-apply-sort-button =
+    .label = Choose…
+    .accesskey = C
+
+apply-current-view-to-folder =
+    .label = Folder…
+
+apply-current-view-to-folder-children =
+    .label = Folder and its children…
+
+apply-changes-prompt-title = Apply Changes?
+
+apply-changes-prompt-message = Apply the current threading and sorting settings to all folders?
+
+# Variables:
+#  $name (String): The name of the folder to apply to.
+apply-changes-prompt-folder-message = Apply the current threading and sorting settings to “{ $name }”?
+
+# Variables:
+#  $name (String): The name of the folder to apply to.
+apply-changes-prompt-folder-children-message = Apply the current threading and sorting settings to “{ $name }” and its children?
+
+apply-current-view-error = Unable to apply current view settings
+
+apply-current-view-success = Current view settings applied successfully

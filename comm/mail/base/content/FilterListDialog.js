@@ -9,6 +9,9 @@ var { PluralForm } = ChromeUtils.importESModule(
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
 
 window.addEventListener("load", onLoad);
 window.addEventListener("unload", onFilterUnload);
@@ -145,7 +148,10 @@ function onLoad() {
     filterEditorQuitObserver,
     "quit-application-requested"
   );
+
+  UIFontSize.registerWindow(window);
 }
+
 /**
  * Set up the toolbarbutton to have an index and an EvenListener for proper
  * keyboard navigation.
@@ -164,8 +170,8 @@ function initNewToolbarButtons(newToolbarbutton) {
 /**
  * Processes arguments sent to this dialog when opened or refreshed.
  *
- * @param aArguments  An object having members representing the arguments.
- *                    { arg1: value1, arg2: value2, ... }
+ * @param {object} aArguments - An object having members representing the arguments.
+ *   { arg1: value1, arg2: value2, ... }
  */
 function processWindowArguments(aArguments) {
   // If a specific folder was requested, try to select it
@@ -215,8 +221,8 @@ function processWindowArguments(aArguments) {
  * This is called from OpenOrFocusWindow() if the dialog is already open.
  * New filters could have been created by operations outside the dialog.
  *
- * @param aArguments  An object of arguments having the same format
- *                    as window.arguments[0].
+ * @param {object} aArguments - An object of arguments having the same format
+ *   as window.arguments[0].
  */
 function refresh(aArguments) {
   // As we really don't know what has changed, clear the search box
@@ -235,8 +241,8 @@ function CanRunFiltersAfterTheFact(aServer) {
 /**
  * Change the root server for which we are managing filters.
  *
- * @param msgFolder The nsIMsgFolder server containing filters
- *                  (or a folder for NNTP server).
+ * @param {nsIMsgFolder} msgFolder - The nsIMsgFolder server containing filters
+ *   (or a folder for NNTP server).
  */
 function setFilterFolder(msgFolder) {
   if (!msgFolder || msgFolder == gServerMenu._folder) {
@@ -331,7 +337,7 @@ function setFilterFolder(msgFolder) {
 /**
  * Select a folder on which filters are to be run.
  *
- * @param aFolder     nsIMsgFolder folder to select.
+ * @param {nsIMsgFolder} aFolder - nsIMsgFolder folder to select.
  */
 function setRunFolder(aFolder) {
   // Setting this attribute should go away in bug 473009.
@@ -344,7 +350,7 @@ function setRunFolder(aFolder) {
 /**
  * Toggle enabled state of a filter, in both the filter properties and the UI.
  *
- * @param aFilterItem  an item (row) of the filter list to be toggled
+ * @param {Element} aFilterItem - An item (row) of the filter list to be toggled.
  */
 function toggleFilter(aFilterItem, aSetForEvent) {
   const filter = aFilterItem._filter;
@@ -372,9 +378,9 @@ function toggleFilter(aFilterItem, aSetForEvent) {
  * Selects a specific filter in the filter list.
  * The listbox view is scrolled to the corresponding item.
  *
- * @param aFilter  The nsIMsgFilter to select.
- *
- * @returns true/false indicating whether the filter was found and selected.
+ * @param {nsIMsgFilter} aFilter - The nsIMsgFilter to select.
+ * @returns {boolean} true/false indicating whether the filter was found and
+ *   selected.
  */
 function selectFilter(aFilter) {
   if (currentFilter() == aFilter) {
@@ -397,6 +403,8 @@ function selectFilter(aFilter) {
 /**
  * Returns the currently selected filter. If multiple filters are selected,
  * returns the first one. If none are selected, returns null.
+ *
+ * @returns {?nsIMsgFilter}
  */
 function currentFilter() {
   const currentItem = gFilterListbox.selectedItem;
@@ -460,10 +468,10 @@ function onCopyToNewFilter() {
  * Calculates the position for inserting the new filter,
  * and then displays the create dialog.
  *
- * @param args  The object containing the arguments for the dialog,
- *              passed to the filterEditorOnLoad() function.
- *              It will be augmented with the insertion position
- *              and global filters list properties by this function.
+ * @param {object} args - The object containing the arguments for the dialog,
+ *   passed to the filterEditorOnLoad() function.
+ *   It will be augmented with the insertion position
+ *   and global filters list properties by this function.
  */
 function calculatePositionAndShowCreateFilterDialog(args) {
   const selectedFilter = currentFilter();
@@ -602,8 +610,8 @@ function onBottom() {
  *   but it would be better if it moved "just as far as necessary"
  *   which would further "compact" related filters
  *
- * @param motion
- *   msgMoveMotion.Up, msgMoveMotion.Down, msgMoveMotion.Top, msgMoveMotion.Bottom
+ * @param {integer} motion - msgMoveMotion.Up, msgMoveMotion.Down,
+ *   msgMoveMotion.Top, msgMoveMotion.Bottom.
  */
 function moveFilter(motion) {
   // At the moment, do not allow moving groups of filters.
@@ -971,8 +979,8 @@ function updateButtons() {
  *  be defined (the root folder except for news) if the server can
  *  accept filters.
  *
- * @param   nsIMsgFolder aFolder - selected folder, from window args
- * @returns an nsIMsgFolder where the filter is defined
+ * @param {nsIMsgFolder} aFolder - Selected folder, from window args.
+ * @returns {?nsIMsgFolder} an nsIMsgFolder where the filter is defined.
  */
 function getFilterFolderForSelection(aFolder) {
   const rootFolder =
@@ -989,7 +997,7 @@ function getFilterFolderForSelection(aFolder) {
  * If the default server cannot have filters, check all accounts
  * and get a server that can have filters.
  *
- * @returns an nsIMsgIncomingServer
+ * @returns {nsIMsgIncomingServer} an nsIMsgIncomingServer
  */
 function getServerThatCanHaveFilters() {
   const defaultAccount = MailServices.accounts.defaultAccount;
@@ -1038,7 +1046,8 @@ function onFilterActionButtonKeyPress(event) {
     ) {
       document
         .getElementById("newFilterMenupopup")
-        .openPopup(event.target.parentNode, "after_end", {
+        .openPopup(event.target.parentNode, {
+          position: "after_end",
           triggerEvent: event,
         });
       return;
@@ -1083,12 +1092,11 @@ function onFilterListKeyPress(aEvent) {
 /**
  * Decides if the given filter matches the given keyword.
  *
- * @param  aFilter   nsIMsgFilter to check
- * @param  aKeyword  the string to find in the filter name
- *
- * @returns True if the filter name contains the searched keyword.
-            Otherwise false. In the future this may be extended to match
-            other filter attributes.
+ * @param {nsIMsgFilter} aFilter - nsIMsgFilter to check.
+ * @param {string} aKeyword - The string to find in the filter name.
+ * @returns {boolean} true if the filter name contains the searched keyword.
+ *   Otherwise false. In the future this may be extended to match
+ *  other filter attributes.
  */
 function filterSearchMatch(aFilter, aKeyword) {
   return aFilter.filterName.toLocaleLowerCase().includes(aKeyword);
@@ -1097,8 +1105,8 @@ function filterSearchMatch(aFilter, aKeyword) {
 /**
  * Called from rebuildFilterList when the list needs to be redrawn.
  *
- * @returns Uses the search term in search box, to produce an array of
- *          row (filter) numbers (indexes) that match the search term.
+ * @returns {?object[]} Uses the search term in search box, to produce an
+ *   array of row (filter) numbers (indexes) that match the search term.
  */
 function onFindFilter() {
   const keyWord = gSearchBox.value.toLocaleLowerCase();
@@ -1126,9 +1134,8 @@ function onFindFilter() {
 /**
  * Clear the search term in the search box if needed.
  *
- * @param aFilter  If this nsIMsgFilter matches the search term,
- *                 do not reset the box. If this is null,
- *                 reset unconditionally.
+ * @param {?nsIMsgFilter} aFilter - If this nsIMsgFilter matches the search term,
+ *   do not reset the box. If this is null, reset unconditionally.
  */
 function resetSearchBox(aFilter) {
   const keyword = gSearchBox.value.toLocaleLowerCase();

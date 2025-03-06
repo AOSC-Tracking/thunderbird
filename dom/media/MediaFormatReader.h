@@ -139,6 +139,12 @@ class MediaFormatReader final
   // Windows when the media engine playback is enabled.
   void UpdateMediaEngineId(uint64_t aMediaEngineId);
 
+  // This function will be called if the media key is set before playback
+  // starts, indicating the playback should be encrypted.
+  void SetEncryptedCustomIdent();
+
+  bool IsEncryptedCustomIdent() const { return mEncryptedCustomIdent; }
+
  protected:
   // Recomputes mBuffered.
   void UpdateBuffered();
@@ -194,8 +200,6 @@ class MediaFormatReader final
   // caller until the returned promise is resolved or rejected.
   RefPtr<GenericPromise> RequestDebugInfo(
       dom::MediaFormatReaderDebugInfo& aInfo);
-
-  Maybe<nsCString> GetAudioProcessPerCodec();
 
   // Switch the video decoder to NullDecoderModule. It might takes effective
   // since a few samples later depends on how much demuxed samples are already
@@ -295,7 +299,11 @@ class MediaFormatReader final
 
     media::TimeInterval mTime;
     bool mDropTarget;
+    // Whether known waiting for more raw packets, either for the random
+    // access point or dependent frames.
     bool mWaiting;
+    // Whether `MediaTrackDemuxer::Seek()` has found the preceding random
+    // access point.
     bool mHasSeeked;
   };
 
@@ -435,7 +443,7 @@ class MediaFormatReader final
     // Pending seek.
     MozPromiseRequestHolder<MediaTrackDemuxer::SeekPromise> mSeekRequest;
 
-    // Queued demux samples waiting to be decoded.
+    // Queued demuxed samples waiting to be decoded.
     nsTArray<RefPtr<MediaRawData>> mQueuedSamples;
     MozPromiseRequestHolder<MediaTrackDemuxer::SamplesPromise> mDemuxRequest;
     // A WaitingPromise is pending if the demuxer is waiting for data or
@@ -606,6 +614,8 @@ class MediaFormatReader final
       }
     }
 
+    // Return whether an InternalSeek() has been requested but has not yet
+    // seeked to the random access point preceding that target.
     bool HasInternalSeekPending() const {
       return mTimeThreshold && !mTimeThreshold.ref().mHasSeeked;
     }
@@ -769,7 +779,7 @@ class MediaFormatReader final
   // delta there.
   uint64_t mLastReportedNumDecodedFrames;
 
-  // Timestamp of the previous decoded keyframe, in microseconds.
+  // Timestamp of the previous decoded video keyframe, in microseconds.
   int64_t mPreviousDecodedKeyframeTime_us;
   // Default mLastDecodedKeyframeTime_us value, must be bigger than anything.
   static const int64_t sNoPreviousDecodedKeyframe = INT64_MAX;
@@ -900,6 +910,12 @@ class MediaFormatReader final
   // The total amount of time we have been waiting for the video data due to
   // lacking of data.
   TimeDuration mTotalWaitingForVideoDataTime;
+
+  // https://github.com/w3c/encrypted-media/issues/251#issuecomment-819783073
+  // Treat playback as encrypted if the media key is set before playback starts,
+  // this allows websites to start with non-encrypted stream and switch to
+  // encrypted stream later.
+  Atomic<bool> mEncryptedCustomIdent;
 };
 
 }  // namespace mozilla

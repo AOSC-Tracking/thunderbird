@@ -19,6 +19,7 @@ import mozilla.components.feature.contextmenu.facts.ContextMenuFacts
 import mozilla.components.feature.fxsuggest.FxSuggestInteractionInfo
 import mozilla.components.feature.fxsuggest.facts.FxSuggestFacts
 import mozilla.components.feature.media.facts.MediaFacts
+import mozilla.components.feature.prompts.dialog.GeneratedPasswordFacts
 import mozilla.components.feature.prompts.dialog.LoginDialogFacts
 import mozilla.components.feature.prompts.facts.AddressAutofillDialogFacts
 import mozilla.components.feature.prompts.facts.CreditCardAutofillDialogFacts
@@ -49,6 +50,7 @@ import org.mozilla.fenix.GleanMetrics.ContextualMenu
 import org.mozilla.fenix.GleanMetrics.CreditCards
 import org.mozilla.fenix.GleanMetrics.Events
 import org.mozilla.fenix.GleanMetrics.FxSuggest
+import org.mozilla.fenix.GleanMetrics.GeneratedPasswordDialog
 import org.mozilla.fenix.GleanMetrics.LoginDialog
 import org.mozilla.fenix.GleanMetrics.Logins
 import org.mozilla.fenix.GleanMetrics.MediaNotification
@@ -70,10 +72,20 @@ interface MetricController {
     fun track(event: Event)
 
     companion object {
+        /**
+         * Instantiate either a debug or release version of the metric controller.
+         * The debug version writes logs rather than sending real telemetry.
+         * @param services the list of available services to start
+         * @param isDataTelemetryEnabled has data telemetry been enabled?
+         * @param isMarketingDataTelemetryEnabled has marketing telemetry been enabled?
+         * @param isUsageTelemetryEnabled has usage telemetry been enabled?
+         * @param settings the user's preferences are held in the settings object
+         */
         fun create(
             services: List<MetricsService>,
             isDataTelemetryEnabled: () -> Boolean,
             isMarketingDataTelemetryEnabled: () -> Boolean,
+            isUsageTelemetryEnabled: () -> Boolean,
             settings: Settings,
         ): MetricController {
             return if (BuildConfig.TELEMETRY) {
@@ -81,6 +93,7 @@ interface MetricController {
                     services,
                     isDataTelemetryEnabled,
                     isMarketingDataTelemetryEnabled,
+                    isUsageTelemetryEnabled,
                     settings,
                 )
             } else {
@@ -114,6 +127,7 @@ internal class ReleaseMetricController(
     private val services: List<MetricsService>,
     private val isDataTelemetryEnabled: () -> Boolean,
     private val isMarketingDataTelemetryEnabled: () -> Boolean,
+    private val isUsageTelemetryEnabled: () -> Boolean,
     private val settings: Settings,
 ) : MetricController {
     private var initialized = mutableSetOf<MetricServiceType>()
@@ -143,6 +157,12 @@ internal class ReleaseMetricController(
         Component.FEATURE_PROMPTS to LoginDialogFacts.Items.SAVE -> {
             LoginDialog.saved.record(NoExtras())
         }
+        Component.FEATURE_PROMPTS to GeneratedPasswordFacts.Items.SHOWN -> {
+            GeneratedPasswordDialog.shown.record(NoExtras())
+        }
+        Component.FEATURE_PROMPTS to GeneratedPasswordFacts.Items.FILLED -> {
+            GeneratedPasswordDialog.filled.record(NoExtras())
+        }
         Component.FEATURE_MEDIA to MediaFacts.Items.STATE -> {
             when (action) {
                 Action.PLAY -> MediaState.play.record(NoExtras())
@@ -159,7 +179,17 @@ internal class ReleaseMetricController(
             }
         }
         Component.BROWSER_TOOLBAR to ToolbarFacts.Items.MENU -> {
-            Events.toolbarMenuVisible.record(NoExtras())
+            if (settings.navigationToolbarEnabled) {
+                Events.browserToolbarAction.record(Events.BrowserToolbarActionExtra("menu_press"))
+            } else {
+                Events.toolbarMenuVisible.record(NoExtras())
+            }
+        }
+        Component.UI_TABCOUNTER to ToolbarFacts.Items.TOOLBAR -> {
+            Events.browserToolbarAction.record(Events.BrowserToolbarActionExtra("tabs_tray"))
+        }
+        Component.UI_TABCOUNTER to ToolbarFacts.Items.MENU -> {
+            Events.browserToolbarAction.record(Events.BrowserToolbarActionExtra("tabs_tray_long_press"))
         }
         Component.FEATURE_CONTEXTMENU to ContextMenuFacts.Items.ITEM -> {
             metadata?.get("item")?.let { item ->
@@ -527,6 +557,7 @@ internal class ReleaseMetricController(
     private fun isTelemetryEnabled(type: MetricServiceType): Boolean = when (type) {
         MetricServiceType.Data -> isDataTelemetryEnabled()
         MetricServiceType.Marketing -> isMarketingDataTelemetryEnabled()
+        MetricServiceType.UsageReporting -> isUsageTelemetryEnabled()
     }
 
     companion object {

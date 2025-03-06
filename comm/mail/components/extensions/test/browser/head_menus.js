@@ -43,7 +43,7 @@ async function rightClickOnContent(menu, selector, browser) {
  *
  * @see mail/components/extensions/schemas/menus.json
  *
- * @param extension
+ * @param {ExtensionWrapper} extension
  * @param {object} expectedInfo
  * @param {?Array} expectedInfo.menuIds
  * @param {?Array} expectedInfo.contexts
@@ -177,7 +177,7 @@ async function checkShownEvent(extension, expectedInfo, expectedTab) {
  *
  * @see mail/components/extensions/schemas/menus.json
  *
- * @param extension
+ * @param {ExtensionWrapper} extension
  * @param {object} expectedInfo
  * @param {?string} expectedInfo.selectionText
  * @param {?string} expectedInfo.linkText
@@ -624,19 +624,19 @@ async function subtest_element(
    *
    * @param {Element} observerElement - An element which can observe the expected
    *   popupshown event, which will be triggered by the click.
-   * @param {Element} element - The element to click on.
+   * @param {Element} elementToClick - The element to click on.
    *
    * @returns {Promise<event>} The captured popupshown event.
    */
-  const rightClick = (observerElement, element) => {
+  const rightClick = (observerElement, elementToClick) => {
     const shownPromise = BrowserTestUtils.waitForEvent(
       observerElement,
       "popupshown"
     );
     EventUtils.synthesizeMouseAtCenter(
-      element,
+      elementToClick,
       { type: "contextmenu" },
-      element.ownerGlobal
+      elementToClick.ownerGlobal
     );
     return shownPromise;
   };

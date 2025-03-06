@@ -334,8 +334,7 @@ impl Streams {
         // filter the list, removing closed streams
         self.send.remove_terminal();
 
-        let send = &self.send;
-        let (removed_bidi, removed_uni) = self.recv.clear_terminal(send, self.role);
+        let (removed_bidi, removed_uni) = self.recv.clear_terminal(&self.send, self.role);
 
         // Send max_streams updates if we removed remote-initiated recv streams.
         // The updates will be send if any steams has been removed.
@@ -486,7 +485,7 @@ impl Streams {
         }
     }
 
-    pub fn handle_data_blocked(&mut self) {
+    pub fn handle_data_blocked(&self) {
         self.receiver_fc.borrow_mut().send_flowc_update();
     }
 
@@ -559,7 +558,8 @@ impl Streams {
         self.recv.keep_alive(stream_id, keep)
     }
 
-    pub fn need_keep_alive(&mut self) -> bool {
+    #[must_use]
+    pub fn need_keep_alive(&self) -> bool {
         self.recv.need_keep_alive()
     }
 }

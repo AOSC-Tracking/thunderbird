@@ -91,8 +91,7 @@ AddressBookStore.prototype = {
    * This is called by the default implementation of applyIncoming(). If using
    * applyIncomingBatch(), this won't be called unless your store calls it.
    *
-   * @param record
-   *        The store record to create an item from
+   * @param {AddressBookRecord} record - The store record to create an item from.
    */
   async create(record) {
     await super.create(record);
@@ -131,8 +130,7 @@ AddressBookStore.prototype = {
    * This is called by the default implementation of applyIncoming(). If using
    * applyIncomingBatch(), this won't be called unless your store calls it.
    *
-   * @param record
-   *        The store record to delete an item from
+   * @param {AddressBookRecord} record - The store record to delete an item from.
    */
   async remove(record) {
     await super.remove(record);
@@ -163,8 +161,7 @@ AddressBookStore.prototype = {
    * This is called by the default implementation of applyIncoming(). If using
    * applyIncomingBatch(), this won't be called unless your store calls it.
    *
-   * @param record
-   *        The record to use to update an item from
+   * @param {AddressBookRecord} record - The record to use to update an item from.
    */
   async update(record) {
     await super.update(record);
@@ -206,8 +203,8 @@ AddressBookStore.prototype = {
   /**
    * Obtain the set of all known record IDs.
    *
-   * @return Object with ID strings as keys and values of true. The values
-   *         are ignored.
+   * @returns {object} an object with ID strings as keys and values of true.
+   *   The values are ignored.
    */
   async getAllIDs() {
     const ids = await super.getAllIDs();
@@ -226,12 +223,10 @@ AddressBookStore.prototype = {
    * the store. If the ID is not known, the record should be created with the
    * delete field set to true.
    *
-   * @param  id
-   *         string record ID
-   * @param  collection
-   *         Collection to add record to. This is typically passed into the
-   *         constructor for the newly-created record.
-   * @return record type for this engine
+   * @param {string} id - Record ID.
+   * @param {object} collection - Collection to add record to. This is typically
+   *   passed into the constructor for the newly-created record.
+   * @returns {AddressBookRecord} record type for this engine.
    */
   async createRecord(id, collection) {
     const record = new AddressBookRecord(collection, id);
@@ -338,8 +333,11 @@ AddressBookTracker.prototype = {
         break;
       }
       case "addrbook-directory-created":
+        book = subject;
+        break;
       case "addrbook-directory-deleted":
         book = subject;
+        this.engine._store.markDeleted(book.UID);
         break;
     }
 

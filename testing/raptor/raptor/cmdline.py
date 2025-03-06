@@ -348,8 +348,8 @@ def create_parser(mach_interface=False):
             help="This contains the path to mozbuild.",
         )
     add_arg(
-        "--noinstall",
-        dest="noinstall",
+        "--no-install",
+        dest="no_install",
         default=False,
         action="store_true",
         help="Flag which indicates if Raptor should not offer to install Android APK.",
@@ -533,6 +533,13 @@ def create_parser(mach_interface=False):
         dest="screenshot_on_failure",
         default=False,
         help="Take a screenshot when the test fails.",
+    )
+    add_arg(
+        "--power-test",
+        action="store_true",
+        dest="power_test",
+        default=False,
+        help="Gather power usage measurements on this test (Android only).",
     )
 
     add_logging_group(parser)
@@ -726,7 +733,7 @@ class _PrintTests(_StopAction):
         # exit Raptor
         parser.exit()
 
-    def filter_app(self, tests, values):
+    def filter_app(self, tests, values, strict=True):
         for test in tests:
             if values["app"] in test["apps"]:
                 yield test

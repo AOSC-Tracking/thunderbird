@@ -143,8 +143,6 @@ class nsMsgDBView : public nsIMsgDBView,
   nsCOMPtr<nsITreeSelection> mTreeSelection;
   // We cache this to determine when to push command status notifications.
   uint32_t mNumSelectedRows;
-  // Set when the message pane is collapsed.
-  bool mSuppressMsgDisplay;
   bool mSuppressCommandUpdating;
   // Set when we're telling the outline a row is being removed. Used to
   // suppress msg loading during delete/move operations.
@@ -288,8 +286,6 @@ class nsMsgDBView : public nsIMsgDBView,
   virtual nsMsgViewIndex FindKey(nsMsgKey key, bool expand);
   virtual nsresult GetDBForViewIndex(nsMsgViewIndex index, nsIMsgDatabase** db);
   virtual nsCOMArray<nsIMsgFolder>* GetFolders();
-  virtual nsresult GetFolderFromMsgURI(const nsACString& aMsgURI,
-                                       nsIMsgFolder** aFolder);
 
   virtual nsresult ListIdsInThread(nsIMsgThread* threadHdr,
                                    nsMsgViewIndex viewIndex,
@@ -324,12 +320,9 @@ class nsMsgDBView : public nsIMsgDBView,
   nsresult SetMsgHdrJunkStatus(nsIJunkMailPlugin* aJunkPlugin,
                                nsIMsgDBHdr* aMsgHdr,
                                nsMsgJunkStatus aNewClassification);
-  nsresult ToggleReadByIndex(nsMsgViewIndex index);
-  nsresult SetReadByIndex(nsMsgViewIndex index, bool read);
   nsresult SetThreadOfMsgReadByIndex(nsMsgViewIndex index,
                                      nsTArray<nsMsgKey>& keysMarkedRead,
                                      bool read);
-  nsresult SetFlaggedByIndex(nsMsgViewIndex index, bool mark);
   nsresult OrExtraFlag(nsMsgViewIndex index, uint32_t orflag);
   nsresult AndExtraFlag(nsMsgViewIndex index, uint32_t andflag);
   nsresult SetExtraFlag(nsMsgViewIndex index, uint32_t extraflag);
@@ -416,7 +409,6 @@ class nsMsgDBView : public nsIMsgDBView,
                                     nsMsgViewIndex startOfThread,
                                     nsMsgViewIndex viewIndex);
   nsresult GetImapDeleteModel(nsIMsgFolder* folder);
-  nsresult UpdateDisplayMessage(nsMsgViewIndex viewPosition);
   nsresult GetDBForHeader(nsIMsgDBHdr* msgHdr, nsIMsgDatabase** db);
 
   bool AdjustReadFlag(nsIMsgDBHdr* msgHdr, uint32_t* msgFlags);
@@ -436,12 +428,6 @@ class nsMsgDBView : public nsIMsgDBView,
   nsCOMPtr<nsIMsgDBHdr> m_cachedHdr;
   nsMsgKey m_cachedMsgKey;
 
-  // We need to store the message key for the message we are currently
-  // displaying to ensure we don't try to redisplay the same message just
-  // because the selection changed (i.e. after a sort).
-  nsMsgKey m_currentlyDisplayedMsgKey;
-  nsCString m_currentlyDisplayedMsgUri;
-  nsMsgViewIndex m_currentlyDisplayedViewIndex;
   // If we're deleting messages, we want to hold off loading messages on
   // selection changed until the delete is done and we want to batch
   // notifications.

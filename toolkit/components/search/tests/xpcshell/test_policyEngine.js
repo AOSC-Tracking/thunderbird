@@ -7,6 +7,15 @@
 
 "use strict";
 
+const CONFIG = [
+  // Let it start with z so it is not the first one lexicographically
+  // and we can test if the globalDefault is respected.
+  { identifier: "zAppDefaultEngine" },
+  { identifier: "otherEngine" },
+  { identifier: "otherEngineToMakeDefault" },
+  { globalDefault: "zAppDefaultEngine" },
+];
+
 SearchSettings.SETTINGS_INVALIDATION_DELAY = 100;
 
 add_setup(async function () {
@@ -17,12 +26,7 @@ add_setup(async function () {
   policies.observe(null, "policies-startup", null);
 
   Services.fog.initializeFOG();
-  await AddonTestUtils.promiseStartupManager();
-  await SearchTestUtils.useTestEngines();
-
-  SearchUtils.GENERAL_SEARCH_ENGINE_IDS = new Set([
-    "engine-resourceicon@search.mozilla.org",
-  ]);
+  SearchTestUtils.setRemoteSettingsConfig(CONFIG);
 });
 
 add_task(async function test_enterprise_policy_engine() {
@@ -136,26 +140,70 @@ add_task(async function test_enterprise_policy_hidden_default() {
   await setupPolicyEngineWithJson({
     policies: {
       SearchEngines: {
-        Remove: ["Test search engine"],
+        Remove: ["zAppDefaultEngine"],
       },
     },
   });
 
   Services.search.resetToAppDefaultEngine();
 
-  Assert.equal(Services.search.defaultEngine.name, "engine-resourceicon");
+  Assert.ok(
+    Services.search.getEngineById("zAppDefaultEngine").hidden,
+    "Should have removed the application default engine"
+  );
+
+  Assert.equal(Services.search.defaultEngine.identifier, "otherEngine");
 });
 
 add_task(async function test_enterprise_policy_default() {
   await setupPolicyEngineWithJson({
     policies: {
       SearchEngines: {
-        Default: "engine-pref",
+        Default: "otherEngineToMakeDefault",
       },
     },
   });
 
   Services.search.resetToAppDefaultEngine();
 
-  Assert.equal(Services.search.defaultEngine.name, "engine-pref");
+  Assert.equal(
+    Services.search.defaultEngine.identifier,
+    "otherEngineToMakeDefault"
+  );
+});
+
+add_task(async function test_enterprise_policy_invalid_default() {
+  consoleAllowList.push("Search engine lookup failed");
+  await setupPolicyEngineWithJson({
+    policies: {
+      SearchEngines: {
+        Default: "Invalid Engine",
+      },
+    },
+  });
+
+  Services.search.resetToAppDefaultEngine();
+
+  Assert.equal(Services.search.defaultEngine.identifier, "zAppDefaultEngine");
+});
+
+add_task(async function test_enterprise_policy_private_default() {
+  Services.prefs.setBoolPref(
+    SearchUtils.BROWSER_SEARCH_PREF + "separatePrivateDefault.ui.enabled",
+    true
+  );
+
+  await setupPolicyEngineWithJson({
+    policies: {
+      SearchEngines: {
+        DefaultPrivate: "otherEngineToMakeDefault",
+      },
+    },
+  });
+
+  Services.search.resetToAppDefaultEngine();
+  Assert.equal(
+    Services.search.defaultPrivateEngine.identifier,
+    "otherEngineToMakeDefault"
+  );
 });

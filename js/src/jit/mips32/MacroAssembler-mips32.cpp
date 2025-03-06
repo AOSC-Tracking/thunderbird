@@ -1446,28 +1446,6 @@ void MacroAssemblerMIPSCompat::boxNonDouble(JSValueType type, Register src,
   ma_li(dest.typeReg(), ImmType(type));
 }
 
-void MacroAssemblerMIPSCompat::boolValueToDouble(const ValueOperand& operand,
-                                                 FloatRegister dest) {
-  convertBoolToInt32(operand.payloadReg(), ScratchRegister);
-  convertInt32ToDouble(ScratchRegister, dest);
-}
-
-void MacroAssemblerMIPSCompat::int32ValueToDouble(const ValueOperand& operand,
-                                                  FloatRegister dest) {
-  convertInt32ToDouble(operand.payloadReg(), dest);
-}
-
-void MacroAssemblerMIPSCompat::boolValueToFloat32(const ValueOperand& operand,
-                                                  FloatRegister dest) {
-  convertBoolToInt32(operand.payloadReg(), ScratchRegister);
-  convertInt32ToFloat32(ScratchRegister, dest);
-}
-
-void MacroAssemblerMIPSCompat::int32ValueToFloat32(const ValueOperand& operand,
-                                                   FloatRegister dest) {
-  convertInt32ToFloat32(operand.payloadReg(), dest);
-}
-
 void MacroAssemblerMIPSCompat::loadConstantFloat32(float f,
                                                    FloatRegister dest) {
   ma_lis(dest, f);
@@ -1717,22 +1695,6 @@ void MacroAssemblerMIPSCompat::storeTypeTag(ImmTag tag, const BaseIndex& dest) {
 }
 
 void MacroAssemblerMIPSCompat::breakpoint() { as_break(0); }
-
-void MacroAssemblerMIPSCompat::ensureDouble(const ValueOperand& source,
-                                            FloatRegister dest,
-                                            Label* failure) {
-  Label isDouble, done;
-  asMasm().branchTestDouble(Assembler::Equal, source.typeReg(), &isDouble);
-  asMasm().branchTestInt32(Assembler::NotEqual, source.typeReg(), failure);
-
-  convertInt32ToDouble(source.payloadReg(), dest);
-  jump(&done);
-
-  bind(&isDouble);
-  unboxDouble(source, dest);
-
-  bind(&done);
-}
 
 void MacroAssemblerMIPSCompat::checkStackAlignment() {
 #ifdef DEBUG
@@ -2157,33 +2119,6 @@ void MacroAssembler::callWithABINoProfiler(const Address& fun, ABIType result) {
 // ===============================================================
 // Move instructions
 
-void MacroAssembler::moveValue(const TypedOrValueRegister& src,
-                               const ValueOperand& dest) {
-  if (src.hasValue()) {
-    moveValue(src.valueReg(), dest);
-    return;
-  }
-
-  MIRType type = src.type();
-  AnyRegister reg = src.typedReg();
-
-  if (!IsFloatingPointType(type)) {
-    if (reg.gpr() != dest.payloadReg()) {
-      move32(reg.gpr(), dest.payloadReg());
-    }
-    mov(ImmWord(MIRTypeToTag(type)), dest.typeReg());
-    return;
-  }
-
-  ScratchDoubleScope scratch(*this);
-  FloatRegister freg = reg.fpu();
-  if (type == MIRType::Float32) {
-    convertFloat32ToDouble(freg, scratch);
-    freg = scratch;
-  }
-  boxDouble(freg, dest, scratch);
-}
-
 void MacroAssembler::moveValue(const ValueOperand& src,
                                const ValueOperand& dest) {
   Register s0 = src.typeReg();
@@ -2268,7 +2203,9 @@ void MacroAssembler::branchTestValue(Condition cond, const ValueOperand& lhs,
   if (cond == Equal) {
     Label done;
     ma_b(lhs.payloadReg(), scratch, &done, NotEqual, ShortJump);
-    { ma_b(lhs.typeReg(), Imm32(getType(rhs)), label, Equal); }
+    {
+      ma_b(lhs.typeReg(), Imm32(getType(rhs)), label, Equal);
+    }
     bind(&done);
   } else {
     ma_b(lhs.payloadReg(), scratch, label, NotEqual);
@@ -2407,7 +2344,7 @@ void MacroAssembler::wasmUnalignedStoreI64(const wasm::MemoryAccessDesc& access,
 void MacroAssemblerMIPSCompat::wasmLoadI64Impl(
     const wasm::MemoryAccessDesc& access, Register memoryBase, Register ptr,
     Register ptrScratch, Register64 output, Register tmp) {
-  uint32_t offset = access.offset();
+  uint32_t offset = access.offset32();
   MOZ_ASSERT_IF(offset, ptrScratch != InvalidReg);
 
   MOZ_ASSERT(!access.isZeroExtendSimd128Load());
@@ -2422,33 +2359,7 @@ void MacroAssemblerMIPSCompat::wasmLoadI64Impl(
   }
 
   unsigned byteSize = access.byteSize();
-  bool isSigned;
-
-  switch (access.type()) {
-    case Scalar::Int8:
-      isSigned = true;
-      break;
-    case Scalar::Uint8:
-      isSigned = false;
-      break;
-    case Scalar::Int16:
-      isSigned = true;
-      break;
-    case Scalar::Uint16:
-      isSigned = false;
-      break;
-    case Scalar::Int32:
-      isSigned = true;
-      break;
-    case Scalar::Uint32:
-      isSigned = false;
-      break;
-    case Scalar::Int64:
-      isSigned = true;
-      break;
-    default:
-      MOZ_CRASH("unexpected array type");
-  }
+  bool isSigned = Scalar::isSignedIntType(access.type());
 
   BaseIndex address(memoryBase, ptr, TimesOne);
   MOZ_ASSERT(INT64LOW_OFFSET == 0);
@@ -2502,7 +2413,7 @@ void MacroAssemblerMIPSCompat::wasmStoreI64Impl(
     const wasm::MemoryAccessDesc& access, Register64 value, Register memoryBase,
     Register ptr, Register ptrScratch, Register tmp) {
   access.assertOffsetInGuardPages();
-  uint32_t offset = access.offset();
+  uint32_t offset = access.offset32();
   MOZ_ASSERT_IF(offset, ptrScratch != InvalidReg);
 
   // Maybe add the offset.
@@ -2512,32 +2423,7 @@ void MacroAssemblerMIPSCompat::wasmStoreI64Impl(
   }
 
   unsigned byteSize = access.byteSize();
-  bool isSigned;
-  switch (access.type()) {
-    case Scalar::Int8:
-      isSigned = true;
-      break;
-    case Scalar::Uint8:
-      isSigned = false;
-      break;
-    case Scalar::Int16:
-      isSigned = true;
-      break;
-    case Scalar::Uint16:
-      isSigned = false;
-      break;
-    case Scalar::Int32:
-      isSigned = true;
-      break;
-    case Scalar::Uint32:
-      isSigned = false;
-      break;
-    case Scalar::Int64:
-      isSigned = true;
-      break;
-    default:
-      MOZ_CRASH("unexpected array type");
-  }
+  bool isSigned = Scalar::isSignedIntType(access.type());
 
   MOZ_ASSERT(INT64LOW_OFFSET == 0);
   BaseIndex address(memoryBase, ptr, TimesOne);
@@ -2586,7 +2472,7 @@ static void EnterAtomic64Region(MacroAssembler& masm,
 
   Label tryLock;
 
-  masm.memoryBarrier(MembarFull);
+  masm.memoryBarrier(MemoryBarrier::Full());
 
   masm.bind(&tryLock);
 
@@ -2596,13 +2482,13 @@ static void EnterAtomic64Region(MacroAssembler& masm,
   masm.as_sc(scratch, spinlock, 0);
   masm.ma_b(scratch, scratch, &tryLock, Assembler::Zero, ShortJump);
 
-  masm.memoryBarrier(MembarFull);
+  masm.memoryBarrier(MemoryBarrier::Full());
 }
 
 static void ExitAtomic64Region(MacroAssembler& masm, Register spinlock) {
-  masm.memoryBarrier(MembarFull);
+  masm.memoryBarrier(MemoryBarrier::Full());
   masm.as_sw(zero, spinlock, 0);
-  masm.memoryBarrier(MembarFull);
+  masm.memoryBarrier(MemoryBarrier::Full());
 }
 
 template <typename T>

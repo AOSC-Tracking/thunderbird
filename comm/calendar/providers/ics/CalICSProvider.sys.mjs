@@ -13,7 +13,8 @@ import {
 
 // NOTE: This module should not be loaded directly, it is available when
 // including calUtils.sys.mjs under the cal.provider.ics namespace.
-
+const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
 /**
  * @implements {calICalendarProvider}
  */
@@ -25,7 +26,7 @@ export var CalICSProvider = {
   },
 
   get displayName() {
-    return cal.l10n.getCalString("icsName");
+    return lazy.l10n.formatValueSync("ics-name-key");
   },
 
   get shortName() {
@@ -114,7 +115,7 @@ class ICSDetectionSession {
    * Create a new ICS detection session.
    *
    * @param {string} aSessionId - The session id, used in the password manager.
-   * @param {string} aName - The user-readable description of this session.
+   * @param {string} aUserName - The user-readable description of this session.
    * @param {string} aPassword - The password for the session.
    * @param {boolean} aSavePassword - Whether to save the password.
    */
@@ -129,8 +130,8 @@ class ICSDetectionSession {
    * Implement nsIInterfaceRequestor.
    *
    * @param {nsIIDRef} aIID - The IID of the interface being requested.
-   * @returns {ICSAutodetectSession | null} Either this object QI'd to the IID, or null.
-   *                                          Components.returnCode is set accordingly.
+   * @returns {?ICSAutodetectSession} Either this object QI'd to the IID, or null.
+   *   Components.returnCode is set accordingly.
    * @see {nsIInterfaceRequestor}
    */
   getInterface(aIID) {

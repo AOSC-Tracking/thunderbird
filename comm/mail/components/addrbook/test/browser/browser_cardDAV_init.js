@@ -434,6 +434,8 @@ add_task(async function testDNSWithTXT() {
 
 /** Test an address book that uses OAuth2 authentication. */
 add_task(async function testOAuth() {
+  Services.fog.testResetFOG();
+
   // Set up the OAuth2 server.
   await OAuth2TestUtils.startServer({
     username: "dave@test.test",
@@ -500,13 +502,20 @@ add_task(async function testOAuth() {
 
   const logins = Services.logins.findLogins("oauth://test.test", null, "");
   Assert.equal(logins.length, 1, "login was saved");
-  Assert.equal(logins[0].httpRealm, "test_scope");
+  Assert.equal(logins[0].httpRealm, "test_mail test_addressbook test_calendar");
   Assert.equal(logins[0].username, "dave@test.test");
   Assert.equal(logins[0].password, "refresh_token");
 
   proxy.destroy();
   CardDAVServer.close();
   OAuth2TestUtils.stopServer();
+  OAuth2TestUtils.checkTelemetry([
+    {
+      issuer: "test.test",
+      reason: "no refresh token",
+      result: "succeeded",
+    },
+  ]);
 
   await promiseDirectoryRemoved(directory.URI);
   Services.logins.removeAllLogins();

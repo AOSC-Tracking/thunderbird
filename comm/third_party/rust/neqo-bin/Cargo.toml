@@ -13,14 +13,35 @@
 edition = "2021"
 rust-version = "1.76.0"
 name = "neqo-bin"
-version = "0.7.9"
+version = "0.11.0"
 authors = ["The Neqo Authors <necko@mozilla.com>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 description = "A basic QUIC HTTP/0.9 and HTTP/3 client and server."
 homepage = "https://github.com/mozilla/neqo/"
+readme = "../README.md"
+keywords = [
+    "quic",
+    "http3",
+    "neqo",
+    "mozilla",
+    "ietf",
+    "firefox",
+]
+categories = [
+    "network-programming",
+    "web-programming",
+]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/mozilla/neqo/"
 
 [lib]
+name = "neqo_bin"
+path = "src/lib.rs"
 bench = false
 
 [[bin]]
@@ -35,6 +56,7 @@ bench = false
 
 [[bench]]
 name = "main"
+path = "benches/main.rs"
 harness = false
 required-features = ["bench"]
 
@@ -51,7 +73,8 @@ features = [
 default-features = false
 
 [dependencies.clap-verbosity-flag]
-version = "2.2"
+version = "3.0"
+features = ["log"]
 default-features = false
 
 [dependencies.futures]
@@ -77,18 +100,19 @@ path = "./../neqo-crypto"
 [dependencies.neqo-http3]
 path = "./../neqo-http3"
 
-[dependencies.neqo-qpack]
-path = "./../neqo-qpack"
-
 [dependencies.neqo-transport]
 path = "./../neqo-transport"
+
+[dependencies.neqo-udp]
+path = "./../neqo-udp"
 
 [dependencies.qlog]
 version = "0.13"
 default-features = false
 
 [dependencies.quinn-udp]
-version = "0.5.0"
+version = "0.5.6"
+features = ["direct-log"]
 default-features = false
 
 [dependencies.regex]
@@ -108,15 +132,13 @@ features = [
 default-features = false
 
 [dependencies.url]
-version = "2.5"
+version = "2.5.3"
+features = ["std"]
 default-features = false
 
 [dev-dependencies.criterion]
 version = "0.5"
-features = [
-    "html_reports",
-    "async_tokio",
-]
+features = ["async_tokio"]
 default-features = false
 
 [dev-dependencies.tokio]
@@ -125,7 +147,18 @@ features = ["sync"]
 default-features = false
 
 [features]
-bench = []
+bench = ["neqo-transport/bench"]
+
+[lints.clippy]
+multiple_crate_versions = "allow"
+
+[lints.clippy.cargo]
+level = "warn"
+priority = -1
+
+[lints.clippy.nursery]
+level = "warn"
+priority = -1
 
 [lints.clippy.pedantic]
 level = "warn"

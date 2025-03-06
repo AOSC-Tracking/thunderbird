@@ -2,27 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { TippyTopProvider } from "resource://activity-stream/lib/TippyTopProvider.sys.mjs";
-import {
-  insertPinned,
-  TOP_SITES_MAX_SITES_PER_ROW,
-} from "resource://activity-stream/common/Reducers.sys.mjs";
-import { Dedupe } from "resource://activity-stream/common/Dedupe.sys.mjs";
-import { shortURL } from "resource://activity-stream/lib/ShortURL.sys.mjs";
-
+import { TippyTopProvider } from "resource:///modules/topsites/TippyTopProvider.sys.mjs";
+import { Dedupe } from "resource:///modules/Dedupe.sys.mjs";
+import { TOP_SITES_MAX_SITES_PER_ROW } from "resource:///modules/topsites/constants.mjs";
 import {
   CUSTOM_SEARCH_SHORTCUTS,
   checkHasSearchEngine,
   getSearchProvider,
-  getSearchFormURL,
-} from "resource://activity-stream/lib/SearchShortcuts.sys.mjs";
+} from "resource://gre/modules/SearchShortcuts.sys.mjs";
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   FaviconFeed: "resource://activity-stream/lib/FaviconFeed.sys.mjs",
-  FilterAdult: "resource://activity-stream/lib/FilterAdult.sys.mjs",
-  LinksCache: "resource://activity-stream/lib/LinksCache.sys.mjs",
+  FilterAdult: "resource:///modules/FilterAdult.sys.mjs",
+  LinksCache: "resource:///modules/LinksCache.sys.mjs",
   NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   Region: "resource://gre/modules/Region.sys.mjs",
@@ -37,6 +31,7 @@ ChromeUtils.defineLazyGetter(lazy, "log", () => {
 });
 
 export const DEFAULT_TOP_SITES = [];
+
 const FRECENCY_THRESHOLD = 100 + 1; // 1 visit (skip first-run/one-time pages)
 const MIN_FAVICON_SIZE = 96;
 const PINNED_FAVICON_PROPS_TO_MIGRATE = [
@@ -72,13 +67,21 @@ const DEFAULT_SITES_OVERRIDE_PREF =
   "browser.newtabpage.activity-stream.default.sites";
 const DEFAULT_SITES_EXPERIMENTS_PREF_BRANCH = "browser.topsites.experiment.";
 
-function getShortURLForCurrentSearch() {
-  const url = shortURL({ url: Services.search.defaultEngine.searchForm });
+function getShortHostnameForCurrentSearch() {
+  const url = lazy.NewTabUtils.shortHostname(
+    Services.search.defaultEngine.searchUrlDomain
+  );
   return url;
 }
 
 class _TopSites {
-  #inited = false;
+  #hasObservers = false;
+  /**
+   * A Promise used to determine if initialization is complete.
+   *
+   * @type {Promise}
+   */
+  #initPromise = null;
   #searchShortcuts = [];
   #sites = [];
 
@@ -87,7 +90,7 @@ class _TopSites {
     ChromeUtils.defineLazyGetter(
       this,
       "_currentSearchHostname",
-      getShortURLForCurrentSearch
+      getShortHostnameForCurrentSearch
     );
     this.dedupe = new Dedupe(this._dedupeKey);
     this.frecentCache = new lazy.LinksCache(
@@ -107,30 +110,42 @@ class _TopSites {
     this.handlePlacesEvents = this.handlePlacesEvents.bind(this);
   }
 
+  /**
+   * Initializes the TopSites module.
+   *
+   * @returns {Promise}
+   */
   async init() {
-    if (this.#inited) {
-      return;
+    if (this.#initPromise) {
+      return this.#initPromise;
     }
-    this.#inited = true;
-    lazy.log.debug("Initializing TopSites.");
-    this.#addObservers();
-    await this._readDefaults({ isStartup: true });
+    this.#initPromise = (async () => {
+      lazy.log.debug("Initializing TopSites.");
+      this.#addObservers();
+      await this._readDefaults({ isStartup: true });
+      // TopSites was initialized by the store calling the initialization
+      // function and then updating custom search shortcuts. Since
+      // initialization now happens upon the first retrieval of sites, we move
+      // the update custom search shortcuts here.
+      await this.updateCustomSearchShortcuts(true);
+    })();
+    return this.#initPromise;
   }
 
   uninit() {
-    if (!this.#inited) {
-      return;
-    }
     lazy.log.debug("Un-initializing TopSites.");
     this.#removeObservers();
     this.#searchShortcuts = [];
     this.#sites = [];
-    this.#inited = false;
+    this.#initPromise = null;
     this.frecentCache.expire();
     this.pinnedCache.expire();
   }
 
   #addObservers() {
+    if (this.#hasObservers) {
+      return;
+    }
     // If the feed was previously disabled PREFS_INITIAL_VALUES was never received
     Services.obs.addObserver(this, "browser-search-engine-modified");
     Services.obs.addObserver(this, "browser-region-updated");
@@ -146,9 +161,13 @@ class _TopSites {
       ["bookmark-added", "bookmark-removed", "history-cleared", "page-removed"],
       this.handlePlacesEvents
     );
+    this.#hasObservers = true;
   }
 
   #removeObservers() {
+    if (!this.#hasObservers) {
+      return;
+    }
     Services.obs.removeObserver(this, "browser-search-engine-modified");
     Services.obs.removeObserver(this, "browser-region-updated");
     Services.obs.removeObserver(this, "newtab-linkBlocked");
@@ -163,6 +182,7 @@ class _TopSites {
       ["bookmark-added", "bookmark-removed", "history-cleared", "page-removed"],
       this.handlePlacesEvents
     );
+    this.#hasObservers = false;
   }
 
   _reset() {
@@ -184,7 +204,7 @@ class _TopSites {
           Services.prefs.getBoolPref(NO_DEFAULT_SEARCH_TILE_PREF, true)
         ) {
           delete this._currentSearchHostname;
-          this._currentSearchHostname = getShortURLForCurrentSearch();
+          this._currentSearchHostname = getShortHostnameForCurrentSearch();
         }
         this.refresh({ broadcast: true });
         break;
@@ -296,26 +316,12 @@ class _TopSites {
    *   A list of Top Sites.
    */
   async getSites() {
-    if (!this.#inited) {
-      await this.init();
-      // TopSites was initialized by the store calling the initialization
-      // function and then updating custom search shortcuts. Since
-      // initialization now happens upon the first get, we move the update
-      // custom search shortcuts here.
-      await this.updateCustomSearchShortcuts(true);
-    }
+    await this.init();
     return structuredClone(this.#sites);
   }
 
   async getSearchShortcuts() {
-    if (!this.#inited) {
-      await this.init();
-      // TopSites was initialized by the store calling the initialization
-      // function and then updating custom search shortcuts. Since
-      // initialization now happens upon the first get, we move the update
-      // custom search shortcuts here.
-      await this.updateCustomSearchShortcuts(true);
-    }
+    await this.init();
     return structuredClone(this.#searchShortcuts);
   }
 
@@ -355,7 +361,7 @@ class _TopSites {
     let remoteSettingData = await this._getRemoteConfig();
 
     for (let siteData of remoteSettingData) {
-      let hostname = shortURL(siteData);
+      let hostname = lazy.NewTabUtils.shortURL(siteData);
       let link = {
         isDefault: true,
         url: siteData.url,
@@ -388,7 +394,7 @@ class _TopSites {
           isDefault: true,
           url,
         };
-        site.hostname = shortURL(site);
+        site.hostname = lazy.NewTabUtils.shortURL(site);
         DEFAULT_TOP_SITES.push(site);
       }
     }
@@ -549,7 +555,9 @@ class _TopSites {
         // haven't previously inserted it, there's space to pin it, and the
         // search engine is available in Firefox
         if (
-          !pinnedSites.find(s => s && shortURL(s) === shortcut.shortURL) &&
+          !pinnedSites.find(
+            s => s && lazy.NewTabUtils.shortURL(s) === shortcut.shortURL
+          ) &&
           !prevInsertedShortcuts.includes(shortcut.shortURL) &&
           nextAvailable > -1 &&
           (await checkHasSearchEngine(shortcut.keyword))
@@ -619,7 +627,7 @@ class _TopSites {
       if (!link) {
         continue;
       }
-      const hostname = shortURL(link);
+      const hostname = lazy.NewTabUtils.shortURL(link);
       if (!this.shouldFilterSearchTile(hostname)) {
         frecent.push({
           ...(searchShortcutsExperiment
@@ -646,7 +654,7 @@ class _TopSites {
       }
       // If we've previously blocked a search shortcut, remove the default top site
       // that matches the hostname
-      const searchProvider = getSearchProvider(shortURL(link));
+      const searchProvider = getSearchProvider(lazy.NewTabUtils.shortURL(link));
       if (
         searchProvider &&
         lazy.NewTabUtils.blockedLinks.isBlocked({ url: searchProvider.url })
@@ -679,7 +687,9 @@ class _TopSites {
 
         // Drop pinned search shortcuts when their engine has been removed / hidden.
         if (link.searchTopSite) {
-          const searchProvider = getSearchProvider(shortURL(link));
+          const searchProvider = getSearchProvider(
+            lazy.NewTabUtils.shortURL(link)
+          );
           if (
             !searchProvider ||
             !(await checkHasSearchEngine(searchProvider.keyword))
@@ -698,7 +708,7 @@ class _TopSites {
           {},
           frecentSite || { isDefault: !!notBlockedDefaultSites.find(finder) },
           link,
-          { hostname: shortURL(link) },
+          { hostname: lazy.NewTabUtils.shortURL(link) },
           { searchTopSite: !!link.searchTopSite }
         );
 
@@ -741,7 +751,7 @@ class _TopSites {
     for (const link of withPinned) {
       if (link) {
         if (link.searchTopSite && !link.isDefault) {
-          await this._attachTippyTopIconForSearchShortcut(link, link.label);
+          this._tippyTopProvider.processSite(link);
         } else {
           this._fetchIcon(link);
         }
@@ -757,30 +767,6 @@ class _TopSites {
     this.#sites = withPinned;
 
     return withPinned;
-  }
-
-  /**
-   * Attach TippyTop icon to the given search shortcut
-   *
-   * Note that it queries the search form URL from search service For Yandex,
-   * and uses it to choose the best icon for its shortcut variants.
-   *
-   * @param {object} link A link object with a `url` property
-   * @param {string} keyword Search keyword
-   */
-  async _attachTippyTopIconForSearchShortcut(link, keyword) {
-    if (
-      ["@\u044F\u043D\u0434\u0435\u043A\u0441", "@yandex"].includes(keyword)
-    ) {
-      let site = { url: link.url };
-      site.url = (await getSearchFormURL(keyword)) || site.url;
-      this._tippyTopProvider.processSite(site);
-      link.tippyTopIcon = site.tippyTopIcon;
-      link.smallFavicon = site.smallFavicon;
-      link.backgroundColor = site.backgroundColor;
-    } else {
-      this._tippyTopProvider.processSite(link);
-    }
   }
 
   /**
@@ -832,7 +818,7 @@ class _TopSites {
       );
       if (shortcut) {
         let clone = { ...shortcut };
-        await this._attachTippyTopIconForSearchShortcut(clone, clone.keyword);
+        this._tippyTopProvider.processSite(clone);
         searchShortcuts.push(clone);
       }
     }
@@ -848,7 +834,7 @@ class _TopSites {
   }
 
   async topSiteToSearchTopSite(site) {
-    const searchProvider = getSearchProvider(shortURL(site));
+    const searchProvider = getSearchProvider(lazy.NewTabUtils.shortURL(site));
     if (
       !searchProvider ||
       !(await checkHasSearchEngine(searchProvider.keyword))
@@ -960,7 +946,7 @@ class _TopSites {
       if (
         pinnedLink &&
         pinnedLink.searchTopSite &&
-        shortURL(pinnedLink) === vendor
+        lazy.NewTabUtils.shortURL(pinnedLink) === vendor
       ) {
         lazy.NewTabUtils.pinnedLinks.unpin(pinnedLink);
         this.pinnedCache.expire();
@@ -1099,6 +1085,43 @@ class _TopSites {
 
     this._broadcastPinnedSitesUpdated();
   }
+}
+
+/**
+ * insertPinned - Inserts pinned links in their specified slots
+ *
+ * @param {Array} links list of links
+ * @param {Array} pinned list of pinned links
+ * @returns {Array} resulting list of links with pinned links inserted
+ */
+export function insertPinned(links, pinned) {
+  // Remove any pinned links
+  const pinnedUrls = pinned.map(link => link && link.url);
+  let newLinks = links.filter(link =>
+    link ? !pinnedUrls.includes(link.url) : false
+  );
+  newLinks = newLinks.map(link => {
+    if (link && link.isPinned) {
+      delete link.isPinned;
+      delete link.pinIndex;
+    }
+    return link;
+  });
+
+  // Then insert them in their specified location
+  pinned.forEach((val, index) => {
+    if (!val) {
+      return;
+    }
+    let link = Object.assign({}, val, { isPinned: true, pinIndex: index });
+    if (index > newLinks.length) {
+      newLinks[index] = link;
+    } else {
+      newLinks.splice(index, 0, link);
+    }
+  });
+
+  return newLinks;
 }
 
 export const TopSites = new _TopSites();

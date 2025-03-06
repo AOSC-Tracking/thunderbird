@@ -11,13 +11,10 @@ import PropTypes from "devtools/client/shared/vendor/react-prop-types";
 import InlinePreviewRow from "./InlinePreviewRow";
 import InlinePreview from "./InlinePreview";
 import { connect } from "devtools/client/shared/vendor/react-redux";
-import {
-  getSelectedFrame,
-  getCurrentThread,
-  getInlinePreviews,
-} from "../../selectors/index";
+import { getInlinePreviews } from "../../selectors/index";
 
 import { features } from "../../utils/prefs";
+import { markerTypes } from "../../constants";
 
 function hasPreviews(previews) {
   return !!previews && !!Object.keys(previews).length;
@@ -28,13 +25,7 @@ class InlinePreviews extends Component {
     return {
       editor: PropTypes.object.isRequired,
       previews: PropTypes.object,
-      selectedFrame: PropTypes.object.isRequired,
-      selectedSource: PropTypes.object.isRequired,
     };
-  }
-
-  shouldComponentUpdate({ previews }) {
-    return hasPreviews(previews);
   }
 
   componentDidMount() {
@@ -48,8 +39,6 @@ class InlinePreviews extends Component {
   renderInlinePreviewMarker() {
     const {
       editor,
-      selectedFrame,
-      selectedSource,
       previews,
       openElementInInspector,
       highlightDomElement,
@@ -60,22 +49,23 @@ class InlinePreviews extends Component {
       return;
     }
 
-    if (
-      !editor ||
-      !selectedFrame ||
-      selectedFrame.location.source.id !== selectedSource.id ||
-      !hasPreviews(previews)
-    ) {
-      editor.removeLineContentMarker("inline-preview-marker");
+    if (!previews) {
+      editor.removeLineContentMarker(markerTypes.INLINE_PREVIEW_MARKER);
       return;
     }
+
     editor.setLineContentMarker({
-      id: "inline-preview-marker",
-      condition: line => {
+      id: markerTypes.INLINE_PREVIEW_MARKER,
+      lines: Object.keys(previews).map(line => {
         // CM6 line is 1-based unlike CM5 which is 0-based.
-        return !!previews[line - 1];
-      },
-      createLineElementNode: line => {
+        // The preview keys line numbers as strings so cast to number to avoid string concatenation
+        line = Number(line);
+        return {
+          line: line + 1,
+          value: previews[line],
+        };
+      }),
+      createLineElementNode: (line, value) => {
         const widgetNode = document.createElement("div");
         widgetNode.className = "inline-preview";
 
@@ -83,10 +73,11 @@ class InlinePreviews extends Component {
           React.createElement(
             React.Fragment,
             null,
-            previews[line - 1].map(preview =>
+            value.map(preview =>
               React.createElement(InlinePreview, {
                 line,
                 key: `${line}-${preview.name}`,
+                type: preview.type,
                 variable: preview.name,
                 value: preview.value,
                 openElementInInspector,
@@ -106,22 +97,19 @@ class InlinePreviews extends Component {
     if (!features.codemirrorNext) {
       return;
     }
-    this.props.editor.removeLineContentMarker("inline-preview-marker");
+    this.props.editor.removeLineContentMarker(
+      markerTypes.INLINE_PREVIEW_MARKER
+    );
   }
 
   render() {
-    const { editor, selectedFrame, selectedSource, previews } = this.props;
+    const { editor, previews } = this.props;
 
     if (features.codemirrorNext) {
       return null;
     }
 
-    // Render only if currently open file is the one where debugger is paused
-    if (
-      !selectedFrame ||
-      selectedFrame.location.source.id !== selectedSource.id ||
-      !hasPreviews(previews)
-    ) {
+    if (!previews) {
       return null;
     }
     const previewsObj = previews;
@@ -143,19 +131,15 @@ class InlinePreviews extends Component {
 }
 
 const mapStateToProps = state => {
-  const thread = getCurrentThread(state);
-  const selectedFrame = getSelectedFrame(state, thread);
-
-  if (!selectedFrame) {
+  const previews = getInlinePreviews(state);
+  if (!hasPreviews(previews)) {
     return {
-      selectedFrame: null,
       previews: null,
     };
   }
 
   return {
-    selectedFrame,
-    previews: getInlinePreviews(state, thread, selectedFrame.id),
+    previews,
   };
 };
 

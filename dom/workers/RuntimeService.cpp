@@ -26,8 +26,10 @@
 #include "jsfriendapi.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/ContextOptions.h"
+#include "js/GCVector.h"
 #include "js/Initialization.h"
 #include "js/LocaleSensitive.h"
+#include "js/Value.h"
 #include "js/WasmFeatures.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Atomics.h"
@@ -48,6 +50,7 @@
 #include "mozilla/dom/WorkerBinding.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "mozilla/dom/ShadowRealmGlobalScope.h"
+#include "mozilla/dom/TrustedTypeUtils.h"
 #include "mozilla/dom/IndexedDatabaseManager.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Preferences.h"
@@ -364,7 +367,6 @@ void LoadJSGCMemoryOptions(const char* aPrefName, void* /* aClosure */) {
       PREF("gc_urgent_threshold_mb", JSGC_URGENT_THRESHOLD_MB),
       PREF("gc_incremental_slice_ms", JSGC_SLICE_TIME_BUDGET_MS),
       PREF("gc_min_empty_chunk_count", JSGC_MIN_EMPTY_CHUNK_COUNT),
-      PREF("gc_max_empty_chunk_count", JSGC_MAX_EMPTY_CHUNK_COUNT),
       PREF("gc_compacting", JSGC_COMPACTING_ENABLED),
       PREF("gc_parallel_marking", JSGC_PARALLEL_MARKING_ENABLED),
       PREF("gc_parallel_marking_threshold_mb",
@@ -382,7 +384,7 @@ void LoadJSGCMemoryOptions(const char* aPrefName, void* /* aClosure */) {
 #undef PREF
 
   auto pref = kWorkerPrefs;
-  auto end = kWorkerPrefs + ArrayLength(kWorkerPrefs);
+  auto end = kWorkerPrefs + std::size(kWorkerPrefs);
 
   if (gRuntimeServiceDuringInit) {
     // During init, we want to update every pref in kWorkerPrefs.
@@ -449,7 +451,6 @@ void LoadJSGCMemoryOptions(const char* aPrefName, void* /* aClosure */) {
       case JSGC_LARGE_HEAP_INCREMENTAL_LIMIT:
       case JSGC_URGENT_THRESHOLD_MB:
       case JSGC_MIN_EMPTY_CHUNK_COUNT:
-      case JSGC_MAX_EMPTY_CHUNK_COUNT:
       case JSGC_HEAP_GROWTH_FACTOR:
       case JSGC_PARALLEL_MARKING_THRESHOLD_MB:
       case JSGC_MAX_MARKING_THREADS:
@@ -475,14 +476,14 @@ MOZ_CAN_RUN_SCRIPT bool InterruptCallback(JSContext* aCx) {
 
 class LogViolationDetailsRunnable final : public WorkerMainThreadRunnable {
   uint16_t mViolationType;
-  nsString mFileName;
+  nsCString mFileName;
   uint32_t mLineNum;
   uint32_t mColumnNum;
   nsString mScriptSample;
 
  public:
   LogViolationDetailsRunnable(WorkerPrivate* aWorker, uint16_t aViolationType,
-                              const nsString& aFileName, uint32_t aLineNum,
+                              const nsCString& aFileName, uint32_t aLineNum,
                               uint32_t aColumnNum,
                               const nsAString& aScriptSample)
       : WorkerMainThreadRunnable(aWorker,
@@ -501,8 +502,13 @@ class LogViolationDetailsRunnable final : public WorkerMainThreadRunnable {
   ~LogViolationDetailsRunnable() = default;
 };
 
-bool ContentSecurityPolicyAllows(JSContext* aCx, JS::RuntimeCode aKind,
-                                 JS::Handle<JSString*> aCode) {
+MOZ_CAN_RUN_SCRIPT_FOR_DEFINITION bool ContentSecurityPolicyAllows(
+    JSContext* aCx, JS::RuntimeCode aKind, JS::Handle<JSString*> aCodeString,
+    JS::CompilationType aCompilationType,
+    JS::Handle<JS::StackGCVector<JSString*>> aParameterStrings,
+    JS::Handle<JSString*> aBodyString,
+    JS::Handle<JS::StackGCVector<JS::Value>> aParameterArgs,
+    JS::Handle<JS::Value> aBodyArg, bool* aOutCanCompileStrings) {
   WorkerPrivate* worker = GetWorkerPrivateFromContext(aCx);
   worker->AssertIsOnWorkerThread();
 
@@ -511,14 +517,27 @@ bool ContentSecurityPolicyAllows(JSContext* aCx, JS::RuntimeCode aKind,
   uint16_t violationType;
   nsAutoJSString scriptSample;
   if (aKind == JS::RuntimeCode::JS) {
-    if (NS_WARN_IF(!scriptSample.init(aCx, aCode))) {
-      JS_ClearPendingException(aCx);
+    ErrorResult error;
+    bool areArgumentsTrusted = TrustedTypeUtils::
+        AreArgumentsTrustedForEnsureCSPDoesNotBlockStringCompilation(
+            aCx, aCodeString, aCompilationType, aParameterStrings, aBodyString,
+            aParameterArgs, aBodyArg, error);
+    if (error.MaybeSetPendingException(aCx)) {
+      return false;
+    }
+    if (!areArgumentsTrusted) {
+      *aOutCanCompileStrings = false;
+      return true;
+    }
+
+    if (NS_WARN_IF(!scriptSample.init(aCx, aCodeString))) {
       return false;
     }
 
     if (!nsContentSecurityUtils::IsEvalAllowed(
             aCx, worker->UsesSystemPrincipal(), scriptSample)) {
-      return false;
+      *aOutCanCompileStrings = false;
+      return true;
     }
 
     evalOK = worker->IsEvalAllowed();
@@ -531,31 +550,21 @@ bool ContentSecurityPolicyAllows(JSContext* aCx, JS::RuntimeCode aKind,
   }
 
   if (reportViolation) {
-    nsString fileName;
-    uint32_t lineNum = 0;
-    JS::ColumnNumberOneOrigin columnNum;
-
-    JS::AutoFilename file;
-    if (JS::DescribeScriptedCaller(aCx, &file, &lineNum, &columnNum) &&
-        file.get()) {
-      CopyUTF8toUTF16(MakeStringSpan(file.get()), fileName);
-    } else {
-      MOZ_ASSERT(!JS_IsExceptionPending(aCx));
-    }
-
+    auto caller = JSCallingLocation::Get(aCx);
     RefPtr<LogViolationDetailsRunnable> runnable =
-        new LogViolationDetailsRunnable(worker, violationType, fileName,
-                                        lineNum, columnNum.oneOriginValue(),
-                                        scriptSample);
+        new LogViolationDetailsRunnable(worker, violationType,
+                                        caller.FileName(), caller.mLine,
+                                        caller.mColumn, scriptSample);
 
     ErrorResult rv;
-    runnable->Dispatch(Killing, rv);
+    runnable->Dispatch(worker, Killing, rv);
     if (NS_WARN_IF(rv.Failed())) {
       rv.SuppressException();
     }
   }
 
-  return evalOK;
+  *aOutCanCompileStrings = evalOK;
+  return true;
 }
 
 void CTypesActivityCallback(JSContext* aCx, JS::CTypesActivityType aType) {
@@ -701,7 +710,7 @@ bool InitJSContextForWorker(WorkerPrivate* aWorkerPrivate,
 
   // Security policy:
   static const JSSecurityCallbacks securityCallbacks = {
-      ContentSecurityPolicyAllows};
+      ContentSecurityPolicyAllows, TrustedTypeUtils::HostGetCodeForEval};
   JS_SetSecurityCallbacks(aWorkerCx, &securityCallbacks);
 
   // A WorkerPrivate lives strictly longer than its JSRuntime so we can safely
@@ -833,6 +842,26 @@ class WorkerJSRuntime final : public mozilla::CycleCollectedJSRuntime {
       mWorkerPrivate->SetCCCollectedAnything(collectedAnything);
     }
   }
+
+  void TraceNativeBlackRoots(JSTracer* aTracer) override {
+    if (!mWorkerPrivate || !mWorkerPrivate->MayContinueRunning()) {
+      return;
+    }
+
+    if (WorkerGlobalScope* scope = mWorkerPrivate->GlobalScope()) {
+      if (EventListenerManager* elm = scope->GetExistingListenerManager()) {
+        elm->TraceListeners(aTracer);
+      }
+    }
+
+    if (WorkerDebuggerGlobalScope* debuggerScope =
+            mWorkerPrivate->DebuggerGlobalScope()) {
+      if (EventListenerManager* elm =
+              debuggerScope->GetExistingListenerManager()) {
+        elm->TraceListeners(aTracer);
+      }
+    }
+  };
 
  private:
   WorkerPrivate* mWorkerPrivate;
@@ -1093,7 +1122,6 @@ bool RuntimeService::RegisterWorker(WorkerPrivate& aWorkerPrivate) {
   const bool isDedicatedWorker = aWorkerPrivate.IsDedicatedWorker();
   if (isServiceWorker) {
     AssertIsOnMainThread();
-    Telemetry::Accumulate(Telemetry::SERVICE_WORKER_SPAWN_ATTEMPTS, 1);
   }
 
   nsCString sharedWorkerScriptSpec;
@@ -1148,7 +1176,9 @@ bool RuntimeService::RegisterWorker(WorkerPrivate& aWorkerPrivate) {
 
       // Worker spawn gets queued due to hitting max workers per domain
       // limit so let's log a warning.
-      WorkerPrivate::ReportErrorToConsole("HittingMaxWorkersPerDomain2");
+      WorkerPrivate::ReportErrorToConsole(nsIScriptError::warningFlag, "DOM"_ns,
+                                          nsContentUtils::eDOM_PROPERTIES,
+                                          "HittingMaxWorkersPerDomain2"_ns);
 
       if (isServiceWorker) {
         Telemetry::Accumulate(Telemetry::SERVICE_WORKER_SPAWN_GETS_QUEUED, 1);
@@ -1210,7 +1240,6 @@ bool RuntimeService::RegisterWorker(WorkerPrivate& aWorkerPrivate) {
 
   if (isServiceWorker) {
     AssertIsOnMainThread();
-    Telemetry::Accumulate(Telemetry::SERVICE_WORKER_WAS_SPAWNED, 1);
   }
   return true;
 }
@@ -1539,7 +1568,7 @@ class DumpCrashInfoRunnable final : public WorkerControlRunnable {
 };
 
 struct ActiveWorkerStats {
-  template <uint32_t ActiveWorkerStats::*Category>
+  template <uint32_t ActiveWorkerStats::* Category>
   void Update(const nsTArray<WorkerPrivate*>& aWorkers) {
     for (const auto worker : aWorkers) {
       RefPtr<DumpCrashInfoRunnable> runnable =
@@ -1743,6 +1772,19 @@ void RuntimeService::CancelWorkersForWindow(const nsPIDOMWindowInner& aWindow) {
   for (WorkerPrivate* const worker : GetWorkersForWindow(aWindow)) {
     MOZ_ASSERT(!worker->IsSharedWorker());
     worker->Cancel();
+  }
+}
+
+void RuntimeService::UpdateWorkersBackgroundState(
+    const nsPIDOMWindowInner& aWindow, bool aIsBackground) {
+  AssertIsOnMainThread();
+  for (WorkerPrivate* const worker : GetWorkersForWindow(aWindow)) {
+    MOZ_ASSERT(!worker->IsSharedWorker());
+    if (aIsBackground) {
+      worker->SetIsRunningInBackground();
+    } else {
+      worker->SetIsRunningInForeground();
+    }
   }
 }
 
@@ -2043,14 +2085,15 @@ void RuntimeService::DumpRunningWorkers() {
 
 bool LogViolationDetailsRunnable::MainThreadRun() {
   AssertIsOnMainThread();
+  MOZ_ASSERT(mWorkerRef);
 
-  nsIContentSecurityPolicy* csp = mWorkerPrivate->GetCsp();
+  nsIContentSecurityPolicy* csp = mWorkerRef->Private()->GetCsp();
   if (csp) {
     csp->LogViolationDetails(mViolationType,
                              nullptr,  // triggering element
-                             mWorkerPrivate->CSPEventListener(), mFileName,
-                             mScriptSample, mLineNum, mColumnNum, u""_ns,
-                             u""_ns);
+                             mWorkerRef->Private()->CSPEventListener(),
+                             mFileName, mScriptSample, mLineNum, mColumnNum,
+                             u""_ns, u""_ns);
   }
 
   return true;
@@ -2123,7 +2166,7 @@ WorkerThreadPrimaryRunnable::Run() {
       runLoopRan = true;
 
       {
-        PROFILER_SET_JS_CONTEXT(cx);
+        PROFILER_SET_JS_CONTEXT(context.get());
 
         {
           // We're on the worker thread here, and WorkerPrivate's refcounting is
@@ -2204,19 +2247,15 @@ WorkerThreadPrimaryRunnable::Run() {
     // Check sentinels if we actually removed all global scope references.
     // In case use the earlier set-aside raw pointers to not mess with the
     // ref counting after the cycle collector has gone away.
-    if (globalScopeSentinel) {
-      MOZ_ASSERT(!globalScopeSentinel->IsAlive());
-      if (NS_WARN_IF(globalScopeSentinel->IsAlive())) {
-        globalScopeRawPtr->NoteWorkerTerminated();
-        globalScopeRawPtr = nullptr;
-      }
+    if (NS_WARN_IF(globalScopeSentinel && globalScopeSentinel->IsAlive())) {
+      MOZ_ASSERT_UNREACHABLE("WorkerGlobalScope alive after worker shutdown");
+      globalScopeRawPtr->NoteWorkerTerminated();
+      globalScopeRawPtr = nullptr;
     }
-    if (debuggerScopeSentinel) {
-      MOZ_ASSERT(!debuggerScopeSentinel->IsAlive());
-      if (NS_WARN_IF(debuggerScopeSentinel->IsAlive())) {
-        debuggerScopeRawPtr->NoteWorkerTerminated();
-        debuggerScopeRawPtr = nullptr;
-      }
+    if (NS_WARN_IF(debuggerScopeSentinel && debuggerScopeSentinel->IsAlive())) {
+      MOZ_ASSERT_UNREACHABLE("Debugger global alive after worker shutdown");
+      debuggerScopeRawPtr->NoteWorkerTerminated();
+      debuggerScopeRawPtr = nullptr;
     }
   }
 
@@ -2266,6 +2305,15 @@ void CancelWorkersForWindow(const nsPIDOMWindowInner& aWindow) {
   RuntimeService* runtime = RuntimeService::GetService();
   if (runtime) {
     runtime->CancelWorkersForWindow(aWindow);
+  }
+}
+
+void UpdateWorkersBackgroundState(const nsPIDOMWindowInner& aWindow,
+                                  bool aIsBackground) {
+  AssertIsOnMainThread();
+  RuntimeService* runtime = RuntimeService::GetService();
+  if (runtime) {
+    runtime->UpdateWorkersBackgroundState(aWindow, aIsBackground);
   }
 }
 

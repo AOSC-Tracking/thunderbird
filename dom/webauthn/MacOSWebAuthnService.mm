@@ -328,6 +328,7 @@ nsTArray<uint8_t> NSDataToArray(NSData* data) {
         switch (platformCredential.attachment) {
           case ASAuthorizationPublicKeyCredentialAttachmentCrossPlatform:
             authenticatorAttachment.emplace(u"cross-platform"_ns);
+            transports.AppendElement(u"hybrid"_ns);
             break;
           case ASAuthorizationPublicKeyCredentialAttachmentPlatform:
             authenticatorAttachment.emplace(u"platform"_ns);
@@ -585,7 +586,7 @@ MacOSWebAuthnService::MakeCredential(uint64_t aTransactionId,
         NSString* userNameNS = nsCocoaUtils::ToNSString(userName);
 
         nsAutoString userDisplayName;
-        Unused << aArgs->GetUserName(userDisplayName);
+        Unused << aArgs->GetUserDisplayName(userDisplayName);
         NSString* userDisplayNameNS = nsCocoaUtils::ToNSString(userDisplayName);
 
         nsTArray<int32_t> coseAlgs;

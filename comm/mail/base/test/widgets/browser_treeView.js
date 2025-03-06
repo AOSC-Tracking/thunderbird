@@ -174,15 +174,15 @@ async function subtestKeyboardAndMouse(variant) {
    * Check if the spacerTop TBODY of the TreeViewTable is properly allocating
    * the height of non existing rows.
    *
-   * @param {int} rows - The number of rows that the spacerTop should be
-   * simulating their height allocation.
+   * @param {int} nbrOfRows - The number of rows that the spacerTop should be
+   *   simulating their height allocation.
    */
-  function checkTopSpacerHeight(rows) {
+  function checkTopSpacerHeight(nbrOfRows) {
     const table = doc.querySelector(`[is="tree-view-table"]`);
     // -26 to account for the tolerance buffer.
     Assert.equal(
       table.spacerTop.clientHeight,
-      list.getRowAtIndex(rows).clientHeight * (rows - 26),
+      list.getRowAtIndex(nbrOfRows).clientHeight * (nbrOfRows - 26),
       "The top spacer has the correct height"
     );
   }
@@ -1197,7 +1197,7 @@ async function subtestRowCountChange() {
  * Checks that expanding and collapsing works. Twisties in the test file are
  * styled as coloured squares: red for collapsed, green for expanded.
  *
- * @note This is practically the same test as in browser_treeListbox.js, but
+ * NOTE: This is practically the same test as in browser_treeListbox.js, but
  * for TreeView instead of TreeListbox. If you make changes here you
  * may want to make changes there too.
  */
@@ -2095,7 +2095,7 @@ async function subtestResize() {
 
   async function scrollVerticallyBy(scrollDistance) {
     await doListActionAndWaitForRowBuffer(() => {
-      list.scrollBy(0, scrollDistance);
+      list.scrollBy({ top: scrollDistance, behavior: "instant" });
     });
   }
 

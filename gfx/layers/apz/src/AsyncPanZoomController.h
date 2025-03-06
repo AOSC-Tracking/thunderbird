@@ -7,6 +7,7 @@
 #ifndef mozilla_layers_AsyncPanZoomController_h
 #define mozilla_layers_AsyncPanZoomController_h
 
+#include "Units.h"
 #include "mozilla/layers/GeckoContentController.h"
 #include "mozilla/layers/RepaintRequest.h"
 #include "mozilla/layers/SampleTime.h"
@@ -41,7 +42,7 @@ namespace mozilla {
 
 namespace ipc {
 
-class SharedMemoryBasic;
+class SharedMemory;
 
 }  // namespace ipc
 
@@ -447,12 +448,6 @@ class AsyncPanZoomController {
   void ClearPhysicalOverscroll();
 
   /**
-   * Returns whether this APZC is for an element marked with the 'scrollgrab'
-   * attribute.
-   */
-  bool HasScrollgrab() const { return mScrollMetadata.GetHasScrollgrab(); }
-
-  /**
    * Returns whether this APZC has scroll snap points.
    */
   bool HasScrollSnapping() const {
@@ -545,7 +540,8 @@ class AsyncPanZoomController {
 
   // Return the directions in which this APZC allows handoff (as governed by
   // overscroll-behavior).
-  ScrollDirections GetAllowedHandoffDirections() const;
+  ScrollDirections GetAllowedHandoffDirections(
+      HandoffConsumer aConsumer = HandoffConsumer::Scrolling) const;
 
   // Return the directions in which this APZC allows overscrolling.
   ScrollDirections GetOverscrollableDirections() const;
@@ -849,7 +845,8 @@ class AsyncPanZoomController {
   /**
    * Gets the relevant point in the event, in external screen coordinates.
    */
-  ExternalPoint GetFirstExternalTouchPoint(const MultiTouchInput& aEvent);
+  static ExternalPoint GetFirstExternalTouchPoint(
+      const MultiTouchInput& aEvent);
 
   /**
    * Gets the amount by which this APZC is overscrolled along both axes.
@@ -975,11 +972,12 @@ class AsyncPanZoomController {
    */
   Maybe<LayoutDevicePoint> ConvertToGecko(const ScreenIntPoint& aPoint);
 
-  enum AxisLockMode {
+  enum class AxisLockMode {
     FREE,     /* No locking at all */
     STANDARD, /* Default axis locking mode that remains locked until pan ends */
     STICKY,   /* Allow lock to be broken, with hysteresis */
     DOMINANT_AXIS, /* Only allow movement on one axis */
+    BREAKABLE,     /* Allow lock to be broken until the pan ends */
   };
 
   static AxisLockMode GetAxisLockMode();
@@ -1107,6 +1105,12 @@ class AsyncPanZoomController {
   // RecentEventsBuffer is not threadsafe. Should only be accessed on the
   // controller thread.
   RecentEventsBuffer<PinchGestureInput> mPinchEventBuffer;
+
+  // Stores the touch events that occured within a given timeframe. Ussed to
+  // determine the direction of a touch scroll, which determines which axis
+  // should be locked if STICKY axis locking is used. Should only by accessed
+  // on the controller thread.
+  RecentEventsBuffer<MultiTouchInput> mTouchScrollEventBuffer;
 
   // Most up-to-date constraints on zooming. These should always be reasonable
   // values; for example, allowing a min zoom of 0.0 can cause very bad things
@@ -1373,8 +1377,12 @@ class AsyncPanZoomController {
   std::tuple<ParentLayerPoint, ScreenPoint> GetDisplacementsForPanGesture(
       const PanGestureInput& aEvent);
 
+  CSSPoint ToCSSPixels(ParentLayerPoint value) const;
+  CSSCoord ToCSSPixels(ParentLayerCoord value) const;
+
  private:
   friend class AutoApplyAsyncTestAttributes;
+  friend class AutoDynamicToolbarHider;
 
   bool SuppressAsyncScrollOffset() const;
 
@@ -1471,6 +1479,7 @@ class AsyncPanZoomController {
 
  private:
   friend class StateChangeNotificationBlocker;
+  friend class ThreadSafeStateChangeNotificationBlocker;
   /**
    * A counter of how many StateChangeNotificationBlockers are active.
    * A non-zero count will prevent state change notifications from
@@ -1536,7 +1545,7 @@ class AsyncPanZoomController {
    * govern dynamic toolbar and pull-to-refresh behaviour).
    */
   PointerEventsConsumableFlags ArePointerEventsConsumable(
-      TouchBlockState* aBlock, const MultiTouchInput& aInput) const;
+      const TouchBlockState* aBlock, const MultiTouchInput& aInput) const;
 
   /**
    * Clear internal state relating to touch input handling.
@@ -1622,9 +1631,6 @@ class AsyncPanZoomController {
       const ParentLayerPoint& aVelocity, SideBits aOverscrollSideBits,
       const RefPtr<const OverscrollHandoffChain>& aOverscrollHandoffChain,
       const RefPtr<const AsyncPanZoomController>& aScrolledApzc);
-
-  void HandleSmoothScrollOverscroll(const ParentLayerPoint& aVelocity,
-                                    SideBits aOverscrollSideBits);
 
   // Start an overscroll animation with the given initial velocity.
   void StartOverscrollAnimation(const ParentLayerPoint& aVelocity,

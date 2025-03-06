@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import org.junit.Rule
 import org.junit.Test
 import org.mozilla.fenix.helpers.AppAndSystemHelper
+import org.mozilla.fenix.helpers.AppAndSystemHelper.clickSystemHomeScreenShortcutAddButton
 import org.mozilla.fenix.helpers.DataGenerationHelper
 import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
 import org.mozilla.fenix.helpers.TestAssetHelper
@@ -30,7 +31,7 @@ class SettingsPrivateBrowsingTest : TestSetup() {
             ),
         ) { it.activity }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/555822
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/555822
     @Test
     fun verifyPrivateBrowsingMenuItemsTest() {
         homeScreen {
@@ -45,7 +46,7 @@ class SettingsPrivateBrowsingTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/420086
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/420086
     @Test
     fun launchLinksInAPrivateTabTest() {
         val firstWebPage = TestAssetHelper.getGenericAsset(mockWebServer, 1)
@@ -74,7 +75,7 @@ class SettingsPrivateBrowsingTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/555776
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/555776
     @Test
     fun launchPageShortcutInPrivateBrowsingTest() {
         val defaultWebPage = TestAssetHelper.getGenericAsset(mockWebServer, 1)
@@ -87,7 +88,7 @@ class SettingsPrivateBrowsingTest : TestSetup() {
         }.openAddToHomeScreen {
             addShortcutName(pageShortcutName)
             clickAddShortcutButton()
-            clickAddAutomaticallyButton()
+            clickSystemHomeScreenShortcutAddButton()
             verifyShortcutAdded(pageShortcutName)
         }
 
@@ -117,7 +118,7 @@ class SettingsPrivateBrowsingTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/414583
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/414583
     @Test
     fun addPrivateBrowsingShortcutFromSettingsTest() {
         homeScreen {

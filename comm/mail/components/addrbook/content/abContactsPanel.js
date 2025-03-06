@@ -13,10 +13,13 @@ var { getSearchTokens, getModelQuery, generateQueryURI } =
 var { UIDensity } = ChromeUtils.importESModule(
   "resource:///modules/UIDensity.sys.mjs"
 );
-
-UIDensity.registerWindow(window);
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
 
 window.addEventListener("load", () => {
+  UIDensity.registerWindow(window);
+  UIFontSize.registerWindow(window);
   AbPanelLoad();
 });
 window.addEventListener("unload", () => {
@@ -52,7 +55,7 @@ function abContextMenuButtonOnCommand(event) {
  * press, etc.). Show the respective context menu for selected contact(s) or
  * results tree blank space (work around for XUL tree bug 1331377).
  *
- * @param aEvent  a context menu event (right-click, context menu key press, etc.)
+ * @param {Event} aEvent - A context menu event (right-click, context menu key press, etc.)
  */
 function contactsListOnContextMenu(aEvent) {
   let contextMenuID;
@@ -99,16 +102,13 @@ function updateCardPropertiesMenu() {
   separator.hidden = false;
   menuitem.hidden = false;
 }
-
 /**
  * Handle the click event of the results tree (workaround for XUL tree
  * bug 1331377).
  *
- * @param aEvent  a click event
+ * @param {Event} aEvent - A click event
  */
 function contactsListOnClick(aEvent) {
-  CommandUpdate_AddressBook();
-
   // Any click on gAbResultsTree view (rows or blank space).
   const row = aEvent.target.closest(`tr[is="auto-tree-view-table-row"]`);
   if (!row) {
@@ -131,7 +131,7 @@ function contactsListOnClick(aEvent) {
 /**
  * Appends the currently selected cards as new recipients in the composed message.
  *
- * @param recipientType  Type of recipient, e.g. "addr_to".
+ * @param {string} recipientType - Type of recipient, e.g. "addr_to".
  */
 function addSelectedAddresses(recipientType) {
   var cards = GetSelectedAbCards();
@@ -229,7 +229,7 @@ function AbPanelLoad() {
   gAbResultsTree.table.body.addEventListener("click", event =>
     contactsListOnClick(event)
   );
-  gAbResultsTree.table.addEventListener("select", () => {
+  gAbResultsTree.addEventListener("select", () => {
     gAbResultsTree.view.selectionChanged();
     document.commandDispatcher.updateCommands("addrbook-select");
   });
@@ -319,12 +319,14 @@ function onEnterInSearchBar() {
 }
 
 /**
- * Open a menupopup as a context menu
+ * Open a menupopup as a context menu.
  *
- * @param aContextMenuID The ID of a menupopup to be shown as context menu
- * @param aEvent         The event which triggered this.
- * @param positionArray  An optional array containing the parameters for openPopup() method;
- *                       if omitted, mouse pointer position will be used.
+ * @param {string} aContextMenuID - The ID of a menupopup to be shown as
+ *   context menu.
+ * @param {Event} aEvent - The event which triggered this.
+ * @param {object[]} [aPositionArray] - An optional array containing the
+ *   parameters for openPopup() method;
+ *   If omitted, mouse pointer position will be used.
  */
 function showContextMenu(aContextMenuID, aEvent, aPositionArray) {
   const theContextMenu = document.getElementById(aContextMenuID);
@@ -337,7 +339,7 @@ function showContextMenu(aContextMenuID, aEvent, aPositionArray) {
 /**
  * Get the URI of the selected directory.
  *
- * @returns The URI of the currently selected directory
+ * @returns {string} the URI of the currently selected directory.
  */
 function getSelectedDirectoryURI() {
   return document.getElementById("addressbookList").value;

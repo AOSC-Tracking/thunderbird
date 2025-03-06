@@ -19,7 +19,6 @@
 pref("startup.homepage_override_url","chrome://navigator-region/locale/region.properties");
 pref("general.skins.selectedSkin", "classic/1.0");
 
-pref("browser.chromeURL","chrome://navigator/content/navigator.xul");
 pref("browser.hiddenWindowChromeURL", "chrome://navigator/content/hiddenWindow.xul");
 
 // prompt for Master Password on startup
@@ -611,7 +610,7 @@ pref("extensions.getAddons.link.url", "https://addons.thunderbird.net/%LOCALE%/%
 pref("extensions.getAddons.recommended.url", "https://services.addons.thunderbird.net/%LOCALE%/%APP%/api/%API_VERSION%/list/recommended/all/%MAX_RESULTS%/%OS%/%VERSION%?src=seamonkey");
 pref("extensions.getAddons.search.browseURL", "https://addons.thunderbird.net/%LOCALE%/%APP%/search/?q=%TERMS%");
 pref("extensions.getAddons.search.url", "https://services.addons.thunderbird.net/%LOCALE%/%APP%/api/%API_VERSION%/search/%TERMS%/all/%MAX_RESULTS%/%OS%/%VERSION%/%COMPATIBILITY_MODE%?src=seamonkey");
-pref("extensions.getAddons.themes.browseURL", "https://addons.thunderbird.net/%LOCALE%/thunderbird/themes/?src=seamonkey");
+pref("extensions.getAddons.themes.browseURL", "https://addons.thunderbird.net/%LOCALE%/%APP%/complete-themes/");
 pref("extensions.getAddons.siteRegExp", "^https://.*addons\\.thunderbird\\.net");
 
 pref("extensions.webservice.discoverURL", "https://services.addons.thunderbird.net/%LOCALE%/%APP%/discovery/pane/%VERSION%/%OS%");

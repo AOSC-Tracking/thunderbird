@@ -7,6 +7,9 @@
 /* globals saveURL */ // From contentAreaUtils.js
 /* globals goUpdateCommand */ // From globalOverlay.js
 
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
@@ -625,11 +628,9 @@ class nsContextMenu {
   /**
    * Get a computed style property for an element.
    *
-   * @param  aElem
-   *         A DOM node
-   * @param  aProp
-   *         The desired CSS property
-   * @returns the value of the property
+   * @param {Node} aElem - A DOM node.
+   * @param {string} aProp - The desired CSS property.
+   * @returns {string} the value of the property.
    */
   getComputedStyle(aElem, aProp) {
     return aElem.ownerGlobal.getComputedStyle(aElem).getPropertyValue(aProp);
@@ -639,8 +640,8 @@ class nsContextMenu {
    * Determine whether the clicked-on link can be saved, and whether it
    * may be saved according to the ScriptSecurityManager.
    *
-   * @returns true if the protocol can be persisted and if the target has
-   *         permission to link to the URL, false if not
+   * @returns {boolean} true if the protocol can be persisted and if the
+   *   target has permission to link to the URL, false if not.
    */
   isLinkSaveable() {
     try {
@@ -742,10 +743,8 @@ class nsContextMenu {
    * Set a DOM node's hidden property by passing in the node's id or the
    * element itself.
    *
-   * @param aItemOrId
-   *        a DOM node or the id of a DOM node
-   * @param aShow
-   *        true to show, false to hide
+   * @param {Node|string} aItemOrId - A DOM node or the id of a DOM node.
+   * @param {boolean} aShow - true to show, false to hide.
    */
   showItem(aItemOrId, aShow) {
     var item =
@@ -761,8 +760,8 @@ class nsContextMenu {
    * Set a DOM node's disabled property by passing in the node's id or the
    * element itself.
    *
-   * @param aItemOrId  A DOM node or the id of a DOM node
-   * @param aEnabled   True to enable the element, false to disable.
+   * @param {Node|string} aItemOrId - A DOM node or the id of a DOM node.
+   * @param {boolean} aEnabled - true to enable the element, false to disable.
    */
   enableItem(aItemOrId, aEnabled) {
     var item =
@@ -777,12 +776,10 @@ class nsContextMenu {
    * value is null, then it removes the attribute (which works
    * nicely for the disabled attribute).
    *
-   * @param  aId
-   *         The id of an element
-   * @param  aAttr
-   *         The attribute name
-   * @param  aVal
-   *         The value to set the attribute to, or null to remove the attribute
+   * @param {string} aId - The id of an element.
+   * @param {string} aAttr - The attribute name.
+   * @param {?string} aVal - The value to set the attribute to, or null to
+   *   remove the attribute.
    */
   setItemAttr(aId, aAttr, aVal) {
     var elem = document.getElementById(aId);
@@ -801,7 +798,7 @@ class nsContextMenu {
    * Get an absolute URL for clicked-on link, from the href property or by
    * resolving an XLink URL by hand.
    *
-   * @returns the string absolute URL for the clicked-on link
+   * @returns {string} the string absolute URL for the clicked-on link.
    */
   getLinkURL() {
     if (this.link.href) {
@@ -820,7 +817,7 @@ class nsContextMenu {
   /**
    * Generate a URI object from the linkURL spec
    *
-   * @returns an nsIURI if possible, or null if not
+   * @returns {?nsIURI} an nsIURI if possible, or null if not.
    */
   getLinkURI() {
     try {
@@ -834,7 +831,7 @@ class nsContextMenu {
   /**
    * Get the scheme for the clicked-on linkURI, if present.
    *
-   * @returns a scheme, possibly undefined, or null if there's no linkURI
+   * @returns {?string} a scheme, possibly undefined, or null if there's no linkURI
    */
   getLinkProtocol() {
     if (this.linkURI) {
@@ -856,7 +853,7 @@ class nsContextMenu {
   /**
    * Determines whether the focused window has something selected.
    *
-   * @returns true if there is a selection, false if not
+   * @returns {boolean} true if there is a selection, false if not
    */
   isContentSelection() {
     return !document.commandDispatcher.focusedWindow.getSelection().isCollapsed;
@@ -865,11 +862,9 @@ class nsContextMenu {
   /**
    * Convert relative URL to absolute, using a provided <base>.
    *
-   * @param  aBase
-   *         The URL string to use as the base
-   * @param  aUrl
-   *         The possibly-relative URL string
-   * @returns The string absolute URL
+   * @param {string} aBase - The URL string to use as the base.
+   * @param {string} aUrl - The possibly-relative URL string.
+   * @returns {string} The string absolute URL.
    */
   makeURLAbsolute(aBase, aUrl) {
     // Construct nsIURL.
@@ -881,9 +876,8 @@ class nsContextMenu {
   /**
    * Determine whether a DOM node is a text or password input, or a textarea.
    *
-   * @param  aNode
-   *         The DOM node to check
-   * @returns true for textboxes, false for other elements
+   * @param {Node} aNode - The DOM node to check.
+   * @returns {boolean} true for textboxes, false for other elements
    */
   isTargetATextBox(aNode) {
     if (HTMLInputElement.isInstance(aNode)) {
@@ -897,8 +891,8 @@ class nsContextMenu {
    * Determine whether a separator should be shown based on whether
    * there are any non-hidden items between it and the previous separator.
    *
-   * @param {DomElement} element - The separator element.
-   * @returns {boolean} True if the separator should be shown, false if not.
+   * @param {Element} element - The separator element.
+   * @returns {boolean} true if the separator should be shown, false if not.
    */
   shouldShowSeparator(element) {
     if (element) {
@@ -916,7 +910,7 @@ class nsContextMenu {
   /**
    * Ensures that there isn't a separator shown at the bottom of the menu.
    *
-   * @param aPopup  The menu to check.
+   * @param {Element} aPopup - The menu to check.
    */
   checkLastSeparator(aPopup) {
     let sibling = aPopup.lastElementChild;
@@ -939,35 +933,11 @@ class nsContextMenu {
     if (!url) {
       return;
     }
-    PlacesUtils.history
-      .insert({
-        url,
-        visits: [
-          {
-            date: new Date(),
-          },
-        ],
-      })
-      .catch(console.error);
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(Services.io.newURI(url));
+    openLinkExternally(url);
   }
 
   openLinkInBrowser() {
-    PlacesUtils.history
-      .insert({
-        url: this.linkURL,
-        visits: [
-          {
-            date: new Date(),
-          },
-        ],
-      })
-      .catch(console.error);
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(this.linkURI);
+    openLinkExternally(this.linkURI);
   }
 
   mediaCommand(command) {

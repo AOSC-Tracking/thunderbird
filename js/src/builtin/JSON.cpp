@@ -25,11 +25,12 @@
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/Object.h"                // JS::GetBuiltinClass
 #include "js/Prefs.h"                 // JS::Prefs
+#include "js/ProfilingCategory.h"
 #include "js/PropertySpec.h"
 #include "js/StableStringChars.h"
 #include "js/TypeDecls.h"
 #include "js/Value.h"
-#include "util/StringBuffer.h"
+#include "util/StringBuilder.h"
 #include "vm/BooleanObject.h"       // js::BooleanObject
 #include "vm/EqualityOperations.h"  // js::SameValue
 #include "vm/Interpreter.h"
@@ -159,7 +160,7 @@ static MOZ_ALWAYS_INLINE RangedPtr<DstCharT> InfallibleQuoteJSONString(
 
 template <typename SrcCharT, typename DstCharT>
 static size_t QuoteJSONStringHelper(const JSLinearString& linear,
-                                    StringBuffer& sb, size_t sbOffset) {
+                                    StringBuilder& sb, size_t sbOffset) {
   size_t len = linear.length();
 
   JS::AutoCheckCannotGC nogc;
@@ -172,7 +173,7 @@ static size_t QuoteJSONStringHelper(const JSLinearString& linear,
   return dstEnd - dstBegin;
 }
 
-static bool QuoteJSONString(JSContext* cx, StringBuffer& sb, JSString* str) {
+static bool QuoteJSONString(JSContext* cx, StringBuilder& sb, JSString* str) {
   JSLinearString* linear = str->ensureLinear(cx);
   if (!linear) {
     return false;
@@ -223,7 +224,7 @@ using ObjectVector = GCVector<JSObject*, 8>;
 
 class StringifyContext {
  public:
-  StringifyContext(JSContext* cx, StringBuffer& sb, const StringBuffer& gap,
+  StringifyContext(JSContext* cx, StringBuilder& sb, const StringBuilder& gap,
                    HandleObject replacer, const RootedIdVector& propertyList,
                    bool maybeSafely)
       : sb(sb),
@@ -237,8 +238,8 @@ class StringifyContext {
     MOZ_ASSERT_IF(maybeSafely, gap.empty());
   }
 
-  StringBuffer& sb;
-  const StringBuffer& gap;
+  StringBuilder& sb;
+  const StringBuilder& gap;
   RootedObject replacer;
   Rooted<ObjectVector> stack;
   const RootedIdVector& propertyList;
@@ -440,11 +441,13 @@ class CycleDetector {
 };
 
 static inline JSString* MaybeGetRawJSON(JSContext* cx, JSObject* obj) {
-  if (!obj->is<RawJSONObject>()) {
+  auto* unwrappedObj = obj->maybeUnwrapIf<js::RawJSONObject>();
+  if (!unwrappedObj) {
     return nullptr;
   }
+  JSAutoRealm ar(cx, unwrappedObj);
 
-  JSString* rawJSON = obj->as<js::RawJSONObject>().rawJSON(cx);
+  JSString* rawJSON = unwrappedObj->rawJSON(cx);
   MOZ_ASSERT(rawJSON);
   return rawJSON;
 }
@@ -777,7 +780,7 @@ static bool SerializeJSONProperty(JSContext* cx, const Value& v,
       }
     }
 
-    return NumberValueToStringBuffer(v, scx->sb);
+    return NumberValueToStringBuilder(v, scx->sb);
   }
 
   /* Step 10. */
@@ -1087,7 +1090,7 @@ class OwnNonIndexKeysIterForJSON {
 };
 
 // Steps from https://262.ecma-international.org/14.0/#sec-serializejsonproperty
-static bool EmitSimpleValue(JSContext* cx, StringBuffer& sb, const Value& v) {
+static bool EmitSimpleValue(JSContext* cx, StringBuilder& sb, const Value& v) {
   /* Step 8. */
   if (v.isString()) {
     return QuoteJSONString(cx, sb, v.toString());
@@ -1111,7 +1114,7 @@ static bool EmitSimpleValue(JSContext* cx, StringBuffer& sb, const Value& v) {
       }
     }
 
-    return NumberValueToStringBuffer(v, sb);
+    return NumberValueToStringBuilder(v, sb);
   }
 
   // Unrepresentable values.
@@ -1126,7 +1129,7 @@ static bool EmitSimpleValue(JSContext* cx, StringBuffer& sb, const Value& v) {
 
 // https://262.ecma-international.org/14.0/#sec-serializejsonproperty step 8b
 // where K is an integer index.
-static bool EmitQuotedIndexColon(StringBuffer& sb, uint32_t index) {
+static bool EmitQuotedIndexColon(StringBuilder& sb, uint32_t index) {
   Int32ToCStringBuf cbuf;
   size_t cstrlen;
   const char* cstr = ::Int32ToCString(&cbuf, index, &cstrlen);
@@ -1507,7 +1510,7 @@ static bool FastSerializeJSONProperty(JSContext* cx, Handle<Value> v,
 
 /* https://262.ecma-international.org/14.0/#sec-json.stringify */
 bool js::Stringify(JSContext* cx, MutableHandleValue vp, JSObject* replacer_,
-                   const Value& space_, StringBuffer& sb,
+                   const Value& space_, StringBuilder& sb,
                    StringifyBehavior stringifyBehavior) {
   RootedObject replacer(cx, replacer_);
   RootedValue space(cx, space_);
@@ -1633,7 +1636,7 @@ bool js::Stringify(JSContext* cx, MutableHandleValue vp, JSObject* replacer_,
     }
   }
 
-  StringBuffer gap(cx);
+  StringBuilder gap(cx);
 
   if (space.isNumber()) {
     /* Step 7. */
@@ -1742,7 +1745,7 @@ bool js::Stringify(JSContext* cx, MutableHandleValue vp, JSObject* replacer_,
     if (fastJSON != slowJSON) {
       MOZ_CRASH("JSON.stringify mismatch between fast and slow paths");
     }
-    // Put the JSON back into the StringBuffer for returning.
+    // Put the JSON back into the StringBuilder for returning.
     if (!sb.append(slowJSON)) {
       return false;
     }
@@ -1752,9 +1755,10 @@ bool js::Stringify(JSContext* cx, MutableHandleValue vp, JSObject* replacer_,
 }
 
 /* https://262.ecma-international.org/14.0/#sec-internalizejsonproperty */
-static bool InternalizeJSONProperty(
-    JSContext* cx, HandleObject holder, HandleId name, HandleValue reviver,
-    MutableHandle<ParseRecordObject> parseRecord, MutableHandleValue vp) {
+static bool InternalizeJSONProperty(JSContext* cx, HandleObject holder,
+                                    HandleId name, HandleValue reviver,
+                                    Handle<ParseRecordObject*> parseRecord,
+                                    MutableHandleValue vp) {
   AutoCheckRecursionLimit recursion(cx);
   if (!recursion.check(cx)) {
     return false;
@@ -1766,31 +1770,32 @@ static bool InternalizeJSONProperty(
     return false;
   }
 
-#ifdef ENABLE_JSON_PARSE_WITH_SOURCE
   RootedObject context(cx);
-  Rooted<UniquePtr<ParseRecordObject::EntryMap>> entries(cx);
+  Rooted<ParseRecordObject::EntryMap*> entries(cx);
   if (JS::Prefs::experimental_json_parse_with_source()) {
     // https://tc39.es/proposal-json-parse-with-source/#sec-internalizejsonproperty
-    bool sameVal = false;
-    Rooted<Value> parsedValue(cx, parseRecord.get().value);
-    if (!SameValue(cx, parsedValue, val, &sameVal)) {
-      return false;
-    }
-    if (!parseRecord.get().isEmpty() && sameVal) {
-      if (parseRecord.get().parseNode) {
-        MOZ_ASSERT(!val.isObject());
-        Rooted<IdValueVector> props(cx, cx);
-        if (!props.emplaceBack(
-                IdValuePair(NameToId(cx->names().source),
-                            StringValue(parseRecord.get().parseNode)))) {
-          return false;
-        }
-        context = NewPlainObjectWithUniqueNames(cx, props);
-        if (!context) {
-          return false;
-        }
+    if (parseRecord) {
+      bool sameVal = false;
+      Rooted<Value> parsedValue(cx, parseRecord->getValue());
+      if (!SameValue(cx, parsedValue, val, &sameVal)) {
+        return false;
       }
-      entries = std::move(parseRecord.get().entries);
+      if (parseRecord->hasValue() && sameVal) {
+        if (parseRecord->getParseNode()) {
+          MOZ_ASSERT(!val.isObject());
+          Rooted<IdValueVector> props(cx, cx);
+          if (!props.emplaceBack(
+                  IdValuePair(NameToId(cx->names().source),
+                              StringValue(parseRecord->getParseNode())))) {
+            return false;
+          }
+          context = NewPlainObjectWithUniqueNames(cx, props);
+          if (!context) {
+            return false;
+          }
+        }
+        parseRecord->getEntries(cx, &entries);
+      }
     }
     if (!context) {
       context = NewPlainObject(cx);
@@ -1799,7 +1804,6 @@ static bool InternalizeJSONProperty(
       }
     }
   }
-#endif
 
   /* Step 2. */
   if (val.isObject()) {
@@ -1830,15 +1834,17 @@ static bool InternalizeJSONProperty(
         }
 
         /* Step 2a(iii)(1). */
-        Rooted<ParseRecordObject> elementRecord(cx);
-#ifdef ENABLE_JSON_PARSE_WITH_SOURCE
+        Rooted<ParseRecordObject*> elementRecord(cx);
         if (entries) {
-          if (auto entry = entries->lookup(id)) {
-            elementRecord = std::move(entry->value());
+          Rooted<Value> value(cx);
+          if (!JS_GetPropertyById(cx, entries, id, &value)) {
+            return false;
+          }
+          if (!value.isNullOrUndefined()) {
+            elementRecord = &value.toObject().as<ParseRecordObject>();
           }
         }
-#endif
-        if (!InternalizeJSONProperty(cx, obj, id, reviver, &elementRecord,
+        if (!InternalizeJSONProperty(cx, obj, id, reviver, elementRecord,
                                      &newElement)) {
           return false;
         }
@@ -1878,15 +1884,17 @@ static bool InternalizeJSONProperty(
 
         /* Step 2c(ii)(1). */
         id = keys[i];
-        Rooted<ParseRecordObject> entryRecord(cx);
-#ifdef ENABLE_JSON_PARSE_WITH_SOURCE
+        Rooted<ParseRecordObject*> entryRecord(cx);
         if (entries) {
-          if (auto entry = entries->lookup(id)) {
-            entryRecord = std::move(entry->value());
+          Rooted<Value> value(cx);
+          if (!JS_GetPropertyById(cx, entries, id, &value)) {
+            return false;
+          }
+          if (!value.isNullOrUndefined()) {
+            entryRecord = &value.toObject().as<ParseRecordObject>();
           }
         }
-#endif
-        if (!InternalizeJSONProperty(cx, obj, id, reviver, &entryRecord,
+        if (!InternalizeJSONProperty(cx, obj, id, reviver, entryRecord,
                                      &newElement)) {
           return false;
         }
@@ -1919,18 +1927,15 @@ static bool InternalizeJSONProperty(
   }
 
   RootedValue keyVal(cx, StringValue(key));
-#ifdef ENABLE_JSON_PARSE_WITH_SOURCE
   if (JS::Prefs::experimental_json_parse_with_source()) {
     RootedValue contextVal(cx, ObjectValue(*context));
     return js::Call(cx, reviver, holder, keyVal, val, contextVal, vp);
   }
-#endif
   return js::Call(cx, reviver, holder, keyVal, val, vp);
 }
 
 static bool Revive(JSContext* cx, HandleValue reviver,
-                   MutableHandle<ParseRecordObject> pro,
-                   MutableHandleValue vp) {
+                   Handle<ParseRecordObject*> pro, MutableHandleValue vp) {
   Rooted<PlainObject*> obj(cx, NewPlainObject(cx));
   if (!obj) {
     return false;
@@ -1940,10 +1945,8 @@ static bool Revive(JSContext* cx, HandleValue reviver,
     return false;
   }
 
-#ifdef ENABLE_JSON_PARSE_WITH_SOURCE
   MOZ_ASSERT_IF(JS::Prefs::experimental_json_parse_with_source(),
-                pro.get().value == vp.get());
-#endif
+                pro->getValue() == vp.get());
   Rooted<jsid> id(cx, NameToId(cx->names().empty_));
   return InternalizeJSONProperty(cx, obj, id, reviver, pro, vp);
 }
@@ -1960,23 +1963,22 @@ template <typename CharT>
 bool js::ParseJSONWithReviver(JSContext* cx,
                               const mozilla::Range<const CharT> chars,
                               HandleValue reviver, MutableHandleValue vp) {
+  js::AutoGeckoProfilerEntry pseudoFrame(cx, "parse JSON",
+                                         JS::ProfilingCategoryPair::JS_Parsing);
   /* https://262.ecma-international.org/14.0/#sec-json.parse steps 2-10. */
-  Rooted<ParseRecordObject> pro(cx);
-#ifdef ENABLE_JSON_PARSE_WITH_SOURCE
+  Rooted<ParseRecordObject*> pro(cx);
   if (JS::Prefs::experimental_json_parse_with_source() && IsCallable(reviver)) {
     Rooted<JSONReviveParser<CharT>> parser(cx, cx, chars);
     if (!parser.get().parse(vp, &pro)) {
       return false;
     }
-  } else
-#endif
-      if (!ParseJSON(cx, chars, vp)) {
+  } else if (!ParseJSON(cx, chars, vp)) {
     return false;
   }
 
   /* Steps 11-12. */
   if (IsCallable(reviver)) {
-    return Revive(cx, reviver, &pro, vp);
+    return Revive(cx, reviver, pro, vp);
   }
   return true;
 }
@@ -2184,7 +2186,6 @@ static bool json_parseImmutable(JSContext* cx, unsigned argc, Value* vp) {
 }
 #endif
 
-#ifdef ENABLE_JSON_PARSE_WITH_SOURCE
 /* https://tc39.es/proposal-json-parse-with-source/#sec-json.israwjson */
 static bool json_isRawJSON(JSContext* cx, unsigned argc, Value* vp) {
   AutoJSMethodProfilerEntry pseudoFrame(cx, "JSON", "isRawJSON");
@@ -2193,15 +2194,16 @@ static bool json_isRawJSON(JSContext* cx, unsigned argc, Value* vp) {
   /* Step 1. */
   if (args.get(0).isObject()) {
     Rooted<JSObject*> obj(cx, &args[0].toObject());
-#  ifdef DEBUG
+#ifdef DEBUG
     if (obj->is<RawJSONObject>()) {
       bool objIsFrozen = false;
       MOZ_ASSERT(js::TestIntegrityLevel(cx, obj, IntegrityLevel::Frozen,
                                         &objIsFrozen));
       MOZ_ASSERT(objIsFrozen);
     }
-#  endif  // DEBUG
-    args.rval().setBoolean(obj->is<RawJSONObject>());
+#endif  // DEBUG
+    args.rval().setBoolean(obj->is<RawJSONObject>() ||
+                           obj->canUnwrapAs<RawJSONObject>());
     return true;
   }
 
@@ -2280,7 +2282,6 @@ static bool json_rawJSON(JSContext* cx, unsigned argc, Value* vp) {
   args.rval().setObject(*obj);
   return true;
 }
-#endif  // ENABLE_JSON_PARSE_WITH_SOURCE
 
 /* https://262.ecma-international.org/14.0/#sec-json.stringify */
 bool json_stringify(JSContext* cx, unsigned argc, Value* vp) {
@@ -2326,14 +2327,15 @@ static const JSFunctionSpec json_static_methods[] = {
 #ifdef ENABLE_RECORD_TUPLE
     JS_FN("parseImmutable", json_parseImmutable, 2, 0),
 #endif
-#ifdef ENABLE_JSON_PARSE_WITH_SOURCE
     JS_FN("isRawJSON", json_isRawJSON, 1, 0),
     JS_FN("rawJSON", json_rawJSON, 1, 0),
-#endif
-    JS_FS_END};
+    JS_FS_END,
+};
 
 static const JSPropertySpec json_static_properties[] = {
-    JS_STRING_SYM_PS(toStringTag, "JSON", JSPROP_READONLY), JS_PS_END};
+    JS_STRING_SYM_PS(toStringTag, "JSON", JSPROP_READONLY),
+    JS_PS_END,
+};
 
 static JSObject* CreateJSONObject(JSContext* cx, JSProtoKey key) {
   RootedObject proto(cx, &cx->global()->getObjectPrototype());
@@ -2341,7 +2343,15 @@ static JSObject* CreateJSONObject(JSContext* cx, JSProtoKey key) {
 }
 
 static const ClassSpec JSONClassSpec = {
-    CreateJSONObject, nullptr, json_static_methods, json_static_properties};
+    CreateJSONObject,
+    nullptr,
+    json_static_methods,
+    json_static_properties,
+};
 
-const JSClass js::JSONClass = {"JSON", JSCLASS_HAS_CACHED_PROTO(JSProto_JSON),
-                               JS_NULL_CLASS_OPS, &JSONClassSpec};
+const JSClass js::JSONClass = {
+    "JSON",
+    JSCLASS_HAS_CACHED_PROTO(JSProto_JSON),
+    JS_NULL_CLASS_OPS,
+    &JSONClassSpec,
+};

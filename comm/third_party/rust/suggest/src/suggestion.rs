@@ -22,7 +22,7 @@ pub(crate) enum AmpSuggestionType {
     Desktop,
 }
 /// A suggestion from the database to show in the address bar.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum Suggestion {
     Amp {
         title: String,
@@ -38,6 +38,7 @@ pub enum Suggestion {
         click_url: String,
         raw_click_url: String,
         score: f64,
+        fts_match_info: Option<FtsMatchInfo>,
     },
     Pocket {
         title: String,
@@ -79,8 +80,41 @@ pub enum Suggestion {
         score: f64,
     },
     Weather {
+        city: Option<String>,
+        region: Option<String>,
+        country: Option<String>,
+        latitude: Option<f64>,
+        longitude: Option<f64>,
         score: f64,
     },
+    Fakespot {
+        fakespot_grade: String,
+        product_id: String,
+        rating: f64,
+        title: String,
+        total_reviews: i64,
+        url: String,
+        icon: Option<Vec<u8>>,
+        icon_mimetype: Option<String>,
+        score: f64,
+        // Details about the FTS match.  For performance reasons, this is only calculated for the
+        // result with the highest score.  We assume that only one that will be shown to the user
+        // and therefore the only one we'll collect metrics for.
+        match_info: Option<FtsMatchInfo>,
+    },
+    Exposure {
+        suggestion_type: String,
+        score: f64,
+    },
+}
+
+/// Additional data about how an FTS match was made
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FtsMatchInfo {
+    /// Was this a prefix match (`water b` matched against `water bottle`)
+    pub prefix: bool,
+    /// Did the match require stemming? (`run shoes` matched against `running shoes`)
+    pub stemming: bool,
 }
 
 impl PartialOrd for Suggestion {
@@ -91,20 +125,9 @@ impl PartialOrd for Suggestion {
 
 impl Ord for Suggestion {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let a_score = match self {
-            Suggestion::Amp { score, .. }
-            | Suggestion::Pocket { score, .. }
-            | Suggestion::Amo { score, .. } => score,
-            _ => &DEFAULT_SUGGESTION_SCORE,
-        };
-        let b_score = match other {
-            Suggestion::Amp { score, .. }
-            | Suggestion::Pocket { score, .. }
-            | Suggestion::Amo { score, .. } => score,
-            _ => &DEFAULT_SUGGESTION_SCORE,
-        };
-        b_score
-            .partial_cmp(a_score)
+        other
+            .score()
+            .partial_cmp(&self.score())
             .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
@@ -118,7 +141,8 @@ impl Suggestion {
             | Self::Wikipedia { url, .. }
             | Self::Amo { url, .. }
             | Self::Yelp { url, .. }
-            | Self::Mdn { url, .. } => Some(url),
+            | Self::Mdn { url, .. }
+            | Self::Fakespot { url, .. } => Some(url),
             _ => None,
         }
     }
@@ -138,6 +162,74 @@ impl Suggestion {
             _ => None,
         }
     }
+
+    pub fn title(&self) -> &str {
+        match self {
+            Self::Amp { title, .. }
+            | Self::Pocket { title, .. }
+            | Self::Wikipedia { title, .. }
+            | Self::Amo { title, .. }
+            | Self::Yelp { title, .. }
+            | Self::Mdn { title, .. }
+            | Self::Fakespot { title, .. } => title,
+            _ => "untitled",
+        }
+    }
+
+    pub fn icon_data(&self) -> Option<&[u8]> {
+        match self {
+            Self::Amp { icon, .. }
+            | Self::Wikipedia { icon, .. }
+            | Self::Yelp { icon, .. }
+            | Self::Fakespot { icon, .. } => icon.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub fn score(&self) -> f64 {
+        match self {
+            Self::Amp { score, .. }
+            | Self::Pocket { score, .. }
+            | Self::Amo { score, .. }
+            | Self::Yelp { score, .. }
+            | Self::Mdn { score, .. }
+            | Self::Weather { score, .. }
+            | Self::Fakespot { score, .. }
+            | Self::Exposure { score, .. } => *score,
+            Self::Wikipedia { .. } => DEFAULT_SUGGESTION_SCORE,
+        }
+    }
+
+    pub fn fts_match_info(&self) -> Option<&FtsMatchInfo> {
+        match self {
+            Self::Fakespot { match_info, .. } => match_info.as_ref(),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+/// Testing utilitise
+impl Suggestion {
+    pub fn with_fakespot_keyword_bonus(mut self) -> Self {
+        match &mut self {
+            Self::Fakespot { score, .. } => {
+                *score += 0.01;
+            }
+            _ => panic!("Not Suggestion::Fakespot"),
+        }
+        self
+    }
+
+    pub fn with_fakespot_product_type_bonus(mut self, bonus: f64) -> Self {
+        match &mut self {
+            Self::Fakespot { score, .. } => {
+                *score += 0.001 * bonus;
+            }
+            _ => panic!("Not Suggestion::Fakespot"),
+        }
+        self
+    }
 }
 
 impl Eq for Suggestion {}
@@ -154,6 +246,7 @@ pub(crate) fn cook_raw_suggestion_url(raw_url: &str) -> String {
 /// Determines whether a "raw" sponsored suggestion URL is equivalent to a
 /// "cooked" URL. The two URLs are equivalent if they are identical except for
 /// their replaced template parameters, which can be different.
+#[uniffi::export]
 pub fn raw_suggestion_url_matches(raw_url: &str, cooked_url: &str) -> bool {
     let Some((raw_url_prefix, raw_url_suffix)) = raw_url.split_once(TIMESTAMP_TEMPLATE) else {
         return raw_url == cooked_url;

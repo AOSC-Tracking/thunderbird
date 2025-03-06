@@ -23,6 +23,13 @@ var { MailServices } = ChromeUtils.importESModule(
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
+ChromeUtils.defineESModuleGetters(
+  this,
+  {
+    adaptMessageForDarkMode: "chrome://messenger/content/DarkReader.mjs",
+  },
+  { global: "current" }
+);
 
 ChromeUtils.defineESModuleGetters(this, {
   NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
@@ -34,14 +41,32 @@ const messengerBundle = Services.strings.createBundle(
   "chrome://messenger/locale/messenger.properties"
 );
 
+const prefersDarkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
 var gMessage, gMessageURI;
 var autodetectCharset;
+
+let reloadTimeout = null;
+function timeoutReload() {
+  if (reloadTimeout) {
+    return;
+  }
+  // Clear the event queue before reloading the message. Several prefs may
+  // be changed at once.
+  reloadTimeout = setTimeout(() => {
+    reloadTimeout = null;
+    ReloadMessage();
+  });
+}
 
 function getMessagePaneBrowser() {
   return document.getElementById("messagepane");
 }
 
-function messagePaneOnResize() {
+/**
+ * Handle "resize" events on the messagepane.
+ */
+async function messagePaneOnResize() {
   const doc = getMessagePaneBrowser().contentDocument;
   // Bail out if it's http content or we don't have images.
   if (doc?.URL.startsWith("http") || !doc?.images) {
@@ -53,22 +78,29 @@ function messagePaneOnResize() {
     window.visualViewport.width
   );
 
+  const adjustImg = img => {
+    if (img.hasAttribute("shrinktofit")) {
+      // overflowing: Whether the image is overflowing visible area.
+      img.toggleAttribute("overflowing", img.naturalWidth > img.clientWidth);
+    } else if (img.hasAttribute("overflowing")) {
+      const isOverflowing = img.clientWidth >= availableWidth;
+      img.toggleAttribute("overflowing", isOverflowing);
+      img.toggleAttribute("shrinktofit", !isOverflowing);
+    }
+  };
+
   for (const img of doc.querySelectorAll(
     "img:is([shrinktofit],[overflowing])"
   )) {
-    if (!img.complete || img.closest("[href]")) {
+    if (img.closest("[href]")) {
       continue;
     }
-    if (img.hasAttribute("shrinktofit")) {
-      // Determine if the image could be enlarged.
-      img.toggleAttribute("overflowing", img.naturalWidth > img.clientWidth);
-    } else if (
-      img.hasAttribute("overflowing") &&
-      img.clientWidth < availableWidth
-    ) {
-      // Handle zoomed images that are no longer overflowing after a resize.
-      img.removeAttribute("overflowing");
-      img.setAttribute("shrinktofit", "true");
+    if (!img.complete) {
+      img.addEventListener("load", event => adjustImg(event.target), {
+        once: true,
+      });
+    } else {
+      adjustImg(img);
     }
   }
 }
@@ -157,6 +189,18 @@ window.addEventListener("DOMContentLoaded", event => {
   window.dispatchEvent(
     new CustomEvent("aboutMessageLoaded", { bubbles: true })
   );
+
+  window.addEventListener("MsgLoaded", msgObserver);
+  prefersDarkQuery.addEventListener("change", msgObserver);
+
+  const disableDarkReaderToggle = document.getElementById("disableDarkReader");
+  disableDarkReaderToggle.checked = !Services.prefs.getBoolPref(
+    "mail.dark-reader.enabled",
+    true
+  );
+  disableDarkReaderToggle.addEventListener("click", e => {
+    Services.prefs.setBoolPref("mail.dark-reader.enabled", !e.target.checked);
+  });
 });
 
 window.addEventListener("unload", () => {
@@ -165,6 +209,8 @@ window.addEventListener("unload", () => {
   MailServices.mailSession.RemoveFolderListener(folderListener);
   preferenceObserver.cleanUp();
   Services.obs.removeObserver(msgObserver, "message-content-updated");
+  window.removeEventListener("MsgLoaded", msgObserver);
+  prefersDarkQuery.removeEventListener("change", msgObserver);
   gViewWrapper?.close();
 });
 
@@ -244,10 +290,10 @@ function displayMessage(uri, viewWrapper) {
     ensureRowIsVisible() {},
     invalidate() {},
     invalidateRange() {},
-    rowCountChanged(index, count) {
+    rowCountChanged(idx, count) {
       const wasSuppressed = gDBView.selection.selectEventsSuppressed;
       gDBView.selection.selectEventsSuppressed = true;
-      gDBView.selection.adjustSelection(index, count);
+      gDBView.selection.adjustSelection(idx, count);
       gDBView.selection.selectEventsSuppressed = wasSuppressed;
     },
     currentIndex: null,
@@ -376,6 +422,19 @@ var msgObserver = {
       displayMessage(data, gViewWrapper);
     }
   },
+
+  handleEvent(event) {
+    switch (event.type) {
+      case "MsgLoaded":
+        if (prefersDarkQuery.matches) {
+          adaptMessageForDarkMode(getMessagePaneBrowser());
+        }
+        break;
+      case "change":
+        timeoutReload();
+        break;
+    }
+  },
 };
 
 var preferenceObserver = {
@@ -385,6 +444,7 @@ var preferenceObserver = {
     "mail.inline_attachments",
     "mail.show_headers",
     "mail.addressDisplayFormat",
+    "mail.dark-reader.enabled",
     "mail.showCondensedAddresses",
     "mailnews.display.disallow_mime_handlers",
     "mailnews.display.html_as",
@@ -392,8 +452,6 @@ var preferenceObserver = {
     "mailnews.headers.showReferences",
     "rss.show.summary",
   ],
-
-  _reloadTimeout: null,
 
   init() {
     for (const topic of this._topics) {
@@ -411,14 +469,11 @@ var preferenceObserver = {
     if (data == "mail.show_headers") {
       AdjustHeaderView(Services.prefs.getIntPref(data));
     }
-    if (!this._reloadTimeout) {
-      // Clear the event queue before reloading the message. Several prefs may
-      // be changed at once.
-      this._reloadTimeout = setTimeout(() => {
-        this._reloadTimeout = null;
-        ReloadMessage();
-      });
+    if (data == "mail.dark-reader.enabled") {
+      document.getElementById("disableDarkReader").checked =
+        !Services.prefs.getBoolPref(data);
     }
+    timeoutReload();
   },
 };
 
@@ -625,13 +680,13 @@ commandController.registerCallback(
   () => commandController.isCommandEnabled("cmd_shiftDeleteMessage")
 );
 commandController.registerCallback("cmd_find", () =>
-  document.getElementById("FindToolbar").onFindCommand()
+  document.getElementById("findToolbar").onFindCommand()
 );
 commandController.registerCallback("cmd_findAgain", () =>
-  document.getElementById("FindToolbar").onFindAgainCommand(false)
+  document.getElementById("findToolbar").onFindAgainCommand(false)
 );
 commandController.registerCallback("cmd_findPrevious", () =>
-  document.getElementById("FindToolbar").onFindAgainCommand(true)
+  document.getElementById("findToolbar").onFindAgainCommand(true)
 );
 commandController.registerCallback("cmd_print", () => {
   top.PrintUtils.startPrintWindow(getMessagePaneBrowser().browsingContext, {});

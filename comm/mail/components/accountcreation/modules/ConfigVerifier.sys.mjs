@@ -32,10 +32,10 @@ export class ConfigVerifier {
   }
 
   /**
-   * @param {nsIURI} url - The URL being processed.
+   * @param {nsIURI} _url - The URL being processed.
    * @see {nsIUrlListener}
    */
-  OnStartRunningUrl() {
+  OnStartRunningUrl(_url) {
     this._log.debug(`Starting to verify configuration;
       email as username=${
         this.config.incoming.username != this.config.identity.emailAddress
@@ -235,10 +235,10 @@ export class ConfigVerifier {
    * This checks a given config, by trying a real connection and login,
    * with username and password.
    *
-   * @param  {AccountConfig} config - The guessed account config.
+   * @param {AccountConfig} config - The guessed account config.
    *   username, password, realname, emailaddress etc. are not filled out,
    *   but placeholders to be filled out via replaceVariables().
-   * @param alter {boolean} - Try other usernames and login schemes, until
+   * @param {boolean} alter - Try other usernames and login schemes, until
    *   login works. Warning: Modifies |config|.
    * @returns {Promise<AccountConfig>} the successful configuration.
    * @throws {Error} when we could guess not the config, either
@@ -284,14 +284,10 @@ export class ConfigVerifier {
       try {
         // Lookup OAuth2 issuer if needed.
         // -- Incoming.
-        if (
-          config.incoming.auth == Ci.nsMsgAuthMethod.OAuth2 &&
-          (!config.incoming.oauthSettings ||
-            !config.incoming.oauthSettings.issuer ||
-            !config.incoming.oauthSettings.scope)
-        ) {
+        if (config.incoming.auth == Ci.nsMsgAuthMethod.OAuth2) {
           const details = OAuth2Providers.getHostnameDetails(
-            config.incoming.hostname
+            config.incoming.hostname,
+            config.incoming.type
           );
           if (!details) {
             reject(
@@ -300,20 +296,12 @@ export class ConfigVerifier {
               )
             );
           }
-          config.incoming.oauthSettings = {
-            issuer: details[0],
-            scope: details[1],
-          };
         }
         // -- Outgoing.
-        if (
-          config.outgoing.auth == Ci.nsMsgAuthMethod.OAuth2 &&
-          (!config.outgoing.oauthSettings ||
-            !config.outgoing.oauthSettings.issuer ||
-            !config.outgoing.oauthSettings.scope)
-        ) {
+        if (config.outgoing.auth == Ci.nsMsgAuthMethod.OAuth2) {
           const details = OAuth2Providers.getHostnameDetails(
-            config.outgoing.hostname
+            config.outgoing.hostname,
+            config.outgoing.type
           );
           if (!details) {
             reject(
@@ -322,10 +310,6 @@ export class ConfigVerifier {
               )
             );
           }
-          config.outgoing.oauthSettings = {
-            issuer: details[0],
-            scope: details[1],
-          };
         }
         if (config.incoming.owaURL) {
           this.server.setUnicharValue("owa_url", config.incoming.owaURL);

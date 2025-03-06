@@ -9,9 +9,6 @@ var { MailServices } = ChromeUtils.importESModule(
 var { AddrBookDirectory } = ChromeUtils.importESModule(
   "resource:///modules/AddrBookDirectory.sys.mjs"
 );
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
 
 XPCOMUtils.defineLazyGlobalGetters(this, ["fetch", "File", "FileReader"]);
 
@@ -216,7 +213,7 @@ async function setPhotoFile(id, file) {
  * Gets the VCardProperties of the given card either directly or by reconstructing
  * from a set of flat standard properties.
  *
- * @param {nsIAbCard/AddrBookCard} card
+ * @param {nsIAbCard|AddrBookCard} card
  * @returns {VCardProperties}
  */
 function vCardPropertiesFromCard(card) {
@@ -231,8 +228,8 @@ function vCardPropertiesFromCard(card) {
 /**
  * Creates a new AddrBookCard from a set of flat standard properties.
  *
- * @param {ContactProperties} properties - a key/value properties object
- * @param {string} uid - optional UID for the card
+ * @param {ContactProperties} properties - A key/value properties object.
+ * @param {string} [uid] - Optional UID for the card.
  * @returns {AddrBookCard}
  */
 function flatPropertiesToAbCard(properties, uid) {
@@ -247,7 +244,7 @@ function flatPropertiesToAbCard(properties, uid) {
  * Checks if the given property is a custom contact property, which can be exposed
  * to WebExtensions.
  *
- * @param {string} name - property name
+ * @param {string} name - Property name.
  * @returns {boolean}
  */
 function isCustomProperty(name) {
@@ -260,14 +257,14 @@ function isCustomProperty(name) {
 
 /**
  * Adds the provided originalProperties to the card, adjusted by the changes
- * given in updateProperties. All banished properties are skipped and the updated
- * properties must be valid according to isCustomProperty().
+ * given in updateProperties. All banished properties are skipped and the
+ *  updated properties must be valid according to isCustomProperty().
  *
- * @param {AddrBookCard} card - a card to receive the provided properties
- * @param {ContactProperties} updateProperties - a key/value object with properties
+ * @param {AddrBookCard} card - A card to receive the provided properties.
+ * @param {ContactProperties} updateProperties - A key/value object with properties.
  *   to update the provided originalProperties
- * @param {nsIProperties} originalProperties - properties to be cloned onto
- *   the provided card
+ * @param {nsIProperties} originalProperties - Properties to be cloned onto
+ *   the provided card.
  */
 function addProperties(card, updateProperties, originalProperties) {
   const updates = Object.entries(updateProperties).filter(e =>
@@ -298,12 +295,11 @@ function addProperties(card, updateProperties, originalProperties) {
  * @implements {nsIAbDirectory}
  */
 class ExtSearchBook extends AddrBookDirectory {
-  constructor(fire, context, args = {}) {
+  constructor(extension, args = {}) {
     super();
-    this.fire = fire;
     this._readOnly = true;
     this._isSecure = Boolean(args.isSecure);
-    this._dirName = String(args.addressBookName ?? context.extension.name);
+    this._dirName = String(args.addressBookName ?? extension.name);
     this._fileName = "";
     this._uid = String(args.id ?? newUID());
     this._uri = "searchaddr://" + this.UID;
@@ -312,7 +308,6 @@ class ExtSearchBook extends AddrBookDirectory {
     this.listNickName = "";
     this.description = "";
     this._dirPrefId = "";
-    this._extension = context.extension;
   }
   /**
    * @see {AddrBookDirectory}
@@ -357,49 +352,12 @@ class ExtSearchBook extends AddrBookDirectory {
   }
   setLocalizedStringValue() {}
   async search(aQuery, aSearchString, aListener) {
-    try {
-      if (this.fire.wakeup) {
-        await this.fire.wakeup();
-      }
-      const { results, isCompleteResult } = await this.fire.async(
-        await addressBookCache.convert(
-          addressBookCache.addressBooks.get(this.UID),
-          this._extension
-        ),
-        aSearchString,
-        aQuery
-      );
-      for (const resultData of results) {
-        let card;
-        // A specified vCard is winning over any individual standard property.
-        // MV3 no longer supports flat properties.
-        if (this._extension.manifest.manifest_version > 2 || resultData.vCard) {
-          const vCard =
-            this._extension.manifest.manifest_version > 2
-              ? resultData
-              : resultData.vCard;
-          try {
-            card = VCardUtils.vCardToAbCard(vCard);
-          } catch (ex) {
-            throw new ExtensionError(`Invalid vCard data: ${vCard}.`);
-          }
-        } else {
-          card = flatPropertiesToAbCard(resultData);
-        }
-        // Add custom properties to the property bag.
-        addProperties(card, resultData);
-        card.directoryUID = this.UID;
-        aListener.onSearchFoundCard(card);
-      }
-      aListener.onSearchFinished(Cr.NS_OK, isCompleteResult, null, "");
-    } catch (ex) {
-      aListener.onSearchFinished(
-        ex.result || Cr.NS_ERROR_FAILURE,
-        true,
-        null,
-        ""
-      );
-    }
+    addressBookCache.emit(
+      `provider-search-request-${this.UID}`,
+      aQuery,
+      aSearchString,
+      aListener
+    );
   }
 }
 
@@ -861,6 +819,9 @@ var addressBookCache = new (class extends EventEmitter {
 })();
 
 this.addressBook = class extends ExtensionAPIPersistent {
+  persistentSearchBooks = [];
+  hasBeenTerminated = false;
+
   PERSISTENT_EVENTS = {
     // For primed persistent events (deactivated background), the context is only
     // available after fire.wakeup() has fulfilled (ensuring the convert() function
@@ -1107,6 +1068,141 @@ this.addressBook = class extends ExtensionAPIPersistent {
       return {
         unregister: () => {
           addressBookCache.off("mailing-list-member-removed", listener);
+        },
+        convert(newFire) {
+          fire = newFire;
+        },
+      };
+    },
+
+    // provider.*
+    onSearchRequest({ fire }, [args]) {
+      const { extension } = this;
+      const isStarting = extension.backgroundState == "starting";
+      const isStopped = extension.backgroundState == "stopped";
+      let dir;
+
+      // The handling of event listeners depends on the current background state
+      // during which the listeners are registered or unregistered (Manifest V3).
+      // starting:
+      //   Event listeners registered in this phase are in top-level background
+      //   code and will be remembered as persistent listeners. They will resume
+      //   the background script, if it has been terminated.
+      //   When the background script is re-run after being resumed, all event
+      //   listeners registered in this phase are usually skipped, except if their
+      //   parameter configuration has changed. In that case the changed listener
+      //   is re-registered with the new parameter configuration, and the old one
+      //   is unregistered during the "running" phase.
+      //
+      // running:
+      //   Event listeners are not registered in top-level code (but at any later
+      //   time) and will not be remembered as persistent listeners. They will
+      //   not resume the background script, and no longer work after background
+      //   termination (except another persistent listener causes the background
+      //   to resume, then it will be re-registered during re-execution of the
+      //   background script).
+      //
+      // suspending:
+      //   All event listeners will be unregistered when the background is being
+      //   terminated during this phase. All listeners remembered as persistent
+      //   will be immediately re-registered in the following "stopped" phase.
+      //
+      // stopped:
+      //   Event listeners registered during this phase are called "primed". The
+      //   background is not running, but these listeners will still be active and
+      //   resume the background script.
+
+      if (isStarting && this.hasBeenTerminated) {
+        throw new ExtensionError(
+          `Re-registering a persistent onSearchRequest listener with different arguments, id=${args.id}.`
+        );
+      }
+
+      const listener = async (event, aQuery, aSearchString, aListener) => {
+        if (fire.wakeup) {
+          await fire.wakeup();
+        }
+
+        try {
+          const { results, isCompleteResult } = await fire.async(
+            await addressBookCache.convert(
+              addressBookCache.addressBooks.get(dir.UID),
+              extension
+            ),
+            aSearchString,
+            aQuery
+          );
+
+          for (const resultData of results) {
+            let card;
+            // A specified vCard is winning over any individual standard property.
+            // MV3 no longer supports flat properties.
+            if (extension.manifest.manifest_version > 2 || resultData.vCard) {
+              const vCard =
+                extension.manifest.manifest_version > 2
+                  ? resultData
+                  : resultData.vCard;
+              try {
+                card = VCardUtils.vCardToAbCard(vCard);
+              } catch (ex) {
+                throw new ExtensionError(`Invalid vCard data: ${vCard}.`);
+              }
+            } else {
+              card = flatPropertiesToAbCard(resultData);
+            }
+            // Add custom properties to the property bag.
+            addProperties(card, resultData);
+            card.directoryUID = dir.UID;
+            aListener.onSearchFoundCard(card);
+          }
+          aListener.onSearchFinished(Cr.NS_OK, isCompleteResult, null, "");
+        } catch (ex) {
+          aListener.onSearchFinished(
+            ex.result || Cr.NS_ERROR_FAILURE,
+            true,
+            null,
+            ""
+          );
+        }
+      };
+
+      if (isStopped) {
+        // This is registering a primed listener (re-executing the exact same
+        // register request with the same arguments), after the background script
+        // has been terminated. Use the already existing persistent directory.
+        dir = this.persistentSearchBooks.shift();
+        // Remember that we have been terminated, to prevent re-registrations of
+        // persistent listeners with changed parameter configurations.
+        this.hasBeenTerminated = true;
+      } else {
+        dir = new ExtSearchBook(extension, args);
+        // Keep track of books of persistent listeners, which must not be removed
+        // during background termination.
+        dir.persistent = isStarting;
+        if (addressBookCache.addressBooks.has(dir.UID)) {
+          throw new ExtensionUtils.ExtensionError(
+            `addressBook with id=${dir.UID} already exists.`
+          );
+        }
+
+        dir.init();
+        MailServices.ab.addAddressBook(dir);
+      }
+
+      addressBookCache.on(`provider-search-request-${dir.UID}`, listener);
+
+      return {
+        unregister: () => {
+          addressBookCache.off(`provider-search-request-${dir.UID}`, listener);
+
+          if (extension.backgroundState == "suspending" && dir.persistent) {
+            // During background termination, all listeners are unregistered. All
+            // persistent listeners will be immediately re-registered as primed
+            // listeners and we should not remove the corresponding address books.
+            this.persistentSearchBooks.push(dir);
+          } else {
+            MailServices.ab.deleteAddressBook(dir.URI);
+          }
         },
         convert(newFire) {
           fire = newFire;
@@ -1623,20 +1719,9 @@ this.addressBook = class extends ExtensionAPIPersistent {
         provider: {
           onSearchRequest: new EventManager({
             context,
-            name: "addressBooks.provider.onSearchRequest",
-            register: (fire, args) => {
-              if (addressBookCache.addressBooks.has(args.id)) {
-                throw new ExtensionUtils.ExtensionError(
-                  `addressBook with id=${args.id} already exists.`
-                );
-              }
-              const dir = new ExtSearchBook(fire, context, args);
-              dir.init();
-              MailServices.ab.addAddressBook(dir);
-              return () => {
-                MailServices.ab.deleteAddressBook(dir.URI);
-              };
-            },
+            module: "addressBook",
+            event: "onSearchRequest",
+            extensionApi: this,
           }).api(),
         },
         contacts: getContactsApi(),

@@ -4,6 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+var { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
+);
+
 ChromeUtils.defineModuleGetter(this, "AppConstants",
                                "resource://gre/modules/AppConstants.jsm");
 ChromeUtils.defineModuleGetter(this, "PlacesUtils",
@@ -123,6 +127,8 @@ function init()
     initApplicationCompatibility();
     initMessages();
 
+    client.list = document.getElementById("user-list");
+
     initCommands();
     initPrefs();
     initMunger();
@@ -171,8 +177,6 @@ function init()
     importFromFrame("changeCSS");
     importFromFrame("scrollToElement");
     importFromFrame("updateMotifSettings");
-    importFromFrame("addUsers");
-    importFromFrame("updateUsers");
     importFromFrame("removeUsers");
 
     processStartupScripts();
@@ -205,9 +209,7 @@ function initStatic()
 
     try
     {
-        const nsISound = Components.interfaces.nsISound;
-        client.sound =
-            Components.classes["@mozilla.org/sound;1"].createInstance(nsISound);
+        client.sound = Cc["@mozilla.org/sound;1"].createInstance(Ci.nsISound);
 
         client.soundList = new Object();
     }
@@ -218,10 +220,9 @@ function initStatic()
 
     try
     {
-        const nsIAlertsService = Components.interfaces.nsIAlertsService;
         client.alert = new Object();
-        client.alert.service =
-          Components.classes["@mozilla.org/alerts-service;1"].getService(nsIAlertsService);
+        client.alert.service = Cc["@mozilla.org/alerts-service;1"]
+                                 .getService(Ci.nsIAlertsService);
         client.alert.alertList = new Object();
         client.alert.floodProtector = new FloodProtector(
             client.prefs['alert.floodDensity'],
@@ -260,9 +261,6 @@ function initStatic()
         setListMode("symbol");
     else
         setListMode("graphic");
-
-    var tree = document.getElementById('user-list');
-    tree.setAttribute("ondragstart", "userlistDNDObserver.onDragStart(event);");
 
     setDebugMode(client.prefs["debugMode"]);
 
@@ -324,7 +322,7 @@ function initStatic()
             {
                 var invalidFile = new nsLocalFile(client.prefs["profilePath"]);
                 invalidFile.append("awayMsgs.invalid");
-                invalidFile.createUnique(FTYPE_FILE, 0o600);
+                invalidFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
                 var msg = getMsg(MSG_ERR_INVALID_FILE,
                                  [awayFile.leafName, invalidFile.leafName]);
                 setTimeout(function() {
@@ -494,8 +492,8 @@ function getFindData(e)
         function init()
         {
             this._init();
-            const FINDSVC_ID = "@mozilla.org/find/find_service;1";
-            var findService = getService(FINDSVC_ID, "nsIFindService");
+            let findService = Cc["@mozilla.org/find/find_service;1"]
+                                .getService(Ci.nsIFindService);
             this.webBrowserFind.wrapFind = findService.wrapFind;
         };
 
@@ -596,7 +594,7 @@ function loadPluginDirectory(localPath, recurse)
     while (enumer.hasMoreElements())
     {
         var entry = enumer.getNext();
-        entry = entry.QueryInterface(Components.interfaces.nsIFile);
+        entry = entry.QueryInterface(Ci.nsIFile);
         if (entry.isDirectory())
             loadPluginDirectory(entry, recurse - 1);
     }
@@ -915,20 +913,9 @@ function updateStalkExpression(network)
 
 function getDefaultFontSize()
 {
-    const PREF_CTRID = "@mozilla.org/preferences-service;1";
-    const nsIPrefService = Components.interfaces.nsIPrefService;
-    const nsIPrefBranch = Components.interfaces.nsIPrefBranch;
-
-    var prefSvc = Components.classes[PREF_CTRID].getService(nsIPrefService);
-    var prefBranch = prefSvc.getBranch(null);
-
     // PX size pref: font.size.variable.x-western
-    var pxSize = 16;
-    try
-    {
-        pxSize = prefBranch.getIntPref("font.size.variable.x-western");
-    }
-    catch(ex) { }
+    var pxSize = Services.prefs.getBranch(null)
+                               .getIntPref("font.size.variable.x-western", 16);
 
     var dpi = 96;
     try
@@ -1041,14 +1028,19 @@ function getUserlistContext(cx)
     if (!cx.channel)
         return cx;
 
-    var user, tree = document.getElementById("user-list");
+    cx.nicknameList = [];
+
+    // Loop through the selection.
+    for (let item of client.list.selectedItems) {
+      cx.nicknameList.push(getNicknameForUserlistRow(item));
+    }
+
     cx.userList = new Array();
     cx.canonNickList = new Array();
-    cx.nicknameList = getSelectedNicknames(tree);
 
     for (var i = 0; i < cx.nicknameList.length; ++i)
     {
-        user = cx.channel.getUser(cx.nicknameList[i])
+        let user = cx.channel.getUser(cx.nicknameList[i])
         cx.userList.push(user);
         cx.canonNickList.push(user.canonicalName);
         if (i == 0)
@@ -1082,8 +1074,8 @@ function getViewsContext(cx)
         var types = ["IRCClient", "IRCNetwork", "IRCDCCChat",
                      "IRCDCCFileTransfer"];
         var typesNetwork = ["IRCNetwork", "IRCChannel", "IRCUser"];
-        var group = String(arrayIndexOf(types, view.TYPE));
-        if (arrayIndexOf(typesNetwork, view.TYPE) != -1)
+        var group = String(types.indexOf(view.TYPE));
+        if (typesNetwork.includes(view.TYPE))
             group = "1-" + getObjectDetails(view).network.viewName;
 
         var sort = group + "-" + view.viewName;
@@ -1146,36 +1138,6 @@ function getViewsContext(cx)
     return cx;
 }
 
-function getSelectedNicknames(tree)
-{
-    var rv = [];
-    if (!tree || !tree.view || !tree.view.selection)
-        return rv;
-    var rangeCount = tree.view.selection.getRangeCount();
-
-    // Loop through the selection ranges.
-    for (var i = 0; i < rangeCount; ++i)
-    {
-        var start = {}, end = {};
-        tree.view.selection.getRangeAt(i, start, end);
-
-        // If they == -1, we've got no selection, so bail.
-        if ((start.value == -1) && (end.value == -1))
-            continue;
-        /* Workaround: Because we use select(-1) instead of clearSelection()
-         * (see bug 197667) the tree will then give us selection ranges
-         * starting from -1 instead of 0! (See bug 319066.)
-         */
-        if (start.value == -1)
-            start.value = 0;
-
-        // Loop through the contents of the current selection range.
-        for (var k = start.value; k <= end.value; ++k)
-            rv.push(getNicknameForUserlistRow(k));
-    }
-    return rv;
-}
-
 function getFontContext(cx)
 {
     if (!cx)
@@ -1229,7 +1191,7 @@ function isStartupURL(url)
     url = makeCanonicalIRCURL(url);
     var list = client.prefs["initialURLs"];
     ensureCachedCanonicalURLs(list);
-    return arrayContains(list.canonicalURLs, url);
+    return list.canonicalURLs.includes(url);
 }
 
 function cycleView(amount)
@@ -1595,28 +1557,6 @@ function doCommand(command)
     }
 }
 
-function doCommandWithParams(command, params)
-{
-    try {
-        var dispatcher = document.commandDispatcher;
-        var controller = dispatcher.getControllerForCommand(command);
-        controller.QueryInterface(Components.interfaces.nsICommandController);
-
-        if (!controller || !controller.isCommandEnabled(command))
-            return;
-
-        var cmdparams = newObject("@mozilla.org/embedcomp/command-params;1",
-                                  "nsICommandParams");
-        for (var i in params)
-            cmdparams.setISupportsValue(i, params[i]);
-
-        controller.doCommandWithParams(command, cmdparams);
-    }
-    catch (e)
-    {
-    }
-}
-
 var testURLs = [
     "irc:",
     "irc://",
@@ -1732,7 +1672,8 @@ function gotoIRCURL(url, e)
 
     if (!url)
     {
-        window.alert(getMsg(MSG_ERR_BAD_IRCURL, urlspec));
+        Services.prompt.alert(window, MSG_ALERT,
+                              getMsg(MSG_ERR_BAD_IRCURL, urlspec));
         return;
     }
 
@@ -1906,8 +1847,8 @@ function gotoIRCURL(url, e)
                  * NOTE: This is always a "#" so that URLs may be compared
                  * properly without involving the server (e.g. off-line).
                  */
-                if ((arrayIndexOf(["#", "&", "+", "!"], target[0]) == -1) &&
-                    (arrayIndexOf(serv.channelTypes, target[0]) == -1))
+                if (!["#", "&", "+", "!"].includes(target[0]) &&
+                    !serv.channelTypes.includes(target[0]))
                 {
                     target = "#" + target;
                 }
@@ -1923,7 +1864,7 @@ function gotoIRCURL(url, e)
                     key = window.promptPassword(getMsg(MSG_URL_KEY, url.spec));
             }
             client.pendingViewContext = e;
-            d = {channelToJoin: chan, key: key};
+            let d = {channelToJoin: chan, key: key};
             targetObject = network.dispatch("join", d);
             delete client.pendingViewContext;
 
@@ -2036,10 +1977,6 @@ function updateAlertIcon(aToggle) {
 
 function initOfflineIcon()
 {
-    const PRBool_CID = "@mozilla.org/supports-PRBool;1";
-    const OS_CID = "@mozilla.org/observer-service;1";
-    const nsISupportsPRBool = Components.interfaces.nsISupportsPRBool;
-
     client.offlineObserver = {
         _element: document.getElementById("offline-status"),
         state: function offline_state()
@@ -2055,7 +1992,7 @@ function initOfflineIcon()
                 var rv = confirmEx(MSG_GOING_OFFLINE, buttonAry);
                 if (rv == 1) // Don't go offline, please!
                 {
-                    subject.QueryInterface(nsISupportsPRBool);
+                    subject.QueryInterface(Ci.nsISupportsPRBool);
                     subject.data = true;
                 }
             }
@@ -2086,7 +2023,8 @@ function initOfflineIcon()
         {
             try
             {
-                var canGoOffline = newObject(PRBool_CID, "nsISupportsPRBool");
+                var canGoOffline = Cc["@mozilla.org/supports-PRBool;1"]
+                                     .createInstance(Ci.nsISupportsPRBool);
                 Services.obs.notifyObservers(canGoOffline, "offline-requested");
                 // Someone called for a halt
                 if (canGoOffline.data)
@@ -2114,15 +2052,8 @@ function uninitOfflineIcon()
 }
 
 client.idleObserver = {
-    QueryInterface: function io_qi(iid)
-    {
-        if (!iid || (!iid.equals(Components.interfaces.nsIObserver) &&
-                     !iid.equals(Components.interfaces.nsISupports)))
-        {
-            throw Components.results.NS_ERROR_NO_INTERFACE;
-        }
-        return this;
-    },
+    QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver]),
+
     observe: function io_observe(subject, topic, data)
     {
         if ((topic == "idle") && !client.prefs["away"])
@@ -2146,22 +2077,9 @@ function initIdleAutoAway(timeout)
     if (!timeout)
         return;
 
-    var is = getService("@mozilla.org/widget/idleservice;1", "nsIIdleService");
-    if (!is)
-    {
-        display(MSG_ERR_NO_IDLESERVICE, MT_WARN);
-        client.prefs["autoIdleTime"] = 0;
-        return;
-    }
-
-    try
-    {
-        is.addIdleObserver(client.idleObserver, timeout * 60);
-    }
-    catch (ex)
-    {
-        display(formatException(ex), MT_ERROR);
-    }
+    let idleService = Cc["@mozilla.org/widget/idleservice;1"]
+                        .getService(Ci.nsIIdleService);
+    idleService.addIdleObserver(client.idleObserver, timeout * 60);
 }
 
 function uninitIdleAutoAway(timeout)
@@ -2170,18 +2088,9 @@ function uninitIdleAutoAway(timeout)
     if (!timeout)
         return;
 
-    var is = getService("@mozilla.org/widget/idleservice;1", "nsIIdleService");
-    if (!is)
-        return;
-
-    try
-    {
-        is.removeIdleObserver(client.idleObserver, timeout * 60);
-    }
-    catch (ex)
-    {
-        display(formatException(ex), MT_ERROR);
-    }
+    let idleService = Cc["@mozilla.org/widget/idleservice;1"]
+                        .getService(Ci.nsIIdleService);
+    idleService.removeIdleObserver(client.idleObserver, timeout * 60);
 }
 
 function updateAppMotif(motifURL)
@@ -2385,9 +2294,8 @@ function updateUserlistSide(shouldBeLeft)
         listParent.appendChild(listParent.childNodes[0]);
         listParent.childNodes[1].setAttribute("collapse", "after");
     }
-    var userlist = document.getElementById("user-list")
     if (client.currentObject && (client.currentObject.TYPE == "IRCChannel"))
-        userlist.view = client.currentObject.userList;
+        client.currentObject.updateUserList(true);
 }
 
 function multilineInputMode (state)
@@ -2443,11 +2351,14 @@ function displayCertificateInfo()
 
     if (!o.server.isSecure)
     {
-        alert(getMsg(MSG_INSECURE_SERVER, o.server.hostname));
+        Services.prompt.alert(window, MSG_ALERT,
+                              getMsg(MSG_INSECURE_SERVER, o.server.hostname));
         return;
     }
 
-    viewCert(o.server.connection.getCertificate());
+    let cd = Cc["@mozilla.org/nsCertificateDialogs;1"]
+               .getService(Ci.nsICertificateDialogs);
+    cd.viewCert(window, o.server.connection.getCertificate());
 }
 
 function onLoggingIcon() {
@@ -2538,8 +2449,7 @@ function setCurrentObject (obj)
     if (obj.frame && getContentWindow(obj.frame))
         window.content = getContentWindow(obj.frame);
 
-    var tb, userList;
-    userList = document.getElementById("user-list");
+    var tb;
 
     if ("currentObject" in client && client.currentObject)
         tb = getTabForObject(client.currentObject);
@@ -2554,11 +2464,14 @@ function setCurrentObject (obj)
     client.currentObject = obj;
 
     // Update userlist:
-    userList.view = null;
+    while (client.list.firstChild &&
+           client.list.firstChild.localName == "listitem")
+    {
+        client.list.firstChild.remove();
+    }
     if (obj.TYPE == "IRCChannel")
     {
-        userList.view = obj.userList;
-        updateUserList();
+        obj.updateUserList(true);
     }
 
     tb = dispatch("create-tab-for-view", { view: obj });
@@ -2619,10 +2532,9 @@ function advanceKeyboardFocus(amount)
 {
     var contentWin = getContentWindow(client.currentObject.frame);
     var contentDoc = getContentDocument(client.currentObject.frame);
-    var userList = document.getElementById("user-list");
 
     // Focus userlist, inputbox and outputwindow in turn:
-    var focusableElems = [userList, client.input.inputField, contentWin];
+    var focusableElems = [client.list, client.input.inputField, contentWin];
 
     var elem = document.commandDispatcher.focusedElement;
     // Finding focus in the content window is "hard". It's going to be null
@@ -2631,7 +2543,7 @@ function advanceKeyboardFocus(amount)
     if (!elem || (elem.ownerDocument == contentDoc))
         elem = contentWin;
 
-    var newIndex = (arrayIndexOf(focusableElems, elem) * 1 + 3 + amount) % 3;
+    var newIndex = (focusableElems.indexOf(elem) + 3 + amount) % 3;
     focusableElems[newIndex].focus();
 
     // Make it obvious this element now has focus.
@@ -2792,49 +2704,15 @@ function setDebugMode(mode)
 
 function setListMode(mode)
 {
-    var elem = document.getElementById("user-list");
     if (mode)
-        elem.setAttribute("mode", mode);
+        client.list.setAttribute("mode", mode);
     else
-        elem.removeAttribute("mode");
-    if (elem && elem.view && elem.treeBoxObject)
-    {
-        elem.treeBoxObject.clearStyleAndImageCaches();
-        elem.treeBoxObject.invalidate();
-    }
+        client.list.removeAttribute("mode");
 }
 
-function updateUserList()
+function getNicknameForUserlistRow(item)
 {
-    var node, chan;
-
-    node = document.getElementById("user-list");
-    if (!node.view)
-        return;
-
-    if (("currentObject" in client) && client.currentObject &&
-        client.currentObject.TYPE == "IRCChannel")
-    {
-        reSortUserlist(client.currentObject);
-    }
-}
-
-function reSortUserlist(channel)
-{
-    if (!channel || !channel.userList)
-        return;
-    channel.userList.childData.reSort();
-}
-
-function getNicknameForUserlistRow(index)
-{
-    // This wouldn't be so hard if APIs didn't change so much... see bug 221619
-    var userlist = document.getElementById("user-list");
-    if (userlist.columns)
-        var col = userlist.columns.getNamedColumn("usercol");
-    else
-        col = "usercol";
-    return userlist.view.getCellText(index, col);
+    return item.getAttribute("label");
 }
 
 function getFrameForDOMWindow(window)
@@ -2910,12 +2788,11 @@ function qi(iid)
 client.progressListener.onStateChange =
 function client_statechange (webProgress, request, stateFlags, status)
 {
-    const nsIWebProgressListener = Components.interfaces.nsIWebProgressListener;
-    const START = nsIWebProgressListener.STATE_START;
-    const STOP = nsIWebProgressListener.STATE_STOP;
-    const IS_NETWORK = nsIWebProgressListener.STATE_IS_NETWORK;
-    const IS_DOCUMENT = nsIWebProgressListener.STATE_IS_DOCUMENT;
-    const IS_REQUEST = nsIWebProgressListener.STATE_IS_REQUEST;
+    const START = Ci.nsIWebProgressListener.STATE_START;
+    const STOP = Ci.nsIWebProgressListener.STATE_STOP;
+    const IS_NETWORK = Ci.nsIWebProgressListener.STATE_IS_NETWORK;
+    const IS_DOCUMENT = Ci.nsIWebProgressListener.STATE_IS_DOCUMENT;
+    const IS_REQUEST = Ci.nsIWebProgressListener.STATE_IS_REQUEST;
 
     var frame;
     //dd("progressListener.onStateChange(" + stateFlags.toString(16) + ")");
@@ -3034,23 +2911,8 @@ function cli_installPlugin(name, source)
             throw CZ_PI_ABORT;
         }
     };
-    function getZipEntry(reader, entryEnum)
-    {
-        // nsIZipReader was rewritten...
-        var itemName = entryEnum.getNext();
-        if (typeof itemName != "string")
-            name = itemName.QueryInterface(nsIZipEntry).name;
-        return itemName;
-    };
-    function checkZipMore(items)
-    {
-        return (("hasMoreElements" in items) && items.hasMoreElements()) ||
-               (("hasMore" in items) && items.hasMore());
-    };
 
-    const DIRECTORY_TYPE = Components.interfaces.nsIFile.DIRECTORY_TYPE;
     const CZ_PI_ABORT = "CZ_PI_ABORT";
-    const nsIZipEntry = Components.interfaces.nsIZipEntry;
 
     var dest;
     // Find a suitable location if there was none specified.
@@ -3103,8 +2965,8 @@ function cli_installPlugin(name, source)
     {
         try
         {
-            var zipReader = newObject("@mozilla.org/libjar/zip-reader;1",
-                                      "nsIZipReader");
+            var zipReader = Cc["@mozilla.org/libjar/zip-reader;1"]
+                              .createInstance(Ci.nsIZipReader);
             zipReader.open(source);
 
             // This is set to the base path found on ALL items in the zip file.
@@ -3115,9 +2977,9 @@ function cli_installPlugin(name, source)
 
             // Look for init.js within a directory...
             var items = zipReader.findEntries("*/init.js");
-            while (checkZipMore(items))
+            while (items.hasMore())
             {
-                var itemName = getZipEntry(zipReader, items);
+                var itemName = items.getNext();
                 // Do we already have one?
                 if (zipPathBase)
                 {
@@ -3135,9 +2997,9 @@ function cli_installPlugin(name, source)
                 // instead (which will probably cause it to not work because the
                 // init.js isn't in the right place).
                 items = zipReader.findEntries("*");
-                while (checkZipMore(items))
+                while (items.hasMore())
                 {
-                    itemName = getZipEntry(zipReader, items);
+                    itemName = items.getNext();
                     if (itemName.substr(0, zipPathBase.length) != zipPathBase)
                     {
                         display(MSG_INSTALL_PLUGIN_ERR_MIXED_BASE, MT_WARN);
@@ -3152,7 +3014,7 @@ function cli_installPlugin(name, source)
                                          "install-plugin.temp");
             zipReader.extract(initPath, initJSFile);
             initJSFile.permissions = 438; // 0666
-            var initJSFileH = fopen(initJSFile, "<");
+            var initJSFileH = new LocalFile(initJSFile, "<");
             var initJSData = initJSFileH.read();
             initJSFileH.close();
             initJSFile.remove(false);
@@ -3169,14 +3031,14 @@ function cli_installPlugin(name, source)
             dest.append(name);
             checkPluginInstalled(name, dest);
 
-            dest.create(DIRECTORY_TYPE, 0o700);
+            dest.create(Ci.nsIFile.DIRECTORY_TYPE, 0o700);
 
             // Actually extract files...
             var destInit;
             items = zipReader.findEntries("*");
-            while (checkZipMore(items))
+            while (items.hasMore())
             {
-                itemName = getZipEntry(zipReader, items);
+                itemName = items.getNext();
                 if (!itemName.match(/\/$/))
                 {
                     var dirs = itemName;
@@ -3191,7 +3053,7 @@ function cli_installPlugin(name, source)
                     {
                         zipFile.append(dirs[i]);
                         if (!zipFile.exists())
-                            zipFile.create(DIRECTORY_TYPE, 0o700);
+                            zipFile.create(Ci.nsIFile.DIRECTORY_TYPE, 0o700);
                     }
                     zipFile.append(dirs[dirs.length - 1]);
 
@@ -3235,7 +3097,7 @@ function cli_installPlugin(name, source)
         try
         {
             // Test init.js for a plugin ID.
-            var initJSFileH = fopen(source, "<");
+            var initJSFileH = new LocalFile(source, "<");
             var initJSData = initJSFileH.read();
             initJSFileH.close();
 
@@ -3250,11 +3112,11 @@ function cli_installPlugin(name, source)
             dest.append(name);
             checkPluginInstalled(name, dest);
 
-            dest.create(DIRECTORY_TYPE, 0o700);
+            dest.create(Ci.nsIFile.DIRECTORY_TYPE, 0o700);
 
             dest.append("init.js");
 
-            var destFile = fopen(dest, ">");
+            var destFile = new LocalFile(dest, ">");
             destFile.write(initJSData);
             destFile.close();
 
@@ -3302,10 +3164,7 @@ function cli_uninstallPlugin(plugin)
 
 function syncOutputFrame(obj, nesting)
 {
-    const nsIWebProgress = Components.interfaces.nsIWebProgress;
-    const WINDOW = nsIWebProgress.NOTIFY_STATE_WINDOW;
-    const NETWORK = nsIWebProgress.NOTIFY_STATE_NETWORK;
-    const ALL = nsIWebProgress.NOTIFY_ALL;
+    const ALL = Ci.nsIWebProgress.NOTIFY_ALL;
 
     var iframe = obj.frame;
 
@@ -3421,7 +3280,7 @@ function getTabForObject(source, create)
         }
 
         var viewKey = Number(tb.getAttribute("viewKey"));
-        arrayRemoveAt(client.viewsArray, viewKey);
+        client.viewsArray.splice(viewKey, 1);
         for (i = viewKey; i < client.viewsArray.length; i++)
             client.viewsArray[i].tb.setAttribute("viewKey", i);
         client.tabs.removeChild(tb);
@@ -3478,11 +3337,7 @@ function getTabForObject(source, create)
 
         if (!("userList" in source) && (source.TYPE == "IRCChannel"))
         {
-            source.userListShare = new Object();
-            source.userList = new XULTreeView(source.userListShare);
-            source.userList.getRowProperties = ul_getrowprops;
-            source.userList.getCellProperties = ul_getcellprops;
-            source.userList.childData.setSortDirection(1);
+            source.userList = new Array();
         }
     }
 
@@ -3500,7 +3355,7 @@ function getTabForObject(source, create)
     if (beforeTab)
     {
         var viewKey = beforeTab.getAttribute("viewKey");
-        arrayInsertAt(client.viewsArray, viewKey, {source: source, tb: tb});
+        client.viewsArray.splice(viewKey, 0, {source: source, tb: tb});
         for (i = viewKey; i < client.viewsArray.length; i++)
             client.viewsArray[i].tb.setAttribute("viewKey", i);
         client.tabs.insertBefore(tb, beforeTab);
@@ -3576,49 +3431,6 @@ function updateTabAttributes()
     }
 }
 
-// Properties getter for user list tree view
-function ul_getrowprops(index)
-{
-    if ((index < 0) || (index >= this.childData.childData.length))
-    {
-        return "";
-    }
-
-    // See bug 432482 - work around Gecko deficiency.
-    if (!this.selection.isSelected(index))
-    {
-        return "unselected";
-    }
-
-    return "";
-}
-
-// Properties getter for user list tree view
-function ul_getcellprops(index, column)
-{
-    if ((index < 0) || (index >= this.childData.childData.length))
-    {
-        return "";
-    }
-
-    var resultProps = [];
-
-    // See bug 432482 - work around Gecko deficiency.
-    if (!this.selection.isSelected(index))
-        resultProps.push("unselected");
-
-    var userObj = this.childData.childData[index]._userObj;
-
-    resultProps.push("voice-" + userObj.isVoice);
-    resultProps.push("op-" + userObj.isOp);
-    resultProps.push("halfop-" + userObj.isHalfOp);
-    resultProps.push("admin-" + userObj.isAdmin);
-    resultProps.push("founder-" + userObj.isFounder);
-    resultProps.push("away-" + userObj.isAway);
-
-    return resultProps.join(" ");
-}
-
 var contentDNDObserver = {
   onDragOver(aEvent) {
     if (aEvent.target == aEvent.dataTransfer.mozSourceNode)
@@ -3635,7 +3447,9 @@ var contentDNDObserver = {
     if (!url || url.search(client.linkRE) == -1)
         return;
 
-    if (url.search(/\.css$/i) != -1  && confirm(getMsg(MSG_TABDND_DROP, url)))
+    if (url.search(/\.css$/i) != -1 &&
+        Services.prompt.confirm(window, MSG_CONFIRM,
+                                getMsg(MSG_TABDND_DROP, url)))
         dispatch("motif", {"motif": url});
     else if (url.search(/^ircs?:\/\//i) != -1)
         dispatch("goto-url", {"url": url});
@@ -3747,24 +3561,6 @@ var tabsDNDObserver = {
   },
 }
 
-var userlistDNDObserver = {
-  onDragStart(aEvent) {
-    var col = {};
-    var row = {};
-    var cell = {};
-    var tree = document.getElementById('user-list');
-    tree.treeBoxObject.getCellAt(aEvent.clientX, aEvent.clientY,
-                                 row, col, cell);
-    // Check whether we're actually on a normal row and cell
-    if (!cell.value || (row.value == -1))
-        return;
-
-    var nickname = getNicknameForUserlistRow(row.value);
-    aEvent.dataTransfer.setData("text/unicode", nickname);
-    aEvent.dataTransfer.setData("text/plain", nickname);
-  },
-}
-
 function deleteTab(tb)
 {
     if (!ASSERT(tb.hasAttribute("viewKey"),
@@ -3778,7 +3574,7 @@ function deleteTab(tb)
     // Re-index higher tabs.
     for (var i = key + 1; i < client.viewsArray.length; i++)
         client.viewsArray[i].tb.setAttribute("viewKey", i - 1);
-    arrayRemoveAt(client.viewsArray, key);
+    client.viewsArray.splice(key, 1);
     client.tabs.removeChild(tb);
     setTimeout(updateTabAttributes, 0);
 
@@ -3787,8 +3583,7 @@ function deleteTab(tb)
 
 function deleteFrame(view)
 {
-    const nsIWebProgress = Components.interfaces.nsIWebProgress;
-    const ALL = nsIWebProgress.NOTIFY_ALL;
+    const ALL = Ci.nsIWebProgress.NOTIFY_ALL;
 
     // We leave the progress listener attached so try to remove it.
     try
@@ -3999,29 +3794,6 @@ client.getURL =
 function cli_geturl ()
 {
     return "irc://";
-}
-
-client.load =
-function cli_load(url, scope)
-{
-    if (!("_loader" in client))
-    {
-        const LOADER_CTRID = "@mozilla.org/moz/jssubscript-loader;1";
-        const mozIJSSubScriptLoader =
-            Components.interfaces.mozIJSSubScriptLoader;
-
-        var cls;
-        if ((cls = Components.classes[LOADER_CTRID]))
-            client._loader = cls.getService(mozIJSSubScriptLoader);
-    }
-
-    if (client._loader.loadSubScriptWithOptions)
-    {
-        var opts = {target: scope, ignoreCache: true};
-        return client._loader.loadSubScriptWithOptions(url, opts);
-    }
-
-    return client._loader.loadSubScript(url, scope);
 }
 
 client.sayToCurrentTarget =
@@ -5162,17 +4934,27 @@ function cli_promptToSaveLogin(url, type, username, password)
     var checkState = { value: true };
     var rv = confirmEx(getMsg(MSG_LOGIN_CONFIRM, name), buttons, 0,
                        MSG_LOGIN_PROMPT, checkState);
-    if (rv == 0)
-    {
-        client.prefs["login.promptToSave"] = checkState.value;
+    if (rv != 0)
+        return;
 
-        var updated = addOrUpdateLogin(url, type, username, password);
-        if (updated) {
-            display(getMsg(MSG_LOGIN_UPDATED, name), MT_INFO);
-        } else {
-            display(getMsg(MSG_LOGIN_ADDED, name), MT_INFO);
-        }
+    client.prefs["login.promptToSave"] = checkState.value;
+
+    username = username.toLowerCase();
+    var newinfo = Cc["@mozilla.org/login-manager/loginInfo;1"]
+                    .createInstance(Ci.nsILoginInfo);
+    newinfo.init(url, null, type, username, password, "", "");
+    var oldinfo = getLogin(url, type, username);
+
+    if (oldinfo) {
+        // Update login.
+        Services.logins.modifyLogin(oldinfo, newinfo);
+        display(getMsg(MSG_LOGIN_UPDATED, name), MT_INFO);
+        return;
     }
+
+    // Add login.
+    Services.logins.addLogin(newinfo);
+    display(getMsg(MSG_LOGIN_ADDED, name), MT_INFO);
 }
 
 client.tryToGetLogin =
@@ -5181,7 +4963,7 @@ function cli_tryToGetLogin(url, type, username, existing, needpass,
 {
     // Password is optional. If it is not given, we look for a saved password
     // first. If there isn't one, we potentially use a safe prompt.
-    var info = getLogin(url, type, username);
+    var info = getLogin(url, type, username.toLowerCase());
     var stored = (info && info.password) ? info.password : "";
     var promptToSave = false;
     if (!existing && stored) {
@@ -5255,17 +5037,16 @@ function cli_startlog(view, showMessage)
         return Infinity;
     };
 
-    const NORMAL_FILE_TYPE = Components.interfaces.nsIFile.NORMAL_FILE_TYPE;
-
     try
     {
         var file = new LocalFile(view.prefs["logFileName"]);
         if (!file.localFile.exists())
         {
             // futils.umask may be 0022. Result is 0644.
-            file.localFile.create(NORMAL_FILE_TYPE, 0o666 & ~futils.umask);
+            file.localFile.create(Ci.nsIFile.NORMAL_FILE_TYPE,
+                                  0o666 & ~futils.umask);
         }
-        view.logFile = fopen(file.localFile, ">>");
+        view.logFile = new LocalFile(file.localFile, ">>");
         // If we're here, it's safe to say when we should re-open:
         view.nextLogFileDate = getNextLogFileDate();
     }
@@ -5292,6 +5073,12 @@ function cli_stoplog(view, showMessage)
         view.logFile.close();
         view.logFile = null;
     }
+}
+
+function getLogin(url, realm, username)
+{
+    let logins = Services.logins.findLogins({}, url, null, realm);
+    return logins.find((login) => login.username === username);
 }
 
 function checkLogFiles()
@@ -5368,6 +5155,10 @@ function getlcfn()
             {
                 return details.server.toLowerCase(text);
             }
+    }
+    else
+    {
+        lcFn = function(text) { return text.toLowerCase(); }
     }
 
     return lcFn;
@@ -5634,4 +5425,32 @@ function showEventAlerts (type, event, message, nick, o, thisp, msgtype)
     {
         // yup. it is probably a MAC or NsIAlertsService is not initialized
     }
+}
+
+function matchEntry(partialName, list, lcFn)
+{
+    function utils_lcfn(text)
+    {
+        return text.toLowerCase();
+    };
+
+    let ary = new Array();
+
+    if ((typeof partialName == "undefined") || (String(partialName) == ""))
+    {
+        for (let i in list)
+            ary.push(i);
+        return ary;
+    }
+
+    if (typeof lcFn != "function")
+        lcFn = utils_lcfn;
+
+    for (let i in list)
+    {
+        if (lcFn(list[i]).indexOf(lcFn(partialName)) == 0)
+            ary.push(i);
+    }
+
+    return ary;
 }

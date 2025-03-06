@@ -9,6 +9,7 @@ import android.os.Parcelable
 import android.util.AttributeSet
 import android.util.JsonReader
 import androidx.annotation.VisibleForTesting
+import mozilla.components.browser.engine.fission.GeckoWebContentIsolationMapper.intoWebContentIsolationStrategy
 import mozilla.components.browser.engine.gecko.activity.GeckoActivityDelegate
 import mozilla.components.browser.engine.gecko.activity.GeckoScreenOrientationDelegate
 import mozilla.components.browser.engine.gecko.ext.getAntiTrackingPolicy
@@ -40,6 +41,7 @@ import mozilla.components.concept.engine.activity.ActivityDelegate
 import mozilla.components.concept.engine.activity.OrientationDelegate
 import mozilla.components.concept.engine.content.blocking.TrackerLog
 import mozilla.components.concept.engine.content.blocking.TrackingProtectionExceptionStorage
+import mozilla.components.concept.engine.fission.WebContentIsolationStrategy
 import mozilla.components.concept.engine.history.HistoryTrackingDelegate
 import mozilla.components.concept.engine.mediaquery.PreferredColorScheme
 import mozilla.components.concept.engine.serviceworker.ServiceWorkerDelegate
@@ -80,6 +82,8 @@ import org.mozilla.geckoview.TranslationsController
 import org.mozilla.geckoview.WebExtensionController
 import org.mozilla.geckoview.WebNotification
 import java.lang.ref.WeakReference
+
+typealias NativePermissionPromptResponse = org.mozilla.geckoview.WebExtension.PermissionPromptResponse
 
 /**
  * Gecko-based implementation of Engine interface.
@@ -342,20 +346,26 @@ class GeckoEngine(
         this.webExtensionDelegate = webExtensionDelegate
 
         val promptDelegate = object : WebExtensionController.PromptDelegate {
-            override fun onInstallPrompt(
+
+            override fun onInstallPromptRequest(
                 ext: org.mozilla.geckoview.WebExtension,
                 permissions: Array<out String>,
                 origins: Array<out String>,
-            ): GeckoResult<AllowOrDeny>? {
-                val result = GeckoResult<AllowOrDeny>()
+            ): GeckoResult<NativePermissionPromptResponse>? {
+                val result = GeckoResult<NativePermissionPromptResponse>()
 
                 webExtensionDelegate.onInstallPermissionRequest(
                     GeckoWebExtension(ext, runtime),
                     // We pass both permissions and origins as a single list of
                     // permissions to be shown to the user.
                     permissions.toList() + origins.toList(),
-                ) { allow ->
-                    if (allow) result.complete(AllowOrDeny.ALLOW) else result.complete(AllowOrDeny.DENY)
+                ) { data ->
+                    result.complete(
+                        NativePermissionPromptResponse(
+                            data.isPermissionsGranted,
+                            data.isPrivateModeGranted,
+                        ),
+                    )
                 }
 
                 return result
@@ -1331,6 +1341,54 @@ class GeckoEngine(
         override var globalPrivacyControlEnabled: Boolean
             get() = runtime.settings.globalPrivacyControl
             set(value) { runtime.settings.setGlobalPrivacyControl(value) }
+
+        override var fingerprintingProtection: Boolean
+            get() = runtime.settings.fingerprintingProtection
+            set(value) { runtime.settings.setFingerprintingProtection(value) }
+
+        override var fingerprintingProtectionPrivateBrowsing: Boolean
+            get() = runtime.settings.fingerprintingProtectionPrivateBrowsing
+            set(value) { runtime.settings.setFingerprintingProtectionPrivateBrowsing(value) }
+
+        override var fingerprintingProtectionOverrides: String?
+            get() = runtime.settings.fingerprintingProtectionOverrides
+            set(value) {
+                value?.let { runtime.settings.setFingerprintingProtectionOverrides(it) }
+            }
+
+        override var fdlibmMathEnabled: Boolean
+            get() = runtime.settings.fdlibmMathEnabled
+            set(value) { runtime.settings.setFdlibmMathEnabled(value) }
+
+        override var userCharacteristicPingCurrentVersion: Int
+            get() = runtime.settings.userCharacteristicPingCurrentVersion
+            set(value) { runtime.settings.setUserCharacteristicPingCurrentVersion(value) }
+
+        override var webContentIsolationStrategy: WebContentIsolationStrategy?
+            get() = runtime.settings.webContentIsolationStrategy?.intoWebContentIsolationStrategy()
+            set(value) {
+                value?.let { runtime.settings.setWebContentIsolationStrategy(it.intoWebContentIsolationStrategy()) }
+            }
+
+        override var fetchPriorityEnabled: Boolean
+            get() = runtime.settings.fetchPriorityEnabled
+            set(value) { runtime.settings.setFetchPriorityEnabled(value) }
+
+        override var parallelMarkingEnabled: Boolean
+            get() = runtime.settings.parallelMarkingEnabled
+            set(value) { runtime.settings.setParallelMarkingEnabled(value) }
+
+        override var cookieBehaviorOptInPartitioning: Boolean
+            get() = runtime.settings.cookieBehaviorOptInPartitioning
+            set(value) { runtime.settings.setCookieBehaviorOptInPartitioning(value) }
+
+        override var cookieBehaviorOptInPartitioningPBM: Boolean
+            get() = runtime.settings.cookieBehaviorOptInPartitioningPBM
+            set(value) { runtime.settings.setCookieBehaviorOptInPartitioningPBM(value) }
+
+        override var certificateTransparencyMode: Int
+            get() = runtime.settings.certificateTransparencyMode
+            set(value) { runtime.settings.setCertificateTransparencyMode(value) }
     }.apply {
         defaultSettings?.let {
             this.javascriptEnabled = it.javascriptEnabled
@@ -1356,7 +1414,18 @@ class GeckoEngine(
             this.cookieBannerHandlingGlobalRules = it.cookieBannerHandlingGlobalRules
             this.cookieBannerHandlingGlobalRulesSubFrames = it.cookieBannerHandlingGlobalRulesSubFrames
             this.globalPrivacyControlEnabled = it.globalPrivacyControlEnabled
+            this.fingerprintingProtection = it.fingerprintingProtection
+            this.fingerprintingProtectionPrivateBrowsing = it.fingerprintingProtectionPrivateBrowsing
+            this.fingerprintingProtectionOverrides = it.fingerprintingProtectionOverrides
+            this.fdlibmMathEnabled = it.fdlibmMathEnabled
             this.emailTrackerBlockingPrivateBrowsing = it.emailTrackerBlockingPrivateBrowsing
+            this.userCharacteristicPingCurrentVersion = it.userCharacteristicPingCurrentVersion
+            this.webContentIsolationStrategy = it.webContentIsolationStrategy
+            this.fetchPriorityEnabled = it.fetchPriorityEnabled
+            this.parallelMarkingEnabled = it.parallelMarkingEnabled
+            this.cookieBehaviorOptInPartitioning = it.cookieBehaviorOptInPartitioning
+            this.cookieBehaviorOptInPartitioningPBM = it.cookieBehaviorOptInPartitioningPBM
+            this.certificateTransparencyMode = it.certificateTransparencyMode
         }
     }
 
@@ -1502,6 +1571,7 @@ internal fun ContentBlockingController.LogEntry.BlockingData.unBlockedBySmartBlo
 internal fun ContentBlockingController.LogEntry.BlockingData.getBlockedCategory(): TrackingCategory {
     return when (category) {
         Event.BLOCKED_FINGERPRINTING_CONTENT -> TrackingCategory.FINGERPRINTING
+        Event.BLOCKED_SUSPICIOUS_FINGERPRINTING -> TrackingCategory.FINGERPRINTING
         Event.BLOCKED_CRYPTOMINING_CONTENT -> TrackingCategory.CRYPTOMINING
         Event.BLOCKED_SOCIALTRACKING_CONTENT, Event.COOKIES_BLOCKED_SOCIALTRACKER -> TrackingCategory.MOZILLA_SOCIAL
         Event.BLOCKED_TRACKING_CONTENT -> TrackingCategory.SCRIPTS_AND_SUB_RESOURCES
@@ -1513,6 +1583,6 @@ internal fun InstallationMethod.toGeckoInstallationMethod(): String? {
     return when (this) {
         InstallationMethod.MANAGER -> WebExtensionController.INSTALLATION_METHOD_MANAGER
         InstallationMethod.FROM_FILE -> WebExtensionController.INSTALLATION_METHOD_FROM_FILE
-        else -> null
+        InstallationMethod.ONBOARDING -> WebExtensionController.INSTALLATION_METHOD_ONBOARDING
     }
 }

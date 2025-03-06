@@ -7,6 +7,10 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 
+ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
+});
+
 XPCOMUtils.defineLazyServiceGetter(
   lazy,
   "protocolSvc",
@@ -15,44 +19,23 @@ XPCOMUtils.defineLazyServiceGetter(
 );
 
 /**
- * Extract the href from the link click event.
- * We look for HTMLAnchorElement, HTMLAreaElement, HTMLLinkElement,
- * and nested anchor tags.
+ * Extract the target from the link node and determine, if the link can be
+ * navigated to directly, or needs to be opened in a new tab.
  *
- * @returns {string} the url for the link being clicked.
+ * @param {?DOMNode} linkNode
+ * @param {DOMWindow} window - the window which initiated the actor event
+ *
+ * @returns {boolean}
  */
-function hRefForClickEvent(aEvent) {
-  const target = aEvent.target;
-
-  if (
-    HTMLImageElement.isInstance(target) &&
-    target.hasAttribute("overflowing")
-  ) {
-    // Click on zoomed image.
-    return [null, null];
+function canNavigate(linkNode, window) {
+  const target = linkNode?.getAttribute("target");
+  if (!target) {
+    return true;
   }
-
-  let href = null;
-  if (
-    HTMLAnchorElement.isInstance(target) ||
-    HTMLAreaElement.isInstance(target) ||
-    HTMLLinkElement.isInstance(target)
-  ) {
-    if (target.hasAttribute("href") && !target.download) {
-      href = target.href;
-    }
-  } else {
-    // We may be nested inside of a link node.
-    let linkNode = aEvent.target;
-    while (linkNode && !HTMLAnchorElement.isInstance(linkNode)) {
-      linkNode = linkNode.parentNode;
-    }
-
-    if (linkNode && !linkNode.download) {
-      href = linkNode.href;
-    }
+  if (window.windowGlobalChild.findBrowsingContextWithName(target)) {
+    return true;
   }
-  return href;
+  return false;
 }
 
 /**
@@ -79,7 +62,8 @@ export class LinkClickHandlerChild extends JSWindowActorChild {
       return;
     }
 
-    const eventHRef = hRefForClickEvent(event);
+    const [eventHRef, linkNode] =
+      lazy.BrowserUtils.hrefAndLinkNodeForClickEvent(event) || [];
     if (!eventHRef) {
       return;
     }
@@ -88,8 +72,15 @@ export class LinkClickHandlerChild extends JSWindowActorChild {
     const eventURI = Services.io.newURI(eventHRef);
 
     try {
+      // Avoid using the eTLD service, and this also works for IP addresses.
       if (pageURI.host == eventURI.host) {
-        // Avoid using the eTLD service, and this also works for IP addresses.
+        if (!canNavigate(linkNode, this.contentWindow)) {
+          event.preventDefault();
+          this.sendAsyncMessage("openLinkInNewTab", {
+            url: eventHRef,
+            refererTopBrowsingContextId: this.browsingContext.top.id,
+          });
+        }
         return;
       }
 
@@ -98,6 +89,13 @@ export class LinkClickHandlerChild extends JSWindowActorChild {
           Services.eTLD.getBaseDomain(eventURI) ==
           Services.eTLD.getBaseDomain(pageURI)
         ) {
+          if (!canNavigate(linkNode, this.contentWindow)) {
+            event.preventDefault();
+            this.sendAsyncMessage("openLinkInNewTab", {
+              url: eventHRef,
+              refererTopBrowsingContextId: this.browsingContext.top.id,
+            });
+          }
           return;
         }
       } catch (ex) {
@@ -117,6 +115,44 @@ export class LinkClickHandlerChild extends JSWindowActorChild {
     ) {
       event.preventDefault();
       this.sendAsyncMessage("openLinkExternally", eventHRef);
+    }
+  }
+}
+
+/**
+ * Listens for click events and check the requested target and, if the target
+ * does not exist on the current page, open the link in a new tab.
+ *
+ * This actor applies to browsers in the "browsers" message manager group.
+ */
+export class RelaxedLinkClickHandlerChild extends JSWindowActorChild {
+  handleEvent(event) {
+    // Don't handle events that:
+    //   a) are in the parent process (handled by onclick),
+    //   b) aren't trusted,
+    //   c) have already been handled or
+    //   d) aren't left-click.
+    if (
+      this.manager.isInProcess ||
+      !event.isTrusted ||
+      event.defaultPrevented ||
+      event.button
+    ) {
+      return;
+    }
+
+    const [eventHRef, linkNode] =
+      lazy.BrowserUtils.hrefAndLinkNodeForClickEvent(event) || [];
+    if (!eventHRef) {
+      return;
+    }
+
+    if (!canNavigate(linkNode, this.contentWindow)) {
+      event.preventDefault();
+      this.sendAsyncMessage("openLinkInNewTab", {
+        url: eventHRef,
+        refererTopBrowsingContextId: this.browsingContext.top.id,
+      });
     }
   }
 }
@@ -144,7 +180,8 @@ export class StrictLinkClickHandlerChild extends JSWindowActorChild {
       return;
     }
 
-    const eventHRef = hRefForClickEvent(event);
+    const [eventHRef, linkNode] =
+      lazy.BrowserUtils.hrefAndLinkNodeForClickEvent(event) || [];
     if (!eventHRef) {
       return;
     }
@@ -152,6 +189,13 @@ export class StrictLinkClickHandlerChild extends JSWindowActorChild {
     const pageURI = Services.io.newURI(this.document.location.href);
     const eventURI = Services.io.newURI(eventHRef);
     if (eventURI.specIgnoringRef == pageURI.specIgnoringRef) {
+      if (!canNavigate(linkNode, this.contentWindow)) {
+        event.preventDefault();
+        this.sendAsyncMessage("openLinkInNewTab", {
+          url: eventHRef,
+          refererTopBrowsingContextId: this.browsingContext.top.id,
+        });
+      }
       return;
     }
 

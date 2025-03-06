@@ -69,13 +69,19 @@ account-hub-email-continue-button = Continue
 
 account-hub-email-confirm-button = Confirm
 
-account-hub-incoming-server-legend = Incoming server
+account-hub-result-incoming-server-legend = Incoming server
+    .title = Incoming server
 
-account-hub-outgoing-server-legend = Outgoing server
+account-hub-result-outgoing-server-legend = Outgoing server
+    .title = Outgoing server
 
 account-hub-protocol-label = Protocol
 
-account-hub-hostname-label = Hostname
+account-hub-result-hostname-label = Hostname
+    .title = Hostname
+
+account-hub-result-authentication-label = Authentication
+    .title = Authentication
 
 account-hub-port-label = Port
     .title = Set the port number to 0 for autodetection
@@ -108,7 +114,11 @@ account-hub-auth-no-authentication-option =
 
 account-hub-auth-label = Authentication method
 
-account-hub-username-label = Username
+account-hub-result-username-label = Username
+    .title = Username
+
+account-hub-name-label = Full name
+    .accesskey = n
 
 account-hub-adding-account-title = Adding Account
 
@@ -125,3 +135,85 @@ account-hub-find-settings-failed = { -brand-full-name } failed to find the setti
 account-hub-notification-show-more = Show more
 
 account-hub-notification-show-less = Show less
+
+account-hub-email-setup-header = Add your email address
+
+account-hub-email-setup-incoming = Incoming server settings
+
+account-hub-email-setup-outgoing = Outgoing server settings
+
+account-hub-email-config-found = Choose your email account type
+
+account-hub-email-enter-password = Enter your email account password
+
+account-hub-email-sync-accounts = Sync your calendars and address books
+
+account-hub-test-configuration = Test
+
+account-hub-add-new-email = Add another email
+
+account-hub-result-imap-description = Keep your folders and emails synced on your server
+
+account-hub-result-pop-description = Keep your folders and emails on your computer
+
+account-hub-result-ews-shortname = Exchange
+
+account-hub-result-ews-description = Use Microsoft Exchange Web Services to sync your folders and emails
+
+account-hub-result-exchange-description = Sync folders & emails with Exchange or Office 365
+
+account-hub-result-ews-text = Server
+
+account-hub-result-recommended-label = Recommended
+
+account-hub-result-addon-label = Requires Add-on
+
+account-hub-edit-configuration = Edit configuration
+
+account-hub-config-success = Configuration found in Mozilla ISPDB
+
+account-hub-password-info = Your credentials will only be stored locally on your computer
+
+account-hub-sync-success = Thunderbird found some connected services
+
+account-hub-sync-failure = Thunderbird was unable to find connected services
+
+account-hub-unable-to-sync-accounts = Thunderbird was unable to connect the selected services
+
+account-hub-email-added-success = Email account connected successfully
+
+account-hub-config-test-success = Configuration settings valid
+
+account-hub-select-all = Select all
+
+account-hub-deselect-all = Deselect all
+
+# $count (Number) - The number of sync accounts selected.
+account-hub-sync-accounts-selected =
+    { $count ->
+        [one] { $count } selected
+        *[other] { $count } selected
+    }
+
+account-hub-no-address-books = No address books found
+
+account-hub-no-calendars = No calendars found
+
+account-hub-email-added-success-links-title = Explore options for security and personalization:
+
+account-hub-signature-link = Email signature
+
+account-hub-email-error-text = Please enter a valid email address
+
+account-hub-name-error-text = Please enter a name
+
+account-hub-hostname-error-text = Hostname empty or invalid. Only letters, numbers, - and . are allowed
+    .title = Hostname empty or invalid. Only letters, numbers, - and . are allowed
+
+account-hub-port-error-text = Port must be between 1 and 65535
+    .title = Port must be between 1 and 65535
+
+account-hub-username-error-text = Username is required
+    .title = Username is required
+
+account-hub-addon-needed = { -brand-full-name } doesn’t natively support this server. To access Exchange email, <a data-l10n-name="addon-install"> install a third-party add-on like Owl (paid).</a>

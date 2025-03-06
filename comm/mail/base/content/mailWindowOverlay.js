@@ -351,16 +351,6 @@ function view_init(event) {
   const viewFeedSummary = document.getElementById("viewFeedSummary");
   viewFeedSummary.hidden = !isFeed;
 
-  const viewRssMenuItemIds = [
-    "bodyFeedGlobalWebPage",
-    "bodyFeedGlobalSummary",
-    "bodyFeedPerFolderPref",
-  ];
-  const checked = FeedMessageHandler.onSelectPref;
-  for (const [index, id] of viewRssMenuItemIds.entries()) {
-    document.getElementById(id).setAttribute("checked", index == checked);
-  }
-
   // Initialize the View Attachment Inline menu
   var viewAttachmentInline = Services.prefs.getBoolPref(
     "mail.inline_attachments"
@@ -586,8 +576,13 @@ function InitMessageMenu() {
     message = document.getElementById("messageBrowser")?.contentWindow.gMessage;
     isDummy = !message?.folder;
   }
+  const aboutMessage =
+    document.getElementById("tabmail")?.currentAboutMessage ||
+    document.getElementById("messageBrowser")?.contentWindow;
 
-  const isNews = message?.folder?.flags & Ci.nsMsgFolderFlags.Newsgroup;
+  const isNews =
+    message?.folder?.flags & Ci.nsMsgFolderFlags.Newsgroup ||
+    aboutMessage?.currentHeaderData?.newsgroups;
   const isFeed = message && FeedUtils.isFeedMessage(message);
 
   // We show reply to Newsgroups only for news messages.
@@ -618,9 +613,6 @@ function InitMessageMenu() {
 
   // Disable the Attachments menu if no message is selected and we don't have
   // any attachment.
-  const aboutMessage =
-    document.getElementById("tabmail")?.currentAboutMessage ||
-    document.getElementById("messageBrowser")?.contentWindow;
   document.getElementById("msgAttachmentMenu").disabled =
     !message || !aboutMessage?.currentAttachments.length;
 
@@ -707,7 +699,7 @@ function showCommandInSpecialFolder(aCommandIds, aFolderFlag) {
  * folder again, based on the value of mail.last_msg_movecopy_target_uri.
  * The menu item label and accesskey are adjusted to include the folder name.
  *
- * @param aMenuItem the menu item to adjust
+ * @param {Element} aMenuItem - The menu item to adjust.
  */
 function initMoveToFolderAgainMenu(aMenuItem) {
   const lastFolderURI = Services.prefs.getStringPref(
@@ -737,14 +729,19 @@ function initMoveToFolderAgainMenu(aMenuItem) {
  * Update the "Show Header" menu items to reflect the current pref.
  */
 function InitViewHeadersMenu() {
-  const dt = Ci.nsMimeHeaderDisplayTypes;
   const headerchoice = Services.prefs.getIntPref("mail.show_headers");
   document
     .getElementById("cmd_viewAllHeader")
-    .setAttribute("checked", headerchoice == dt.AllHeaders);
+    .setAttribute(
+      "checked",
+      headerchoice == Ci.nsMimeHeaderDisplayTypes.AllHeaders
+    );
   document
     .getElementById("cmd_viewNormalHeader")
-    .setAttribute("checked", headerchoice == dt.NormalHeaders);
+    .setAttribute(
+      "checked",
+      headerchoice == Ci.nsMimeHeaderDisplayTypes.NormalHeaders
+    );
   document.commandDispatcher.updateCommands("create-menu-mark");
 }
 
@@ -755,12 +752,6 @@ function InitViewBodyMenu() {
   if (["mail3PaneTab", "mailMessageTab"].includes(tab?.mode.name)) {
     message = tab.message;
   }
-
-  // Separate render prefs not implemented for feeds, bug 458606.  Show the
-  // checked item for feeds as for the regular pref.
-  //  let html_as = Services.prefs.getIntPref("rss.display.html_as");
-  //  let prefer_plaintext = Services.prefs.getBoolPref("rss.display.prefer_plaintext");
-  //  let disallow_classes = Services.prefs.getIntPref("rss.display.disallow_mime_handlers");
   const html_as = Services.prefs.getIntPref("mailnews.display.html_as");
   const prefer_plaintext = Services.prefs.getBoolPref(
     "mailnews.display.prefer_plaintext"
@@ -830,11 +821,20 @@ function InitViewBodyMenu() {
   // else (the user edited prefs/user.js) check none of the radio menu items
 
   if (isFeed) {
-    AllowHTML_menuitem.hidden = !FeedMessageHandler.gShowSummary;
-    Sanitized_menuitem.hidden = !FeedMessageHandler.gShowSummary;
-    AsPlaintext_menuitem.hidden = !FeedMessageHandler.gShowSummary;
-    document.getElementById("viewFeedSummarySeparator").hidden =
-      !gShowFeedSummary;
+    const viewRssMenuItemIds = [
+      "bodyFeedGlobalWebPage",
+      "bodyFeedGlobalSummary",
+      "bodyFeedPerFolderPref",
+    ];
+    const checked = FeedMessageHandler.onSelectPref;
+    for (const [index, id] of viewRssMenuItemIds.entries()) {
+      document.getElementById(id).setAttribute("checked", index == checked);
+    }
+    const hideOptions = checked == FeedMessageHandler.kSelectOverrideWebPage;
+    AllowHTML_menuitem.hidden = hideOptions;
+    Sanitized_menuitem.hidden = hideOptions;
+    AsPlaintext_menuitem.hidden = hideOptions;
+    document.getElementById("viewFeedSummarySeparator").hidden = hideOptions;
   }
 }
 
@@ -1058,8 +1058,8 @@ function MsgGetMessagesForAllAuthenticatedAccounts() {
  * Get messages for the account selected from Menu dropdowns.
  * if offline, prompt for getting messages.
  *
- * @param aFolder (optional) a folder in the account for which messages should
- *                           be retrieved.  If null, all accounts will be used.
+ * @param {nsIMsgFolder} [aFolder] - A folder in the account for which messages
+ *   should be retrieved. If null, all accounts will be used.
  */
 function MsgGetMessagesForAccount(aFolder) {
   if (!aFolder) {
@@ -1117,8 +1117,8 @@ function MsgSubscribe(folder) {
  * Show a confirmation dialog - check if the user really want to unsubscribe
  * from the given newsgroup/s.
  *
- * @folders an array of newsgroup folders to unsubscribe from
- * @returns true if the user said it's ok to unsubscribe
+ * @param {nsIMsgFolder[]} folders - Newsgroup folders to unsubscribe from.
+ * @returns {boolean} true if the user said it's ok to unsubscribe
  */
 function ConfirmUnsubscribe(folders) {
   var bundle = document.getElementById("bundle_messenger");
@@ -1137,7 +1137,8 @@ function ConfirmUnsubscribe(folders) {
 
 /**
  * Unsubscribe from selected or passed in newsgroup/s.
- * @param {nsIMsgFolder[]} selectedFolders - The folders to unsubscribe.
+ *
+ * @param {nsIMsgFolder[]} folders - The folders to unsubscribe.
  */
 function MsgUnsubscribe(folders) {
   if (!ConfirmUnsubscribe(folders)) {
@@ -1224,7 +1225,7 @@ function MsgOpenNewWindowForMessage(aMsgHdr, aView) {
 /**
  * Display the given message in an existing folder tab.
  *
- * @param aMsgHdr The message header to display.
+ * @param {nsIMsgDBHdr} aMsgHdr - The message header to display.
  */
 function MsgDisplayMessageInFolderTab(aMsgHdr) {
   const tabmail = document.getElementById("tabmail");
@@ -1385,18 +1386,6 @@ function MsgBodyAllParts() {
   Services.prefs.setIntPref("mailnews.display.disallow_mime_handlers", 0);
 }
 
-function MsgFeedBodyRenderPrefs(plaintext, html, mime) {
-  // Separate render prefs not implemented for feeds, bug 458606.
-  //  Services.prefs.setBoolPref("rss.display.prefer_plaintext", plaintext);
-  //  Services.prefs.setIntPref("rss.display.html_as", html);
-  //  Services.prefs.setIntPref("rss.display.disallow_mime_handlers", mime);
-
-  Services.prefs.setBoolPref("mailnews.display.prefer_plaintext", plaintext);
-  Services.prefs.setIntPref("mailnews.display.html_as", html);
-  Services.prefs.setIntPref("mailnews.display.disallow_mime_handlers", mime);
-  // Reload only if showing rss summary; menuitem hidden if web page..
-}
-
 function ToggleInlineAttachment(target) {
   var viewAttachmentInline = !Services.prefs.getBoolPref(
     "mail.inline_attachments"
@@ -1514,8 +1503,8 @@ function GetFolderMessages(selectedFolders = GetSelectedMsgFolders()) {
 /**
  * Gets new messages for the given server, for the given folder.
  *
- * @param server which nsIMsgIncomingServer to check for new messages
- * @param folder which nsIMsgFolder folder to check for new messages
+ * @param {nsIMsgIncomingServer} server - Server which to check for new messages.
+ * @param {nsIMsgFolder} folder - Folder to check for new messages.
  */
 function GetNewMsgs(server, folder) {
   // Note that for Global Inbox folder.server != server when we want to get
@@ -1650,12 +1639,13 @@ function CommandUpdate_UndoRedo() {
   EnableMenuItem("menu_redo", SetupUndoRedoCommand("cmd_redo"));
 }
 
+/**
+ * @param {string} command - A command, usually "cmd_<something>".
+ */
 function SetupUndoRedoCommand(command) {
   let mainWindow;
-  let folder = null;
   const tabmail = document.getElementById("tabmail");
   if (tabmail) {
-    folder = tabmail.currentTabInfo.folder;
     mainWindow = window;
   } else {
     mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
@@ -1663,10 +1653,6 @@ function SetupUndoRedoCommand(command) {
     if (!mainWindow) {
       return false;
     }
-    folder = document.getElementById("messageBrowser")?.contentWindow?.gFolder;
-  }
-  if (!folder?.server.canUndoDeleteOnServer) {
-    return false;
   }
 
   let canUndoOrRedo = false;
@@ -1925,8 +1911,7 @@ function addAttachmentToPopup(
       // The text-link class must be added to the <label> and have a <menu>
       // hover rule. Adding to <menu> makes hover overflow the underline to
       // the popup items.
-      const label = item.children[1];
-      label.classList.add("text-link");
+      item.children[1].classList.add("text-link");
     }
   }
 

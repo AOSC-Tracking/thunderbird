@@ -127,9 +127,9 @@ async function setRecurrence(recurrenceWindow) {
   // weekly
   await menulistSelect(recurrenceDocument.getElementById("period-list"), "1");
 
-  const mon = cal.l10n.getDateFmtString("day.2.Mmm");
-  const wed = cal.l10n.getDateFmtString("day.4.Mmm");
-  const fri = cal.l10n.getDateFmtString("day.6.Mmm");
+  const mon = cal.dtz.formatter.shortWeekdayNames[1];
+  const wed = cal.dtz.formatter.shortWeekdayNames[3];
+  const fri = cal.dtz.formatter.shortWeekdayNames[5];
 
   const dayPicker = recurrenceDocument.getElementById("daypicker-weekday");
 
@@ -169,7 +169,7 @@ async function setRecurrence(recurrenceWindow) {
   EventUtils.synthesizeKey("VK_TAB", {}, recurrenceWindow);
 
   const button = recurrenceDocument.querySelector("dialog").getButton("accept");
-  button.scrollIntoView();
+  button.scrollIntoView({ block: "start", behavior: "instant" });
   // Close dialog.
   EventUtils.synthesizeMouseAtCenter(button, {}, recurrenceWindow);
 }

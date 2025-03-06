@@ -13,6 +13,98 @@ exclude: true
 
 ⚠️  breaking change and deprecation notices
 
+## v136
+- Added support for controlling `security.pki.certificate_transparency.mode` via [`GeckoRuntimeSettings.setCertificateTransparencyMode`][136.1]
+- Added [`GeckoSession.CompositorScrollDelegate`][136.2] interface, which allows reacting to scroll position changes as soon as they are composited
+- Added support for controlling `network.trr.excluded-domains` via [`GeckoRuntimeSettings.setTrustedRecursiveResolverExcludedDomains`][136.3] and [`GeckoRuntimeSettings.getTrustedRecursiveResolverExcludedDomains`][136.4]
+- Added [`GeckoSession.Loader.originalInput`][136.5] option, which allows passing through the original user address bar input
+
+[136.1]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setCertificateTransparencyMode
+[136.2]: {{javadoc_uri}}/GeckoSession.html#CompositorScrollDelegate
+[136.3]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setTrustedRecursiveResolverExcludedDomains
+[136.4]: {{javadoc_uri}}/GeckoRuntimeSettings.html#getTrustedRecursiveResolverExcludedDomains
+[136.5]: {{javadoc_uri}}/GeckoSession.Loader.html#originalInput(java.lang.String)
+
+## v134
+- ⚠️ [`WebExtensionController.PromptDelegate.onInstallPrompt`][133.5] is removed see https://bugzilla.mozilla.org/show_bug.cgi?id=1919374 for more details.
+- Added support for controlling `javascript.options.mem.gc_parallel_marking` via [`GeckoRuntimeSettings.setParallelMarkingEnabled`][134.1]
+
+[134.1]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setParallelMarkingEnabled
+
+## v133
+- Added [`GeckoSession.getWebCompatInfo`][133.1] that returns a `GeckoResult<JSONObject>` for web compatability information. ([bug 1917273]({{bugzilla}}1917273)).
+- Added [`isInteractiveWidgetDefaultResizesVisual`][133.2] to tell the preference value of "dom.interactive_widget_default_resizes_visual".
+- Added [`WebExtension.PermissionPromptResponse`][133.3] Represents a response from `WebExtension` prompt request.
+- Added [`WebExtension.onInstallPromptRequest`][133.4] Delegate notified when install prompt needs to be shown.
+- ⚠️ [`WebExtensionController.PromptDelegate.onInstallPrompt`][133.5] is deprecated, and it will be deleted in version 134 see https://bugzilla.mozilla.org/show_bug.cgi?id=1919374.
+- Added [`ERROR_SOFT_BLOCKED`][133.6] to `WebExtension.InstallException.ErrorCodes`, and [`SOFT_BLOCKLIST`][133.7] to`WebExtension.DisabledFlags`. ([bug 1917852]({{bugzilla}}1917852))
+- Added [`InstallException.extensionId`][133.8], which indicates the ID of the extension that caused the exception.
+- Added [`getFissionEnabled()`][133.9] on `GeckoRuntimeSettings` and [`fissionEnabled(boolean)`][133.10] on `GeckoRuntimeSettings.Builder` to control Fission on Android.
+- Added [`InstallException.extensionVersion`][133.11], which indicates the version of the extension that caused the exception.
+- Added [`WebExtensionController.INSTALLATION_METHOD_ONBOARDING`][133.12], which should be used when a `WebExtension` is installed from the embedder's onboarding feature.
+- Added support for controlling `network.fetchpriority.enabled` via [`GeckoRuntimeSettings.setFetchPriorityEnabled`][133.13]
+- Added [`GeckoRuntimeSettings.setCookieBehaviorOptInPartitioning`][133.14] and [`GeckoRuntimeSettings.setCookieBehaviorOptInPartitioningPBM`][133.15] to control the cookie behavior opt-in partitioning.
+
+[133.1]: {{javadoc_uri}}/GeckoSession.html#getWebCompatInfo()
+[133.2]: {{javadoc_uri}}/GeckoRuntime.html#isInteractiveWidgetDefaultResizesVisual()
+[133.3]: {{javadoc_uri}}/WebExtension.PermissionPromptResponse.html
+[133.4]: {{javadoc_uri}}/WebExtensionController.PromptDelegate.html#onInstallPromptRequest
+[133.5]: {{javadoc_uri}}/WebExtensionController.PromptDelegate.html#onInstallPrompt
+[133.6]: {{javadoc_uri}}/WebExtension.InstallException.ErrorCodes.html#ERROR_BLOCKLISTED
+[133.7]: {{javadoc_uri}}/WebExtension.DisabledFlags.html#SOFT_BLOCKLIST
+[133.8]: {{javadoc_uri}}/WebExtension.InstallException.html#extensionId
+[133.9]: {{javadoc_uri}}/GeckoRuntimeSettings.html#getFissionEnabled()
+[133.10]: {{javadoc_uri}}/GeckoRuntimeSettings.Builder.html#fissionEnabled(boolean)
+[133.11]: {{javadoc_uri}}/WebExtension.InstallException.html#extensionVersion
+[133.12]: {{javadoc_uri}}/WebExtensionController.html#INSTALLATION_METHOD_ONBOARDING
+[133.13]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setFetchPriorityEnabled
+[133.14]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setCookieBehaviorOptInPartitioning
+[133.15]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setCookieBehaviorOptInPartitioningPBM
+
+## v132
+-Added [`getDisableShip`][132.1] to get the setting for Session History in Parent (SHIP)) and [`disableShip`][132.2] to set the status of SHIP on the `GeckoRuntimeSettings` builder.
+- Added [`setWebContentIsolationStrategy`][132.3] and [`getWebContentIsolationStrategy`][132.4]
+and defined the strategies.
+
+[132.1]: {{javadoc_uri}}/GeckoRuntimeSettings.html#getDisableShip()
+[132.2]: {{javadoc_uri}}/GeckoRuntimeSettings.Builder.html#disableShip(boolean)
+[132.3]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setWebContentIsolationStrategy(int)
+[132.4]: {{javadoc_uri}}/GeckoRuntimeSettings.html#getWebContentIsolationStrategy()
+
+## v131
+- Added [`GeckoDisplay.windowInsetsChanged`][131.1].
+- Added [`GeckoView.addWindowInsetsListener`][131.2] and [`GeckoView.removeWindowInsetsListener`][131.3] to allow listening WindowInsets changes of Activity's root window with multiple listeners.
+- ⚠️Increased `compileSdkVersion` to 35 (Android 15)
+- ️️⚠️ Removed deprecated [`GeckoSession.ContentDelegate.onProductUrl`][128.5].
+- Added support for controlling `toolkit.telemetry.user_characteristics_ping.current_version` via [`GeckoRuntimeSettings.setUserCharacteristicPingCurrentVersion`][131.4]
+
+[131.1]: {{javadoc_uri}}/GeckoDisplay.html#windowInsetsChanged
+[131.2]: {{javadoc_uri}}/GeckoView.html#addWindowInsetsListener
+[131.3]: {{javadoc_uri}}/GeckoView.html#removeWindowInsetsListener
+[131.4]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setUserCharacteristicPingCurrentVersion
+
+## v130
+- ⚠️ Removed [`TranslationState`][127.4] constructor, please use the new [`TranslationState`][127.3] constructor with `hasVisibleChange`. ([bug 1895275]({{bugzilla}}1895275))
+- Added support for controlling `privacy.fingerprintingProtection` and `privacy.fingerprintingProtection.pbmode` via [`GeckoRuntimeSettings.setFingerprintingProtection`][130.1]
+- Added support for controlling `privacy.fingerprintingProtection.overrides` via [`GeckoRuntimeSettings.setFingerprintingProtectionOverrides`][130.2]
+- Added support for controlling `javascript.options.use_fdlibm_for_sin_cos_tan` via [`GeckoRuntimeSettings.setFdlibmMathEnabled`][130.3]
+
+[130.1]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setFingerprintingProtection
+[130.2]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setFingerprintingProtectionOverrides
+[130.3]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setFdlibmMathEnabled
+
+## v129
+- Added [`ERROR_ADMIN_INSTALL_ONLY`][129.1] to `WebExtension.InstallException.ErrorCodes`. ([bug 1902222]({{bugzilla}}1902222))
+- Added [`ContentDelegate.onHideDynamicToolbar`][129.2] to notify
+  the app that it must fully-collapse its dynamic toolbar ([bug 1855990]({{bugzilla}}1855990))
+- Added [`PURGED_BOUNCETRACKER`][129.3] and [`BLOCKED_SUSPICIOUS_FINGERPRINTING`][129.4]
+  to `ContentBlockingController.Event`. ([bug 1901808]({{bugzilla}}1901808))
+
+[129.1]: {{javadoc_uri}}/WebExtension.InstallException.ErrorCodes.html#ERROR_ADMIN_INSTALL_ONLY
+[129.2]: {{javadoc_uri}}/GeckoSession.ContentDelegate.html#onHideDynamicToolbar(org.mozilla.geckoview.GeckoSession)
+[129.3]: {{javadoc_uri}}/ContentBlockingController.Event.html#PURGED_BOUNCETRACKER
+[129.4]: {{javadoc_uri}}/ContentBlockingController.Event.html#BLOCKED_SUSPICIOUS_FINGERPRINTING
+
 ## v128
 - ⚠️ Removed deprecated [`GeckoSession.NavigationDelegate.onLocationChange`][128.1]
 - Reverted the change to the `WebExtension.MetaData` related to "prompt" permissions ([bug 1879543]({{bugzilla}}1879543)) and explicitly passed the permissions/origins into the `PromptDelegate` methods. Required permissions and origins are now available via [`WebExtension.MetaData.requiredPermissions`][128.2] and [`WebExtension.MetaData.requiredOrigins`][128.3].
@@ -1571,4 +1663,4 @@ to allow adding gecko profiler markers.
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport(android.content.Context,android.os.Bundle,java.lang.String)
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: 24697aa7b11e3d09335606e1951de2dd4c9f15df
+[api-version]: e4cbf1715fe3d046f0d576e13b85124353988ddb

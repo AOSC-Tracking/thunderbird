@@ -92,15 +92,6 @@ export var l10n = {
   getString: _getString.bind(undefined, "calendar"),
 
   /**
-   * Gets a string from chrome://calendar/locale/calendar.properties bundle
-   *
-   * @param {string} aStringName - The name of the string within the properties file
-   * @param {string[]} aParams - (optional) Parameters to format the string
-   * @returns {string} The formatted string
-   */
-  getCalString: _getString.bind(undefined, "calendar", "calendar"),
-
-  /**
    * Gets a string from chrome://lightning/locale/lightning.properties
    *
    * @param {string} aStringName - The name of the string within the properties file
@@ -117,25 +108,6 @@ export var l10n = {
    * @returns {string} The formatted string
    */
   getDateFmtString: _getString.bind(undefined, "calendar", "dateFormat"),
-
-  /**
-   * Gets the month name string in the right form depending on a base string.
-   *
-   * @param {number} aMonthNum - The month number to get, 1-based.
-   * @param {string} aBundleName - The Bundle to get the string from
-   * @param {string} aStringBase - The base string name, .monthFormat will be appended
-   * @returns {string} The formatted month name
-   */
-  formatMonth(aMonthNum, aBundleName, aStringBase) {
-    let monthForm = l10n.getString(aBundleName, aStringBase + ".monthFormat") || "nominative";
-
-    if (monthForm == "nominative") {
-      // Fall back to the default name format
-      monthForm = "name";
-    }
-
-    return l10n.getDateFmtString(`month.${aMonthNum}.${monthForm}`);
-  },
 
   /**
    * Sort an array of strings in place, according to the current locale.

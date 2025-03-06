@@ -19,6 +19,9 @@
 /* globals gChatTab */ // From globals chat-messenger.js
 /* globals currentAttachments */ // From msgHdrView.js
 
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
@@ -238,8 +241,8 @@ function MailToolboxCustomizeDone(aEvent, customizePopupId) {
       if ("_teardown" in popup) {
         popup._teardown();
       } else {
-        for (let i = popup.children.length - 1; i >= 0; i--) {
-          const child = popup.children[i];
+        for (let j = popup.children.length - 1; j >= 0; j--) {
+          const child = popup.children[j];
           if (child.getAttribute("generated") != "true") {
             continue;
           }
@@ -360,8 +363,12 @@ function onViewToolbarsPopupShowing(
           toolbar.setAttribute(hidingAttribute, "true");
           menuItem.removeAttribute("checked");
         } else {
-          menuItem.setAttribute("checked", true);
-          toolbar.removeAttribute(hidingAttribute);
+          menuItem.setAttribute("checked", "true");
+          if (hidingAttribute == "autohide") {
+            toolbar.setAttribute(hidingAttribute, "false");
+          } else {
+            toolbar.removeAttribute(hidingAttribute);
+          }
         }
         Services.xulStore.persist(toolbar, hidingAttribute);
       });
@@ -420,7 +427,7 @@ function focusOnMail(tabNo, event) {
 /**
  * Open the address book and optionally display/edit a card.
  *
- * @param {?array} openArgs - Command and arguments to execute once the address
+ * @param {?Array} openArgs - Command and arguments to execute once the address
  *   book was opened. Available commands are declared in
  *   aboutAddressBookCommands.mjs.
  * @returns {?Window} The address book's window global, if the address book was
@@ -560,9 +567,9 @@ function toSanitize() {
 /**
  * Opens the Preferences (Options) dialog.
  *
- * @param aPaneID       ID of prefpane to select automatically.
- * @param aScrollPaneTo ID of the element to scroll into view.
- * @param aOtherArgs    other prefpane specific arguments
+ * @param {string} aPaneID - ID of prefpane to select automatically.
+ * @param {string} aScrollPaneTo - ID of the element to scroll into view.
+ * @param {*} aOtherArgs - Other prefpane specific arguments
  */
 function openOptionsDialog(aPaneID, aScrollPaneTo, aOtherArgs) {
   openPreferencesTab(aPaneID, aScrollPaneTo, aOtherArgs);
@@ -721,20 +728,15 @@ function openSupportURL() {
 }
 
 /**
- *  Fetches the url for the passed in pref name, formats it and then loads it in the default
- *  browser.
+ * Fetches the url for the passed in pref name, formats it and then loads it in the default
+ * browser.
  *
- *  @param aPrefName - name of the pref that holds the url we want to format and open
+ * @param {string} aPrefName - Name of the pref that holds the url we want to
+ *   format and open.
  */
 function openFormattedURL(aPrefName) {
   var urlToOpen = Services.urlFormatter.formatURLPref(aPrefName);
-
-  var uri = Services.io.newURI(urlToOpen);
-
-  var protocolSvc = Cc[
-    "@mozilla.org/uriloader/external-protocol-service;1"
-  ].getService(Ci.nsIExternalProtocolService);
-  protocolSvc.loadURI(uri);
+  openLinkExternally(urlToOpen, { addToHistory: false });
 }
 
 /**
@@ -848,8 +850,8 @@ function getMostRecentMailWindow() {
  * whitespace or identical characters. Windows especially will drop trailing
  * dots and whitespace from filename extensions.
  *
- * @param aAttachment the AttachmentInfo object
- * @returns a sanitized display name for the attachment
+ * @param {AttachmentInfo} aAttachment - The AttachmentInfo object.
+ * @returns {string} a sanitized display name for the attachment.
  */
 function SanitizeAttachmentDisplayName(aAttachment) {
   let displayName = aAttachment.name.trim().replace(/\s+/g, " ");

@@ -106,7 +106,7 @@ var gMessageListeners = [];
  * @param {string} name - The name of the header. i.e. "to", "subject". This
  *   must be in lower case and the name of the header is used to help
  *   dynamically generate ids for objects in the document.
- * @param {function} [outputFunction=updateHeaderValue] - Takes a headerEntry
+ * @param {Function} [outputFunction=updateHeaderValue] - Takes a headerEntry
  *   (see the definition below) and a header value. This allows to provide a
  *   unique methods for determining how the header value is displayed. Defaults
  *   to `updateHeaderValue` which just sets the header value on the text node.
@@ -147,6 +147,14 @@ const gExpandedHeaderList = [
  * DOM based on properties in the header lists.
  */
 var gExpandedHeaderView = {};
+
+/**
+ * This array will contain lower-case strings of all header names that are
+ * included in `mail.compose.other.header` but not in
+ * `mailnews.headers.extraExpandedHeaders`, to be displayed only for
+ * outgoing messages.
+ */
+var gCustomComposeHeaders = [];
 
 /**
  * This is an array of header name and value pairs for the currently displayed
@@ -349,6 +357,10 @@ function initializeHeaderViewTables() {
     );
   }
 
+  gCustomComposeHeaders = otherHeaders
+    .map(h => h.toLowerCase())
+    .filter(h => !extraHeaders.find(e => e.toLowerCase() == h));
+
   // Showing headers, mapped to the pref controlling display.
   const headerPref = new Map([
     ["organization", "mailnews.headers.showOrganization"],
@@ -380,6 +392,7 @@ function initializeHeaderViewTables() {
 
 /**
  * Show security info dialog when keyboard shortcut it invoked.
+ *
  * @param {Event} event - keypress event
  */
 async function msgSecurityKeypressHandler(event) {
@@ -501,10 +514,10 @@ var messageProgressListener = {
    * @param {nsIWebProgress} webProgress
    * @param {nsIRequest} request
    * @param {integer} stateFlags
-   * @param {nsresult} status
+   * @param {nsresult} _status
    * @see {nsIWebProgressListener}
    */
-  onStateChange(webProgress, request, stateFlags) {
+  onStateChange(webProgress, request, stateFlags, _status) {
     if (
       !(request instanceof Ci.nsIMailChannel) ||
       !(stateFlags & Ci.nsIWebProgressListener.STATE_START)
@@ -550,10 +563,10 @@ var messageProgressListener = {
   /**
    * Step 3: The parser has finished reading the body of the message.
    *
-   * @param {nsIMailChannel} mailChannel
+   * @param {nsIMailChannel} _mailChannel
    * @see {nsIMailProgressListener}
    */
-  onBodyComplete() {
+  onBodyComplete(_mailChannel) {
     autoMarkAsRead();
   },
 
@@ -895,8 +908,10 @@ var messageProgressListener = {
    * OnStateChange event for STATE_STOP.  This is the same event that
    * generates the "msgLoaded" property flag change event.  This best
    * corresponds to the end of the streaming process.
+   *
+   * @param {nsIMsgMailNewsUrl} url
    */
-  onEndMsgDownload(url) {
+  async onEndMsgDownload(url) {
     const browser = getMessagePaneBrowser();
 
     // If we have no attachments, we hide the attachment icon in the message
@@ -929,9 +944,7 @@ var messageProgressListener = {
       currentAttachments.length &&
       Services.prefs.getBoolPref("mail.inline_attachments") &&
       FeedUtils.isFeedMessage(gMessage) &&
-      browser &&
-      browser.contentDocument &&
-      browser.contentDocument.body
+      browser.contentDocument?.body
     ) {
       for (const img of browser.contentDocument.body.getElementsByClassName(
         "moz-attached-image"
@@ -944,23 +957,108 @@ var messageProgressListener = {
             break;
           }
         }
-
-        img.addEventListener(
-          "load",
-          function () {
-            if (this.clientWidth > this.parentNode.clientWidth) {
-              img.setAttribute("overflowing", "true");
-              img.setAttribute("shrinktofit", "true");
-            }
-          },
-          { once: true }
-        );
       }
     }
 
-    OnMsgParsed(url);
+    // browser doesn't do this, but I thought it could be a useful thing to test out...
+    // If the find bar is visible and we just loaded a new message, re-run
+    // the find command. This means the new message will get highlighted and
+    // we'll scroll to the first word in the message that matches the find text.
+    const findBar = document.getElementById("findToolbar");
+    if (!findBar.hidden) {
+      findBar.onFindAgainCommand(false);
+    }
+    // Run the phishing detector on the message if it hasn't been marked as not
+    // a scam already.
+    if (
+      gMessage &&
+      !gMessage.getUint32Property("notAPhishMessage") &&
+      PhishingDetector.analyzeMsgForPhishingURLs(url, browser)
+    ) {
+      gMessageNotificationBar.setPhishingMsg();
+    }
+
+    // Notify anyone (e.g., extensions) who's interested in when a message is loaded.
+    Services.obs.notifyObservers(null, "MsgMsgDisplayed", gMessageURI);
+
+    // Rewrite any anchor elements' href attribute to reflect that the loaded
+    // document is a mailnews url. This will cause docShell to scroll to the
+    // element in the document rather than opening the link externally.
+    for (const linkNode of browser.contentDocument.links) {
+      if (!linkNode.hash) {
+        continue;
+      }
+
+      // We have a ref fragment which may reference a node in this document.
+      // Ensure html in mail anchors work as expected.
+      const anchorId = linkNode.hash.replace("#", "");
+      // Continue if an id (html5) or name attribute value for the ref is not
+      // found in this document.
+      try {
+        if (
+          !linkNode.ownerDocument.querySelector(
+            `#${anchorId},[name='${anchorId}']`
+          )
+        ) {
+          continue;
+        }
+      } catch (ex) {
+        // invalid selector
+        continue;
+      }
+
+      // Then check if the href url matches the document baseURL.
+      if (
+        makeURI(linkNode.href).specIgnoringRef !=
+        makeURI(linkNode.baseURI).specIgnoringRef
+      ) {
+        continue;
+      }
+
+      // Finally, if the document url is a message url, and the anchor href is
+      // http, it needs to be adjusted so docShell finds the node.
+      const messageURI = makeURI(linkNode.ownerDocument.URL);
+      if (
+        messageURI instanceof Ci.nsIMsgMailNewsUrl &&
+        linkNode.href.startsWith("http")
+      ) {
+        linkNode.href = messageURI.specIgnoringRef + linkNode.hash;
+      }
+    }
+
+    if (browser.contentDocument.readyState != "complete") {
+      await new Promise(resolve => {
+        browser.contentWindow.addEventListener("load", resolve, {
+          once: true,
+        });
+      });
+    }
+
+    // Scale any overflowing images, exclude http content.
+    if (!browser.contentDocument.URL.startsWith("http")) {
+      const adjustImg = img => {
+        img.toggleAttribute("overflowing", img.naturalWidth > img.clientWidth);
+      };
+      for (const img of browser.contentDocument.images) {
+        // No zooming for children of clickable links.
+        if (img.closest("[href]")) {
+          continue;
+        }
+        img.toggleAttribute("shrinktofit", true);
+        if (!img.complete) {
+          img.addEventListener("load", event => adjustImg(event.target), {
+            once: true,
+          });
+        } else {
+          adjustImg(img);
+        }
+      }
+    }
   },
 
+  /**
+   * @param {nsIMsgMailNewsUrl} url
+   */
   onEndMsgHeaders(url) {
     if (!url.errorCode) {
       // Should not mark a message as read if failed to load.
@@ -1033,7 +1131,7 @@ function OnTagsChange() {
 /**
  * Flush out any local state being held by a header entry for a given table.
  *
- * @param aHeaderTable Table of header entries
+ * @param {object} aHeaderTable - {object} Table of header entries.
  */
 function ClearHeaderView(aHeaderTable) {
   for (const name in aHeaderTable) {
@@ -1048,7 +1146,7 @@ function ClearHeaderView(aHeaderTable) {
 /**
  * Make sure that any valid header entry in the table is collapsed.
  *
- * @param aHeaderTable Table of header entries
+ * @param {object} aHeaderTable - Table of header entries.
  */
 function hideHeaderView(aHeaderTable) {
   for (const name in aHeaderTable) {
@@ -1060,7 +1158,7 @@ function hideHeaderView(aHeaderTable) {
 /**
  * Make sure that any valid header entry in the table specified is visible.
  *
- * @param aHeaderTable Table of header entries
+ * @param {object} aHeaderTable - Table of header entries.
  */
 function showHeaderView(aHeaderTable) {
   for (const name in aHeaderTable) {
@@ -1162,8 +1260,8 @@ function updateExpandedView() {
 /**
  * Default method for updating a header value into a header entry
  *
- * @param aHeaderEntry  A single header from currentHeaderData
- * @param aHeaderValue  The new value for headerEntry
+ * @param {MsgHeaderEntry} aHeaderEntry - A single header from currentHeaderData
+ * @param {object} aHeaderValue - The new value for headerEntry.
  */
 function updateHeaderValue(aHeaderEntry, aHeaderValue) {
   aHeaderEntry.enclosingBox.headerValue = aHeaderValue;
@@ -1173,9 +1271,9 @@ function updateHeaderValue(aHeaderEntry, aHeaderValue) {
  * Create the DOM nodes (aka "View") for a non-standard header and insert them
  * into the grid.  Create and return the corresponding headerEntry object.
  *
- * @param {string} headerName - name of the header we're adding, used to
- *                             construct the element IDs (in lower case)
- * @param {string} label - name of the header as displayed in the UI
+ * @param {string} headerName - Name of the header we're adding, used to
+ *   construct the element IDs (in lower case).
+ * @param {string} label - Name of the header as displayed in the UI.
  */
 class HeaderView {
   constructor(headerName, label) {
@@ -1228,7 +1326,7 @@ class HeaderView {
 /**
  * Removes all non-predefined header nodes from the view.
  *
- * @param aHeaderTable  Table of header entries.
+ * @param {object} aHeaderTable - Table of header entries.
  */
 function RemoveNewHeaderViews(aHeaderTable) {
   for (const name in aHeaderTable) {
@@ -1256,6 +1354,14 @@ function UpdateExpandedMessageHeaders() {
   // This height attribute may be set by toggleWrap() if the user clicked
   // the "more" button" in the header.
   // Remove it so that the height is determined automatically.
+
+  const showCustomComposeHeaders = gFolder?.isSpecialFolder(
+    Ci.nsMsgFolderFlags.SentMail |
+      Ci.nsMsgFolderFlags.Drafts |
+      Ci.nsMsgFolderFlags.Queue |
+      Ci.nsMsgFolderFlags.Templates,
+    true
+  );
 
   for (const headerName in currentHeaderData) {
     let headerEntry = null;
@@ -1300,37 +1406,24 @@ function UpdateExpandedMessageHeaders() {
         !(
           gViewAllHeaders ||
           Services.prefs.getBoolPref("mailnews.headers.showReferences") ||
-          gFolder?.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false)
+          currentHeaderData.newsgroups
         )
       ) {
         // Hide references header if view all headers mode isn't selected, the
         // pref show references is deactivated and the currently displayed
         // message isn't a newsgroup posting.
         headerEntry.valid = false;
-      } else if (!headerEntry.hidden) {
+      } else if (
+        !headerEntry.hidden &&
+        (showCustomComposeHeaders ||
+          !gCustomComposeHeaders.includes(headerName))
+      ) {
         // Set the row element visible before populating the field.
         headerEntry.enclosingRow.hidden = false;
         const headerField = currentHeaderData[headerName];
         headerEntry.outputFunction(headerEntry, headerField.headerValue);
         headerEntry.valid = true;
       }
-    }
-  }
-
-  const otherHeaders = Services.prefs
-    .getCharPref("mail.compose.other.header", "")
-    .split(",")
-    .map(h => h.trim())
-    .filter(Boolean);
-
-  for (const otherHeaderName of otherHeaders) {
-    const toLowerCaseHeaderName = otherHeaderName.toLowerCase();
-    const headerEntry = gExpandedHeaderView[toLowerCaseHeaderName];
-    const headerData = currentHeaderData[toLowerCaseHeaderName];
-
-    if (headerEntry && headerData) {
-      headerEntry.outputFunction(headerEntry, headerData.headerValue);
-      headerEntry.valid = true;
     }
   }
 
@@ -1489,10 +1582,10 @@ function outputEmailAddresses(headerEntry, emailAddresses) {
  */
 function CanDetachAttachments() {
   var canDetach =
+    gFolder && // We can't detach from loaded eml files yet.
     !gFolder.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false) &&
     (!gFolder.isSpecialFolder(Ci.nsMsgFolderFlags.ImapBox, false) ||
-      MailOfflineMgr.isOnline()) &&
-    gFolder; // We can't detach from loaded eml files yet.
+      MailOfflineMgr.isOnline());
   if (canDetach && "content-type" in currentHeaderData) {
     canDetach = !ContentTypeIsSMIME(
       currentHeaderData["content-type"].headerValue
@@ -1650,9 +1743,9 @@ function onShowSaveAttachmentMenuMultiple() {
  * This is our oncommand handler for the attachment list items. A double click
  * or enter press in an attachmentitem simulates "opening" the attachment.
  *
- * @param event  the event object
+ * @param {Event} _event - The event.
  */
-function attachmentItemCommand() {
+function attachmentItemCommand(_event) {
   HandleSelectedAttachments("open");
 }
 
@@ -2073,12 +2166,11 @@ function getAttachmentsTotalSizeStr() {
  * Expand/collapse the attachment list. When expanding it, automatically resize
  * it to an appropriate height (1/4 the message pane or smaller).
  *
- * @param expanded  True if the attachment list should be expanded, false
- *                  otherwise. If |expanded| is not specified, toggle the state.
- * @param updateFocus  (optional) True if the focus should be updated, focusing
- *                     on the attachmentList when expanding, or the messagepane
- *                     when collapsing (but only when the attachmentList was
- *                     originally focused).
+ * @param {boolean} [expanded] - true if the attachment list should be expanded,
+ *   false otherwise. If |expanded| is not specified, toggle the state.
+ * @param {boolean} updateFocus - true if the focus should be updated,
+ *   focusing on the attachmentList when expanding, or the messagepane
+ *   when collapsing (but only when the attachmentList was originally focused).
  */
 function toggleAttachmentList(expanded, updateFocus) {
   var attachmentView = document.getElementById("attachmentView");
@@ -2138,7 +2230,7 @@ function toggleAttachmentList(expanded, updateFocus) {
 /**
  * Open an attachment from the attachment bar.
  *
- * @param event the event that triggered this action
+ * @param {Event} event - The event that triggered this action.
  */
 function OpenAttachmentFromBar(event) {
   if (event.button == 0) {
@@ -2154,7 +2246,7 @@ function OpenAttachmentFromBar(event) {
 /**
  * Handle all the attachments in this message (save them, open them, etc).
  *
- * @param action one of "open", "save", "saveAs", "detach", or "delete"
+ * @param {"open"|"save"|"saveAs"|"detach"|"delete"} action
  */
 function HandleAllAttachments(action) {
   HandleMultipleAttachments(currentAttachments, action);
@@ -2164,7 +2256,7 @@ function HandleAllAttachments(action) {
  * Try to handle all the attachments in this message (save them, open them,
  * etc). If the action fails for whatever reason, catch the error and report it.
  *
- * @param action  one of "open", "save", "saveAs", "detach", or "delete"
+ * @param {"open"|"save"|"saveAs"|"detach"|"delete"} action
  */
 function TryHandleAllAttachments(action) {
   try {
@@ -2178,7 +2270,7 @@ function TryHandleAllAttachments(action) {
  * Handle the currently-selected attachments in this message (save them, open
  * them, etc).
  *
- * @param action  one of "open", "save", "saveAs", "detach", or "delete"
+ * @param {"open"|"save"|"saveAs"|"detach"|"delete"} action
  */
 function HandleSelectedAttachments(action) {
   const attachmentList = document.getElementById("attachmentList");
@@ -2193,8 +2285,8 @@ function HandleSelectedAttachments(action) {
 /**
  * Perform an action on multiple attachments (e.g. open or save)
  *
- * @param attachments  an array of AttachmentInfo objects to work with
- * @param action  one of "open", "save", "saveAs", "detach", or "delete"
+ * @param {AttachmentInfo[]} attachments - AttachmentInfo objects to work with.
+ * @param {"open"|"save"|"saveAs"|"detach"|"delete"} action - Action to take.
  */
 function HandleMultipleAttachments(attachments, action) {
   // Feed message link attachments save handling.
@@ -2291,11 +2383,9 @@ function HandleMultipleAttachments(attachments, action) {
       // Show one save dialog at a time, which allows to adjust the file name
       // and folder path for each attachment. For added convenience, we remember
       // the folder path of each file for the save dialog of the next one.
-      const saveAttachments = function (attachments) {
-        if (attachments.length > 0) {
-          attachments[0].save(top.messenger).then(function () {
-            saveAttachments(attachments.slice(1));
-          });
+      const saveAttachments = async infos => {
+        for (const info of infos) {
+          await info.save(top.messenger);
         }
       };
       saveAttachments(attachments);
@@ -2438,7 +2528,7 @@ function onShowOtherActionsPopup() {
   document.getElementById("otherActionsFeedBodyAs").hidden = !isFeed;
 }
 
-function InitOtherActionsViewBodyMenu() {
+function InitOtherActionsViewBodyMenu(isFeed = false) {
   const html_as = Services.prefs.getIntPref("mailnews.display.html_as");
   const prefer_plaintext = Services.prefs.getBoolPref(
     "mailnews.display.prefer_plaintext"
@@ -2446,7 +2536,6 @@ function InitOtherActionsViewBodyMenu() {
   const disallow_classes = Services.prefs.getIntPref(
     "mailnews.display.disallow_mime_handlers"
   );
-  const isFeed = false; // TODO
   const kDefaultIDs = [
     "otherActionsMenu_bodyAllowHTML",
     "otherActionsMenu_bodySanitized",
@@ -2474,14 +2563,6 @@ function InitOtherActionsViewBodyMenu() {
 
   document.getElementById("otherActionsMenu_bodyAllParts").hidden =
     !Services.prefs.getBoolPref("mailnews.display.show_all_body_parts_menu");
-
-  // Clear all checkmarks.
-  AllowHTML_menuitem.removeAttribute("checked");
-  Sanitized_menuitem.removeAttribute("checked");
-  AsPlaintext_menuitem.removeAttribute("checked");
-  if (AllBodyParts_menuitem) {
-    AllBodyParts_menuitem.removeAttribute("checked");
-  }
 
   if (
     !prefer_plaintext &&
@@ -2515,12 +2596,23 @@ function InitOtherActionsViewBodyMenu() {
   // else (the user edited prefs/user.js) check none of the radio menu items
 
   if (isFeed) {
-    AllowHTML_menuitem.hidden = !gShowFeedSummary;
-    Sanitized_menuitem.hidden = !gShowFeedSummary;
-    AsPlaintext_menuitem.hidden = !gShowFeedSummary;
+    const viewRssMenuItemIds = [
+      "otherActionsMenu_bodyFeedGlobalWebPage",
+      "otherActionsMenu_bodyFeedGlobalSummary",
+      "otherActionsMenu_bodyFeedPerFolderPref",
+    ];
+    const checked = FeedMessageHandler.onSelectPref;
+    for (const [index, id] of viewRssMenuItemIds.entries()) {
+      document.getElementById(id).setAttribute("checked", index == checked);
+    }
+    // Unlike the global menu we use the variable here to possibly have the
+    // value relevant to the current mode if the per folder option is selected.
+    AllowHTML_menuitem.hidden = !FeedMessageHandler.gShowSummary;
+    Sanitized_menuitem.hidden = !FeedMessageHandler.gShowSummary;
+    AsPlaintext_menuitem.hidden = !FeedMessageHandler.gShowSummary;
     document.getElementById(
       "otherActionsMenu_viewFeedSummarySeparator"
-    ).hidden = !gShowFeedSummary;
+    ).hidden = !FeedMessageHandler.gShowSummary;
   }
 }
 
@@ -2539,7 +2631,7 @@ const gHeaderCustomize = {
   /**
    * The object storing all saved customization options.
    *
-   * @note Any keys added to this object should also be added to the telemetry
+   * NOTE: Any keys added to this object should also be added to the telemetry
    * scalar tb.ui.configuration.message_header.
    *
    * @type {object}
@@ -2687,11 +2779,13 @@ const gHeaderCustomize = {
     document.getElementById("headerSubjectLarge").checked =
       this.customizeData.subjectLarge || false;
 
-    const type = Ci.nsMimeHeaderDisplayTypes;
     const pref = Services.prefs.getIntPref("mail.show_headers");
 
     document.getElementById("headerViewAllHeaders").checked =
-      type.AllHeaders == pref;
+      Ci.nsMimeHeaderDisplayTypes.AllHeaders == pref;
+
+    document.getElementById("headerShowDarkToggle").checked =
+      Services.prefs.getBoolPref("mail.dark-reader.show-toggle");
   },
 
   /**
@@ -2772,6 +2866,18 @@ const gHeaderCustomize = {
   },
 
   /**
+   * Show or hide the quick dark message mode toggle in the message header.
+   *
+   * @param {DOMEvent} event - The checkbox command event.
+   */
+  toggleDarkToggle(event) {
+    Services.prefs.setBoolPref(
+      "mail.dark-reader.show-toggle",
+      event.target.checked
+    );
+  },
+
+  /**
    * Close the customize panel.
    */
   closePanel() {
@@ -2797,16 +2903,21 @@ const gHeaderCustomize = {
  */
 const gMessageHeader = {
   /**
-   * Get the newsgroup server corresponding to the currently selected message.
+   * Get the newsgroup server corresponding to the currently selected message,
+   * or the server of the first NNTP account.
    *
-   * @returns {?nsISubscribableServer} The server for the newsgroup, or null.
+   * @returns {?nsINntpIncomingServer} The server for the newsgroup, or null.
    */
   get newsgroupServer() {
-    if (gFolder.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false)) {
-      return gFolder.server?.QueryInterface(Ci.nsISubscribableServer);
-    }
-
-    return null;
+    const server = gFolder?.isSpecialFolder(
+      Ci.nsMsgFolderFlags.Newsgroup,
+      false
+    )
+      ? gFolder.server
+      : MailServices.accounts.accounts.find(
+          account => account.incomingServer.type == "nntp"
+        )?.incomingServer;
+    return server?.QueryInterface(Ci.nsINntpIncomingServer);
   },
 
   /**
@@ -2871,6 +2982,10 @@ const gMessageHeader = {
     document.getElementById("viewContactItem").hidden =
       !element.cardDetails.card || !element.cardDetails.book?.readOnly;
 
+    // Working around bug 1949890, where the screen coordinates in the event are
+    // calculated incorrectly for HiDPI screens after an await.
+    const { screenX = 0, screenY = 0 } = event;
+
     const discoverKeyMenuItem = document.getElementById("searchKeysOpenPGP");
     if (discoverKeyMenuItem) {
       const hidden = await PgpSqliteDb2.hasAnyPositivelyAcceptedKeyForEmail(
@@ -2886,12 +3001,12 @@ const gMessageHeader = {
     const popup = document.getElementById("emailAddressPopup");
     popup.headerField = element;
 
-    if (!event.screenX) {
+    if (!screenX) {
       popup.openPopup(event.target, "after_start", 0, 0, true);
       return;
     }
 
-    popup.openPopupAtScreen(event.screenX, event.screenY, true);
+    popup.openPopupAtScreen(screenX, screenY, true);
   },
 
   openNewsgroupPopup(event, element) {
@@ -2899,9 +3014,9 @@ const gMessageHeader = {
       .getElementById("newsgroupPlaceHolder")
       .setAttribute("label", element.textContent);
 
-    const subscribed = this.newsgroupServer
-      ?.QueryInterface(Ci.nsINntpIncomingServer)
-      .containsNewsgroup(element.textContent);
+    const subscribed = this.newsgroupServer?.containsNewsgroup(
+      element.textContent
+    );
     document.getElementById("subscribeToNewsgroupItem").hidden = subscribed;
     document.getElementById("subscribeToNewsgroupSeparator").hidden =
       subscribed;
@@ -2924,7 +3039,7 @@ const gMessageHeader = {
    * @param {number} screenX - Where to show it, x.
    * @param {number} screenY - Where to show it, y.
    */
-  async openListIdPopup(element, screenX, screenY) {
+  openListIdPopup(element, screenX, screenY) {
     document
       .getElementById("listIdPlaceHolder")
       .setAttribute(
@@ -2977,7 +3092,7 @@ const gMessageHeader = {
     // Show "Open Browser With Message-ID" only for nntp messages or mailing
     // lists hosted by Google.
     document.getElementById("messageIdContext-openBrowserWithMsgId").hidden =
-      !gFolder.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false) &&
+      !currentHeaderData.newsgroups &&
       !currentHeaderData["list-archive"]?.headerValue.includes(
         "<https://groups.google.com/"
       );
@@ -3074,27 +3189,22 @@ const gMessageHeader = {
   },
 
   copyNewsgroupURL(event) {
+    const newsgroup = event.currentTarget.parentNode.headerField.textContent;
     const server = this.newsgroupServer;
-    if (!server) {
+    if (
+      !gFolder?.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false) ||
+      !server
+    ) {
+      // For standalone newsgroup messages, use a URI with no server specified.
+      navigator.clipboard.writeText("news:" + newsgroup);
       return;
     }
 
-    const newsgroup = event.currentTarget.parentNode.headerField.textContent;
-
-    let url;
-    if (server.socketType != Ci.nsMsgSocketType.SSL) {
-      url = "news://" + server.hostName;
-      if (server.port != Ci.nsINntpUrl.DEFAULT_NNTP_PORT) {
-        url += ":" + server.port;
-      }
-      url += "/" + newsgroup;
-    } else {
-      url = "snews://" + server.hostName;
-      if (server.port != Ci.nsINntpUrl.DEFAULT_NNTPS_PORT) {
-        url += ":" + server.port;
-      }
-      url += "/" + newsgroup;
+    let url = "news://" + server.hostName;
+    if (server.port != Ci.nsINntpUrl.DEFAULT_NNTP_PORT) {
+      url += ":" + server.port;
     }
+    url += "/" + newsgroup;
 
     try {
       const uri = Services.io.newURI(url);
@@ -3111,11 +3221,14 @@ const gMessageHeader = {
    */
   subscribeToNewsgroup(event) {
     const server = this.newsgroupServer;
-    if (server) {
-      const newsgroup = event.currentTarget.parentNode.headerField.textContent;
-      server.subscribe(newsgroup);
-      server.commitSubscribeChanges();
+    if (!server) {
+      console.warn("No news server set up.");
+      return;
     }
+
+    const newsgroup = event.currentTarget.parentNode.headerField.textContent;
+    server.subscribeToNewsgroup(newsgroup);
+    server.commitSubscribeChanges();
   },
 
   /**
@@ -3246,8 +3359,8 @@ const gMessageHeader = {
 };
 window.addEventListener(
   "openListId",
-  async event => {
-    await gMessageHeader.openListIdPopup(
+  event => {
+    gMessageHeader.openListIdPopup(
       event.target,
       event.detail.screenX,
       event.detail.screenY
@@ -3277,19 +3390,21 @@ function MarkSelectedMessagesFlagged(markFlagged) {
 }
 
 /**
- * @param headermode {Ci.nsMimeHeaderDisplayTypes}
+ * @param {nsMimeHeaderDisplayTypes} headermode
  */
 function AdjustHeaderView(headermode) {
-  const all = Ci.nsMimeHeaderDisplayTypes.AllHeaders;
   document
     .getElementById("messageHeader")
-    .setAttribute("show_header_mode", headermode == all ? "all" : "normal");
+    .setAttribute(
+      "show_header_mode",
+      headermode == Ci.nsMimeHeaderDisplayTypes.AllHeaders ? "all" : "normal"
+    );
 }
 
 /**
  * Should the reply command/button be enabled?
  *
- * @return whether the reply command/button should be enabled.
+ * @returns {boolean} whether the reply command/button should be enabled.
  */
 function IsReplyEnabled() {
   // If we're in an rss item, we never want to Reply, because there's
@@ -3300,10 +3415,10 @@ function IsReplyEnabled() {
 /**
  * Should the reply-all command/button be enabled?
  *
- * @return whether the reply-all command/button should be enabled.
+ * @returns {boolean} whether the reply-all command/button should be enabled.
  */
 function IsReplyAllEnabled() {
-  if (gFolder?.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false)) {
+  if (currentHeaderData.newsgroups) {
     // If we're in a news item, we always want ReplyAll, because we can
     // reply to the sender and the newsgroup.
     return true;
@@ -3351,7 +3466,7 @@ function IsReplyAllEnabled() {
 /**
  * Should the reply-list command/button be enabled?
  *
- * @return whether the reply-list command/button should be enabled.
+ * @returns {boolean} whether the reply-list command/button should be enabled.
  */
 function IsReplyListEnabled() {
   // ReplyToList is enabled if there is a List-Post header
@@ -3382,7 +3497,7 @@ function UpdateReplyButtons() {
   }
 
   let buttonToShow;
-  if (gFolder?.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false)) {
+  if (currentHeaderData.newsgroups) {
     // News messages always default to the "followup" dual-button.
     buttonToShow = "followup";
   } else if (FeedUtils.isFeedMessage(gMessage)) {
@@ -3461,14 +3576,6 @@ function SelectedMessagesAreRead() {
 
 function SelectedMessagesAreFlagged() {
   return gMessage?.isFlagged;
-}
-
-function MsgReplyMessage(event) {
-  if (gFolder.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false)) {
-    MsgReplyGroup(event);
-  } else {
-    MsgReplySender(event);
-  }
 }
 
 function MsgReplySender(event) {
@@ -3569,8 +3676,8 @@ function updateHeaderToolbarButtons() {
 /**
  * Checks if the selected messages can be marked as read or unread
  *
- * @param markingRead true if trying to mark messages as read, false otherwise
- * @return true if the chosen operation can be performed
+ * @param {boolean} markingRead - true if trying to mark messages as read.
+ * @returns {boolean} true if the chosen operation can be performed
  */
 function CanMarkMsgAsRead(markingRead) {
   return gMessage && SelectedMessagesAreRead() != markingRead;
@@ -3579,8 +3686,8 @@ function CanMarkMsgAsRead(markingRead) {
 /**
  * Marks the selected messages as read or unread
  *
- * @param read true if trying to mark messages as read, false if marking unread,
- *        undefined if toggling the read status
+ * @param {boolean} [read] - true if trying to mark messages as read,
+ *  false if marking unread, undefined if toggling the read status.
  */
 function MsgMarkMsgAsRead(read) {
   if (read == undefined) {
@@ -3595,6 +3702,8 @@ function MsgMarkAsFlagged() {
 
 /**
  * Extract email data and prefill the event/task dialog with that data.
+ *
+ * @param {boolean} [isTask=false]
  */
 function convertToEventOrTask(isTask = false) {
   window.top.calendarExtract.extractFromEmail(gMessage, isTask);
@@ -3611,7 +3720,7 @@ function convertToEventOrTask(isTask = false) {
  *  display widget), this must be moved into the MessageDisplayWidget or
  *  otherwise be scoped to the tab.
  *
- * @param {nsIMsgHdr} msgHdr - The nsIMsgHdr of the message with a junk status change.
+ * @param {nsIMsgDBHdr} msgHdr - The nsIMsgHdr of the message with a junk status change.
  */
 function HandleJunkStatusChanged(msgHdr) {
   if (!msgHdr || !msgHdr.folder) {
@@ -4067,8 +4176,8 @@ function onRemoteContentOptionsShowing(aEvent) {
 /**
  * Add privileges to display remote content for the given uri.
  *
- * @param aUriSpec |String| uri for the site to add permissions for.
- * @param aReload  Reload the message display after allowing the URI.
+ * @param {string} aUriSpec - uri for the site to add permissions for.
+ * @param {boolean} aReload - Reload the message display after allowing the URI.
  */
 function allowRemoteContentForURI(aUriSpec, aReload = true) {
   const uri = Services.io.newURI(aUriSpec);
@@ -4085,7 +4194,7 @@ function allowRemoteContentForURI(aUriSpec, aReload = true) {
 /**
  * Add privileges to display remote content for the given uri.
  *
- * @param aListNode  The menulist element containing the URIs to allow.
+ * @param {Node} aListNode - The menulist element containing the URIs to allow.
  */
 function allowRemoteContentForAll(aListNode) {
   const uriNodes = aListNode.querySelectorAll(".allow-remote-uri");
@@ -4105,7 +4214,7 @@ function editRemoteContentSettings() {
 }
 
 /**
- *  Set the msg hdr flag to ignore the phishing warning and reload the message.
+ * Set the msg hdr flag to ignore the phishing warning and reload the message.
  */
 function IgnorePhishingWarning() {
   // This property should really be called skipPhishingWarning or something
@@ -4115,7 +4224,7 @@ function IgnorePhishingWarning() {
 }
 
 /**
- *  Open the preferences dialog to allow disabling the scam feature.
+ * Open the preferences dialog to allow disabling the scam feature.
  */
 function OpenPhishingSettings() {
   top.openOptionsDialog("panePrivacy", "privacySecurityCategory");
@@ -4132,7 +4241,8 @@ function setMsgHdrPropertyAndReload(aProperty, aValue) {
 
 /**
  * Mark a specified message as read.
- * @param msgHdr header (nsIMsgDBHdr) of the message to mark as read
+ *
+ * @param {nsIMsgDBHdr} msgHdr - nsIMsgDBHdr to mark as read.
  */
 function MarkMessageAsRead(msgHdr) {
   ClearPendingReadTimer();
@@ -4144,110 +4254,6 @@ function ClearPendingReadTimer() {
   if (gMarkViewedMessageAsReadTimer) {
     clearTimeout(gMarkViewedMessageAsReadTimer);
     gMarkViewedMessageAsReadTimer = null;
-  }
-}
-
-// this is called when layout is actually finished rendering a
-// mail message. OnMsgLoaded is called when libmime is done parsing the message
-function OnMsgParsed(aUrl) {
-  // browser doesn't do this, but I thought it could be a useful thing to test out...
-  // If the find bar is visible and we just loaded a new message, re-run
-  // the find command. This means the new message will get highlighted and
-  // we'll scroll to the first word in the message that matches the find text.
-  const findBar = document.getElementById("FindToolbar");
-  if (!findBar.hidden) {
-    findBar.onFindAgainCommand(false);
-  }
-  const browser = getMessagePaneBrowser();
-  // Run the phishing detector on the message if it hasn't been marked as not
-  // a scam already.
-  if (
-    gMessage &&
-    !gMessage.getUint32Property("notAPhishMessage") &&
-    PhishingDetector.analyzeMsgForPhishingURLs(aUrl, browser)
-  ) {
-    gMessageNotificationBar.setPhishingMsg();
-  }
-
-  // Notify anyone (e.g., extensions) who's interested in when a message is loaded.
-  Services.obs.notifyObservers(null, "MsgMsgDisplayed", gMessageURI);
-
-  const doc =
-    browser && browser.contentDocument ? browser.contentDocument : null;
-
-  // Rewrite any anchor elements' href attribute to reflect that the loaded
-  // document is a mailnews url. This will cause docShell to scroll to the
-  // element in the document rather than opening the link externally.
-  const links = doc && doc.links ? doc.links : [];
-  for (const linkNode of links) {
-    if (!linkNode.hash) {
-      continue;
-    }
-
-    // We have a ref fragment which may reference a node in this document.
-    // Ensure html in mail anchors work as expected.
-    const anchorId = linkNode.hash.replace("#", "");
-    // Continue if an id (html5) or name attribute value for the ref is not
-    // found in this document.
-    const selector = "#" + anchorId + ", [name='" + anchorId + "']";
-    try {
-      if (!linkNode.ownerDocument.querySelector(selector)) {
-        continue;
-      }
-    } catch (ex) {
-      continue;
-    }
-
-    // Then check if the href url matches the document baseURL.
-    if (
-      makeURI(linkNode.href).specIgnoringRef !=
-      makeURI(linkNode.baseURI).specIgnoringRef
-    ) {
-      continue;
-    }
-
-    // Finally, if the document url is a message url, and the anchor href is
-    // http, it needs to be adjusted so docShell finds the node.
-    const messageURI = makeURI(linkNode.ownerDocument.URL);
-    if (
-      messageURI instanceof Ci.nsIMsgMailNewsUrl &&
-      linkNode.href.startsWith("http")
-    ) {
-      linkNode.href = messageURI.specIgnoringRef + linkNode.hash;
-    }
-  }
-
-  const stylesReadyPromise = new Promise(resolve => {
-    if (doc.readyState === "complete") {
-      resolve();
-      return;
-    }
-    browser.contentWindow.addEventListener("load", resolve, {
-      once: true,
-    });
-  });
-
-  const applyOverflowingToImg = async img => {
-    img.setAttribute("shrinktofit", "true");
-    if (!img.complete) {
-      await new Promise(resolve => {
-        img.addEventListener("load", resolve, { once: true });
-      });
-    }
-    await stylesReadyPromise;
-    if (img.naturalWidth > img.clientWidth) {
-      img.setAttribute("overflowing", "true");
-    }
-  };
-
-  // Scale any overflowing images, exclude http content.
-  const imgs = doc && !doc.URL.startsWith("http") ? doc.images : [];
-  for (const img of imgs) {
-    // No zooming for children of clickable links.
-    if (img.closest("[href]")) {
-      continue;
-    }
-    applyOverflowingToImg(img);
   }
 }
 
@@ -4422,11 +4428,17 @@ function reportMsgRead({ isNewRead = false, key = null }) {
     gSecureMsgProbe.key = key;
   }
   if (gSecureMsgProbe.key && gSecureMsgProbe.isNewRead) {
-    Services.telemetry.keyedScalarAdd(
-      "tb.mails.read_secure",
-      gSecureMsgProbe.key,
-      1
-    );
+    // The key is one of:
+    // - 'signed-smime'
+    // - 'signed-openpgp'
+    // - 'encrypted-smime'
+    // - 'encrypted-openpgp'
+    const is_signed = gSecureMsgProbe.key.startsWith("signed-");
+    const is_encrypted = gSecureMsgProbe.key.startsWith("encrypted-");
+    const security = gSecureMsgProbe.key.endsWith("-openpgp")
+      ? "OpenPGP"
+      : "S/MIME";
+    Glean.mail.mailsReadSecure.record({ security, is_signed, is_encrypted });
   }
 }
 
@@ -4505,7 +4517,8 @@ var headerToolbarNavigation = {
         event.preventDefault();
         event.target.parentNode
           .querySelector("menupopup")
-          .openPopup(event.target.parentNode, "after_end", {
+          .openPopup(event.target.parentNode, {
+            position: "after_end",
             triggerEvent: event,
           });
       } else {

@@ -56,13 +56,13 @@ function checkMenuitems(menu, ...expectedItems) {
 
 async function checkABrowser(browser, doc = browser.ownerDocument) {
   if (
-    browser.webProgress?.isLoadingDocument ||
+    browser.ownerDocument.readyState != "complete" ||
     !browser.currentURI ||
     browser.currentURI?.spec == "about:blank"
   ) {
     await BrowserTestUtils.browserLoaded(
       browser,
-      undefined,
+      false,
       url => url != "about:blank"
     );
   }
@@ -115,7 +115,7 @@ async function checkABrowser(browser, doc = browser.ownerDocument) {
   checkMenuitems(browserContext, ...expectedContextItems);
   browserContext.hidePopup();
 
-  // A link.
+  // A link. Also test "Save Link As" works.
 
   shownPromise = BrowserTestUtils.waitForEvent(browserContext, "popupshown");
   await BrowserTestUtils.synthesizeMouseAtCenter(
@@ -131,7 +131,16 @@ async function checkABrowser(browser, doc = browser.ownerDocument) {
     "browserContext-copylink",
     "browserContext-savelink"
   );
-  browserContext.hidePopup();
+  const pickerPromise2 = new Promise(resolve => {
+    SpecialPowers.MockFilePicker.init(window.browsingContext);
+    SpecialPowers.MockFilePicker.showCallback = picker => {
+      resolve(picker.defaultString);
+      return Ci.nsIFilePicker.returnCancel;
+    };
+  });
+  browserContext.activateItem(doc.getElementById("browserContext-savelink"));
+  Assert.equal(await pickerPromise2, "Link to a web page");
+  SpecialPowers.MockFilePicker.cleanup();
 
   // A text input widget.
 
@@ -183,8 +192,16 @@ async function checkABrowser(browser, doc = browser.ownerDocument) {
 }
 
 add_setup(async function () {
-  const account = MailServices.accounts.createLocalMailAccount();
-  account.addIdentity(MailServices.accounts.createIdentity());
+  const account = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
+  identity.email = "mochitest@localhost";
+  account.addIdentity(identity);
+  account.incomingServer = MailServices.accounts.createIncomingServer(
+    "user",
+    "test",
+    "pop3"
+  );
+  MailServices.accounts.defaultAccount = account;
   const rootFolder = account.incomingServer.rootFolder.QueryInterface(
     Ci.nsIMsgLocalMailFolder
   );
@@ -194,7 +211,7 @@ add_setup(async function () {
   const message = await fetch(TEST_MESSAGE_URL).then(r => r.text());
   testFolder.addMessageBatch([message]);
   const messages = new MessageGenerator().makeMessages({ count: 5 });
-  const messageStrings = messages.map(message => message.toMessageString());
+  const messageStrings = messages.map(m => m.toMessageString());
   testFolder.addMessageBatch(messageStrings);
 
   about3Pane = document.getElementById("tabmail").currentAbout3Pane;

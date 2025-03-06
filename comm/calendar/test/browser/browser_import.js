@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// This tests importing an ICS file.
+/** This tests importing/exporting an ICS file. */
 
 const { MockFilePicker } = ChromeUtils.importESModule(
   "resource://testing-common/MockFilePicker.sys.mjs"
@@ -31,6 +31,8 @@ add_setup(async function () {
 });
 
 add_task(async function () {
+  Services.fog.testResetFOG();
+
   const tabOpenPromise = BrowserTestUtils.waitForEvent(tabmail.tabContainer, "TabOpen");
   window.goDoCommand("calendar_import_command");
   const {
@@ -169,7 +171,7 @@ add_task(async function () {
 
   EventUtils.synthesizeMouseAtCenter(doc.getElementById("calendarSelectAll"), {}, win);
 
-  nextButton.scrollIntoView();
+  nextButton.scrollIntoView({ block: "start", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(nextButton, {}, win);
   await TestUtils.waitForCondition(
     () => BrowserTestUtils.isVisible(calendarsPane),
@@ -200,6 +202,14 @@ add_task(async function () {
   EventUtils.synthesizeMouseAtCenter(summaryPane.querySelector("button.progressFinish"), {}, win);
   await tabClosePromise;
 
+  const gleanEvents = Glean.mail.import.testGetValue();
+  Assert.equal(gleanEvents.length, 1, "the import should have been recorded in telemetry");
+  Assert.deepEqual(
+    gleanEvents[0].extra,
+    { importer: "calendar", result: "succeeded" },
+    "the telemetry data should be correct"
+  );
+
   // Check that the items were actually successfully imported.
   const result = await calendar.getItemsAsArray(
     Ci.calICalendar.ITEM_FILTER_ALL_ITEMS,
@@ -210,6 +220,28 @@ add_task(async function () {
   is(result.length, 4, "all items that were imported were in fact imported");
 
   await CalendarTestUtils.monthView.waitForItemAt(window, 1, 3, 4);
+
+  // While we're here, make sure we can export the "Test" calendar as well.
+  const exportedFile = await IOUtils.getFile(PathUtils.tempDir, "export.ics");
+  MockFilePicker.setFiles([exportedFile]);
+
+  const context = document.getElementById("list-calendars-context-menu");
+  EventUtils.synthesizeMouseAtCenter(
+    document.querySelector("#calendar-list li:nth-child(2)"),
+    { type: "contextmenu" },
+    window
+  );
+  await BrowserTestUtils.waitForPopupEvent(context, "shown");
+  context.activateItem(document.getElementById("list-calendars-context-export"));
+
+  await TestUtils.waitForCondition(() => exportedFile.exists());
+
+  const icsExported = await IOUtils.readUTF8(exportedFile.path);
+  Assert.ok(icsExported.includes("\r\nNAME:Test\r\n"), "ics export should contain calendar NAME");
+  Assert.ok(
+    icsExported.includes("\r\nX-WR-CALNAME:Test\r\n"),
+    "ics export should contain calendar X-WR-CALNAME"
+  );
 
   for (const item of result) {
     await calendar.deleteItem(item);

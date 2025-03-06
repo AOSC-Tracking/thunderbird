@@ -26,8 +26,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
  * @param {string} stringName - Name of the string within the properties file.
  * @param {string[]} [params] - (optional) Parameters to format the string.
  * @returns {string | null} A string describing the recurrence
- *                                        pattern or null if the item has no
- *                                        recurrence info.
+ *   pattern or null if the item has no info.
  */
 export function recurrenceStringFromItem(item, bundleName, stringName, params) {
   // See the `parentItem` property of `calIItemBase`.
@@ -47,7 +46,7 @@ export function recurrenceStringFromItem(item, bundleName, stringName, params) {
   const endDate = rawEndDate ? rawEndDate.getInTimezone(kDefaultTimezone) : null;
 
   return (
-    recurrenceRule2String(recurrenceInfo, startDate, endDate, startDate.isDate) ||
+    recurrenceRule2String(recurrenceInfo, startDate, endDate, startDate?.isDate) ||
     cal.l10n.getString(bundleName, stringName, params)
   );
 }
@@ -56,11 +55,11 @@ export function recurrenceStringFromItem(item, bundleName, stringName, params) {
  * This function takes the recurrence info passed as argument and creates a
  * literal string representing the repeat pattern in natural language.
  *
- * @param recurrenceInfo    An item's recurrence info to parse.
- * @param startDate         The start date to base rules on.
- * @param endDate           The end date to base rules on.
- * @param allDay            If true, the pattern should assume an allday item.
- * @returns A human readable string describing the recurrence.
+ * @param {calIRecurrenceInfo} recurrenceInfo - An item's recurrence info to parse.
+ * @param {calIDateTime} startDate - The start date to base rules on.
+ * @param {calIDateTime} endDate - The end date to base rules on.
+ * @param {boolean} allDay - If true, the pattern should assume an allday item.
+ * @returns {string} A human readable string describing the recurrence.
  */
 export function recurrenceRule2String(recurrenceInfo, startDate, endDate, allDay) {
   function getRString(name, args) {
@@ -85,6 +84,13 @@ export function recurrenceRule2String(recurrenceInfo, startDate, endDate, allDay
     // Checks if aByDay contains only values from 1 to 7 with any order.
     const mask = aByDay.reduce((value, item) => value | (1 << item), 1);
     return aByDay.length == 7 && mask == Math.pow(2, 8) - 1;
+  }
+
+  if (!startDate) {
+    // https://datatracker.ietf.org/doc/html/rfc5545#section-3.6.1
+    // DTSTART is optional when METHOD is used.
+    // For such occasions, we're not able to display anything sensible.
+    return getRString("ruleTooComplexSummary");
   }
 
   // Retrieve a valid recurrence rule from the currently
@@ -298,8 +304,8 @@ export function recurrenceRule2String(recurrenceInfo, startDate, endDate, allDay
         ) {
           // RRULE:FREQ=YEARLY;BYMONTH=x;BYMONTHDAY=y.
           // RRULE:FREQ=YEARLY;BYMONTHDAY=x (takes the month from the start date).
-          const monthNumber = bymonth ? bymonth[0] : startDate.month + 1;
-          const month = getRString("repeatDetailsMonth" + monthNumber);
+          const monthNumber = bymonth ? bymonth[0] - 1 : startDate.month;
+          const month = cal.dtz.formatter.monthNames[monthNumber];
           const monthDay =
             bymonthday[0] == -1
               ? getRString("monthlyLastDay")
@@ -309,7 +315,7 @@ export function recurrenceRule2String(recurrenceInfo, startDate, endDate, allDay
         } else if (checkRecurrenceRule(rule, ["BYMONTH"]) && checkRecurrenceRule(rule, ["BYDAY"])) {
           // RRULE:FREQ=YEARLY;BYMONTH=x;BYDAY=y1,y2,....
           const byday = rule.getComponent("BYDAY");
-          const month = getRString("repeatDetailsMonth" + bymonth[0]);
+          const month = cal.dtz.formatter.monthNames[bymonth[0] - 1];
           if (everyWeekDay(byday)) {
             // Every day of the month.
             let yearlyString = "yearlyEveryDayOf";
@@ -345,11 +351,11 @@ export function recurrenceRule2String(recurrenceInfo, startDate, endDate, allDay
           }
         } else if (checkRecurrenceRule(rule, ["BYMONTH"])) {
           // RRULE:FREQ=YEARLY;BYMONTH=x (takes the day from the start date).
-          const month = getRString("repeatDetailsMonth" + bymonth[0]);
+          const month = cal.dtz.formatter.monthNames[bymonth[0] - 1];
           const yearlyString = getRString("yearlyNthOn", [month, startDate.day]);
           ruleString = PluralForm.get(rule.interval, yearlyString).replace("#3", rule.interval);
         } else {
-          const month = getRString("repeatDetailsMonth" + (startDate.month + 1));
+          const month = cal.dtz.formatter.monthNames[startDate.month];
           const yearlyString = getRString("yearlyNthOn", [month, startDate.day]);
           ruleString = PluralForm.get(rule.interval, yearlyString).replace("#3", rule.interval);
         }
@@ -431,9 +437,9 @@ export function hasUnsupported(recurrenceInfo) {
 /**
  * Split rules into negative and positive rules.
  *
- * @param recurrenceInfo    An item's recurrence info to parse.
- * @returns An array with two elements: an array of positive
- *                            rules and an array of negative rules.
+ * @param {calIRecurrenceInfo} recurrenceInfo    An item's recurrence info to parse.
+ * @returns {calIRecurrenceItem[][]} An array with two elements: an array of positive
+ *  rules and an array of negative rules.
  */
 export function splitRecurrenceRules(recurrenceInfo) {
   const ritems = recurrenceInfo.getRecurrenceItems();
@@ -452,10 +458,10 @@ export function splitRecurrenceRules(recurrenceInfo) {
 /**
  * Check if a recurrence rule's component is valid.
  *
- * @see                     calIRecurrenceRule
- * @param aRule             The recurrence rule to check.
- * @param aArray            An array of component names to check.
- * @returns Returns true if the rule is valid.
+ * @see {calIRecurrenceRule}
+ * @param {calIRecurrenceRule} aRule - The recurrence rule to check.
+ * @param {calIIcalComponent[]} aArray - An array of component names to check.
+ * @returns {boolean} true if the rule is valid.
  */
 export function checkRecurrenceRule(aRule, aArray) {
   for (const comp of aArray) {
@@ -470,11 +476,9 @@ export function checkRecurrenceRule(aRule, aArray) {
 /**
  * Counts the occurrences of the parent item if any of a provided item
  *
- * @param  {(calIEvent|calIToDo)}  aItem  item to count for
- * @returns {(number|null)} number of occurrences or null if the
- *                                          passed item's parent item isn't a
- *                                          recurring item or its recurrence is
- *                                          infinite
+ * @param {alIEvent|calIToDo} aItem - Item to count for.
+ * @returns {number|null} number of occurrences, or null if the passed items
+ *   parent item isn't a recurring item or its recurrence is infinite.
  */
 export function countOccurrences(aItem) {
   let occCounter = null;

@@ -140,8 +140,7 @@ add_task(async function test_opening_thread_in_tabs_closing_behaviour() {
  * Open some message tabs in the background from the folder tab.
  *
  * @param {number} numAdd - The number of tabs to add.
- *
- * @param {TestTab[]} An array of tab objects corresponding to all the open
+ * @returns {TestTab[]} An array of tab objects corresponding to all the open
  *   tabs.
  */
 async function openTabs(numAdd) {
@@ -188,7 +187,7 @@ async function assertClose(fromTab, closeMethod, switchToTab, closingTabs) {
       `tab #${tab.index} should be in the DOM tree before ${desc}`
     );
   }
-  fromTab.node.scrollIntoView();
+  fromTab.node.scrollIntoView({ block: "start", behavior: "instant" });
   await closeMethod(fromTab.node);
   for (const tab of closingTabs) {
     Assert.ok(

@@ -51,16 +51,14 @@ export class MailNotificationManager {
 
     // Ensure that OS integration is defined before we attempt to initialize the
     // system tray icon.
-    ChromeUtils.defineLazyGetter(this, "_osIntegration", () => {
-      try {
-        return Cc["@mozilla.org/messenger/osintegration;1"].getService(
-          Ci.nsIMessengerOSIntegration
-        );
-      } catch (e) {
-        // We don't have OS integration on all platforms.
-        return null;
-      }
-    });
+    try {
+      this._osIntegration = Cc[
+        "@mozilla.org/messenger/osintegration;1"
+      ].getService(Ci.nsIMessengerOSIntegration);
+    } catch (e) {
+      // We don't have OS integration on all platforms, i.e. 32-bit Linux.
+      this._osIntegration = null;
+    }
 
     if (["macosx", "win"].includes(AppConstants.platform)) {
       // We don't have indicator for unread count on Linux yet.
@@ -266,7 +264,7 @@ export class MailNotificationManager {
    * Get the body for the alert.
    *
    * @param {nsIMsgFolder} folder - The changed folder.
-   * @param {nsIMsgHdr} msgHdr - The nsIMsgHdr of the first new messages.
+   * @param {nsIMsgDBHdr} msgHdr - The nsIMsgHdr of the first new messages.
    * @returns {string} The alert body.
    */
   async _getAlertBody(folder, msgHdr) {
@@ -327,7 +325,7 @@ export class MailNotificationManager {
   /**
    * Show the alert.
    *
-   * @param {nsIMsgHdr} msgHdr - The nsIMsgHdr of the first new messages.
+   * @param {nsIMsgDBHdr} msgHdr - The nsIMsgHdr of the first new messages.
    * @param {string} title - The alert title.
    * @param {string} body - The alert body.
    */

@@ -75,29 +75,33 @@ export function getIconData(icons, extension) {
     }
   }
 
-  const getIcon = (size, theme) => {
-    const { icon } = IconDetails.getPreferredIcon(icons, extension, size);
-    if (typeof icon === "object") {
-      if (icon[theme] == IconDetails.DEFAULT_ICON) {
-        icon[theme] = DEFAULT_ICON;
+  const getIcon = (iconSize, theme) => {
+    const { icon: preferredIcon } = IconDetails.getPreferredIcon(
+      icons,
+      extension,
+      iconSize
+    );
+    if (typeof preferredIcon === "object") {
+      if (preferredIcon[theme] == IconDetails.DEFAULT_ICON) {
+        preferredIcon[theme] = DEFAULT_ICON;
       }
-      return IconDetails.escapeUrl(icon[theme]);
+      return IconDetails.escapeUrl(preferredIcon[theme]);
     }
-    if (icon == IconDetails.DEFAULT_ICON) {
+    if (preferredIcon == IconDetails.DEFAULT_ICON) {
       return DEFAULT_ICON;
     }
-    return IconDetails.escapeUrl(icon);
+    return IconDetails.escapeUrl(preferredIcon);
   };
 
   const style = [];
-  const getImageSet = (size, theme) => `image-set(
-    url("${getIcon(size, theme)}"),
-    url("${getIcon(size * 2, theme)}") 2x
+  const getImageSet = (imgSize, theme) => `image-set(
+    url("${getIcon(imgSize, theme)}"),
+    url("${getIcon(imgSize * 2, theme)}") 2x
   )`;
-  const getStyle = (name, size) => {
-    style.push([`--webextension-${name}`, getImageSet(size, "default")]);
-    style.push([`--webextension-${name}-light`, getImageSet(size, "light")]);
-    style.push([`--webextension-${name}-dark`, getImageSet(size, "dark")]);
+  const getStyle = (name, imgSize) => {
+    style.push([`--webextension-${name}`, getImageSet(imgSize, "default")]);
+    style.push([`--webextension-${name}-light`, getImageSet(imgSize, "light")]);
+    style.push([`--webextension-${name}-dark`, getImageSet(imgSize, "dark")]);
   };
 
   getStyle("menupanel-image", 32);
@@ -221,6 +225,7 @@ export class ToolbarButtonAPI extends ExtensionAPIPersistent {
           button.setAttribute("type", "menu");
           button.setAttribute("wantdropmarker", "true");
           const menupopup = document.createXULElement("menupopup");
+          menupopup.classList.add("webextension-menupopup");
           menupopup.dataset.actionMenu = this.manifestName;
           menupopup.dataset.extensionId = this.extension.id;
           button.appendChild(menupopup);
@@ -246,10 +251,10 @@ export class ToolbarButtonAPI extends ExtensionAPIPersistent {
    *
    * May return null to append new buttons to the end of the toolbar.
    *
-   * @param {DOMElement} toolbar - a toolbar node
+   * @param {DOMElement} _toolbar - A toolbar node.
    * @returns {DOMElement} a node which is to be used as insertion point, or null
    */
-  getNonCustomizableToolbarInsertionPoint() {
+  getNonCustomizableToolbarInsertionPoint(_toolbar) {
     return null;
   }
 
@@ -433,8 +438,8 @@ export class ToolbarButtonAPI extends ExtensionAPIPersistent {
   /**
    * Return the toolbar button if it is currently visible in the given window.
    *
-   * @param window
-   * @returns {DOMElement} the toolbar button element, or null
+   * @param {Window} window
+   * @returns {?DOMElement} the toolbar button element, or null.
    */
   getToolbarButton(window) {
     const button = window.document.getElementById(this.id);
@@ -451,21 +456,15 @@ export class ToolbarButtonAPI extends ExtensionAPIPersistent {
    *
    * @param {Window} window
    * @param {object} options
-   * @param {boolean} options.requirePopupUrl - do not fall back to emitting an
-   *                                            onClickedEvent, if no popupURL is
-   *                                            set and consider this action fail
-   *
-   * @returns {boolean} status if action could be successfully triggered
+   * @param {boolean} options.requirePopupUrl - Do not fall back to emitting an
+   *   onClickedEvent, if no popupURL is set and consider this action fail.
+   * @returns {boolean} status if action could be successfully triggered.
    */
   async triggerAction(window, options = {}) {
     const button = this.getToolbarButton(window);
     const { popup: popupURL, enabled } = this.getContextData(
       this.getTargetFromWindow(window)
     );
-
-    const isDisabled = button =>
-      button.hasAttribute("disabled") &&
-      button.getAttribute("disabled") !== "false";
 
     const focusWindow = win => {
       if (Services.focus.activeWindow == win.top) {
@@ -485,7 +484,12 @@ export class ToolbarButtonAPI extends ExtensionAPIPersistent {
     };
 
     let success = false;
-    if (button && enabled && !isDisabled(button)) {
+    if (
+      button &&
+      enabled &&
+      (!button.hasAttribute("disabled") ||
+        button.getAttribute("disabled") === "false")
+    ) {
       await focusWindow(window);
 
       if (popupURL) {
@@ -722,13 +726,14 @@ export class ToolbarButtonAPI extends ExtensionAPIPersistent {
    * Gets the target object corresponding to the `details` parameter of the various
    * get* and set* API methods.
    *
-   * @param {object} details
-   *        An object with optional `tabId` or `windowId` properties.
-   * @throws if `windowId` is specified, this is not valid in Thunderbird.
+   * @param {object} details - An object with details.
+   * @param {string} [details.tabId]
+   * @param {string} [details.windowId]
+   * @throws {ExtensionError} if `windowId` is specified, this is not valid in Thunderbird.
    * @returns {XULElement|ChromeWindow|null}
-   *        If a `tabId` was specified, the corresponding XULElement tab.
-   *        If a `windowId` was specified, the corresponding ChromeWindow.
-   *        Otherwise, `null`.
+   *   If a `tabId` was specified, the corresponding XULElement tab.
+   *   If a `windowId` was specified, the corresponding ChromeWindow.
+   *   Otherwise, `null`.
    */
   getTargetFromDetails({ tabId, windowId }) {
     if (windowId != null) {
@@ -743,10 +748,9 @@ export class ToolbarButtonAPI extends ExtensionAPIPersistent {
   /**
    * Gets the data associated with a tab, window, or the global one.
    *
-   * @param {XULElement|ChromeWindow|null} target
-   *        A XULElement tab, a ChromeWindow, or null for the global data.
-   * @returns {object}
-   *        The icon, title, badge, etc. associated with the target.
+   * @param {XULElement|ChromeWindow|null} target - A XULElement tab, a
+   *   ChromeWindow, or null for the global data.
+   * @returns {object} The icon, title, badge, etc. associated with the target.
    */
   getContextData(target) {
     if (target) {
@@ -758,13 +762,13 @@ export class ToolbarButtonAPI extends ExtensionAPIPersistent {
   /**
    * Set a global, window specific or tab specific property.
    *
-   * @param {object} details
-   *        An object with optional `tabId` or `windowId` properties.
-   * @param {string} prop
-   *        String property to set. Should should be one of "icon", "title", "label",
-   *        "badgeText", "popup", "badgeBackgroundColor", "badgeTextColor" or "enabled".
-   * @param {string} value
-   *        Value for prop.
+   * @param {object} details - An object with details.
+   * @param {string} [details.tabId]
+   * @param {string} [details.windowId]
+   * @param {string} prop - String property to set. Should should be one of
+   *  "icon", "title", "label", "badgeText", "popup", "badgeBackgroundColor",
+   *  "badgeTextColor" or "enabled".
+   * @param {string} value - Value for prop.
    */
   async setProperty(details, prop, value) {
     const target = this.getTargetFromDetails(details);
@@ -781,13 +785,13 @@ export class ToolbarButtonAPI extends ExtensionAPIPersistent {
   /**
    * Retrieve the value of a global, window specific or tab specific property.
    *
-   * @param {object} details
-   *        An object with optional `tabId` or `windowId` properties.
-   * @param {string} prop
-   *        String property to retrieve. Should should be one of "icon", "title", "label",
-   *        "badgeText", "popup", "badgeBackgroundColor", "badgeTextColor" or "enabled".
-   * @returns {string} value
-   *          Value of prop.
+   * @param {object} details - An object with details.
+   * @param {string} [details.tabId]
+   * @param {string} [details.windowId]
+   * @param {string} prop - String property to retrieve. Should should be one of
+   *   "icon", "title", "label", "badgeText", "popup", "badgeBackgroundColor",
+   *   "badgeTextColor" or "enabled".
+   * @returns {string} value - Value of prop.
    */
   getProperty(details, prop) {
     return this.getContextData(this.getTargetFromDetails(details))[prop];

@@ -198,7 +198,7 @@ add_task(async function test_joinChat() {
       if (key === "roomIdOrAlias") {
         return roomId;
       }
-      ok(false, "Unknown chat room field");
+      ok(false, `Unknown chat room field "${key}"`);
       return null;
     },
   };
@@ -396,4 +396,14 @@ add_task(async function test_deleteAccount() {
   ok(stopped);
   equal(removedListeners, MatrixSDK.ClientEvent.Sync);
   equal(account._verificationRequestTimeouts.size, 0);
+});
+
+add_task(function test_getChatRoomFieldValuesFromString() {
+  const result =
+    MatrixAccount.prototype.getChatRoomFieldValuesFromString("#test:test");
+  Assert.deepEqual(
+    result.values,
+    { roomIdOrAlias: "#test:test" },
+    "Unexpected channel for bare channel"
+  );
 });

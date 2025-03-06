@@ -40,7 +40,6 @@ nsMsgOfflineImapOperation::nsMsgOfflineImapOperation(nsMsgDatabase* db,
   m_operation = 0;
   m_operationFlags = 0;
   m_messageKey = nsMsgKey_None;
-  m_sourceMessageKey = nsMsgKey_None;
   m_mdb = db;
   NS_ADDREF(m_mdb);
   m_mdbRow = row;
@@ -123,9 +122,7 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::GetSrcMessageKey(
 
 NS_IMETHODIMP nsMsgOfflineImapOperation::SetSrcMessageKey(
     nsMsgKey aMessageKey) {
-  m_sourceMessageKey = aMessageKey;
-  return m_mdb->SetUint32Property(m_mdbRow, PROP_SRC_MESSAGE_KEY,
-                                  m_sourceMessageKey);
+  return m_mdb->SetUint32Property(m_mdbRow, PROP_SRC_MESSAGE_KEY, aMessageKey);
 }
 
 /* attribute imapMessageFlagsType flagOperation; */
@@ -271,6 +268,7 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::AddMessageCopyOperation(
 // we write out the folders as one string, separated by 0x1.
 #define FOLDER_SEP_CHAR '\001'
 
+// Helper to read m_copyDestinations list from db.
 nsresult nsMsgOfflineImapOperation::GetCopiesFromDB() {
   nsCString copyDests;
   m_copyDestinations.Clear();
@@ -298,6 +296,7 @@ nsresult nsMsgOfflineImapOperation::GetCopiesFromDB() {
   return rv;
 }
 
+// Helper to write m_copyDestinations list to db.
 nsresult nsMsgOfflineImapOperation::SetCopiesToDB() {
   nsAutoCString copyDests;
 

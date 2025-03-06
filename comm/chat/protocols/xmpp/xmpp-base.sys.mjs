@@ -12,6 +12,7 @@ import {
   ClassInfo,
 } from "resource:///modules/imXPCOMUtils.sys.mjs";
 import {
+  ChatRoomFieldValues,
   GenericAccountPrototype,
   GenericAccountBuddyPrototype,
   GenericConvIMPrototype,
@@ -1484,7 +1485,7 @@ var XMPPRoomInfoPrototype = {
   },
   get chatRoomFieldValues() {
     const roomJid = this._account._roomList.get(this.name);
-    return this._account.getChatRoomDefaultFieldValues(roomJid);
+    return this._account.getChatRoomFieldValuesFromString(roomJid);
   },
 };
 function XMPPRoomInfo(aName, aAccount) {
@@ -1576,20 +1577,23 @@ export var XMPPAccountPrototype = {
       isPassword: true,
     },
   },
-  parseDefaultChatName(aDefaultChatName) {
-    if (!aDefaultChatName) {
-      return { nick: this._jid.node };
+  getChatRoomFieldValuesFromString(aString) {
+    // TODO Does this make sense?
+    if (!aString) {
+      return new ChatRoomFieldValues({ nick: this._jid.node });
     }
 
-    const params = aDefaultChatName.trim().split(/\s+/);
+    const params = aString.trim().split(/\s+/);
     const jid = this._parseJID(params[0]);
 
-    // We swap node and domain as domain is required for parseJID, but node and
-    // resource are optional. In MUC join command, Node is required as it
-    // represents a room, but domain and resource are optional as we get muc
-    // domain from service discovery.
+    // In MUC join command, node is required as it represents a room, but domain
+    // and resource are optional as we get the MUC domain from service discovery.
+    //
+    // _parseJID requires a domain and not node, if only a single field is provided
+    // treat it as the node and replace the domain with the MUC service domain.
     if (!jid.node && jid.domain) {
-      [jid.node, jid.domain] = [jid.domain, jid.node];
+      jid.node = jid.domain;
+      jid.domain = this._mucService;
     }
 
     const chatFields = {
@@ -1600,21 +1604,20 @@ export var XMPPAccountPrototype = {
     if (params.length > 1) {
       chatFields.password = params[1];
     }
-    return chatFields;
+    return new ChatRoomFieldValues(chatFields);
   },
-  getChatRoomDefaultFieldValues(aDefaultChatName) {
-    const rv = GenericAccountPrototype.getChatRoomDefaultFieldValues.call(
-      this,
-      aDefaultChatName
-    );
-    if (!rv.values.nick) {
-      rv.values.nick = this._jid.node;
-    }
-    if (!rv.values.server && this._mucService) {
-      rv.values.server = this._mucService;
+  /**
+   * XMPP provides the user's nick and the current MUC service as the server name.
+   */
+  getChatRoomDefaultFieldValues() {
+    const chatFields = {
+      nick: this._jid.node,
+    };
+    if (this._mucService) {
+      chatFields.server = this._mucService;
     }
 
-    return rv;
+    return new ChatRoomFieldValues(chatFields);
   },
 
   // XEP-0045: Requests joining room if it exists or
@@ -1893,10 +1896,10 @@ export var XMPPAccountPrototype = {
         telephone: "tooltip-telephone",
       };
 
-      const tooltipInfo = [];
+      const vCard = [];
       for (const [field, stringKey] of Object.entries(kTooltipFields)) {
         if (vCardInfo.hasOwnProperty(field)) {
-          tooltipInfo.push(
+          vCard.push(
             new TooltipInfo(
               lazy.l10n.formatValueSync(stringKey),
               vCardInfo[field]
@@ -1912,12 +1915,10 @@ export var XMPPAccountPrototype = {
           participant.buddyIconFilename = dataURI;
         }
 
-        tooltipInfo.push(
-          new TooltipInfo(null, dataURI, Ci.prplITooltipInfo.icon)
-        );
+        vCard.push(new TooltipInfo(null, dataURI, Ci.prplITooltipInfo.icon));
       }
       Services.obs.notifyObservers(
-        new nsSimpleEnumerator(tooltipInfo),
+        new nsSimpleEnumerator(vCard),
         "user-info-received",
         aJid
       );
@@ -2337,20 +2338,20 @@ export var XMPPAccountPrototype = {
         Stanza.node("query", Stanza.NS.disco_info)
       );
       this.sendStanza(iq, receivedStanza => {
-        const query = receivedStanza.getElement(["query"]);
+        const stanzaQuery = receivedStanza.getElement(["query"]);
         const from = receivedStanza.attributes.from;
         if (
           aStanza.attributes.type != "result" ||
-          !query ||
-          query.uri != Stanza.NS.disco_info
+          !stanzaQuery ||
+          stanzaQuery.uri != Stanza.NS.disco_info
         ) {
           this.LOG("Could not get features for this service: " + from);
           return true;
         }
-        const features = query
+        const features = stanzaQuery
           .getElements(["feature"])
           .map(elt => elt.attributes.var);
-        const identity = query.getElement(["identity"]);
+        const identity = stanzaQuery.getElement(["identity"]);
         if (
           identity &&
           identity.attributes.category == "conference" &&
@@ -2396,8 +2397,8 @@ export var XMPPAccountPrototype = {
           null,
           Stanza.node("enable", Stanza.NS.carbons)
         );
-        this.sendStanza(iqStanza, aStanza => {
-          const error = this.parseError(aStanza);
+        this.sendStanza(iqStanza, stanza => {
+          const error = this.parseError(stanza);
           if (error) {
             this.WARN(
               "Unable to enable message carbons due to " +
@@ -2407,7 +2408,7 @@ export var XMPPAccountPrototype = {
             return true;
           }
 
-          const type = aStanza.attributes.type;
+          const type = stanza.attributes.type;
           if (type != "result") {
             this.WARN(
               "Received unexpected stanza with " +
@@ -2659,7 +2660,7 @@ export var XMPPAccountPrototype = {
       this.addChatRequest(
         invitation.mucJid,
         () => {
-          const chatRoomFields = this.getChatRoomDefaultFieldValues(
+          const chatRoomFields = this.getChatRoomFieldValuesFromString(
             invitation.mucJid
           );
           if (invitation.password) {
@@ -2677,12 +2678,12 @@ export var XMPPAccountPrototype = {
               { from: invitation.from },
               null
             );
-            const x = Stanza.node("x", Stanza.NS.muc_user, null, decline);
+            const x2 = Stanza.node("x", Stanza.NS.muc_user, null, decline);
             const s = Stanza.node(
               "message",
               null,
               { to: invitation.mucJid },
-              x
+              x2
             );
             this.sendStanza(s);
           }
@@ -2856,7 +2857,7 @@ export var XMPPAccountPrototype = {
   /**
    * Save the icon for a resource to the local file system.
    *
-   * @param photo - The vcard photo node representing the icon.
+   * @param {Node} photo - The vcard photo node representing the icon.
    * @param {prplIChatBuddy|prplIConversation} resource - Resource the icon is for.
    * @returns {Promise<string>} Resolves with the file:// URI to the local icon file.
    */
@@ -2909,7 +2910,7 @@ export var XMPPAccountPrototype = {
     const istream = Cc["@mozilla.org/io/string-input-stream;1"].createInstance(
       Ci.nsIStringInputStream
     );
-    istream.setData(content, content.length);
+    istream.setByteStringData(content);
 
     const fileName = resource._photoHash + "." + kExt[type];
     const file = new lazy.FileUtils.File(

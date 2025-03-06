@@ -48,6 +48,9 @@ with Files("mozilla/README"):
 with Files("mozilla/meta/**"):
     BUG_COMPONENT = ("Testing", "web-platform-tests")
 
+with Files("mozilla/tests/cookie-store/**"):
+    BUG_COMPONENT = ("Core", "DOM: Networking")
+
 with Files("mozilla/tests/dom/**"):
     BUG_COMPONENT = ("Core", "DOM: Core & HTML")
 
@@ -533,9 +536,6 @@ with Files("tests/generic-sensor/**"):
     BUG_COMPONENT = ("Core", "DOM: Device Interfaces")
 
 with Files("tests/geolocation-sensor/**"):
-    BUG_COMPONENT = ("Core", "DOM: Geolocation")
-
-with Files("tests/geolocation-API/**"):
     BUG_COMPONENT = ("Core", "DOM: Geolocation")
 
 with Files("tests/graphics-aam/**"):

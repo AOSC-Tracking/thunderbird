@@ -13,6 +13,7 @@
 /* import-globals-from ../calendar-ui-utils.js */
 
 var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+var { openLinkExternally } = ChromeUtils.importESModule("resource:///modules/LinkHelper.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
 ChromeUtils.defineESModuleGetters(this, {
@@ -53,8 +54,8 @@ function dispose() {
  * Sets the id of a Dialog to another value to allow different CSS styles
  * to be used.
  *
- * @param aDialog               The Dialog to be changed.
- * @param aNewId                The new ID as String.
+ * @param {MozDialog} aDialog - The Dialog to be changed.
+ * @param {string} aNewId - The new ID as String.
  */
 function setDialogId(aDialog, aNewId) {
   aDialog.setAttribute("id", aNewId);
@@ -66,7 +67,7 @@ function setDialogId(aDialog, aNewId) {
  * This needs to be invoked after changing a dialog id while loading to apply the values for the
  * new dialog id.
  *
- * @param aDialog               The Dialog to apply the property values for
+ * @param {MozDialog} aDialog - The Dialog to apply the property values for.
  */
 function applyPersistedProperties(aDialog) {
   const xulStore = Services.xulStore;
@@ -105,7 +106,7 @@ function applyPersistedProperties(aDialog) {
  *
  * @param {Element} aMenuitem - The menuitem to create the alarm from.
  * @param {calICalendar} aCalendar - The calendar for getting the default alarm type.
- * @returns The calIAlarm with information from the menuitem.
+ * @returns {calIAlarm} The calIAlarm with information from the menuitem.
  */
 function createReminderFromMenuitem(aMenuitem, aCalendar) {
   let reminder = aMenuitem.reminder || new CalAlarm();
@@ -417,11 +418,12 @@ function getDefaultAlarmType(calendar) {
  * @param {Element} reminderList - The reminders menu element.
  * @param {calIEvent | calITodo} calendarItem - The calendar item.
  * @param {number} lastAlarmSelection - Index of the previous selection in the reminders menu.
+ * @param {calICalendar} calendar - Calendar to use.
  * @param {Element} reminderDetails - The reminder details element.
  * @param {calITimezone} timezone - The relevant timezone.
- * @param {boolean} suppressDialogs - If true, controls are updated without prompting
- *                                    for changes with the dialog
- * @returns {number} Index of the item selected in the reminders menu.
+ * @param {boolean} suppressDialogs - If true, controls are updated without
+ *   prompting for changes with the dialog.
+ * @returns {integer} Index of the item selected in the reminders menu.
  */
 function commonUpdateReminder(
   reminderList,
@@ -635,13 +637,12 @@ function adaptScheduleAgent(aItem) {
  * @param {calIEvent | calITodo} item - The calendar item.
  */
 function sendMailToOrganizer(item) {
-  const organizer = item.organizer;
-  const email = cal.email.getAttendeeEmail(organizer, true);
-  const emailSubject = cal.l10n.getString("calendar-event-dialog", "emailSubjectReply", [
-    item.title,
-  ]);
-  const identity = item.calendar.getProperty("imip.identity");
-  cal.email.sendTo(email, emailSubject, null, identity);
+  cal.email.sendTo(
+    cal.email.getAttendeeEmail(item.organizer, true),
+    `Re: ${item.title}`,
+    null,
+    item.calendar.getProperty("imip.identity")
+  );
 }
 
 /**
@@ -659,8 +660,6 @@ function openAttachmentFromItemSummary(aAttachmentId, item) {
     .filter(aAttachment => aAttachment.hashId == aAttachmentId);
 
   if (attachments.length && attachments[0].uri && attachments[0].uri.spec != "about:blank") {
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(attachments[0].uri);
+    openLinkExternally(attachments[0].uri, { addToHistory: false });
   }
 }

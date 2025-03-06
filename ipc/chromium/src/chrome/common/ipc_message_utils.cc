@@ -6,19 +6,17 @@
 
 #include "chrome/common/ipc_message_utils.h"
 #include "mozilla/ipc/SharedMemory.h"
-#include "mozilla/ipc/SharedMemoryBasic.h"
 
 namespace IPC {
-
-static uint32_t kShmemThreshold = 64 * 1024;
 
 MessageBufferWriter::MessageBufferWriter(MessageWriter* writer,
                                          uint32_t full_len)
     : writer_(writer) {
-  // NOTE: We only write out the `shmem_ok` bool if we're over kShmemThreshold
-  // to avoid bloating the size of messages with small buffers.
-  if (full_len > kShmemThreshold) {
-    shmem_ = new mozilla::ipc::SharedMemoryBasic();
+  // NOTE: We only write out the `shmem_ok` bool if we're over
+  // kMessageBufferShmemThreshold to avoid bloating the size of messages with
+  // small buffers.
+  if (full_len > kMessageBufferShmemThreshold) {
+    shmem_ = new mozilla::ipc::SharedMemory();
     bool shmem_ok = shmem_->Create(full_len) && shmem_->Map(full_len);
     writer->WriteBool(shmem_ok);
     if (shmem_ok) {
@@ -26,7 +24,7 @@ MessageBufferWriter::MessageBufferWriter(MessageWriter* writer,
         writer->FatalError("SharedMemory::WriteHandle failed");
         return;
       }
-      buffer_ = reinterpret_cast<char*>(shmem_->memory());
+      buffer_ = reinterpret_cast<char*>(shmem_->Memory());
     } else {
       // Creating or mapping the shared memory region failed, perhaps due to FD
       // exhaustion or address space fragmentation. Fall back to trying to send
@@ -66,16 +64,17 @@ bool MessageBufferWriter::WriteBytes(const void* data, uint32_t len) {
 MessageBufferReader::MessageBufferReader(MessageReader* reader,
                                          uint32_t full_len)
     : reader_(reader) {
-  // NOTE: We only write out the `shmem_ok` bool if we're over kShmemThreshold
-  // to avoid bloating the size of messages with small buffers.
-  if (full_len > kShmemThreshold) {
+  // NOTE: We only write out the `shmem_ok` bool if we're over
+  // kMessageBufferShmemThreshold to avoid bloating the size of messages with
+  // small buffers.
+  if (full_len > kMessageBufferShmemThreshold) {
     bool shmem_ok = false;
     if (!reader->ReadBool(&shmem_ok)) {
       reader->FatalError("MessageReader::ReadBool failed!");
       return;
     }
     if (shmem_ok) {
-      shmem_ = new mozilla::ipc::SharedMemoryBasic();
+      shmem_ = new mozilla::ipc::SharedMemory();
       if (!shmem_->ReadHandle(reader)) {
         reader->FatalError("SharedMemory::ReadHandle failed!");
         return;
@@ -84,7 +83,7 @@ MessageBufferReader::MessageBufferReader(MessageReader* reader,
         reader->FatalError("SharedMemory::Map failed");
         return;
       }
-      buffer_ = reinterpret_cast<const char*>(shmem_->memory());
+      buffer_ = reinterpret_cast<const char*>(shmem_->Memory());
     }
   }
   remaining_ = full_len;

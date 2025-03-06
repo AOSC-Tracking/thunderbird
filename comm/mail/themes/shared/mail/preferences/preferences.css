@@ -473,11 +473,12 @@ treechildren::-moz-tree-cell-text(selected) {
 }
 
 .update-throbber {
-  width: 16px;
-  height: 16px;
-  margin-inline: 6px 4px;
-  content: image-set(url("chrome://global/skin/icons/loading.png"),
-                     url("chrome://global/skin/icons/loading@2x.png") 2x);
+  width: 1.3em;
+  min-height: 1.3em;
+  margin-inline-end: 8px;
+  content: url("chrome://messenger/skin/icons/spinning.svg");
+  -moz-context-properties: fill;
+  fill: var(--in-content-accent-color);
 
   /* Work around bug 560067 - animated images in visibility: hidden
    * still eat CPU. */
@@ -598,7 +599,7 @@ treechildren::-moz-tree-cell-text(selected) {
 
 #preferencesContainer richlistbox {
   appearance: none;
-  background-color: var(--in-content-box-background);
+  background-color: var(--background-color-box);
   color: var(--in-content-text-color);
 
   & richlistitem {
@@ -654,6 +655,11 @@ treechildren::-moz-tree-cell-text(selected) {
 
 #availableLocales {
   margin-inline: 0;
+
+  & > image {
+    -moz-context-properties: fill;
+    fill: var(--selected-item-color);
+  }
 }
 
 #warning-message {
@@ -1129,7 +1135,27 @@ calendar-notifications-setting {
   }
 }
 
+/* Feature labels */
+
+.align-baseline {
+  align-items: baseline;
+}
+
+.label-experiment {
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  display: inline-block;
+  padding: 3px;
+  background-color: var(--color-warning-default);
+  color: var(--color-yellow-90);
+  border-radius: 3px;
+  margin-inline-start: 12px;
+}
+
 /* QR Export for Mobile */
+
 
 #qrExportContent {
   --qr-legend-icon-gap: 6px;
@@ -1155,8 +1181,8 @@ calendar-notifications-setting {
   }
 
   .qr-panel {
-    background: light-dark(#f7f7f7, #262d3b);
-    border: 1px solid light-dark(#e4e4e7, #303a4a);
+    background: var(--color-neutral-subtle);
+    border: 1px solid var(--color-neutral-border);
     border-radius: 6px;
     padding-inline: 32px;
     padding-block: 24px 15px;
@@ -1175,7 +1201,7 @@ calendar-notifications-setting {
   }
 
   .qr-subpanel {
-    background: light-dark(#feffff, #1a202c);
+    background: var(--color-neutral-base);
     border-radius: 3px;
     padding: var(--qr-gap);
 
@@ -1253,15 +1279,15 @@ calendar-notifications-setting {
   font-size: 0.7rem;
   text-transform: uppercase;
   border-radius: 3px;
-  background: light-dark(#1373d9, #58c9ff);
-  color: light-dark(#feffff, #1a202c);
+  background: var(--color-primary-default);
+  color: var(--color-neutral-base);
   padding: 4px 9px;
-  border: 1px solid light-dark(#175fb6, #32aeff);
+  border: 1px solid var(--color-primary-hover);
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
   font-weight: 700;
 
-  &:enabled:hover {
-    background: light-dark(#175fb6, #32aeff);
+  &:hover {
+    background: var(--color-primary-hover);
   }
 }
 
@@ -1274,7 +1300,7 @@ qr-code-wizard {
 
   figcaption {
     font-weight: 600;
-    color: light-dark(#4c4d58, #d9d9de);
+    color: var(--color-text-secondary);
     margin-block-end: var(--qr-gap);
   }
 
@@ -1309,4 +1335,139 @@ qr-code-wizard {
 
 #qrExportRestart {
   margin-block-start: 24px;
+}
+
+/* Appearance Tab */
+
+.pane-appearance-sorting-options {
+  display: grid;
+  grid-template-columns: max-content 1fr 1fr;
+  align-items: center;
+  margin-block: 18px;
+
+  & label {
+    text-align: end;
+  }
+}
+
+.pane-appearance-sorting-buttons {
+  text-align: end;
+  display: flex;
+  justify-content: end;
+  align-items: center;
+}
+
+.folder-chooser-popup-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding-inline-start: 6px;
+
+  -moz-context-properties: fill, stroke;
+  --icon-color: currentColor;
+  fill: color-mix(in srgb, var(--icon-color) 20%, transparent);
+  stroke: var(--icon-color);
+
+  &::before {
+    position: relative;
+    content: var(--icon-folder);
+  }
+
+  &::after {
+    position: relative;
+    content: var(--icon-nav-down-sm);
+  }
+}
+
+#defaultSortOrder {
+  & .radio-icon {
+    margin-inline-end: 3px;
+    -moz-context-properties: stroke;
+    stroke: currentColor;
+  }
+
+  & [selected="true"] .radio-icon {
+    stroke: AccentColor;
+  }
+}
+
+#defaultSortOrderAscending .radio-icon {
+  list-style-image: var(--icon-ascending-xs);
+}
+
+#defaultSortOrderDescending .radio-icon {
+  list-style-image: var(--icon-descending-xs);
+}
+
+.appearance-options {
+  display: flex;
+  flex-direction: row;
+  gap: 15px;
+  margin-block-start: 9px;
+
+  & .radio-icon {
+    -moz-context-properties: fill, stroke;
+    fill: var(--color-text-base);
+    stroke: var(--color-text-secondary);
+    margin-inline-start: -22px;
+    background-color: var(--color-neutral-base);
+    border-radius: 6px;
+  }
+
+  & radio {
+    display: flex;
+    align-items: end;
+    background-color: var(--color-neutral-subtle);
+    border: 1px solid var(--color-neutral-border);
+    border-radius: 10px;
+    padding: 3px;
+    margin: 0;
+
+    & .radio-check {
+      margin-block: 0;
+    }
+
+    & .radio-label-box {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      margin: 0;
+      padding: 0;
+    }
+
+    & .radio-label {
+      align-self: start;
+      margin: 0;
+      padding: 0;
+      line-height: 1.3;
+    }
+
+    &:hover {
+      background-color: var(--color-neutral-border);
+    }
+
+    &[selected="true"] {
+      border-color: AccentColor;
+      outline: 1px solid AccentColor;
+
+      .radio-icon {
+        fill: AccentColor;
+        stroke: AccentColor;
+      }
+    }
+  }
+}
+
+#defaultFlagThreaded .radio-icon {
+  list-style-image: var(--threaded-illustration);
+}
+
+#defaultFlagUnthreaded .radio-icon {
+  list-style-image: var(--unthreaded-illustration);
+}
+
+#defaultFlagGrouped .radio-icon {
+  list-style-image: var(--grouped-illustration);
 }

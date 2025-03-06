@@ -394,12 +394,6 @@ review bot, the task will ran for every new Phabricator diff.
 Any supported and detected issue will be automatically reported on the
 Phabricator revision.
 
-resource-monitor
-================
-If a task set this boolean attribute to `true`, it will collect CPU, memory, and
-- if available - Disk and Network IO by running the resource-monitor utility,
-provided through fetches.
-
 retrigger
 =========
 Whether the task can be retriggered, or if it needs to be re-run.
@@ -478,6 +472,11 @@ snap_test_type
 
 For Snap tests tasks, used to disambiguate task label
 
+snap_test_release
+=================
+
+For Snap tests tasks, used to disambiguate task label by distro release
+
 .. _primary one: https://taskcluster-taskgraph.readthedocs.io/en/latest/reference/transforms/from_deps.html#primary-kind
 
 build-type
@@ -539,3 +538,11 @@ A list of the test manifests that run in this task.
 lull-schedule
 =============
 Used by performance tasks to schedule them at a specified frequency in a best-effort method. Schedules them when the overall CI load is low for a given platform. Use "w" for weeks, "d" for days, "h" for hours, and "m" for minutes in a string like so to specify the scheduling frequency: 1d, 1w 4h, 2w 4d 1h.
+
+this_chunk
+=============
+Used by source tests to support chunking and specify a current chunk.
+
+total_chunks
+=============
+Used by source tests to support chunking and specify a total amount of chunks.

@@ -12,6 +12,7 @@ var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.
 ChromeUtils.defineESModuleGetters(this, {
   CalEvent: "resource:///modules/CalEvent.sys.mjs",
 });
+const l10n = new Localization(["calendar/categories.ftl"], true);
 
 const EVENTTITLE = "Event";
 const EVENTLOCATION = "Location";
@@ -81,11 +82,10 @@ add_task(async function testEventDialog() {
   Assert.equal(iframeDocument.getElementById("item-calendar").value, "Test");
 
   // Check standard title.
-  const defTitle = cal.l10n.getAnyString("calendar", "calendar", "newEvent");
-  Assert.equal(iframeDocument.getElementById("item-title").placeholder, defTitle);
+  Assert.equal(iframeDocument.getElementById("item-title").placeholder, "New Event");
 
   // Prepare category.
-  const categories = cal.l10n.getAnyString("calendar", "categories", "categories2");
+  const categories = l10n.formatValueSync("categories2");
   // Pick 4th value in a comma-separated list.
   const category = categories.split(",")[4];
   // Calculate date to repeat until.
@@ -392,7 +392,10 @@ function checkTooltip(row, col, startTime, endTime) {
   currDate.addDuration(cal.createDuration(`P${7 * (row - 1) + (col - 1)}D`));
   const startDate = cal.dtz.formatter.formatDate(currDate);
 
-  Assert.ok(dateTime.includes(`${startDate} ${startTime} – `));
+  Assert.ok(dateTime.startsWith(startDate));
+
+  // AM/PM indicator (if there is one) removed if it's the same in endTime.
+  Assert.stringContains(dateTime, startTime.replace(/ [AP]M/, ""));
 
   // This could be on the next day if it is 00:00.
   Assert.ok(dateTime.endsWith(endTime));

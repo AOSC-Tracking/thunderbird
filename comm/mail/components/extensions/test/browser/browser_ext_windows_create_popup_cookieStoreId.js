@@ -92,11 +92,13 @@ add_task(async function userContext_disabled() {
 });
 
 add_task(async function valid_cookieStoreId() {
+  // Set userContext.enabled to false and check if requesting the contextualIdentities
+  // permission flips it to true, and using a cookieStoreId succeeds.
   await SpecialPowers.pushPrefEnv({
-    set: [["privacy.userContext.enabled", true]],
+    set: [["privacy.userContext.enabled", false]],
   });
 
-  const testCases = [
+  const TEST_CASES = [
     {
       description: "one URL",
       createParams: {
@@ -105,23 +107,25 @@ add_task(async function valid_cookieStoreId() {
         cookieStoreId: "firefox-container-1",
       },
       expectedCookieStoreIds: ["firefox-container-1"],
-      expectedExecuteScriptResult: ["about:blank - null"],
+      expectedExecuteScriptResult: ["about:blank"],
     },
     {
       description: "one URL in an array",
       createParams: {
         type: "popup",
         url: ["about:blank"],
-        cookieStoreId: "firefox-container-1",
+        cookieStoreId: "firefox-container-2",
       },
-      expectedCookieStoreIds: ["firefox-container-1"],
-      expectedExecuteScriptResult: ["about:blank - null"],
+      expectedCookieStoreIds: ["firefox-container-2"],
+      expectedExecuteScriptResult: ["about:blank"],
     },
   ];
 
   async function background(testCases) {
     const readyTabs = new Map();
     const tabReadyCheckers = new Set();
+    const baseURL = await browser.runtime.getURL("");
+
     browser.webNavigation.onCompleted.addListener(({ url, tabId, frameId }) => {
       if (frameId === 0) {
         readyTabs.set(tabId, url);
@@ -156,7 +160,7 @@ add_task(async function valid_cookieStoreId() {
         return (
           await browser.tabs.executeScript(tabId, {
             matchAboutBlank: true,
-            code: "`${document.URL} - ${origin}`",
+            code: "`${document.URL} - ${origin}/`",
           })
         )[0];
       } catch (e) {
@@ -199,7 +203,7 @@ add_task(async function valid_cookieStoreId() {
 
         const result = await executeScriptAndGetResult(win.tabs[i].id);
         browser.test.assertEq(
-          expectedResult,
+          `${expectedResult} - ${baseURL}`,
           result,
           `expected executeScript result for tab ${i} (${description})`
         );
@@ -210,11 +214,17 @@ add_task(async function valid_cookieStoreId() {
     browser.test.sendMessage("done");
   }
   const extension = ExtensionTestUtils.loadExtension({
+    useAddonManager: "temporary",
     manifest: {
+      browser_specific_settings: {
+        gecko: {
+          id: "popup_window_cookieStoreId@mochi.test",
+        },
+      },
       host_permissions: ["*://*/*"], // allows script in top-level about:blank.
-      permissions: ["cookies", "webNavigation"],
+      permissions: ["cookies", "webNavigation", "contextualIdentities"],
     },
-    background: `(${background})(${JSON.stringify(testCases)})`,
+    background: `(${background})(${JSON.stringify(TEST_CASES)})`,
   });
 
   await extension.startup();

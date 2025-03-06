@@ -214,7 +214,7 @@ var calendarViewController = {
  * This function does the common steps to switch between views. Should be called
  * from app-specific view switching functions
  *
- * @param viewType     The type of view to select.
+ * @param {string} viewType - The type of view to select.
  */
 function switchToView(viewType) {
   const viewBox = getViewBox();
@@ -298,7 +298,7 @@ function switchToView(viewType) {
 /**
  * Returns the calendar view box element.
  *
- * @returns The view-box element.
+ * @returns {Element} The view-box element.
  */
 function getViewBox() {
   return document.getElementById("view-box");
@@ -307,7 +307,7 @@ function getViewBox() {
 /**
  * Returns the currently selected calendar view.
  *
- * @returns The selected calendar view
+ * @returns {?Element} The selected calendar view
  */
 function currentView() {
   for (const element of getViewBox().children) {
@@ -322,8 +322,7 @@ function currentView() {
  * Handler function to set the selected day in the minimonth to the currently
  * selected day in the current view.
  *
- * @param event     The "dayselect" event emitted from the views.
- *
+ * @param {Event} event - The "dayselect" event emitted from the views.
  */
 function observeViewDaySelect(event) {
   const date = event.detail;
@@ -364,7 +363,7 @@ function observeViewDaySelect(event) {
 /**
  * Shows the given date in the current view, if in calendar mode.
  *
- * @param aNewDate      The new date as a JSDate.
+ * @param {Date} aNewDate - The new date.
  */
 function minimonthPick(aNewDate) {
   if (gCurrentMode == "calendar" || gCurrentMode == "task") {
@@ -381,7 +380,7 @@ function minimonthPick(aNewDate) {
 /**
  * Provides a neutral way to get the minimonth.
  *
- * @returns The XUL minimonth element.
+ * @returns {Element} The minimonth element.
  */
 function getMinimonth() {
   return document.getElementById("calMinimonth");
@@ -469,7 +468,7 @@ function showCalControlBarMenuPopup(event) {
 /**
  * Provides a neutral way to go to the current day in the views and minimonth.
  *
- * @param date     The date to go.
+ * @param {calIDateTime} date - The date to go to.
  */
 function goToDate(date) {
   getMinimonth().value = cal.dtz.dateTimeToJsDate(date);
@@ -579,27 +578,22 @@ var calendarNavigationBar = {
     let docTitle = "";
     if (startDate) {
       const intervalLabel = document.getElementById("intervalDescription");
+      intervalLabel.textContent = currentView().getRangeDescription();
       const firstWeekNo = cal.weekInfoService.getWeekTitle(startDate);
-      let secondWeekNo = firstWeekNo;
+      const secondWeekNo =
+        startDate.nativeTime == endDate.nativeTime
+          ? firstWeekNo
+          : cal.weekInfoService.getWeekTitle(endDate);
       const weekLabel = document.getElementById("calendarWeek");
-      if (startDate.nativeTime == endDate.nativeTime) {
-        intervalLabel.textContent = cal.dtz.formatter.formatDate(startDate);
-      } else {
-        intervalLabel.textContent = currentView().getRangeDescription();
-        secondWeekNo = cal.weekInfoService.getWeekTitle(endDate);
-      }
       if (secondWeekNo == firstWeekNo) {
-        weekLabel.textContent = cal.l10n.getCalString("singleShortCalendarWeek", [firstWeekNo]);
-        weekLabel.tooltipText = cal.l10n.getCalString("singleLongCalendarWeek", [firstWeekNo]);
+        document.l10n.setAttributes(weekLabel, "single-calendar-week", {
+          index: firstWeekNo,
+        });
       } else {
-        weekLabel.textContent = cal.l10n.getCalString("severalShortCalendarWeeks", [
-          firstWeekNo,
-          secondWeekNo,
-        ]);
-        weekLabel.tooltipText = cal.l10n.getCalString("severalLongCalendarWeeks", [
-          firstWeekNo,
-          secondWeekNo,
-        ]);
+        document.l10n.setAttributes(weekLabel, "several-calendar-weeks", {
+          startIndex: firstWeekNo,
+          endIndex: secondWeekNo,
+        });
       }
       docTitle = intervalLabel.textContent;
     }

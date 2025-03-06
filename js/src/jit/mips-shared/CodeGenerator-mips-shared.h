@@ -33,9 +33,9 @@ class CodeGeneratorMIPSShared : public CodeGeneratorShared {
   Operand ToOperand(const LDefinition* def);
 
 #ifdef JS_PUNBOX64
-  Operand ToOperandOrRegister64(const LInt64Allocation input);
+  Operand ToOperandOrRegister64(const LInt64Allocation& input);
 #else
-  Register64 ToOperandOrRegister64(const LInt64Allocation input);
+  Register64 ToOperandOrRegister64(const LInt64Allocation& input);
 #endif
 
   MoveOperand toMoveOperand(LAllocation a) const;
@@ -98,10 +98,6 @@ class CodeGeneratorMIPSShared : public CodeGeneratorShared {
       branchToBlock(lhs, rhs, mirFalse, Assembler::InvertCondition(cond));
       jumpToBlock(mirTrue);
     }
-  }
-  void testZeroEmitBranch(Assembler::Condition cond, Register reg,
-                          MBasicBlock* ifTrue, MBasicBlock* ifFalse) {
-    emitBranch(reg, Imm32(0), cond, ifTrue, ifFalse);
   }
 
   void emitTableSwitchDispatch(MTableSwitch* mir, Register index,

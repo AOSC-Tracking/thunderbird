@@ -10,6 +10,7 @@
 #define nsGridContainerFrame_h___
 
 #include "mozilla/CSSOrderAwareFrameIterator.h"
+#include "mozilla/IntrinsicISizesCache.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/HashTable.h"
@@ -118,8 +119,10 @@ class nsGridContainerFrame final : public nsContainerFrame,
   void Init(nsIContent* aContent, nsContainerFrame* aParent,
             nsIFrame* aPrevInFlow) override;
   void DidSetComputedStyle(ComputedStyle* aOldStyle) override;
-  nscoord GetMinISize(gfxContext* aRenderingContext) override;
-  nscoord GetPrefISize(gfxContext* aRenderingContext) override;
+
+  nscoord IntrinsicISize(const mozilla::IntrinsicSizeInput& aInput,
+                         mozilla::IntrinsicISizeType aType) override;
+
   void MarkIntrinsicISizesDirty() override;
 
   void BuildDisplayList(nsDisplayListBuilder* aBuilder,
@@ -147,8 +150,6 @@ class nsGridContainerFrame final : public nsContainerFrame,
                     const nsLineList::iterator* aPrevFrameLine,
                     nsFrameList&& aFrameList) override;
   void RemoveFrame(DestroyContext&, ChildListID, nsIFrame*) override;
-  mozilla::StyleAlignFlags CSSAlignmentForAbsPosChild(
-      const ReflowInput& aChildRI, LogicalAxis aLogicalAxis) const override;
 
 #ifdef DEBUG
   void SetInitialChildList(ChildListID aListID,
@@ -333,9 +334,7 @@ class nsGridContainerFrame final : public nsContainerFrame,
       mozilla::PresShell* aPresShell, ComputedStyle* aStyle);
   explicit nsGridContainerFrame(ComputedStyle* aStyle,
                                 nsPresContext* aPresContext)
-      : nsContainerFrame(aStyle, aPresContext, kClassID),
-        mCachedMinISize(NS_INTRINSIC_ISIZE_UNKNOWN),
-        mCachedPrefISize(NS_INTRINSIC_ISIZE_UNKNOWN) {
+      : nsContainerFrame(aStyle, aPresContext, kClassID) {
     for (auto& perAxisBaseline : mBaseline) {
       for (auto& baseline : perAxisBaseline) {
         baseline = NS_INTRINSIC_ISIZE_UNKNOWN;
@@ -363,16 +362,16 @@ class nsGridContainerFrame final : public nsContainerFrame,
    * @return the consumed size of all of this grid container's continuations
    *         so far including this frame
    */
-  nscoord ReflowChildren(GridReflowInput& aState,
+  nscoord ReflowChildren(GridReflowInput& aGridRI,
                          const LogicalRect& aContentArea,
                          const nsSize& aContainerSize,
                          ReflowOutput& aDesiredSize, nsReflowStatus& aStatus);
 
   /**
-   * Helper for GetMinISize / GetPrefISize.
+   * Helper to implement IntrinsicISize().
    */
-  nscoord IntrinsicISize(gfxContext* aRenderingContext,
-                         mozilla::IntrinsicISizeType aConstraint);
+  nscoord ComputeIntrinsicISize(const mozilla::IntrinsicSizeInput& aInput,
+                                mozilla::IntrinsicISizeType aType);
 
   nscoord GetBBaseline(BaselineSharingGroup aBaselineGroup) const {
     return mBaseline[mozilla::LogicalAxis::Block][aBaselineGroup];
@@ -421,8 +420,8 @@ class nsGridContainerFrame final : public nsContainerFrame,
    */
   static FindItemInGridOrderResult FindFirstItemInGridOrder(
       mozilla::CSSOrderAwareFrameIterator& aIter,
-      const nsTArray<GridItemInfo>& aGridItems, LineRange GridArea::*aMajor,
-      LineRange GridArea::*aMinor, uint32_t aFragmentStartTrack);
+      const nsTArray<GridItemInfo>& aGridItems, LineRange GridArea::* aMajor,
+      LineRange GridArea::* aMinor, uint32_t aFragmentStartTrack);
   /**
    * Find the last item in Grid Order in this fragment.
    * @param aFragmentStartTrack is the first track in this fragment in the same
@@ -433,8 +432,8 @@ class nsGridContainerFrame final : public nsContainerFrame,
    */
   static FindItemInGridOrderResult FindLastItemInGridOrder(
       mozilla::ReverseCSSOrderAwareFrameIterator& aIter,
-      const nsTArray<GridItemInfo>& aGridItems, LineRange GridArea::*aMajor,
-      LineRange GridArea::*aMinor, uint32_t aFragmentStartTrack,
+      const nsTArray<GridItemInfo>& aGridItems, LineRange GridArea::* aMajor,
+      LineRange GridArea::* aMinor, uint32_t aFragmentStartTrack,
       uint32_t aFirstExcludedTrack);
 
   /**
@@ -478,10 +477,10 @@ class nsGridContainerFrame final : public nsContainerFrame,
   };
 
   mozilla::Maybe<nsGridContainerFrame::Fragmentainer> GetNearestFragmentainer(
-      const GridReflowInput& aState) const;
+      const GridReflowInput& aGridRI) const;
 
   // @return the consumed size of all continuations so far including this frame
-  nscoord ReflowInFragmentainer(GridReflowInput& aState,
+  nscoord ReflowInFragmentainer(GridReflowInput& aGridRI,
                                 const LogicalRect& aContentArea,
                                 ReflowOutput& aDesiredSize,
                                 nsReflowStatus& aStatus,
@@ -491,7 +490,7 @@ class nsGridContainerFrame final : public nsContainerFrame,
   // Helper for ReflowInFragmentainer
   // @return the consumed size of all continuations so far including this frame
   nscoord ReflowRowsInFragmentainer(
-      GridReflowInput& aState, const LogicalRect& aContentArea,
+      GridReflowInput& aGridRI, const LogicalRect& aContentArea,
       ReflowOutput& aDesiredSize, nsReflowStatus& aStatus,
       Fragmentainer& aFragmentainer, const nsSize& aContainerSize,
       const nsTArray<const GridItemInfo*>& aItems, uint32_t aStartRow,
@@ -502,7 +501,7 @@ class nsGridContainerFrame final : public nsContainerFrame,
                          nsSize aContainerSize,
                          const mozilla::Maybe<nscoord>& aStretchBSize,
                          const Fragmentainer* aFragmentainer,
-                         const GridReflowInput& aState,
+                         const GridReflowInput& aGridRI,
                          const LogicalRect& aContentArea,
                          ReflowOutput& aDesiredSize, nsReflowStatus& aStatus);
 
@@ -514,7 +513,7 @@ class nsGridContainerFrame final : public nsContainerFrame,
    * in the column axis in that case.
    * @return the intrinsic size in the masonry axis
    */
-  nscoord MasonryLayout(GridReflowInput& aState,
+  nscoord MasonryLayout(GridReflowInput& aGridRI,
                         const LogicalRect& aContentArea,
                         SizingConstraint aConstraint,
                         ReflowOutput& aDesiredSize, nsReflowStatus& aStatus,
@@ -532,11 +531,7 @@ class nsGridContainerFrame final : public nsContainerFrame,
   void AddImplicitNamedAreasInternal(LineNameList& aNameList,
                                      ImplicitNamedAreas*& aAreas);
 
-  /**
-   * Cached values to optimize GetMinISize/GetPrefISize.
-   */
-  nscoord mCachedMinISize;
-  nscoord mCachedPrefISize;
+  mozilla::IntrinsicISizesCache mCachedIntrinsicSizes;
 
   // Our baselines, one per BaselineSharingGroup per axis.
   PerLogicalAxis<PerBaseline<nscoord>> mBaseline;

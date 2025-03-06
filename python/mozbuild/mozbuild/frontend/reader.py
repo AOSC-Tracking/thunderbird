@@ -30,7 +30,6 @@ from collections import OrderedDict, defaultdict
 from concurrent.futures.process import ProcessPoolExecutor
 from io import StringIO
 from itertools import chain
-from multiprocessing import cpu_count
 
 import mozpack.path as mozpath
 from mozpack.files import FileFinder
@@ -41,6 +40,7 @@ from mozbuild.util import (
     EmptyValue,
     HierarchicalStringList,
     ReadOnlyDefaultDict,
+    cpu_count,
     memoize,
 )
 
@@ -799,7 +799,7 @@ class BuildReaderError(Exception):
         s.write("\n")
         s.write("This variable expects the following type(s):\n")
         s.write("\n")
-        if type(inner.args[4]) == type:
+        if type(inner.args[4]) is type:
             s.write("    %s\n" % inner.args[4].__name__)
         else:
             for t in inner.args[4]:

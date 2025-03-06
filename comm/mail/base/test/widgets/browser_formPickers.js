@@ -18,12 +18,13 @@ let testFolder;
 
 async function checkABrowser(browser) {
   if (
-    browser.webProgress?.isLoadingDocument ||
+    browser.ownerDocument.readyState != "complete" ||
+    !browser.currentURI ||
     browser.currentURI?.spec == "about:blank"
   ) {
     await BrowserTestUtils.browserLoaded(
       browser,
-      undefined,
+      false,
       url => url != "about:blank"
     );
   }
@@ -33,10 +34,15 @@ async function checkABrowser(browser) {
 
   // Date picker
 
-  // Open the popup.
+  // Open the popup. Sometimes the click to open the date picker is ignored and
+  // the test runs into a timeout. Adding a small delay here helps to prevent that.
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(r => setTimeout(r, 250));
+  info("Preparing to open the date picker.");
   const pickerPromise = BrowserTestUtils.waitForDateTimePickerPanelShown(
     win.top
   );
+
   await SpecialPowers.spawn(browser, [], function () {
     const input = content.document.querySelector(`input[type="date"]`);
     if (content.location.protocol == "mailbox:") {
@@ -52,6 +58,7 @@ async function checkABrowser(browser) {
     }
   });
   const picker = await pickerPromise;
+  Assert.ok(!!picker, "Date picker was successfully opened");
 
   // Click in the middle of the picker. This should always land on a date and
   // close the picker.
@@ -166,8 +173,17 @@ async function checkABrowser(browser) {
 }
 
 add_setup(async function () {
-  const account = MailServices.accounts.createLocalMailAccount();
-  account.addIdentity(MailServices.accounts.createIdentity());
+  // We'll try composing, so need an account.
+  const account = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
+  identity.email = "mochitest@localhost";
+  account.addIdentity(identity);
+  account.incomingServer = MailServices.accounts.createIncomingServer(
+    "user",
+    "test",
+    "pop3"
+  );
+  MailServices.accounts.defaultAccount = account;
   const rootFolder = account.incomingServer.rootFolder.QueryInterface(
     Ci.nsIMsgLocalMailFolder
   );

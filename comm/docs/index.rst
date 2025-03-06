@@ -7,24 +7,40 @@ Thunderbird Source Tree Documentation
 =====================================
 
 .. toctree::
-   :caption: Project Information
-   :maxdepth: 1
+   :caption: Overview
+   :maxdepth: 2
 
-   build/index
+   {overview_doc}
 
-   mots/index
+.. toctree::
+   :caption: Building Thunderbird
+   :maxdepth: 2
 
-   l10n/index
+   {build_doc}
 
-   rust/index
+.. toctree::
+   :caption: Localization
+   :maxdepth: 2
 
-   storybook/index
+   {loc_doc}
 
-   telemetry/index
+.. toctree::
+   :caption: Telemetry
+   :maxdepth: 2
 
-   architecture/index
+   {data_doc}
 
-   frontend/index
+.. toctree::
+   :caption: Front End
+   :maxdepth: 2
+
+   {ui_doc}
+
+.. toctree::
+   :caption: Rust in Thunderbird
+   :maxdepth: 2
+
+   {rust_doc}
 
 
 Indices and tables

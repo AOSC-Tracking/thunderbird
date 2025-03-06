@@ -1,9 +1,7 @@
 #!/usr/bin/env python
-# ***** BEGIN LICENSE BLOCK *****
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
-# ***** END LICENSE BLOCK *****
 import copy
 import gzip
 import json
@@ -212,6 +210,15 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
                     "default": 0,
                     "type": int,
                     "help": "Repeat tests (used for confirm-failures) X times.",
+                },
+            ],
+            [
+                ["--timeout-multiplier"],
+                {
+                    "action": "store",
+                    "dest": "timeout_multiplier",
+                    "type": float,
+                    "help": "Sets the timeout multiplier (0.25 for `--backlog` tests by default)",
                 },
             ],
         ]
@@ -431,7 +438,9 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
             cmd.append("--skip-implementation-status=%s" % implementation_status)
 
         # Bug 1643177 - reduce timeout multiplier for web-platform-tests backlog
-        if c["backlog"]:
+        if "timeout_multiplier" in c:
+            cmd.append("--timeout-multiplier=%s" % c["timeout_multiplier"])
+        elif c["backlog"]:
             cmd.append("--timeout-multiplier=0.25")
 
         test_paths = set()
@@ -651,6 +660,11 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
 
         if self.is_android:
             env["ADB_PATH"] = self.adb_path
+
+        env["MOZ_GMP_PATH"] = os.pathsep.join(
+            os.path.join(dirs["abs_test_bin_dir"], "plugins", p, "1.0")
+            for p in ("gmp-fake", "gmp-fakeopenh264")
+        )
 
         env = self.query_env(partial_env=env, log_level=INFO)
 

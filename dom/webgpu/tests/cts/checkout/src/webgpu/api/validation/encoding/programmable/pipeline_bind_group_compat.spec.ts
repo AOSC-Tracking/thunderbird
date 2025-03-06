@@ -21,6 +21,7 @@ import {
   ValidBindableResource,
 } from '../../../../capability_info.js';
 import { GPUConst } from '../../../../constants.js';
+import { MaxLimitsTestMixin } from '../../../../gpu_test.js';
 import {
   ProgrammableEncoderType,
   kProgrammableEncoderTypes,
@@ -73,14 +74,14 @@ const kCompatTestParams = kUnitCaseParamsBuilder
 
 class F extends ValidationTest {
   getIndexBuffer(): GPUBuffer {
-    return this.device.createBuffer({
+    return this.createBufferTracked({
       size: 8 * Uint32Array.BYTES_PER_ELEMENT,
       usage: GPUBufferUsage.INDEX,
     });
   }
 
   getIndirectBuffer(indirectParams: Array<number>): GPUBuffer {
-    const buffer = this.device.createBuffer({
+    const buffer = this.createBufferTracked({
       mappedAtCreation: true,
       size: indirectParams.length * Uint32Array.BYTES_PER_ELEMENT,
       usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
@@ -347,11 +348,10 @@ class F extends ValidationTest {
       explicitPipelineLayout
     );
 
-    const buffer = device.createBuffer({
+    const buffer = this.createBufferTracked({
       size: 16,
       usage: GPUBufferUsage.UNIFORM,
     });
-    this.trackForCleanup(buffer);
 
     let emptyBindGroupLayouts;
     let nonEmptyBindGroupLayouts;
@@ -425,7 +425,7 @@ class F extends ValidationTest {
   }
 }
 
-export const g = makeTestGroup(F);
+export const g = makeTestGroup(MaxLimitsTestMixin(F));
 
 g.test('bind_groups_and_pipeline_layout_mismatch')
   .desc(
@@ -531,6 +531,13 @@ g.test('buffer_binding,render_pipeline')
   .params(u => u.combine('type', kBufferBindingTypes))
   .fn(t => {
     const { type } = t.params;
+
+    t.skipIf(
+      (type === 'storage' || type === 'read-only-storage') &&
+        t.isCompatibility &&
+        !(t.device.limits.maxStorageBuffersInFragmentStage! > 1),
+      `maxStorageBuffersInFragmentStage(${t.device.limits.maxStorageBuffersInFragmentStage}) is not >= 1`
+    );
 
     // Create fixed bindGroup
     const uniformBuffer = t.getUniformBuffer();
@@ -749,6 +756,18 @@ g.test('bgl_visibility_mismatch')
     );
   });
 
+function resourceIsStorageTexture(resourceType: ValidBindableResource) {
+  return (
+    resourceType === 'readonlyStorageTex' ||
+    resourceType === 'readwriteStorageTex' ||
+    resourceType === 'writeonlyStorageTex'
+  );
+}
+
+function resourceIsStorageBuffer(resourceType: ValidBindableResource) {
+  return resourceType === 'storageBuf';
+}
+
 g.test('bgl_resource_type_mismatch')
   .desc(
     `
@@ -766,6 +785,20 @@ g.test('bgl_resource_type_mismatch')
   .fn(t => {
     const { encoderType, call, callWithZero, bgResourceType, plResourceType, useU32Array } =
       t.params;
+
+    t.skipIf(
+      t.isCompatibility &&
+        resourceIsStorageTexture(plResourceType) &&
+        !(t.device.limits.maxStorageTexturesInFragmentStage! >= 1),
+      `maxStorageTexturesInFragmentStage(${t.device.limits.maxStorageTexturesInFragmentStage}) is not >= 1`
+    );
+
+    t.skipIf(
+      t.isCompatibility &&
+        resourceIsStorageBuffer(plResourceType) &&
+        !(t.device.limits.maxStorageBuffersInFragmentStage! >= 1),
+      `maxStorageBuffersInFragmentStage(${t.device.limits.maxStorageBuffersInFragmentStage}) is not >= 1`
+    );
 
     const bglEntries: Array<GPUBindGroupLayoutEntry> = [
       t.createBindGroupLayoutEntry(encoderType, bgResourceType, useU32Array),
@@ -909,7 +942,7 @@ g.test('empty_bind_group_layouts_requires_empty_bind_groups,render_pass')
 
     const encoder = t.device.createCommandEncoder();
 
-    const attachmentTexture = t.device.createTexture({
+    const attachmentTexture = t.createTextureTracked({
       format: 'rgba8unorm',
       size: { width: 16, height: 16, depthOrArrayLayers: 1 },
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
@@ -1082,12 +1115,11 @@ g.test('default_bind_group_layouts_never_match,render_pass')
         );
       },
       doCommandFn: ({ t, encoder, pipeline, emptyBindGroups, nonEmptyBindGroups }) => {
-        const attachmentTexture = t.device.createTexture({
+        const attachmentTexture = t.createTextureTracked({
           format: 'rgba8unorm',
           size: { width: 16, height: 16, depthOrArrayLayers: 1 },
           usage: GPUTextureUsage.RENDER_ATTACHMENT,
         });
-        t.trackForCleanup(attachmentTexture);
 
         const renderPass = encoder.beginRenderPass({
           colorAttachments: [

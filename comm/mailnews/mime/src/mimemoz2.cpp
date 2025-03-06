@@ -54,6 +54,7 @@ static bool MIME_VariableWidthPlaintext;
 mime_stream_data::mime_stream_data()
     : url_name(nullptr),
       orig_url_name(nullptr),
+      format_out(0),
       pluginObj2(nullptr),
       istream(nullptr),
       obj(nullptr),
@@ -301,8 +302,10 @@ nsresult GenerateAttachmentData(MimeObject* object, const char* aMessageURL,
   if (!urlSpec) return NS_ERROR_OUT_OF_MEMORY;
 
   if ((options->format_out == nsMimeOutput::nsMimeMessageBodyDisplay) &&
-      (PL_strncasecmp(aMessageURL, urlSpec, strlen(urlSpec)) == 0))
+      (PL_strncasecmp(aMessageURL, urlSpec, strlen(urlSpec)) == 0)) {
+    PR_FREEIF(urlSpec);
     return NS_OK;
+  }
 
   nsCString urlString(urlSpec);
 
@@ -965,7 +968,7 @@ static mime_image_stream_data* mime_image_begin(const char* image_url,
 
   mid->url = (char*)strdup(image_url);
   if (!mid->url) {
-    PR_Free(mid);
+    delete mid;
     return nullptr;
   }
 
@@ -1008,7 +1011,7 @@ static char* mime_image_make_image_html(MimeClosure image_closure) {
   /* Wouldn't it be nice if attributes were case-sensitive? */
   const char* scaledPrefix =
       "<DIV CLASS=\"moz-attached-image-container\"><IMG "
-      "CLASS=\"moz-attached-image\" shrinktofit=\"yes\" SRC=\"";
+      "CLASS=\"moz-attached-image\" SRC=\"";
   const char* suffix = "\"></DIV>";
   // Thunderbird doesn't have this pref.
 #ifdef MOZ_SUITE
@@ -1171,7 +1174,6 @@ MimeDisplayOptions::MimeDisplayOptions() {
 
   variable_width_plaintext_p = false;
   wrap_long_lines_p = false;
-  rot13_p = false;
   part_to_load = nullptr;
 
   no_output_p = false;
@@ -1298,6 +1300,7 @@ extern "C" void* mime_bridge_create_display_stream(
 
   msd->options->m_prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
   if (NS_FAILED(rv)) {
+    PR_Free(msd->options);
     delete msd;
     return nullptr;
   }
@@ -1306,6 +1309,7 @@ extern "C" void* mime_bridge_create_display_stream(
   rv = CallCreateInstance(MOZ_TXTTOHTMLCONV_CONTRACTID, &(msd->options->conv));
   if (NS_FAILED(rv)) {
     msd->options->m_prefBranch = nullptr;
+    PR_Free(msd->options);
     delete msd;
     return nullptr;
   }

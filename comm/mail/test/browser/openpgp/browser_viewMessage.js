@@ -8,19 +8,10 @@
 
 "use strict";
 
-/*
- * This file contains S/MIME tests that should be enabled once
- * bug 1806161 gets fixed.
- */
-
 const {
   get_about_message,
   open_message_from_file,
   wait_for_message_display_completion,
-  // TODO: Enable for S/MIME test
-  //  smimeUtils_ensureNSS,
-  //  smimeUtils_loadCertificateAndKey,
-  //  smimeUtils_loadPEMCertificate,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
@@ -40,8 +31,6 @@ var { MailConsts } = ChromeUtils.importESModule(
 );
 
 const MSG_TEXT = "Sundays are nothing without callaloo.";
-// TODO: Enable for S/MIME test
-//const MSG_TEXT_SMIME = "This is a test message from Alice to Bob.";
 
 function getMsgBodyTxt(msgc) {
   const msgPane = get_about_message(msgc).getMessagePaneBrowser();
@@ -109,18 +98,6 @@ add_setup(async function () {
       )
     )
   );
-
-  // TODO: Enable for S/MIME test
-  /*
-  smimeUtils_ensureNSS();
-  smimeUtils_loadPEMCertificate(
-    new FileUtils.File(getTestFilePath("../smime/data/TestCA.pem")),
-    Ci.nsIX509Cert.CA_CERT
-  );
-  smimeUtils_loadCertificateAndKey(
-    new FileUtils.File(getTestFilePath("../smime/data/Bob.p12"))
-  );
-*/
 });
 
 /**
@@ -288,7 +265,7 @@ add_task(async function testOpenForwardedEncrypted() {
   await BrowserTestUtils.closeWindow(msgc);
 });
 
-// TODO: the above tests that an encrypted .eml can be opnened from an unencrypted message.
+// TODO: the above tests that an encrypted .eml can be opened from an unencrypted message.
 // We should also test/handle:
 //  - other attachment (like .doc) in an encrypted message
 //  - unencrypted .eml attachment in encrypted message (currently broken - bug 1926607)
@@ -419,35 +396,6 @@ add_task(async function testOpenUnverifiedUnsignedEncrypted() {
 });
 
 /**
- * -- FUNCTIONALITY NOT YET IMPLEMENTED --
- * Test that we decrypt a nested S/MIME encrypted message
- * (with outer S/MIME signature that is ignored).
- */
-/*
-add_task(async function testOuterSmimeSigInnerSmimeUnsignedEncrypted() {
-  let msgc = await open_message_from_file(
-    new FileUtils.File(
-      getTestFilePath(
-        "data/eml/outer-smime-bad-sig-inner-smime-enc.eml"
-      )
-    )
-  );
-  let aboutMessage = get_about_message(msgc);
-
-  Assert.ok(getMsgBodyTxt(msgc).includes(MSG_TEXT_SMIME), "message text is in body");
-  Assert.ok(
-    OpenPGPTestUtils.hasNoSignedIconState(aboutMessage.document),
-    "signed icon is not displayed"
-  );
-  Assert.ok(
-    OpenPGPTestUtils.hasEncryptedIconState(aboutMessage.document, "ok"),
-    "encrypted icon is displayed"
-  );
-  await BrowserTestUtils.closeWindow(msgc);
-});
-*/
-
-/**
  * Test that we decrypt a nested OpenPGP encrypted message
  * (with outer S/MIME signature that is ignored).
  */
@@ -470,35 +418,6 @@ add_task(async function testOuterSmimeSigInnerPgpUnverifiedUnsignedEncrypted() {
   );
   await BrowserTestUtils.closeWindow(msgc);
 });
-
-/**
- * -- FUNCTIONALITY NOT YET IMPLEMENTED --
- * Test that we decrypt a nested S/MIME encrypted message
- * (with outer OpenPGP signature that is ignored).
- */
-/*
-add_task(async function testOuterPgpSigInnerSmimeUnsignedEncrypted() {
-  let msgc = await open_message_from_file(
-    new FileUtils.File(
-      getTestFilePath(
-        "data/eml/outer-pgp-sig-inner-smime-enc.eml"
-      )
-    )
-  );
-  let aboutMessage = get_about_message(msgc);
-
-  Assert.ok(getMsgBodyTxt(msgc).includes(MSG_TEXT_SMIME), "message text is in body");
-  Assert.ok(
-    OpenPGPTestUtils.hasNoSignedIconState(aboutMessage.document),
-    "signed icon is not displayed"
-  );
-  Assert.ok(
-    OpenPGPTestUtils.hasEncryptedIconState(aboutMessage.document, "ok"),
-    "encrypted icon is displayed"
-  );
-  await BrowserTestUtils.closeWindow(msgc);
-});
-*/
 
 /**
  * Test that we decrypt a nested OpenPGP encrypted message
@@ -577,35 +496,6 @@ add_task(async function testOpenSignedByUnverifiedEncrypted() {
 });
 
 /**
- * -- FUNCTIONALITY NOT YET IMPLEMENTED --
- * Test that we decrypt a nested S/MIME encrypted+signed message
- * (with outer S/MIME signature that is ignored).
- */
-/*
-add_task(async function testOuterSmimeSigInnerSmimeSignedEncrypted() {
-  let msgc = await open_message_from_file(
-    new FileUtils.File(
-      getTestFilePath(
-        "data/eml/outer-smime-bad-sig-inner-smime-enc-sig.eml"
-      )
-    )
-  );
-  let aboutMessage = get_about_message(msgc);
-
-  Assert.ok(getMsgBodyTxt(msgc).includes(MSG_TEXT_SMIME), "message text is in body");
-  Assert.ok(
-    OpenPGPTestUtils.hasSignedIconState(aboutMessage.document, "unknown"),
-    "signed unknown icon is displayed"
-  );
-  Assert.ok(
-    OpenPGPTestUtils.hasEncryptedIconState(aboutMessage.document, "ok"),
-    "encrypted icon is displayed"
-  );
-  await BrowserTestUtils.closeWindow(msgc);
-});
-*/
-
-/**
  * Test that we decrypt a nested OpenPGP encrypted+signed message
  * (with outer S/MIME signature that is ignored).
  */
@@ -658,35 +548,6 @@ add_task(async function testOuterSmimeSigInnerPgpEncryptedInsideMixed() {
   );
   await BrowserTestUtils.closeWindow(msgc);
 });
-
-/**
- * -- FUNCTIONALITY NOT YET IMPLEMENTED --
- * Test that we decrypt a nested S/MIME encrypted+signed message
- * (with outer OpenPGP signature that is ignored).
- */
-/*
-add_task(async function testOuterPgpSigInnerSmimeSignedEncrypted() {
-  let msgc = await open_message_from_file(
-    new FileUtils.File(
-      getTestFilePath(
-        "data/eml/outer-pgp-sig-inner-smime-enc-sig.eml"
-      )
-    )
-  );
-  let aboutMessage = get_about_message(msgc);
-
-  Assert.ok(getMsgBodyTxt(msgc).includes(MSG_TEXT_SMIME), "message text is in body");
-  Assert.ok(
-    OpenPGPTestUtils.hasSignedIconState(aboutMessage.document, "unknown"),
-    "signed unknown icon is displayed"
-  );
-  Assert.ok(
-    OpenPGPTestUtils.hasEncryptedIconState(aboutMessage.document, "ok"),
-    "encrypted icon is displayed"
-  );
-  await BrowserTestUtils.closeWindow(msgc);
-});
-*/
 
 /**
  * Test that we decrypt a nested OpenPGP encrypted+signed message
@@ -965,6 +826,49 @@ add_task(async function testOpenEncryptedForRevokedKey() {
   );
   await BrowserTestUtils.closeWindow(msgc);
   await OpenPGPTestUtils.removeKeyById("0xEF2FD01608AFD744", true);
+});
+
+/**
+ * Test that a git commit isn't confusing signed/encrypted states.
+ */
+add_task(async function testGitCommitSpoof() {
+  await OpenPGPTestUtils.importPublicKey(
+    window,
+    new FileUtils.File(
+      getTestFilePath("data/keys/benny-hashwell-0xc55ccd9c5ab482b2-pub.asc")
+    )
+  );
+  const opengpgprocessed = openpgpProcessed();
+  const msgc = await open_message_from_file(
+    new FileUtils.File(getTestFilePath("data/eml/sigspoof-git-commit.eml"))
+  );
+  const aboutMessage = get_about_message(msgc);
+  await opengpgprocessed;
+
+  // This (text#1) should be visible, and not confused with mail headers.
+  Assert.ok(
+    getMsgBodyTxt(msgc).includes(
+      "tree 870fc0aaa5383d845fa9431c9d08cfd486e11a65"
+    ),
+    "message text#1 should be in body"
+  );
+  // This (text#2), the normal text shoudl be visible too.
+  Assert.ok(
+    getMsgBodyTxt(msgc).includes("Hope you find something good elsewhere!"),
+    "message text#2 should be in body"
+  );
+  // Mistmatch (at least) due to the fact that content had to be modified
+  // for it to mimic a message.
+  Assert.ok(
+    OpenPGPTestUtils.hasSignedIconState(aboutMessage.document, "mismatch"),
+    "should say signed mismatch"
+  );
+  Assert.ok(
+    OpenPGPTestUtils.hasNoEncryptedIconState(aboutMessage.document),
+    "should not be say encrypted"
+  );
+  await BrowserTestUtils.closeWindow(msgc);
+  await OpenPGPTestUtils.removeKeyById("0xc55ccd9c5ab482b2", false);
 });
 
 registerCleanupFunction(async function tearDown() {

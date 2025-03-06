@@ -268,8 +268,7 @@ export const MailUsageTelemetry = {
       return "keyboard";
     }
 
-    const { URL } = node.ownerDocument;
-    if (WINDOW_URLS.includes(URL)) {
+    if (WINDOW_URLS.includes(node.ownerDocument.URL)) {
       return this._getBrowserWidgetContainer(node);
     }
     return null;
@@ -338,8 +337,8 @@ export const MailUsageTelemetry = {
     const source = this._getWidgetContainer(node);
 
     if (item && source) {
-      const scalar = `tb.ui.interaction.${source.replace("-", "_")}`;
-      Services.telemetry.keyedScalarAdd(scalar, telemetryId(item), 1);
+      const id = telemetryId(item);
+      Glean.mail.uiInteraction.record({ id, source });
     }
   },
 

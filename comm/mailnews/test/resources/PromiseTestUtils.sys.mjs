@@ -395,3 +395,76 @@ PromiseTestUtils.PromiseStoreScanListener.prototype = {
     return this._promise;
   },
 };
+
+/**
+ * PromiseSendLaterListener is a helper for sending messages with a delay via
+ * nsIMsgSendLater.
+ *
+ * If sending was successful, it resolves with an object that includes the
+ * number of messages the service tried to send, and the number of messages it
+ * successfully sent.
+ *
+ * @implements {nsIMsgSendLaterListener}
+ */
+PromiseTestUtils.PromiseSendLaterListener = class {
+  QueryInterface = ChromeUtils.generateQI(["nsIMsgSendLaterListener"]);
+
+  constructor() {
+    this._promise = new Promise((resolve, reject) => {
+      this._resolve = resolve;
+      this._reject = reject;
+    });
+  }
+
+  onStartSending() {}
+  onMessageStartSending() {}
+  onMessageSendProgress() {}
+
+  onMessageSendError(aCurrentMessage, aMessageHeader, aStatus) {
+    this._reject(aStatus);
+  }
+
+  onStopSending(aStatus, aMsg, aTotalTried, aSuccessful) {
+    if (aStatus != Cr.NS_OK) {
+      this._reject(aStatus);
+      return;
+    }
+
+    this._resolve({
+      totalTried: aTotalTried,
+      successful: aSuccessful,
+    });
+  }
+
+  get promise() {
+    return this._promise;
+  }
+};
+
+/**
+ * Message outgoing listener that can be turned into a Promise.
+ */
+PromiseTestUtils.PromiseMsgOutgoingListener = class {
+  QueryInterface = ChromeUtils.generateQI(["nsIMsgOutgoingListener"]);
+
+  constructor() {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    this._promise = promise;
+    this._resolve = resolve;
+    this._reject = reject;
+  }
+
+  onSendStart() {}
+
+  onSendStop(serverURI, exitCode) {
+    if (exitCode == Cr.NS_OK) {
+      this._resolve();
+    } else {
+      this._reject(exitCode);
+    }
+  }
+
+  get promise() {
+    return this._promise;
+  }
+};

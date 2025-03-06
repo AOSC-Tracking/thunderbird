@@ -11,11 +11,14 @@ var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
 
-var gAnyValidIdentity = false; // If there are no valid identities for any account
-// returns the first account with an invalid server or identity
-
 var gNewAccountToLoad = null; // used to load new messages if we come from the mail3pane
 
+/**
+ * Filters out all fully valid accounts.
+ *
+ * @param {nsIMsgAccount[]} accounts
+ * @returns {nsIMsgAccount[]}
+ */
 function getInvalidAccounts(accounts) {
   const invalidAccounts = [];
   for (const account of accounts) {
@@ -31,9 +34,7 @@ function getInvalidAccounts(accounts) {
     }
 
     for (const identity of account.identities) {
-      if (identity.valid) {
-        gAnyValidIdentity = true;
-      } else {
+      if (!identity.valid) {
         invalidAccounts.push(account);
       }
     }
@@ -195,8 +196,9 @@ function loadInboxForNewAccount() {
   // was created, the download messages box is checked, and the wizard was opened from the 3pane
   if (gNewAccountToLoad) {
     var rootMsgFolder = gNewAccountToLoad.incomingServer.rootMsgFolder;
-    const kInboxFlag = Ci.nsMsgFolderFlags.Inbox;
-    var inboxFolder = rootMsgFolder.getFolderWithFlags(kInboxFlag);
+    var inboxFolder = rootMsgFolder.getFolderWithFlags(
+      Ci.nsMsgFolderFlags.Inbox
+    );
     SelectFolder(inboxFolder.URI);
     window.focus();
     setTimeout(MsgGetMessage, 0);
@@ -204,46 +206,26 @@ function loadInboxForNewAccount() {
   }
 }
 
-// returns true if we migrated - it knows this because 4.x did not have the
-// pref mailnews.quotingPrefs.version, so if it's not set, we're either
-// migrating from 4.x, or a much older version of Mozilla.
-function migrateGlobalQuotingPrefs(allIdentities) {
-  // if reply_on_top and auto_quote exist then, if non-default
-  // migrate and delete, if default just delete.
-  var reply_on_top = 0;
-  var auto_quote = true;
-  var quotingPrefs = Services.prefs.getIntPref(
-    "mailnews.quotingPrefs.version",
-    0
-  );
-  var migrated = false;
-
-  // If the quotingPrefs version is 0 then we need to migrate our preferences
-  if (quotingPrefs == 0) {
-    migrated = true;
-    try {
-      reply_on_top = Services.prefs.getIntPref("mailnews.reply_on_top");
-      auto_quote = Services.prefs.getBoolPref("mail.auto_quote");
-    } catch (ex) {}
-
-    if (!auto_quote || reply_on_top) {
-      for (const identity of allIdentities) {
-        if (identity.valid) {
-          identity.autoQuote = auto_quote;
-          identity.replyOnTop = reply_on_top;
-        }
-      }
-    }
-    Services.prefs.setIntPref("mailnews.quotingPrefs.version", 1);
-  }
-  return migrated;
-}
-
 /**
  * Open the Account Setup Tab or focus it if it's already open.
+ *
+ * @param {boolean} [isInitialSetup] - If this call is for the initial account
+ *   setup.
  */
-function openAccountSetupTab() {
+function openAccountSetup(isInitialSetup = false) {
   const mail3Pane = Services.wm.getMostRecentWindow("mail:3pane");
+
+  // Only show the Account Hub if this is not the initial setup and there is at
+  // least one account set up already.
+  if (
+    !isInitialSetup &&
+    MailServices.accounts.accounts.length &&
+    Services.prefs.getBoolPref("mail.accounthub.enabled", false)
+  ) {
+    mail3Pane.openAccountHub();
+    return;
+  }
+
   const tabmail = mail3Pane.document.getElementById("tabmail");
 
   // Switch to the account setup tab if it's already open.

@@ -8,12 +8,14 @@
 #define mozilla_dom_indexeddatabasemanager_h__
 
 #include "js/TypeDecls.h"
+#include "MainThreadUtils.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/dom/quota/PersistenceType.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Mutex.h"
 #include "nsClassHashtable.h"
 #include "nsHashKeys.h"
+#include "nsIIndexedDatabaseManager.h"
 #include "SafeRefPtr.h"
 
 namespace mozilla {
@@ -32,7 +34,7 @@ class FileManagerInfo;
 
 }  // namespace indexedDB
 
-class IndexedDatabaseManager final {
+class IndexedDatabaseManager final : public nsIIndexedDatabaseManager {
   using PersistenceType = mozilla::dom::quota::PersistenceType;
   using DatabaseFileManager = mozilla::dom::indexedDB::DatabaseFileManager;
   using FileManagerInfo = mozilla::dom::indexedDB::FileManagerInfo;
@@ -46,13 +48,17 @@ class IndexedDatabaseManager final {
     Logging_DetailedProfilerMarks
   };
 
-  NS_INLINE_DECL_REFCOUNTING_WITH_DESTROY(IndexedDatabaseManager, Destroy())
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIINDEXEDDATABASEMANAGER
 
   // Returns a non-owning reference.
   static IndexedDatabaseManager* GetOrCreate();
 
   // Returns a non-owning reference.
   static IndexedDatabaseManager* Get();
+
+  // No one should call this but the factory.
+  static already_AddRefed<IndexedDatabaseManager> FactoryCreate();
 
   static bool IsClosed();
 
@@ -86,6 +92,8 @@ class IndexedDatabaseManager final {
 #endif
 
   static uint32_t DataThreshold();
+
+  static uint32_t MaxStructuredCloneSize();
 
   static uint32_t MaxSerializedMsgSize();
 
@@ -148,6 +156,8 @@ class IndexedDatabaseManager final {
 
   void Destroy();
 
+  nsresult EnsureBackgroundActor();
+
   static void LoggingModePrefChangedCallback(const char* aPrefName,
                                              void* aClosure);
 
@@ -159,6 +169,7 @@ class IndexedDatabaseManager final {
       mPendingDeleteInfos;
 
   nsCString mLocale;
+  bool mLocaleInitialized MOZ_GUARDED_BY(sMainThreadCapability);
 
   indexedDB::BackgroundUtilsChild* mBackgroundActor;
 

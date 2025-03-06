@@ -9,6 +9,7 @@
 #include "nsIInputStream.h"
 #include "nsCOMPtr.h"
 #include "mozilla/Buffer.h"
+#include "mozilla/Mutex.h"
 
 class MboxParser;
 
@@ -44,7 +45,7 @@ class MboxMsgInputStream : public nsIInputStream {
    * The maxAllowedSize parameter allows the caller to specify a safety limit,
    * if it knows that the number of expected bytes is smaller than the
    * given number. This is useful if the mbox stream doesn't contain the
-   * expected sepatarors.
+   * expected separators.
    */
   explicit MboxMsgInputStream(nsIInputStream* mboxStream,
                               uint32_t maxAllowedSize);
@@ -79,7 +80,7 @@ class MboxMsgInputStream : public nsIInputStream {
    * positioned when the MboxMsgInputStream was constructed!
    * If a seek was performed beforehand, that position is considered offset 0.
    */
-  uint64_t MsgOffset() { return mMsgOffset; }
+  uint64_t MsgOffset();
 
   /**
    * If the "From " line contained a sender, it can be accessed here.
@@ -120,6 +121,9 @@ class MboxMsgInputStream : public nsIInputStream {
 
   // Hide gory parsing details with pIMPL.
   mozilla::UniquePtr<MboxParser> mParser;
+
+ private:
+  mozilla::Mutex mLock;
 };
 
 #endif  // COMM_MAILNEWS_BASE_SRC_MBOXMSGINPUTSTREAM_H_

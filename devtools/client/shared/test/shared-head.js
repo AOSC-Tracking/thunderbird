@@ -279,15 +279,6 @@ Services.prefs.setBoolPref("devtools.inspector.three-pane-enabled", true);
 // requests occuring after a process is created/destroyed. See Bug 1620983.
 Services.prefs.setBoolPref("dom.ipc.processPrelaunch.enabled", false);
 
-// Disable this preference to capture async stacks across all locations during
-// DevTools mochitests. Async stacks provide very valuable information to debug
-// intermittents, but come with a performance overhead, which is why they are
-// only captured in Debuggees by default.
-Services.prefs.setBoolPref(
-  "javascript.options.asyncstack_capture_debuggee_only",
-  false
-);
-
 // On some Linux platforms, prefers-reduced-motion is enabled, which would
 // trigger the notification to be displayed in the toolbox. Dismiss the message
 // by default.
@@ -304,9 +295,6 @@ registerCleanupFunction(() => {
   Services.prefs.clearUserPref("devtools.toolbox.previousHost");
   Services.prefs.clearUserPref("devtools.toolbox.splitconsole.open");
   Services.prefs.clearUserPref("devtools.toolbox.splitconsoleHeight");
-  Services.prefs.clearUserPref(
-    "javascript.options.asyncstack_capture_debuggee_only"
-  );
   Services.prefs.clearUserPref(
     "devtools.inspector.simple-highlighters.message-dismissed"
   );
@@ -1016,9 +1004,8 @@ function isEveryFrameTargetEnabled() {
  */
 async function openInspectorForURL(url, hostType) {
   const tab = await addTab(url);
-  const { inspector, toolbox, highlighterTestFront } = await openInspector(
-    hostType
-  );
+  const { inspector, toolbox, highlighterTestFront } =
+    await openInspector(hostType);
   return { tab, inspector, toolbox, highlighterTestFront };
 }
 
@@ -1036,9 +1023,7 @@ function getActiveInspector() {
  *        Optional window where to fire the key event
  */
 function synthesizeKeyShortcut(key, target) {
-  // parseElectronKey requires any window, just to access `KeyboardEvent`
-  const window = Services.appShell.hiddenDOMWindow;
-  const shortcut = KeyShortcuts.parseElectronKey(window, key);
+  const shortcut = KeyShortcuts.parseElectronKey(key);
   const keyEvent = {
     altKey: shortcut.alt,
     ctrlKey: shortcut.ctrl,
@@ -2386,4 +2371,122 @@ async function unregisterServiceWorker(workerUrl) {
     );
   });
   ok(unregisterSuccess, "Service worker successfully unregistered");
+}
+
+/**
+ * Toggle the JavavaScript tracer via its toolbox toolbar button.
+ */
+async function toggleJsTracer(toolbox) {
+  const { tracerCommand } = toolbox.commands;
+  const { isTracingEnabled } = tracerCommand;
+  const { logMethod, traceOnNextInteraction, traceOnNextLoad } =
+    toolbox.commands.tracerCommand.getTracingOptions();
+
+  // When the tracer is waiting for user interaction or page load, it won't be made active
+  // right away. The test should manually wait for its activation.
+  const shouldWaitForToggle = !traceOnNextInteraction && !traceOnNextLoad;
+  let onTracingToggled;
+  if (shouldWaitForToggle) {
+    onTracingToggled = new Promise(resolve => {
+      tracerCommand.on("toggle", async function listener() {
+        // Ignore the event, if we are still in the same state as before the click
+        if (tracerCommand.isTracingActive == isTracingEnabled) {
+          return;
+        }
+        tracerCommand.off("toggle", listener);
+        resolve();
+      });
+    });
+  }
+
+  const toolbarButton = toolbox.doc.getElementById("command-button-jstracer");
+  toolbarButton.click();
+
+  if (shouldWaitForToggle) {
+    info("Waiting for the tracer to be active");
+    await onTracingToggled;
+  }
+
+  const {
+    TRACER_LOG_METHODS,
+  } = require("resource://devtools/shared/specs/tracer.js");
+  if (logMethod != TRACER_LOG_METHODS.CONSOLE) {
+    return;
+  }
+
+  // We were tracing and just requested to stop it.
+  // Wait for the stop message to appear in the console before clearing its content.
+  // This simplifies writting tests toggling the tracer ON multiple times and checking
+  // for the display of traces in the console.
+  if (isTracingEnabled) {
+    const { hud } = await toolbox.getPanel("webconsole");
+    info("Wait for tracing to be disabled");
+    await waitFor(() =>
+      [...hud.ui.outputNode.querySelectorAll(".message")].some(msg =>
+        msg.textContent.includes("Stopped tracing")
+      )
+    );
+
+    hud.ui.clearOutput();
+    await waitFor(
+      () => hud.ui.outputNode.querySelectorAll(".message").length === 0
+    );
+  } else {
+    // We are enabling the tracing to the console, and the console may not be opened just yet.
+    const { hud } = await toolbox.getPanelWhenReady("webconsole");
+    if (!traceOnNextInteraction && !traceOnNextLoad) {
+      await waitFor(() =>
+        [...hud.ui.outputNode.querySelectorAll(".message")].some(msg =>
+          msg.textContent.includes("Started tracing to Web Console")
+        )
+      );
+    }
+  }
+}
+
+/**
+ * Retrieve the context menu element corresponding to the provided id, for the
+ * provided netmonitor instance.
+ * @param {Object} monitor
+ *        The network monitor object
+ * @param {String} id
+ *        The id of the context menu item
+ */
+function getNetmonitorContextMenuItem(monitor, id) {
+  const Menu = require("resource://devtools/client/framework/menu.js");
+  return Menu.getMenuElementById(id, monitor.panelWin.document);
+}
+
+/*
+ * Selects and clicks the context menu item of the netmonitor, it should
+ * also wait for the popup to close.
+ * @param {Object} monitor
+ *        The network monitor object
+ * @param {String} id
+ *        The id of the context menu item
+ */
+async function selectNetmonitorContextMenuItem(monitor, id) {
+  const contextMenuItem = getNetmonitorContextMenuItem(monitor, id);
+
+  const popup = contextMenuItem.parentNode;
+  await _maybeOpenAncestorMenu(contextMenuItem);
+  const hidden = BrowserTestUtils.waitForEvent(popup, "popuphidden");
+  popup.activateItem(contextMenuItem);
+  await hidden;
+}
+
+async function _maybeOpenAncestorMenu(menuItem) {
+  const parentPopup = menuItem.parentNode;
+  if (parentPopup.state == "open") {
+    return;
+  }
+  const shown = BrowserTestUtils.waitForEvent(parentPopup, "popupshown");
+  if (parentPopup.state == "showing") {
+    await shown;
+    return;
+  }
+  const parentMenu = parentPopup.parentNode;
+  await _maybeOpenAncestorMenu(parentMenu);
+  parentMenu.openMenu(true);
+  await shown;
 }

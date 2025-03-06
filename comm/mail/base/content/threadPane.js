@@ -22,11 +22,13 @@ ChromeUtils.defineESModuleGetters(this, {
  * selection object (thanks to TreeSelection) and set that as the
  * current/transient selection.
  *
- * @param aSingleSelect Should the selection we create be a single selection?
- *     This is relevant if the row being clicked on is already part of the
- *     selection.  If it is part of the selection and !aSingleSelect, then we
- *     leave the selection as is.  If it is part of the selection and
- *     aSingleSelect then we create a transient single-row selection.
+ * @param {Event} event
+ * @param {XULTreeElement} tree
+ * @param {boolean} aSingleSelect - Should the selection we create be a single
+ *   selection? This is relevant if the row being clicked on is already part of
+ *   the selection. If it is part of the selection and !aSingleSelect, then we
+ *   leave the selection as is.  If it is part of the selection and
+ *   aSingleSelect then we create a transient single-row selection.
  */
 function ChangeSelectionWithoutContentLoad(event, tree, aSingleSelect) {
   var treeSelection = tree.view.selection;
@@ -168,8 +170,8 @@ function ThreadPaneOnClick(event) {
   // (scrollbar buttons) and don't want those events to cause a doubleclick.
 
   const t = event.target;
-  if (t.localName == "treecol") {
-    HandleColumnClick(t.id);
+  if (t.closest("treecol")) {
+    HandleColumnClick(t.closest("treecol").id);
     return;
   }
 

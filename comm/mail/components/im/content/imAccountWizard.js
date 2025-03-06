@@ -5,6 +5,9 @@
 // chat/content/imAccountOptionsHelper.js
 /* globals accountOptionsHelper */
 
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 var { IMServices } = ChromeUtils.importESModule(
   "resource:///modules/IMServices.sys.mjs"
 );
@@ -13,6 +16,9 @@ var { MailServices } = ChromeUtils.importESModule(
 );
 var { ChatIcons } = ChromeUtils.importESModule(
   "resource:///modules/chatIcons.sys.mjs"
+);
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
 );
 
 var PREF_EXTENSIONS_GETMOREPROTOCOLSURL = "extensions.getMoreProtocolsURL";
@@ -83,6 +89,8 @@ var accountWizard = {
 
     Services.obs.addObserver(this, "prpl-quit");
     window.addEventListener("unload", this.unload);
+
+    UIFontSize.registerWindow(window);
   },
   unload() {
     Services.obs.removeObserver(accountWizard, "prpl-quit");
@@ -394,10 +402,12 @@ var accountWizard = {
       }
     }
 
-    for (let i = 0; i < this.prefs.length; ++i) {
-      const opt = this.prefs[i];
-      const label = bundle.getFormattedString("accountColon", [opt.opt.label]);
-      this.createSummaryRow(label, opt.value, rows);
+    for (const pref of this.prefs) {
+      this.createSummaryRow(
+        bundle.getFormattedString("accountColon", [pref.opt.label]),
+        pref.value,
+        rows
+      );
     }
   },
 
@@ -514,9 +524,7 @@ var accountWizard = {
   },
 
   openURL(aURL) {
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(Services.io.newURI(aURL));
+    openLinkExternally(aURL, { addToHistory: false });
   },
 };
 

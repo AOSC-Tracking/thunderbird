@@ -8,6 +8,11 @@ set_config("MOZ_SUITE", True)
 set_define("MOZ_SUITE", True)
 
 imply_option("MOZ_APP_BASENAME", "SeaMonkey")
+imply_option("MOZ_APP_ID", "{92650c4d-4b8e-4d2a-b7eb-24ecf4f6b63a}")
+imply_option("MOZ_APP_VENDOR", "Mozilla")
+# Include the DevTools client, not just the server (which is the default)
+imply_option("MOZ_DEVTOOLS", "all")
+imply_option("NSS_EXTRA_SYMBOLS_FILE", "../comm/mailnews/nss-extra.symbols")
 
 imply_option('--enable-default-browser-agent', False)
 
@@ -34,6 +39,14 @@ def set_defconf(k, v):
     set_define(k, v)
     add_old_configure_assignment(k, v)
 
+
+set_define("MAR_CHANNEL_ID", "\"seamonkey-comm-release\"")
+add_old_configure_assignment("MAR_CHANNEL_ID", "seamonkey-comm-release")
+
+set_define("ACCEPTED_MAR_CHANNEL_IDS",
+            "\"seamonkey-comm-release,seamonkey-comm-central\"")
+add_old_configure_assignment("ACCEPTED_MAR_CHANNEL_IDS",
+                             "seamonkey-comm-release,seamonkey-comm-central")
 
 add_old_configure_assignment("commtopsrcdir", commtopsrcdir)
 set_config("commtopsrcdir", commtopsrcdir)
@@ -73,6 +86,28 @@ set_defconf("SEAMONKEY_VERSION_DISPLAY", seamonkey_version.version_display)
 
 imply_option("MOZ_PLACES", True)
 imply_option("MOZ_SERVICES_SYNC", False)
+
+# Thunderbird Rust code is now the default
+option("--disable-thunderbird-rust", help="Enable Rust support within Thunderbird")
+
+set_config("MOZ_THUNDERBIRD_RUST", True, when="--enable-thunderbird-rust")
+set_define("MOZ_THUNDERBIRD_RUST", True, when="--enable-thunderbird-rust")
+set_config("MOZ_OVERRIDE_GKRUST", True, when="--enable-thunderbird-rust")
+
+
+@depends("--enable-thunderbird-rust")
+def moz_override_cargo_config(enable_rust):
+    rust_override = "comm/rust/.cargo/config.toml.in"
+    if enable_rust:
+        log.info(f"Using {rust_override} for Rust code.")
+        return rust_override
+
+
+set_config(
+    "MOZ_OVERRIDE_CARGO_CONFIG",
+    moz_override_cargo_config,
+    when="--enable-thunderbird-rust",
+)
 
 # Building extensions is disabled by default.
 

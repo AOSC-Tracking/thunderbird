@@ -137,6 +137,8 @@ if CONFIG["CC_TYPE"] == "clang-cl":
         LDFLAGS += ["clang_rt.builtins-i386.lib"]
     elif CONFIG["TARGET_CPU"] == "x86_64":
         LDFLAGS += ["clang_rt.builtins-x86_64.lib"]
+    elif CONFIG["TARGET_CPU"] == "aarch64":
+        LDFLAGS += ["clang_rt.builtins-aarch64.lib"]
 
 SYMBOLS_FILE = "rnp.symbols"
 
@@ -192,6 +194,12 @@ SOURCES += [
     "src/libsexpp/src/sexp-output.cpp",
     "src/libsexpp/src/sexp-simple-string.cpp",
 ]
+
+if CONFIG["CC_TYPE"] == "clang-cl" and CONFIG["TARGET_CPU"] == "aarch64":
+    SOURCES["src/librepgp/stream-dump.cpp"].flags += ["/EHa"]
+
+SOURCES["src/lib/crypto/sha1cd/sha1.c"].flags += ["-Wno-unsafe-buffer-usage", "-Wno-extra-semi-stmt"]
+SOURCES["src/lib/crypto/sha1cd/ubc_check.c"].flags += ["-Wno-unsafe-buffer-usage"]
 
 if CONFIG["MZLA_LIBRNP_BACKEND"] == "botan":
     SOURCES += [

@@ -15,7 +15,7 @@
 #include "ScopedGLHelpers.h"
 
 #include "mozilla/layers/D3D11ShareHandleImage.h"
-#include "mozilla/layers/D3D11TextureIMFSampleImage.h"
+#include "mozilla/layers/D3D11ZeroCopyTextureImage.h"
 #include "mozilla/layers/D3D11YCbCrImage.h"
 #include "mozilla/layers/GpuProcessD3D11TextureMap.h"
 #include "mozilla/layers/TextureD3D11.h"
@@ -200,7 +200,7 @@ bool GLBlitHelper::BlitImage(layers::D3D11ShareHandleImage* const srcImage,
 
 // -------------------------------------
 
-bool GLBlitHelper::BlitImage(layers::D3D11TextureIMFSampleImage* const srcImage,
+bool GLBlitHelper::BlitImage(layers::D3D11ZeroCopyTextureImage* const srcImage,
                              const gfx::IntSize& destSize,
                              const OriginPos destOrigin) const {
   const auto& data = srcImage->GetData();
@@ -210,26 +210,6 @@ bool GLBlitHelper::BlitImage(layers::D3D11TextureIMFSampleImage* const srcImage,
   if (!data->SerializeSpecific(&desc)) return false;
 
   return BlitDescriptor(desc, destSize, destOrigin);
-}
-
-// -------------------------------------
-
-bool GLBlitHelper::BlitImage(layers::D3D11YCbCrImage* const srcImage,
-                             const gfx::IntSize& destSize,
-                             const OriginPos destOrigin) const {
-  const auto& data = srcImage->GetData();
-  if (!data) return false;
-
-  const WindowsHandle handles[3] = {
-      (WindowsHandle)(data->mHandles[0] ? data->mHandles[0]->GetHandle()
-                                        : nullptr),
-      (WindowsHandle)(data->mHandles[1] ? data->mHandles[1]->GetHandle()
-                                        : nullptr),
-      (WindowsHandle)(data->mHandles[2] ? data->mHandles[2]->GetHandle()
-                                        : nullptr)};
-  return BlitAngleYCbCr(handles, srcImage->mPictureRect, srcImage->GetYSize(),
-                        srcImage->GetCbCrSize(), srcImage->mColorSpace,
-                        destSize, destOrigin);
 }
 
 // -------------------------------------
@@ -262,7 +242,7 @@ bool GLBlitHelper::BlitDescriptor(const layers::SurfaceDescriptorD3D10& desc,
     auto* textureMap = layers::GpuProcessD3D11TextureMap::Get();
     if (textureMap) {
       Maybe<HANDLE> handle =
-          textureMap->GetSharedHandleOfCopiedTexture(gpuProcessTextureId.ref());
+          textureMap->GetSharedHandle(gpuProcessTextureId.ref());
       if (handle.isSome()) {
         tex = OpenSharedTexture(d3d, (WindowsHandle)handle.ref());
       }

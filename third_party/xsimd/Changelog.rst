@@ -9,6 +9,63 @@
 Changelog
 =========
 
+13.1.0
+------
+
+    * Fix rotate_left and rotate_right behavior (it was swapped!)
+
+    * Fix compress implementation on RISC-V
+
+    * Improve RISC-V CI
+
+    * Fix clang-17 compilation on RISC-V
+
+    * Validate cmake integration
+
+    * Provide xsimd::transpose on 64 and 32 bits on most platforms
+
+    * Improve documentation
+
+    * Provide xsimd::batch_bool::count
+
+    * Fix interaction between xsimd::make_sized_batch_t and
+      xsimd::batch<std::complex, ...>
+
+    * Fix vbmi, sve and rvv detection through xsimd::available_architectures
+
+    * Fix compilation on MS targets where ``small`` can be defined.
+
+    * Change default install directory for installed headers.
+
+    * Support mixed-complex implementations of xsimd::pow()
+
+    * Improve xsimd::pow implementation for complex numbers
+
+    * Fix uninitialized read in lgamma implementation
+
+13.0.0
+------
+
+    * Most xsimd functions are flagged as always_inline
+
+    * Fix some xsimd scalar version (abs, bitofsign, signbit, bitwise_cast, exp10)
+
+    * Move from batch_constant<batch<T, A>, Csts...> to batch_constant<T, A, Csts...>
+
+    * Move from batch_bool_constant<batch<T, A>, Csts...> to batch_bool_constant<T, A, Csts...>
+
+    * Provide an as_batch() method (resp. as_batch_bool) method for batch_constant (resp. batch_bool_constant)
+
+    * New architecture emulated<N> for batches of N bits emulated using scalar operations.
+
+    * Remove the version method from all architectures
+
+    * Support xsimd::avg and xsimd::avgr vector operation
+
+    * Model i8mm arm extension
+
+    * Fix dispatching mechanism
+
 12.1.1
 ------
 

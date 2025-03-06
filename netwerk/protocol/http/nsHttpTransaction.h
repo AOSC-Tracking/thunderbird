@@ -188,9 +188,9 @@ class nsHttpTransaction final : public nsAHttpTransaction,
 
   void SetClassOfService(ClassOfService cos);
 
-  virtual nsresult OnHTTPSRRAvailable(
-      nsIDNSHTTPSSVCRecord* aHTTPSSVCRecord,
-      nsISVCBRecord* aHighestPriorityRecord) override;
+  virtual nsresult OnHTTPSRRAvailable(nsIDNSHTTPSSVCRecord* aHTTPSSVCRecord,
+                                      nsISVCBRecord* aHighestPriorityRecord,
+                                      const nsACString& aCname) override;
 
   void GetHashKeyOfConnectionEntry(nsACString& aResult);
 
@@ -214,16 +214,14 @@ class nsHttpTransaction final : public nsAHttpTransaction,
                                        uint32_t* contentRead,
                                        uint32_t* contentRemaining);
   [[nodiscard]] nsresult ProcessData(char*, uint32_t, uint32_t*);
+  void ReportResponseHeader(uint32_t aSubType);
   void DeleteSelfOnConsumerThread();
   void ReleaseBlockingTransaction();
-
   [[nodiscard]] static nsresult ReadRequestSegment(nsIInputStream*, void*,
                                                    const char*, uint32_t,
                                                    uint32_t, uint32_t*);
   [[nodiscard]] static nsresult WritePipeSegment(nsIOutputStream*, void*, char*,
                                                  uint32_t, uint32_t, uint32_t*);
-
-  bool TimingEnabled() const { return mCaps & NS_HTTP_TIMING_ENABLED; }
 
   bool ResponseTimeoutEnabled() const final;
 
@@ -560,7 +558,6 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   } mEarlyDataDisposition{EARLY_NONE};
 
   HttpTrafficCategory mTrafficCategory{HttpTrafficCategory::eInvalid};
-  bool mThroughCaptivePortal;
   Atomic<int32_t> mProxyConnectResponseCode{0};
 
   OnPushCallback mOnPushCallback;
@@ -595,6 +592,9 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   // be associated with the connection entry whose hash key is not the same as
   // this transaction's.
   nsCString mHashKeyOfConnectionEntry;
+  // The CNAME of the host, or empty if none.
+  nsCString mCname;
+  nsCString mServerHeader;
 
   nsCOMPtr<WebTransportSessionEventListener> mWebTransportSessionEventListener;
 

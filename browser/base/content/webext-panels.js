@@ -5,7 +5,7 @@
 
 // Via webext-panels.xhtml
 /* import-globals-from browser.js */
-/* import-globals-from nsContextMenu.js */
+/* global windowRoot */
 
 ChromeUtils.defineESModuleGetters(this, {
   ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
@@ -41,6 +41,10 @@ function getBrowser(panel) {
   browser.setAttribute("context", "contentAreaContextMenu");
   browser.setAttribute("tooltip", "aHTMLTooltip");
   browser.setAttribute("autocompletepopup", "PopupAutoComplete");
+
+  if (gAllowTransparentBrowser) {
+    browser.setAttribute("transparent", "true");
+  }
 
   // Ensure that the browser is going to run in the same bc group as the other
   // extension pages from the same addon.
@@ -99,6 +103,17 @@ function getBrowser(panel) {
     },
     true
   );
+  browser.addEventListener("DOMWindowClose", event => {
+    if (panel.viewType == "sidebar") {
+      windowRoot.ownerGlobal.SidebarController.hide();
+    }
+    // Prevent DOMWindowClose events originated from
+    // extensions sidebar and devtools panels to bubble up
+    // to the gBrowser DOMWindowClose listener and
+    // be mistaken as being originated from a tab being closed
+    // (See Bug 1926373)
+    event.stopPropagation();
+  });
 
   const initBrowser = () => {
     ExtensionParent.apiManager.emit(
@@ -176,3 +191,10 @@ function loadPanel(extensionId, extensionUrl, browserStyle) {
     browser.fixupAndLoadURIString(extensionUrl, { triggeringPrincipal });
   });
 }
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "gAllowTransparentBrowser",
+  "browser.tabs.allow_transparent_browser",
+  false
+);

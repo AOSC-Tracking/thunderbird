@@ -1,4 +1,4 @@
-// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2024 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -17,12 +17,12 @@ features: [Temporal]
 
 // 
 
-let calendar = new Temporal.Calendar("gregory");
+let calendar = "gregory";
 const date = new Temporal.ZonedDateTime(1_609_504_496_987_654_321n, "UTC", calendar);
 
 assert.sameValue(date.yearOfWeek, 2021);
 
-calendar = new Temporal.Calendar("iso8601");
+calendar = "iso8601";
 const isodate = new Temporal.ZonedDateTime(1_609_504_496_987_654_321n, "UTC", calendar);
 
 assert.sameValue(isodate.yearOfWeek, 2020);

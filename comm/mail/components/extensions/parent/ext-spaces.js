@@ -4,113 +4,13 @@
 
 "use strict";
 
-var { ExtensionSupport } = ChromeUtils.importESModule(
-  "resource:///modules/ExtensionSupport.sys.mjs"
-);
-var { ExtensionCommon } = ChromeUtils.importESModule(
-  "resource://gre/modules/ExtensionCommon.sys.mjs"
-);
 var { ExtensionParent } = ChromeUtils.importESModule(
   "resource://gre/modules/ExtensionParent.sys.mjs"
 );
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
-ChromeUtils.defineESModuleGetters(this, {
-  getIconData: "resource:///modules/ExtensionToolbarButtons.sys.mjs",
-});
-
-XPCOMUtils.defineLazyGlobalGetters(this, ["InspectorUtils"]);
+var { getNativeButtonProperties, getNativeTabProperties } =
+  ChromeUtils.importESModule("resource:///modules/ExtensionSpaces.sys.mjs");
 
 var windowURLs = ["chrome://messenger/content/messenger.xhtml"];
-
-/**
- * Return the paths to the 16px and 32px icons defined in the manifest of this
- * extension, if any.
- *
- * @param {ExtensionData} extension - the extension to retrieve the path object for
- */
-function getManifestIcons(extension) {
-  if (extension.manifest.icons) {
-    const { icon: icon16 } = ExtensionParent.IconDetails.getPreferredIcon(
-      extension.manifest.icons,
-      extension,
-      16
-    );
-    const { icon: icon32 } = ExtensionParent.IconDetails.getPreferredIcon(
-      extension.manifest.icons,
-      extension,
-      32
-    );
-    return {
-      16: extension.baseURI.resolve(icon16),
-      32: extension.baseURI.resolve(icon32),
-    };
-  }
-  return null;
-}
-
-/**
- * Convert WebExtension SpaceButtonProperties into a NativeButtonProperties
- * object required by the gSpacesToolbar.* functions.
- *
- * @param {SpaceData} spaceData - @see mail/components/extensions/parent/ext-mail.js
- * @returns {NativeButtonProperties} - @see mail/base/content/spacesToolbar.js
- */
-function getNativeButtonProperties({
-  extension,
-  defaultUrl,
-  buttonProperties,
-}) {
-  const normalizeColor = color => {
-    if (typeof color == "string") {
-      const col = InspectorUtils.colorToRGBA(color);
-      if (!col) {
-        throw new ExtensionError(`Invalid color value: "${color}"`);
-      }
-      return [col.r, col.g, col.b, Math.round(col.a * 255)];
-    }
-    return color;
-  };
-
-  const hasThemeIcons =
-    buttonProperties.themeIcons && buttonProperties.themeIcons.length > 0;
-
-  // If themeIcons have been defined, ignore manifestIcons as fallback and use
-  // themeIcons for the default theme as well, following the behavior of
-  // WebExtension action buttons.
-  const fallbackManifestIcons = hasThemeIcons
-    ? null
-    : getManifestIcons(extension);
-
-  // Use _normalize() to bypass cache.
-  const icons = ExtensionParent.IconDetails._normalize(
-    {
-      path: buttonProperties.defaultIcons || fallbackManifestIcons,
-      themeIcons: hasThemeIcons ? buttonProperties.themeIcons : null,
-    },
-    extension
-  );
-  const iconStyles = new Map(getIconData(icons, extension).style);
-
-  const badgeStyles = new Map();
-  const bgColor = normalizeColor(buttonProperties.badgeBackgroundColor);
-  if (bgColor) {
-    badgeStyles.set(
-      "--spaces-button-badge-bg-color",
-      `rgba(${bgColor[0]}, ${bgColor[1]}, ${bgColor[2]}, ${bgColor[3] / 255})`
-    );
-  }
-
-  return {
-    title: buttonProperties.title || extension.name,
-    url: defaultUrl,
-    badgeText: buttonProperties.badgeText,
-    badgeStyles,
-    iconStyles,
-  };
-}
 
 ExtensionSupport.registerWindowListener("ext-spaces", {
   chromeURLs: windowURLs,
@@ -130,10 +30,10 @@ ExtensionSupport.registerWindowListener("ext-spaces", {
       if (!spaceData.extension) {
         continue;
       }
-      const nativeButtonProperties = getNativeButtonProperties(spaceData);
       await window.gSpacesToolbar.createToolbarButton(
         spaceData.spaceButtonId,
-        nativeButtonProperties
+        getNativeTabProperties(spaceData),
+        getNativeButtonProperties(spaceData)
       );
     }
   },
@@ -199,47 +99,66 @@ this.spaces = class extends ExtensionAPI {
   }
 
   getAPI(context) {
-    const { tabManager } = context.extension;
+    const { extension } = context;
+    const { tabManager } = extension;
     const self = this;
+
+    // Enforce full startup of the parent implementation of the tabs API. This is
+    // needed, because `tabs.onCreated.addListener()` is a synchronous child
+    // implementation, which returns as soon as the listener has been registered
+    // in the current child process, not waiting for the parent implementation of
+    // the tabs API to actually register a listener for the native TabOpen event.
+    // If the tab is opened through the spaces API, the parent implementation of
+    // the tabs API may not even be fully initialized and the pending event
+    // listener for the TabOpen event may not get registered in time.
+    extensions.loadModule("tabs");
 
     return {
       spaces: {
-        async create(name, defaultUrl, buttonProperties) {
-          if (spaceTracker.fromSpaceName(name, context.extension)) {
+        async create(name, tabProperties, buttonProperties) {
+          if (spaceTracker.fromSpaceName(name, extension)) {
             throw new ExtensionError(
               `Failed to create space with name ${name}: Space already exists for this extension.`
             );
           }
 
-          defaultUrl = context.uri.resolve(defaultUrl);
-          if (!/((^https:)|(^http:)|(^moz-extension:))/i.test(defaultUrl)) {
-            throw new ExtensionError(
-              `Failed to create space with name ${name}: Invalid default url.`
-            );
+          if (!tabProperties) {
+            tabProperties = {};
+          } else if (typeof tabProperties == "string") {
+            tabProperties = { url: tabProperties };
           }
 
           try {
+            const nativeButtonProperties = getNativeButtonProperties({
+              extension,
+              buttonProperties,
+            });
+            const nativeTabProperties = getNativeTabProperties({
+              extension,
+              tabProperties,
+            });
+
             const spaceData = await spaceTracker.create(
               name,
-              defaultUrl,
+              tabProperties,
               buttonProperties,
-              context.extension
+              extension
             );
 
-            const nativeButtonProperties = getNativeButtonProperties(spaceData);
             for (const window of ExtensionSupport.openWindows) {
               if (windowURLs.includes(window.location.href)) {
                 await window.gSpacesToolbar.createToolbarButton(
                   spaceData.spaceButtonId,
+                  nativeTabProperties,
                   nativeButtonProperties
                 );
               }
             }
 
-            return spaceTracker.convert(spaceData, context.extension);
+            return spaceTracker.convert(spaceData, extension);
           } catch (error) {
             throw new ExtensionError(
-              `Failed to create space with name ${name}: ${error}`
+              `Failed to create space with name ${name}: ${error.message}`
             );
           }
         },
@@ -250,7 +169,7 @@ this.spaces = class extends ExtensionAPI {
               `Failed to remove space with id ${spaceId}: Unknown id.`
             );
           }
-          if (spaceData.extension?.id != context.extension.id) {
+          if (spaceData.extension?.id != extension.id) {
             throw new ExtensionError(
               `Failed to remove space with id ${spaceId}: Space does not belong to this extension.`
             );
@@ -271,33 +190,43 @@ this.spaces = class extends ExtensionAPI {
             );
           }
         },
-        async update(spaceId, updatedDefaultUrl, updatedButtonProperties) {
+        async update(spaceId, updatedTabProperties, updatedButtonProperties) {
           const spaceData = spaceTracker.fromSpaceId(spaceId);
           if (!spaceData) {
             throw new ExtensionError(
               `Failed to update space with id ${spaceId}: Unknown id.`
             );
           }
-          if (spaceData.extension?.id != context.extension.id) {
+          if (spaceData.extension?.id != extension.id) {
             throw new ExtensionError(
               `Failed to update space with id ${spaceId}: Space does not belong to this extension.`
             );
           }
 
-          let changes = false;
-          if (updatedDefaultUrl) {
-            updatedDefaultUrl = context.uri.resolve(updatedDefaultUrl);
-            if (
-              !/((^https:)|(^http:)|(^moz-extension:))/i.test(updatedDefaultUrl)
-            ) {
-              throw new ExtensionError(
-                `Failed to update space with id ${spaceId}: Invalid default url.`
-              );
-            }
-            spaceData.defaultUrl = updatedDefaultUrl;
-            changes = true;
+          if (!updatedTabProperties) {
+            updatedTabProperties = {};
+          } else if (typeof updatedTabProperties == "string") {
+            updatedTabProperties = { url: updatedTabProperties };
+          } else if (!updatedTabProperties.hasOwnProperty("url")) {
+            // The concept for the update function is to have the 2nd and the 3rd
+            // parameter optional, allowing to specify the 2nd, the 3rd or both
+            // parameters. Even though these parameters do not have overlapping
+            // properties, the schema parser is currently not able to properly
+            // detect which parameter is specified, if both are actually defined
+            // as optional. The only way out is to define the 2nd parameter as
+            // non-optional and allow it to accept buttonProperties (what the 3rd
+            // parameter is about). This needs manual parameter fixing here.
+            updatedButtonProperties = { ...updatedTabProperties };
+            updatedTabProperties = {};
           }
 
+          let changes = false;
+          const buttonProperties = { ...spaceData.buttonProperties };
+          const tabProperties = { ...spaceData.tabProperties };
+          if (updatedTabProperties.url != null) {
+            tabProperties.url = updatedTabProperties.url;
+            changes = true;
+          }
           if (updatedButtonProperties) {
             for (const [key, value] of Object.entries(
               updatedButtonProperties
@@ -306,33 +235,44 @@ this.spaces = class extends ExtensionAPI {
               // and need to be ignored, reset happens via an empty string. In MV3
               // we use "optional": "omit-key-if-missing" and unset properties
               // are omitted and null is an allowed value to enforce a reset.
-              if (
-                context.extension.manifest.manifest_version > 2 ||
-                value != null
-              ) {
-                spaceData.buttonProperties[key] = value;
+              if (extension.manifest.manifest_version > 2 || value != null) {
+                buttonProperties[key] = value;
                 changes = true;
               }
             }
           }
 
-          if (changes) {
-            const nativeButtonProperties = getNativeButtonProperties(spaceData);
-            try {
-              for (const window of ExtensionSupport.openWindows) {
-                if (windowURLs.includes(window.location.href)) {
-                  await window.gSpacesToolbar.updateToolbarButton(
-                    spaceData.spaceButtonId,
-                    nativeButtonProperties
-                  );
-                }
+          if (!changes) {
+            return;
+          }
+
+          try {
+            const nativeButtonProperties = getNativeButtonProperties({
+              extension,
+              buttonProperties,
+            });
+            const nativeTabProperties = getNativeTabProperties({
+              extension,
+              tabProperties,
+            });
+
+            for (const window of ExtensionSupport.openWindows) {
+              if (windowURLs.includes(window.location.href)) {
+                await window.gSpacesToolbar.updateToolbarButton(
+                  spaceData.spaceButtonId,
+                  nativeTabProperties,
+                  nativeButtonProperties
+                );
               }
-              spaceTracker.update(spaceData);
-            } catch (error) {
-              throw new ExtensionError(
-                `Failed to update space with id ${spaceId}: ${error}`
-              );
             }
+
+            spaceData.buttonProperties = buttonProperties;
+            spaceData.tabProperties = tabProperties;
+            spaceTracker.update(spaceData);
+          } catch (error) {
+            throw new ExtensionError(
+              `Failed to update space with id ${spaceId}: ${error.message}`
+            );
           }
         },
         async open(spaceId, windowId) {
@@ -345,7 +285,7 @@ this.spaces = class extends ExtensionAPI {
 
           const window = await getNormalWindowReady(context, windowId);
           const space = window.gSpacesToolbar.spaces.find(
-            space => space.button.id == spaceData.spaceButtonId
+            s => s.button.id == spaceData.spaceButtonId
           );
 
           const tabmail = window.document.getElementById("tabmail");
@@ -360,14 +300,12 @@ this.spaces = class extends ExtensionAPI {
               `Failed to get space with id ${spaceId}: Unknown id.`
             );
           }
-          return spaceTracker.convert(spaceData, context.extension);
+          return spaceTracker.convert(spaceData, extension);
         },
         async query(queryInfo) {
           const allSpaceData = [...spaceTracker.getAll()];
           return allSpaceData
-            .map(spaceData =>
-              spaceTracker.convert(spaceData, context.extension)
-            )
+            .map(spaceData => spaceTracker.convert(spaceData, extension))
             .filter(space => self.matchSpace(space, queryInfo));
         },
       },

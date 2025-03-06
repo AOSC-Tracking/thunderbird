@@ -148,20 +148,20 @@ class AccountHubControllerClass {
    *
    * @param {string} id - The ID of the template to clone.
    */
-  #loadView(id) {
+  async #loadView(id) {
     this.#hideViews();
 
     let view = this.#modal.querySelector(id);
     if (view) {
       view.hidden = false;
       this.#currentView = view;
-      // Update the UI to make sure we're refreshing old views.
-      this.#currentView.initUI();
+      await view.ready;
       return;
     }
     view = document.createElement(id);
     this.#modal.appendChild(view);
     this.#currentView = view;
+    await view.ready;
   }
 
   /**
@@ -179,7 +179,7 @@ class AccountHubControllerClass {
    *
    * @param {?string} type - Which account flow to load when the modal opens.
    */
-  open(type = "START") {
+  async open(type = "MAIL") {
     // Interrupt if something went wrong while cleaning up a previously loaded
     // view.
     if (!this.#reset()) {
@@ -190,7 +190,7 @@ class AccountHubControllerClass {
       this.#closeButton.hidden = !MailServices.accounts.accounts.length;
     }
 
-    this.#views[type].call();
+    await this.#views[type].call();
     if (!this.#modal.open) {
       this.#modal.showModal();
     }
@@ -218,7 +218,7 @@ class AccountHubControllerClass {
    */
   async #viewStart() {
     await this.#loadScript("start");
-    this.#loadView("account-hub-start");
+    await this.#loadView("account-hub-start");
   }
 
   /**
@@ -226,7 +226,7 @@ class AccountHubControllerClass {
    */
   async #viewEmailSetup() {
     await this.#loadScript("email");
-    this.#loadView("account-hub-email");
+    await this.#loadView("account-hub-email");
   }
 
   /**
@@ -283,5 +283,5 @@ async function openAccountHub(type) {
     AccountHubController = new AccountHubControllerClass();
   }
   await AccountHubController.ready;
-  AccountHubController.open(type);
+  await AccountHubController.open(type);
 }

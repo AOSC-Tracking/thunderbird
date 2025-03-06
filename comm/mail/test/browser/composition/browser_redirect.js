@@ -44,7 +44,7 @@ add_setup(function () {
   const account = MailServices.accounts.createAccount();
   account.incomingServer = MailServices.accounts.createIncomingServer(
     "nobody",
-    "Redirect Addresses Testing",
+    "RedirectAddressesTesting",
     "pop3"
   );
 
@@ -91,10 +91,10 @@ function checkAddresses(win, expectedFields) {
     const expected = expectedFields[type];
     const obtained = obtainedFields[type];
 
-    for (let i = 0; i < expected.length; i++) {
-      if (!obtained || !obtained.includes(expected[i])) {
+    for (let j = 0; j < expected.length; j++) {
+      if (!obtained || !obtained.includes(expected[j])) {
         throw new Error(
-          expected[i] +
+          expected[j] +
             " is not in " +
             type +
             " fields; " +

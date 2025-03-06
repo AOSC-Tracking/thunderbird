@@ -181,6 +181,45 @@ var gIdentityHandler = {
       let wrapper = document.getElementById("template-identity-popup");
       wrapper.replaceWith(wrapper.content);
       this._popupInitialized = true;
+      this._initializePopupListeners();
+    }
+  },
+
+  _initializePopupListeners() {
+    let popup = this._identityPopup;
+    popup.addEventListener("popupshown", event => {
+      this.onPopupShown(event);
+    });
+    popup.addEventListener("popuphidden", event => {
+      this.onPopupHidden(event);
+    });
+
+    const COMMANDS = {
+      "identity-popup-security-button": () => {
+        this.showSecuritySubView();
+      },
+      "identity-popup-security-httpsonlymode-menulist": () => {
+        this.changeHttpsOnlyPermission();
+      },
+      "identity-popup-clear-sitedata-button": event => {
+        this.clearSiteData(event);
+      },
+      "identity-popup-remove-cert-exception": () => {
+        this.removeCertException();
+      },
+      "identity-popup-disable-mixed-content-blocking": () => {
+        this.disableMixedContentProtection();
+      },
+      "identity-popup-enable-mixed-content-blocking": () => {
+        this.enableMixedContentProtection();
+      },
+      "identity-popup-more-info": event => {
+        this.handleMoreInfoClick(event);
+      },
+    };
+
+    for (let [id, handler] of Object.entries(COMMANDS)) {
+      document.getElementById(id).addEventListener("command", handler);
     }
   },
 
@@ -442,10 +481,9 @@ var gIdentityHandler = {
   disableMixedContentProtection() {
     // Use telemetry to measure how often unblocking happens
     const kMIXED_CONTENT_UNBLOCK_EVENT = 2;
-    let histogram = Services.telemetry.getHistogramById(
-      "MIXED_CONTENT_UNBLOCK_COUNTER"
-    );
-    histogram.add(kMIXED_CONTENT_UNBLOCK_EVENT);
+    Services.telemetry
+      .getHistogramById("MIXED_CONTENT_UNBLOCK_COUNTER")
+      .add(kMIXED_CONTENT_UNBLOCK_EVENT);
 
     SitePermissions.setForPrincipal(
       gBrowser.contentPrincipal,
@@ -727,7 +765,7 @@ var gIdentityHandler = {
       );
     }
     try {
-      return this._IDNService.convertToDisplayIDN(this._uri.host, {});
+      return this._IDNService.convertToDisplayIDN(this._uri.host);
     } catch (e) {
       // If something goes wrong (e.g. host is an IP address) just fail back
       // to the full domain.
@@ -854,8 +892,12 @@ var gIdentityHandler = {
 
       if (this._isMixedActiveContentLoaded) {
         this._identityBox.classList.add("mixedActiveContent");
-        if (UrlbarPrefs.get("trimHttps") && warnTextOnInsecure) {
+        if (
+          UrlbarPrefs.getScotchBonnetPref("trimHttps") &&
+          warnTextOnInsecure
+        ) {
           icon_label = gNavigatorBundle.getString("identity.notSecure.label");
+          tooltip = gNavigatorBundle.getString("identity.notSecure.tooltip");
           this._identityBox.classList.add("notSecureText");
         }
       } else if (this._isMixedActiveContentBlocked) {

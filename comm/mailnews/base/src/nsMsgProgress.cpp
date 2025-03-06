@@ -42,9 +42,6 @@ NS_IMETHODIMP nsMsgProgress::OpenProgressDialog(
   }
 
   NS_ENSURE_ARG_POINTER(dialogURL);
-  NS_ENSURE_ARG_POINTER(parentDOMWindow);
-  nsCOMPtr<nsPIDOMWindowOuter> parent =
-      nsPIDOMWindowOuter::From(parentDOMWindow);
 
   // Set up window.arguments[0]...
   nsCOMPtr<nsIMutableArray> array(do_CreateInstance(NS_ARRAY_CONTRACTID, &rv));
@@ -61,13 +58,17 @@ NS_IMETHODIMP nsMsgProgress::OpenProgressDialog(
   array->AppendElement(parameters);
 
   // Open the dialog.
-  RefPtr<mozilla::dom::BrowsingContext> newWindow;
+  nsCOMPtr<nsIWindowWatcher> wwatch(
+      do_GetService(NS_WINDOWWATCHER_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  nsString chromeOptions(u"chrome,dependent,centerscreen"_ns);
+  nsCString chromeOptions("chrome,dependent,centerscreen"_ns);
   if (inDisplayModal) chromeOptions.AppendLiteral(",modal");
 
-  return parent->OpenDialog(NS_ConvertASCIItoUTF16(dialogURL), u"_blank"_ns,
-                            chromeOptions, array, getter_AddRefs(newWindow));
+  nsCOMPtr<mozIDOMWindowProxy> newWindow;
+  return wwatch->OpenWindow(parentDOMWindow, nsDependentCString(dialogURL),
+                            "_blank"_ns, chromeOptions, array,
+                            getter_AddRefs(newWindow));
 }
 
 NS_IMETHODIMP nsMsgProgress::CloseProgressDialog(bool forceClose) {
@@ -232,12 +233,11 @@ NS_IMETHODIMP nsMsgProgress::OnProgress(nsIRequest* request, int64_t aProgress,
 
 NS_IMETHODIMP nsMsgProgress::OnStatus(nsIRequest* request, nsresult aStatus,
                                       const char16_t* aStatusArg) {
-  nsresult rv;
-  nsCOMPtr<nsIStringBundleService> sbs =
-      mozilla::components::StringBundle::Service();
-  NS_ENSURE_TRUE(sbs, NS_ERROR_UNEXPECTED);
-  nsString str;
-  rv = sbs->FormatStatusMessage(aStatus, aStatusArg, str);
+  nsString msg;
+  nsAutoString host;
+  host.Append(aStatusArg);
+  nsresult rv = FormatStatusMessage(aStatus, host, msg);
   NS_ENSURE_SUCCESS(rv, rv);
-  return ShowStatusString(str);
+
+  return ShowStatusString(msg);
 }

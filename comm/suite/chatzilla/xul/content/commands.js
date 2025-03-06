@@ -480,7 +480,7 @@ function dispatch(text, e, isInteractive, flags)
 
     e.commandText = ary[1];
     if (ary[2])
-        e.inputData = stringTrim(ary[2]);
+        e.inputData = ary[2].trim();
 
     /* list matching commands */
     ary = client.commandManager.list(e.commandText, flags, true);
@@ -786,6 +786,36 @@ function dispatchCommand (command, e, flags)
         return aliasLine;
     };
 
+    /*
+     * Clones an existing object (Only the enumerable properties
+     * of course.) use as a function..
+     * var c = Clone (obj);
+     * or a constructor...
+     * var c = new Clone (obj);
+     */
+    function Clone(obj)
+    {
+        let robj = new Object();
+
+        if ("__proto__" in obj)
+        {
+            // Special clone for Spidermonkey.
+            for (let p in obj)
+            {
+                if (obj.hasOwnProperty(p))
+                    robj[p] = obj[p];
+            }
+            robj.__proto__ = obj.__proto__;
+        }
+        else
+        {
+            for (let p in obj)
+                robj[p] = obj[p];
+        }
+
+        return robj;
+    };
+
     function callBeforeHooks()
     {
         if ("beforeHooks" in client.commandManager)
@@ -877,7 +907,7 @@ function dispatchCommand (command, e, flags)
             {
                 var newEvent = Clone(e);
                 delete newEvent.command;
-                commandList[i] = stringTrim(commandList[i]);
+                commandList[i] = commandList[i].trim();
                 dispatch(commandList[i], newEvent, flags);
             }
         }
@@ -1123,7 +1153,7 @@ function cmdChanUserMode(e)
              * else in a no-op manner (e.g. voicing an already voiced user).
              */
             if ((user.encodedName != me.encodedName) &&
-                (arrayContains(user.modes, mode) ^ adding))
+                (user.modes.includes(mode) ^ adding))
             {
                 nickList.push(user.encodedName);
             }
@@ -1437,7 +1467,7 @@ function cmdNetworks(e)
 {
     var wrapper = newInlineText(MSG_NETWORKS_HEADA);
 
-    var netnames = keys(client.networks).sort();
+    var netnames = Object.keys(client.networks).sort();
 
     for (let i = 0; i < netnames.length; i++)
     {
@@ -1982,7 +2012,7 @@ function cmdMode(e)
     if (!e.modestr)
     {
         e.modestr = "";
-        if (!e.channel && arrayContains(e.server.channelTypes, chan[0]))
+        if (!e.channel && e.server.channelTypes.includes(chan[0]))
             e.channel = new CIRCChannel(e.server, null, chan);
         if (e.channel)
             e.channel.pendingModeReply = true;
@@ -2287,12 +2317,7 @@ function cmdEval(e)
 
 function cmdFocusInput(e)
 {
-    const WWATCHER_CTRID = "@mozilla.org/embedcomp/window-watcher;1";
-    const nsIWindowWatcher = Components.interfaces.nsIWindowWatcher;
-
-    var watcher =
-        Components.classes[WWATCHER_CTRID].getService(nsIWindowWatcher);
-    if (watcher.activeWindow == window)
+    if (Services.ww.activeWindow == window)
         client.input.focus();
     else
         document.commandDispatcher.focusedElement = client.input;
@@ -2345,7 +2370,7 @@ function cmdGotoURL(e)
         return;
     }
 
-    var browserWin = getWindowByType("navigator:browser");
+    var browserWin = Services.wm.getMostRecentWindow("navigator:browser");
     var location = browserWin ? browserWin.gBrowser.currentURI.spec : null;
     var action = e.command.name;
     let where = "current";
@@ -2436,8 +2461,8 @@ function cmdJoin(e)
             return chan;
         }
 
-        if ((arrayIndexOf(["#", "&", "+", "!"], e.channelName[0]) == -1) &&
-            (arrayIndexOf(e.server.channelTypes, e.channelName[0]) == -1))
+        if (!["#", "&", "+", "!"].includes(e.channelName[0]) &&
+            !e.server.channelTypes.includes(e.channelName[0]))
         {
             e.channelName = e.server.channelTypes[0] + e.channelName;
         }
@@ -2481,7 +2506,7 @@ function cmdLeave(e)
         // specified a non-existing channel and isn't in a channel either, we
         // will also return a falsy value
         var shouldContinue = true;
-        if (arrayIndexOf(e.server.channelTypes, channelName[0]) == -1)
+        if (!e.server.channelTypes.includes(channelName[0]))
         {
             // No valid prefix character. Check they really meant a channel...
             var valid = false;
@@ -2639,6 +2664,17 @@ function cmdReload(e)
 
 function cmdLoad(e)
 {
+    /* Creates a random string of |len| characters from a-z, A-Z, 0-9. */
+    function randomString(len) {
+        const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let rv = "";
+
+        for (let i = 0; i < len; i++)
+            rv += chars.substr(Math.floor(Math.random() * chars.length), 1);
+
+        return rv;
+    };
+
     if (!e.scope)
         e.scope = new Object();
 
@@ -2655,8 +2691,10 @@ function cmdLoad(e)
 
     try
     {
+        let opts = {target: e.scope, ignoreCache: true};
         var rvStr;
-        var rv = rvStr = client.load(e.url, e.scope);
+        var rv = rvStr = Services.scriptloader
+                                 .loadSubScriptWithOptions(e.url, opts);
         let oldPlugin = getPluginByURL(e.url);
         if (oldPlugin && !disablePlugin(oldPlugin, true))
         {
@@ -2827,7 +2865,7 @@ function cmdAlias(e)
         }
 
         // Command Manager is updated when the preference changes.
-        arrayRemoveAt(aliasDefs, ary[0]);
+        aliasDefs.splice(ary[0], 1);
         aliasDefs.update();
 
         feedback(e, getMsg(MSG_ALIAS_REMOVED, e.aliasName));
@@ -2953,10 +2991,19 @@ function cmdAway(e)
             var awayNick = e.network.prefs["awayNick"];
             if (e.network.state == NET_ONLINE)
             {
+                e.server.me.isAway = true;
                 // Postulate that if normal nick and away nick are the same,
                 // user doesn't want to change nicks:
                 if (awayNick && (normalNick != awayNick))
                     e.server.changeNick(awayNick);
+                else
+                {
+                    if (client.currentObject.TYPE == "IRCChannel")
+                    {
+                        let user = e.server.me.unicodeName;
+                        client.currentObject.updateUser(user);
+                    }
+                }
                 e.server.sendData("AWAY :" + fromUnicode(e.reason, e.network) +
                                   "\n");
             }
@@ -2992,10 +3039,19 @@ function cmdAway(e)
         {
             if (e.network.state == NET_ONLINE)
             {
+                e.server.me.isAway = false;
                 var curNick = e.server.me.unicodeName;
                 var awayNick = e.network.prefs["awayNick"];
                 if (awayNick && (curNick == awayNick))
                     e.server.changeNick(e.network.prefs["nickname"]);
+                else
+                {
+                    if (client.currentObject.TYPE == "IRCChannel")
+                    {
+                        let user = e.server.me.unicodeName;
+                        client.currentObject.updateUser(user);
+                    }
+                }
                 e.server.sendData("AWAY\n");
             }
             // Go back to old nick, even if not connected:
@@ -3022,7 +3078,7 @@ function cmdOpenAtStartup(e)
     var url = makeCanonicalIRCURL(origURL);
     var list = client.prefs["initialURLs"];
     ensureCachedCanonicalURLs(list);
-    var index = arrayIndexOf(list.canonicalURLs, url);
+    var index = list.canonicalURLs.indexOf(url);
 
     if (e.toggle == null)
     {
@@ -3054,7 +3110,7 @@ function cmdOpenAtStartup(e)
         // no, please don't open at startup
         if (index != -1)
         {
-            arrayRemoveAt(list, index);
+            list.splice(index, 1);
             list.update();
             display(getMsg(MSG_STARTUP_REMOVED, url));
         }
@@ -3140,7 +3196,7 @@ function cmdPref (e)
         {
             // ignore exception generated by clear of nonexistant pref
             if (!("result" in ex) ||
-                ex.result != Components.results.NS_ERROR_UNEXPECTED)
+                ex.result != Cr.NS_ERROR_UNEXPECTED)
             {
                 throw ex;
             }
@@ -3365,7 +3421,7 @@ function cmdNotify(e)
             var nickname = e.server.toLowerCase(e.nicknameList[i]);
             var list = net.prefs["notifyList"];
             list = e.server.toLowerCase(list.join(";")).split(";");
-            var idx = arrayIndexOf (list, nickname);
+            var idx = list.indexOf(nickname);
             if (idx == -1)
             {
                 net.prefs["notifyList"].push (nickname);
@@ -3373,7 +3429,7 @@ function cmdNotify(e)
             }
             else
             {
-                arrayRemoveAt (net.prefs["notifyList"], idx);
+                net.prefs["notifyList"].splice(idx, 1);
                 subs.push(nickname);
             }
         }
@@ -3560,13 +3616,13 @@ function cmdSave(e)
             var requestSpec;
             try
             {
-              var channel = aRequest.QueryInterface(nsIChannel);
+              var channel = aRequest.QueryInterface(Ci.nsIChannel);
               requestSpec = channel.URI.spec;
             }
             catch (ex) { }
 
             // Detect end of file saving of any file:
-            if (aStateFlags & nsIWebProgressListener.STATE_STOP)
+            if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP)
             {
                 if (aStatus == kErrorBindingAborted)
                     aStatus = 0;
@@ -3577,12 +3633,18 @@ function cmdSave(e)
                 if (abortSaving)
                 {
                     // Cancel saving
-                    wbp.cancelSave();
-                    display(getMsg(MSG_SAVE_ERR_FAILED, aMessage), MT_ERROR);
+                    if (wbp)
+                    {
+                        wbp.progressListener = null;
+                        wbp.cancelSave();
+                    }
+                    pm = [e.sourceObject.viewName, getURLSpecFromFile(file),
+                          aStatus];
+                    display(getMsg(MSG_SAVE_ERR_FAILED, pm), MT_ERROR);
                     return;
                 }
 
-                if (aStateFlags & nsIWebProgressListener.STATE_IS_NETWORK
+                if (aStateFlags & Ci.nsIWebProgressListener.STATE_IS_NETWORK
                     && wbp.currentState == nsIWBP.PERSIST_STATE_FINISHED)
                 {
                     // Let the user know:
@@ -3610,28 +3672,18 @@ function cmdSave(e)
         onStatusChange: function(aWebProgress, aRequest, aStatus, aMessage) {},
         onSecurityChange: function(aWebProgress, aRequest, state) {},
 
-        QueryInterface: function(aIID)
-        {
-            if (aIID.equals(Components.interfaces.nsIWebProgressListener)
-                || aIID.equals(Components.interfaces.nsISupports)
-                || aIID.equals(Components.interfaces.nsISupportsWeakReference))
-            {
-                return this;
-            }
-
-            throw Components.results.NS_NOINTERFACE;
-        }
+        QueryInterface: XPCOMUtils.generateQI([Ci.nsIWebProgressListener,
+                                               Ci.nsISupportsWeakReference,
+                                               Ci.nsISupports]),
     };
 
     const kFileNotFound = 2152857618;
     const kErrorBindingAborted = 2152398850;
 
-    const nsIWBP = Components.interfaces.nsIWebBrowserPersist;
-    const nsIWebProgressListener = Components.interfaces.nsIWebProgressListener;
-    const nsIChannel = Components.interfaces.nsIChannel;
+    const nsIWBP = Ci.nsIWebBrowserPersist;
 
-    var wbp = newObject("@mozilla.org/embedding/browser/nsWebBrowserPersist;1",
-                        nsIWBP);
+    var wbp = Cc["@mozilla.org/embedding/browser/nsWebBrowserPersist;1"]
+                .createInstance(nsIWBP);
     wbp.progressListener = OutputProgressListener;
 
     var file, saveType, saveFolder, docToBeSaved, title;
@@ -3721,7 +3773,9 @@ function cmdSave(e)
         }
 
         var askforreplace = (e.isInteractive && file.exists());
-        if (askforreplace && !confirm(getMsg(MSG_SAVE_FILEEXISTS, e.filename)))
+        if (askforreplace &&
+            !Services.prompt.confirm(window, MSG_CONFIRM,
+                                     getMsg(MSG_SAVE_FILEEXISTS, e.filename)))
             return;
     }
 
@@ -3869,7 +3923,7 @@ function cmdDoCommand(e)
     }
     else if (e.cmdName == "cmd_chatzillaPrefs")
     {
-        var prefWin = getWindowByType("irc:chatzilla:config");
+        var prefWin = Services.wm.getMostRecentWindow("irc:chatzilla:config");
         if (!prefWin)
         {
             window.openDialog('chrome://chatzilla/content/config.xul', '',
@@ -3882,11 +3936,10 @@ function cmdDoCommand(e)
     }
     else if (e.cmdName == "cmd_selectAll")
     {
-        var userList = document.getElementById("user-list");
         var elemFocused = document.commandDispatcher.focusedElement;
 
-        if (userList.view && (elemFocused == userList))
-            userList.view.selection.selectAll();
+        if (elemFocused == client.list)
+            client.list.selectAll();
         else
             doCommand("cmd_selectAll");
     }
@@ -3991,7 +4044,7 @@ function cmdIgnore(e)
                 display(getMsg(MSG_IGNORE_DELERR, e.mask));
         }
         // Update pref:
-        var ignoreList = keys(e.network.ignoreList);
+        var ignoreList = Object.keys(e.network.ignoreList);
         e.network.prefs["ignoreList"] = ignoreList;
         e.network.prefs["ignoreList"].update();
     }
@@ -4176,9 +4229,6 @@ function cmdDCCSend(e)
     if (!client.prefs["dcc.enabled"])
         return display(MSG_DCC_NOT_ENABLED);
 
-    const DIRSVC_CID = "@mozilla.org/file/directory_service;1";
-    const nsIProperties = Components.interfaces.nsIProperties;
-
     if (!e.nickname && !e.user)
         return display(MSG_DCC_ERR_NOUSER);
 
@@ -4202,8 +4252,7 @@ function cmdDCCSend(e)
         catch(ex)
         {
             // Ok, try user's home directory.
-            var fl = Components.classes[DIRSVC_CID].getService(nsIProperties);
-            file = fl.get("Home", Components.interfaces.nsIFile);
+            file = Services.dirsvc.get("Home", Ci.nsIFile);
 
             // Another freaking try/catch wrapper.
             try
@@ -4361,8 +4410,7 @@ function cmdDCCAutoAcceptAdd(e)
         e.user = e.server.getUser(e.nickname);
 
     var mask = e.user ? "*!" + e.user.name + "@" + e.user.host : e.nickname;
-    var index = arrayIndexOf(list, mask);
-    if (index == -1)
+    if (!list.includes(mask))
     {
         list.push(mask);
         list.update();
@@ -4595,7 +4643,7 @@ function cmdInstallPlugin(e)
                 tempName += urlMatches[2];
 
             ctx.outFile = getTempFile(client.prefs["profilePath"], tempName);
-            ctx.outFileH = fopen(ctx.outFile, ">");
+            ctx.outFileH = new LocalFile(ctx.outFile, ">");
         },
         onDataAvailable: function _onDataAvailable(request, context, stream,
                                                    offset, count)
@@ -4704,8 +4752,8 @@ function cmdFind(e)
 
     // Used from the inputbox, set the search string and find the first
     // occurrence using find-again.
-    const FINDSVC_ID = "@mozilla.org/find/find_service;1";
-    var findService = getService(FINDSVC_ID, "nsIFindService");
+    let findService = Cc["@mozilla.org/find/find_service;1"]
+                        .getService(Ci.nsIFindService);
     // Make sure it searches the entire document, but don't lose the old setting
     var oldWrap = findService.wrapFind;
     findService.wrapFind = true;

@@ -20,12 +20,11 @@ ChromeUtils.defineESModuleGetters(this, {
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
   CardDAVUtils: "resource:///modules/CardDAVUtils.sys.mjs",
   ConfigVerifier: "resource:///modules/accountcreation/ConfigVerifier.sys.mjs",
-
   CreateInBackend:
     "resource:///modules/accountcreation/CreateInBackend.sys.mjs",
-
   FetchConfig: "resource:///modules/accountcreation/FetchConfig.sys.mjs",
   GuessConfig: "resource:///modules/accountcreation/GuessConfig.sys.mjs",
+  OAuth2Module: "resource:///modules/OAuth2Module.sys.mjs",
   OAuth2Providers: "resource:///modules/OAuth2Providers.sys.mjs",
   Sanitizer: "resource:///modules/accountcreation/Sanitizer.sys.mjs",
   UIDensity: "resource:///modules/UIDensity.sys.mjs",
@@ -109,7 +108,7 @@ function onSetupComplete() {
  *
  * @param {string} domain - Text with the question.
  * @param {Function} okCallback - Called when the user clicks OK.
- * @param {function(ex)} cancelCallback - Called when the user clicks Cancel
+ * @param {function(Error):void} cancelCallback - Called when the user clicks Cancel
  *   or if you call `Abortable.cancel()`.
  * @returns {Abortable} - If `Abortable.cancel()` is called,
  *   the dialog is closed and the `cancelCallback()` is called.
@@ -734,7 +733,7 @@ var gAccountSetup = {
 
       call = priorityQueue.addCall();
       gAccountSetupLogger.debug(
-        "Looking up configuration: Thunderbird installation…"
+        "Looking up configuration: Mozilla ISP database…"
       );
       fetch = FetchConfig.fromDB(
         domain,
@@ -772,7 +771,7 @@ var gAccountSetup = {
           const errorCallback = autodiscoverCall.errorCallback();
           if (e instanceof CancelledException) {
             errorCallback(e);
-          } else if (allErrors && allErrors.some(e => e.code == 401)) {
+          } else if (allErrors && allErrors.some(err => err.code == 401)) {
             // Auth failed.
             // Ask user for username.
             this.onStartOver();
@@ -941,26 +940,6 @@ var gAccountSetup = {
     // to false. We do it on the incoming config, as at this point we don't have
     // an outgoing one, and we've just toggled `handlesOutgoing`.
     ewsIncoming.useGlobalPreferredServer = false;
-
-    if (ewsIncoming.oauthSettings) {
-      // OWL uses these fields in such a way that their values won't work with
-      // our OAuth2 implementation. Replace them with settings from our OAuth2
-      // implementation.
-      const oauthSettings = OAuth2Providers.getHostnameDetails(
-        ewsIncoming.hostname
-      );
-
-      if (oauthSettings) {
-        // EWS needs more scope. Don't request it for other protocols, as
-        // it may be disallowed for some users.
-        ewsIncoming.oauthSettings.scope +=
-          " https://outlook.office.com/EWS.AccessAsUser.All";
-        [ewsIncoming.oauthSettings.issuer, ewsIncoming.oauthSettings.scope] =
-          oauthSettings;
-      } else {
-        ewsIncoming.oauthSettings = null;
-      }
-    }
 
     config.incomingAlternatives.push(ewsIncoming);
   },
@@ -1290,8 +1269,10 @@ var gAccountSetup = {
         addonsInstallRows.lastChild.remove();
       }
 
-      const container = document.getElementById("resultExchangeHostname");
-      _makeHostDisplayString(config.incoming, container);
+      _makeHostDisplayString(
+        config.incoming,
+        document.getElementById("resultExchangeHostname")
+      );
       document
         .getElementById("incomingTitle-exchange")
         .appendChild(_socketTypeSpan(config.incoming.socketType));
@@ -1816,38 +1797,26 @@ var gAccountSetup = {
   async adjustOAuth2Visibility(config) {
     // If the incoming server hostname supports OAuth2, enable it.
     const iDetails = OAuth2Providers.getHostnameDetails(
-      config.incoming.hostname
+      config.incoming.hostname,
+      config.incoming.type
     );
     document.getElementById("in-authMethod-oauth2").hidden = !iDetails;
     if (iDetails) {
       gAccountSetupLogger.debug(
         `OAuth2 details for incoming server ${config.incoming.hostname} is ${iDetails}`
       );
-      config.incoming.oauthSettings = {};
-      [
-        config.incoming.oauthSettings.issuer,
-        config.incoming.oauthSettings.scope,
-      ] = iDetails;
-      this._currentConfig.incoming.oauthSettings =
-        config.incoming.oauthSettings;
     }
 
     // If the smtp hostname supports OAuth2, enable it.
     const oDetails = OAuth2Providers.getHostnameDetails(
-      config.outgoing.hostname
+      config.outgoing.hostname,
+      config.outgoing.type
     );
     document.getElementById("out-authMethod-oauth2").hidden = !oDetails;
     if (oDetails) {
       gAccountSetupLogger.debug(
         `OAuth2 details for outgoing server ${config.outgoing.hostname} is ${oDetails}`
       );
-      config.outgoing.oauthSettings = {};
-      [
-        config.outgoing.oauthSettings.issuer,
-        config.outgoing.oauthSettings.scope,
-      ] = oDetails;
-      this._currentConfig.outgoing.oauthSettings =
-        config.outgoing.oauthSettings;
     }
   },
 
@@ -1917,7 +1886,7 @@ var gAccountSetup = {
    * If the user changed the port manually, adjust the SSL value,
    * (only) if the new port is impossible with the old SSL value.
    *
-   * @param config {AccountConfig}
+   * @param {AccountConfig} config
    */
   adjustIncomingSSLToPort(config) {
     const incoming = config.incoming;
@@ -2134,9 +2103,8 @@ var gAccountSetup = {
     }
 
     gAccountSetupLogger.debug("creating account in backend");
-    const newAccount = await CreateInBackend.createAccountInBackend(
-      configFilledIn
-    );
+    const newAccount =
+      await CreateInBackend.createAccountInBackend(configFilledIn);
 
     window.close();
     gMainWindow.postMessage("account-created-in-backend", "*");
@@ -2421,23 +2389,8 @@ var gAccountSetup = {
         self._currentConfig.outgoing.username =
           successfulConfig.outgoing.username;
 
-        // We loaded dynamic client registration, fill this data back in to the
-        // config set.
-        if (successfulConfig.incoming.oauthSettings) {
-          self._currentConfig.incoming.oauthSettings =
-            successfulConfig.incoming.oauthSettings;
-        }
-        if (successfulConfig.outgoing.oauthSettings) {
-          self._currentConfig.outgoing.oauthSettings =
-            successfulConfig.outgoing.oauthSettings;
-        }
         self.finish(configFilledIn);
-
-        Services.telemetry.keyedScalarAdd(
-          "tb.account.successful_email_account_setup",
-          telemetryKey,
-          1
-        );
+        Glean.mail.successfulEmailAccountSetup[telemetryKey].add(1);
       })
       .catch(e => {
         // failed
@@ -2465,11 +2418,7 @@ var gAccountSetup = {
         // hidden in non-manual mode, so it's fine to enable
         reTestButton.disabled = false;
 
-        Services.telemetry.keyedScalarAdd(
-          "tb.account.failed_email_account_setup",
-          telemetryKey,
-          1
-        );
+        Glean.mail.failedEmailAccountSetup[telemetryKey].add(1);
       });
   },
 
@@ -2478,9 +2427,8 @@ var gAccountSetup = {
    */
   async finish(concreteConfig) {
     gAccountSetupLogger.debug("creating account in backend");
-    const newAccount = await CreateInBackend.createAccountInBackend(
-      concreteConfig
-    );
+    const newAccount =
+      await CreateInBackend.createAccountInBackend(concreteConfig);
 
     // Trigger the first login to download the folder structure and messages.
     newAccount.incomingServer.getNewMessages(
@@ -2604,6 +2552,22 @@ var gAccountSetup = {
    */
   async fetchAddressBooks() {
     this.addressBooks = [];
+
+    // Bail out if the CardDAV scope wasn't granted.
+    if (this._currentConfig.incoming.auth == Ci.nsMsgAuthMethod.OAuth2) {
+      const mod = new OAuth2Module();
+      if (
+        !mod.initFromHostname(
+          this._currentConfig.incoming.hostname,
+          this._currentConfig.incoming.username,
+          "carddav"
+        ) ||
+        !mod.getRefreshToken()
+      ) {
+        return;
+      }
+    }
+
     try {
       this.addressBooks = await CardDAVUtils.detectAddressBooks(
         this._email,
@@ -2727,6 +2691,22 @@ var gAccountSetup = {
    */
   async fetchCalendars() {
     this.calendars = {};
+
+    // Bail out if the CalDAV scope wasn't granted.
+    if (this._currentConfig.incoming.auth == Ci.nsMsgAuthMethod.OAuth2) {
+      const mod = new OAuth2Module();
+      if (
+        !mod.initFromHostname(
+          this._currentConfig.incoming.hostname,
+          this._currentConfig.incoming.username,
+          "caldav"
+        ) ||
+        !mod.getRefreshToken()
+      ) {
+        return;
+      }
+    }
+
     try {
       this.calendars = await cal.provider.detection.detect(
         this._email,
@@ -2994,10 +2974,10 @@ var gSecurityWarningDialog = {
    * (Given that this dialog object is static/global and persistent,
    * we can store that approval state here in this object.)
    *
-   * @param configSchema @see open()
-   * @param configFilledIn @see open()
-   * @returns {boolean} - True when the dialog should be shown
-   *   (call open()). if false, the dialog can and should be skipped.
+   * @param {AccountConfig} configSchema @see open()
+   * @param {AccountConfig} configFilledIn @see open()
+   * @returns {boolean} true when the dialog should be shown.
+   *   (call open()). If false, the dialog can and should be skipped.
    */
   needed(configSchema, configFilledIn) {
     assert(configSchema instanceof AccountConfig);
@@ -3044,17 +3024,19 @@ var gSecurityWarningDialog = {
    * OK or Cancel, the callbacks are called. There the callers proceed as
    * appropriate.
    *
-   * @param configSchema   The config, with placeholders not replaced yet.
-   *      This object may be modified to store the user's confirmations, but
-   *      currently that's not the case.
-   * @param configFilledIn   The concrete config with placeholders replaced.
-   * @param onlyIfNeeded {Boolean} - If there is nothing to warn about,
-   *     call okCallback() immediately (and sync).
-   * @param okCallback {function(config {AccountConfig})}
-   *      Called when the user clicked OK and approved the config including
-   *      the warnings. |config| is without placeholders replaced.
-   * @param cancalCallback {function()}
-   *      Called when the user decided to heed the warnings and not approve.
+   * @param {AccountConfig} configSchema - The config, with placeholders not
+   *   replaced yet.
+   *   This object may be modified to store the user's confirmations, but
+   *    currently that's not the case.
+   * @param {AccountConfig} configFilledIn - The concrete config with
+   *   placeholders replaced.
+   * @param {boolean} onlyIfNeeded - If there is nothing to warn about,
+   *   call okCallback() immediately (and sync).
+   * @param {function(AccountConfig):void} okCallback - Called when the user
+   *   clicked OK and approved the config including the warnings.
+   *  |config| is without placeholders replaced.
+   * @param {function():void} cancelCallback - Called when the user decided to
+   *   heed the warnings and not approve.
    */
   open(configSchema, configFilledIn, onlyIfNeeded, okCallback, cancelCallback) {
     assert(typeof okCallback == "function");

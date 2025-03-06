@@ -28,7 +28,7 @@ class SettingsAddonsTest : TestSetup() {
     @get:Rule
     val activityTestRule = HomeActivityIntentTestRule.withDefaultSettingsOverrides()
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/875780
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/875780
     // Walks through settings add-ons menu to ensure all items are present
     @Test
     fun verifyAddonsListItemsTest() {
@@ -46,7 +46,7 @@ class SettingsAddonsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/875781
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/875781
     // Installs an add-on from the Add-ons menu and verifies the prompts
     @Test
     fun installAddonFromMainMenuTest() {
@@ -61,6 +61,7 @@ class SettingsAddonsTest : TestSetup() {
                         1,
                     ),
                 ) {
+                    waitForAddonsListProgressBarToBeGone()
                     clickInstallAddon(addonName)
                 }
                 verifyAddonDownloadOverlay()
@@ -68,15 +69,14 @@ class SettingsAddonsTest : TestSetup() {
                 cancelInstallAddon()
                 clickInstallAddon(addonName)
                 acceptPermissionToInstallAddon()
-                verifyAddonInstallCompleted(addonName, activityTestRule)
-                verifyAddonInstallCompletedPrompt(addonName)
+                verifyAddonInstallCompletedPrompt(addonName, activityTestRule)
                 closeAddonInstallCompletePrompt()
                 verifyAddonIsInstalled(addonName)
                 verifyEnabledTitleDisplayed()
             }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/561597
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/561597
     // Installs an addon, then uninstalls it
     @Test
     fun verifyAddonsCanBeUninstalledTest() {
@@ -98,7 +98,7 @@ class SettingsAddonsTest : TestSetup() {
 
     // TODO: Harden to dynamically install addons from position
     //   in list of detected addons on screen instead of hard-coded values.
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/561600
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/561600
     // Installs 2 add-on and checks that the app doesn't crash while navigating the app
     @SmokeTest
     @Test
@@ -127,7 +127,7 @@ class SettingsAddonsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/561594
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/561594
     @SmokeTest
     @Test
     fun verifyUBlockWorksInPrivateModeTest() {
@@ -135,13 +135,12 @@ class SettingsAddonsTest : TestSetup() {
         val addonName = "uBlock Origin"
 
         addonsMenu {
-            installAddon(addonName, activityTestRule)
-            selectAllowInPrivateBrowsing()
+            installAddonInPrivateMode(addonName, activityTestRule)
             closeAddonInstallCompletePrompt()
         }.goBack {
         }.openContextMenuOnSponsoredShortcut("Top Articles") {
         }.openTopSiteInPrivateTab {
-            waitForPageToLoad()
+            verifyPocketPageContent()
         }.openThreeDotMenu {
             openAddonsSubList()
             verifyAddonAvailableInMainMenu(addonName)
@@ -149,7 +148,7 @@ class SettingsAddonsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/875785
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/875785
     @Test
     fun verifyUBlockWorksInNormalModeTest() {
         val addonName = "uBlock Origin"
@@ -159,7 +158,7 @@ class SettingsAddonsTest : TestSetup() {
             closeAddonInstallCompletePrompt()
         }.goBack {
         }.openTopSiteTabWithTitle("Top Articles") {
-            waitForPageToLoad()
+            verifyUrl("getpocket.com/explore")
         }.openThreeDotMenu {
             openAddonsSubList()
             verifyTrackersBlockedByUblock()

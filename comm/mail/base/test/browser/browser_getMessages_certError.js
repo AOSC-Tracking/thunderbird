@@ -2,6 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// It seems wrong to split this into separate files to avoid a timeout,
+// because the majority of this file is shared code that is called
+// multiple times for various scenarios.
+requestLongerTimeout(2);
+
 /**
  * Tests that fetching mail from a server with an invalid certificate shows a
  * notification, that clicking the notification opens the certificate error
@@ -50,6 +55,7 @@ add_setup(async function () {
   registerCleanupFunction(async () => {
     MailServices.accounts.removeAccount(localAccount, false);
     certOverrideService.clearAllOverrides();
+    alertsService.unregister();
   });
 });
 
@@ -186,12 +192,12 @@ async function subsubtest(
 ) {
   info(`getting messages for ${inbox.server.type} inbox`);
 
-  await testCallback();
-
   const dialogPromise = BrowserTestUtils.promiseAlertDialogOpen(
     "extra1",
     "chrome://pippki/content/exceptionDialog.xhtml"
   );
+
+  await testCallback();
 
   const alert = await TestUtils.waitForCondition(
     () => MockAlertsService._alert,
@@ -214,7 +220,25 @@ async function subsubtest(
   // while the first alert is open, but we should wait a while for them.
   await promiseServerIdle(inbox.server);
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-  await new Promise(resolve => setTimeout(resolve, 500));
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  let updatePromise;
+  if (expectedCert) {
+    updatePromise = new Promise(resolve => {
+      const folderListener = {
+        onFolderEvent(aEventFolder, aEvent) {
+          if (aEvent == "FolderLoaded" && inbox.URI == aEventFolder.URI) {
+            MailServices.mailSession.RemoveFolderListener(folderListener);
+            resolve();
+          }
+        },
+      };
+      MailServices.mailSession.AddFolderListener(
+        folderListener,
+        Ci.nsIFolderListener.event
+      );
+    });
+  }
 
   MockAlertsService._listener.observe(null, "alertclickcallback", alert.cookie);
   MockAlertsService._listener.observe(null, "alertfinished", alert.cookie);
@@ -240,19 +264,10 @@ async function subsubtest(
     // The checkbox in the dialog was checked, so this exception is permanent.
     Assert.ok(!isTemporary.value, "certificate exception should be permanent");
 
-    // This should be unnecessary.
-    EventUtils.synthesizeMouseAtCenter(
-      getMessagesButton,
-      { type: "contextmenu" },
-      about3Pane
-    );
-    await BrowserTestUtils.waitForPopupEvent(getMessagesContext, "shown");
-    getMessagesContext.activateItem(
-      getMessagesContext.querySelector(
-        `[data-server-key="${inbox.server.key}"]`
-      )
-    );
-    await BrowserTestUtils.waitForPopupEvent(getMessagesContext, "hidden");
+    // Force update of inbox.
+    inbox.updateFolder(null);
+    inbox.getNewMessages(null, null);
+    await updatePromise;
 
     await TestUtils.waitForCondition(
       () => inbox.getNumUnread(false) - inbox.numPendingUnread == 10,

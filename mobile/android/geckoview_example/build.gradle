@@ -1,8 +1,7 @@
 buildDir "${topobjdir}/gradle/build/mobile/android/geckoview_example"
 
 apply plugin: 'com.android.application'
-
-apply from: "${topsrcdir}/mobile/android/gradle/product_flavors.gradle"
+apply plugin: 'kotlin-android'
 
 android {
     buildToolsVersion project.ext.buildToolsVersion
@@ -16,11 +15,6 @@ android {
         applicationId "org.mozilla.geckoview_example"
         versionCode project.ext.versionCode
         versionName project.ext.versionName
-    }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
     }
 
     buildTypes {
@@ -39,9 +33,6 @@ android {
         ignoreAssetsPattern  '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         noCompress 'ja'
     }
-
-    project.configureProductFlavors.delegate = it
-    project.configureProductFlavors()
 
     buildFeatures {
         buildConfig true

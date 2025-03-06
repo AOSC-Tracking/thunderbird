@@ -7,14 +7,11 @@
  * malformed mboxes in unambiguous cases.
  */
 
-const { MessageGenerator } = ChromeUtils.importESModule(
-  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
-);
 const { PromiseTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-const { TelemetryTestUtils } = ChromeUtils.importESModule(
-  "resource://testing-common/TelemetryTestUtils.sys.mjs"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
 // Force mbox mailstore.
@@ -71,7 +68,7 @@ add_task(async function test_unescapedMbox() {
  * Test that reading from bad offset fails.
  */
 add_task(async function test_badStoreTokens() {
-  Services.telemetry.clearScalars();
+  Services.fog.testResetFOG();
 
   localAccountUtils.loadLocalMailAccount();
   const inbox = localAccountUtils.inboxFolder;
@@ -115,12 +112,10 @@ add_task(async function test_badStoreTokens() {
 
   // Make sure telemetry counted them
 
-  TelemetryTestUtils.assertKeyedScalar(
-    TelemetryTestUtils.getProcessScalars("parent", true),
-    "tb.mails.mbox_read_errors",
-    "missing_from",
-
-    inbox.getTotalMessages(false)
+  Assert.equal(
+    Glean.mail.mboxReadErrors.missing_from.testGetValue(),
+    inbox.getTotalMessages(false),
+    "Mbox missing-from-line failures should be counted in Glean"
   );
 
   // Clear up.
@@ -132,7 +127,7 @@ add_task(async function test_badStoreTokens() {
  * causes unexpected-size errors in the mbox code.
  */
 add_task(async function test_badMessageSizes() {
-  Services.telemetry.clearScalars();
+  Services.fog.testResetFOG();
 
   localAccountUtils.loadLocalMailAccount();
   const inbox = localAccountUtils.inboxFolder;
@@ -177,12 +172,87 @@ add_task(async function test_badMessageSizes() {
   }
 
   // Make sure telemetry counted them.
-  TelemetryTestUtils.assertKeyedScalar(
-    TelemetryTestUtils.getProcessScalars("parent", true),
-    "tb.mails.mbox_read_errors",
-    "unexpected_size",
+  Assert.equal(
+    Glean.mail.mboxReadErrors.unexpected_size.testGetValue(),
+    inbox.getTotalMessages(false),
+    "Mbox size-overrun failures should be counted in Glean"
+  );
 
-    inbox.getTotalMessages(false)
+  // Clear up.
+  localAccountUtils.clearAll();
+});
+
+/**
+ * Test handling of mbox file with missing final EOL.
+ */
+add_task(async function test_writeWithmissingEOL() {
+  Services.fog.testResetFOG();
+  localAccountUtils.loadLocalMailAccount();
+  const inbox = localAccountUtils.inboxFolder;
+  const generator = new MessageGenerator();
+
+  // Add a batch of messages to inbox.
+  const batch1 = generator.makeMessages({ count: 10 });
+  inbox.addMessageBatch(batch1.map(synMsg => synMsg.toMessageString()));
+
+  // Simulate a truncated mbox with no trailing EOL.
+  // Need to write directly to the mbox file, which means this one won't
+  // appear in the DB. But that's OK. We'll we'll be throwing away the DB
+  // and rebuilding it from the mbox anyway.
+  const badMsg =
+    `Message-Id: WIBBLE\r\n` +
+    `From: alice@example.com\r\n` +
+    `To: bob@example.com\r\n` +
+    `Subject: Hi Bob\r\n` +
+    `\r\n` +
+    `This line is incomple`; // NOTE: No EOL!
+  await IOUtils.writeUTF8(inbox.filePath.path, "From \r\n" + badMsg, {
+    mode: "append",
+  });
+
+  // Add another batch of messages to inbox.
+  // The code should spot the missing EOL, and add one before writing
+  // the first of this batch.
+  const batch2 = generator.makeMessages({ count: 10 });
+  inbox.addMessageBatch(batch2.map(synMsg => synMsg.toMessageString()));
+
+  // Make sure telemetry picked up that the EOL was missing.
+  Assert.equal(
+    Glean.mail.mboxWriteErrors.missing_eol.testGetValue(),
+    1,
+    "Mbox no-final-EOL errors should be reported via telemetry"
+  );
+
+  // Kill the database (.msf file) and rebuild it from the mbox.
+  // With no-final-EOL mitigation, we'll have all the messages we wrote.
+  // Without the mitigation, two of the messages will have been merged
+  // into one.
+  // See nsMsgBrkMBoxStore::InternalGetNewMsgOutputStream() - the EOL check
+  // and mitigation was added in bug 1924402.
+  inbox.msgDatabase.forceClosed();
+  inbox.msgDatabase = null;
+  await IOUtils.remove(inbox.summaryFile.path);
+  const urlListener = new PromiseTestUtils.PromiseUrlListener();
+  inbox.parseFolder(null, urlListener);
+  await urlListener.promise;
+
+  // Make sure we've got all the messages (look them up by MessageId).
+
+  const expected = [
+    ...batch1.map(synMsg => synMsg.messageId),
+    "WIBBLE",
+    ...batch2.map(synMsg => synMsg.messageId),
+  ].toSorted();
+
+  const got = [...inbox.msgDatabase.enumerateMessages()]
+    .map(msg => msg.messageId)
+    .toSorted();
+  Assert.deepEqual(got, expected, "All messages should be in DB");
+
+  Assert.equal(
+    inbox.getTotalMessages(false),
+    expected.length,
+    "Shouldn't have any unexpected extra messages"
   );
 
   // Clear up.

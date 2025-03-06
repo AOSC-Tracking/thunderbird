@@ -4,7 +4,6 @@
 
 package org.mozilla.fenix
 
-import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
@@ -52,9 +51,6 @@ import mozilla.components.feature.top.sites.TopSitesFrecencyConfig
 import mozilla.components.feature.top.sites.TopSitesProviderConfig
 import mozilla.components.lib.crash.CrashReporter
 import mozilla.components.service.fxa.manager.SyncEnginesStorage
-import mozilla.components.service.glean.Glean
-import mozilla.components.service.glean.config.Configuration
-import mozilla.components.service.glean.net.ConceptFetchHttpUploader
 import mozilla.components.service.sync.logins.LoginsApiException
 import mozilla.components.support.base.ext.areNotificationsEnabledSafe
 import mozilla.components.support.base.ext.isNotificationChannelEnabled
@@ -72,36 +68,37 @@ import mozilla.components.support.rustlog.RustLog
 import mozilla.components.support.utils.BrowsersCache
 import mozilla.components.support.utils.logElapsedTime
 import mozilla.components.support.webextensions.WebExtensionSupport
+import mozilla.telemetry.glean.Glean
 import org.mozilla.fenix.GleanMetrics.Addons
 import org.mozilla.fenix.GleanMetrics.Addresses
 import org.mozilla.fenix.GleanMetrics.AndroidAutofill
 import org.mozilla.fenix.GleanMetrics.CreditCards
 import org.mozilla.fenix.GleanMetrics.CustomizeHome
 import org.mozilla.fenix.GleanMetrics.Events.marketingNotificationAllowed
-import org.mozilla.fenix.GleanMetrics.GleanBuildInfo
 import org.mozilla.fenix.GleanMetrics.Logins
 import org.mozilla.fenix.GleanMetrics.Metrics
 import org.mozilla.fenix.GleanMetrics.PerfStartup
 import org.mozilla.fenix.GleanMetrics.Preferences
 import org.mozilla.fenix.GleanMetrics.SearchDefaultEngine
-import org.mozilla.fenix.GleanMetrics.ShoppingSettings
 import org.mozilla.fenix.GleanMetrics.TopSites
 import org.mozilla.fenix.components.Components
 import org.mozilla.fenix.components.Core
 import org.mozilla.fenix.components.appstate.AppAction
-import org.mozilla.fenix.components.metrics.MetricServiceType
+import org.mozilla.fenix.components.initializeGlean
 import org.mozilla.fenix.components.metrics.MozillaProductDetector
+import org.mozilla.fenix.components.startMetricsIfEnabled
+import org.mozilla.fenix.distributions.getDistributionId
 import org.mozilla.fenix.experiments.maybeFetchExperiments
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.containsQueryParameters
-import org.mozilla.fenix.ext.getCustomGleanServerUrlIfAvailable
 import org.mozilla.fenix.ext.isCustomEngine
 import org.mozilla.fenix.ext.isKnownSearchDomain
-import org.mozilla.fenix.ext.setCustomEndpointIfAvailable
 import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.lifecycle.StoreLifecycleObserver
+import org.mozilla.fenix.lifecycle.VisibilityLifecycleObserver
 import org.mozilla.fenix.nimbus.FxNimbus
 import org.mozilla.fenix.onboarding.MARKETING_CHANNEL_ID
+import org.mozilla.fenix.perf.ApplicationExitInfoMetrics
 import org.mozilla.fenix.perf.MarkersActivityLifecycleCallbacks
 import org.mozilla.fenix.perf.ProfilerMarkerFactProcessor
 import org.mozilla.fenix.perf.StartupTimeline
@@ -112,6 +109,7 @@ import org.mozilla.fenix.push.WebPushEngineIntegration
 import org.mozilla.fenix.session.PerformanceActivityLifecycleCallbacks
 import org.mozilla.fenix.session.VisibilityLifecycleCallback
 import org.mozilla.fenix.utils.Settings
+import org.mozilla.fenix.utils.Settings.Companion.TOP_SITES_PROVIDER_LIMIT
 import org.mozilla.fenix.utils.Settings.Companion.TOP_SITES_PROVIDER_MAX_THRESHOLD
 import org.mozilla.fenix.wallpapers.Wallpaper
 import java.util.UUID
@@ -181,7 +179,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
 
         // We avoid blocking the main thread on startup by calling into Glean on the background thread.
         @OptIn(DelicateCoroutinesApi::class)
-        GlobalScope.launch(Dispatchers.IO) {
+        GlobalScope.launch(IO) {
             PerfStartup.applicationOnCreate.accumulateSamples(listOf(durationMillis))
         }
     }
@@ -189,41 +187,16 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
     @OptIn(DelicateCoroutinesApi::class) // GlobalScope usage
     @VisibleForTesting
     protected open fun initializeGlean() {
-        val telemetryEnabled = settings().isTelemetryEnabled
-
-        logger.debug("Initializing Glean (uploadEnabled=$telemetryEnabled})")
-
-        // for performance reasons, this is only available in Nightly or Debug builds
-        val customEndpoint = if (Config.channel.isNightlyOrDebug) {
-            // for testing, if custom glean server url is set in the secret menu, use it to initialize Glean
-            getCustomGleanServerUrlIfAvailable(this)
-        } else {
-            null
+        val settings = settings()
+        // We delay the Glean initialization until, we have user consent (After onboarding).
+        if (components.fenixOnboarding.userHasBeenOnboarded()) {
+            initializeGlean(this, logger, settings.isTelemetryEnabled, components.core.client)
         }
-
-        val configuration = Configuration(
-            channel = BuildConfig.BUILD_TYPE,
-            httpClient = ConceptFetchHttpUploader(
-                lazy(LazyThreadSafetyMode.NONE) { components.core.client },
-            ),
-            enableEventTimestamps = FxNimbus.features.glean.value().enableEventTimestamps,
-            delayPingLifetimeIo = FxNimbus.features.glean.value().delayPingLifetimeIo,
-        )
-
-        // Set the metric configuration from Nimbus.
-        Glean.applyServerKnobsConfig(FxNimbus.features.glean.value().metricsEnabled)
-
-        Glean.initialize(
-            applicationContext = this,
-            configuration = configuration.setCustomEndpointIfAvailable(customEndpoint),
-            uploadEnabled = telemetryEnabled,
-            buildInfo = GleanBuildInfo.buildInfo,
-        )
 
         // We avoid blocking the main thread on startup by setting startup metrics on the background thread.
         val store = components.core.store
-        GlobalScope.launch(Dispatchers.IO) {
-            setStartupMetrics(store, settings())
+        GlobalScope.launch(IO) {
+            setStartupMetrics(store, settings)
         }
     }
 
@@ -253,7 +226,6 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
                 components.core.engine.warmUp()
             }
 
-            // We need to always initialize Glean and do it early here.
             initializeGlean()
 
             // Attention: Do not invoke any code from a-s in this scope.
@@ -287,7 +259,16 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         }
 
         setupLeakCanary()
-        startMetricsIfEnabled()
+        if (components.fenixOnboarding.userHasBeenOnboarded()) {
+            startMetricsIfEnabled(
+                logger = logger,
+                analytics = components.analytics,
+                isTelemetryEnabled = settings().isTelemetryEnabled,
+                isMarketingTelemetryEnabled = settings().isMarketingTelemetryEnabled &&
+                    settings().hasMadeMarketingTelemetrySelection,
+                isDailyUsagePingEnabled = settings().isDailyUsagePingEnabled,
+            )
+        }
         setupPush()
 
         GlobalFxSuggestDependencyProvider.initialize(components.fxSuggest.storage)
@@ -305,6 +286,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
                 appStore = components.appStore,
                 browserStore = components.core.store,
             ),
+            VisibilityLifecycleObserver(),
         )
 
         components.analytics.metricsStorage.tryRegisterAsUsageRecorder(this)
@@ -341,7 +323,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         @OptIn(DelicateCoroutinesApi::class) // GlobalScope usage
         fun queueInitStorageAndServices() {
             components.performance.visualCompletenessQueue.queue.runIfReadyOrQueue {
-                GlobalScope.launch(Dispatchers.IO) {
+                GlobalScope.launch(IO) {
                     logger.info("Running post-visual completeness tasks...")
                     logElapsedTime(logger, "Storage initialization") {
                         components.core.historyStorage.warmUp()
@@ -364,6 +346,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
                             },
                             providerConfig = TopSitesProviderConfig(
                                 showProviderTopSites = components.settings.showContileFeature,
+                                limit = TOP_SITES_PROVIDER_LIMIT,
                                 maxThreshold = TOP_SITES_PROVIDER_MAX_THRESHOLD,
                             ),
                         )
@@ -410,7 +393,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
 
         @OptIn(DelicateCoroutinesApi::class) // GlobalScope usage
         fun queueReviewPrompt() {
-            GlobalScope.launch(Dispatchers.IO) {
+            GlobalScope.launch(IO) {
                 components.reviewPromptController.trackApplicationLaunch()
             }
         }
@@ -418,7 +401,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         @OptIn(DelicateCoroutinesApi::class) // GlobalScope usage
         fun queueRestoreLocale() {
             components.performance.visualCompletenessQueue.queue.runIfReadyOrQueue {
-                GlobalScope.launch(Dispatchers.IO) {
+                GlobalScope.launch(IO) {
                     components.useCases.localeUseCases.restore()
                 }
             }
@@ -437,7 +420,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         @OptIn(DelicateCoroutinesApi::class) // GlobalScope usage
         fun queueNimbusFetchInForeground() {
             queue.runIfReadyOrQueue {
-                GlobalScope.launch(Dispatchers.IO) {
+                GlobalScope.launch(IO) {
                     components.nimbus.sdk.maybeFetchExperiments(
                         context = this@FenixApplication,
                     )
@@ -448,7 +431,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         @OptIn(DelicateCoroutinesApi::class) // GlobalScope usage
         fun queueSuggestIngest() {
             queue.runIfReadyOrQueue {
-                GlobalScope.launch(Dispatchers.IO) {
+                GlobalScope.launch(IO) {
                     components.fxSuggest.storage.runStartupIngestion()
                 }
             }
@@ -467,16 +450,15 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         if (settings().enableFxSuggest) {
             queueSuggestIngest()
         }
+        queueCollectProcessExitInfo()
     }
 
-    private fun startMetricsIfEnabled() {
-        if (settings().isTelemetryEnabled) {
-            components.analytics.metrics.start(MetricServiceType.Data)
-            components.analytics.crashFactCollector.start()
-        }
-
-        if (settings().isMarketingTelemetryEnabled) {
-            components.analytics.metrics.start(MetricServiceType.Marketing)
+    @OptIn(DelicateCoroutinesApi::class) // GlobalScope usage
+    private fun queueCollectProcessExitInfo() {
+        if (SDK_INT >= Build.VERSION_CODES.R && settings().isTelemetryEnabled) {
+            GlobalScope.launch(IO) {
+                ApplicationExitInfoMetrics.recordProcessExits(applicationContext)
+            }
         }
     }
 
@@ -550,7 +532,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
 
     @OptIn(DelicateCoroutinesApi::class) // GlobalScope usage
     private fun finishSetupMegazord(): Deferred<Unit> {
-        return GlobalScope.async(Dispatchers.IO) {
+        return GlobalScope.async(IO) {
             if (Config.channel.isDebug) {
                 RustHttpConfig.allowEmulatorLoopback()
             }
@@ -594,8 +576,6 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         }
     }
 
-    @SuppressLint("WrongConstant")
-    // Suppressing erroneous lint warning about using MODE_NIGHT_AUTO_BATTERY, a likely library bug
     private fun setDayNightTheme() {
         val settings = this.settings()
         when {
@@ -735,12 +715,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         setPreferenceMetrics(settings)
         with(Metrics) {
             // Set this early to guarantee it's in every ping from here on.
-            distributionId.set(
-                when (Config.channel.isMozillaOnline) {
-                    true -> "MozillaOnline"
-                    false -> "Mozilla"
-                },
-            )
+            distributionId.set(getDistributionId(browserStore))
 
             defaultBrowser.set(browsersCache.all(applicationContext).isDefaultBrowser)
             mozillaProductDetector.getMozillaBrowserDefault(applicationContext)?.also {
@@ -811,14 +786,6 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
             tabViewSetting.set(settings.getTabViewPingString())
             closeTabSetting.set(settings.getTabTimeoutPingString())
 
-            val installSourcePackage = if (SDK_INT >= Build.VERSION_CODES.R) {
-                packageManager.getInstallSourceInfo(packageName).installingPackageName
-            } else {
-                @Suppress("DEPRECATION")
-                packageManager.getInstallerPackageName(packageName)
-            }
-            installSource.set(installSourcePackage.orEmpty())
-
             val isDefaultTheCurrentWallpaper =
                 Wallpaper.nameIsDefault(settings.currentWallpaperName)
 
@@ -862,13 +829,6 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         }
 
         setAutofillMetrics()
-
-        with(ShoppingSettings) {
-            componentOptedOut.set(!settings.isReviewQualityCheckEnabled)
-            nimbusDisabledShopping.set(!FxNimbus.features.shoppingExperience.value().enabled)
-            userHasOnboarded.set(settings.reviewQualityCheckOptInTimeInMillis != 0L)
-            disabledAds.set(!settings.isReviewQualityCheckProductRecommendationsEnabled)
-        }
     }
 
     @VisibleForTesting

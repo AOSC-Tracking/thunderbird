@@ -9,14 +9,52 @@ Services.scriptloader.loadSubScript(
 );
 
 /**
+ * Converts milliseconds to seconds.
+ *
+ * @param {number} ms - The duration in milliseconds.
+ * @returns {number} The duration in seconds.
+ */
+function millisecondsToSeconds(ms) {
+  return ms / 1000;
+}
+
+/**
+ * Converts bytes to mebibytes.
+ *
+ * @param {number} bytes - The size in bytes.
+ * @returns {number} The size in mebibytes.
+ */
+function bytesToMebibytes(bytes) {
+  return bytes / (1024 * 1024);
+}
+
+/**
+ * Calculates the median of a list of numbers.
+ *
+ * @param {number[]} numbers - An array of numbers to find the median of.
+ * @returns {number} The median of the provided numbers.
+ */
+function median(numbers) {
+  numbers = numbers.sort((lhs, rhs) => lhs - rhs);
+  const midIndex = Math.floor(numbers.length / 2);
+
+  if (numbers.length & 1) {
+    return numbers[midIndex];
+  }
+
+  return (numbers[midIndex - 1] + numbers[midIndex]) / 2;
+}
+
+/**
  * Opens a new tab in the foreground.
  *
  * @param {string} url
  */
-async function addTab(url) {
+async function addTab(url, message, win = window) {
   logAction(url);
+  info(message);
   const tab = await BrowserTestUtils.openNewForegroundTab(
-    gBrowser,
+    win.gBrowser,
     url,
     true // Wait for load
   );
@@ -24,6 +62,37 @@ async function addTab(url) {
     tab,
     removeTab() {
       BrowserTestUtils.removeTab(tab);
+    },
+    /**
+     * Runs a callback in the content page. The function's contents are serialized as
+     * a string, and run in the page. The `translations-test.mjs` module is made
+     * available to the page.
+     *
+     * @param {(TranslationsTest: import("./translations-test.mjs")) => any} callback
+     * @returns {Promise<void>}
+     */
+    runInPage(callback, data = {}) {
+      // ContentTask.spawn runs the `Function.prototype.toString` on this function in
+      // order to send it into the content process. The following function is doing its
+      // own string manipulation in order to load in the TranslationsTest module.
+      const fn = new Function(/* js */ `
+        const TranslationsTest = ChromeUtils.importESModule(
+          "chrome://mochitests/content/browser/toolkit/components/translations/tests/browser/translations-test.mjs"
+        );
+
+        // Pass in the values that get injected by the task runner.
+        TranslationsTest.setup({Assert, ContentTaskUtils, content});
+
+        const data = ${JSON.stringify(data)};
+
+        return (${callback.toString()})(TranslationsTest, data);
+      `);
+
+      return ContentTask.spawn(
+        tab.linkedBrowser,
+        {}, // Data to inject.
+        fn
+      );
     },
   };
 }
@@ -60,6 +129,17 @@ function focusElementAndSynthesizeKey(element, key) {
   assertVisibility({ visible: { element } });
   element.focus();
   EventUtils.synthesizeKey(key);
+}
+
+/**
+ * Focuses the given window object, moving it to the top of all open windows.
+ *
+ * @param {Window} win
+ */
+async function focusWindow(win) {
+  const windowFocusPromise = BrowserTestUtils.waitForEvent(win, "focus");
+  win.focus();
+  await windowFocusPromise;
 }
 
 /**
@@ -120,16 +200,15 @@ function getByL10nId(l10nId, doc = document) {
  * @param {string} langTag - A BCP-47 language tag.
  */
 const getIntlDisplayName = (() => {
-  let displayNames = null;
+  let languageDisplayNames = null;
 
   return langTag => {
-    if (!displayNames) {
-      displayNames = new Services.intl.DisplayNames(undefined, {
-        type: "language",
+    if (!languageDisplayNames) {
+      languageDisplayNames = TranslationsParent.createLanguageDisplayNames({
         fallback: "none",
       });
     }
-    return displayNames.of(langTag);
+    return languageDisplayNames.of(langTag);
   };
 })();
 
@@ -197,6 +276,23 @@ function logAction(...params) {
       ""
     )}`
   );
+}
+
+/**
+ * Returns true if Full-Page Translations is currently active, otherwise false.
+ *
+ * @returns {boolean}
+ */
+function isFullPageTranslationsActive() {
+  try {
+    const { requestedLanguagePair } = TranslationsParent.getTranslationsActor(
+      gBrowser.selectedBrowser
+    ).languageState;
+    return !!requestedLanguagePair;
+  } catch {
+    // Translations actor unavailable, continue on.
+  }
+  return false;
 }
 
 /**
@@ -282,6 +378,366 @@ async function toggleReaderMode() {
 }
 
 /**
+ * A class for benchmarking translation performance and reporting
+ * metrics to our perftest infrastructure.
+ */
+class TranslationsBencher {
+  /**
+   * The metric base name for the engine initialization time.
+   *
+   * @type {string}
+   */
+  static METRIC_ENGINE_INIT_TIME = "engine-init-time";
+
+  /**
+   * The metric base name for words translated per second.
+   *
+   * @type {string}
+   */
+  static METRIC_WORDS_PER_SECOND = "words-per-second";
+
+  /**
+   * The metric base name for tokens translated per second.
+   *
+   * @type {string}
+   */
+  static METRIC_TOKENS_PER_SECOND = "tokens-per-second";
+
+  /**
+   * The metric base name for total memory usage in the inference process.
+   *
+   * @type {string}
+   */
+  static METRIC_TOTAL_MEMORY_USAGE = "total-memory-usage";
+
+  /**
+   * The metric base name for total translation time.
+   *
+   * @type {string}
+   */
+  static METRIC_TOTAL_TRANSLATION_TIME = "total-translation-time";
+
+  /**
+   * Data required to ensure that peftest metrics are validated and calculated correctly for the
+   * given test file. This data can be generated for a test file by running the script located at:
+   *
+   * toolkit/components/translations/tests/scripts/translations-perf-data.py
+   *
+   * @type {Record<string, {pageLanguage: string, tokenCount: number, wordCount: number}>}
+   */
+  static #PAGE_DATA = {
+    [SPANISH_BENCHMARK_PAGE_URL]: {
+      pageLanguage: "es",
+      tokenCount: 10966,
+      wordCount: 6944,
+    },
+  };
+
+  /**
+   * A class that gathers and reports metrics to perftest.
+   */
+  static Journal = class {
+    #metrics = {};
+
+    /**
+     * Pushes a metric value into the journal.
+     *
+     * @param {string} metricName - The metric name.
+     * @param {number} value - The metric value to record.
+     */
+    pushMetric(metricName, value) {
+      if (!this.#metrics[metricName]) {
+        this.#metrics[metricName] = [];
+      }
+      this.#metrics[metricName].push(value);
+    }
+
+    /**
+     * Pushes multiple metric values into the journal.
+     *
+     * @param {Array<[string, number]>} metrics - An array of [metricName, value] pairs.
+     */
+    pushMetrics(metrics) {
+      for (const [metricName, value] of metrics) {
+        this.pushMetric(metricName, value);
+      }
+    }
+
+    /**
+     * Logs the median value of each collected metric to the console.
+     * The log is then picked up by the perftest infrastructure.
+     * The logged data must match the schema defined in the test file.
+     */
+    reportMetrics() {
+      const reportedMetrics = {};
+      for (const [name, values] of Object.entries(this.#metrics)) {
+        reportedMetrics[name] = median(values);
+      }
+      info(`perfMetrics | ${JSON.stringify(reportedMetrics)}`);
+    }
+  };
+
+  /**
+   * Benchmarks the translation process and reports metrics to perftest.
+   *
+   * @param {object} options - The benchmark options.
+   * @param {string} options.page - The URL of the page to test.
+   * @param {number} options.runCount - The number of runs to perform.
+   * @param {string} options.sourceLanguage - The BCP-47 language tag for the source language.
+   * @param {string} options.targetLanguage - The BCP-47 language tag for the target language.
+   *
+   * @returns {Promise<void>} Resolves when benchmarking is complete.
+   */
+  static async benchmarkTranslation({
+    page,
+    runCount,
+    sourceLanguage,
+    targetLanguage,
+  }) {
+    const { wordCount, tokenCount, pageLanguage } =
+      TranslationsBencher.#PAGE_DATA[page] ?? {};
+
+    if (!wordCount || !tokenCount || !pageLanguage) {
+      const testPageName = page.match(/[^\\/]+$/)[0];
+      const testPagePath = page.substring(
+        "https://example.com/browser/".length
+      );
+      const sourceLangName = getIntlDisplayName(sourceLanguage);
+      throw new Error(`
+
+        🚨 Perf test data is not properly defined for ${testPageName} 🚨
+
+        To enable ${testPageName} for Translations perf tests, please follow these steps:
+
+          1) Ensure ${testPageName} has a proper HTML lang attribute in the markup:
+
+               <html lang="${sourceLanguage}">
+
+          2) Download the ${sourceLanguage}-${PIVOT_LANGUAGE}.vocab.spm model from a ${sourceLangName} row on the following site:
+
+               https://gregtatum.github.io/taskcluster-tools/src/models/
+
+          3) Run the following command to extract the perf metadata from ${testPageName}:
+
+               ❯ python3 toolkit/components/translations/tests/scripts/translations-perf-data.py \\
+                 --page_path="${testPagePath}" \\
+                 --model_path="..."
+
+          4) Include the resulting metadata for ${testPageName} in the TranslationsBencher.#PAGE_DATA object.
+      `);
+    }
+
+    if (sourceLanguage !== pageLanguage) {
+      throw new Error(
+        `Perf test source language '${sourceLanguage}' did not match the expected page language '${pageLanguage}'.`
+      );
+    }
+
+    const journal = new TranslationsBencher.Journal();
+
+    for (let runNumber = 0; runNumber < runCount; ++runNumber) {
+      const { tab, cleanup, runInPage } = await loadTestPage({
+        page,
+        endToEndTest: true,
+        languagePairs: [
+          { fromLang: sourceLanguage, toLang: "en" },
+          { fromLang: "en", toLang: targetLanguage },
+        ],
+        prefs: [["browser.translations.logLevel", "Error"]],
+      });
+
+      await TranslationsBencher.#injectTranslationCompleteObserver(runInPage);
+
+      await FullPageTranslationsTestUtils.assertTranslationsButton(
+        { button: true, circleArrows: false, locale: false, icon: true },
+        "The button is available."
+      );
+
+      await FullPageTranslationsTestUtils.openPanel({
+        onOpenPanel: FullPageTranslationsTestUtils.assertPanelViewDefault,
+      });
+
+      await FullPageTranslationsTestUtils.changeSelectedFromLanguage({
+        langTag: sourceLanguage,
+      });
+      await FullPageTranslationsTestUtils.changeSelectedToLanguage({
+        langTag: targetLanguage,
+      });
+
+      const engineReadyTimestampPromise =
+        TranslationsBencher.#getEngineReadyTimestampPromise(tab.linkedBrowser);
+      const translationCompleteTimestampPromise =
+        TranslationsBencher.#getTranslationCompleteTimestampPromise(runInPage);
+
+      const translateButtonClickedTime = performance.now();
+      await FullPageTranslationsTestUtils.clickTranslateButton();
+
+      const [engineReadyTime, translationCompleteTime] = await Promise.all([
+        engineReadyTimestampPromise,
+        translationCompleteTimestampPromise,
+      ]);
+
+      const initTimeMilliseconds = engineReadyTime - translateButtonClickedTime;
+      const translationTimeSeconds = millisecondsToSeconds(
+        translationCompleteTime - engineReadyTime
+      );
+      const wordsPerSecond = wordCount / translationTimeSeconds;
+      const tokensPerSecond = tokenCount / translationTimeSeconds;
+
+      const totalMemoryMB =
+        await TranslationsBencher.#getInferenceProcessTotalMemoryUsage();
+
+      const decimalPrecision = 3;
+      journal.pushMetrics([
+        [
+          TranslationsBencher.METRIC_ENGINE_INIT_TIME,
+          Number(initTimeMilliseconds.toFixed(decimalPrecision)),
+        ],
+        [
+          TranslationsBencher.METRIC_WORDS_PER_SECOND,
+          Number(wordsPerSecond.toFixed(decimalPrecision)),
+        ],
+        [
+          TranslationsBencher.METRIC_TOKENS_PER_SECOND,
+          Number(tokensPerSecond.toFixed(decimalPrecision)),
+        ],
+        [
+          TranslationsBencher.METRIC_TOTAL_MEMORY_USAGE,
+          Number(totalMemoryMB.toFixed(decimalPrecision)),
+        ],
+        [
+          TranslationsBencher.METRIC_TOTAL_TRANSLATION_TIME,
+          Number(translationTimeSeconds.toFixed(decimalPrecision)),
+        ],
+      ]);
+
+      await cleanup();
+    }
+
+    journal.reportMetrics();
+  }
+
+  /**
+   * Injects a mutation observer into the test page to detect when translation is complete.
+   *
+   * @param {Function} runInPage - Runs a closure within the content context of the page.
+   * @returns {Promise<void>} Resolves when the observer is injected.
+   */
+  static async #injectTranslationCompleteObserver(runInPage) {
+    await runInPage(TranslationsTest => {
+      const { getLastParagraph } = TranslationsTest.getSelectors();
+      const lastParagraph = getLastParagraph();
+
+      if (!lastParagraph) {
+        throw new Error("Unable to find the last paragraph for observation.");
+      }
+
+      const observer = new content.MutationObserver(
+        (_mutationsList, _observer) => {
+          content.document.dispatchEvent(
+            new CustomEvent("TranslationComplete")
+          );
+        }
+      );
+
+      observer.observe(lastParagraph, {
+        childList: true,
+      });
+    });
+  }
+
+  /**
+   * Returns a Promise that resolves with the timestamp when the Translations engine becomes ready.
+   *
+   * @param {Browser} browser - The browser hosting the translation.
+   * @returns {Promise<number>} The timestamp when the engine is ready.
+   */
+  static async #getEngineReadyTimestampPromise(browser) {
+    const { promise, resolve } = Promise.withResolvers();
+
+    function maybeGetTranslationStartTime(event) {
+      if (
+        event.detail.reason === "isEngineReady" &&
+        event.detail.actor.languageState.isEngineReady
+      ) {
+        browser.removeEventListener(
+          "TranslationsParent:LanguageState",
+          maybeGetTranslationStartTime
+        );
+        resolve(performance.now());
+      }
+    }
+
+    browser.addEventListener(
+      "TranslationsParent:LanguageState",
+      maybeGetTranslationStartTime
+    );
+
+    return promise;
+  }
+
+  /**
+   * Returns a Promise that resolves with the timestamp after the translation is complete.
+   *
+   * @param {Function} runInPage - A helper to run code on the test page.
+   * @returns {Promise<number>} The timestamp when the translation is complete.
+   */
+  static async #getTranslationCompleteTimestampPromise(runInPage) {
+    await runInPage(async () => {
+      const { promise, resolve } = Promise.withResolvers();
+
+      content.document.addEventListener("TranslationComplete", resolve, {
+        once: true,
+      });
+
+      await promise;
+    });
+
+    return performance.now();
+  }
+
+  /**
+   * Returns the total memory used by the inference process in megabytes.
+   *
+   * @returns {Promise<number>} The total memory usage in megabytes.
+   */
+  static async #getInferenceProcessTotalMemoryUsage() {
+    let memoryReporterManager = Cc[
+      "@mozilla.org/memory-reporter-manager;1"
+    ].getService(Ci.nsIMemoryReporterManager);
+
+    let totalBytes = 0;
+
+    const handleReport = (
+      aProcess,
+      aPath,
+      _aKind,
+      _aUnits,
+      aAmount,
+      _aDescription
+    ) => {
+      if (aProcess.startsWith("inference")) {
+        if (aPath.startsWith("explicit")) {
+          totalBytes += aAmount;
+        }
+      }
+    };
+
+    await new Promise(resolve =>
+      memoryReporterManager.getReports(
+        handleReport,
+        null, // handleReportData
+        resolve, // finishReporting
+        null, // finishReportingData
+        false // anonymized
+      )
+    );
+
+    return bytesToMebibytes(totalBytes);
+  }
+}
+
+/**
  * A collection of shared functionality utilized by
  * FullPageTranslationsTestUtils and SelectTranslationsTestUtils.
  *
@@ -344,14 +800,14 @@ class SharedTranslationsTestUtils {
       menuList.label,
       `The label for the menulist ${menuList.id} should not be empty.`
     );
-    if (langTag) {
+    if (langTag !== undefined) {
       is(
         menuList.value,
         langTag,
         `Expected ${menuList.id} selection to match '${langTag}'`
       );
     }
-    if (l10nId) {
+    if (l10nId !== undefined) {
       is(
         menuList.getAttribute("data-l10n-id"),
         l10nId,
@@ -621,7 +1077,7 @@ class FullPageTranslationsTestUtils {
       );
     is(
       locale.innerText,
-      toLanguage,
+      toLanguage.split("-")[0],
       `The expected language tag "${toLanguage}" is shown.`
     );
     is(
@@ -635,35 +1091,53 @@ class FullPageTranslationsTestUtils {
       `{"fromLanguage":"${fromLangDisplay}","toLanguage":"${toLangDisplay}"}`
     );
   }
+
   /**
    * Asserts that the Spanish test page has been translated by checking
    * that the H1 element has been modified from its original form.
    *
-   * @param {string} fromLanguage - The BCP-47 language tag being translated from.
-   * @param {string} toLanguage - The BCP-47 language tag being translated into.
-   * @param {Function} runInPage - Allows running a closure in the content page.
-   * @param {string} message - An optional message to log to info.
-   * @param {ChromeWindow} [win]
+   * @param {object} options - The options for the assertion.
+   *
+   * @param {string} options.fromLanguage - The BCP-47 language tag being translated from.
+   * @param {string} options.toLanguage - The BCP-47 language tag being translated into.
+   * @param {Function} options.runInPage - Allows running a closure in the content page.
+   * @param {boolean} [options.endToEndTest=false] - Whether this assertion is for an end-to-end test.
+   * @param {string} [options.message] - An optional message to log to info.
+   * @param {ChromeWindow} [options.win=window] - The window in which to perform the check (defaults to the current window).
    */
-  static async assertPageIsTranslated(
+  static async assertPageIsTranslated({
     fromLanguage,
     toLanguage,
     runInPage,
+    endToEndTest = false,
     message = null,
-    win = window
-  ) {
+    win = window,
+  }) {
     if (message) {
       info(message);
     }
     info("Checking that the page is translated");
-    const callback = async (TranslationsTest, { fromLang, toLang }) => {
-      const { getH1 } = TranslationsTest.getSelectors();
-      await TranslationsTest.assertTranslationResult(
-        "The page's H1 is translated.",
-        getH1,
-        `DON QUIJOTE DE LA MANCHA [${fromLang} to ${toLang}, html]`
-      );
-    };
+    let callback;
+    if (endToEndTest) {
+      callback = async TranslationsTest => {
+        const { getH1 } = TranslationsTest.getSelectors();
+        await TranslationsTest.assertTranslationResult(
+          "The page's H1 is translated.",
+          getH1,
+          "Don Quixote de La Mancha"
+        );
+      };
+    } else {
+      callback = async (TranslationsTest, { fromLang, toLang }) => {
+        const { getH1 } = TranslationsTest.getSelectors();
+        await TranslationsTest.assertTranslationResult(
+          "The page's H1 is translated.",
+          getH1,
+          `DON QUIJOTE DE LA MANCHA [${fromLang} to ${toLang}, html]`
+        );
+      };
+    }
+
     await runInPage(callback, { fromLang: fromLanguage, toLang: toLanguage });
     await FullPageTranslationsTestUtils.assertLangTagIsShownOnTranslationsButton(
       fromLanguage,
@@ -712,8 +1186,9 @@ class FullPageTranslationsTestUtils {
         errorMessage: false,
         errorMessageHint: false,
         errorHintAction: false,
-        fromMenuList: false,
         fromLabel: false,
+        fromMenuList: false,
+        fromMenuPopup: false,
         header: false,
         intro: false,
         introLearnMoreLink: false,
@@ -721,6 +1196,7 @@ class FullPageTranslationsTestUtils {
         restoreButton: false,
         toLabel: false,
         toMenuList: false,
+        toMenuPopup: false,
         translateButton: false,
         unsupportedHeader: false,
         unsupportedHint: false,
@@ -929,9 +1405,11 @@ class FullPageTranslationsTestUtils {
    * @param {object} options - Options containing 'langTag' and 'l10nId' to assert against.
    * @param {string} [options.langTag] - The BCP-47 language tag to match.
    * @param {string} [options.l10nId] - The localization Id to match.
+   * @param {ChromeWindow} [options.win]
+   *  - An optional ChromeWindow, for multi-window tests.
    */
-  static assertSelectedFromLanguage({ langTag, l10nId }) {
-    const { fromMenuList } = FullPageTranslationsPanel.elements;
+  static assertSelectedFromLanguage({ langTag, l10nId, win = window }) {
+    const { fromMenuList } = win.FullPageTranslationsPanel.elements;
     SharedTranslationsTestUtils._assertSelectedLanguage(fromMenuList, {
       langTag,
       l10nId,
@@ -944,9 +1422,11 @@ class FullPageTranslationsTestUtils {
    * @param {object} options - Options containing 'langTag' and 'l10nId' to assert against.
    * @param {string} [options.langTag] - The BCP-47 language tag to match.
    * @param {string} [options.l10nId] - The localization Id to match.
+   * @param {ChromeWindow} [options.win]
+   *  - An optional ChromeWindow, for multi-window tests.
    */
-  static assertSelectedToLanguage({ langTag, l10nId }) {
-    const { toMenuList } = FullPageTranslationsPanel.elements;
+  static assertSelectedToLanguage({ langTag, l10nId, win = window }) {
+    const { toMenuList } = win.FullPageTranslationsPanel.elements;
     SharedTranslationsTestUtils._assertSelectedLanguage(toMenuList, {
       langTag,
       l10nId,
@@ -1131,10 +1611,13 @@ class FullPageTranslationsTestUtils {
 
   /**
    * Simulates clicking the restore-page button.
+   *
+   * @param {ChromeWindow} [win]
+   *  - An optional ChromeWindow, for multi-window tests.
    */
-  static async clickRestoreButton() {
+  static async clickRestoreButton(win = window) {
     logAction();
-    const { restoreButton } = FullPageTranslationsPanel.elements;
+    const { restoreButton } = win.FullPageTranslationsPanel.elements;
     assertVisibility({ visible: { restoreButton } });
     await FullPageTranslationsTestUtils.waitForPanelPopupEvent(
       "popuphidden",
@@ -1166,12 +1649,15 @@ class FullPageTranslationsTestUtils {
    * @param {boolean} config.pivotTranslation
    *  - True if the expected translation is a pivot translation, otherwise false.
    *    Affects the number of expected downloads.
+   * @param {Function} config.onOpenPanel
+   *  - A function to run as soon as the panel opens.
    * @param {ChromeWindow} [config.win]
    *  - An optional ChromeWindow, for multi-window tests.
    */
   static async clickTranslateButton({
     downloadHandler = null,
     pivotTranslation = false,
+    onOpenPanel = null,
     win = window,
   } = {}) {
     logAction();
@@ -1186,6 +1672,16 @@ class FullPageTranslationsTestUtils {
       win
     );
 
+    let panelOpenCallbackPromise;
+    if (onOpenPanel) {
+      panelOpenCallbackPromise =
+        FullPageTranslationsTestUtils.waitForPanelPopupEvent(
+          "popupshown",
+          () => {},
+          onOpenPanel
+        );
+    }
+
     if (downloadHandler) {
       await FullPageTranslationsTestUtils.assertTranslationsButton(
         { button: true, circleArrows: true, locale: false, icon: true },
@@ -1194,6 +1690,8 @@ class FullPageTranslationsTestUtils {
       );
       await downloadHandler(pivotTranslation ? 2 : 1);
     }
+
+    await panelOpenCallbackPromise;
   }
 
   /**
@@ -1206,6 +1704,8 @@ class FullPageTranslationsTestUtils {
    *  - Open the panel from the app menu. If false, uses the translations button.
    * @param {boolean} config.openWithKeyboard
    *  - Open the panel by synthesizing the keyboard. If false, synthesizes the mouse.
+   * @param {string} [config.expectedFromLanguage] - The expected from-language tag.
+   * @param {string} [config.expectedToLanguage] - The expected to-language tag.
    * @param {ChromeWindow} [config.win]
    *  - An optional window for multi-window tests.
    */
@@ -1213,6 +1713,8 @@ class FullPageTranslationsTestUtils {
     onOpenPanel = null,
     openFromAppMenu = false,
     openWithKeyboard = false,
+    expectedFromLanguage = undefined,
+    expectedToLanguage = undefined,
     win = window,
   }) {
     logAction();
@@ -1228,6 +1730,18 @@ class FullPageTranslationsTestUtils {
         win,
         onOpenPanel,
         openWithKeyboard,
+      });
+    }
+    if (expectedFromLanguage !== undefined) {
+      FullPageTranslationsTestUtils.assertSelectedFromLanguage({
+        win,
+        langTag: expectedFromLanguage,
+      });
+    }
+    if (expectedToLanguage !== undefined) {
+      FullPageTranslationsTestUtils.assertSelectedToLanguage({
+        win,
+        langTag: expectedToLanguage,
       });
     }
   }
@@ -1341,27 +1855,84 @@ class FullPageTranslationsTestUtils {
   }
 
   /**
+   * Changes the selected language by opening the dropdown menu for each provided language tag.
+   *
+   * @param {string} langTag - The BCP-47 language tag to select from the dropdown menu.
+   * @param {object} elements - Elements involved in the dropdown language selection process.
+   * @param {Element} elements.menuList - The element that triggers the dropdown menu.
+   * @param {Element} elements.menuPopup - The dropdown menu element containing selectable languages.
+   * @param {ChromeWindow} [win]
+   *  - An optional ChromeWindow, for multi-window tests.
+   *
+   * @returns {Promise<void>}
+   */
+  static async #changeSelectedLanguage(langTag, elements, win = window) {
+    const { menuList, menuPopup } = elements;
+
+    await FullPageTranslationsTestUtils.waitForPanelPopupEvent(
+      "popupshown",
+      () => click(menuList),
+      null /* postEventAssertion */,
+      win
+    );
+
+    const menuItem = menuPopup.querySelector(`[value="${langTag}"]`);
+    await FullPageTranslationsTestUtils.waitForPanelPopupEvent(
+      "popuphidden",
+      () => {
+        click(menuItem);
+        // Synthesizing a click on the menuitem isn't closing the popup
+        // as a click normally would, so this tab keypress is added to
+        // ensure the popup closes.
+        EventUtils.synthesizeKey("KEY_Tab", {}, win);
+      },
+      null /* postEventAssertion */,
+      win
+    );
+  }
+
+  /**
    * Switches the selected from-language to the provided language tag.
    *
-   * @param {string} langTag - A BCP-47 language tag.
+   * @param {object} options
+   * @param {string} options.langTag - A BCP-47 language tag.
+   * @param {ChromeWindow} [options.win]
+   *  - An optional ChromeWindow, for multi-window tests.
    */
-  static changeSelectedFromLanguage(langTag) {
+  static async changeSelectedFromLanguage({ langTag, win = window }) {
     logAction(langTag);
-    const { fromMenuList } = FullPageTranslationsPanel.elements;
-    fromMenuList.value = langTag;
-    fromMenuList.dispatchEvent(new Event("command"));
+    const { fromMenuList: menuList, fromMenuPopup: menuPopup } =
+      win.FullPageTranslationsPanel.elements;
+    await FullPageTranslationsTestUtils.#changeSelectedLanguage(
+      langTag,
+      {
+        menuList,
+        menuPopup,
+      },
+      win
+    );
   }
 
   /**
    * Switches the selected to-language to the provided language tag.
    *
-   * @param {string} langTag - A BCP-47 language tag.
+   * @param {object} options
+   * @param {string} options.langTag - A BCP-47 language tag.
+   * @param {ChromeWindow} [options.win]
+   *  - An optional ChromeWindow, for multi-window tests.
    */
-  static changeSelectedToLanguage(langTag) {
+  static async changeSelectedToLanguage({ langTag, win = window }) {
     logAction(langTag);
-    const { toMenuList } = FullPageTranslationsPanel.elements;
-    toMenuList.value = langTag;
-    toMenuList.dispatchEvent(new Event("command"));
+    const { toMenuList: menuList, toMenuPopup: menuPopup } =
+      win.FullPageTranslationsPanel.elements;
+    await FullPageTranslationsTestUtils.#changeSelectedLanguage(
+      langTag,
+      {
+        menuList,
+        menuPopup,
+      },
+      win
+    );
   }
 
   /**
@@ -1513,6 +2084,8 @@ class SelectTranslationsTestUtils {
       if (expectedTargetLanguage) {
         // Target language expected, check for the data-l10n-id with a `{$language}` argument.
         const expectedL10nId =
+          selectH1 ||
+          selectPdfSpan ||
           selectFrenchSection ||
           selectEnglishSection ||
           selectSpanishSection ||
@@ -1521,26 +2094,37 @@ class SelectTranslationsTestUtils {
           selectSpanishSentence
             ? "main-context-menu-translate-selection-to-language"
             : "main-context-menu-translate-link-text-to-language";
+
+        await waitForCondition(
+          () =>
+            TranslationsUtils.langTagsMatch(
+              menuItem.getAttribute("target-language"),
+              expectedTargetLanguage
+            ),
+          `Waiting for translate-selection context menu item to match the expected target language ${expectedTargetLanguage}`
+        );
         await waitForCondition(
           () => menuItem.getAttribute("data-l10n-id") === expectedL10nId,
-          `Waiting for translate-selection context menu item to localize with target language ${expectedTargetLanguage}`
+          `Waiting for translate-selection context menu item to have the correct data-l10n-id '${expectedL10nId}`
         );
 
-        is(
-          menuItem.getAttribute("data-l10n-id"),
-          expectedL10nId,
-          "Expected the translate-selection context menu item to be localized with a target language."
-        );
-
-        const l10nArgs = JSON.parse(menuItem.getAttribute("data-l10n-args"));
-        is(
-          l10nArgs.language,
-          getIntlDisplayName(expectedTargetLanguage),
-          `Expected the translate-selection context menu item to have the target language '${expectedTargetLanguage}'.`
-        );
+        if (Services.locale.appLocaleAsBCP47 === "en-US") {
+          // We only want to test the localized name in CI if the current app locale is the default (en-US).
+          const expectedLanguageDisplayName = getIntlDisplayName(
+            expectedTargetLanguage
+          );
+          await waitForCondition(() => {
+            const l10nArgs = JSON.parse(
+              menuItem.getAttribute("data-l10n-args")
+            );
+            return l10nArgs.language === expectedLanguageDisplayName;
+          }, `Waiting for translate-selection context menu item to have the correct data-l10n-args '${expectedLanguageDisplayName}`);
+        }
       } else {
         // No target language expected, check for the data-l10n-id that has no `{$language}` argument.
         const expectedL10nId =
+          selectH1 ||
+          selectPdfSpan ||
           selectFrenchSection ||
           selectEnglishSection ||
           selectSpanishSection ||
@@ -1550,17 +2134,54 @@ class SelectTranslationsTestUtils {
             ? "main-context-menu-translate-selection"
             : "main-context-menu-translate-link-text";
         await waitForCondition(
-          () => menuItem.getAttribute("data-l10n-id") === expectedL10nId,
-          "Waiting for translate-selection context menu item to localize without target language."
+          () => !menuItem.getAttribute("target-language"),
+          "Waiting for translate-selection context menu item to remove its target-language attribute."
         );
-
-        is(
-          menuItem.getAttribute("data-l10n-id"),
-          expectedL10nId,
-          "Expected the translate-selection context menu item to be localized without a target language."
+        await waitForCondition(
+          () => menuItem.getAttribute("data-l10n-id") === expectedL10nId,
+          `Waiting for translate-selection context menu item to have the correct data-l10n-id '${expectedL10nId}`
         );
       }
     }
+  }
+
+  /**
+   * Tests that the context menu displays the expected target language for translation based on
+   * the provided configurations.
+   *
+   * @param {object} options - Options for configuring the test environment and expected language behavior.
+   * @param {Array.<string>} options.runInPage - A content-exposed function to run within the context of the page.
+   * @param {Array.<string>} [options.systemLocales=[]] - Locales to mock as system locales.
+   * @param {Array.<string>} [options.appLocales=[]] - Locales to mock as application locales.
+   * @param {Array.<string>} [options.webLanguages=[]] - Languages to mock as web languages.
+   * @param {string} options.expectedTargetLanguage - The expected target language for the translate-selection item.
+   */
+  static async testContextMenuItemWithLocales({
+    runInPage,
+    systemLocales = [],
+    appLocales = [],
+    webLanguages = [],
+    expectedTargetLanguage,
+  }) {
+    const cleanupLocales = await mockLocales({
+      systemLocales,
+      appLocales,
+      webLanguages,
+    });
+
+    await SelectTranslationsTestUtils.assertContextMenuTranslateSelectionItem(
+      runInPage,
+      {
+        selectSpanishSentence: true,
+        openAtSpanishSentence: true,
+        expectMenuItemVisible: true,
+        expectedTargetLanguage,
+      },
+      `The translate-selection context menu item should match the expected target language '${expectedTargetLanguage}'`
+    );
+
+    await closeAllOpenPanelsAndMenus();
+    await cleanupLocales();
   }
 
   /**
@@ -1660,14 +2281,20 @@ class SelectTranslationsTestUtils {
       textArea: true,
       toLabel: true,
       toMenuList: true,
-      translateFullPageButton: !isFullPageTranslationsRestrictedForPage,
+      translateFullPageButton: !(
+        isFullPageTranslationsRestrictedForPage ||
+        isFullPageTranslationsActive()
+      ),
     });
     SelectTranslationsTestUtils.#assertConditionalUIEnabled({
       copyButton: true,
       doneButtonPrimary: true,
       textArea: true,
-      translateFullPageButton:
-        !sameLanguageSelected && !isFullPageTranslationsRestrictedForPage,
+      translateFullPageButton: !(
+        sameLanguageSelected ||
+        isFullPageTranslationsRestrictedForPage ||
+        isFullPageTranslationsActive()
+      ),
     });
 
     await waitForCondition(
@@ -1683,7 +2310,11 @@ class SelectTranslationsTestUtils {
     await SelectTranslationsTestUtils.#assertPanelTextAreaOverflow();
 
     let footerButtons;
-    if (sameLanguageSelected || isFullPageTranslationsRestrictedForPage) {
+    if (
+      sameLanguageSelected ||
+      isFullPageTranslationsRestrictedForPage ||
+      isFullPageTranslationsActive()
+    ) {
       footerButtons = [copyButton, doneButtonPrimary];
     } else {
       footerButtons =
@@ -1914,7 +2545,10 @@ class SelectTranslationsTestUtils {
       textArea: true,
       toLabel: true,
       toMenuList: true,
-      translateFullPageButton: !isFullPageTranslationsRestrictedForPage,
+      translateFullPageButton: !(
+        isFullPageTranslationsRestrictedForPage ||
+        isFullPageTranslationsActive()
+      ),
     });
     SelectTranslationsTestUtils.#assertPanelHasTranslatingPlaceholder();
   }
@@ -1943,7 +2577,8 @@ class SelectTranslationsTestUtils {
       doneButtonPrimary: true,
       translateFullPageButton:
         fromMenuList.value !== toMenuList.value &&
-        !isFullPageTranslationsRestrictedForPage,
+        !isFullPageTranslationsRestrictedForPage &&
+        !isFullPageTranslationsActive(),
     });
   }
 
@@ -1965,7 +2600,9 @@ class SelectTranslationsTestUtils {
       copyButton: true,
       doneButtonPrimary: true,
       translateFullPageButton:
-        fromLanguage !== toLanguage && !isFullPageTranslationsRestrictedForPage,
+        fromLanguage !== toLanguage &&
+        !isFullPageTranslationsRestrictedForPage &&
+        !isFullPageTranslationsActive(),
     });
 
     if (fromLanguage === toLanguage) {
@@ -2516,7 +3153,7 @@ class SelectTranslationsTestUtils {
 
       menuList.focus();
       menuList.value = langTag;
-      menuList.dispatchEvent(new Event("command"));
+      menuList.dispatchEvent(new Event("command", { bubbles: true }));
       await menuListUpdated;
     }
 
@@ -2712,6 +3349,8 @@ class TranslationsSettingsTestUtils {
   static async openAboutPreferencesTranslationsSettingsPane(settingsButton) {
     const document = gBrowser.selectedBrowser.contentDocument;
 
+    const translationsPane =
+      content.window.gCategoryModules.get("paneTranslations");
     const promise = BrowserTestUtils.waitForEvent(
       document,
       "paneshown",
@@ -2722,41 +3361,45 @@ class TranslationsSettingsTestUtils {
     click(settingsButton, "Click settings button");
     await promise;
 
-    const elements = {
-      backButton: document.getElementById("translations-settings-back-button"),
-      header: document.getElementById("translations-settings-header"),
-      translationsSettingsDescription: document.getElementById(
-        "translations-settings-description"
-      ),
-      translateAlwaysHeader: document.getElementById(
-        "translations-settings-always-translate"
-      ),
-      translateNeverHeader: document.getElementById(
-        "translations-settings-never-translate"
-      ),
-      translateAlwaysMenuList: document.getElementById(
-        "translations-settings-always-translate-list"
-      ),
-      translateNeverMenuList: document.getElementById(
-        "translations-settings-never-translate-list"
-      ),
-      translateNeverSiteHeader: document.getElementById(
-        "translations-settings-never-sites-header"
-      ),
-      translateNeverSiteDesc: document.getElementById(
-        "translations-settings-never-sites"
-      ),
-      translateDownloadLanguagesHeader: document
-        .getElementById("translations-settings-download-section")
-        .querySelector("h2"),
-      translateDownloadLanguagesLearnMore: document.getElementById(
-        "download-languages-learn-more"
-      ),
-      translateDownloadLanguagesList: document.getElementById(
-        "translations-settings-download-section"
-      ),
-    };
+    return translationsPane.elements;
+  }
 
-    return elements;
+  /**
+   * Utility function to handle the click event for a `moz-button` element that controls
+   * the Download/Remove Language functionality.
+   *
+   * The button's icon reflects the current state of the language (downloaded, loading, or removed),
+   * which is represented by a corresponding CSS class.
+   *
+   * When this button is clicked for any language, the function waits for the button's state and icon
+   * to update. It then checks whether the button's state and icon match the expected state as defined
+   * by the test case, and logs the respective message provided by the test case.
+   *
+   * @param {Element} langButton - The `moz-button` element representing the download/remove button.
+   * @param {string} buttonIcon - The expected CSS class representing the button's state/icon (e.g., download, loading, or remove icon).
+   * @param {string} logMsg - A custom log message provided by the test case indicating the expected result.
+   */
+
+  static async downaloadButtonClick(langButton, buttonIcon, logMsg) {
+    if (
+      !langButton.parentNode
+        .querySelector("moz-button")
+        .classList.contains(buttonIcon)
+    ) {
+      await BrowserTestUtils.waitForMutationCondition(
+        langButton.parentNode.querySelector("moz-button"),
+        { attributes: true, attributeFilter: ["class"] },
+        () =>
+          langButton.parentNode
+            .querySelector("moz-button")
+            .classList.contains(buttonIcon)
+      );
+    }
+    ok(
+      langButton.parentNode
+        .querySelector("moz-button")
+        .classList.contains(buttonIcon),
+      logMsg
+    );
   }
 }

@@ -27,14 +27,14 @@ XPCOMUtils.defineLazyGetter(this, "bundle", function() {
 const gInContentProcess = Services.appinfo.processType == Ci.nsIXULRuntime.PROCESS_TYPE_CONTENT;
 const FAVICON_REQUEST_TIMEOUT = 60 * 1000;
 // Map from windows to arrays of data about pending favicon loads.
-var gFaviconLoadDataMap = new Map();
+let gFaviconLoadDataMap = new Map();
 
 const ITEM_CHANGED_BATCH_NOTIFICATION_THRESHOLD = 10;
 
 // copied from utilityOverlay.js
 const TAB_DROP_TYPE = "application/x-moz-tabbrowser-tab";
 
-var InternalFaviconLoader = {
+let InternalFaviconLoader = {
   /**
    * This gets called for every inner window that is destroyed.
    * In the parent process, we process the destruction ourselves. In the child process,
@@ -644,7 +644,7 @@ var PlacesUIUtils = {
                    .createInstance(Ci.nsIMutableArray);
       args.appendElement(uriList);
       browserWindow = Services.ww.openWindow(aWindow,
-                                             "chrome://navigator/content/navigator.xul",
+                                             AppConstants.BROWSER_CHROME_URL,
                                              null, "chrome,dialog=no,all", args);
       return;
     }
@@ -1156,7 +1156,7 @@ var PlacesUIUtils = {
       info.hiddenRows.push("keyword");
 
     return this.showBookmarkDialog(info,
-                                   focusManager.activeWindow ||
+                                   Services.focus.activeWindow ||
                                    Services.wm.getMostRecentWindow(null));
   },
 
@@ -1378,10 +1378,6 @@ XPCOMUtils.defineLazyGetter(PlacesUIUtils, "ellipsis", function() {
   return Services.prefs.getComplexValue("intl.ellipsis",
                                         Ci.nsIPrefLocalizedString).data;
 });
-
-XPCOMUtils.defineLazyServiceGetter(this, "focusManager",
-                                   "@mozilla.org/focus-manager;1",
-                                   "nsIFocusManager");
 
 /**
  * Determines if an unwrapped node can be moved.

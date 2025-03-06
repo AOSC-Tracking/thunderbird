@@ -25,6 +25,9 @@
 ChromeUtils.importESModule(
   "resource:///modules/activity/activityModules.sys.mjs"
 );
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
@@ -43,7 +46,7 @@ ChromeUtils.defineESModuleGetters(this, {
 });
 
 ChromeUtils.defineLazyGetter(this, "PopupNotifications", function () {
-  const { PopupNotifications } = ChromeUtils.importESModule(
+  const { PopupNotifications: NotificationPopup } = ChromeUtils.importESModule(
     "resource:///modules/GlobalPopupNotifications.sys.mjs"
   );
   try {
@@ -53,7 +56,7 @@ ChromeUtils.defineLazyGetter(this, "PopupNotifications", function () {
     // minimized because of the effects of the "noautohide" attribute on Linux.
     // This can be removed once bug 545265 and bug 1320361 are fixed.
     const shouldSuppress = () => window.windowState == window.STATE_MINIMIZED;
-    return new PopupNotifications(
+    return new NotificationPopup(
       document.getElementById("tabmail"),
       document.getElementById("notification-popup"),
       document.getElementById("notification-popup-box"),
@@ -100,7 +103,7 @@ function verifyOpenAccountHubTab() {
     return;
   }
 
-  openAccountSetupTab();
+  openAccountSetup(true);
 }
 
 let _resolveDelayedStartup;
@@ -129,10 +132,10 @@ var gMailInit = {
       document.documentElement.setAttribute("screenY", screen.availTop);
     }
 
-    // Run menubar initialization first, to avoid TabsInTitlebar code picking
+    // Run menubar initialization first, to avoid CustomTitlebar code picking
     // up mutations from it and causing a reflow.
     AutoHideMenubar.init();
-    TabsInTitlebar.init();
+    CustomTitlebar.init();
 
     // Call this after we set attributes that might change toolbars' computed
     // text color.
@@ -242,10 +245,6 @@ var gMailInit = {
           loadPostAccountWizard();
         }
         break;
-
-      case "open-account-setup-tab":
-        openAccountSetupTab();
-        break;
       default:
         break;
     }
@@ -273,15 +272,15 @@ var gMailInit = {
     PeriodicFilterManager.setupFiltering();
     msgDBCacheManager.init();
 
-    this.delayedStartupFinished = true;
-    _resolveDelayedStartup(window);
-    Services.obs.notifyObservers(window, "browser-delayed-startup-finished");
+    this._loadComponentsAtStartup().then(() => {
+      this.delayedStartupFinished = true;
+      _resolveDelayedStartup(window);
+      Services.obs.notifyObservers(window, "browser-delayed-startup-finished");
 
-    // Notify observer to resolve the browserStartupPromise, which is used for the
-    // delayed background startup of WebExtensions.
-    Services.obs.notifyObservers(window, "extensions-late-startup");
-
-    this._loadComponentsAtStartup();
+      // Notify observer to resolve the browserStartupPromise, which is used for the
+      // delayed background startup of WebExtensions.
+      Services.obs.notifyObservers(window, "extensions-late-startup");
+    });
   },
 
   /**
@@ -315,6 +314,18 @@ var gMailInit = {
       // Add a timeout to prevent opening the browser immediately at startup.
       setTimeout(this.showEOYDonationAppeal, 2000);
     }
+
+    if (Services.prefs.getBoolPref("mail.inappnotifications.enabled", false)) {
+      import("chrome://messenger/content/in-app-notification-manager.mjs")
+        .then(() => {
+          document
+            .querySelector(".in-app-notification-root")
+            .replaceChildren(
+              document.createElement("in-app-notification-manager")
+            );
+        })
+        .catch(console.error);
+    }
   },
 
   /**
@@ -331,7 +342,7 @@ var gMailInit = {
     }
 
     SessionStoreManager.unloadingWindow(window);
-    TabsInTitlebar.uninit();
+    CustomTitlebar.uninit();
     ToolbarIconColor.uninit();
     gSpacesToolbar.onUnload();
 
@@ -379,10 +390,7 @@ var gMailInit = {
 
     // Fall back to opening a browser window if we don't have a tabmail.
     if (!tabmail) {
-      const protocolSvc = Cc[
-        "@mozilla.org/uriloader/external-protocol-service;1"
-      ].getService(Ci.nsIExternalProtocolService);
-      protocolSvc.loadURI(Services.io.newURI(url));
+      openLinkExternally(url, { addToHistory: false });
     } else {
       tabmail.openTab("contentTab", {
         url,
@@ -405,26 +413,15 @@ var gMailInit = {
  */
 function verifyExistingAccounts() {
   try {
-    // Migrate quoting preferences from global to per account. This function
-    // returns true if it had to migrate, which we will use to mean this is a
-    // just migrated or new profile.
-    let newProfile = migrateGlobalQuotingPrefs(
-      MailServices.accounts.allIdentities
-    );
-
+    let newProfile = true;
     // If there are no accounts, or all accounts are "invalid" then kick off the
     // account migration. Or if this is a new (to Mozilla) profile. MCD can set
     // up accounts without the profile being used yet.
-    if (newProfile) {
-      // Check if MCD is configured. If not, say this is not a new profile so
-      // that we don't accidentally remigrate non MCD profiles.
-      var adminUrl = Services.prefs.getCharPref(
-        "autoadmin.global_config_url",
-        ""
-      );
-      if (!adminUrl) {
-        newProfile = false;
-      }
+
+    // Check if MCD is configured. If not, say this is not a new profile so
+    // that we don't accidentally remigrate non MCD profiles.
+    if (!Services.prefs.getCharPref("autoadmin.global_config_url", "")) {
+      newProfile = false;
     }
 
     const accounts = MailServices.accounts.accounts;
@@ -468,7 +465,7 @@ function verifyExistingAccounts() {
  */
 function switchToMailTab() {
   const tabmail = document.getElementById("tabmail");
-  if (tabmail?.selectedTab.mode.name != "folder") {
+  if (tabmail?.selectedTab.mode.name != "mail3PaneTab") {
     tabmail.switchToTab(0);
   }
 }
@@ -620,7 +617,7 @@ function getWindowStateForSessionPersistence() {
  * @param {boolean} aDontRestoreFirstTab - If this is true, the first tab will
  *   not be restored, and will continue to retain focus at the end. This is
  *   needed if the window was opened with a folder or a message as an argument.
- * @returns true if the restoration was successful, false otherwise.
+ * @returns {boolean} true if the restoration was successful, false otherwise.
  */
 async function atStartupRestoreTabs(aDontRestoreFirstTab) {
   const state = await SessionStoreManager.loadingWindow(window);
@@ -714,7 +711,7 @@ function loadExtraTabs() {
  * Loads the given message header at window open. Exactly one out of this and
  * |loadStartFolder| should be called.
  *
- * @param aStartMsgHdr The message header to load at window open
+ * @param {nsIMsgDBHdr} aStartMsgHdr - The message header to load at window open.
  */
 async function loadStartMsgHdr(aStartMsgHdr) {
   const mailStartupObserver = {
@@ -912,7 +909,7 @@ messageFlavorDataProvider.prototype = {
   },
 };
 
-var TabsInTitlebar = {
+var CustomTitlebar = {
   init() {
     this._readPref();
     Services.prefs.addObserver(this._drawInTitlePref, this);
@@ -952,7 +949,7 @@ var TabsInTitlebar = {
   },
 
   get enabled() {
-    return document.documentElement.getAttribute("tabsintitlebar") == "true";
+    return document.documentElement.getAttribute("customtitlebar") == "true";
   },
 
   observe(subject, topic) {
@@ -1024,16 +1021,12 @@ var TabsInTitlebar = {
     }
 
     if (allowed) {
-      document.documentElement.setAttribute("tabsintitlebar", "true");
+      document.documentElement.setAttribute("customtitlebar", "true");
       if (AppConstants.platform == "macosx") {
-        document.documentElement.setAttribute("chromemargin", "0,-1,-1,-1");
         document.documentElement.removeAttribute("drawtitle");
-      } else {
-        document.documentElement.setAttribute("chromemargin", "0,2,2,2");
       }
     } else {
-      document.documentElement.removeAttribute("tabsintitlebar");
-      document.documentElement.removeAttribute("chromemargin");
+      document.documentElement.removeAttribute("customtitlebar");
       if (AppConstants.platform == "macosx") {
         document.documentElement.setAttribute("drawtitle", "true");
       }

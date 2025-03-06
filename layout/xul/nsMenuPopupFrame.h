@@ -165,13 +165,15 @@ class nsMenuPopupFrame final : public nsBlockFrame {
 
   mozilla::dom::XULPopupElement& PopupElement() const;
 
-  nscoord GetPrefISize(gfxContext*) final;
-  nscoord GetMinISize(gfxContext*) final;
+  nscoord IntrinsicISize(const mozilla::IntrinsicSizeInput& aInput,
+                         mozilla::IntrinsicISizeType aType) override;
+
   void Reflow(nsPresContext* aPresContext, ReflowOutput& aDesiredSize,
               const ReflowInput& aReflowInput,
               nsReflowStatus& aStatus) override;
 
   nsIWidget* GetWidget() const;
+  already_AddRefed<nsIWidget> ComputeParentWidget() const;
 
   enum class WidgetStyle : uint8_t {
     ColorScheme,
@@ -212,9 +214,10 @@ class nsMenuPopupFrame final : public nsBlockFrame {
   PopupLevel GetPopupLevel() const { return GetPopupLevel(IsNoAutoHide()); }
 
   // Ensure that a widget has already been created for this view, and create
-  // one if it hasn't. If aRecreate is true, destroys any existing widget and
-  // creates a new one, regardless of whether one has already been created.
-  void PrepareWidget(bool aRecreate = false);
+  // one if it hasn't. If aForceRecreate is true, destroys any existing widget
+  // and creates a new one, regardless of whether one has already been created.
+  // Otherwise does so only if needed.
+  void PrepareWidget(bool aForceRecreate = false);
 
   MOZ_CAN_RUN_SCRIPT void EnsureActiveMenuListItemIsVisible();
 
@@ -429,7 +432,6 @@ class nsMenuPopupFrame final : public nsBlockFrame {
  protected:
   // returns the popup's level.
   PopupLevel GetPopupLevel(bool aIsNoAutoHide) const;
-  void TweakMinPrefISize(nscoord&);
 
   void InitPositionFromAnchorAlign(const nsAString& aAnchor,
                                    const nsAString& aAlign);
@@ -637,8 +639,6 @@ class nsMenuPopupFrame final : public nsBlockFrame {
   MenuPopupAnchorType mAnchorType = MenuPopupAnchorType::Node;
 
   nsRect mOverrideConstraintRect;
-
-  static int8_t sDefaultLevelIsTop;
 
   static mozilla::TimeStamp sLastKeyTime;
 

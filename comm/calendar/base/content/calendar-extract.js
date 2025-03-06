@@ -41,9 +41,12 @@ var calendarExtract = {
         // If no language name is found that is ok, keep the technical term
       }
 
-      let label = cal.l10n.getCalString("extractUsing", [langName]);
+      let label = calendarExtract.l10n.formatValueSync("extract-using", { languageName: langName });
       if (localeParts[3] != "") {
-        label = cal.l10n.getCalString("extractUsingRegion", [langName, localeParts[3]]);
+        label = calendarExtract.l10n.formatValueSync("extract-using-region", {
+          languageName: langName,
+          region: localeParts[3],
+        });
       }
 
       langs.push([label, localeParts[1]]);
@@ -127,7 +130,7 @@ var calendarExtract = {
     cal.alarms.setDefaultValues(item);
     const tabmail = document.getElementById("tabmail");
     const messagePaneBrowser =
-      tabmail?.currentTabInfo.chromeBrowser.contentWindow.visibleMessagePaneBrowser?.() ||
+      tabmail?.currentTabInfo.chromeBrowser.contentWindow.messagePane.visibleMessagePaneBrowser?.() ||
       tabmail?.currentAboutMessage?.getMessagePaneBrowser() ||
       document.getElementById("messageBrowser")?.contentWindow?.getMessagePaneBrowser();
     let sel = messagePaneBrowser?.contentWindow?.getSelection();
@@ -264,3 +267,8 @@ var calendarExtract = {
     );
   },
 };
+ChromeUtils.defineLazyGetter(
+  calendarExtract,
+  "l10n",
+  () => new Localization(["calendar/calendar.ftl"], true)
+);

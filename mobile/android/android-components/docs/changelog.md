@@ -4,7 +4,134 @@ title: Changelog
 permalink: /changelog/
 ---
 
-# 128.0 (In Development)
+# 136.0 (In Development)
+* **support-ktx**
+    * 🆕 New `ExpandablePrompt` interface implemented by `AddressSelectBar`, `CreditCardSelectBar` to inform when it is expanded or collapsed. [Bug 19010409](https://bugzilla.mozilla.org/show_bug.cgi?id=19010409).
+
+# 135.0
+* **support-ktx**
+    * 🆕 `Context.setApplicationNightMode()` will apply the provided night mode on all API levels and persist it on Android 31+ so that on new launches the splashscreen matches. [Bug 1919488](https://bugzilla.mozilla.org/show_bug.cgi?id=1919488)
+* **feature-downloads**
+    * `AbstractFetchDownloadService.createOpenFileIntent` will no longer create an intent to open PDF files from the caller application if it can open PDFs. The user will be prompted to choose an application. See [Bug 1941609](https://bugzilla.mozilla.org/show_bug.cgi?id=1941609).
+* **feature-prompts**
+    * 🆕 New `ToggleablePrompt` interface implemented by `AddressSelectBar`, `CreditCardSelectBar` `LoginSelectBar` and `SuggestStrongPasswordBar` to inform when these are shown or hidden. [Bug 1909746](https://bugzilla.mozilla.org/show_bug.cgi?id=1909746).
+    * 🆕 New `ExpandablePrompt` interface implemented by `LoginSelectBar` to inform when it is expanded or collapsed. [Bug 1909746](https://bugzilla.mozilla.org/show_bug.cgi?id=1909746).
+
+# 134.0
+* **browser-state**
+  * 🌟 Added `DownloadState.isPdf` property to indicate whether the file associated with the download is a PDF. See [Bug 1920092](https://bugzilla.mozilla.org/show_bug.cgi?id=1920092).
+
+* **concept-storage**
+  * 🆕 Exposed `lastModified` property for `BookmarkNode`s that includes timestamp data for the last time the node was modified. [Bug 1928444](https://bugzilla.mozilla.org/show_bug.cgi?id=1928444)
+
+* **feature-downloads**
+  * `AbstractFetchDownloadService.createOpenFileIntent` will create an intent to open PDF files from the caller application if it can open PDFs. See [Bug 1920092](https://bugzilla.mozilla.org/show_bug.cgi?id=1920092).
+  * `AbstractFetchDownloadService.openFile` will open PDF files from the caller application if it can open PDFs. See [Bug 1920092](https://bugzilla.mozilla.org/show_bug.cgi?id=1920092).
+
+* **browser-toolbar**
+    * Added internal data class `DisplayMargins` in `DisplayToolbar` class that can be used to specify margins for `DisplayToolbar`'s views
+    * Added `setUrlBackgroundMargins` method in `DisplayToolbar` class that client apps can use to specify custom `DisplayMargins` for the `background` view. [Bug 1927778](https://bugzilla.mozilla.org/show_bug.cgi?id=1927778)
+
+* **lib-crash**
+  * ⚠️ **Breaking change**: Crash database functions dealing with unsent crashes have been renamed and now require a timestamp parameter as the start of the range to search for unsent crashes.
+
+# 133.0
+* **browser-store**
+    * Adds `desktopMode` property to the `BrowserStore` to know whether or not browsing is in desktop mode. The pre-existing Action to update a tab's desktop mode has been renamed to disambiguate its intended use case. [Bug 1910768](https://bugzilla.mozilla.org/show_bug.cgi?id=1910768)
+
+* **browser-errorpages**
+  * 🌟 Vertically center content of all error pages. Update image and text of no internet connection error page. [Bug 1921460](https://bugzilla.mozilla.org/show_bug.cgi?id=1921460)
+
+* **browser-engine-gecko**
+  * Added `WebExtensionInstallException.SoftBlocked` to handle the `ERROR_SOFT_BLOCKED` error returned by Gecko.
+  * Adds support for enabling desktop mode browsing at the time of the engine session's creation.  [Bug 1910768](https://bugzilla.mozilla.org/show_bug.cgi?id=1910768)
+
+* **support-ktx**
+  * 🆕 `Window.setupPersistentInsets()` will setup handling persistent insets instead of the framework to allow for custom handling of dynamic insets [Bug 1911042](https://bugzilla.mozilla.org/show_bug.cgi?id=1911042)
+  * 🆕 `ImeInsetsSynchronizer` allows synchronizing the resize animation for any View which should be shown at the top of the keyboard while this is showing or hiding. [Bug 1911042](https://bugzilla.mozilla.org/show_bug.cgi?id=1911042)
+
+* **ui-widgets**
+  * 🆕 New `mozac_material_ripple_minimum_interaction_size` drawable for a 48dp ripple to be used when `selectableItemBackgroundBorderless` is too big and `selectableItemBackground` is too small. [Bug 1920554](https://bugzilla.mozilla.org/show_bug.cgi?id=1920554).
+
+# 132.0
+* **feature-awesomebar**
+  * The `onCancelEditing` now returns a result based on the `onStartEditing` and `onStopEditing` callback. [Bug 1917496](https://bugzilla.mozilla.org/show_bug.cgi?id=1917496)
+
+* **support-ktx**:
+    * ⚠️ `Int.dpToPx` will round the values to the nearest integer, instead of always rounding down. [Bug 1912988](https://bugzilla.mozilla.org/show_bug.cgi?id=1912988)
+
+* **support-utils**
+  * Added a `ColorUtils.calculateAlphaFromPercentage()` helper function to calculate the alpha value based on opacity. [Bug 1906795](https://bugzilla.mozilla.org/show_bug.cgi?id=1906795)
+
+* **lib-crash**
+  * Adds `CrashReporter.hasUnsentCrashReports()` method, allowing the caller to find out if there is unsent crashes. [Bug 1904974](https://bugzilla.mozilla.org/show_bug.cgi?id=1904974)
+  * Adds `CrashReporter.unsentCrashReports()` method, allowing the caller to fetch all unsent crashes. [Bug 1904974](https://bugzilla.mozilla.org/show_bug.cgi?id=1904974)
+  * Adds Store primitives (State, Action, Middleware) to be able to drive the crash reporter UI. [Bug 1905774](https://bugzilla.mozilla.org/show_bug.cgi?id=1905774)
+  * Adds new parameter `useLegacyReporting` when initializing a `CrashReporter`. [Bug 1905774](https://bugzilla.mozilla.org/show_bug.cgi?id=1905774)
+
+* **feature-session**:
+  * 🚒 `FullscreenFeature.isFullscreen` now reports the new value if evaluated in the `fullScreenChanged` callback. [Bug 1918757](https://bugzilla.mozilla.org/show_bug.cgi?id=1918757)
+
+# 131.0
+* **All components**
+  * ⚠️Increased `compileSdkVersion` to 35 (Android 15)
+
+* **browser-state**
+  * 🆕 New `isPdf` property for `ContentState` to inform whether the current page is a pdf or not. [Bug 1817810](https://bugzilla.mozilla.org/show_bug.cgi?id=1817810)
+
+# 130.0
+
+* **ui-widgets**
+  * ⚠️ **Breaking change**: `SnackbarDelegate` now supports passing whether the snackbar should be shown/styled for an error. [Bug 1906657](https://bugzilla.mozilla.org/show_bug.cgi?id=1906657)
+  * ⚠️ **Breaking change**: `SnackbarDelegate` has a new method that allows passing in Strings for the snackbar text and action, not just string resource ids. [Bug 1892762](https://bugzilla.mozilla.org/show_bug.cgi?id=1892762).
+  * `DefaultSnackbarDelegate` will allow passing in Strings for the snackbar text and action beside string resource ids. [Bug 1892762](https://bugzilla.mozilla.org/show_bug.cgi?id=1892762).
+
+* **feature-prompts**:
+  * ⚠️ **Breaking change**: `FullScreenNotification` interface is now implemented using a `FullScreenNotificationToast`. `FullScreenNotificationDialog` has been removed, see [Bug 1902996](https://bugzilla.mozilla.org/show_bug.cgi?id=1902996).
+
+* **feature-customtabs**
+  * ⚠️ **Breaking change**: `CustomTabsToolbarFeature.updateTheme` was replaced with `CustomTabsToolbarFeature.customTabsColorsConfig` to allow more control over which UI elements should be themed or not. [Bug 1904325](https://bugzilla.mozilla.org/show_bug.cgi?id=1904325)
+  * 🆕 New `CustomTabConfig.getConfiguredColorSchemeParams` and `ColorSchemeParams?.getToolbarContrastColor` to help get the colors specified in custom tabs configurations. [Bug 1904325](https://bugzilla.mozilla.org/show_bug.cgi?id=1904325)
+  * 🆕 New `BrowserMenuBuilder?.addCustomMenuItems` method for populating the current menu builder with custom tabs items specified in the custom tabs configuration. [Bug 1904325](https://bugzilla.mozilla.org/show_bug.cgi?id=1904325)
+
+* **browser-engine-gecko**
+  * Added `fingerprintingProtection` and `fingerprintingProtectionPrivateBrowsing` to settings. This allows user to toggle `privacy.fingerprintingProtection` and `privacy.fingerprintingProtection.pbmode` pref. [bug #1878911](https://bugzilla.mozilla.org/show_bug.cgi?id=1878911)
+
+* **concept-engine**
+  * Added `fingerprintingProtection` and `fingerprintingProtectionPrivateBrowsing` to settings. This allows user to toggle `privacy.fingerprintingProtection` and `privacy.fingerprintingProtection.pbmode` pref. [bug #1878911](https://bugzilla.mozilla.org/show_bug.cgi?id=1878911)
+
+* **feature-accounts**
+  * Added support for logout and account deletion web channel messages that update the `FxaAccountManager` and also dismiss any UI affordance in applications.
+
+* **support-test**
+  * ⚠️ **Breaking change**: `expectException` now takes the expected exception class as a type parameter, instead of an argument, and returns the caught exception ([Bug 1908065](https://bugzilla.mozilla.org/show_bug.cgi?id=1908065)).
+
+* **browser-storage-sync**
+  * ⚠️ **Breaking change**: The type parameters of `RemoteTabsCommandQueue.CommandSender` are now `<T, U>`, where `T : DeviceCommandOutgoing`, and `U` is the result of sending the command ([Bug 1908065](https://bugzilla.mozilla.org/show_bug.cgi?id=1908065)).
+  * ⚠️ **Breaking change**: `RemoteTabsCommandQueue.SendResult` has been renamed to `SendCloseTabsResult`, and has a new `RetryFor` variant ([Bug 1908065](https://bugzilla.mozilla.org/show_bug.cgi?id=1908065)).
+
+* **service-firefox-accounts**
+  * 🆕 `SendCommandException` is now a sealed class, with `TabsNotClosed` and `Other` variants ([Bug 1908065](https://bugzilla.mozilla.org/show_bug.cgi?id=1908065)).
+  * ⚠️ **Breaking change**: `FxaDeviceConstellation.sendCommandToDevice()` now throws an instance of `SendCommandException.TabsNotClosed` if some URLs in a `DeviceCommandOutgoing.CloseTab` couldn't be sent in the command ([Bug 1908065](https://bugzilla.mozilla.org/show_bug.cgi?id=1908065)).
+
+# 129.0
+
+* **browser-engine-gecko**
+    * Added `WebExtensionInstallException.AdminInstallOnly` to handle the `ERROR_ADMIN_INSTALL_ONLY` error returned by Gecko when the add-on can only be installed via Enterprise Policies.
+
+* **browser-icons**
+  * Increased size of single-letter fallback-favicon, see [Bug 1905393](https://bugzilla.mozilla.org/show_bug.cgi?id=1905393).
+
+* **feature-accounts-push**
+  * `CloseTabsUseCases.close()` now returns an `UndoableOperation`.
+  * 🆕 New `CloseTabsCommandReceiver` class for processing "close synced tabs" commands received from other devices.
+  * ⚠️ **Breaking change**: `CloseTabsFeature()` now takes a `CloseTabsCommandReceiver` instead of an `onTabsClosed` callback.
+
+* **lib-state**
+  * Introduce a `UiStore` that is similar to a regular `Store` but all the actions are dispatched and processed _immediately_ on the Main thread.
+    * ⚠️ **Note:** Using a `UiStore` means that long running work will block the main thread like any other long running UI work would. Ensure you are dispatching async work to an appropriate background dispatcher.
+
+# 128.0
 
 * **browser-toolbar**
   * Added new data classes `CustomTabsToolbarButtonConfig` and `CustomTabsToolbarListeners` to `CustomTabsToolbarFeature`, see [Bug 1897811](https://bugzilla.mozilla.org/show_bug.cgi?id=1897811).
@@ -106,9 +233,6 @@ permalink: /changelog/
 
 * **feature-customtabs**
   * Fallback behaviour when failing to open a new window in custom tab will now be loading the URL directly in the same custom tab. [Bug 1832357](https://bugzilla.mozilla.org/show_bug.cgi?id=1832357)
-
-* **feature-session**
-  * Update URL in the store immediately when using the optimized load URL code path.
 
 * **tooling-lint**
   * Added a lint rule to detect when `Response#close` may not have been called. Note: Currently, this rule only runs on Android Components.

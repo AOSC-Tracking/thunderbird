@@ -18,13 +18,14 @@
 #import "sdk/objc/components/video_codec/RTCDefaultVideoEncoderFactory.h"
 #import "sdk/objc/helpers/RTCCameraPreviewView.h"
 
+#include "api/audio/audio_processing.h"
+#include "api/audio/builtin_audio_processing_builder.h"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "api/enable_media.h"
 #include "api/peer_connection_interface.h"
 #include "api/rtc_event_log/rtc_event_log_factory.h"
 #include "api/task_queue/default_task_queue_factory.h"
-#include "modules/audio_processing/include/audio_processing.h"
 #include "sdk/objc/native/api/video_capturer.h"
 #include "sdk/objc/native/api/video_decoder_factory.h"
 #include "sdk/objc/native/api/video_encoder_factory.h"
@@ -124,7 +125,7 @@ void ObjCCallClient::CreatePeerConnectionFactory() {
       [[RTC_OBJC_TYPE(RTCDefaultVideoEncoderFactory) alloc] init]);
   dependencies.video_decoder_factory = webrtc::ObjCToNativeVideoDecoderFactory(
       [[RTC_OBJC_TYPE(RTCDefaultVideoDecoderFactory) alloc] init]);
-  dependencies.audio_processing = webrtc::AudioProcessingBuilder().Create();
+  dependencies.audio_processing_builder = std::make_unique<webrtc::BuiltinAudioProcessingBuilder>();
   webrtc::EnableMedia(dependencies);
   dependencies.event_log_factory = std::make_unique<webrtc::RtcEventLogFactory>();
   pcf_ = webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));

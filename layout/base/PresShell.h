@@ -128,12 +128,8 @@ class ScrollAnchorContainer;
 }  // namespace layout
 
 // 039d8ffc-fa55-42d7-a53a-388cb129b052
-#define NS_PRESSHELL_IID                             \
-  {                                                  \
-    0x039d8ffc, 0xfa55, 0x42d7, {                    \
-      0xa5, 0x3a, 0x38, 0x8c, 0xb1, 0x29, 0xb0, 0x52 \
-    }                                                \
-  }
+#define NS_PRESSHELL_IID \
+  {0x039d8ffc, 0xfa55, 0x42d7, {0xa5, 0x3a, 0x38, 0x8c, 0xb1, 0x29, 0xb0, 0x52}}
 
 #undef NOISY_INTERRUPTIBLE_REFLOW
 
@@ -418,7 +414,7 @@ class PresShell final : public nsStubDocumentObserver,
    * viewport. Will return null in situations where we don't have a mobile
    * viewport, and for documents that are not the root content document.
    */
-  RefPtr<MobileViewportManager> GetMobileViewportManager() const;
+  MobileViewportManager* GetMobileViewportManager() const;
 
   /**
    * Called when document load completes.
@@ -1159,7 +1155,7 @@ class PresShell final : public nsStubDocumentObserver,
   MOZ_CAN_RUN_SCRIPT void FireResizeEvent();
   MOZ_CAN_RUN_SCRIPT void FireResizeEventSync();
 
-  void NativeAnonymousContentRemoved(nsIContent* aAnonContent);
+  void NativeAnonymousContentWillBeRemoved(nsIContent* aAnonContent);
 
   /**
    * See HTMLDocument.setKeyPressEventModel() in HTMLDocument.webidl for the
@@ -1259,7 +1255,8 @@ class PresShell final : public nsStubDocumentObserver,
   NS_IMETHOD GetDisplaySelection(int16_t* aToggle) override;
   NS_IMETHOD ScrollSelectionIntoView(RawSelectionType aRawSelectionType,
                                      SelectionRegion aRegion,
-                                     int16_t aFlags) override;
+                                     ControllerScrollFlags aFlags) override;
+  using nsISelectionController::ScrollSelectionIntoView;
   NS_IMETHOD RepaintSelection(RawSelectionType aRawSelectionType) override;
   void SelectionWillTakeFocus() override;
   void SelectionWillLoseFocus() override;
@@ -1475,6 +1472,12 @@ class PresShell final : public nsStubDocumentObserver,
    */
   void MarkFixedFramesForReflow(IntrinsicDirty aIntrinsicDirty);
 
+  /**
+   * Similar to above MarkFixedFramesForReflow, but for sticky position children
+   * stuck to the root frame.
+   */
+  void MarkStickyFramesForReflow();
+
   void MaybeReflowForInflationScreenSizeChange();
 
   // This function handles all the work after VisualViewportSize is set
@@ -1521,6 +1524,9 @@ class PresShell final : public nsStubDocumentObserver,
   // shown/hidden.
   nsSize GetVisualViewportSizeUpdatedByDynamicToolbar() const;
 
+  // Trigger refreshing the MobileViewportManager's size metrics.
+  void RefreshViewportSize();
+
   /* Enable/disable author style level. Disabling author style disables the
    * entire author level of the cascade, including the HTML preshint level.
    */
@@ -1563,7 +1569,7 @@ class PresShell final : public nsStubDocumentObserver,
 
   /**
    * Informs the pres shell that the document is now at the anchor with
-   * the given name.  If |aScroll| is true, scrolls the view of the
+   * the given name or range.  If |aScroll| is true, scrolls the view of the
    * document so that the anchor with the specified name is displayed at
    * the top of the window.  If |aAnchorName| is empty, then this informs
    * the pres shell that there is no current target, and |aScroll| must
@@ -1571,7 +1577,8 @@ class PresShell final : public nsStubDocumentObserver,
    * and |aScroll| is true, the scrolling may be performed with an animation.
    */
   MOZ_CAN_RUN_SCRIPT
-  nsresult GoToAnchor(const nsAString& aAnchorName, bool aScroll,
+  nsresult GoToAnchor(const nsAString& aAnchorName,
+                      const nsRange* aFirstTextDirective, bool aScroll,
                       ScrollFlags aAdditionalScrollFlags = ScrollFlags::None);
 
   /**
@@ -1583,18 +1590,6 @@ class PresShell final : public nsStubDocumentObserver,
    * if it's removed from the DOM), so don't call this more than once.
    */
   MOZ_CAN_RUN_SCRIPT nsresult ScrollToAnchor();
-
-  /**
-   * Finds text fragments ranes in the document, highlights the ranges and
-   * scrolls to the last text fragment range on the page if
-   * `aScrollToTextFragment` is true.
-   *
-   * @param aScrollToTextFragment If true, scrolls the view to the last text
-   *                              fragment.
-   * @return True if scrolling happened.
-   */
-  MOZ_CAN_RUN_SCRIPT bool HighlightAndGoToTextFragment(
-      bool aScrollToTextFragment);
 
   /**
    * When scroll anchoring adjusts positions in the root frame during page load,
@@ -1763,6 +1758,12 @@ class PresShell final : public nsStubDocumentObserver,
 
   void ClearTemporarilyVisibleForScrolledIntoViewDescendantFlags() const;
 
+  // A cache that contains all fully selected nodes per selection instance.
+  // Only non-null during reflow.
+  dom::SelectionNodeCache* GetSelectionNodeCache() {
+    return mSelectionNodeCache;
+  }
+
  private:
   ~PresShell();
 
@@ -1809,7 +1810,37 @@ class PresShell final : public nsStubDocumentObserver,
 #endif
   }
 
-  void PushCurrentEventInfo(nsIFrame* aFrame, nsIContent* aContent);
+  struct EventTargetInfo {
+    EventTargetInfo() = default;
+    EventTargetInfo(EventMessage aEventMessage, nsIFrame* aFrame,
+                    nsIContent* aContent)
+        : mFrame(aFrame), mContent(aContent), mEventMessage(aEventMessage) {}
+
+    [[nodiscard]] bool IsSet() const { return mFrame || mContent; }
+    void Clear() {
+      mEventMessage = eVoidEvent;
+      mFrame = nullptr;
+      mContent = nullptr;
+    }
+    void ClearFrame() { mFrame = nullptr; }
+    void UpdateFrameAndContent(nsIFrame* aFrame, nsIContent* aContent) {
+      mFrame = aFrame;
+      mContent = aContent;
+    }
+    void SetFrameAndContent(EventMessage aEventMessage, nsIFrame* aFrame,
+                            nsIContent* aContent) {
+      mEventMessage = aEventMessage;
+      mFrame = aFrame;
+      mContent = aContent;
+    }
+
+    nsIFrame* mFrame = nullptr;
+    nsCOMPtr<nsIContent> mContent;
+    EventMessage mEventMessage = eVoidEvent;
+  };
+
+  void PushCurrentEventInfo(const EventTargetInfo& aInfo);
+  void PushCurrentEventInfo(EventTargetInfo&& aInfo);
   void PopCurrentEventInfo();
   nsIContent* GetCurrentEventContent();
 
@@ -1980,6 +2011,11 @@ class PresShell final : public nsStubDocumentObserver,
   class DelayedMouseEvent : public DelayedInputEvent {
    public:
     explicit DelayedMouseEvent(WidgetMouseEvent* aEvent);
+  };
+
+  class DelayedPointerEvent : public DelayedInputEvent {
+   public:
+    explicit DelayedPointerEvent(WidgetPointerEvent* aEvent);
   };
 
   class DelayedKeyEvent : public DelayedInputEvent {
@@ -2622,7 +2658,8 @@ class PresShell final : public nsStubDocumentObserver,
     nsresult HandleRetargetedEvent(WidgetGUIEvent* aGUIEvent,
                                    nsEventStatus* aEventStatus,
                                    nsIContent* aTarget) {
-      AutoCurrentEventInfoSetter eventInfoSetter(*this, nullptr, aTarget);
+      AutoCurrentEventInfoSetter eventInfoSetter(
+          *this, EventTargetInfo(aGUIEvent->mMessage, nullptr, aTarget));
       if (!mPresShell->GetCurrentEventFrame()) {
         return NS_OK;
       }
@@ -2820,27 +2857,37 @@ class PresShell final : public nsStubDocumentObserver,
      * AutoCurrentEventInfoSetter() pushes and pops current event info of
      * aEventHandler.mPresShell.
      */
-    struct MOZ_STACK_CLASS AutoCurrentEventInfoSetter final {
+    struct MOZ_RAII AutoCurrentEventInfoSetter final {
       explicit AutoCurrentEventInfoSetter(EventHandler& aEventHandler)
           : mEventHandler(aEventHandler) {
         MOZ_DIAGNOSTIC_ASSERT(!mEventHandler.mCurrentEventInfoSetter);
         mEventHandler.mCurrentEventInfoSetter = this;
-        mEventHandler.mPresShell->PushCurrentEventInfo(nullptr, nullptr);
+        mEventHandler.mPresShell->PushCurrentEventInfo(EventTargetInfo());
       }
-      AutoCurrentEventInfoSetter(EventHandler& aEventHandler, nsIFrame* aFrame,
-                                 nsIContent* aContent)
+      AutoCurrentEventInfoSetter(EventHandler& aEventHandler,
+                                 const EventTargetInfo& aInfo)
           : mEventHandler(aEventHandler) {
         MOZ_DIAGNOSTIC_ASSERT(!mEventHandler.mCurrentEventInfoSetter);
         mEventHandler.mCurrentEventInfoSetter = this;
-        mEventHandler.mPresShell->PushCurrentEventInfo(aFrame, aContent);
+        mEventHandler.mPresShell->PushCurrentEventInfo(aInfo);
       }
       AutoCurrentEventInfoSetter(EventHandler& aEventHandler,
+                                 EventTargetInfo&& aInfo)
+          : mEventHandler(aEventHandler) {
+        MOZ_DIAGNOSTIC_ASSERT(!mEventHandler.mCurrentEventInfoSetter);
+        mEventHandler.mCurrentEventInfoSetter = this;
+        mEventHandler.mPresShell->PushCurrentEventInfo(
+            std::forward<EventTargetInfo>(aInfo));
+      }
+      AutoCurrentEventInfoSetter(EventHandler& aEventHandler,
+                                 EventMessage aEventMessage,
                                  EventTargetData& aEventTargetData)
           : mEventHandler(aEventHandler) {
         MOZ_DIAGNOSTIC_ASSERT(!mEventHandler.mCurrentEventInfoSetter);
         mEventHandler.mCurrentEventInfoSetter = this;
         mEventHandler.mPresShell->PushCurrentEventInfo(
-            aEventTargetData.GetFrame(), aEventTargetData.GetContent());
+            EventTargetInfo(aEventMessage, aEventTargetData.GetFrame(),
+                            aEventTargetData.GetContent()));
       }
       ~AutoCurrentEventInfoSetter() {
         mEventHandler.mPresShell->PopCurrentEventInfo();
@@ -2995,6 +3042,12 @@ class PresShell final : public nsStubDocumentObserver,
 
   nsCOMPtr<nsIContent> mLastAnchorScrolledTo;
 
+  // Text directives are supposed to be scrolled to the center of the viewport.
+  // Since `ScrollToAnchor()` might get called after `GoToAnchor()` during a
+  // load, the vertical view position should be preserved.
+  enum class AnchorScrollType : bool { Anchor, TextDirective };
+  AnchorScrollType mLastAnchorScrollType = AnchorScrollType::Anchor;
+
   // Information needed to properly handle scrolling content into view if the
   // pre-scroll reflow flush can be interrupted.  mContentToScrollTo is non-null
   // between the initial scroll attempt and the first time we finish processing
@@ -3006,10 +3059,8 @@ class PresShell final : public nsStubDocumentObserver,
   a11y::DocAccessible* mDocAccessible;
 #endif  // #ifdef ACCESSIBILITY
 
-  nsIFrame* mCurrentEventFrame;
-  nsCOMPtr<nsIContent> mCurrentEventContent;
-  nsTArray<nsIFrame*> mCurrentEventFrameStack;
-  nsCOMArray<nsIContent> mCurrentEventContentStack;
+  EventTargetInfo mCurrentEventTarget;
+  nsTArray<EventTargetInfo> mCurrentEventTargetStack;
   // Set of frames that we should mark with NS_FRAME_HAS_DIRTY_CHILDREN after
   // we finish reflowing mCurrentReflowRoot.
   nsTHashSet<nsIFrame*> mFramesToDirty;
@@ -3222,6 +3273,13 @@ class PresShell final : public nsStubDocumentObserver,
   // The last TimeStamp when the keyup event did not exit fullscreen because it
   // was consumed.
   TimeStamp mLastConsumedEscapeKeyUpForFullscreen;
+
+  // The `SelectionNodeCache` is tightly coupled with the PresShell.
+  // It should only be possible to create a cache from within a PresShell.
+  // The created cache sets itself into `this`. Therefore, it's necessary to use
+  // `friend` here to avoid having setters.
+  friend dom::SelectionNodeCache;
+  dom::SelectionNodeCache* mSelectionNodeCache{nullptr};
 
   struct CapturingContentInfo final {
     CapturingContentInfo()

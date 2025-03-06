@@ -81,33 +81,43 @@ function parseAndRemoveField(obj, field) {
  * @returns {Object} The stack traces layout expected by the Glean crash.stackTraces metric.
  */
 function stackTracesLegacyToGlean(stackTraces) {
-  // Make a clone to fix up the values without altering the original.
-  stackTraces = structuredClone(stackTraces);
+  let ret = {};
   // Change "status" to "error", only populate if an error occurred.
   if ("status" in stackTraces && stackTraces.status !== "OK") {
-    stackTraces.error = stackTraces.status;
+    ret.error = stackTraces.status;
   }
-  delete stackTraces.status;
 
   // Change "crash_info" to flattened individual fields.
-  if ("crash_info" in stackTraces) {
-    stackTraces.crash_type = stackTraces.crash_info.type;
-    stackTraces.crash_address = stackTraces.crash_info.address;
-    stackTraces.crash_thread = stackTraces.crash_info.crashing_thread;
-    delete stackTraces.crash_info;
-  }
+  ret.crash_type = stackTraces.crash_info?.type;
+  ret.crash_address = stackTraces.crash_info?.address;
+  ret.crash_thread = stackTraces.crash_info?.crashing_thread;
+
+  ret.main_module = stackTraces.main_module;
 
   // Rename modules[].{base_addr,end_addr}
   if ("modules" in stackTraces) {
-    for (let module of stackTraces.modules) {
-      module.base_address = module.base_addr;
-      delete module.base_addr;
-      module.end_address = module.end_addr;
-      delete module.end_addr;
-    }
+    ret.modules = stackTraces.modules.map(module => ({
+      base_address: module.base_addr,
+      end_address: module.end_addr,
+      code_id: module.code_id,
+      debug_file: module.debug_file,
+      debug_id: module.debug_id,
+      filename: module.filename,
+      version: module.version,
+    }));
   }
 
-  return stackTraces;
+  if ("threads" in stackTraces) {
+    ret.threads = stackTraces.threads.map(thread => ({
+      frames: thread.frames.map(frame => ({
+        module_index: frame.module_index,
+        ip: frame.ip,
+        trust: frame.trust,
+      })),
+    }));
+  }
+
+  return ret;
 }
 
 /**
@@ -177,11 +187,12 @@ export var CrashManager = function (options) {
       case "pendingDumpsDir":
       case "submittedDumpsDir":
       case "eventsDirs":
-      case "storeDir":
+      case "storeDir": {
         let key = "_" + k;
         delete this[key];
         Object.defineProperty(this, key, { value });
         break;
+      }
       case "telemetryStoreSizeKey":
         this._telemetryStoreSizeKey = value;
         break;
@@ -422,7 +433,10 @@ CrashManager.prototype = Object.freeze({
 
         if (needsSave) {
           let store = await this._getStore();
-          await store.save();
+
+          if (store) {
+            await store.save();
+          }
         }
 
         for (let path of deletePaths) {
@@ -451,8 +465,11 @@ CrashManager.prototype = Object.freeze({
   pruneOldCrashes(date) {
     return (async () => {
       let store = await this._getStore();
-      store.pruneOldCrashes(date);
-      await store.save();
+
+      if (store) {
+        store.pruneOldCrashes(date);
+        await store.save();
+      }
     })();
   },
 
@@ -511,7 +528,7 @@ CrashManager.prototype = Object.freeze({
       }
 
       let store = await this._getStore();
-      if (store.addCrash(processType, crashType, id, date, metadata)) {
+      if (store && store.addCrash(processType, crashType, id, date, metadata)) {
         await store.save();
       }
 
@@ -586,6 +603,10 @@ CrashManager.prototype = Object.freeze({
    */
   async ensureCrashIsPresent(id) {
     let store = await this._getStore();
+    if (!store) {
+      return Promise.reject();
+    }
+
     let crash = store.getCrash(id);
 
     if (crash) {
@@ -608,7 +629,7 @@ CrashManager.prototype = Object.freeze({
    */
   async setRemoteCrashID(crashID, remoteID) {
     let store = await this._getStore();
-    if (store.setRemoteCrashID(crashID, remoteID)) {
+    if (store && store.setRemoteCrashID(crashID, remoteID)) {
       await store.save();
     }
   },
@@ -631,7 +652,7 @@ CrashManager.prototype = Object.freeze({
    */
   async addSubmissionAttempt(crashID, submissionID, date) {
     let store = await this._getStore();
-    if (store.addSubmissionAttempt(crashID, submissionID, date)) {
+    if (store && store.addSubmissionAttempt(crashID, submissionID, date)) {
       await store.save();
     }
   },
@@ -648,7 +669,10 @@ CrashManager.prototype = Object.freeze({
    */
   async addSubmissionResult(crashID, submissionID, date, result) {
     let store = await this._getStore();
-    if (store.addSubmissionResult(crashID, submissionID, date, result)) {
+    if (
+      store &&
+      store.addSubmissionResult(crashID, submissionID, date, result)
+    ) {
       await store.save();
     }
   },
@@ -663,7 +687,7 @@ CrashManager.prototype = Object.freeze({
    */
   async setCrashClassifications(crashID, classifications) {
     let store = await this._getStore();
-    if (store.setCrashClassifications(crashID, classifications)) {
+    if (store && store.setCrashClassifications(crashID, classifications)) {
       await store.save();
     }
   },
@@ -701,6 +725,10 @@ CrashManager.prototype = Object.freeze({
     return (async () => {
       let data = await IOUtils.read(entry.path);
       let store = await this._getStore();
+
+      if (!store) {
+        return this.EVENT_FILE_ERROR_UNKNOWN_EVENT;
+      }
 
       let decoder = new TextDecoder();
       data = decoder.decode(data);
@@ -756,7 +784,7 @@ CrashManager.prototype = Object.freeze({
    * Submit a Glean crash ping with the given parameters.
    *
    * @param {string} reason - the reason for the crash ping, one of: "crash", "event_found"
-   * @param {string} type - the process type (from {@link processTypes})
+   * @param {string} process_type - the process type (from {@link processTypes})
    * @param {DateTime} date - the time of the crash (or the closest time after it)
    * @param {string} minidumpHash - the hash of the minidump file, if any
    * @param {object} stackTraces - the object containing stack trace information
@@ -764,7 +792,7 @@ CrashManager.prototype = Object.freeze({
    */
   _submitGleanCrashPing(
     reason,
-    type,
+    process_type,
     date,
     minidumpHash,
     stackTraces,
@@ -782,7 +810,7 @@ CrashManager.prototype = Object.freeze({
       }
     }
 
-    Glean.crash.processType.set(type);
+    Glean.crash.processType.set(process_type);
     Glean.crash.time.set(date.getTime() * 1000);
     Glean.crash.minidumpSha256Hash.set(minidumpHash);
 
@@ -827,6 +855,7 @@ CrashManager.prototype = Object.freeze({
           cap
         ),
         remoteType: cap,
+        utilityActorsName: t(comma_list, "UtilityActorsName"),
         shutdownProgress: cap,
         startup: t(bool, "StartupCrash"),
       },
@@ -1002,7 +1031,7 @@ CrashManager.prototype = Object.freeze({
       case "crash.main.2":
         return this.EVENT_FILE_ERROR_OBSOLETE;
 
-      case "crash.main.3":
+      case "crash.main.3": {
         let crashID = lines[0];
         let metadata = JSON.parse(lines[1]);
         store.addCrash(
@@ -1022,6 +1051,7 @@ CrashManager.prototype = Object.freeze({
         );
 
         break;
+      }
 
       case "crash.submission.1":
         if (lines.length == 3) {
@@ -1068,30 +1098,36 @@ CrashManager.prototype = Object.freeze({
    */
   _getDirectoryEntries(path, re) {
     return (async function () {
-      let children = await IOUtils.getChildren(path);
       let entries = [];
 
-      for (const entry of children) {
-        let stat = await IOUtils.stat(entry);
-        if (stat.type == "directory") {
-          continue;
+      try {
+        let children = await IOUtils.getChildren(path);
+
+        for (const entry of children) {
+          let stat = await IOUtils.stat(entry);
+          if (stat.type == "directory") {
+            continue;
+          }
+
+          let filename = PathUtils.filename(entry);
+          let match = re.exec(filename);
+          if (!match) {
+            continue;
+          }
+          entries.push({
+            path: entry,
+            id: match[1],
+            date: stat.lastModified,
+          });
         }
 
-        let filename = PathUtils.filename(entry);
-        let match = re.exec(filename);
-        if (!match) {
-          continue;
-        }
-        entries.push({
-          path: entry,
-          id: match[1],
-          date: stat.lastModified,
+        entries.sort((a, b) => {
+          return a.date - b.date;
         });
+      } catch (ex) {
+        // Missing events folders are allowed
+        console.error(ex);
       }
-
-      entries.sort((a, b) => {
-        return a.date - b.date;
-      });
 
       return entries;
     })();
@@ -1169,15 +1205,11 @@ CrashManager.prototype = Object.freeze({
     return (async () => {
       let store = await this._getStore();
 
+      if (!store) {
+        return [];
+      }
+
       return store.crashes;
-    })();
-  },
-
-  getCrashCountsByDay() {
-    return (async () => {
-      let store = await this._getStore();
-
-      return store._countsByDay;
     })();
   },
 });
@@ -1403,12 +1435,17 @@ CrashStore.prototype = Object.freeze({
 
       let encoder = new TextEncoder();
       let data = encoder.encode(JSON.stringify(normalized));
-      let size = await IOUtils.write(this._storePath, data, {
-        tmpPath: this._storePath + ".tmp",
-        compress: true,
-      });
-      if (this._telemetrySizeKey) {
-        Services.telemetry.getHistogramById(this._telemetrySizeKey).add(size);
+      try {
+        let size = await IOUtils.write(this._storePath, data, {
+          tmpPath: this._storePath + ".tmp",
+          compress: true,
+        });
+        if (this._telemetrySizeKey) {
+          Services.telemetry.getHistogramById(this._telemetrySizeKey).add(size);
+        }
+      } catch (ex) {
+        // This operation might fail during shutdown, tough luck.
+        console.error(ex);
       }
     })();
   },

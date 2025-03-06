@@ -33,7 +33,6 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1.0"
-ffi-support = "0.4"
 lazy_static = "1.4"
 log = "0.4"
 serde_derive = "1"
@@ -55,6 +54,9 @@ path = "../support/error"
 [dependencies.interrupt-support]
 path = "../support/interrupt"
 
+[dependencies.payload-support]
+path = "../support/payload"
+
 [dependencies.rc_crypto]
 path = "../support/rc_crypto"
 features = ["hawk"]
@@ -69,10 +71,10 @@ path = "../support/guid"
 features = ["random"]
 
 [dependencies.uniffi]
-version = "0.27.1"
+version = "0.28.2"
 
 [dependencies.url]
-version = "2.1"
+version = "2"
 optional = true
 
 [dependencies.viaduct]
@@ -84,7 +86,7 @@ version = "0.10"
 default-features = false
 
 [build-dependencies.uniffi]
-version = "0.27.1"
+version = "0.28.2"
 features = ["build"]
 
 [features]
@@ -103,3 +105,6 @@ sync-client = [
     "url",
 ]
 sync-engine = ["random-guid"]
+
+[lints.clippy]
+empty-line-after-doc-comments = "allow"

@@ -10,6 +10,7 @@
 /* import-globals-from calendar-ui-utils.js */
 
 var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+
 var { recurrenceRule2String } = ChromeUtils.importESModule(
   "resource:///modules/calendar/calRecurrenceUtils.sys.mjs"
 );
@@ -86,7 +87,7 @@ var taskDetailsView = {
         const statusDetails = document.getElementById("calendar-task-details-status");
         switch (status) {
           case "NEEDS-ACTION": {
-            statusDetails.textContent = cal.l10n.getCalString("taskDetailsStatusNeedsAction");
+            document.l10n.setAttributes(statusDetails, "task-details-status-needs-action");
             break;
           }
           case "IN-PROCESS": {
@@ -95,22 +96,22 @@ var taskDetailsView = {
             if (property != null) {
               percent = parseInt(property, 10);
             }
-            statusDetails.textContent = cal.l10n.getCalString("taskDetailsStatusInProgress", [
+            document.l10n.setAttributes(statusDetails, "task-details-status-in-progress", {
               percent,
-            ]);
+            });
             break;
           }
           case "COMPLETED": {
             if (item.completedDate) {
               const completedDate = item.completedDate.getInTimezone(cal.dtz.defaultTimezone);
-              statusDetails.textContent = cal.l10n.getCalString("taskDetailsStatusCompletedOn", [
-                dateFormatter.formatDateTime(completedDate),
-              ]);
+              document.l10n.setAttributes(statusDetails, "task-details-status-completed-on", {
+                datetime: dateFormatter.formatDateTime(completedDate),
+              });
             }
             break;
           }
           case "CANCELLED": {
-            statusDetails.textContent = cal.l10n.getCalString("taskDetailsStatusCancelled");
+            document.l10n.setAttributes(statusDetails, "task-details-status-cancelled");
             break;
           }
           default: {
@@ -235,7 +236,7 @@ var taskDetailsView = {
     if (maxCount == 1) {
       const menuitem = document.createXULElement("menuitem");
       menuitem.setAttribute("class", "menuitem-iconic");
-      menuitem.setAttribute("label", cal.l10n.getCalString("None"));
+      document.l10n.setAttributes(menuitem, "no-categories");
       menuitem.setAttribute("type", "radio");
       if (itemCategories.length === 0) {
         menuitem.setAttribute("checked", "true");
@@ -410,24 +411,23 @@ function taskViewUpdate(filter) {
 /**
  * Prepares a dialog to send an email to the organizer of the currently selected
  * task in the task view.
- *
- * XXX We already have a function with this name in the event dialog. Either
- * consolidate or make name more clear.
  */
 function sendMailToOrganizer() {
   const item = document.getElementById("calendar-task-tree").currentTask;
-  if (item != null) {
-    const organizer = item.organizer;
-    const email = cal.email.getAttendeeEmail(organizer, true);
-    const emailSubject = cal.l10n.getString("calendar-event-dialog", "emailSubjectReply", [
-      item.title,
-    ]);
-    const identity = item.calendar.getProperty("imip.identity");
-    cal.email.sendTo(email, emailSubject, null, identity);
-  }
+  // We don't do a null check on purpose here so we get proper console error in
+  // case something fails.
+  cal.email.sendTo(
+    cal.email.getAttendeeEmail(item.organizer, true),
+    `Re: ${item.title}`,
+    null,
+    item.calendar.getProperty("imip.identity")
+  );
 }
 
-// Install event listeners for the display deck change and connect task tree to filter field
+/**
+ * Install event listeners for the display deck change and connect task tree to
+ * filter field.
+ */
 function taskViewOnLoad() {
   const calendarDisplayBox = document.getElementById("calendarDisplayBox");
   const tree = document.getElementById("calendar-task-tree");
@@ -461,7 +461,7 @@ function taskViewOnLoad() {
 /**
  * Copy the value of the given link node to the clipboard
  *
- * @param linkNode      The node containing the value to copy to the clipboard
+ * @param {Node} linkNode - The node containing the value to copy to the clipboard
  */
 function taskViewCopyLink(linkNode) {
   if (linkNode) {

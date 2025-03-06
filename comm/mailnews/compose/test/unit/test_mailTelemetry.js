@@ -5,10 +5,6 @@
  * Test telemetry related to mails sent.
  */
 
-const { TelemetryTestUtils } = ChromeUtils.importESModule(
-  "resource://testing-common/TelemetryTestUtils.sys.mjs"
-);
-
 let server;
 
 const kIdentityMail = "identity@foo.invalid";
@@ -19,14 +15,13 @@ const NUM_MAILS = 3;
 
 const deliveryListener = {
   count: 0,
-  onStartRequest() {},
-  onStopRequest() {
+  onSendStart() {},
+  onSendStop() {
     if (++this.count == NUM_MAILS) {
-      const scalars = TelemetryTestUtils.getProcessScalars("parent");
       Assert.equal(
-        scalars["tb.mails.sent"],
+        Glean.compose.mailsSent.testGetValue(),
         NUM_MAILS,
-        "Count of mails sent must be correct."
+        "mails_sent must be correct"
       );
     }
   },
@@ -36,7 +31,7 @@ const deliveryListener = {
  * Check that we're counting mails sent.
  */
 add_task(async function test_mails_sent() {
-  Services.telemetry.clearScalars();
+  Services.fog.testResetFOG();
 
   server = setupServerDaemon();
   registerCleanupFunction(() => {
@@ -57,16 +52,21 @@ add_task(async function test_mails_sent() {
     const smtpServer = getBasicSmtpServer(server.port);
     const identity = getSmtpIdentity(kIdentityMail, smtpServer);
 
+    const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
     for (let i = 0; i < NUM_MAILS; i++) {
       smtpServer.sendMailMessage(
         testFile,
-        kTo,
+        MailServices.headerParser.parseEncodedHeaderW(kTo),
+        [],
         identity,
         kSender,
         null,
         null,
         false,
-        "",
+        messageId,
         deliveryListener
       );
     }

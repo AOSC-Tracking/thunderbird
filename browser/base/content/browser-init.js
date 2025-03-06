@@ -102,12 +102,13 @@ var gBrowserInit = {
       toolbarMenubar.setAttribute("data-l10n-attrs", "toolbarname");
     }
 
-    // Run menubar initialization first, to avoid TabsInTitlebar code picking
+    // Run menubar initialization first, to avoid CustomTitlebar code picking
     // up mutations from it and causing a reflow.
     AutoHideMenubar.init();
-    // Update the chromemargin attribute so the window can be sized correctly.
+    // Update the customtitlebar attribute so the window can be sized
+    // correctly.
     window.TabBarVisibility.update();
-    TabsInTitlebar.init();
+    CustomTitlebar.init();
 
     new LightweightThemeConsumer(document);
 
@@ -132,8 +133,7 @@ var gBrowserInit = {
       .getInterface(Ci.nsIAppWindow).XULBrowserWindow = window.XULBrowserWindow;
     window.browserDOMWindow = new nsBrowserAccess();
 
-    gBrowser = window._gBrowser;
-    delete window._gBrowser;
+    gBrowser = new window.Tabbrowser();
     gBrowser.init();
 
     BrowserWindowTracker.track(window);
@@ -143,11 +143,59 @@ var gBrowserInit = {
     gNavToolbox.palette = document.getElementById(
       "BrowserToolbarPalette"
     ).content;
+
+    let isVerticalTabs = Services.prefs.getBoolPref(
+      "sidebar.verticalTabs",
+      false
+    );
+    let nonRemovables;
+
+    // We don't want these normally non-removable elements to get put back into the
+    // tabstrip if we're initializing with vertical tabs.
+    // We should refrain from excluding popups here to make sure CUI doesn't
+    // get into a blank saved state.
+    if (isVerticalTabs) {
+      nonRemovables = [gBrowser.tabContainer];
+      for (let elem of nonRemovables) {
+        elem.setAttribute("removable", "true");
+        // tell CUI to ignore this element when it builds the toolbar areas
+        elem.setAttribute("skipintoolbarset", "true");
+      }
+    }
     for (let area of CustomizableUI.areas) {
       let type = CustomizableUI.getAreaType(area);
       if (type == CustomizableUI.TYPE_TOOLBAR) {
         let node = document.getElementById(area);
         CustomizableUI.registerToolbarNode(node);
+      }
+    }
+    if (isVerticalTabs) {
+      // Show the vertical tabs toolbar
+      setToolbarVisibility(
+        document.getElementById(CustomizableUI.AREA_VERTICAL_TABSTRIP),
+        true,
+        false,
+        false
+      );
+      let tabstripToolbar = document.getElementById(
+        CustomizableUI.AREA_TABSTRIP
+      );
+      let wasCollapsed = tabstripToolbar.collapsed;
+      TabBarVisibility.update();
+      if (tabstripToolbar.collapsed !== wasCollapsed) {
+        let eventParams = {
+          detail: {
+            visible: !tabstripToolbar.collapsed,
+          },
+          bubbles: true,
+        };
+        let event = new CustomEvent("toolbarvisibilitychange", eventParams);
+        tabstripToolbar.dispatchEvent(event);
+      }
+
+      for (let elem of nonRemovables) {
+        elem.setAttribute("removable", "false");
+        elem.removeAttribute("skipintoolbarset");
       }
     }
     BrowserSearch.initPlaceHolder();
@@ -181,7 +229,9 @@ var gBrowserInit = {
   },
 
   onLoad() {
-    gBrowser.addEventListener("DOMUpdateBlockedPopups", gPopupBlockerObserver);
+    gBrowser.addEventListener("DOMUpdateBlockedPopups", e =>
+      PopupBlockerObserver.handleEvent(e)
+    );
     gBrowser.addEventListener(
       "TranslationsParent:LanguageState",
       FullPageTranslationsPanel
@@ -232,7 +282,7 @@ var gBrowserInit = {
 
     // Misc. inits.
     gUIDensity.init();
-    TabletModeUpdater.init();
+    Win10TabletModeUpdater.init();
     CombinedStopReload.ensureInitialized();
     gPrivateBrowsingUI.init();
     BrowserSearch.init();
@@ -316,10 +366,6 @@ var gBrowserInit = {
 
     this._cancelDelayedStartup();
 
-    // Bug 1531854 - The hidden window is force-created here
-    // until all of its dependencies are handled.
-    Services.appShell.hiddenDOMWindow;
-
     gBrowser.addEventListener(
       "PermissionStateChange",
       function () {
@@ -369,22 +415,23 @@ var gBrowserInit = {
     BrowserOffline.init();
     CanvasPermissionPromptHelper.init();
     WebAuthnPromptHelper.init();
-    ContentAnalysis.initialize(document);
+
+    BrowserUtils.callModulesFromCategory(
+      "browser-window-delayed-startup",
+      window
+    );
 
     // Initialize the full zoom setting.
     // We do this before the session restore service gets initialized so we can
     // apply full zoom settings to tabs restored by the session restore service.
     FullZoom.init();
     PanelUI.init(shouldSuppressPopupNotifications);
-    ReportBrokenSite.init(gBrowser);
 
     UpdateUrlbarSearchSplitterState();
 
     BookmarkingUI.init();
     BrowserSearch.delayedStartupInit();
-    SearchUIUtils.init();
     gProtectionsHandler.init();
-    HomePage.delayedStartup().catch(console.error);
 
     let safeMode = document.getElementById("helpSafeMode");
     if (Services.appinfo.inSafeMode) {
@@ -562,21 +609,18 @@ var gBrowserInit = {
 
           let managedBookmarksPopup = document.createXULElement("menupopup");
           managedBookmarksPopup.setAttribute("id", "managed-bookmarks-popup");
-          managedBookmarksPopup.setAttribute(
-            "oncommand",
-            "PlacesToolbarHelper.openManagedBookmark(event);"
+          managedBookmarksPopup.addEventListener("command", event =>
+            PlacesToolbarHelper.openManagedBookmark(event)
           );
-          managedBookmarksPopup.setAttribute(
-            "ondragover",
-            "event.dataTransfer.effectAllowed='none';"
+          managedBookmarksPopup.addEventListener(
+            "dragover",
+            event => (event.dataTransfer.effectAllowed = "none")
           );
-          managedBookmarksPopup.setAttribute(
-            "ondragstart",
-            "PlacesToolbarHelper.onDragStartManaged(event);"
+          managedBookmarksPopup.addEventListener("dragstart", event =>
+            PlacesToolbarHelper.onDragStartManaged(event)
           );
-          managedBookmarksPopup.setAttribute(
-            "onpopupshowing",
-            "PlacesToolbarHelper.populateManagedBookmarks(this);"
+          managedBookmarksPopup.addEventListener("popupshowing", event =>
+            PlacesToolbarHelper.populateManagedBookmarks(event.currentTarget)
           );
           managedBookmarksPopup.setAttribute("placespopup", "true");
           managedBookmarksPopup.setAttribute("is", "places-popup");
@@ -604,7 +648,14 @@ var gBrowserInit = {
 
     CaptivePortalWatcher.delayedStartup();
 
-    ShoppingSidebarManager.ensureInitialized();
+    if (
+      !Services.prefs.getBoolPref(
+        "browser.shopping.experience2023.integratedSidebar",
+        false
+      )
+    ) {
+      ShoppingSidebarManager.ensureInitialized();
+    }
 
     SessionStore.promiseAllWindowsRestored.then(() => {
       this._schedulePerWindowIdleTasks();
@@ -728,7 +779,7 @@ var gBrowserInit = {
         let globalHistoryOptions = undefined;
         let triggeringRemoteType = undefined;
         let forceAllowDataURI = false;
-        let wasSchemelessInput = false;
+        let schemelessInput = Ci.nsILoadInfo.SchemelessInputTypeUnset;
         if (window.arguments[1]) {
           if (!(window.arguments[1] instanceof Ci.nsIPropertyBag2)) {
             throw new Error(
@@ -767,9 +818,9 @@ var gBrowserInit = {
             forceAllowDataURI =
               extraOptions.getPropertyAsBool("forceAllowDataURI");
           }
-          if (extraOptions.hasKey("wasSchemelessInput")) {
-            wasSchemelessInput =
-              extraOptions.getPropertyAsBool("wasSchemelessInput");
+          if (extraOptions.hasKey("schemelessInput")) {
+            schemelessInput =
+              extraOptions.getPropertyAsUint32("schemelessInput");
           }
         }
 
@@ -794,7 +845,7 @@ var gBrowserInit = {
             fromExternal,
             globalHistoryOptions,
             triggeringRemoteType,
-            wasSchemelessInput,
+            schemelessInput,
           });
         } catch (e) {
           console.error(e);
@@ -883,7 +934,6 @@ var gBrowserInit = {
               "resource:///modules/DownloadsMacFinderProgress.sys.mjs"
             ).DownloadsMacFinderProgress.register();
           }
-          Services.telemetry.setEventRecordingEnabled("downloads", true);
         } catch (ex) {
           console.error(ex);
         }
@@ -903,6 +953,10 @@ var gBrowserInit = {
       gGfxUtils.init();
     });
 
+    scheduleIdleTask(async () => {
+      await gProfiles.init();
+    });
+
     // This should always go last, since the idle tasks (except for the ones with
     // timeouts) should execute in order. Note that this observer notification is
     // not guaranteed to fire, since the window could close before we get here.
@@ -912,10 +966,6 @@ var gBrowserInit = {
         window,
         "browser-idle-startup-tasks-finished"
       );
-    });
-
-    scheduleIdleTask(() => {
-      gProfiles.init();
     });
   },
 
@@ -979,7 +1029,7 @@ var gBrowserInit = {
   onUnload() {
     gUIDensity.uninit();
 
-    TabsInTitlebar.uninit();
+    CustomTitlebar.uninit();
 
     ToolbarIconColor.uninit();
 
@@ -1015,9 +1065,7 @@ var gBrowserInit = {
 
     BookmarkingUI.uninit();
 
-    TabletModeUpdater.uninit();
-
-    gTabletModePageCounter.finish();
+    Win10TabletModeUpdater.uninit();
 
     CaptivePortalWatcher.uninit();
 

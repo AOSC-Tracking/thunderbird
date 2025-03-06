@@ -4,10 +4,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "Cookie.h"
+#include "CookieCommons.h"
 #include "CookieStorage.h"
 #include "mozilla/Encoding.h"
 #include "mozilla/dom/ToJSValue.h"
-#include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/glean/NetwerkMetrics.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "nsIURLParser.h"
 #include "nsURLHelper.h"
@@ -74,6 +75,12 @@ already_AddRefed<Cookie> Cookie::FromCookieStruct(
     cookie->mData.rawSameSite() = nsICookie::SAMESITE_NONE;
   }
 
+  // Enforce session cookie if the partition is session-only.
+  if (CookieCommons::ShouldEnforceSessionForOriginAttributes(
+          aOriginAttributes)) {
+    cookie->mData.isSession() = true;
+  }
+
   return cookie.forget();
 }
 
@@ -128,8 +135,7 @@ size_t Cookie::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const {
          mData.name().SizeOfExcludingThisIfUnshared(MallocSizeOf) +
          mData.value().SizeOfExcludingThisIfUnshared(MallocSizeOf) +
          mData.host().SizeOfExcludingThisIfUnshared(MallocSizeOf) +
-         mData.path().SizeOfExcludingThisIfUnshared(MallocSizeOf) +
-         mFilePathCache.SizeOfExcludingThisIfUnshared(MallocSizeOf);
+         mData.path().SizeOfExcludingThisIfUnshared(MallocSizeOf);
 }
 
 bool Cookie::IsStale() const {
@@ -223,36 +229,6 @@ const OriginAttributes& Cookie::OriginAttributesNative() {
 }
 
 const Cookie& Cookie::AsCookie() { return *this; }
-
-const nsCString& Cookie::GetFilePath() {
-  MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread());
-
-  if (Path().IsEmpty()) {
-    // If we don't have a path, just return the (empty) file path cache.
-    return mFilePathCache;
-  }
-  if (!mFilePathCache.IsEmpty()) {
-    // If we've computed the answer before, just return it.
-    return mFilePathCache;
-  }
-
-  nsIURLParser* parser = net_GetStdURLParser();
-  NS_ENSURE_TRUE(parser, mFilePathCache);
-
-  int32_t pathLen = Path().Length();
-  int32_t filepathLen = 0;
-  uint32_t filepathPos = 0;
-
-  nsresult rv = parser->ParsePath(PromiseFlatCString(Path()).get(), pathLen,
-                                  &filepathPos, &filepathLen, nullptr,
-                                  nullptr,            // don't care about query
-                                  nullptr, nullptr);  // don't care about ref
-  NS_ENSURE_SUCCESS(rv, mFilePathCache);
-
-  mFilePathCache = Substring(Path(), filepathPos, filepathLen);
-
-  return mFilePathCache;
-}
 
 // compatibility method, for use with the legacy nsICookie interface.
 // here, expires == 0 denotes a session cookie.

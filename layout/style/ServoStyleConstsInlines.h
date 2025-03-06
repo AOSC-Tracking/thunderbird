@@ -56,6 +56,8 @@ template struct StyleStrong<StyleLockedCounterStyleRule>;
 template struct StyleStrong<StyleContainerRule>;
 template struct StyleStrong<StyleScopeRule>;
 template struct StyleStrong<StyleStartingStyleRule>;
+template struct StyleStrong<StyleLockedPositionTryRule>;
+template struct StyleStrong<StyleLockedNestedDeclarationsRule>;
 
 template <typename T>
 inline void StyleOwnedSlice<T>::Clear() {
@@ -461,11 +463,11 @@ inline bool StyleComputedUrl::HasRef() const {
   return false;
 }
 
-inline bool StyleComputedImageUrl::IsImageResolved() const {
+inline bool StyleComputedUrl::IsImageResolved() const {
   return bool(LoadData().flags & StyleLoadDataFlags::TRIED_TO_RESOLVE_IMAGE);
 }
 
-inline imgRequestProxy* StyleComputedImageUrl::GetImage() const {
+inline imgRequestProxy* StyleComputedUrl::GetImage() const {
   MOZ_ASSERT(IsImageResolved());
   return LoadData().resolved_image;
 }
@@ -593,7 +595,7 @@ StyleCalcLengthPercentage& LengthPercentage::AsCalc() {
   MOZ_ASSERT(IsCalc());
   // NOTE: in 32-bits, the pointer is not swapped, and goes along with the tag.
 #ifdef SERVO_32_BITS
-  return *calc.ptr;
+  return *reinterpret_cast<StyleCalcLengthPercentage*>(calc.ptr);
 #else
   return *reinterpret_cast<StyleCalcLengthPercentage*>(
       NativeEndian::swapFromLittleEndian(calc.ptr));
@@ -826,6 +828,25 @@ void LengthPercentage::ScaleLengthsBy(float aScale) {
 IMPL_LENGTHPERCENTAGE_FORWARDS(LengthPercentageOrAuto)
 IMPL_LENGTHPERCENTAGE_FORWARDS(StyleSize)
 IMPL_LENGTHPERCENTAGE_FORWARDS(StyleMaxSize)
+IMPL_LENGTHPERCENTAGE_FORWARDS(StyleInset)
+IMPL_LENGTHPERCENTAGE_FORWARDS(StyleMargin)
+
+template <>
+inline bool StyleInset::IsAnchorPositioningFunction() const {
+  return IsAnchorFunction() || IsAnchorSizeFunction();
+}
+
+template <>
+inline bool StyleInset::MaybeAuto() const {
+  return IsAuto() || IsAnchorPositioningFunction();
+}
+
+template <>
+inline bool StyleInset::MaybePercentageAware() const {
+  return HasPercent() || IsAnchorPositioningFunction();
+}
+
+#undef IMPL_LENGTHPERCENTAGE_FORWARDS
 
 template <>
 inline bool LengthOrAuto::IsLength() const {
@@ -847,15 +868,26 @@ inline bool StyleFlexBasis::IsAuto() const {
   return IsSize() && AsSize().IsAuto();
 }
 
-template <>
-inline bool StyleSize::BehavesLikeInitialValueOnBlockAxis() const {
-  return IsAuto() || !IsLengthPercentage();
-}
+#define IMPL_BEHAVES_LIKE_SIZE_METHODS(ty_, isInitialValMethod_)        \
+  template <>                                                           \
+  inline bool ty_::BehavesLikeStretchOnInlineAxis() const {             \
+    return IsStretch() || IsMozAvailable() || IsWebkitFillAvailable();  \
+  }                                                                     \
+  template <>                                                           \
+  inline bool ty_::BehavesLikeStretchOnBlockAxis() const {              \
+    /* TODO(dholbert): Add "|| IsMozAvailable()" in bug 527285. */      \
+    return IsStretch() || IsWebkitFillAvailable();                      \
+  }                                                                     \
+  template <>                                                           \
+  inline bool ty_::BehavesLikeInitialValueOnBlockAxis() const {         \
+    return isInitialValMethod_() ||                                     \
+           (!BehavesLikeStretchOnBlockAxis() && !IsLengthPercentage()); \
+  }
 
-template <>
-inline bool StyleMaxSize::BehavesLikeInitialValueOnBlockAxis() const {
-  return IsNone() || !IsLengthPercentage();
-}
+IMPL_BEHAVES_LIKE_SIZE_METHODS(StyleSize, IsAuto)
+IMPL_BEHAVES_LIKE_SIZE_METHODS(StyleMaxSize, IsNone)
+
+#undef IMPL_BEHAVES_LIKE_SIZE_METHODS
 
 template <>
 inline bool StyleBackgroundSize::IsInitialValue() const {
@@ -1004,8 +1036,7 @@ inline bool StyleImage::IsImageRequestType() const {
 }
 
 template <>
-inline const StyleComputedImageUrl* StyleImage::GetImageRequestURLValue()
-    const {
+inline const StyleComputedUrl* StyleImage::GetImageRequestURLValue() const {
   const auto& finalImage = FinalImage();
   if (finalImage.IsUrl()) {
     return &finalImage.AsUrl();

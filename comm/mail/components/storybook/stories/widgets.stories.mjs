@@ -34,6 +34,13 @@ export const IconOnlyButton = () => html`
   ></button>
 `;
 
+export const IconOnlyRoundButton = () => html`
+  <button
+    class="button button-round icon-button icon-only"
+    style="background-image: var(--icon-add);"
+  ></button>
+`;
+
 export const PrimaryButton = () => html`
   <button class="button button-primary">Primary Button</button>
   <button
@@ -68,8 +75,19 @@ export const FlatButton = () => html`
   ></button>
 `;
 
+export const ModalCloseFlatButton = () => html`
+  <button
+    class="button button-flat button-round icon-button icon-only modal-close-button"
+    style="background-image: var(--icon-close-lg);"
+  ></button>
+`;
+
 export const LinkButton = () => html`
   <button class="button link-button">Link</button>
+`;
+
+export const LinkButtonSmall = () => html`
+  <button class="button link-button link-button-sm">Link</button>
 `;
 
 export const CheckButton = () => html`

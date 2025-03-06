@@ -511,7 +511,7 @@ add_task(async function test_get_can_verify_signature() {
   }
   equal(
     error.message,
-    "Invalid content signature (main/password-fields) using 'fake-x5u'"
+    "Invalid content signature (main/password-fields) using 'fake-x5u' and signer remote-settings.content-signature.mozilla.org"
   );
 });
 add_task(clear_state);
@@ -1664,3 +1664,23 @@ wNuvFqc=
     responses[req.method]
   );
 }
+
+add_task(clear_state);
+
+add_task(async function test_hasAttachments_works_as_expected() {
+  let res = await client.db.hasAttachments();
+  Assert.equal(res, false, "Should return false, no attachments at start");
+
+  await client.db.saveAttachment("foo", {
+    record: { id: "foo" },
+    blob: new Blob(["foo"]),
+  });
+
+  res = await client.db.hasAttachments();
+  Assert.equal(res, true, "Should return true, just saved an attachment");
+
+  await client.db.pruneAttachments([]);
+
+  res = await client.db.hasAttachments();
+  Assert.equal(res, false, "Should return false after attachments are pruned");
+});

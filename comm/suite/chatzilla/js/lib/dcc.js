@@ -32,22 +32,15 @@ function CIRCDCC(parent)
     this._lastPort = null;
 
     try {
-        var dnsComp = Components.classes["@mozilla.org/network/dns-service;1"];
-        this._dnsSvc = dnsComp.getService(Components.interfaces.nsIDNSService);
+        this._dnsSvc = Cc["@mozilla.org/network/dns-service;1"]
+                         .getService(Ci.nsIDNSService);
 
         // Get local hostname.
-        if ("myHostName" in this._dnsSvc) {
-            // Using newer (1.7a+) version with DNS re-write.
-            this.addHost(this._dnsSvc.myHostName);
-        }
-        if ("myIPAddress" in this._dnsSvc) {
-            // Older Mozilla, have to use this method.
-            this.addIP(this._dnsSvc.myIPAddress);
-        }
+        this.addHost(this._dnsSvc.myHostName);
         this.addHost("localhost");
     } catch(ex) {
         // what to do?
-        dd("Error getting local IPs: " + ex);
+        dd("Error getting local hostnames: " + ex);
     }
 
     this._lastID = Math.round(Math.random() * DCC_ID_MAX);
@@ -96,7 +89,7 @@ function dcc_addhost(host, auth)
     };
 
     try {
-        var th = getService("@mozilla.org/thread-manager;1").currentThread;
+        var th = Services.tm.currentThread;
         var dnsRecord = this._dnsSvc.asyncResolve(host, false, listener, th);
     } catch (ex) {
         dd("Error resolving host to IP: " + ex);
@@ -132,26 +125,26 @@ function dcc_getmatches(nickname, filename, types, dirs, states)
     var n = nickname;
     var f = filename;
 
-    if (arrayIndexOf(types, "chat") >= 0)
+    if (types.includes("chat"))
     {
         for (k = 0; k < this.chats.length; k++)
         {
             if ((!nickname || matchNames(this.chats[k].user.unicodeName, n)) &&
-                (!dirs || arrayIndexOf(dirs, this.chats[k].state.dir) >= 0) &&
-                (!states || arrayIndexOf(states, this.chats[k].state.state) >= 0))
+                (!dirs || dirs.includes(this.chats[k].state.dir)) &&
+                (!states || states.includes(this.chats[k].state.state)))
             {
                 list.push(this.chats[k]);
             }
         }
     }
-    if (arrayIndexOf(types, "file") >= 0)
+    if (types.includes("file"))
     {
         for (k = 0; k < this.files.length; k++)
         {
             if ((!nickname || matchNames(this.files[k].user.unicodeName, n)) &&
                 (!filename || matchNames(this.files[k].filename, f)) &&
-                (!dirs || arrayIndexOf(dirs, this.files[k].state.dir) >= 0) &&
-                (!states || arrayIndexOf(states, this.files[k].state.state) >= 0))
+                (!dirs || dirs.includes(this.files[k].state.dir)) &&
+                (!states || states.includes(this.files[k].state.state)))
             {
                 list.push(this.files[k]);
             }
@@ -974,16 +967,14 @@ function dfile_request(localFile)
 CIRCDCCFileTransfer.prototype.accept =
 function dfile_accept(localFile)
 {
-    const nsIBinaryOutputStream = Components.interfaces.nsIBinaryOutputStream;
-
     this.state.sendAccept();
 
     this.localFile = new LocalFile(localFile, ">");
     this.localPath = localFile.path;
 
-    this.filestream = Components.classes["@mozilla.org/binaryoutputstream;1"];
-    this.filestream = this.filestream.createInstance(nsIBinaryOutputStream);
-    this.filestream.setOutputStream(this.localFile.outputStream);
+    this.filestream = Cc["@mozilla.org/binaryoutputstream;1"]
+                        .createInstance(Ci.nsIBinaryOutputStream)
+                        .setOutputStream(this.localFile.outputStream);
 
     this.position = 0;
     this.connection = new CBSConnection(true);
@@ -1074,9 +1065,9 @@ function dfile_onSocketAccepted(socket, transport)
                                        this, "onConnect"));
 
     try {
-        this.filestream = Components.classes["@mozilla.org/binaryinputstream;1"];
-        this.filestream = this.filestream.createInstance(nsIBinaryInputStream);
-        this.filestream.setInputStream(this.localFile.baseInputStream);
+        this.filestream = Cc["@mozilla.org/binaryinputstream;1"]
+                            .createInstance(Ci.nsIBinaryInputStream)
+                            .setInputStream(this.localFile.baseInputStream);
 
         // Start the reading!
         var d;

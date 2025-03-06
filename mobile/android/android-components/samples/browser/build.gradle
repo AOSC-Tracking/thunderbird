@@ -9,10 +9,6 @@ if (findProject(":geckoview") != null) {
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
-if (findProject(":geckoview") != null) {
-    apply from: "${topsrcdir}/mobile/android/gradle/product_flavors.gradle"
-}
-
 android {
     defaultConfig {
         applicationId "org.mozilla.samples.browser"
@@ -32,11 +28,6 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
-    }
-
-    if (findProject(":geckoview") != null) {
-        project.configureProductFlavors.delegate = it
-        project.configureProductFlavors()
     }
 
     flavorDimensions += "engine"
@@ -135,10 +126,12 @@ dependencies {
     implementation project(':ui-tabcounter')
     implementation project(':ui-widgets')
 
-    // Add a dependency on service-glean to simplify the testing workflow
+    // Add a dependency on glean to simplify the testing workflow
     // for engineers that want to test Gecko metrics exfiltrated via the Glean
     // SDK. See bug 1592935 for more context.
-    implementation project(':service-glean')
+    implementation project(":service-glean")
+    implementation ComponentsDependencies.mozilla_glean
+    
     implementation project(':service-location')
     implementation project(':service-digitalassetlinks')
     implementation project(':service-sync-logins')
@@ -149,6 +142,7 @@ dependencies {
     implementation project(':support-ktx')
     implementation project(':support-webextensions')
     implementation project(':support-rustlog')
+    implementation project(':feature-screendetection')
 
     geckoImplementation project(':browser-engine-gecko')
 
@@ -173,6 +167,7 @@ dependencies {
 
     androidTestImplementation project(':support-android-test')
     androidTestImplementation ComponentsDependencies.androidx_test_core
+    androidTestImplementation ComponentsDependencies.androidx_test_monitor
     androidTestImplementation ComponentsDependencies.androidx_test_runner
     androidTestImplementation ComponentsDependencies.androidx_test_rules
     androidTestImplementation ComponentsDependencies.androidx_test_junit

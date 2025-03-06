@@ -8,6 +8,7 @@
 #include "nsISeekableStream.h"
 #include "prlog.h"
 
+#include "CopyMessageStreamListener.h"
 #include "FolderCompactor.h"
 #include "HeaderReader.h"
 #include "LineReader.h"
@@ -31,7 +32,6 @@
 #include "nsIMsgIncomingServer.h"
 #include "nsString.h"
 #include "nsIMsgFolderCacheElement.h"
-#include "nsICopyMessageStreamListener.h"
 #include "nsIMsgCopyService.h"
 #include "nsIMessenger.h"
 #include "nsIDocShell.h"
@@ -50,6 +50,7 @@
 #include "mozilla/Components.h"
 #include "mozilla/UniquePtr.h"
 #include "StoreIndexer.h"
+#include "nsIPropertyBag2.h"
 
 #include <algorithm>
 #include <functional>
@@ -65,7 +66,11 @@ nsLocalMailCopyState::nsLocalMailCopyState()
       m_curCopyIndex(0),
       m_totalMsgCount(0),
       m_isMove(false),
+      m_isFolder(false),
       m_addXMozillaHeaders(false),
+      m_copyingMultipleMessages(false),
+      m_fromLineSeen(false),
+      m_allowUndo(false),
       m_writeFailed(false),
       m_notifyFolderLoaded(false) {}
 
@@ -546,8 +551,10 @@ nsresult nsMsgLocalMailFolder::CreateSubfolderInternal(
     const nsAString& folderName, nsIMsgWindow* msgWindow,
     nsIMsgFolder** aNewFolder) {
   nsresult rv = CheckIfFolderExists(folderName, this, msgWindow);
-  // No need for an assertion: we already throw an alert.
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    // CheckIfFolderExists() already shows alert if a folder exists.
+    return rv;
+  }
   nsCOMPtr<nsIMsgPluggableStore> msgStore;
   rv = GetMsgStore(getter_AddRefs(msgStore));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -555,16 +562,16 @@ nsresult nsMsgLocalMailFolder::CreateSubfolderInternal(
   if (rv == NS_MSG_ERROR_INVALID_FOLDER_NAME) {
     ThrowAlertMsg("folderCreationFailed", msgWindow);
   } else if (rv == NS_MSG_FOLDER_EXISTS) {
+    // May happen here due to localized folder name vs. name on disk.
     ThrowAlertMsg("folderExists", msgWindow);
   }
 
   if (NS_SUCCEEDED(rv)) {
-    // we need to notify explicitly the flag change because it failed when we
-    // did AddSubfolder
+    // We need to notify explicitly the flag change because it failed when we
+    // did AddSubfolder()
     (*aNewFolder)->OnFlagChange(mFlags);
-    (*aNewFolder)
-        ->SetPrettyName(
-            folderName);  // because empty trash will create a new trash folder
+    // Set pretty name because empty trash will create a new trash folder.
+    (*aNewFolder)->SetPrettyName(folderName);
     NotifyFolderAdded(*aNewFolder);
   }
 
@@ -1321,7 +1328,7 @@ nsMsgLocalMailFolder::OnCopyCompleted(nsISupports* srcSupport,
   }
   if (moveCopySucceeded && mDatabase) {
     mDatabase->SetSummaryValid(true);
-    (void)CloseDBIfFolderNotOpen(false);
+    (void)CloseDB();
   }
 
   delete mCopyState;
@@ -2302,6 +2309,13 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
           uint32_t carryOver = nsMsgMessageFlags::New |
                                nsMsgMessageFlags::Read |
                                nsMsgMessageFlags::HasRe;
+
+          // The first half of this OR operation represents the values of the
+          // flags that are *not* part of `carryOver`, which `parseMsgState` has
+          // identified and we want to preserve. The second half represents the
+          // values of the flags defined by `carryOver` in the original message,
+          // which we want to, well, carry over onto the new header (and
+          // overwrite any value the parser has found for them).
           newHdr->SetFlags((newFlags & ~carryOver) |
                            ((mCopyState->m_flags) & carryOver));
 
@@ -2315,6 +2329,13 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
           uint32_t carryOver = nsMsgMessageFlags::New |
                                nsMsgMessageFlags::Read |
                                nsMsgMessageFlags::Marked;
+
+          // The first half of this OR operation represents the values of the
+          // flags that are *not* part of `carryOver`, which `parseMsgState` has
+          // identified and we want to preserve. The second half represents the
+          // values of the flags defined by `carryOver` in the original message,
+          // which we want to, well, carry over onto the new header (and
+          // overwrite any value the parser has found for them).
           newHdr->SetFlags((newFlags & ~carryOver) |
                            ((mCopyState->m_flags) & carryOver));
         }
@@ -2594,20 +2615,14 @@ NS_IMETHODIMP nsMsgLocalMailFolder::EndMessage(nsMsgKey key) {
 nsresult nsMsgLocalMailFolder::CopyMessagesTo(nsTArray<nsMsgKey>& keyArray,
                                               nsIMsgWindow* aMsgWindow,
                                               bool isMove) {
-  if (!mCopyState) return NS_ERROR_OUT_OF_MEMORY;
+  if (!mCopyState) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
 
   nsresult rv;
-
-  nsCOMPtr<nsICopyMessageStreamListener> copyStreamListener = do_CreateInstance(
-      "@mozilla.org/messenger/copymessagestreamlistener;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   nsCOMPtr<nsIMsgFolder> srcFolder(
       do_QueryInterface(mCopyState->m_srcSupport, &rv));
   NS_ENSURE_SUCCESS(rv, NS_ERROR_NO_INTERFACE);
-
-  rv = copyStreamListener->Init(this);
-  NS_ENSURE_SUCCESS(rv, rv);
 
   if (!mCopyState->m_messageService) {
     nsCString uri;
@@ -2617,10 +2632,6 @@ nsresult nsMsgLocalMailFolder::CopyMessagesTo(nsTArray<nsMsgKey>& keyArray,
   }
 
   if (NS_SUCCEEDED(rv) && mCopyState->m_messageService) {
-    nsCOMPtr<nsIStreamListener> streamListener(
-        do_QueryInterface(copyStreamListener, &rv));
-    NS_ENSURE_SUCCESS(rv, NS_ERROR_NO_INTERFACE);
-
     mCopyState->m_curCopyIndex = 0;
     // we need to kick off the first message - subsequent messages
     // are kicked off by nsMailboxProtocol when it finishes a message
@@ -2634,18 +2645,25 @@ nsresult nsMsgLocalMailFolder::CopyMessagesTo(nsTArray<nsMsgKey>& keyArray,
     if (srcLocalFolder) {
       StartMessage();
     }
+
+    RefPtr<CopyMessageStreamListener> streamListener =
+        new CopyMessageStreamListener(this, isMove);
+
     nsCOMPtr<nsIURI> dummyNull;
     rv = mCopyState->m_messageService->CopyMessages(
         keyArray, srcFolder, streamListener, isMove, nullptr, aMsgWindow,
         getter_AddRefs(dummyNull));
   }
+
   return rv;
 }
 
 nsresult nsMsgLocalMailFolder::CopyMessageTo(nsISupports* message,
                                              nsIMsgWindow* aMsgWindow,
                                              bool isMove) {
-  if (!mCopyState) return NS_ERROR_OUT_OF_MEMORY;
+  if (!mCopyState) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
 
   nsresult rv;
   nsCOMPtr<nsIMsgDBHdr> msgHdr(do_QueryInterface(message, &rv));
@@ -2659,24 +2677,19 @@ nsresult nsMsgLocalMailFolder::CopyMessageTo(nsISupports* message,
   nsCString uri;
   srcFolder->GetUriForMsg(msgHdr, uri);
 
-  nsCOMPtr<nsICopyMessageStreamListener> copyStreamListener = do_CreateInstance(
-      "@mozilla.org/messenger/copymessagestreamlistener;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = copyStreamListener->Init(this);
-  if (NS_FAILED(rv)) return rv;
-
-  if (!mCopyState->m_messageService)
+  if (!mCopyState->m_messageService) {
     rv = GetMessageServiceFromURI(uri,
                                   getter_AddRefs(mCopyState->m_messageService));
+  }
 
   if (NS_SUCCEEDED(rv) && mCopyState->m_messageService) {
-    nsCOMPtr<nsIStreamListener> streamListener(
-        do_QueryInterface(copyStreamListener, &rv));
-    NS_ENSURE_SUCCESS(rv, NS_ERROR_NO_INTERFACE);
+    RefPtr<CopyMessageStreamListener> streamListener =
+        new CopyMessageStreamListener(this, isMove);
+
     rv = mCopyState->m_messageService->CopyMessage(uri, streamListener, isMove,
                                                    nullptr, aMsgWindow);
   }
+
   return rv;
 }
 
@@ -2785,7 +2798,7 @@ NS_IMETHODIMP nsMsgLocalMailFolder::RetrieveHdrOfPartialMessage(
   // Walk through all the selected headers, looking for a matching
   // Message-ID.
   for (uint32_t i = 0; i < mDownloadPartialMessages.Length(); i++) {
-    nsCOMPtr<nsIMsgDBHdr> msgDBHdr = mDownloadPartialMessages[i];
+    auto msgDBHdr = mDownloadPartialMessages[i];
     nsCString oldMsgId;
     msgDBHdr->GetMessageId(oldMsgId);
 
@@ -2801,28 +2814,25 @@ NS_IMETHODIMP nsMsgLocalMailFolder::RetrieveHdrOfPartialMessage(
 }
 
 NS_IMETHODIMP nsMsgLocalMailFolder::DownloadMessagesForOffline(
-    nsTArray<RefPtr<nsIMsgDBHdr>> const& aMessages, nsIMsgWindow* aWindow) {
-  if (mDownloadInProgress)
+    nsTArray<RefPtr<nsIMsgDBHdr>> const& messages, nsIMsgWindow* aWindow) {
+  if (mDownloadInProgress) {
     return NS_ERROR_FAILURE;  // already has a download in progress
-
+  }
   // We're starting a download...
   mDownloadInProgress = true;
-
-  MarkMsgsOnPop3Server(aMessages, POP3_FETCH_BODY);
-
-  // Pull out all the PARTIAL messages into a new array
-  nsresult rv;
-  for (nsIMsgDBHdr* hdr : aMessages) {
-    uint32_t flags = 0;
-    hdr->GetFlags(&flags);
-    if (flags & nsMsgMessageFlags::Partial) {
-      mDownloadPartialMessages.AppendElement(hdr);
-    }
-  }
-  mDownloadWindow = aWindow;
+  mDownloadPartialMessages.Clear();
+  // Do not download already completed messages.
+  std::copy_if(messages.cbegin(), messages.cend(),
+               MakeBackInserter(mDownloadPartialMessages),
+               [](const auto& msgHdr) {
+                 uint32_t flags = 0;
+                 msgHdr->GetFlags(&flags);
+                 return flags & nsMsgMessageFlags::Partial;
+               });
+  MarkMsgsOnPop3Server(mDownloadPartialMessages, POP3_FETCH_BODY);
 
   nsCOMPtr<nsIMsgIncomingServer> server;
-  rv = GetServer(getter_AddRefs(server));
+  nsresult rv = GetServer(getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv, NS_MSG_INVALID_OR_MISSING_SERVER);
 
   nsCOMPtr<nsILocalMailIncomingServer> localMailServer =
@@ -2948,7 +2958,6 @@ nsMsgLocalMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
   if (mDownloadInProgress) {
     mDownloadInProgress = false;
     mDownloadPartialMessages.Clear();
-    mDownloadWindow = nullptr;
     return nsMsgDBFolder::OnStopRunningUrl(aUrl, aExitCode);
   }
 
@@ -3097,7 +3106,7 @@ nsMsgLocalMailFolder::NotifyCompactCompleted() {
   // if compacted, processing flags probably also aren't valid.
   ClearProcessingFlags();
   (void)RefreshSizeOnDisk();
-  (void)CloseDBIfFolderNotOpen(false);
+  (void)CloseDB();
   NotifyFolderEvent(kCompactCompleted);
   return NS_OK;
 }
@@ -3110,9 +3119,7 @@ NS_IMETHODIMP nsMsgLocalMailFolder::Shutdown(bool shutdownChildren) {
 NS_IMETHODIMP
 nsMsgLocalMailFolder::OnMessageClassified(const nsACString& aMsgURI,
                                           nsMsgJunkStatus aClassification,
-                                          uint32_t aJunkPercent)
-
-{
+                                          uint32_t aJunkPercent) {
   nsCOMPtr<nsIMsgIncomingServer> server;
   nsresult rv = GetServer(getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -3349,7 +3356,8 @@ nsMsgLocalMailFolder::AddMessageBatch(
       NS_ENSURE_SUCCESS(rv, rv);
 
       // Get a msgWindow. Proceed without one, but filter actions to imap
-      // folders will silently fail if not signed in and no window for a prompt.
+      // folders will silently fail if not signed in and no window for a
+      // prompt.
       nsCOMPtr<nsIMsgWindow> msgWindow;
       nsCOMPtr<nsIMsgMailSession> mailSession =
           do_GetService("@mozilla.org/messenger/services/session;1", &rv);
@@ -3371,7 +3379,7 @@ nsMsgLocalMailFolder::AddMessageBatch(
 
       msgStore->FinishNewMessage(outFileStream, newHdr);
       outFileStream = nullptr;
-      newMailParser->OnStopRequest(nullptr, NS_OK);
+      newMailParser->DoneParsing();
       newMailParser->EndMsgDownload();
       aHdrArray.AppendElement(newHdr);
     }
@@ -3469,12 +3477,5 @@ NS_IMETHODIMP nsMsgLocalMailFolder::UpdateNewMsgHdr(nsIMsgDBHdr* aOldHdr,
   if (junkScoreOrigin.EqualsLiteral("plugin"))
     aNewHdr->SetStringProperty("junkscore", ""_ns);
 
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgLocalMailFolder::GetDownloadInProgress(bool* downloadInProgress) {
-  NS_ENSURE_ARG_POINTER(downloadInProgress);
-  *downloadInProgress = mDownloadInProgress;
   return NS_OK;
 }

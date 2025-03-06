@@ -34,7 +34,8 @@ function GetNextNMessages(folder) {
 /**
  * Figure out the message key from the message uri.
  *
- * @param uri string defining internal storage
+ * @param {string} uri - string defining internal storage.
+ * @returns {?string}
  */
 function GetMsgKeyFromURI(uri) {
   // Format of 'uri' : protocol://email/folder#key?params
@@ -144,15 +145,14 @@ async function ComposeMessage(
       }
     }
   }
-  var identity = null;
-  var newsgroup = null;
-  var hdr;
+  let identity = null;
+  let newsgroup = null;
+  let hdr;
 
-  // dump("ComposeMessage folder=" + folder + "\n");
   try {
     if (folder) {
       // Get the incoming server associated with this uri.
-      var server = folder.server;
+      const server = folder.server;
 
       // If they hit new or reply and they are reading a newsgroup,
       // turn this into a new post or a reply to group.
@@ -169,7 +169,6 @@ async function ComposeMessage(
       if (!identity) {
         [identity] = MailUtils.getIdentityForServer(server);
       }
-      // dump("identity = " + identity + "\n");
     }
   } catch (ex) {
     dump("failed to get an identity to pre-select: " + ex + "\n");
@@ -237,8 +236,7 @@ async function ComposeMessage(
         messageArray.length = 8;
       }
 
-      for (var i = 0; i < messageArray.length; ++i) {
-        var messageUri = messageArray[i];
+      for (const messageUri of messageArray) {
         hdr = messenger.msgHdrFromURI(messageUri);
 
         if (
@@ -274,7 +272,7 @@ async function ComposeMessage(
           }
 
           if (
-            /^(.*[._-])?(do[._-]?not|no)[._-]?reply([._-].*)?@/i.test(email)
+            /^(.*[._-])?(do[._-]?not|no)[._-]?reply([._+-].*)?@/i.test(email)
           ) {
             const [title, message, replyAnywayButton] =
               await document.l10n.formatValues([
@@ -331,7 +329,7 @@ async function ComposeMessage(
             !hdr.folder.customIdentity
           ) {
             useCatchAll = MailServices.accounts.allIdentities.some(
-              identity => identity.catchAll
+              id => id.catchAll
             );
           }
 
@@ -341,7 +339,7 @@ async function ComposeMessage(
             MsgHdrToMimeMessage(
               hdr,
               null,
-              function (hdr, mimeMsg) {
+              function (msgHdr, mimeMsg) {
                 const catchAllHeaders = Services.prefs
                   .getStringPref("mail.compose.catchAllHeaders")
                   .split(",")
@@ -359,21 +357,22 @@ async function ComposeMessage(
                   }
                 }
 
-                let [identity, matchingHint] = MailUtils.getIdentityForHeader(
-                  hdr,
-                  type,
-                  collectedHeaderAddresses
-                );
+                let [hdrIdentity, matchingHint] =
+                  MailUtils.getIdentityForHeader(
+                    msgHdr,
+                    type,
+                    collectedHeaderAddresses
+                  );
 
                 // The found identity might have no catchAll enabled.
-                if (identity.catchAll && matchingHint) {
+                if (hdrIdentity.catchAll && matchingHint) {
                   // If name is not set in matchingHint, search trough other hints.
                   if (matchingHint.email && !matchingHint.name) {
                     const hints =
                       MailServices.headerParser.makeFromDisplayAddress(
-                        hdr.recipients +
+                        msgHdr.recipients +
                           "," +
-                          hdr.ccList +
+                          msgHdr.ccList +
                           "," +
                           collectedHeaderAddresses
                       );
@@ -402,11 +401,11 @@ async function ComposeMessage(
                 // Now open compose window and use matching hint as reply sender.
                 MailServices.compose.OpenComposeWindow(
                   null,
-                  hdr,
+                  msgHdr,
                   messageUri,
                   type,
                   format,
-                  identity,
+                  hdrIdentity,
                   matchingHint.toString(),
                   msgWindow,
                   selection,
@@ -417,19 +416,33 @@ async function ComposeMessage(
               { saneBodySize: true }
             );
           } else {
-            // Fall back to traditional behavior.
-            const [hdrIdentity] = MailUtils.getIdentityForHeader(
-              hdr,
-              type,
-              findDeliveredToIdentityEmail(hdr)
-            );
+            let bestIdentity = null;
+            if (!identity && currentHeaderData.newsgroups) {
+              // This appears to be a standalone newsgroup message opened from
+              // a file or 'news:' URI. Try to get the identity of the first
+              // NNTP account.
+              const server = MailServices.accounts.accounts.find(
+                account => account.incomingServer.type == "nntp"
+              )?.incomingServer;
+              if (server) {
+                [bestIdentity] = MailUtils.getIdentityForServer(server);
+              }
+            }
+            if (!bestIdentity) {
+              // Fall back to traditional behavior.
+              [bestIdentity] = MailUtils.getIdentityForHeader(
+                hdr,
+                type,
+                findDeliveredToIdentityEmail(hdr)
+              );
+            }
             MailServices.compose.OpenComposeWindow(
               null,
               hdr,
               messageUri,
               type,
               format,
-              hdrIdentity,
+              bestIdentity,
               null,
               msgWindow,
               selection,

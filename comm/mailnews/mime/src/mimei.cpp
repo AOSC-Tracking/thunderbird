@@ -17,6 +17,7 @@
 #include "nsCOMPtr.h"
 #include "mimeobj.h"   /*  MimeObject (abstract) */
 #include "mimecont.h"  /*   |--- MimeContainer (abstract) */
+/*                          |     |--- MimeMultipart (abstract) */
 #include "mimemmix.h"  /*   |     |     |--- MimeMultipartMixed */
 #include "mimemdig.h"  /*   |     |     |--- MimeMultipartDigest */
 #include "mimempar.h"  /*   |     |     |--- MimeMultipartParallel */
@@ -24,15 +25,18 @@
 #include "mimemrel.h"  /*   |     |     |--- MimeMultipartRelated */
 #include "mimemapl.h"  /*   |     |     |--- MimeMultipartAppleDouble */
 #include "mimesun.h"   /*   |     |     |--- MimeSunAttachment */
+/*                          |     |     |--- MimeMultipartSigned (abstract)*/
 #include "nsMailHeaders.h"
 #ifdef ENABLE_SMIME
 #include "mimemcms.h"  /*   |     |           |---MimeMultipartSignedCMS */
 #endif
+/*                          |     |--- MimeEncrypted (abstract) */
 #ifdef ENABLE_SMIME
 #include "mimecms.h"   /*   |     |     |--- MimeEncryptedPKCS7 */
 #endif
 #include "mimemsg.h"   /*   |     |--- MimeMessage */
 #include "mimeunty.h"  /*   |     |--- MimeUntypedText */
+/*                          |--- MimeLeaf (abstract) */
 #include "mimetext.h"  /*   |     |--- MimeInlineText (abstract) */
 #include "mimetpla.h"  /*   |     |     |--- MimeInlineTextPlain */
 #include "mimethpl.h"  /*   |     |     |     |--- M.I.TextHTMLAsPlaintext */
@@ -223,7 +227,10 @@ MimeObject* mime_new(MimeObjectClass* clazz, MimeHeaders* hdrs,
   }
 
   object = (MimeObject*)PR_MALLOC(size);
-  if (!object) return 0;
+  if (!object) {
+    PR_Free(hdrs);
+    return 0;
+  }
 
   memset(object, 0, size);
   object->clazz = clazz;
@@ -279,7 +286,7 @@ bool mime_is_allowed_class(const MimeObjectClass* clazz,
             clazz == (MimeObjectClass*)&mimeMultipartAppleDoubleClass ||
             clazz == (MimeObjectClass*)&mimeMessageClass ||
             clazz == (MimeObjectClass*)&mimeExternalObjectClass ||
-    /*    mimeUntypedTextClass? -- does uuencode */
+  /*    mimeUntypedTextClass? -- does uuencode */
 #ifdef ENABLE_SMIME
             clazz == (MimeObjectClass*)&mimeMultipartSignedCMSClass ||
             clazz == (MimeObjectClass*)&mimeEncryptedCMSClass ||
@@ -1406,9 +1413,6 @@ int mime_parse_url_options(const char* url, MimeDisplayOptions* options) {
         memcpy(options->part_to_load, value, end - value);
         options->part_to_load[end - value] = 0;
       }
-    } else if (!PL_strncasecmp("rot13", q, name_end - q)) {
-      options->rot13_p =
-          end <= value || !PL_strncasecmp("true", value, end - value);
     } else if (!PL_strncasecmp("emitter", q, name_end - q)) {
       if ((end > value) && !PL_strncasecmp("js", value, end - value)) {
         // the js emitter needs to hear about nested message bodies

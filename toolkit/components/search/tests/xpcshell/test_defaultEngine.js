@@ -16,15 +16,14 @@ add_setup(async () => {
   Services.fog.initializeFOG();
 
   useHttpServer();
-  await AddonTestUtils.promiseStartupManager();
 
   await Services.search.init();
 
   engine1 = await SearchTestUtils.installOpenSearchEngine({
-    url: `${gDataUrl}engine.xml`,
+    url: `${gHttpURL}/opensearch/generic1.xml`,
   });
   engine2 = await SearchTestUtils.installOpenSearchEngine({
-    url: `${gDataUrl}engine2.xml`,
+    url: `${gHttpURL}/opensearch/generic2.xml`,
   });
 });
 
@@ -84,7 +83,7 @@ add_task(async function test_defaultEngine() {
 
 add_task(async function test_telemetry_empty_submission_url() {
   await SearchTestUtils.installOpenSearchEngine({
-    url: `${gDataUrl}../opensearch/simple.xml`,
+    url: `${gHttpURL}/opensearch/simple.xml`,
     setAsDefaultPrivate: true,
   });
 

@@ -34,7 +34,6 @@
 #include "prerror.h"
 #include "secmodt.h"
 
-#include "ArrayUtils.h"
 #include "BigEndian.h"
 #include "ClearKeyBase64.h"
 #include "mozilla/Sprintf.h"
@@ -264,7 +263,7 @@ static bool EncodeBase64Web(vector<uint8_t> aBinary, string& aEncoded) {
     size_t idx = static_cast<size_t>(out[i]);
 
     // out of bounds index for 'sAlphabet'
-    assert(idx < MOZ_ARRAY_LENGTH(sAlphabet));
+    assert(idx < std::size(sAlphabet));
     out[i] = sAlphabet[idx];
   }
 

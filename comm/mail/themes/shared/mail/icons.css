@@ -6,19 +6,24 @@
 
 :root {
   /* XS - 12x12px icons */
+  --icon-ascending-xs: url("chrome://messenger/skin/icons/xs/ascending.svg");
+  --icon-close-xs: url("chrome://messenger/skin/icons/xs/close.svg");
+  --icon-descending-xs: url("chrome://messenger/skin/icons/xs/descending.svg");
   --icon-dot-xs: url("chrome://messenger/skin/icons/xs/dot.svg");
   --icon-sparkle-star-xs: url("chrome://messenger/skin/icons/xs/sparkle-star.svg");
   --icon-replies-xs: url("chrome://messenger/skin/icons/xs/replies.svg");
+  --icon-nav-down-xs: url("chrome://messenger/skin/icons/new/nav-down-xs.svg");
+  --icon-nav-up-xs: url("chrome://messenger/skin/icons/new/nav-up-xs.svg");
+  --icon-moon-xs: url("chrome://messenger/skin/icons/new/moon-xs.svg");
+  --icon-sun-xs: url("chrome://messenger/skin/icons/new/sun-xs.svg");
 
   /* SM - 16x16px icons */
   --icon-folder-compact-sm: url("chrome://messenger/skin/icons/sm/folder-compact.svg");
   --icon-sparkle-star-sm: url("chrome://messenger/skin/icons/sm/sparkle-star.svg");
   --icon-upload-sm: url("chrome://messenger/skin/icons/sm/upload.svg");
   --icon-mobile-export-sm: url("chrome://messenger/skin/icons/sm/mobile-export.svg");
-  --icon-mobile-export-sm: url("chrome://messenger/skin/icons/sm/mobile-export.svg");
 
   /* LG - 24x24px icons */
-  --icon-mobile-export-lg: url("chrome://messenger/skin/icons/lg/mobile-export.svg");
   --icon-mobile-export-lg: url("chrome://messenger/skin/icons/lg/mobile-export.svg");
 
   --icon-account-settings: url("chrome://messenger/skin/icons/new/compact/account-settings.svg");
@@ -38,6 +43,7 @@
   --icon-clear: url("chrome://messenger/skin/icons/new/compact/clear.svg");
   --icon-clock: url("chrome://messenger/skin/icons/new/compact/clock.svg");
   --icon-close: url("chrome://messenger/skin/icons/new/compact/close.svg");
+  --icon-close-lg: url("chrome://messenger/skin/icons/new/compact/close-lg.svg");
   --icon-cloud-download: url("chrome://messenger/skin/icons/new/compact/cloud-download.svg");
   --icon-collapse: url("chrome://messenger/skin/icons/new/compact/collapse.svg");
   --icon-compress: url("chrome://messenger/skin/icons/new/compact/compress.svg");
@@ -140,6 +146,7 @@
   --icon-spelling: url("chrome://messenger/skin/icons/new/compact/spelling.svg");
   --icon-star: url("chrome://messenger/skin/icons/new/compact/star.svg");
   --icon-subtract-circle-sm: url("chrome://messenger/skin/icons/new/subtract-circle-sm.svg");
+  --icon-success: url("chrome://messenger/skin/icons/new/compact/success.svg");
   --icon-sync: url("chrome://messenger/skin/icons/new/compact/sync.svg");
   --icon-tag: url("chrome://messenger/skin/icons/new/compact/tag.svg");
   --icon-tasks: url("chrome://messenger/skin/icons/new/compact/tasks.svg");
@@ -272,6 +279,10 @@
   --addons-manager-recent-updates: url("chrome://messenger/skin/icons/new/touch/extension-update-recent.svg");
 
   --icon-account-sync: url("chrome://messenger/skin/icons/account-sync.svg");
+
+  --grouped-illustration: url("chrome://messenger/skin/illustrations/pictograph-grouped.svg");
+  --threaded-illustration: url("chrome://messenger/skin/illustrations/pictograph-threaded.svg");
+  --unthreaded-illustration: url("chrome://messenger/skin/illustrations/pictograph-unthreaded.svg");
 }
 
 :root[uidensity="compact"] {

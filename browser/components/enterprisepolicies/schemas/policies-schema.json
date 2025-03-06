@@ -270,6 +270,43 @@
         },
         "BypassForSameTabOperations": {
           "type": "boolean"
+        },
+        "InterceptionPoints": {
+          "type": "object",
+          "properties": {
+            "Clipboard": {
+              "type": "object",
+              "properties": {
+                "Enabled": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "DragAndDrop": {
+              "type": "object",
+              "properties": {
+                "Enabled": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "FileUpload": {
+              "type": "object",
+              "properties": {
+                "Enabled": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "Print": {
+              "type": "object",
+              "properties": {
+                "Enabled": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -709,6 +746,9 @@
               "enum": ["navbar", "menupanel"]
             },
             "temporarily_allow_weak_signatures": {
+              "type": "boolean"
+            },
+            "private_browsing": {
               "type": "boolean"
             }
           }
@@ -1490,6 +1530,9 @@
           "type": "boolean"
         },
         "MoreFromMozilla": {
+          "type": "boolean"
+        },
+        "FirefoxLabs": {
           "type": "boolean"
         },
         "Locked": {

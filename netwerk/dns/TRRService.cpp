@@ -7,9 +7,9 @@
 #include "nsComponentManagerUtils.h"
 #include "nsDirectoryServiceUtils.h"
 #include "nsHttpConnectionInfo.h"
+#include "nsHttpHandler.h"
 #include "nsICaptivePortalService.h"
 #include "nsIFile.h"
-#include "nsIParentalControlsService.h"
 #include "nsINetworkLinkService.h"
 #include "nsIObserverService.h"
 #include "nsIOService.h"
@@ -21,9 +21,9 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/Telemetry.h"
-#include "mozilla/TelemetryComms.h"
 #include "mozilla/Tokenizer.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/glean/NetwerkMetrics.h"
 #include "mozilla/net/NeckoParent.h"
 #include "mozilla/net/TRRServiceChild.h"
 // Put DNSLogging.h at the end to avoid LOG being overwritten by other headers.
@@ -164,12 +164,6 @@ bool TRRService::CheckCaptivePortalIsPassed() {
   return result;
 }
 
-static void EventTelemetryPrefChanged(const char* aPref, void* aData) {
-  Telemetry::SetEventRecordingEnabled(
-      "network.dns"_ns,
-      StaticPrefs::network_trr_confirmation_telemetry_enabled());
-}
-
 nsresult TRRService::Init(bool aNativeHTTPSQueryEnabled) {
   MOZ_ASSERT(NS_IsMainThread(), "wrong thread");
   if (mInitialized) {
@@ -196,7 +190,7 @@ nsresult TRRService::Init(bool aNativeHTTPSQueryEnabled) {
   if (XRE_IsParentProcess()) {
     mCaptiveIsPassed = CheckCaptivePortalIsPassed();
 
-    mParentalControlEnabled = GetParentalControlEnabledInternal();
+    mParentalControlEnabled = GetParentalControlsEnabledInternal();
 
     mLinkService = do_GetService(NS_NETWORK_LINK_SERVICE_CONTRACTID);
     if (mLinkService) {
@@ -215,26 +209,19 @@ nsresult TRRService::Init(bool aNativeHTTPSQueryEnabled) {
     sTRRBackgroundThread = thread;
   }
 
-  Preferences::RegisterCallbackAndCall(
-      EventTelemetryPrefChanged,
-      "network.trr.confirmation_telemetry_enabled"_ns);
-
   LOG(("Initialized TRRService\n"));
   return NS_OK;
 }
 
 // static
-bool TRRService::GetParentalControlEnabledInternal() {
-  nsCOMPtr<nsIParentalControlsService> pc =
-      do_CreateInstance("@mozilla.org/parental-controls-service;1");
-  if (pc) {
-    bool result = false;
-    pc->GetParentalControlsEnabled(&result);
-    LOG(("TRRService::GetParentalControlEnabledInternal=%d\n", result));
-    return result;
-  }
+bool TRRService::GetParentalControlsEnabledInternal() {
+  return nsHttpHandler::GetParentalControlsEnabled();
+}
 
-  return false;
+// static, for testing purposes only
+bool TRRService::ReloadParentalControlsEnabled() {
+  nsHttpHandler::UpdateParentalControlsEnabled(true /* wait for completion */);
+  return nsHttpHandler::GetParentalControlsEnabled();
 }
 
 void TRRService::SetDetectedTrrURI(const nsACString& aURI) {
@@ -1241,9 +1228,6 @@ void TRRService::ConfirmationContext::RecordEvent(
     return;
   }
 
-  Telemetry::EventID eventType =
-      Telemetry::EventID::NetworkDns_Trrconfirmation_Context;
-
   nsAutoCString results;
   static_assert(RESULTS_SIZE < 64);
 
@@ -1263,32 +1247,23 @@ void TRRService::ConfirmationContext::RecordEvent(
     results.Append(nsDependentCSubstring(mResults, posInResults));
   }
 
-  auto extra = Some<nsTArray<mozilla::Telemetry::EventExtraEntry>>({
-      Telemetry::EventExtraEntry{"trigger"_ns, mTrigger},
-      Telemetry::EventExtraEntry{"contextReason"_ns, mContextChangeReason},
-      Telemetry::EventExtraEntry{"attemptCount"_ns,
-                                 nsPrintfCString("%u", mAttemptCount)},
-      Telemetry::EventExtraEntry{"results"_ns, results},
-      Telemetry::EventExtraEntry{
-          "time"_ns,
-          nsPrintfCString(
-              "%f",
-              !mFirstRequestTime.IsNull()
-                  ? (TimeStamp::Now() - mFirstRequestTime).ToMilliseconds()
-                  : 0.0)},
-      Telemetry::EventExtraEntry{"networkID"_ns, mNetworkId},
-      Telemetry::EventExtraEntry{"captivePortal"_ns,
-                                 nsPrintfCString("%i", mCaptivePortalStatus)},
-  });
-
-  if (mTrigger.Equals("failed-lookups"_ns)) {
-    extra.ref().AppendElement(
-        Telemetry::EventExtraEntry{"failedLookups"_ns, mFailedLookups});
-  }
-
-  enum ConfirmationState state = mState;
-  Telemetry::RecordEvent(eventType, mozilla::Some(nsPrintfCString("%u", state)),
-                         extra);
+  glean::network_dns::TrrConfirmationContextExtra extra = {
+      .attemptcount = Some(mAttemptCount),
+      .captiveportal = Some(nsPrintfCString("%i", mCaptivePortalStatus)),
+      .contextreason = Some(mContextChangeReason),
+      .failedlookups = mTrigger.Equals("failed-lookups"_ns)
+                           ? Some(mFailedLookups)
+                           : Nothing(),
+      .networkid = Some(mNetworkId),
+      .results = Some(results),
+      .time = Some(nsPrintfCString(
+          "%f", !mFirstRequestTime.IsNull()
+                    ? (TimeStamp::Now() - mFirstRequestTime).ToMilliseconds()
+                    : 0.0)),
+      .trigger = Some(mTrigger),
+      .value = Some(mState),
+  };
+  glean::network_dns::trr_confirmation_context.Record(Some(extra));
 
   reset();
 }

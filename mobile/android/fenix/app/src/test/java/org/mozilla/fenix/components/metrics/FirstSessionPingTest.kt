@@ -15,6 +15,8 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.spyk
 import io.mockk.verify
+import mozilla.components.browser.state.state.BrowserState
+import mozilla.components.browser.state.store.BrowserStore
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.mozilla.fenix.FenixApplication
@@ -38,8 +40,13 @@ internal class FirstSessionPingTest {
         mockkStatic("org.mozilla.fenix.ext.ContextKt")
         every { mockedContext.settings() } returns mockedSettings
 
-        val mockAp = spyk(FirstSessionPing(mockedContext), recordPrivateCalls = true)
-        every { mockAp.checkMetricsNotEmpty() } returns true
+        val mockedState: BrowserState = mockk(relaxed = true)
+        every { mockedState.distributionId } returns null
+
+        val mockedStore: BrowserStore = mockk(relaxed = true)
+        every { mockedStore.state } returns mockedState
+
+        val mockAp = spyk(FirstSessionPing(mockedContext, mockedStore), recordPrivateCalls = true)
         every { mockAp.wasAlreadyTriggered() } returns false
         every { mockAp.markAsTriggered() } just Runs
 
@@ -53,7 +60,7 @@ internal class FirstSessionPingTest {
 
     @Test
     fun `checkAndSend() doesn't trigger the ping again if it was marked as triggered`() {
-        val mockAp = spyk(FirstSessionPing(mockk()), recordPrivateCalls = true)
+        val mockAp = spyk(FirstSessionPing(mockk(), mockk()), recordPrivateCalls = true)
         every { mockAp.wasAlreadyTriggered() } returns true
 
         mockAp.checkAndSend()
@@ -62,7 +69,7 @@ internal class FirstSessionPingTest {
     }
 
     @Test
-    fun `WHEN build version is R installSourcePackage RETURNS the set package name`() {
+    fun `WHEN build version is R THEN installSourcePackage returns the set package name`() {
         val mockedPackageManager: PackageManager = mockk(relaxed = true)
         val testPackageName = "test R"
         mockedPackageManager.mockInstallSourcePackageForBuildMinR(testPackageName)
@@ -73,12 +80,12 @@ internal class FirstSessionPingTest {
         val mockedContext: Context = mockk(relaxed = true)
         every { mockedContext.applicationContext } returns mockedApplication
 
-        val result = FirstSessionPing(mockedContext).installSourcePackage(Build.VERSION_CODES.R)
+        val result = FirstSessionPing(mockedContext, mockk()).installSourcePackage(Build.VERSION_CODES.R)
         assertEquals(testPackageName, result)
     }
 
     @Test
-    fun `GIVEN packageManager throws an exception WHEN Build version is R installSourcePackage RETURNS an empty string`() {
+    fun `GIVEN packageManager throws an exception WHEN build version is R THEN installSourcePackage returns an empty string`() {
         val mockedPackageManager: PackageManager = mockk(relaxed = true)
         every { mockedPackageManager.getInstallSourceInfo(any()).installingPackageName } throws PackageManager.NameNotFoundException()
 
@@ -88,12 +95,12 @@ internal class FirstSessionPingTest {
         val mockedContext: Context = mockk(relaxed = true)
         every { mockedContext.applicationContext } returns mockedApplication
 
-        val result = FirstSessionPing(mockedContext).installSourcePackage(Build.VERSION_CODES.R)
+        val result = FirstSessionPing(mockedContext, mockk()).installSourcePackage(Build.VERSION_CODES.R)
         assertEquals("", result)
     }
 
     @Test
-    fun `WHEN build version is more than R installSourcePackage RETURNS the set package name`() {
+    fun `WHEN build version is more than R THEN installSourcePackage returns the set package name`() {
         val mockedPackageManager: PackageManager = mockk(relaxed = true)
         val testPackageName = "test > R"
         mockedPackageManager.mockInstallSourcePackageForBuildMinR(testPackageName)
@@ -105,12 +112,12 @@ internal class FirstSessionPingTest {
         every { mockedContext.applicationContext } returns mockedApplication
 
         val result =
-            FirstSessionPing(mockedContext).installSourcePackage(Build.VERSION_CODES.R.plus(1))
+            FirstSessionPing(mockedContext, mockk()).installSourcePackage(Build.VERSION_CODES.R.plus(1))
         assertEquals(testPackageName, result)
     }
 
     @Test
-    fun `GIVEN packageManager throws an exception WHEN Build version is more than R installSourcePackage RETURNS an empty string`() {
+    fun `GIVEN packageManager throws an exception WHEN build version is more than R THEN installSourcePackage returns an empty string`() {
         val mockedPackageManager: PackageManager = mockk(relaxed = true)
         every { mockedPackageManager.getInstallSourceInfo(any()).installingPackageName } throws PackageManager.NameNotFoundException()
 
@@ -121,12 +128,12 @@ internal class FirstSessionPingTest {
         every { mockedContext.applicationContext } returns mockedApplication
 
         val result =
-            FirstSessionPing(mockedContext).installSourcePackage(Build.VERSION_CODES.R.plus(1))
+            FirstSessionPing(mockedContext, mockk()).installSourcePackage(Build.VERSION_CODES.R.plus(1))
         assertEquals("", result)
     }
 
     @Test
-    fun `WHEN build version is less than R installSourcePackage RETURNS the set package name`() {
+    fun `WHEN build version is less than R THEN installSourcePackage returns the set package name`() {
         val mockedPackageManager: PackageManager = mockk(relaxed = true)
         val testPackageName = "test < R"
         mockedPackageManager.mockInstallSourcePackageForBuildMaxQ(testPackageName)
@@ -138,12 +145,12 @@ internal class FirstSessionPingTest {
         every { mockedContext.applicationContext } returns mockedApplication
 
         val result =
-            FirstSessionPing(mockedContext).installSourcePackage(Build.VERSION_CODES.R.minus(1))
+            FirstSessionPing(mockedContext, mockk()).installSourcePackage(Build.VERSION_CODES.R.minus(1))
         assertEquals(testPackageName, result)
     }
 
     @Test
-    fun `GIVEN packageManager throws an exception WHEN Build version is less than R installSourcePackage RETURNS an empty string`() {
+    fun `GIVEN packageManager throws an exception WHEN build version is less than R THEN installSourcePackage returns an empty string`() {
         val mockedPackageManager: PackageManager = mockk(relaxed = true)
         @Suppress("DEPRECATION")
         every { mockedPackageManager.getInstallerPackageName(any()) } throws IllegalArgumentException()
@@ -155,7 +162,7 @@ internal class FirstSessionPingTest {
         every { mockedContext.applicationContext } returns mockedApplication
 
         val result =
-            FirstSessionPing(mockedContext).installSourcePackage(Build.VERSION_CODES.R.minus(1))
+            FirstSessionPing(mockedContext, mockk()).installSourcePackage(Build.VERSION_CODES.R.minus(1))
         assertEquals("", result)
     }
 }

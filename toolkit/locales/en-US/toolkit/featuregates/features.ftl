@@ -10,26 +10,9 @@ experimental-features-css-masonry-description = Enables support for the experime
 
 # The title of the experiment should be kept in English as it may be referenced
 # by various online articles and is technical in nature.
-experimental-features-web-gpu2 =
-    .label = Web API: WebGPU
-experimental-features-web-gpu-description3 = The <a data-l10n-name="wikipedia-webgpu">WebGPU API</a> provides low-level support for performing computation and graphics rendering using the <a data-l10n-name="wikipedia-gpu">Graphics Processing Unit (GPU)</a> of the user’s device or computer. The first version of the <a data-l10n-name="spec">specification</a> is nearing finalization. See <a data-l10n-name="bugzilla">bug 1616739</a> for more details.
-
-# The title of the experiment should be kept in English as it may be referenced
-# by various online articles and is technical in nature.
 experimental-features-media-jxl =
     .label = Media: JPEG XL
 experimental-features-media-jxl-description = With this feature enabled, { -brand-short-name } supports the JPEG XL (JXL) format. This is an enhanced image file format that supports lossless transition from traditional JPEG files. See <a data-l10n-name="bugzilla">bug 1539075</a> for more details.
-
-# Do not translate 'SameSite', 'Lax' and 'None'.
-experimental-features-cookie-samesite-none-requires-secure2 =
-    .label = Cookies: SameSite=None requires secure attribute
-experimental-features-cookie-samesite-none-requires-secure2-description = Cookies with “SameSite=None” attribute require the secure attribute. This feature requires “Cookies: SameSite=Lax by default”.
-
-# "Service Worker" is an API name and is usually not translated.
-experimental-features-devtools-serviceworker-debugger-support =
-    .label = Developer Tools: Service Worker debugging
-# "Service Worker" is an API name and is usually not translated.
-experimental-features-devtools-serviceworker-debugger-support-description = Enables experimental support for Service Workers in the Debugger panel. This feature may slow the Developer Tools down and increase memory consumption.
 
 # WebRTC global mute toggle controls
 experimental-features-webrtc-global-mute-toggles =
@@ -45,3 +28,16 @@ experimental-features-js-warp-description = Enable Warp, a project to improve Ja
 experimental-features-ime-search =
     .label = Address Bar: show results during IME composition
 experimental-features-ime-search-description = An IME (Input Method Editor) is a tool that allows you to enter complex symbols, such as those used in East Asian or Indic written languages, using a standard keyboard. Enabling this experiment will keep the address bar panel open, showing search results and suggestions, while using IME to input text. Note that the IME might display a panel that covers the address bar results, therefore this preference is only suggested for IME not using this type of panel.
+
+# Auto Picture-in-Picture
+experimental-features-auto-pip =
+    .label = Picture-in-Picture: auto-open on tab switch
+experimental-features-auto-pip-description = Enable Picture-in-Picture on active videos when switching tabs.
+
+experimental-features-group-developer-tools =
+  .label = Developer Tools
+experimental-features-group-webpage-display =
+  .label = Webpage Display
+experimental-features-group-customize-browsing =
+  .label = Customize your browsing
+experimental-features-group-customize-browsing-description = If you try these features, <a data-l10n-name="connect">share your thoughts on Connect</a>

@@ -35,6 +35,8 @@ bool KeyAlgorithmProxy::WriteStructuredClone(
     }
     case EC:
       return StructuredCloneHolder::WriteString(aWriter, mEc.mNamedCurve);
+    case OKP:
+      return true;
   }
 
   return false;
@@ -103,6 +105,12 @@ bool KeyAlgorithmProxy::ReadStructuredClone(JSStructuredCloneReader* aReader) {
       }
 
       mEc.mName = mName;
+      return true;
+    }
+
+    case OKP: {
+      mType = OKP;
+      mEd.mName = mName;
       return true;
     }
   }

@@ -9,15 +9,17 @@
 use super::{AllowQuirks, Number, Percentage, ToComputedValue};
 use crate::computed_value_flags::ComputedValueFlags;
 use crate::font_metrics::{FontMetrics, FontMetricsOrientation};
+#[cfg(feature = "gecko")]
 use crate::gecko_bindings::structs::GeckoFontMetrics;
 use crate::parser::{Parse, ParserContext};
 use crate::values::computed::{self, CSSPixelLength, Context};
 use crate::values::generics::length as generics;
 use crate::values::generics::length::{
-    GenericLengthOrNumber, GenericLengthPercentageOrNormal, GenericMaxSize, GenericSize,
+    GenericAnchorSizeFunction, GenericLengthOrNumber, GenericLengthPercentageOrNormal,
+    GenericMargin, GenericMaxSize, GenericSize,
 };
 use crate::values::generics::NonNegative;
-use crate::values::specified::calc::{self, CalcNode};
+use crate::values::specified::calc::{self, AllowAnchorPositioningFunctions, CalcNode};
 use crate::values::specified::NonNegativeNumber;
 use crate::values::CSSFloat;
 use crate::{Zero, ZeroNoPercent};
@@ -49,6 +51,7 @@ pub const PX_PER_PC: CSSFloat = PX_PER_PT * 12.;
 /// added here, `custom_properties::NonCustomReferences::from_unit`
 /// must also be updated. Consult the comment in that function as to why.
 #[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, ToCss, ToShmem)]
+#[repr(u8)]
 pub enum FontRelativeLength {
     /// A "em" value: https://drafts.csswg.org/css-values/#em
     #[css(dimension)]
@@ -103,7 +106,7 @@ impl FontBaseSize {
             Self::InheritedStyle => {
                 // If we're using the size from our inherited style, we still need to apply our
                 // own zoom.
-                let zoom = style.get_box().clone_zoom();
+                let zoom = style.resolved_specified_zoom();
                 style.get_parent_font().clone_font_size().zoom(zoom)
             },
         }
@@ -212,6 +215,7 @@ impl FontRelativeLength {
     }
 
     /// Computes the length, given a GeckoFontMetrics getter to resolve font-relative units.
+    #[cfg(feature = "gecko")]
     pub fn to_computed_pixel_length_with_font_metrics(
         &self,
         get_font_metrics: impl Fn() -> GeckoFontMetrics,
@@ -455,6 +459,7 @@ enum ViewportUnit {
 ///
 /// <https://drafts.csswg.org/css-values/#viewport-relative-lengths>
 #[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, ToCss, ToShmem)]
+#[repr(u8)]
 pub enum ViewportPercentageLength {
     /// <https://drafts.csswg.org/css-values/#valdef-length-vw>
     #[css(dimension)]
@@ -710,6 +715,7 @@ impl ViewportPercentageLength {
 
 /// HTML5 "character width", as defined in HTML5 § 14.5.4.
 #[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, ToCss, ToShmem)]
+#[repr(C)]
 pub struct CharacterWidth(pub i32);
 
 impl CharacterWidth {
@@ -727,6 +733,7 @@ impl CharacterWidth {
 
 /// Represents an absolute length with its unit
 #[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, ToCss, ToShmem)]
+#[repr(u8)]
 pub enum AbsoluteLength {
     /// An absolute length in pixels (px)
     #[css(dimension)]
@@ -828,6 +835,7 @@ impl PartialOrd for AbsoluteLength {
 ///
 /// <https://drafts.csswg.org/css-contain-3/#container-lengths>
 #[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, ToCss, ToShmem)]
+#[repr(u8)]
 pub enum ContainerRelativeLength {
     /// 1% of query container's width
     #[css(dimension)]
@@ -955,6 +963,7 @@ impl ContainerRelativeLength {
 ///
 /// <https://drafts.csswg.org/css-values/#lengths>
 #[derive(Clone, Copy, Debug, MallocSizeOf, PartialEq, ToShmem)]
+#[repr(u8)]
 pub enum NoCalcLength {
     /// An absolute length
     ///
@@ -1051,14 +1060,14 @@ impl NoCalcLength {
             "pt" => Self::Absolute(AbsoluteLength::Pt(value)),
             "pc" => Self::Absolute(AbsoluteLength::Pc(value)),
             // font-relative
-            "em" if context.parsing_mode.allows_font_relative_lengths() => Self::FontRelative(FontRelativeLength::Em(value)),
-            "ex" if context.parsing_mode.allows_font_relative_lengths() => Self::FontRelative(FontRelativeLength::Ex(value)),
-            "ch" if context.parsing_mode.allows_font_relative_lengths() => Self::FontRelative(FontRelativeLength::Ch(value)),
-            "cap" if context.parsing_mode.allows_font_relative_lengths() => Self::FontRelative(FontRelativeLength::Cap(value)),
-            "ic" if context.parsing_mode.allows_font_relative_lengths() => Self::FontRelative(FontRelativeLength::Ic(value)),
-            "rem" if context.parsing_mode.allows_font_relative_lengths() => Self::FontRelative(FontRelativeLength::Rem(value)),
-            "lh" if context.parsing_mode.allows_font_relative_lengths() => Self::FontRelative(FontRelativeLength::Lh(value)),
-            "rlh" if context.parsing_mode.allows_font_relative_lengths() => Self::FontRelative(FontRelativeLength::Rlh(value)),
+            "em" if context.allows_computational_dependence() => Self::FontRelative(FontRelativeLength::Em(value)),
+            "ex" if context.allows_computational_dependence() => Self::FontRelative(FontRelativeLength::Ex(value)),
+            "ch" if context.allows_computational_dependence() => Self::FontRelative(FontRelativeLength::Ch(value)),
+            "cap" if context.allows_computational_dependence() => Self::FontRelative(FontRelativeLength::Cap(value)),
+            "ic" if context.allows_computational_dependence() => Self::FontRelative(FontRelativeLength::Ic(value)),
+            "rem" if context.allows_computational_dependence() => Self::FontRelative(FontRelativeLength::Rem(value)),
+            "lh" if context.allows_computational_dependence() => Self::FontRelative(FontRelativeLength::Lh(value)),
+            "rlh" if context.allows_computational_dependence() => Self::FontRelative(FontRelativeLength::Rlh(value)),
             // viewport percentages
             "vw" if !context.in_page_rule() => {
                 Self::ViewportPercentage(ViewportPercentageLength::Vw(value))
@@ -1220,6 +1229,7 @@ impl NoCalcLength {
 
     /// Get a px value without a full style context; this can handle either
     /// absolute or (if a font metrics getter is provided) font-relative units.
+    #[cfg(feature = "gecko")]
     #[inline]
     pub fn to_computed_pixel_length_with_font_metrics(
         &self,
@@ -1509,6 +1519,7 @@ impl Length {
     }
 
     /// Get a px value, with an optional GeckoFontMetrics getter to resolve font-relative units.
+    #[cfg(feature = "gecko")]
     pub fn to_computed_pixel_length_with_font_metrics(
         &self,
         get_font_metrics: Option<impl Fn() -> GeckoFontMetrics>,
@@ -1638,6 +1649,7 @@ impl From<Percentage> for LengthPercentage {
         if let Some(clamping_mode) = pc.calc_clamping_mode() {
             LengthPercentage::Calc(Box::new(CalcLengthPercentage {
                 clamping_mode,
+                has_anchor_function: false,
                 node: CalcNode::Leaf(calc::Leaf::Percentage(pc.get())),
             }))
         } else {
@@ -1681,6 +1693,7 @@ impl LengthPercentage {
         input: &mut Parser<'i, 't>,
         num_context: AllowedNumericType,
         allow_quirks: AllowQuirks,
+        allow_anchor: AllowAnchorPositioningFunctions,
     ) -> Result<Self, ParseError<'i>> {
         let location = input.current_source_location();
         let token = input.next()?;
@@ -1711,8 +1724,7 @@ impl LengthPercentage {
             },
             Token::Function(ref name) => {
                 let function = CalcNode::math_function(context, name, location)?;
-                let calc =
-                    CalcNode::parse_length_or_percentage(context, input, num_context, function)?;
+                let calc = CalcNode::parse_length_or_percentage(context, input, num_context, function, allow_anchor)?;
                 Ok(LengthPercentage::Calc(Box::new(calc)))
             },
             _ => return Err(location.new_unexpected_token_error(token.clone())),
@@ -1727,7 +1739,46 @@ impl LengthPercentage {
         input: &mut Parser<'i, 't>,
         allow_quirks: AllowQuirks,
     ) -> Result<Self, ParseError<'i>> {
-        Self::parse_internal(context, input, AllowedNumericType::All, allow_quirks)
+        Self::parse_internal(
+            context,
+            input,
+            AllowedNumericType::All,
+            allow_quirks,
+            AllowAnchorPositioningFunctions::No,
+        )
+    }
+
+    /// Parses allowing the unitless length quirk, as well as allowing
+    /// anchor-positioning related functions, `anchor()` and `anchor-size()`.
+    #[inline]
+    pub fn parse_quirky_with_anchor_functions<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+        allow_quirks: AllowQuirks,
+    ) -> Result<Self, ParseError<'i>> {
+        Self::parse_internal(
+            context,
+            input,
+            AllowedNumericType::All,
+            allow_quirks,
+            AllowAnchorPositioningFunctions::AllowAnchorAndAnchorSize,
+        )
+    }
+
+    /// Parses non-negative length, allowing the unitless length quirk,
+    /// as well as allowing `anchor-size()`.
+    pub fn parse_non_negative_with_anchor_size<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+        allow_quirks: AllowQuirks,
+    ) -> Result<Self, ParseError<'i>> {
+        Self::parse_internal(
+            context,
+            input,
+            AllowedNumericType::NonNegative,
+            allow_quirks,
+            AllowAnchorPositioningFunctions::AllowAnchorSize,
+        )
     }
 
     /// Parse a non-negative length.
@@ -1754,17 +1805,18 @@ impl LengthPercentage {
             input,
             AllowedNumericType::NonNegative,
             allow_quirks,
+            AllowAnchorPositioningFunctions::No,
         )
     }
 
     /// Returns self as specified::calc::CalcNode.
     /// Note that this expect the clamping_mode is AllowedNumericType::All for Calc. The caller
     /// should take care about it when using this function.
-    fn to_calc_node(self) -> CalcNode {
+    fn to_calc_node(self) -> (CalcNode, bool) {
         match self {
-            LengthPercentage::Length(l) => CalcNode::Leaf(calc::Leaf::Length(l)),
-            LengthPercentage::Percentage(p) => CalcNode::Leaf(calc::Leaf::Percentage(p.0)),
-            LengthPercentage::Calc(p) => p.node,
+            LengthPercentage::Length(l) => (CalcNode::Leaf(calc::Leaf::Length(l)), false),
+            LengthPercentage::Percentage(p) => (CalcNode::Leaf(calc::Leaf::Percentage(p.0)), false),
+            LengthPercentage::Calc(p) => (p.node, p.has_anchor_function),
         }
     }
 
@@ -1773,13 +1825,14 @@ impl LengthPercentage {
         let mut sum = smallvec::SmallVec::<[CalcNode; 2]>::new();
         sum.push(CalcNode::Leaf(calc::Leaf::Percentage(1.0)));
 
-        let mut node = self.to_calc_node();
+        let (mut node, has_anchor_function) = self.to_calc_node();
         node.negate();
         sum.push(node);
 
         let calc = CalcNode::Sum(sum.into_boxed_slice().into());
         LengthPercentage::Calc(Box::new(
-            calc.into_length_or_percentage(clamping_mode).unwrap(),
+            calc.into_length_or_percentage(clamping_mode, has_anchor_function)
+                .unwrap(),
         ))
     }
 }
@@ -1899,6 +1952,18 @@ impl NonNegativeLengthPercentage {
     ) -> Result<Self, ParseError<'i>> {
         LengthPercentage::parse_non_negative_quirky(context, input, allow_quirks).map(NonNegative)
     }
+
+    /// Parses a length or a percentage, allowing the unitless length quirk,
+    /// as well as allowing `anchor-size()`.
+    #[inline]
+    pub fn parse_non_negative_with_anchor_size<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+        allow_quirks: AllowQuirks,
+    ) -> Result<Self, ParseError<'i>> {
+        LengthPercentage::parse_non_negative_with_anchor_size(context, input, allow_quirks).map(NonNegative)
+    }
+
 }
 
 /// Either a `<length>` or the `auto` keyword.
@@ -1953,6 +2018,10 @@ macro_rules! parse_size_non_length {
                 "fit-content" | "-moz-fit-content" => $size::FitContent,
                 #[cfg(feature = "gecko")]
                 "-moz-available" => $size::MozAvailable,
+                #[cfg(feature = "gecko")]
+                "-webkit-fill-available" if is_webkit_fill_available_keyword_enabled() => $size::WebkitFillAvailable,
+                #[cfg(feature = "gecko")]
+                "stretch" if is_stretch_enabled() => $size::Stretch,
                 $auto_or_none => $size::$auto_or_none_ident,
             })
         });
@@ -1960,6 +2029,15 @@ macro_rules! parse_size_non_length {
             return size;
         }
     }};
+}
+
+#[cfg(feature = "gecko")]
+fn is_webkit_fill_available_keyword_enabled() -> bool {
+    static_prefs::pref!("layout.css.webkit-fill-available.enabled")
+}
+#[cfg(feature = "gecko")]
+fn is_stretch_enabled() -> bool {
+    static_prefs::pref!("layout.css.stretch-size-keyword.enabled")
 }
 
 #[cfg(feature = "gecko")]
@@ -1996,8 +2074,14 @@ impl Size {
         parse_size_non_length!(Size, input, "auto" => Auto);
         parse_fit_content_function!(Size, input, context, allow_quirks);
 
-        let length = NonNegativeLengthPercentage::parse_quirky(context, input, allow_quirks)?;
-        Ok(GenericSize::LengthPercentage(length))
+        if let Ok(length) =
+            input.try_parse(|i| NonNegativeLengthPercentage::parse_non_negative_with_anchor_size(context, i, allow_quirks))
+        {
+            return Ok(GenericSize::LengthPercentage(length));
+        }
+        Ok(Self::AnchorSizeFunction(Box::new(
+            GenericAnchorSizeFunction::parse(context, input)?,
+        )))
     }
 
     /// Returns `0%`.
@@ -2029,10 +2113,52 @@ impl MaxSize {
         parse_size_non_length!(MaxSize, input, "none" => None);
         parse_fit_content_function!(MaxSize, input, context, allow_quirks);
 
-        let length = NonNegativeLengthPercentage::parse_quirky(context, input, allow_quirks)?;
-        Ok(GenericMaxSize::LengthPercentage(length))
+        if let Ok(length) =
+            input.try_parse(|i| NonNegativeLengthPercentage::parse_non_negative_with_anchor_size(context, i, allow_quirks))
+        {
+            return Ok(GenericMaxSize::LengthPercentage(length));
+        }
+        Ok(Self::AnchorSizeFunction(Box::new(
+            GenericAnchorSizeFunction::parse(context, input)?,
+        )))
     }
 }
 
 /// A specified non-negative `<length>` | `<number>`.
 pub type NonNegativeLengthOrNumber = GenericLengthOrNumber<NonNegativeLength, NonNegativeNumber>;
+
+/// A specified value for `anchor-size` function.
+pub type AnchorSizeFunction = GenericAnchorSizeFunction<LengthPercentage>;
+
+/// A specified value for `margin` properties.
+pub type Margin = GenericMargin<LengthPercentage>;
+
+impl Margin {
+    /// Parses an inset type, allowing the unitless length quirk.
+    /// <https://quirks.spec.whatwg.org/#the-unitless-length-quirk>
+    #[inline]
+    pub fn parse_quirky<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+        allow_quirks: AllowQuirks,
+    ) -> Result<Self, ParseError<'i>> {
+        if let Ok(l) = input.try_parse(|i| LengthPercentage::parse_quirky(context, i, allow_quirks))
+        {
+            return Ok(Self::LengthPercentage(l));
+        }
+        if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+            return Ok(Self::Auto);
+        }
+        let inner = AnchorSizeFunction::parse(context, input)?;
+        Ok(Self::AnchorSizeFunction(Box::new(inner)))
+    }
+}
+
+impl Parse for Margin {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self, ParseError<'i>> {
+        Self::parse_quirky(context, input, AllowQuirks::No)
+    }
+}

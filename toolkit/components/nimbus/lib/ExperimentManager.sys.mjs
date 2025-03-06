@@ -11,11 +11,16 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   ClientEnvironment: "resource://normandy/lib/ClientEnvironment.sys.mjs",
+  ClientID: "resource://gre/modules/ClientID.sys.mjs",
   ExperimentStore: "resource://nimbus/lib/ExperimentStore.sys.mjs",
   FirstStartup: "resource://gre/modules/FirstStartup.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   NormandyUtils: "resource://normandy/lib/NormandyUtils.sys.mjs",
   PrefUtils: "resource://normandy/lib/PrefUtils.sys.mjs",
+  RemoteSettingsExperimentLoader:
+    "resource://nimbus/lib/RemoteSettingsExperimentLoader.sys.mjs",
+  EnrollmentsContext:
+    "resource://nimbus/lib/RemoteSettingsExperimentLoader.sys.mjs",
   Sampling: "resource://gre/modules/components-utils/Sampling.sys.mjs",
   TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.sys.mjs",
   TelemetryEvents: "resource://normandy/lib/TelemetryEvents.sys.mjs",
@@ -84,6 +89,7 @@ export class _ExperimentManager {
     this.id = id;
     this.store = store || new lazy.ExperimentStore();
     this.sessions = new Map();
+    this.optInRecipes = [];
     // By default, no extra context.
     this.extraContext = {};
     Services.prefs.addObserver(UPLOAD_ENABLED_PREF, this);
@@ -213,10 +219,23 @@ export class _ExperimentManager {
     this.observe();
 
     lazy.NimbusFeatures.nimbusTelemetry.onUpdate(() => {
-      const cfg =
+      // Providing default values ensure we disable metrics when unenrolling.
+      const cfg = {
+        metrics_enabled: {
+          "nimbus_targeting_environment.targeting_context_value": false,
+          "nimbus_events.enrollment_status": false,
+        },
+      };
+
+      const overrides =
         lazy.NimbusFeatures.nimbusTelemetry.getVariable(
           "gleanMetricConfiguration"
         ) ?? {};
+
+      for (const [key, value] of Object.entries(overrides)) {
+        cfg[key] = { ...(cfg[key] ?? {}), ...value };
+      }
+
       Services.fog.applyServerKnobsConfig(JSON.stringify(cfg));
     });
   }
@@ -225,27 +244,40 @@ export class _ExperimentManager {
    * Runs every time a Recipe is updated or seen for the first time.
    * @param {RecipeArgs} recipe
    * @param {string} source
+   * @param {boolean} isTargetingMatch
    */
-  async onRecipe(recipe, source) {
-    const { slug, isEnrollmentPaused } = recipe;
+  async onRecipe(recipe, source, isTargetingMatch) {
+    const { slug, isEnrollmentPaused, isFirefoxLabsOptIn } = recipe;
 
     if (!source) {
       throw new Error("When calling onRecipe, you must specify a source.");
     }
 
-    if (!this.sessions.has(source)) {
-      this.sessions.set(source, new Set());
+    if (isFirefoxLabsOptIn) {
+      this.optInRecipes.push(recipe);
     }
-    this.sessions.get(source).add(slug);
 
-    if (this.store.has(slug)) {
-      await this.updateEnrollment(recipe, source);
-    } else if (isEnrollmentPaused) {
-      lazy.log.debug(`Enrollment is paused for "${slug}"`);
-    } else if (!(await this.isInBucketAllocation(recipe.bucketConfig))) {
-      lazy.log.debug("Client was not enrolled because of the bucket sampling");
-    } else {
-      await this.enroll(recipe, source);
+    if (isTargetingMatch) {
+      if (!this.sessions.has(source)) {
+        this.sessions.set(source, new Set());
+      }
+      this.sessions.get(source).add(slug);
+
+      if (this.store.has(slug)) {
+        await this.updateEnrollment(recipe, source);
+      } else if (!isFirefoxLabsOptIn) {
+        // Firefox Labs opt-ins cannot be paused and we do not enroll in them
+        // directly.
+        if (isEnrollmentPaused) {
+          lazy.log.debug(`Enrollment is paused for "${slug}"`);
+        } else if (!(await this.isInBucketAllocation(recipe.bucketConfig))) {
+          lazy.log.debug(
+            "Client was not enrolled because of the bucket sampling"
+          );
+        } else {
+          await this.enroll(recipe, source);
+        }
+      }
     }
   }
 
@@ -412,25 +444,104 @@ export class _ExperimentManager {
   }
 
   /**
-   * Bucket configuration specifies a specific percentage of clients that can
-   * be enrolled.
-   * @param {BucketConfig} bucketConfig
-   * @returns {Promise<boolean>}
+   * Determine userId based on bucketConfig.randomizationUnit;
+   * either "normandy_id" or "group_id".
+   *
+   * @param {object} bucketConfig
+   *
    */
-  isInBucketAllocation(bucketConfig) {
-    if (!bucketConfig) {
-      lazy.log.debug("Cannot enroll if recipe bucketConfig is not set.");
-      return false;
-    }
-
+  async getUserId(bucketConfig) {
     let id;
     if (bucketConfig.randomizationUnit === "normandy_id") {
       id = lazy.ClientEnvironment.userId;
+    } else if (bucketConfig.randomizationUnit === "group_id") {
+      id = await lazy.ClientID.getProfileGroupID();
     } else {
       // Others not currently supported.
       lazy.log.debug(
         `Invalid randomizationUnit: ${bucketConfig.randomizationUnit}`
       );
+    }
+    return id;
+  }
+
+  /**
+   * Get all of the opt-in recipes that match targeting and bucketing.
+   *
+   * @returns opt in recipes
+   */
+  async getAllOptInRecipes() {
+    const enrollmentsCtx = new lazy.EnrollmentsContext(this, null, {
+      validationEnabled: false,
+    });
+
+    // RemoteSettingsExperimentLoader could be in a middle of updating recipes
+    // so let's wait for the update to finish and this promise to resolve.
+    await lazy.RemoteSettingsExperimentLoader.updatingRecipes();
+
+    // At this point in the execution of this function,
+    // RemoteSettingsExperimentLoader should've finished updating recipes at least once.
+    const optInRecipesWithTargetingMatch = [];
+
+    for (const recipe of this.optInRecipes) {
+      // check if the opt in recipe matches targeting and bucketing.
+      if (
+        (await enrollmentsCtx.checkTargeting(recipe)) &&
+        (await this.isInBucketAllocation(recipe.bucketConfig))
+      ) {
+        optInRecipesWithTargetingMatch.push(recipe);
+      }
+    }
+
+    return optInRecipesWithTargetingMatch;
+  }
+
+  /**
+   * Get a single opt in recipe given its slug.
+   *
+   * @returns a single opt in recipe or undefined if not found.
+   */
+  async getSingleOptInRecipe(slug) {
+    if (!slug) {
+      throw new Error("Slug required for .getSingleOptInRecipe");
+    }
+
+    // RemoteSettingsExperimentLoader could be in a middle of updating recipes
+    // so let's wait for the update to finish and this promise to resolve.
+    await lazy.RemoteSettingsExperimentLoader.updatingRecipes();
+
+    return this.optInRecipes.find(recipe => recipe.slug === slug);
+  }
+
+  /**
+   * Determine if this client falls into the bucketing specified in bucketConfig
+   *
+   * @param {object} bucketConfig
+   * @param {string} bucketConfig.randomizationUnit
+   *                 The randomization unit to use for bucketing. This must be
+   *                 either "normandy_id" or "group_id".
+   * @param {number} bucketConfig.start
+   *                 The start of the bucketing range (inclusive).
+   * @param {number} bucketConfig.count
+   *                 The number of buckets in the range.
+   * @param {number} bucketConfig.total
+   *                 The total number of buckets.
+   * @param {string} bucketConfig.namespace
+   *                 A namespace used to seed the RNG used in the sampling
+   *                 algorithm. Given an otherwise identical bucketConfig with
+   *                 different namespaces, the client will fall into different a
+   *                 different bucket.
+   * @returns {Promise<boolean>}
+   *          Whether or not the client falls into the bucketing range.
+   */
+  async isInBucketAllocation(bucketConfig) {
+    if (!bucketConfig) {
+      lazy.log.debug("Cannot enroll if recipe bucketConfig is not set.");
+      return false;
+    }
+
+    const id = await this.getUserId(bucketConfig);
+    if (!id) {
       return false;
     }
 
@@ -453,14 +564,18 @@ export class _ExperimentManager {
    * @rejects {Error}
    * @memberof _ExperimentManager
    */
-  async enroll(recipe, source, { reenroll = false } = {}) {
-    let { slug, branches } = recipe;
+  async enroll(
+    recipe,
+    source,
+    { reenroll = false, optInRecipeBranchSlug } = {}
+  ) {
+    let { slug, branches, bucketConfig, isFirefoxLabsOptIn } = recipe;
 
     const enrollment = this.store.get(slug);
 
     if (
       enrollment &&
-      (enrollment.isActive || !enrollment.isRollout || !reenroll)
+      (enrollment.active || !enrollment.isRollout || !reenroll)
     ) {
       this.sendFailureTelemetry("enrollFailed", slug, "name-conflict");
       throw new Error(`An experiment with the slug "${slug}" already exists.`);
@@ -469,7 +584,29 @@ export class _ExperimentManager {
     let storeLookupByFeature = recipe.isRollout
       ? this.store.getRolloutForFeature.bind(this.store)
       : this.store.hasExperimentForFeature.bind(this.store);
-    const branch = await this.chooseBranch(slug, branches);
+    const userId = await this.getUserId(bucketConfig);
+
+    let branch;
+
+    if (isFirefoxLabsOptIn) {
+      if (typeof optInRecipeBranchSlug === "undefined") {
+        throw new Error(
+          `Branch slug not provided for Firefox Labs opt in recipe: "${slug}"`
+        );
+      } else {
+        branch = branches.find(branch => branch.slug === optInRecipeBranchSlug);
+
+        if (!branch) {
+          throw new Error(
+            `Invalid branch slug provided for Firefox Labs opt in recipe: "${slug}"`
+          );
+        }
+      }
+    } else {
+      // recipe is not an opt in recipe hence use a ratio sampled branch
+      branch = await this.chooseBranch(slug, branches, userId);
+    }
+
     const features = featuresCompat(branch);
     for (let feature of features) {
       if (storeLookupByFeature(feature?.featureId)) {
@@ -496,6 +633,11 @@ export class _ExperimentManager {
       featureIds,
       isRollout,
       localizations,
+      isFirefoxLabsOptIn,
+      firefoxLabsTitle,
+      firefoxLabsDescription,
+      firefoxLabsGroup,
+      requiresRestart = false,
     },
     branch,
     source,
@@ -545,6 +687,16 @@ export class _ExperimentManager {
 
     if (localizations) {
       experiment.localizations = localizations;
+    }
+
+    if (typeof isFirefoxLabsOptIn !== "undefined") {
+      Object.assign(experiment, {
+        isFirefoxLabsOptIn,
+        firefoxLabsTitle,
+        firefoxLabsDescription,
+        firefoxLabsGroup,
+        requiresRestart,
+      });
     }
 
     if (typeof isRollout !== "undefined") {
@@ -649,7 +801,12 @@ export class _ExperimentManager {
         enrollment.unenrollReason !== "individual-opt-out"
       ) {
         lazy.log.debug(`Re-enrolling in rollout "${recipe.slug}`);
-        return !!(await this.enroll(recipe, source, { reenroll: true }));
+        const options = { reenroll: true };
+        if (recipe.isFirefoxLabsOptIn) {
+          // Opt-In rollouts only have a single branch.
+          options.optInRecipeBranchSlug = recipe.branches[0].slug;
+        }
+        return !!(await this.enroll(recipe, source, options));
       }
     }
 
@@ -975,6 +1132,7 @@ export class _ExperimentManager {
    *
    * @param {string} slug
    * @param {Branch[]} branches
+   * @param {string} userId
    * @returns {Promise<Branch>}
    * @memberof _ExperimentManager
    */

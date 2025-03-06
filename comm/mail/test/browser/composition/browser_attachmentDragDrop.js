@@ -168,10 +168,10 @@ async function simulateDragAndDrop(win, dragData, type) {
   if (type == "inline") {
     const editor = win.GetCurrentEditor();
 
-    await BrowserTestUtils.waitForCondition(() => {
-      editor.selectAll();
-      return editor.getSelectedElement("img");
-    }, "Confirm the image was added to the message body");
+    await BrowserTestUtils.waitForCondition(
+      () => editor.document.body.querySelector("img"),
+      "Confirm the image was added to the message body"
+    );
 
     Assert.equal(
       win.document.getElementById("attachmentBucket").itemCount,
@@ -237,6 +237,55 @@ add_task(async function test_text_file_drag() {
     cwc,
     [[{ type: "application/x-moz-file", data: file }]],
     "text"
+  );
+
+  await close_compose_window(cwc);
+});
+
+/**
+ * Test that a directory can't be dropped into the message compose window.
+ */
+add_task(async function test_directory_drag_and_drop() {
+  const file = new FileUtils.File(getTestFilePath("data"));
+  const cwc = await open_compose_new_mail();
+
+  const dragOverTarget = getDragOverTarget(cwc);
+  const dragData = [[{ type: "application/x-moz-file", data: file }]];
+  const dropEffect = "move";
+  const dropTarget = getDropTarget(cwc);
+
+  initDragSession(cwc, dragData, dropEffect);
+  const [result, dataTransfer] = EventUtils.synthesizeDragOver(
+    dragOverTarget,
+    dragOverTarget,
+    dragData,
+    dropEffect,
+    cwc
+  );
+  // Give the attachment overlay some time to incorrectly appear.
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 500));
+  Assert.ok(
+    !dropTarget.classList.contains("show"),
+    "The attachment overlay should not appear."
+  );
+
+  Assert.equal(
+    EventUtils.synthesizeDropAfterDragOver(
+      result,
+      dataTransfer,
+      dragOverTarget,
+      cwc
+    ),
+    "none",
+    "Dropping an operating system folder should have no effect."
+  );
+  dragService.getCurrentSession().endDragSession(true);
+
+  Assert.equal(
+    cwc.document.getElementById("attachmentBucket").itemCount,
+    0,
+    "Nothing should have been attached."
   );
 
   await close_compose_window(cwc);
@@ -406,7 +455,7 @@ function selectAttachments(bucket, itemSet) {
   const win = bucket.ownerGlobal;
   let first = true;
   for (const item of itemSet) {
-    item.scrollIntoView();
+    item.scrollIntoView({ block: "start", behavior: "instant" });
     EventUtils.synthesizeMouseAtCenter(item, { ctrlKey: !first }, win);
     first = false;
   }

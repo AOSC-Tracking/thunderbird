@@ -12,10 +12,13 @@
 
 var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 
+var lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
+
 /**
  * Get this window's currently selected calendar.
  *
- * @returns The currently selected calendar.
+ * @returns {calICalendar} The currently selected calendar.
  */
 function getSelectedCalendar() {
   return cal.view.getCompositeCalendar(window).defaultCalendar;
@@ -26,7 +29,7 @@ function getSelectedCalendar() {
  * this. If there is only one calendar left, no calendar is removed and the user
  * is not prompted.
  *
- * @param aCalendar     The calendar to delete.
+ * @param {calICalendar} aCalendar - The calendar to delete.
  */
 function promptDeleteCalendar(aCalendar) {
   const calendars = cal.manager.getCalendars();
@@ -36,7 +39,7 @@ function promptDeleteCalendar(aCalendar) {
   }
 
   const modes = new Set(aCalendar.getProperty("capabilities.removeModes") || ["unsubscribe"]);
-  const title = cal.l10n.getCalString("removeCalendarTitle");
+  const title = lazy.l10n.formatValueSync("remove-calendar-title");
 
   let textKey, b0text, b2text;
   let removeFlags = 0;
@@ -45,23 +48,23 @@ function promptDeleteCalendar(aCalendar) {
     Ci.nsIPromptService.BUTTON_POS_1 * Ci.nsIPromptService.BUTTON_TITLE_CANCEL;
 
   if (modes.has("delete") && !modes.has("unsubscribe")) {
-    textKey = "removeCalendarMessageDelete";
+    textKey = "remove-calendar-message-delete";
     promptFlags += Ci.nsIPromptService.BUTTON_DELAY_ENABLE;
-    b0text = cal.l10n.getCalString("removeCalendarButtonDelete");
+    b0text = lazy.l10n.formatValueSync("remove-calendar-button-delete");
   } else if (modes.has("delete")) {
-    textKey = "removeCalendarMessageDeleteOrUnsubscribe";
+    textKey = "remove-calendar-message-delete-or-unsubscribe";
     promptFlags += Ci.nsIPromptService.BUTTON_POS_2 * Ci.nsIPromptService.BUTTON_TITLE_IS_STRING;
-    b0text = cal.l10n.getCalString("removeCalendarButtonUnsubscribe");
-    b2text = cal.l10n.getCalString("removeCalendarButtonDelete");
+    b0text = lazy.l10n.formatValueSync("remove-calendar-button-unsubscribe");
+    b2text = lazy.l10n.formatValueSync("remove-calendar-button-delete");
   } else if (modes.has("unsubscribe")) {
-    textKey = "removeCalendarMessageUnsubscribe";
+    textKey = "remove-calendar-message-unsubscribe";
     removeFlags |= Ci.calICalendarManager.REMOVE_NO_DELETE;
-    b0text = cal.l10n.getCalString("removeCalendarButtonUnsubscribe");
+    b0text = lazy.l10n.formatValueSync("remove-calendar-button-unsubscribe");
   } else {
     return;
   }
 
-  const text = cal.l10n.getCalString(textKey, [aCalendar.name]);
+  const text = lazy.l10n.formatValueSync(textKey, { name: aCalendar.name });
   const res = Services.prompt.confirmEx(
     window,
     title,
@@ -76,7 +79,7 @@ function promptDeleteCalendar(aCalendar) {
 
   if (res != 1) {
     // Not canceled
-    if (textKey == "removeCalendarMessageDeleteOrUnsubscribe" && res == 0) {
+    if (textKey == "remove-calendar-message-delete-or-unsubscribe" && res == 0) {
       // Both unsubscribing and deleting is possible, but unsubscribing was
       // requested. Make sure no delete is executed.
       removeFlags |= Ci.calICalendarManager.REMOVE_NO_DELETE;
@@ -97,14 +100,13 @@ function updateCalendarStatusIndicators(item) {
   const image = item.querySelector("img.calendar-readstatus");
   if (item.hasAttribute("calendar-readfailed")) {
     image.setAttribute("src", "chrome://messenger/skin/icons/new/compact/warning.svg");
-    const tooltip = cal.l10n.getCalString("tooltipCalendarDisabled", [calendarName]);
-    image.setAttribute("title", tooltip);
+    document.l10n.setAttributes(item, "tooltip-calendar-disabled", { name: calendarName });
   } else if (item.hasAttribute("calendar-readonly")) {
     image.setAttribute("src", "chrome://messenger/skin/icons/new/compact/lock.svg");
-    const tooltip = cal.l10n.getCalString("tooltipCalendarReadOnly", [calendarName]);
-    image.setAttribute("title", tooltip);
+    document.l10n.setAttributes(item, "tooltip-calendar-read-only", { name: calendarName });
   } else {
     image.removeAttribute("src");
+    delete item.dataset.l10nId;
     image.removeAttribute("title");
   }
 }
@@ -192,9 +194,9 @@ async function loadCalendarManager() {
     displayedCheckbox.checked = calendar.getProperty("calendar-main-in-composite");
     displayedCheckbox.hidden = calendar.getProperty("disabled");
     const stringName = cal.view.getCompositeCalendar(window).getCalendarById(calendar.id)
-      ? "hideCalendar"
-      : "showCalendar";
-    displayedCheckbox.setAttribute("title", cal.l10n.getCalString(stringName, [calendar.name]));
+      ? "hide-calendar-title"
+      : "show-calendar-title";
+    document.l10n.setAttributes(displayedCheckbox, stringName, { name: calendar.name });
 
     calendarList.appendChild(item);
     if (calendar.getProperty("calendar-main-default")) {
@@ -239,8 +241,8 @@ async function loadCalendarManager() {
       compositeCalendar.removeCalendar(calendar);
     }
 
-    const stringName = event.target.checked ? "hideCalendar" : "showCalendar";
-    event.target.setAttribute("title", cal.l10n.getCalString(stringName, [calendar.name]));
+    const stringName = event.target.checked ? "hide-calendar-title" : "show-calendar-title";
+    document.l10n.setAttributes(event.target, stringName, { name: calendar.name });
 
     calendarList.focus();
   });
@@ -283,11 +285,11 @@ async function loadCalendarManager() {
           compositeCalendar.addCalendar(calendar);
         }
         const stringName = item.querySelector(".calendar-displayed").checked
-          ? "hideCalendar"
-          : "showCalendar";
-        item
-          .querySelector(".calendar-displayed")
-          .setAttribute("title", cal.l10n.getCalString(stringName, [calendar.name]));
+          ? "hide-calendar-title"
+          : "show-calendar-title";
+        document.l10n.setAttributes(item.querySelector(".calendar-displayed"), stringName, {
+          name: calendar.name,
+        });
         break;
       }
     }
@@ -392,12 +394,14 @@ async function loadCalendarManager() {
 
 /**
  * Creates the initial "Home" calendar if no calendar exists.
+ *
+ * @returns {calICalendar}
  */
 function initHomeCalendar() {
   const composite = cal.view.getCompositeCalendar(window);
   const url = Services.io.newURI("moz-storage-calendar://");
   const homeCalendar = cal.manager.createCalendar("storage", url);
-  homeCalendar.name = cal.l10n.getCalString("homeCalendarName");
+  homeCalendar.name = lazy.l10n.formatValueSync("home-calendar-name");
   homeCalendar.setProperty("disabled", true);
 
   cal.manager.registerCalendar(homeCalendar);
@@ -458,18 +462,23 @@ function calendarListSetupContextMenu(event) {
     elem.hidden = !calendar;
   }
   if (calendar) {
-    const stringName = composite.getCalendarById(calendar.id) ? "hideCalendar" : "showCalendar";
-    document.getElementById("list-calendars-context-togglevisible").label = cal.l10n.getCalString(
+    const stringName = composite.getCalendarById(calendar.id)
+      ? "hide-calendar-label"
+      : "show-calendar-label";
+    document.l10n.setAttributes(
+      document.getElementById("list-calendars-context-togglevisible"),
       stringName,
-      [calendar.name]
+      { name: calendar.name }
     );
+
     const accessKey = document
       .getElementById("list-calendars-context-togglevisible")
       .getAttribute(composite.getCalendarById(calendar.id) ? "accesskeyhide" : "accesskeyshow");
     document.getElementById("list-calendars-context-togglevisible").accessKey = accessKey;
-    document.getElementById("list-calendars-context-showonly").label = cal.l10n.getCalString(
-      "showOnlyCalendar",
-      [calendar.name]
+    document.l10n.setAttributes(
+      document.getElementById("list-calendars-context-showonly"),
+      "show-only-calendar",
+      { name: calendar.name }
     );
     setupDeleteMenuitem("list-calendars-context-delete", calendar);
     document.getElementById("list-calendar-context-reload").hidden = !calendar.canRefresh;
@@ -499,7 +508,7 @@ function openCalendarListItemContext(event) {
  * removeModes. The menuitem must have the attributes "labelremove",
  * "labeldelete" and "labelunsubscribe".
  *
- * @param aDeleteId     The id of the menuitem to delete the calendar
+ * @param {string} aDeleteId - The id of the menuitem to delete the calendar.
  */
 function setupDeleteMenuitem(aDeleteId, aCalendar) {
   const calendar = aCalendar === undefined ? getSelectedCalendar() : aCalendar;
@@ -524,7 +533,7 @@ function setupDeleteMenuitem(aDeleteId, aCalendar) {
 /**
  * Makes sure the passed calendar is visible to the user
  *
- * @param aCalendar   The calendar to make visible.
+ * @param {calICalendar} aCalendar - The calendar to make visible.
  */
 function ensureCalendarVisible(aCalendar) {
   // We use the main window's calendar list to ensure that the calendar is visible.
@@ -541,7 +550,7 @@ function ensureCalendarVisible(aCalendar) {
 /**
  * Hides the specified calendar if it is visible, or shows it if it is hidden.
  *
- * @param aCalendar   The calendar to show or hide
+ * @param {calICalendar} aCalendar - The calendar to show or hide.
  */
 function toggleCalendarVisible(aCalendar) {
   const composite = cal.view.getCompositeCalendar(window);
@@ -571,7 +580,7 @@ function showAllCalendars() {
 /**
  * Shows only the specified calendar, and hides all others.
  *
- * @param aCalendar   The calendar to show as the only visible calendar
+ * @param {calICalendar} aCalendar - The calendar to show as the only visible calendar.
  */
 function showOnlyCalendar(aCalendar) {
   const composite = cal.view.getCompositeCalendar(window);
@@ -641,9 +650,13 @@ var compositeObserver = {
  */
 function openLocalCalendar() {
   const picker = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
-  picker.init(window.browsingContext, cal.l10n.getCalString("Open"), Ci.nsIFilePicker.modeOpen);
+  picker.init(
+    window.browsingContext,
+    lazy.l10n.formatValueSync("calendar-open"),
+    Ci.nsIFilePicker.modeOpen
+  );
   const wildmat = "*.ics";
-  const description = cal.l10n.getCalString("filterIcs", [wildmat]);
+  const description = lazy.l10n.formatValueSync("filter-ics", { wildmat });
   picker.appendFilter(description, wildmat);
   picker.appendFilters(Ci.nsIFilePicker.filterAll);
 
@@ -662,7 +675,7 @@ function openLocalCalendar() {
       if (prettyName) {
         calendar.name = decodeURIComponent(prettyName[1]);
       } else {
-        calendar.name = cal.l10n.getCalString("untitledCalendarName");
+        calendar.name = lazy.l10n.formatValueSync("untitled-calendar-name");
       }
 
       cal.manager.registerCalendar(calendar);

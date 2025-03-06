@@ -149,8 +149,28 @@ add_task(async () => {
     {
       checkboxID: "showCondensedAddresses",
       pref: "mail.showCondensedAddresses",
+    },
+    {
+      checkboxID: "tableHorizontalScroll",
+      pref: "mail.threadpane.table.horizontal_scroll",
+    },
+    {
+      checkboxID: "darkReader",
+      pref: "mail.dark-reader.enabled",
+    },
+    {
+      checkboxID: "darkReaderToggle",
+      pref: "mail.dark-reader.show-toggle",
     }
   );
+
+  // Nightly experimental prefs.
+  if (AppConstants.NIGHTLY_BUILD) {
+    await testCheckboxes("paneGeneral", "readingAndDisplayCategory", {
+      checkboxID: "conversationView",
+      pref: "mail.thread.conversation.enabled",
+    });
+  }
 });
 
 add_task(async () => {
@@ -260,42 +280,100 @@ add_task(async () => {
   });
 });
 
+/**
+ * Tests the system integration dialog.
+ */
+add_task(async function testSystemIntegrationDialog() {
+  const { prefsDocument } = await openNewPrefsTab(
+    "paneGeneral",
+    "generalCategory"
+  );
+  await promiseSubDialog(
+    prefsDocument.getElementById("checkDefaultButton"),
+    "chrome://messenger/content/systemIntegrationDialog.xhtml",
+    () => {},
+    "cancel"
+  );
+  await closePrefsTab();
+});
+
+/**
+ * Tests the language and appearance dialogs.
+ */
+add_task(async function testLanguageAndAppearanceDialogs() {
+  const { prefsDocument } = await openNewPrefsTab(
+    "paneGeneral",
+    "languageAndAppearanceCategory"
+  );
+  await promiseSubDialog(
+    prefsDocument.getElementById("advancedFonts"),
+    "chrome://messenger/content/preferences/fonts.xhtml",
+    () => {},
+    "cancel"
+  );
+  await promiseSubDialog(
+    prefsDocument.getElementById("colors"),
+    "chrome://messenger/content/preferences/colors.xhtml",
+    () => {},
+    "cancel"
+  );
+  await promiseSubDialog(
+    prefsDocument.getElementById("manageMessengerLanguagesButton"),
+    "chrome://messenger/content/preferences/messengerLanguages.xhtml",
+    () => {},
+    "cancel"
+  );
+  await closePrefsTab();
+});
+
+/**
+ * Tests the new mail alert dialogs.
+ */
+add_task(async function testNewMailAlertDialogs() {
+  Services.prefs.setBoolPref("mail.biff.show_alert", true);
+  const { prefsDocument } = await openNewPrefsTab(
+    "paneGeneral",
+    "incomingMailCategory"
+  );
+  if (AppConstants.platform != "linux") {
+    await promiseSubDialog(
+      prefsDocument.getElementById("dockOptions"),
+      "chrome://messenger/content/preferences/dockoptions.xhtml",
+      () => {},
+      "cancel"
+    );
+  }
+  if (AppConstants.platform != "macosx") {
+    await promiseSubDialog(
+      prefsDocument.getElementById("customizeMailAlert"),
+      "chrome://messenger/content/preferences/notifications.xhtml",
+      () => {},
+      "cancel"
+    );
+  }
+  await closePrefsTab();
+});
+
+/**
+ * Tests the tag dialog.
+ */
 add_task(async function testTagDialog() {
   const { prefsDocument, prefsWindow } = await openNewPrefsTab(
     "paneGeneral",
     "tagsCategory"
   );
 
-  const newTagDialogPromise = BrowserTestUtils.promiseAlertDialogOpen(
-    undefined,
+  await promiseSubDialog(
+    prefsDocument.getElementById("newTagButton"),
     "chrome://messenger/content/newTagDialog.xhtml",
-    {
-      isSubDialog: true,
-      async callback(dialogWindow) {
-        await TestUtils.waitForCondition(
-          () => Services.focus.focusedWindow == dialogWindow,
-          "waiting for subdialog to be focused"
-        );
+    async function (dialogWindow) {
+      const dialogDocument = dialogWindow.document;
 
-        const dialogDocument = dialogWindow.document;
-
-        EventUtils.sendString("tbird", dialogWindow);
-        // "#000080" == rgb(0, 0, 128);
-        dialogDocument.getElementById("tagColorPicker").value = "#000080";
-
-        EventUtils.synthesizeMouseAtCenter(
-          dialogDocument.querySelector("dialog").getButton("accept"),
-          {},
-          dialogWindow
-        );
-        await new Promise(r => setTimeout(r));
-      },
+      EventUtils.sendString("tbird", dialogWindow);
+      // "#000080" == rgb(0, 0, 128);
+      dialogDocument.getElementById("tagColorPicker").value = "#000080";
     }
   );
-
-  const newTagButton = prefsDocument.getElementById("newTagButton");
-  EventUtils.synthesizeMouseAtCenter(newTagButton, {}, prefsWindow);
-  await newTagDialogPromise;
 
   const tagList = prefsDocument.getElementById("tagList");
 
@@ -322,47 +400,28 @@ add_task(async function testTagDialog() {
 
   // Now edit the tag. The key should stay the same, name and color will change.
 
-  const editTagDialogPromise = BrowserTestUtils.promiseAlertDialogOpen(
-    undefined,
+  await promiseSubDialog(
+    prefsDocument.getElementById("editTagButton"),
     "chrome://messenger/content/newTagDialog.xhtml",
-    {
-      isSubDialog: true,
-      async callback(dialogWindow) {
-        await TestUtils.waitForCondition(
-          () => Services.focus.focusedWindow == dialogWindow,
-          "waiting for subdialog to be focused"
-        );
+    async function (dialogWindow) {
+      const dialogDocument = dialogWindow.document;
 
-        const dialogDocument = dialogWindow.document;
+      Assert.equal(
+        dialogDocument.getElementById("name").value,
+        "tbird",
+        "should have existing tbird tag name prefilled"
+      );
+      Assert.equal(
+        dialogDocument.getElementById("tagColorPicker").value,
+        "#000080",
+        "should have existing tbird tag color prefilled"
+      );
 
-        Assert.equal(
-          dialogDocument.getElementById("name").value,
-          "tbird",
-          "should have existing tbird tag name prefilled"
-        );
-        Assert.equal(
-          dialogDocument.getElementById("tagColorPicker").value,
-          "#000080",
-          "should have existing tbird tag color prefilled"
-        );
-
-        EventUtils.sendString("-xx", dialogWindow); // => tbird-xx
-        // "#FFD700" == rgb(255, 215, 0);
-        dialogDocument.getElementById("tagColorPicker").value = "#FFD700";
-
-        EventUtils.synthesizeMouseAtCenter(
-          dialogDocument.querySelector("dialog").getButton("accept"),
-          {},
-          dialogWindow
-        );
-        await new Promise(r => setTimeout(r));
-      },
+      EventUtils.sendString("-xx", dialogWindow); // => tbird-xx
+      // "#FFD700" == rgb(255, 215, 0);
+      dialogDocument.getElementById("tagColorPicker").value = "#FFD700";
     }
   );
-
-  const editTagButton = prefsDocument.getElementById("editTagButton");
-  EventUtils.synthesizeMouseAtCenter(editTagButton, {}, prefsWindow);
-  await editTagDialogPromise;
 
   Assert.ok(
     tagList.querySelector(
@@ -396,5 +455,65 @@ add_task(async function testTagDialog() {
     "tbird-xx (with key tbird) tag should have been removed from the list"
   );
 
+  await closePrefsTab();
+});
+
+/**
+ * Tests the receipts dialog.
+ */
+add_task(async function testReceiptsDialog() {
+  const { prefsDocument } = await openNewPrefsTab(
+    "paneGeneral",
+    "readingAndDisplayCategory"
+  );
+  await promiseSubDialog(
+    prefsDocument.getElementById("showReturnReceipts"),
+    "chrome://messenger/content/preferences/receipts.xhtml",
+    () => {},
+    "cancel"
+  );
+  await closePrefsTab();
+});
+
+/**
+ * Tests the update history dialog.
+ */
+add_task(async function testUpdateHistoryDialog() {
+  const { prefsDocument } = await openNewPrefsTab(
+    "paneGeneral",
+    "updatesCategory"
+  );
+  await promiseSubDialog(
+    prefsDocument.getElementById("showUpdateHistory"),
+    "chrome://mozapps/content/update/history.xhtml",
+    () => {},
+    "cancel"
+  );
+  await closePrefsTab();
+}).skip(
+  AppConstants.platform === "win" &&
+    Services.sysinfo.getProperty("hasWinPackageId")
+); // The updates panel is disabled in MSIX builds.
+
+/**
+ * Tests the network dialogs.
+ */
+add_task(async function testNetworkDialogs() {
+  const { prefsDocument } = await openNewPrefsTab(
+    "paneGeneral",
+    "networkAndDiskspaceCategory"
+  );
+  await promiseSubDialog(
+    prefsDocument.getElementById("catProxiesButton"),
+    "chrome://messenger/content/preferences/connection.xhtml",
+    () => {},
+    "cancel"
+  );
+  await promiseSubDialog(
+    prefsDocument.getElementById("offlineSettingsButton"),
+    "chrome://messenger/content/preferences/offline.xhtml",
+    () => {},
+    "cancel"
+  );
   await closePrefsTab();
 });

@@ -450,7 +450,7 @@ add_task(async function testSpacesToolbarContextMenu() {
   /**
    * Ensure the tab is scrolled into view.
    *
-   * @param {MozTabmailTab} - The tab to scroll into view.
+   * @param {MozTabmailTab} tab - The tab to scroll into view.
    */
   async function scrollToTab(tab) {
     function tabInView() {
@@ -464,7 +464,7 @@ add_task(async function testSpacesToolbarContextMenu() {
       info(`Tab ${tab.label} already in view`);
       return;
     }
-    tab.scrollIntoView();
+    tab.scrollIntoView({ block: "start", behavior: "instant" });
     await TestUtils.waitForCondition(
       tabInView,
       "Tab should be scrolled into view: " + tab.label
@@ -497,7 +497,7 @@ add_task(async function testSpacesToolbarContextMenu() {
    * This should be used alongside waitForNewTab so the test can keep track of
    * the expected number of tabs.
    *
-   * @param {MozTabmailTab} - The tab to close.
+   * @param {MozTabmailTab} tab - The tab to close.
    */
   async function closeTab(tab) {
     numTabs--;
@@ -934,16 +934,21 @@ add_task(async function testSpacesToolbarExtension() {
   window.gSpacesToolbar.toggleToolbar(false);
 
   for (let i = 0; i < 6; i++) {
-    await window.gSpacesToolbar.createToolbarButton(`testButton${i}`, {
-      title: `Title ${i}`,
-      url: `https://test.invalid/${i}`,
-      iconStyles: new Map([
-        [
-          "--webextension-toolbar-image",
-          'url("chrome://messenger/content/extension.svg")',
-        ],
-      ]),
-    });
+    await window.gSpacesToolbar.createToolbarButton(
+      `testButton${i}`,
+      {
+        url: `https://test.invalid/${i}`,
+      },
+      {
+        title: `Title ${i}`,
+        iconStyles: new Map([
+          [
+            "--webextension-toolbar-image",
+            'url("chrome://messenger/content/extension.svg")',
+          ],
+        ]),
+      }
+    );
     const button = document.getElementById(`testButton${i}`);
     Assert.ok(button);
     Assert.equal(button.title, `Title ${i}`);
@@ -965,27 +970,32 @@ add_task(async function testSpacesToolbarExtension() {
     );
 
     const space = window.gSpacesToolbar.spaces.find(
-      space => space.name == `testButton${i}`
+      s => s.name == `testButton${i}`
     );
     Assert.ok(space);
     Assert.equal(
-      space.url,
+      space.tabProperties.url,
       `https://test.invalid/${i}`,
       "Added url should be correct."
     );
   }
 
   for (let i = 0; i < 6; i++) {
-    await window.gSpacesToolbar.updateToolbarButton(`testButton${i}`, {
-      title: `Modified Title ${i}`,
-      url: `https://test.invalid/${i + 1}`,
-      iconStyles: new Map([
-        [
-          "--webextension-toolbar-image",
-          'url("chrome://messenger/skin/icons/new-addressbook.svg")',
-        ],
-      ]),
-    });
+    await window.gSpacesToolbar.updateToolbarButton(
+      `testButton${i}`,
+      {
+        url: `https://test.invalid/${i + 1}`,
+      },
+      {
+        title: `Modified Title ${i}`,
+        iconStyles: new Map([
+          [
+            "--webextension-toolbar-image",
+            'url("chrome://messenger/skin/icons/new-addressbook.svg")',
+          ],
+        ]),
+      }
+    );
     const button = document.getElementById(`testButton${i}`);
     Assert.ok(button);
     Assert.equal(button.title, `Modified Title ${i}`);
@@ -1011,11 +1021,11 @@ add_task(async function testSpacesToolbarExtension() {
     );
 
     const space = window.gSpacesToolbar.spaces.find(
-      space => space.name == `testButton${i}`
+      s => s.name == `testButton${i}`
     );
     Assert.ok(space);
     Assert.equal(
-      space.url,
+      space.tabProperties.url,
       `https://test.invalid/${i + 1}`,
       "Updated url should be correct."
     );
@@ -1060,7 +1070,7 @@ add_task(async function testSpacesToolbarExtension() {
   for (let i = 0; i < 6; i++) {
     await window.gSpacesToolbar.removeToolbarButton(`testButton${i}`);
     const space = window.gSpacesToolbar.spaces.find(
-      space => space.name == `testButton${i}`
+      s => s.name == `testButton${i}`
     );
     Assert.ok(!space);
 

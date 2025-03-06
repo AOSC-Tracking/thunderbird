@@ -74,12 +74,6 @@
 @BINPATH@/@MOZ_CLANG_RT_ASAN_LIB@
 #endif
 
-#ifdef MOZ_DMD
-; DMD
-@RESPATH@/dmd.py
-@RESPATH@/fix_stacks.py
-#endif
-
 #ifdef PKG_LOCALE_MANIFEST
 #include @PKG_LOCALE_MANIFEST@
 #endif
@@ -204,6 +198,7 @@
 @RESPATH@/chrome/icons/default/calendar-general-dialog.ico
 #elifdef UNIX_BUT_NOT_MAC
 @RESPATH@/chrome/icons/default/*.png
+@RESPATH@/chrome/icons/default/*.svg
 #endif
 
 ; Gloda
@@ -330,7 +325,9 @@
 
 # Files added to components directory via `FINAL_TARGET_FILES.components`.
 
+#ifdef MOZ_SERVICES_SYNC
 @RESPATH@/components/SyncComponents.manifest
+#endif
 @RESPATH@/components/servicesComponents.manifest
 @RESPATH@/components/servicesSettings.manifest
 @RESPATH@/components/cryptoComponents.manifest
@@ -357,6 +354,11 @@
 @BINPATH@/libGLESv2.dll
 #endif # MOZ_ANGLE_RENDERER
 
+#ifdef MOZ_DXCOMPILER
+@BINPATH@/@MOZ_DXC_DLL_NAME@
+@BINPATH@/@MOZ_DXIL_DLL_NAME@
+#endif
+
 ; Background tasks-specific preferences.  These are in the GRE
 ; location since they apply to all tasks at this time.
 #ifdef MOZ_BACKGROUNDTASKS
@@ -367,7 +369,6 @@
 ; Style Sheets, Graphics and other Resources used by the layout engine.
 @RESPATH@/res/EditorOverride.css
 @RESPATH@/res/contenteditable.css
-@RESPATH@/res/designmode.css
 @RESPATH@/res/table-add-column-after-active.gif
 @RESPATH@/res/table-add-column-after-hover.gif
 @RESPATH@/res/table-add-column-after.gif
@@ -437,14 +438,6 @@
 @RESPATH@/chrome/pippki@JAREXT@
 @RESPATH@/chrome/pippki.manifest
 
-; preprocessor.py doesn't handle parentheses, so while the following could be
-; expressed in a single line, it's more clear to break them up.
-#if defined(XP_WIN) || defined(XP_MACOSX)
-#if !defined(_ARM64_)
-@BINPATH@/@DLL_PREFIX@osclientcerts@DLL_SUFFIX@
-#endif
-#endif
-
 ; For process sandboxing
 #if defined(MOZ_SANDBOX)
 #if defined(XP_LINUX)
@@ -480,12 +473,6 @@
 @BINPATH@/@DLL_PREFIX@mozwer@DLL_SUFFIX@
 #endif
 #endif
-#endif
-
-; [ minidump-analyzer ]
-;
-#ifdef MOZ_CRASHREPORTER
-@BINPATH@/minidump-analyzer@BIN_SUFFIX@
 #endif
 
 ; [ Ping Sender ]

@@ -9,22 +9,11 @@
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
-
-var { AppConstants } = ChromeUtils.importESModule(
-  "resource://gre/modules/AppConstants.sys.mjs"
-);
-
-var { ExtensionCommon } = ChromeUtils.importESModule(
-  "resource://gre/modules/ExtensionCommon.sys.mjs"
-);
 var { ExtensionParent } = ChromeUtils.importESModule(
   "resource://gre/modules/ExtensionParent.sys.mjs"
 );
 var { SelectionUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/SelectionUtils.sys.mjs"
-);
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 ChromeUtils.defineESModuleGetters(this, {
@@ -34,7 +23,7 @@ ChromeUtils.defineESModuleGetters(this, {
 XPCOMUtils.defineLazyGlobalGetters(this, ["fetch", "FileReader"]);
 
 var { makeWidgetId } = ExtensionCommon;
-var { DefaultMap, ExtensionError } = ExtensionUtils;
+var { DefaultMap } = ExtensionUtils;
 var { IconDetails } = ExtensionParent;
 
 const ACTION_MENU_TOP_LEVEL_LIMIT = 6;
@@ -274,17 +263,18 @@ var gMenuBuilder = {
 
     if (forceManifestIcons) {
       for (const rootElement of children) {
-        // Display the extension icon on the root element.
-        if (
-          root.extension.manifest.icons &&
-          rootElement.getAttribute("type") !== "checkbox"
-        ) {
+        // Display the extension icon on the root element. Fallback to the generic
+        // extension icon, if there is no extension icon specified in the manifest.
+        if (rootElement.getAttribute("type") !== "checkbox") {
           this.setMenuItemIcon(
             rootElement,
             root.extension,
             contextData,
-            root.extension.manifest.icons
+            root.extension.manifest.icons || {
+              16: "chrome://messenger/content/extension.svg",
+            }
           );
+          rootElement.classList.add("webextension-rootElement");
         } else {
           this.removeMenuItemIcon(rootElement);
         }
@@ -334,6 +324,7 @@ var gMenuBuilder = {
     const element = doc.createXULElement("menu");
     // Menu elements need to have a menupopup child for its menu items.
     const menupopup = doc.createXULElement("menupopup");
+    menupopup.classList.add("webextension-menupopup");
     element.appendChild(menupopup);
     return element;
   },

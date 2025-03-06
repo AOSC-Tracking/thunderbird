@@ -11,7 +11,7 @@ mod interface;
 mod r#type;
 
 use crate::{
-    arena::Handle,
+    arena::{Handle, HandleSet},
     proc::{ExpressionKindTracker, LayoutError, Layouter, TypeResolution},
     FastHashSet,
 };
@@ -78,42 +78,82 @@ bitflags::bitflags! {
     #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct Capabilities: u32 {
-        /// Support for [`AddressSpace:PushConstant`].
-        const PUSH_CONSTANT = 0x1;
+        /// Support for [`AddressSpace::PushConstant`][1].
+        ///
+        /// [1]: crate::AddressSpace::PushConstant
+        const PUSH_CONSTANT = 1 << 0;
         /// Float values with width = 8.
-        const FLOAT64 = 0x2;
-        /// Support for [`Builtin:PrimitiveIndex`].
-        const PRIMITIVE_INDEX = 0x4;
+        const FLOAT64 = 1 << 1;
+        /// Support for [`BuiltIn::PrimitiveIndex`][1].
+        ///
+        /// [1]: crate::BuiltIn::PrimitiveIndex
+        const PRIMITIVE_INDEX = 1 << 2;
         /// Support for non-uniform indexing of sampled textures and storage buffer arrays.
-        const SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING = 0x8;
+        const SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING = 1 << 3;
         /// Support for non-uniform indexing of uniform buffers and storage texture arrays.
-        const UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING = 0x10;
+        const UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING = 1 << 4;
         /// Support for non-uniform indexing of samplers.
-        const SAMPLER_NON_UNIFORM_INDEXING = 0x20;
-        /// Support for [`Builtin::ClipDistance`].
-        const CLIP_DISTANCE = 0x40;
-        /// Support for [`Builtin::CullDistance`].
-        const CULL_DISTANCE = 0x80;
+        const SAMPLER_NON_UNIFORM_INDEXING = 1 << 5;
+        /// Support for [`BuiltIn::ClipDistance`].
+        ///
+        /// [`BuiltIn::ClipDistance`]: crate::BuiltIn::ClipDistance
+        const CLIP_DISTANCE = 1 << 6;
+        /// Support for [`BuiltIn::CullDistance`].
+        ///
+        /// [`BuiltIn::CullDistance`]: crate::BuiltIn::CullDistance
+        const CULL_DISTANCE = 1 << 7;
         /// Support for 16-bit normalized storage texture formats.
-        const STORAGE_TEXTURE_16BIT_NORM_FORMATS = 0x100;
+        const STORAGE_TEXTURE_16BIT_NORM_FORMATS = 1 << 8;
         /// Support for [`BuiltIn::ViewIndex`].
-        const MULTIVIEW = 0x200;
+        ///
+        /// [`BuiltIn::ViewIndex`]: crate::BuiltIn::ViewIndex
+        const MULTIVIEW = 1 << 9;
         /// Support for `early_depth_test`.
-        const EARLY_DEPTH_TEST = 0x400;
-        /// Support for [`Builtin::SampleIndex`] and [`Sampling::Sample`].
-        const MULTISAMPLED_SHADING = 0x800;
+        const EARLY_DEPTH_TEST = 1 << 10;
+        /// Support for [`BuiltIn::SampleIndex`] and [`Sampling::Sample`].
+        ///
+        /// [`BuiltIn::SampleIndex`]: crate::BuiltIn::SampleIndex
+        /// [`Sampling::Sample`]: crate::Sampling::Sample
+        const MULTISAMPLED_SHADING = 1 << 11;
         /// Support for ray queries and acceleration structures.
-        const RAY_QUERY = 0x1000;
+        const RAY_QUERY = 1 << 12;
         /// Support for generating two sources for blending from fragment shaders.
-        const DUAL_SOURCE_BLENDING = 0x2000;
+        const DUAL_SOURCE_BLENDING = 1 << 13;
         /// Support for arrayed cube textures.
-        const CUBE_ARRAY_TEXTURES = 0x4000;
+        const CUBE_ARRAY_TEXTURES = 1 << 14;
         /// Support for 64-bit signed and unsigned integers.
-        const SHADER_INT64 = 0x8000;
+        const SHADER_INT64 = 1 << 15;
         /// Support for subgroup operations.
-        const SUBGROUP = 0x10000;
+        /// Implies support for subgroup operations in both fragment and compute stages,
+        /// but not necessarily in the vertex stage, which requires [`Capabilities::SUBGROUP_VERTEX_STAGE`].
+        const SUBGROUP = 1 << 16;
         /// Support for subgroup barriers.
-        const SUBGROUP_BARRIER = 0x20000;
+        const SUBGROUP_BARRIER = 1 << 17;
+        /// Support for subgroup operations in the vertex stage.
+        const SUBGROUP_VERTEX_STAGE = 1 << 18;
+        /// Support for [`AtomicFunction::Min`] and [`AtomicFunction::Max`] on
+        /// 64-bit integers in the [`Storage`] address space, when the return
+        /// value is not used.
+        ///
+        /// This is the only 64-bit atomic functionality available on Metal 3.1.
+        ///
+        /// [`AtomicFunction::Min`]: crate::AtomicFunction::Min
+        /// [`AtomicFunction::Max`]: crate::AtomicFunction::Max
+        /// [`Storage`]: crate::AddressSpace::Storage
+        const SHADER_INT64_ATOMIC_MIN_MAX = 1 << 19;
+        /// Support for all atomic operations on 64-bit integers.
+        const SHADER_INT64_ATOMIC_ALL_OPS = 1 << 20;
+        /// Support for [`AtomicFunction::Add`], [`AtomicFunction::Sub`],
+        /// and [`AtomicFunction::Exchange { compare: None }`] on 32-bit floating-point numbers
+        /// in the [`Storage`] address space.
+        ///
+        /// [`AtomicFunction::Add`]: crate::AtomicFunction::Add
+        /// [`AtomicFunction::Sub`]: crate::AtomicFunction::Sub
+        /// [`AtomicFunction::Exchange { compare: None }`]: crate::AtomicFunction::Exchange
+        /// [`Storage`]: crate::AddressSpace::Storage
+        const SHADER_FLOAT32_ATOMIC = 1 << 21;
+        /// Support for atomic operations on images.
+        const TEXTURE_ATOMIC = 1 << 22;
     }
 }
 
@@ -230,9 +270,29 @@ pub struct Validator {
     #[allow(dead_code)]
     switch_values: FastHashSet<crate::SwitchValue>,
     valid_expression_list: Vec<Handle<crate::Expression>>,
-    valid_expression_set: BitSet,
+    valid_expression_set: HandleSet<crate::Expression>,
     override_ids: FastHashSet<u16>,
     allow_overrides: bool,
+
+    /// A checklist of expressions that must be visited by a specific kind of
+    /// statement.
+    ///
+    /// For example:
+    ///
+    /// - [`CallResult`] expressions must be visited by a [`Call`] statement.
+    /// - [`AtomicResult`] expressions must be visited by an [`Atomic`] statement.
+    ///
+    /// Be sure not to remove any [`Expression`] handle from this set unless
+    /// you've explicitly checked that it is the right kind of expression for
+    /// the visiting [`Statement`].
+    ///
+    /// [`CallResult`]: crate::Expression::CallResult
+    /// [`Call`]: crate::Statement::Call
+    /// [`AtomicResult`]: crate::Expression::AtomicResult
+    /// [`Atomic`]: crate::Statement::Atomic
+    /// [`Expression`]: crate::Expression
+    /// [`Statement`]: crate::Statement
+    needs_visit: HandleSet<crate::Expression>,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -283,6 +343,8 @@ pub enum ValidationError {
         handle: Handle<crate::Expression>,
         source: ConstExpressionError,
     },
+    #[error("Array size expression {handle:?} is not strictly positive")]
+    ArraySizeError { handle: Handle<crate::Expression> },
     #[error("Constant {handle:?} '{name}' is invalid")]
     Constant {
         handle: Handle<crate::Constant>,
@@ -371,20 +433,38 @@ impl crate::TypeInner {
 impl Validator {
     /// Construct a new validator instance.
     pub fn new(flags: ValidationFlags, capabilities: Capabilities) -> Self {
+        let subgroup_operations = if capabilities.contains(Capabilities::SUBGROUP) {
+            use SubgroupOperationSet as S;
+            S::BASIC | S::VOTE | S::ARITHMETIC | S::BALLOT | S::SHUFFLE | S::SHUFFLE_RELATIVE
+        } else {
+            SubgroupOperationSet::empty()
+        };
+        let subgroup_stages = {
+            let mut stages = ShaderStages::empty();
+            if capabilities.contains(Capabilities::SUBGROUP_VERTEX_STAGE) {
+                stages |= ShaderStages::VERTEX;
+            }
+            if capabilities.contains(Capabilities::SUBGROUP) {
+                stages |= ShaderStages::FRAGMENT | ShaderStages::COMPUTE;
+            }
+            stages
+        };
+
         Validator {
             flags,
             capabilities,
-            subgroup_stages: ShaderStages::empty(),
-            subgroup_operations: SubgroupOperationSet::empty(),
+            subgroup_stages,
+            subgroup_operations,
             types: Vec::new(),
             layouter: Layouter::default(),
             location_mask: BitSet::new(),
             ep_resource_bindings: FastHashSet::default(),
             switch_values: FastHashSet::default(),
             valid_expression_list: Vec::new(),
-            valid_expression_set: BitSet::new(),
+            valid_expression_set: HandleSet::new(),
             override_ids: FastHashSet::default(),
             allow_overrides: true,
+            needs_visit: HandleSet::new(),
         }
     }
 
@@ -466,14 +546,13 @@ impl Validator {
 
         let decl_ty = &gctx.types[o.ty].inner;
         match decl_ty {
-            &crate::TypeInner::Scalar(scalar) => match scalar {
+            &crate::TypeInner::Scalar(
                 crate::Scalar::BOOL
                 | crate::Scalar::I32
                 | crate::Scalar::U32
                 | crate::Scalar::F32
-                | crate::Scalar::F64 => {}
-                _ => return Err(OverrideError::TypeNotScalar),
-            },
+                | crate::Scalar::F64,
+            ) => {}
             _ => return Err(OverrideError::TypeNotScalar),
         }
 
@@ -546,6 +625,20 @@ impl Validator {
                     }
                     .with_span_handle(handle, &module.types)
                 })?;
+            if !self.allow_overrides {
+                if let crate::TypeInner::Array {
+                    size: crate::ArraySize::Pending(_),
+                    ..
+                } = ty.inner
+                {
+                    return Err((ValidationError::Type {
+                        handle,
+                        name: ty.name.clone().unwrap_or_default(),
+                        source: TypeError::UnresolvedOverride(handle),
+                    })
+                    .with_span_handle(handle, &module.types));
+                }
+            }
             mod_info.type_flags.push(ty_info.flags);
             self.types[handle.index()] = ty_info;
         }

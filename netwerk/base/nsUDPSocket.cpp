@@ -11,6 +11,7 @@
 #include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/Telemetry.h"
 
+#include "MockNetworkLayer.h"
 #include "nsQueryObject.h"
 #include "nsSocketTransport2.h"
 #include "nsUDPSocket.h"
@@ -21,6 +22,7 @@
 #include "nsIOService.h"
 #include "prnetdb.h"
 #include "prio.h"
+#include "private/pprio.h"
 #include "nsNetAddr.h"
 #include "nsNetSegmentUtils.h"
 #include "nsServiceManagerUtils.h"
@@ -193,9 +195,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 nsUDPMessage::nsUDPMessage(NetAddr* aAddr, nsIOutputStream* aOutputStream,
                            FallibleTArray<uint8_t>&& aData)
-    : mOutputStream(aOutputStream), mData(std::move(aData)) {
-  memcpy(&mAddr, aAddr, sizeof(NetAddr));
-}
+    : mAddr(*aAddr), mOutputStream(aOutputStream), mData(std::move(aData)) {}
 
 nsUDPMessage::~nsUDPMessage() { DropJSObjects(this); }
 
@@ -227,6 +227,7 @@ nsUDPMessage::GetRawData(JSContext* cx, JS::MutableHandle<JS::Value> aRawData) {
   if (!mJsobj) {
     ErrorResult error;
     mJsobj = dom::Uint8Array::Create(cx, nullptr, mData, error);
+    error.WouldReportJSException();
     if (error.Failed()) {
       return error.StealNSResult();
     }
@@ -255,9 +256,14 @@ nsUDPSocket::nsUDPSocket() {
 
 nsUDPSocket::~nsUDPSocket() { CloseSocket(); }
 
-void nsUDPSocket::AddOutputBytes(int32_t aBytes) {
+void nsUDPSocket::AddOutputBytes(uint32_t aBytes) {
   mByteWriteCount += aBytes;
   profiler_count_bandwidth_written_bytes(aBytes);
+}
+
+void nsUDPSocket::AddInputBytes(uint32_t aBytes) {
+  mByteReadCount += aBytes;
+  profiler_count_bandwidth_read_bytes(aBytes);
 }
 
 void nsUDPSocket::OnMsgClose() {
@@ -344,9 +350,7 @@ class UDPMessageProxy final : public nsIUDPMessage {
  public:
   UDPMessageProxy(NetAddr* aAddr, nsIOutputStream* aOutputStream,
                   FallibleTArray<uint8_t>&& aData)
-      : mOutputStream(aOutputStream), mData(std::move(aData)) {
-    memcpy(&mAddr, aAddr, sizeof(mAddr));
-  }
+      : mAddr(*aAddr), mOutputStream(aOutputStream), mData(std::move(aData)) {}
 
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIUDPMESSAGE
@@ -428,8 +432,7 @@ void nsUDPSocket::OnSocketReady(PRFileDesc* fd, int16_t outFlags) {
         ("nsUDPSocket::OnSocketReady: PR_RecvFrom failed [this=%p]\n", this));
     return;
   }
-  mByteReadCount += count;
-  profiler_count_bandwidth_read_bytes(count);
+  this->AddInputBytes(count);
 
   FallibleTArray<uint8_t> data;
   if (!data.AppendElements(buff, count, fallible)) {
@@ -639,6 +642,16 @@ nsUDPSocket::InitWithAddress(const NetAddr* aAddr, nsIPrincipal* aPrincipal,
 
   PRNetAddrToNetAddr(&addr, &mAddr);
 
+  if (StaticPrefs::network_socket_attach_mock_network_layer() &&
+      xpc::AreNonLocalConnectionsDisabled()) {
+    if (NS_FAILED(AttachMockNetworkLayer(mFD))) {
+      UDPSOCKET_LOG(
+          ("nsSocketTransport::InitiateSocket "
+           "AttachMockNetworkLayer failed [this=%p]\n",
+           this));
+    }
+  }
+
   // wait until AsyncListen is called before polling the socket for
   // client connections.
   return NS_OK;
@@ -781,7 +794,7 @@ void nsUDPSocket::CloseSocket() {
 NS_IMETHODIMP
 nsUDPSocket::GetAddress(NetAddr* aResult) {
   // no need to enter the lock here
-  memcpy(aResult, &mAddr, sizeof(mAddr));
+  *aResult = mAddr;
   return NS_OK;
 }
 
@@ -1194,6 +1207,10 @@ nsUDPSocket::SendWithAddress(const NetAddr* aAddr, const uint8_t* aData,
   return NS_OK;
 }
 
+int64_t nsUDPSocket::GetFileDescriptor() {
+  return PR_FileDesc2NativeHandle(mFD);
+}
+
 NS_IMETHODIMP
 nsUDPSocket::SendBinaryStream(const nsACString& aHost, uint16_t aPort,
                               nsIInputStream* aStream) {
@@ -1232,8 +1249,8 @@ nsUDPSocket::RecvWithAddr(NetAddr* addr, nsTArray<uint8_t>& aData) {
         ("nsUDPSocket::RecvWithAddr: PR_RecvFrom failed [this=%p]\n", this));
     return NS_OK;
   }
-  mByteReadCount += count;
-  profiler_count_bandwidth_read_bytes(count);
+
+  this->AddInputBytes(count);
   PRNetAddrToNetAddr(&prAddr, addr);
 
   if (!aData.AppendElements(buff, count, fallible)) {

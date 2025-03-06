@@ -93,6 +93,7 @@ module.exports = {
       "../mail/components/extensions/test/browser/head.js",
       "../mail/components/im/test/TestProtocol.sys.mjs",
       "../mail/components/preferences/messengerLanguages.js",
+      "../mail/components/search/SearchSupport.sys.mjs",
       "../mail/components/storybook/node_modules",
       "../mail/components/unifiedtoolbar/content/items/mail-go-button.mjs",
       "../mail/components/unifiedtoolbar/content/mail-tab-button.mjs",
@@ -172,10 +173,12 @@ module.exports = {
 
       "../suite",
 
+      "../node_modules",
+
       ...ignorePatterns,
     ],
     includePattern: ".+\\.m?js(doc)?$",
-    excludePattern: "(^|\\/|\\\\)_",
+    excludePattern: "(^|\\/|\\\\|browser|test)_",
   },
   opts: {
     recurse: true,

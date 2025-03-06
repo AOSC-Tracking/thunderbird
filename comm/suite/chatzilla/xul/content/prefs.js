@@ -19,7 +19,7 @@ function initPrefs()
 
     client.prefs = client.prefManager.prefs;
 
-    var profilePath = getSpecialDirectory("ProfD");
+    let profilePath = Services.dirsvc.get("ProfD", Ci.nsIFile);
     profilePath.append("chatzilla");
 
     client.prefManager.addPref("profilePath", profilePath.path, null, null,
@@ -53,24 +53,22 @@ function initPrefs()
 
     // Set up default nickname, if possible.
     var defaultNick = DEFAULT_NICK;
-    var en = getService("@mozilla.org/process/environment;1", "nsIEnvironment");
-    if (en)
-    {
-        /* Get the enviroment variables used by various OSes:
-         *   USER     - Linux, macOS and other *nix-types.
-         *   USERNAME - Windows.
-         *   LOGNAME  - *nix again.
-         */
-        const vars = ["USER", "USERNAME", "LOGNAME"];
+    let env = Cc["@mozilla.org/process/environment;1"]
+                .getService(Ci.nsIEnvironment);
+    /* Get the enviroment variables used by various OSes:
+     *   USER     - Linux, macOS and other *nix-types.
+     *   USERNAME - Windows.
+     *   LOGNAME  - *nix again.
+     */
+    const vars = ["USER", "USERNAME", "LOGNAME"];
 
-        for (var i = 0; i < vars.length; i++)
+    for (let varName of vars)
+    {
+        let nick = env.get(varName);
+        if (nick)
         {
-            var nick = en.get(vars[i]);
-            if (nick)
-            {
-                defaultNick = nick.replace(/ /g, "_");
-                break;
-            }
+            defaultNick = nick.replace(/ /g, "_");
+            break;
         }
     }
 
@@ -786,7 +784,7 @@ function onPrefChanged(prefName, newValue, oldValue)
 
         case "sortUsersByMode":
             if (client.currentObject.TYPE == "IRCChannel")
-                updateUserList();
+                client.currentObject.updateUserList(true);
 
         case "motif.current":
             client.dispatch("sync-motif");

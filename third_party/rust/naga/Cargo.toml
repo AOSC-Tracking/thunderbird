@@ -11,18 +11,23 @@
 
 [package]
 edition = "2021"
-rust-version = "1.74"
+rust-version = "1.76"
 name = "naga"
-version = "0.20.0"
+version = "23.0.0"
 authors = ["gfx-rs developers"]
+build = "build.rs"
 exclude = [
     "bin/**/*",
     "tests/**/*",
     "Cargo.lock",
     "target/**/*",
 ]
+autolib = false
+autobins = false
+autoexamples = false
 autotests = false
-description = "Shader translation infrastructure"
+autobenches = false
+description = "Shader translator and validator. Part of the wgpu project"
 readme = "README.md"
 keywords = [
     "shader",
@@ -37,22 +42,26 @@ resolver = "2"
 [package.metadata.docs.rs]
 all-features = true
 
-[[test]]
-name = "naga-test"
-path = "tests/root.rs"
+[lib]
+name = "naga"
+path = "src/lib.rs"
 
 [dependencies]
-arrayvec = "0.7"
-bit-set = "0.5"
-bitflags = "2.5"
 log = "0.4"
-rustc-hash = "1.1.0"
-thiserror = "1.0.61"
 
 [dependencies.arbitrary]
-version = "1.3"
+version = "1.4"
 features = ["derive"]
 optional = true
+
+[dependencies.arrayvec]
+version = "0.7"
+
+[dependencies.bit-set]
+version = "0.8"
+
+[dependencies.bitflags]
+version = "2.7"
 
 [dependencies.codespan-reporting]
 version = "0.11.0"
@@ -63,39 +72,56 @@ optional = true
 
 [dependencies.indexmap]
 version = "2"
-features = ["std"]
 
 [dependencies.petgraph]
-version = "0.6"
+version = "0.7"
 optional = true
 
 [dependencies.pp-rs]
 version = "0.2.1"
 optional = true
 
+[dependencies.rustc-hash]
+version = "1"
+
 [dependencies.serde]
-version = "1.0.202"
-features = ["derive"]
+version = "1.0.217"
+features = [
+    "default",
+    "derive",
+]
 optional = true
 
 [dependencies.spirv]
 version = "0.3"
 optional = true
 
+[dependencies.strum]
+version = "0.26.0"
+features = ["derive"]
+
 [dependencies.termcolor]
 version = "1.4.1"
 
+[dependencies.thiserror]
+version = "2"
+
 [dependencies.unicode-xid]
-version = "0.2.3"
+version = "0.2.6"
 optional = true
 
 [dev-dependencies]
 diff = "0.1"
-env_logger = "0.11"
 ron = "0.8.0"
+
+[dev-dependencies.env_logger]
+version = "0.11"
 
 [dev-dependencies.hlsl-snapshots]
 path = "./hlsl-snapshots"
+
+[dev-dependencies.itertools]
+version = "0.13.0"
 
 [dev-dependencies.rspirv]
 version = "0.11"
@@ -103,12 +129,19 @@ git = "https://github.com/gfx-rs/rspirv"
 rev = "b969f175d5663258b4891e44b76c1544da9661ab"
 
 [dev-dependencies.serde]
-version = "1.0"
-features = ["derive"]
+version = "1"
+features = [
+    "default",
+    "derive",
+]
+default-features = false
 
 [dev-dependencies.spirv]
 version = "0.3"
 features = ["deserialize"]
+
+[build-dependencies.cfg_aliases]
+version = "0.2.1"
 
 [features]
 arbitrary = [
@@ -127,7 +160,9 @@ dot-out = []
 glsl-in = ["dep:pp-rs"]
 glsl-out = []
 hlsl-out = []
+hlsl-out-if-target-windows = []
 msl-out = []
+msl-out-if-target-apple = []
 serialize = [
     "dep:serde",
     "bitflags/serde",

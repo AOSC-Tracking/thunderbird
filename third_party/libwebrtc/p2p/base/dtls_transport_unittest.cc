@@ -22,9 +22,9 @@
 #include "p2p/base/fake_ice_transport.h"
 #include "p2p/base/packet_transport_internal.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/crypto_random.h"
 #include "rtc_base/dscp.h"
 #include "rtc_base/gunit.h"
-#include "rtc_base/helpers.h"
 #include "rtc_base/network/received_packet.h"
 #include "rtc_base/rtc_certificate.h"
 #include "rtc_base/ssl_adapter.h"
@@ -66,7 +66,7 @@ void SetRemoteFingerprintFromCert(
           ->SetRemoteParameters(
               fingerprint->algorithm,
               reinterpret_cast<const uint8_t*>(fingerprint->digest.data()),
-              fingerprint->digest.size(), absl::nullopt)
+              fingerprint->digest.size(), std::nullopt)
           .ok());
 }
 
@@ -92,8 +92,6 @@ class DtlsTestClient : public sigslot::has_slots<> {
     fake_ice_transport_->SetAsync(true);
     fake_ice_transport_->SetAsyncDelay(async_delay_ms);
     fake_ice_transport_->SetIceRole(role);
-    fake_ice_transport_->SetIceTiebreaker((role == ICEROLE_CONTROLLING) ? 1
-                                                                        : 2);
     // Hook the raw packets so that we can verify they are encrypted.
     fake_ice_transport_->RegisterReceivedPacketCallback(
         this, [&](rtc::PacketTransportInternal* transport,
@@ -458,6 +456,22 @@ TEST_F(DtlsTransportTest, TestTransferDtlsCombineRecords) {
   FakeIceTransport* transport = client1_.fake_ice_transport();
   transport->combine_outgoing_packets(true);
   TestTransfer(500, 100, /*srtp=*/false);
+}
+
+TEST_F(DtlsTransportTest, KeyingMaterialExporter) {
+  PrepareDtls(rtc::KT_DEFAULT);
+  ASSERT_TRUE(Connect());
+
+  int crypto_suite;
+  EXPECT_TRUE(client1_.dtls_transport()->GetSrtpCryptoSuite(&crypto_suite));
+  int key_len;
+  int salt_len;
+  EXPECT_TRUE(rtc::GetSrtpKeyAndSaltLengths(crypto_suite, &key_len, &salt_len));
+  rtc::ZeroOnFreeBuffer<uint8_t> client1_out(2 * (key_len + salt_len));
+  rtc::ZeroOnFreeBuffer<uint8_t> client2_out(2 * (key_len + salt_len));
+  EXPECT_TRUE(client1_.dtls_transport()->ExportSrtpKeyingMaterial(client1_out));
+  EXPECT_TRUE(client2_.dtls_transport()->ExportSrtpKeyingMaterial(client2_out));
+  EXPECT_EQ(client1_out, client2_out);
 }
 
 class DtlsTransportVersionTest

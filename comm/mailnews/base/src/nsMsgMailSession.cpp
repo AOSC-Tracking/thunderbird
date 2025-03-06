@@ -17,7 +17,6 @@
 #include "nsIObserverService.h"
 #include "nsIAppStartup.h"
 #include "nsISupportsPrimitives.h"
-#include "nsIAppShellService.h"
 #include "nsAppShellCID.h"
 #include "nsIWindowMediator.h"
 #include "nsIWindowWatcher.h"
@@ -347,39 +346,6 @@ NS_IMETHODIMP nsMsgMailSession::AddMsgWindow(nsIMsgWindow* msgWindow) {
 
 NS_IMETHODIMP nsMsgMailSession::RemoveMsgWindow(nsIMsgWindow* msgWindow) {
   mWindows.RemoveObject(msgWindow);
-  // Mac keeps a hidden window open so the app doesn't shut down when
-  // the last window is closed. So don't shutdown the account manager in that
-  // case. Similarly, for suite, we don't want to disable mailnews when the
-  // last mail window is closed.
-#if !defined(XP_MACOSX) && !defined(MOZ_SUITE)
-  if (!mWindows.Count()) {
-    nsresult rv;
-    nsCOMPtr<nsIMsgAccountManager> accountManager =
-        do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-    if (NS_FAILED(rv)) return rv;
-    accountManager->CleanupOnExit();
-  }
-#endif
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgMailSession::IsFolderOpenInWindow(nsIMsgFolder* folder,
-                                                     bool* aResult) {
-  NS_ENSURE_ARG_POINTER(aResult);
-
-  *aResult = false;
-
-  uint32_t count = mWindows.Count();
-
-  for (uint32_t i = 0; i < count; i++) {
-    nsCOMPtr<nsIMsgFolder> openFolder;
-    mWindows[i]->GetOpenFolder(getter_AddRefs(openFolder));
-    if (folder == openFolder.get()) {
-      *aResult = true;
-      break;
-    }
-  }
-
   return NS_OK;
 }
 
@@ -603,15 +569,8 @@ NS_IMETHODIMP nsMsgShutdownService::Observe(nsISupports* aSubject,
       nsCOMPtr<nsIWindowMediator> winMed =
           do_GetService(NS_WINDOWMEDIATOR_CONTRACTID);
       winMed->GetMostRecentWindow(nullptr, getter_AddRefs(internalDomWin));
-
-      // If not use the hidden window.
-      if (!internalDomWin) {
-        nsCOMPtr<nsIAppShellService> appShell(
-            do_GetService(NS_APPSHELLSERVICE_CONTRACTID));
-        appShell->GetHiddenDOMWindow(getter_AddRefs(internalDomWin));
-        NS_ENSURE_TRUE(internalDomWin,
-                       NS_ERROR_FAILURE);  // bail if we don't get a window.
-      }
+      NS_ENSURE_TRUE(internalDomWin,
+                     NS_ERROR_FAILURE);  // Bail if we don't get a window.
     }
 
     if (!mQuitForced) {

@@ -662,9 +662,9 @@ export const CalendarTestUtils = {
    *       no leading spaces and the second is indented by two spaces.
    * `;
    *
-   * @param strings       The string fragments from the template string
-   * @param ...values     The interpolated values
-   * @returns The interpolated, dedented string
+   * @param {string[]} strings - The string fragments from the template string.
+   * @param  {...string} values - The interpolated values.
+   * @returns {string} The interpolated, dedented string.
    */
   dedent(strings, ...values) {
     const parts = [];
@@ -704,8 +704,8 @@ export const CalendarTestUtils = {
    * Creates and registers a new calendar with the calendar manager. The
    * created calendar will be set as the default calendar.
    *
-   * @param {string} - name
-   * @param {string} - type
+   * @param {string} [name="Test"] - Name.
+   * @param {string} [type="storage"] - Type.
    *
    * @returns {calICalendar}
    */
@@ -1000,10 +1000,8 @@ export const CalendarTestUtils = {
    */
   async goToDate(win, year, month, day) {
     const miniMonth = win.document.getElementById("calMinimonth");
-
-    const activeYear = miniMonth.querySelector(".minimonth-year-name").getAttribute("value");
-
-    const activeMonth = miniMonth.querySelector(".minimonth-month-name").getAttribute("monthIndex");
+    const activeYear = miniMonth.getAttribute("year");
+    const activeMonth = miniMonth.getAttribute("month");
 
     async function doScroll(name, difference, sleepTime) {
       if (difference === 0) {
@@ -1024,10 +1022,10 @@ export const CalendarTestUtils = {
     await doScroll("year", activeYear - year, 10);
     await doScroll("month", activeMonth - (month - 1), 25);
 
-    function getMiniMonthDay(week, day) {
+    function getMiniMonthDay(week, weekDay) {
       return miniMonth.querySelector(
         `.minimonth-cal-box > tr.minimonth-row-body:nth-of-type(${week + 1}) > ` +
-          `td.minimonth-day:nth-of-type(${day})`
+          `td.minimonth-day:nth-of-type(${weekDay})`
       );
     }
 
@@ -1106,9 +1104,9 @@ export const CalendarTestUtils = {
         alignStart == (target.ownerDocument.dir == "ltr")
           ? targetRect.left - scrollRect.left
           : targetRect.right - scrollRect.right;
-      multidayView.grid.scrollBy(xDiff, yDiff);
+      multidayView.grid.scrollBy({ left: xDiff, top: yDiff, behavior: "instant" });
     } else {
-      target.scrollIntoView(alignStart);
+      target.scrollIntoView({ block: alignStart ? "start" : "end", behavior: "instant" });
     }
   },
 
@@ -1155,11 +1153,10 @@ export const CalendarTestUtils = {
       // where P is the pixelsPerMinute of the view. Thus
       //   scrollMinute = min +- round(0.5 / P)
       const roundingError = Math.round(0.5 / view.pixelsPerMinute);
-      view.scrollToMinute(scrollMinute);
-      await TestUtils.waitForCondition(
-        () => Math.abs(view.scrollMinute - scrollMinute) <= roundingError,
-        "Waiting for scroll minute to restore"
-      );
+      await TestUtils.waitForCondition(() => {
+        view.scrollToMinute(scrollMinute);
+        return Math.abs(view.scrollMinute - scrollMinute) <= roundingError;
+      }, "Waiting for scroll minute to restore");
     }
     await CalendarTestUtils.closeCalendarTab(win);
   },

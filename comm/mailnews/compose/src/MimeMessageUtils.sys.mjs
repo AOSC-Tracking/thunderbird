@@ -229,7 +229,8 @@ export var MsgUtils = {
             ).messageURIToMsgHdr(originalMsgURI);
         } catch (e) {
           console.warn(
-            `messageServiceFromURI failed for ${originalMsgURI}\n${e.stack}`
+            `messageServiceFromURI failed for ${originalMsgURI}`,
+            e.stack
           );
         }
         if (msgHdr) {
@@ -977,7 +978,7 @@ export var MsgUtils = {
   formatStringWithSMTPHostName(userIdentity, composeBundle, errorName) {
     const smtpServer =
       MailServices.outgoingServer.getServerByIdentity(userIdentity);
-    const smtpHostname = smtpServer.hostname;
+    const smtpHostname = smtpServer.serverURI.host;
     return composeBundle.formatStringFromName(errorName, [smtpHostname]);
   },
 

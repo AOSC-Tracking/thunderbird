@@ -16,6 +16,7 @@ support-files = [
 tags = "searchnontelem"
 
 ["browser_426329.js"]
+support-files = ["test.html", "discovery.html", "426329.xml"]
 
 ["browser_addKeywordSearch.js"]
 
@@ -46,16 +47,14 @@ support-files = [
 ["browser_contextmenu_whereToOpenLink.js"]
 
 ["browser_defaultPrivate_nimbus.js"]
-support-files = [
-  "search-engines/basic/manifest.json",
-  "search-engines/private/manifest.json",
-]
 
 ["browser_google_behavior.js"]
 
 ["browser_hiddenOneOffs_diacritics.js"]
 
 ["browser_ime_composition.js"]
+
+["browser_oneOff.js"]
 
 ["browser_oneOffContextMenu.js"]
 
@@ -70,11 +69,11 @@ support-files = ["trendingSuggestionEngine.sjs"]
 
 ["browser_searchEngine_behaviors.js"]
 
+["browser_searchPanelHeader.js"]
+
 ["browser_search_annotation.js"]
 
 ["browser_search_discovery.js"]
-
-["browser_search_nimbus_reload.js"]
 
 ["browser_searchbar_addEngine.js"]
 

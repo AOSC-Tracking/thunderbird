@@ -89,6 +89,10 @@ export class AddrBookDirectory {
     );
   }
 
+  /**
+   * @param {string} uid
+   * @returns {nsIAbCard}
+   */
   getCard(uid) {
     const card = new lazy.AddrBookCard();
     card.directoryUID = this.UID;
@@ -111,8 +115,11 @@ export class AddrBookDirectory {
       Cr.NS_ERROR_NOT_IMPLEMENTED
     );
   }
-  /** @abstract */
-  deleteCard() {
+  /**
+   * @abstract
+   * @param {string} _uid
+   */
+  deleteCard(_uid) {
     throw new Components.Exception(
       `${this.constructor.name} does not implement deleteCard.`,
       Cr.NS_ERROR_NOT_IMPLEMENTED
@@ -125,8 +132,11 @@ export class AddrBookDirectory {
       Cr.NS_ERROR_NOT_IMPLEMENTED
     );
   }
-  /** @abstract */
-  deleteList() {
+  /**
+   * @abstract
+   * @param {string} _uid
+   */
+  deleteList(_uid) {
     throw new Components.Exception(
       `${this.constructor.name} does not implement deleteList.`,
       Cr.NS_ERROR_NOT_IMPLEMENTED
@@ -583,14 +593,12 @@ export class AddrBookDirectory {
       }
     }
 
-    // Increment this preference if the DisplayName property changed.
+    // Increment this preference if the the card changed.
     // This will cause the UI to throw away cached values.
-    if ("DisplayName" in changeData) {
-      Services.prefs.setIntPref(
-        "mail.displayname.version",
-        Services.prefs.getIntPref("mail.displayname.version", 0) + 1
-      );
-    }
+    Services.prefs.setIntPref(
+      "mail.displayname.version",
+      Services.prefs.getIntPref("mail.displayname.version", 0) + 1
+    );
 
     // Send the card as it is in this directory, not as passed to this function.
     const newCard = this.getCard(card.UID);
@@ -628,14 +636,12 @@ export class AddrBookDirectory {
       }
     }
 
-    // Increment this preference if one or more cards has a display name.
+    // Increment this preference if one or more cards changed.
     // This will cause the UI to throw away cached values.
-    if (updateDisplayNameVersion) {
-      Services.prefs.setIntPref(
-        "mail.displayname.version",
-        Services.prefs.getIntPref("mail.displayname.version", 0) + 1
-      );
-    }
+    Services.prefs.setIntPref(
+      "mail.displayname.version",
+      Services.prefs.getIntPref("mail.displayname.version", 0) + 1
+    );
 
     for (const card of cards) {
       Services.obs.notifyObservers(card, "addrbook-contact-deleted", this.UID);
@@ -673,14 +679,12 @@ export class AddrBookDirectory {
     }
     this.saveCardProperties(uid, newProperties);
 
-    // Increment this preference if the card has a display name.
+    // Increment this preference if the card was dropped.
     // This will cause the UI to throw away cached values.
-    if (card.displayName) {
-      Services.prefs.setIntPref(
-        "mail.displayname.version",
-        Services.prefs.getIntPref("mail.displayname.version", 0) + 1
-      );
-    }
+    Services.prefs.setIntPref(
+      "mail.displayname.version",
+      Services.prefs.getIntPref("mail.displayname.version", 0) + 1
+    );
 
     const newCard = this.getCard(uid);
     Services.obs.notifyObservers(newCard, "addrbook-contact-created", this.UID);

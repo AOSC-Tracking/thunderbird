@@ -8,7 +8,7 @@
 #include "mozilla/gtest/nsUserCharacteristics.h"
 
 #include "mozilla/glean/GleanPings.h"
-#include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/glean/ResistfingerprintingMetrics.h"
 
 using namespace mozilla;
 
@@ -143,4 +143,67 @@ TEST(ResistFingerprinting, UserCharacteristics_ClearPref)
 
   Preferences::SetBool("datareporting.healthreport.uploadEnabled",
                        original_value);
+}
+
+const auto* const kLastVersionPref =
+    "toolkit.telemetry.user_characteristics_ping.last_version_sent";
+const auto* const kCurrentVersionPref =
+    "toolkit.telemetry.user_characteristics_ping.current_version";
+const auto* const kOptOutPref =
+    "toolkit.telemetry.user_characteristics_ping.opt-out";
+const auto* const kSendOncePref =
+    "toolkit.telemetry.user_characteristics_ping.send-once";
+const auto* const kResistFingerprintingPref = "privacy.resistFingerprinting";
+const auto* const kResistFingerprintingPrefPBMode =
+    "privacy.resistFingerprinting.pbmode";
+const auto* const kFingerprintingProtectionOverrides =
+    "privacy.fingerprintingProtection.overrides";
+
+TEST(ResistFingerprinting, UserCharacteristics_ShouldSubmit)
+{
+  // Test nsUserCharacteristics::ShouldSubmit()
+
+  // Make sure kCurrentVersionPref > kLastVersionPref and kCurrentVersionPref !=
+  // 0
+  Preferences::SetInt(kCurrentVersionPref, 1);
+  Preferences::SetInt(kLastVersionPref, 0);
+
+  // Verify ShouldSubmit returns true when kCurrentVersionPref >
+  // kLastVersionPref
+  ASSERT_TRUE(nsUserCharacteristics::ShouldSubmit());
+
+  // Verify opting-out works
+  Preferences::SetBool(kOptOutPref, true);
+  ASSERT_FALSE(nsUserCharacteristics::ShouldSubmit());
+
+  Preferences::SetBool(kOptOutPref, false);
+  ASSERT_TRUE(nsUserCharacteristics::ShouldSubmit());
+
+  // Verify ShouldSubmit returns false when kCurrentVersionPref = 0
+  Preferences::SetInt(kCurrentVersionPref, 0);
+  ASSERT_FALSE(nsUserCharacteristics::ShouldSubmit());
+
+  // Verify sending a ping once regardless of version works
+  Preferences::SetBool(kSendOncePref, true);
+  ASSERT_TRUE(nsUserCharacteristics::ShouldSubmit());
+  Preferences::SetInt(kCurrentVersionPref, 1);
+
+  // Verify precedence
+  Preferences::SetBool(kOptOutPref, true);
+  ASSERT_FALSE(nsUserCharacteristics::ShouldSubmit());
+  Preferences::SetBool(kOptOutPref, false);
+
+  // Verify resistFingerprinting prevents submission
+  Preferences::SetBool(kResistFingerprintingPref, true);
+  ASSERT_FALSE(nsUserCharacteristics::ShouldSubmit());
+  Preferences::SetBool(kResistFingerprintingPref, false);
+
+  Preferences::SetBool(kResistFingerprintingPrefPBMode, true);
+  ASSERT_FALSE(nsUserCharacteristics::ShouldSubmit());
+  Preferences::SetBool(kResistFingerprintingPrefPBMode, false);
+
+  // Verify non-empty fingerprintingProtection overrides prevent submission
+  Preferences::SetCString(kFingerprintingProtectionOverrides, "test");
+  ASSERT_FALSE(nsUserCharacteristics::ShouldSubmit());
+  Preferences::ClearUser(kFingerprintingProtectionOverrides);
 }

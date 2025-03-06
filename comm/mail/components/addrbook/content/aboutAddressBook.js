@@ -23,9 +23,8 @@ ChromeUtils.defineLazyGetter(this, "ABQueryUtils", function () {
   return ChromeUtils.importESModule("resource:///modules/ABQueryUtils.sys.mjs");
 });
 ChromeUtils.defineLazyGetter(this, "ICAL", function () {
-  return ChromeUtils.importESModule(
-    "resource:///modules/calendar/Ical.sys.mjs"
-  ).default;
+  return ChromeUtils.importESModule("resource:///modules/calendar/Ical.sys.mjs")
+    .default;
 });
 
 ChromeUtils.defineESModuleGetters(this, {
@@ -90,7 +89,10 @@ window.addEventListener("load", () => {
     .addEventListener("click", event => {
       document
         .getElementById("booksPaneCreateBookContext")
-        .openPopup(event.target, "after_start", { triggerEvent: event });
+        .openPopup(event.target, {
+          position: "after_start",
+          triggerEvent: event,
+        });
     });
   document
     .getElementById("booksPaneCreateContact")
@@ -1218,7 +1220,7 @@ customElements.whenDefined("tree-view-table-row").then(() => {
     /**
      * Generate the layout for the current card.
      *
-     * @note This element could be recycled, make sure you set or clear all
+     * NOTE: This element could be recycled, make sure you set or clear all
      * properties.
      */
     _fillRow() {
@@ -1312,7 +1314,7 @@ customElements.whenDefined("tree-view-table-row").then(() => {
     /**
      * Generate the layout for the current card.
      *
-     * @note This element could be recycled, make sure you set or clear all
+     * NOTE: This element could be recycled, make sure you set or clear all
      * properties.
      */
     _fillRow() {
@@ -1343,7 +1345,7 @@ var cardsPane = {
   /**
    * The array of columns for the table layout.
    *
-   * @type {Array}
+   * @type {Array<object>}
    */
   COLUMNS: [
     {
@@ -1740,7 +1742,7 @@ var cardsPane = {
   /**
    * Display a list.
    *
-   * @param {bookUID} uid - The UID of the address book containing the list.
+   * @param {bookUID} bookUID - The UID of the address book containing the list.
    * @param {string} uid - The UID of the list to display.
    */
   displayList(bookUID, uid) {
@@ -1809,7 +1811,8 @@ var cardsPane = {
   /**
    * Set the name format to be displayed.
    *
-   * @param {integer} format - One of the nsIAbCard.GENERATE_* constants.
+   * @param {Event} event - Event whose value is one of the
+   *   nsIAbCard.GENERATE_* constants.
    */
   setNameFormat(event) {
     // AddrBookDataAdapter will detect this change and update automatically.
@@ -3009,7 +3012,7 @@ var detailsPane = {
   /**
    * Sanitize the link if linkifying is not desired (based on href value).
    *
-   * @param {HTMLAnchorElement) anchor
+   * @param {HTMLAnchorElement} anchor
    * @returns {HTMLAnchorElement|Text} sanitized anchor
    */
   _sanitizeHref(anchor) {
@@ -3713,9 +3716,8 @@ var detailsPane = {
     const listDirectory = MailServices.ab.getDirectory(listCard.mailListURI);
 
     document.querySelector("#viewContact .list-header").hidden = false;
-    document.querySelector(
-      "#viewContact .list-header > h1"
-    ).textContent = `${listDirectory.dirName}`;
+    document.querySelector("#viewContact .list-header > h1").textContent =
+      `${listDirectory.dirName}`;
 
     const cards = Array.from(listDirectory.childCards, card => {
       return {
@@ -4322,15 +4324,12 @@ var printHandler = {
   printDirectory(directory) {
     const title = directory ? directory.dirName : document.title;
 
-    let cards;
-    if (directory) {
-      cards = directory.childCards;
-    } else {
-      cards = [];
-      for (const directory of MailServices.ab.directories) {
-        cards = cards.concat(directory.childCards);
-      }
-    }
+    const cards = directory
+      ? directory.childCards
+      : MailServices.ab.directories.reduce(
+          (t, d) => t.concat(d.childCards),
+          []
+        );
 
     this._printCards(title, cards);
   },

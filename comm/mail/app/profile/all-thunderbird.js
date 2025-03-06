@@ -138,6 +138,19 @@ pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?loc
   pref("app.update.noWindowAutoRestart.delayMs", 300000);
 #endif
 
+// The Multi Session Install Lockout prevents updates from being installed at
+// startup when they normally would be if there are other instances using the
+// installation. We only do this for a limited amount of time before we go ahead
+// and apply the update anyways.
+// Hopefully, at some point, updating Thunderbird while it is running will not break
+// things and this mechanism can be removed.
+// Note that these prefs are bit dangerous because having different values in
+// different profiles could cause erratic behavior.
+// This feature is also affected by
+// `app.update.multiSessionInstallLockout.timeoutMs`, which is in the branding
+// section.
+pref("app.update.multiSessionInstallLockout.enabled", true);
+
 // URL for "Learn More" for DataCollection
 pref("toolkit.datacollection.infoURL",
      "https://www.mozilla.org/thunderbird/legal/privacy/#telemetry");
@@ -172,7 +185,6 @@ pref("javascript.options.showInConsole", true);
 
 // Controls enabling of the extension system logging (can reduce performance)
 pref("extensions.logging.enabled", false);
-pref("extensions.overlayloader.loglevel", "warn");
 
 pref("extensions.abuseReport.enabled", false);
 
@@ -296,7 +308,6 @@ pref("browser.preferences.animateFadeIn", true);
 #else
 pref("browser.preferences.animateFadeIn", false);
 #endif
-pref("browser.preferences.search", true);
 
 // Whether the results panel should be kept open during IME composition.
 // The default value is false because some IME open a picker panel, and we end
@@ -360,6 +371,9 @@ pref("mail.threadpane.padding.bottom_percent", 10);
 // Use correspondents column instead of from/recipient columns.
 pref("mail.threadpane.use_correspondents", true);
 
+// Allow horizontal scroll and last column resize on the thread pane.
+pref("mail.threadpane.table.horizontal_scroll", false);
+
 // To allow images to be inserted into a composition with an auth prompt, we
 // need the following two.
 pref("network.auth.subresource-img-cross-origin-http-auth-allow", true);
@@ -415,6 +429,7 @@ pref("network.protocol-handler.expose.mailbox", true);
 // (e.g. message pane) where we may divert them out to external applications.
 pref("network.protocol-handler.expose.about", true);
 pref("network.protocol-handler.expose.blob", true);
+pref("network.protocol-handler.expose.chrome", true);
 pref("network.protocol-handler.expose.data", true);
 pref("network.protocol-handler.expose.file", true);
 pref("network.protocol-handler.expose.http", true);
@@ -467,9 +482,6 @@ pref("security.aboutcertificate.enabled", true);
 // has on a preloaded list, it causes S/MIME failures. (Bug 1777336)
 pref("security.intermediate_preloading_healer.enabled", false);
 
-// Don't show a prompt for external applications.
-pref("security.external_protocol_requires_permission", false);
-
 // Prompt for the primary password prior to opening application windows,
 // to avoid the race that triggers multiple prompts (see bug 177175).
 pref("security.prompt_for_master_password_on_startup", true);
@@ -512,15 +524,14 @@ pref("spellchecker.dictionary", "");
 // Dictionary download preference
 pref("spellchecker.dictionaries.download.url", "https://addons.thunderbird.net/%LOCALE%/%APP%/dictionaries/");
 
-// profile.force.migration can be used to bypass the migration wizard, forcing migration from a particular
-// mail application without any user intervention. Possible values are:
-// seamonkey (mozilla suite) and outlook.
-pref("profile.force.migration", "");
-
 // prefs to control the mail alert notification
 #ifndef XP_MACOSX
 pref("alerts.totalOpenTime", 10000);
 #endif
+
+// Don't show a prompt for external applications (http(s):// will never prompt).
+pref("mail.external_protocol_requires_permission", false);
+
 
 // analyze urls in mail messages for scams
 pref("mail.phishing.detection.enabled", true);
@@ -691,9 +702,6 @@ pref("font.size.variable.el", 15);
 pref("font.size.monospace.el", 12);
 #endif
 
-// Since different versions of Windows need different settings, we'll handle
-// this in MailMigrator.sys.mjs.
-
 // Linux, in other words.  Other OSes may wish to override.
 #ifdef UNIX_BUT_NOT_MAC
 // The font.name-list fallback is defined in case font.name isn't
@@ -850,10 +858,6 @@ pref("privacy.userContext.enabled", false);
 // muting the camera and microphone.
 pref("privacy.webrtc.globalMuteToggles", false);
 
-// If set to true, Thunderbird will collapse the main menu for new profiles
-// (or, more precisely, profiles that start with no accounts created).
-pref("mail.main_menu.collapse_by_default", true);
-
 // If set to true, when saving a message to a file, use underscore
 // instead of space in the file name.
 pref("mail.save_msg_filename_underscores_for_space", false);
@@ -864,8 +868,8 @@ pref("security.allow_eval_with_system_principal", false);
 // Enable FIDO U2F
 pref("security.webauth.u2f", true);
 
-// Use OS date and time settings by default.
-pref("intl.regional_prefs.use_os_locales", true);
+// Use application date and time settings by default.
+pref("intl.regional_prefs.use_os_locales", false);
 
 // Multi-lingual preferences:
 //  *.enabled - Are langpacks available for the build of Firefox?
@@ -895,8 +899,6 @@ pref("toolkit.osKeyStore.loglevel", "Warn");
 pref("devtools.chrome.enabled", true);
 pref("devtools.debugger.remote-enabled", true);
 pref("devtools.selfxss.count", 5);
-// Enable extensionStorage storage actor by default
-pref("devtools.storage.extensionStorage.enabled", true);
 
 // Toolbox preferences
 pref("devtools.toolbox.footer.height", 250);
@@ -904,22 +906,16 @@ pref("devtools.toolbox.sidebar.width", 500);
 pref("devtools.toolbox.host", "bottom");
 pref("devtools.toolbox.previousHost", "right");
 pref("devtools.toolbox.selectedTool", "inspector");
-pref("devtools.toolbox.sideEnabled", true);
 pref("devtools.toolbox.zoomValue", "1");
 pref("devtools.toolbox.splitconsole.enabled", true);
 pref("devtools.toolbox.splitconsole.open", false);
 pref("devtools.toolbox.splitconsoleHeight", 100);
 pref("devtools.toolbox.tabsOrder", "");
-pref("devtools.netmonitor.features.newEditAndResend", false);
-
-// The fission pref for enabling the "Multiprocess Browser Toolbox", which will
-// make it possible to debug anything in Firefox (See Bug 1570639 for more
-// information).
-#if defined(NIGHTLY_BUILD)
-pref("devtools.browsertoolbox.fission", true);
-#else
-pref("devtools.browsertoolbox.fission", false);
-#endif
+// This is only used for local Web Extension debugging,
+// and allows to keep the window on top of all others,
+// so that you can debug the Firefox window, while keeping the devtools
+// always visible
+pref("devtools.toolbox.alwaysOnTop", true);
 
 // When the Multiprocess Browser Toolbox is enabled, you can configure the scope of it:
 // - "everything" will enable debugging absolutely everything in the browser
@@ -927,6 +923,17 @@ pref("devtools.browsertoolbox.fission", false);
 // - "parent-process" will restrict debugging to the parent process
 //   All privileged javascript, documents and workers running in the parent process.
 pref("devtools.browsertoolbox.scope", "everything");
+
+// This preference will enable watching top-level targets from the server side.
+pref("devtools.target-switching.server.enabled", true);
+
+// In DevTools, create a target for each frame (i.e. not only for top-level document and
+// remote frames).
+pref("devtools.every-frame-target.enabled", true);
+
+// Controls the hability to debug popups from the same DevTools
+// of the original tab the popups are coming from
+pref("devtools.popups.debug", false);
 
 // Toolbox Button preferences
 pref("devtools.command-button-pick.enabled", true);
@@ -961,12 +968,10 @@ pref("devtools.inspector.imagePreviewTooltipSize", 300);
 pref("devtools.inspector.showUserAgentStyles", false);
 // Show native anonymous content and user agent shadow roots
 pref("devtools.inspector.showAllAnonymousContent", false);
-// Enable the inline CSS compatibility warning in inspector rule view
-pref("devtools.inspector.ruleview.inline-compatibility-warning.enabled", false);
-// Enable the compatibility tool in the inspector.
-pref("devtools.inspector.compatibility.enabled", true);
-// Enable color scheme simulation in the inspector.
-pref("devtools.inspector.color-scheme-simulation.enabled", true);
+// Enable overflow debugging in the inspector.
+pref("devtools.overflow.debugging.enabled", true);
+// Enable drag to edit properties in the inspector rule view.
+pref("devtools.inspector.draggable_properties", true);
 
 // Grid highlighter preferences
 pref("devtools.gridinspector.gridOutlineMaxColumns", 50);
@@ -980,6 +985,9 @@ pref("devtools.gridinspector.maxHighlighters", 3);
 // Whether or not simplified highlighters should be used when
 // prefers-reduced-motion is enabled.
 pref("devtools.inspector.simple-highlighters-reduced-motion", false);
+// Wheter or not Enter on inplace editor in the Rules view moves focus and activates
+// next inplace editor.
+pref("devtools.inspector.rule-view.focusNextOnEnter", true);
 
 // Whether or not the box model panel is opened in the layout view
 pref("devtools.layout.boxmodel.opened", true);
@@ -1009,9 +1017,6 @@ pref("devtools.markup.collapseAttributes", true);
 pref("devtools.markup.collapseAttributeLength", 120);
 // Whether to auto-beautify the HTML on copy.
 pref("devtools.markup.beautifyOnCopy", false);
-// Whether or not the DOM mutation breakpoints context menu are enabled in the
-// markup view.
-pref("devtools.markup.mutationBreakpoints.enabled", true);
 
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "authored");
@@ -1047,7 +1052,7 @@ pref("devtools.netmonitor.features.search", true);
 pref("devtools.netmonitor.features.requestBlocking", true);
 
 // Enable the Application panel
-pref("devtools.application.enabled", false);
+pref("devtools.application.enabled", true);
 
 // Enable the custom formatters feature
 // This preference represents the user's choice to enable the custom formatters feature.
@@ -1061,7 +1066,7 @@ pref("devtools.netmonitor.panes-search-width", 550);
 pref("devtools.netmonitor.panes-search-height", 450);
 pref("devtools.netmonitor.filters", "[\"all\"]");
 pref("devtools.netmonitor.visibleColumns",
-  "[\"status\",\"method\",\"domain\",\"file\",\"initiator\",\"type\",\"transferred\",\"contentSize\",\"waterfall\"]"
+    "[\"status\",\"method\",\"domain\",\"file\",\"initiator\",\"type\",\"transferred\",\"contentSize\",\"waterfall\"]"
 );
 pref("devtools.netmonitor.columnsData",
   '[{"name":"status","minWidth":30,"width":5}, {"name":"method","minWidth":30,"width":5}, {"name":"domain","minWidth":30,"width":10}, {"name":"file","minWidth":30,"width":25}, {"name":"url","minWidth":30,"width":25},{"name":"initiator","minWidth":30,"width":10},{"name":"type","minWidth":30,"width":5},{"name":"transferred","minWidth":30,"width":10},{"name":"contentSize","minWidth":30,"width":5},{"name":"waterfall","minWidth":150,"width":15}]');
@@ -1086,14 +1091,15 @@ pref("devtools.netmonitor.har.compress", false);
 pref("devtools.netmonitor.har.forceExport", false);
 pref("devtools.netmonitor.har.pageLoadedTimeout", 1500);
 pref("devtools.netmonitor.har.enableAutoExportToFile", false);
-
-pref("devtools.netmonitor.features.webSockets", true);
+pref("devtools.netmonitor.har.multiple-pages", false);
 
 // netmonitor audit
 pref("devtools.netmonitor.audits.slow", 500);
 
-// Disable the EventSource Inspector.
-pref("devtools.netmonitor.features.serverSentEvents", false);
+// Enable the new Edit and Resend panel
+  pref("devtools.netmonitor.features.newEditAndResend", true);
+
+pref("devtools.netmonitor.customRequest", '{}');
 
 // Enable the Storage Inspector
 pref("devtools.storage.enabled", true);
@@ -1101,8 +1107,8 @@ pref("devtools.storage.enabled", true);
 // Enable the Style Editor.
 pref("devtools.styleeditor.enabled", true);
 pref("devtools.styleeditor.autocompletion-enabled", true);
-pref("devtools.styleeditor.showMediaSidebar", true);
-pref("devtools.styleeditor.mediaSidebarWidth", 238);
+pref("devtools.styleeditor.showAtRulesSidebar", true);
+pref("devtools.styleeditor.atRulesSidebarWidth", 238);
 pref("devtools.styleeditor.navSidebarWidth", 245);
 pref("devtools.styleeditor.transitions", true);
 
@@ -1128,11 +1134,9 @@ pref("devtools.webconsole.filter.netxhr", false);
 
 // Webconsole autocomplete preference
 pref("devtools.webconsole.input.autocomplete",true);
-#ifdef NIGHTLY_BUILD
-  pref("devtools.webconsole.input.context", true);
-#else
-  pref("devtools.webconsole.input.context", false);
-#endif
+
+// Show context selector in console input
+pref("devtools.webconsole.input.context", true);
 
 // Set to true to eagerly show the results of webconsole terminal evaluations
 // when they don't have side effects.
@@ -1183,9 +1187,6 @@ pref("devtools.webconsole.input.editorOnboarding", true);
 // Enable message grouping in the console, true by default
 pref("devtools.webconsole.groupWarningMessages", true);
 
-// Saved state of the Display content messages checkbox in the browser console.
-pref("devtools.browserconsole.contentMessages", true);
-
 // Enable network monitoring the browser toolbox console/browser console.
 pref("devtools.browserconsole.enableNetworkMonitoring", false);
 
@@ -1230,13 +1231,8 @@ pref("devtools.responsive.reloadNotification.enabled", true);
 pref("devtools.responsive.touchSimulation.enabled", false);
 // The user agent of the viewport.
 pref("devtools.responsive.userAgent", "");
-
-// Show the custom user agent input in Nightly builds.
-#if defined(NIGHTLY_BUILD)
-  pref("devtools.responsive.showUserAgentInput", true);
-#else
-  pref("devtools.responsive.showUserAgentInput", false);
-#endif
+// Show the custom user agent input by default
+pref("devtools.responsive.showUserAgentInput", true);
 
 // Show tab debug targets for This Firefox (on by default for local builds).
 #ifdef MOZILLA_OFFICIAL
@@ -1272,15 +1268,30 @@ pref("devtools.debugger.features.map-await-expression", true);
 pref("devtools.debugger.features.async-captured-stacks", true);
 pref("devtools.debugger.features.async-live-stacks", false);
 
+// When debugging a website, this pref controls if extension content scripts applied
+// to the currently debugged page should be shown in the Debugger Source Tree
+// As of bug 1936360, Firefox defaults to false, but we default to `true` to
+// ease extension debugging.
+pref("devtools.debugger.show-content-scripts", true);
+
+pref("devtools.debugger.hide-ignored-sources", false);
+#if defined(NIGHTLY_BUILD)
+  pref("devtools.debugger.features.codemirror-next", true);
+#else
+  pref("devtools.debugger.features.codemirror-next", false);
+#endif
+
 // Disable autohide for DevTools popups and tooltips.
 // This is currently not exposed by any UI to avoid making
 // about:devtools-toolbox tabs unusable by mistake.
 pref("devtools.popup.disable_autohide", false);
 
-// Enable overflow debugging in the inspector.
-pref("devtools.overflow.debugging.enabled", true);
-// Enable drag to edit properties in the inspector rule view.
-pref("devtools.inspector.draggable_properties", true);
+// Add support for high contrast mode
+#if defined(NIGHTLY_BUILD)
+  pref("devtools.high-contrast-mode-support", true);
+#else
+  pref("devtools.high-contrast-mode-support", false);
+#endif
 
 // Telemetry settings.
 
@@ -1365,14 +1376,9 @@ pref("identity.fxaccounts.oauth.enabled", false);
 pref("identity.fxaccounts.remote.profile.uri", "https://profile.stage.mozaws.net/v1");
 // The remote URL of the FxA OAuth Server
 pref("identity.fxaccounts.remote.oauth.uri", "https://oauth.stage.mozaws.net/v1");
-#endif
 // Token server used by the FxA Sync identity.
-// This pref exists on all channels to keep a test working.
 pref("identity.sync.tokenserver.uri", "https://token.stage.mozaws.net/1.0/sync/1.5");
 
-#ifdef NIGHTLY_BUILD
-// Adds stage server to the white list, because we need it.
-pref("webchannel.allowObject.urlWhitelist", "https://content.cdn.mozilla.net https://support.mozilla.org https://install.mozilla.org https://accounts.stage.mozaws.net");
 // Adds Firefox/10x.0 to the User-Agent string, because we need it.
 // TODO: Fix this.
 pref("general.useragent.compatMode.firefox", true);
@@ -1407,12 +1413,10 @@ pref("toolbar.unifiedtoolbar.buttonstyle", 0);
 // Enable on macOS the non-native context menus
 pref("widget.macos.native-context-menus", false);
 
-#ifdef XP_MACOSX
-#ifdef NIGHTLY_BUILD
-pref("mail.theme.macos.native-theme", true);
+#if defined(XP_MACOSX) && defined(NIGHTLY_BUILD)
+pref("mail.theme.native-theme", true);
 #else
-pref("mail.theme.macos.native-theme", false);
-#endif
+pref("mail.theme.native-theme", false);
 #endif
 
 // Bug 1773079 : check if true causes issues for Thunderbird
@@ -1424,4 +1428,25 @@ pref("dom.disable_window_flip", true);
 pref("browser.theme.dark-private-windows", true);
 
 // In-app notifications are disabled while the feature is being implemented.
-pref("mail.inappnotifications.enabled", false);
+pref("mail.inappnotifications.enabled", true);
+// Refresh interval for in-app notifications in ms (6 hours)
+pref("mail.inappnotifications.refreshInterval", 21600000);
+// In-app notification server endpoint is specified by branding prefs.
+
+// Disables all filtering of in-app notifications, useful for testing.
+pref("mail.inappnotifications.bypass-filtering", false);
+
+#ifdef NIGHTLY_BUILD
+// Enable the new experimental conversation view based on Gloda.
+pref("mail.thread.conversation.enabled", false);
+#endif
+
+// Enable the conversion to dark mode for all messages when using a dark theme.
+pref("mail.dark-reader.enabled", true);
+pref("mail.dark-reader.show-toggle", true);
+
+// Enable the new account setup (starting from the second account)
+pref("mail.accounthub.enabled", false);
+
+// Export to mobile logging level.
+pref("mail.qrexport.loglevel", "Warn");

@@ -67,7 +67,7 @@ export class HistoryController {
       ? options?.component
       : "firefoxview";
     this.historyCache = {
-      entries: [],
+      entries: null,
       searchQuery: null,
       sortOption: null,
     };
@@ -81,7 +81,7 @@ export class HistoryController {
   }
 
   hostDisconnected() {
-    ChromeUtils.idleDispatch(() => this.placesQuery.close());
+    this.placesQuery.close();
   }
 
   deleteFromHistory() {
@@ -93,19 +93,24 @@ export class HistoryController {
     this.updateCache();
   }
 
-  onChangeSortOption(e) {
-    this.sortOption = e.target.value;
+  onChangeSortOption(e, value = e.target.value) {
+    this.sortOption = value;
     this.updateCache();
   }
 
   get historyVisits() {
-    return this.historyCache.entries;
+    return this.historyCache.entries || [];
+  }
+
+  get isHistoryPending() {
+    return this.historyCache.entries === null;
   }
 
   get searchResults() {
-    return this.historyCache.searchQuery
-      ? this.historyCache.entries[0].items
-      : null;
+    if (this.historyCache.searchQuery && this.historyCache.entries?.length) {
+      return this.historyCache.entries[0].items;
+    }
+    return null;
   }
 
   get totalVisitsCount() {
@@ -131,7 +136,11 @@ export class HistoryController {
     const entries = searchQuery
       ? await this.#getVisitsForSearchQuery(searchQuery)
       : await this.#getVisitsForSortOption(sortOption, historyMap);
-    if (this.searchQuery !== searchQuery || this.sortOption !== sortOption) {
+    if (
+      this.searchQuery !== searchQuery ||
+      this.sortOption !== sortOption ||
+      !entries
+    ) {
       // This query is stale, discard results and do not update the cache / UI.
       return;
     }
@@ -182,7 +191,11 @@ export class HistoryController {
 
   async #getVisitsForSortOption(sortOption, historyMap) {
     if (!historyMap) {
-      historyMap = await this.#fetchHistory();
+      const fetchedHistory = await this.#fetchHistory();
+      if (!fetchedHistory) {
+        return null;
+      }
+      historyMap = fetchedHistory;
     }
     switch (sortOption) {
       case "date":

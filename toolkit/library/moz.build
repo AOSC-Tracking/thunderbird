@@ -9,6 +9,7 @@
 def Libxul_defines():
     LIBRARY_DEFINES["MOZILLA_INTERNAL_API"] = True
     LIBRARY_DEFINES["IMPL_LIBXUL"] = True
+    LIBRARY_DEFINES["MOZ_SUPPORT_LEAKCHECKING"] = True
     if not CONFIG["JS_SHARED_LIBRARY"]:
         LIBRARY_DEFINES["STATIC_EXPORTABLE_JS_API"] = True
 
@@ -156,8 +157,12 @@ USE_LIBS += [
     "nss",
     "psshparser",
     "sqlite",
-    "zlib",
 ]
+
+if not CONFIG["USE_LIBZ_RS"]:
+    USE_LIBS += [
+        "zlib",
+    ]
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
     # The mozgtk library is a workaround that makes Gtk+ use libwayland-client
@@ -180,11 +185,6 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
 if CONFIG["MOZ_WAYLAND"]:
     USE_LIBS += [
         "mozwayland",
-    ]
-
-if CONFIG["MOZ_JPROF"]:
-    USE_LIBS += [
-        "jprof",
     ]
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk" or CONFIG["MOZ_TREE_FREETYPE"]:
@@ -304,6 +304,10 @@ if CONFIG["MOZ_SYSTEM_LIBEVENT"]:
 if CONFIG["MOZ_SYSTEM_LIBVPX"]:
     OS_LIBS += CONFIG["MOZ_LIBVPX_LIBS"]
 
+if CONFIG["MOZ_SYSTEM_AV1"]:
+    OS_LIBS += CONFIG["MOZ_SYSTEM_LIBAOM_LIBS"]
+    OS_LIBS += CONFIG["MOZ_SYSTEM_LIBDAV1D_LIBS"]
+
 if not CONFIG["MOZ_TREE_PIXMAN"]:
     OS_LIBS += CONFIG["MOZ_PIXMAN_LIBS"]
 
@@ -372,12 +376,8 @@ if CONFIG["OS_ARCH"] == "WINNT":
         # "d3d11", # should be explicitly linked by gfx-backend-d3d11
         #'d3d12', # should be explicitly linked by d3d12-rs
         "d3dcompiler",
+        "runtimeobject",
     ]
-
-    if CONFIG["CC_TYPE"] == "clang-cl":
-        OS_LIBS += [
-            "runtimeobject",
-        ]
 
     if CONFIG["ACCESSIBILITY"]:
         OS_LIBS += [

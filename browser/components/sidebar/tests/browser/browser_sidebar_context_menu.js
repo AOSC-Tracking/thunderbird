@@ -3,14 +3,20 @@
 
 "use strict";
 
-add_setup(() => SpecialPowers.pushPrefEnv({ set: [["sidebar.revamp", true]] }));
+add_setup(async () => {
+  // turn off animations for this test
+  await SpecialPowers.pushPrefEnv({
+    set: [["sidebar.animation.enabled", false]],
+  });
+});
 
 add_task(async function test_sidebar_extension_context_menu() {
   const win = await BrowserTestUtils.openNewBrowserWindow();
   await waitForBrowserWindowActive(win);
   const { document } = win;
   const sidebar = document.querySelector("sidebar-main");
-  ok(BrowserTestUtils.isVisible(sidebar), "Sidebar is shown.");
+  await sidebar.updateComplete;
+  ok(sidebar, "Sidebar is shown.");
 
   const manageStub = sinon.stub(sidebar, "manageExtension");
   const reportStub = sinon.stub(sidebar, "reportExtension");
@@ -27,18 +33,6 @@ add_task(async function test_sidebar_extension_context_menu() {
 
   const contextMenu = document.getElementById("sidebar-context-menu");
   is(contextMenu.state, "closed", "Checking if context menu is closed");
-
-  //   Click anywhere in the sidebar
-  EventUtils.synthesizeMouseAtCenter(
-    sidebar,
-    { type: "contextmenu", button: 2 },
-    win
-  );
-  is(
-    contextMenu.state,
-    "closed",
-    "Context menu hidden when anything other than button is right clicked"
-  );
 
   await openAndWaitForContextMenu(
     contextMenu,
@@ -79,7 +73,153 @@ add_task(async function test_sidebar_extension_context_menu() {
   );
   ok(removeStub.called, "Remove Extension called");
 
+  info(
+    "Verify report context menu disabled/enabled based on about:config pref"
+  );
+  await SpecialPowers.pushPrefEnv({
+    set: [["extensions.abuseReport.enabled", false]],
+  });
+  await openAndWaitForContextMenu(
+    contextMenu,
+    sidebar.extensionButtons[0],
+    () => {
+      const reportExtensionButtonEl = document.getElementById(
+        "sidebar-context-menu-report-extension"
+      );
+      is(
+        reportExtensionButtonEl.disabled,
+        true,
+        "Expect report item to be disabled"
+      );
+    }
+  );
+  await SpecialPowers.popPrefEnv();
+  await openAndWaitForContextMenu(
+    contextMenu,
+    sidebar.extensionButtons[0],
+    () => {
+      const reportExtensionButtonEl = document.getElementById(
+        "sidebar-context-menu-report-extension"
+      );
+      is(
+        reportExtensionButtonEl.disabled,
+        false,
+        "Expect report item to be enabled"
+      );
+    }
+  );
+
+  info(
+    "Verify remove context menu disabled/enabled based on addon uninstall permission"
+  );
+  const { EnterprisePolicyTesting } = ChromeUtils.importESModule(
+    "resource://testing-common/EnterprisePolicyTesting.sys.mjs"
+  );
+  await EnterprisePolicyTesting.setupPolicyEngineWithJson({
+    policies: {
+      Extensions: {
+        Locked: [extension.id],
+      },
+    },
+  });
+  await openAndWaitForContextMenu(
+    contextMenu,
+    sidebar.extensionButtons[0],
+    () => {
+      const removeExtensionButtonEl = document.getElementById(
+        "sidebar-context-menu-remove-extension"
+      );
+      is(
+        removeExtensionButtonEl.disabled,
+        true,
+        "Expect remove item to be disabled"
+      );
+    }
+  );
+  await EnterprisePolicyTesting.setupPolicyEngineWithJson("");
+  await openAndWaitForContextMenu(
+    contextMenu,
+    sidebar.extensionButtons[0],
+    () => {
+      const removeExtensionButtonEl = document.getElementById(
+        "sidebar-context-menu-remove-extension"
+      );
+      is(
+        removeExtensionButtonEl.disabled,
+        false,
+        "Expect remove item to be enabled"
+      );
+    }
+  );
+
   sinon.restore();
   await extension.unload();
   await BrowserTestUtils.closeWindow(win);
+});
+
+add_task(async function test_toggle_vertical_tabs_from_tab_strip() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["sidebar.verticalTabs", false]],
+  });
+
+  info("Enable vertical tabs from the toolbar.");
+  const toolbarContextMenu = document.getElementById("toolbar-context-menu");
+  const toggleMenuItem = document.getElementById(
+    "toolbar-context-toggle-vertical-tabs"
+  );
+  const customizeSidebarItem = document.getElementById(
+    "toolbar-context-customize-sidebar"
+  );
+  await openAndWaitForContextMenu(
+    toolbarContextMenu,
+    gBrowser.tabContainer,
+    () => {
+      Assert.deepEqual(
+        document.l10n.getAttributes(toggleMenuItem),
+        { id: "toolbar-context-turn-on-vertical-tabs", args: null },
+        "Context menu item indicates that it enables vertical tabs."
+      );
+      toggleMenuItem.click();
+    }
+  );
+  await TestUtils.waitForCondition(
+    () => gBrowser.tabContainer.verticalMode,
+    "Vertical tabs are enabled."
+  );
+
+  // Open customize sidebar panel from context menu
+  await openAndWaitForContextMenu(
+    toolbarContextMenu,
+    gBrowser.tabContainer,
+    () => {
+      customizeSidebarItem.click();
+    }
+  );
+  ok(window.SidebarController.isOpen, "Sidebar is open");
+  Assert.equal(
+    window.SidebarController.currentID,
+    "viewCustomizeSidebar",
+    "Sidebar should have opened to the customize sidebar panel"
+  );
+
+  info("Disable vertical tabs from the toolbar.");
+  await openAndWaitForContextMenu(
+    toolbarContextMenu,
+    gBrowser.tabContainer,
+    () => {
+      Assert.deepEqual(
+        document.l10n.getAttributes(toggleMenuItem),
+        { id: "toolbar-context-turn-off-vertical-tabs", args: null },
+        "Context menu item indicates that it disables vertical tabs."
+      );
+      toggleMenuItem.click();
+    }
+  );
+  await TestUtils.waitForCondition(
+    () => !gBrowser.tabContainer.verticalMode,
+    "Vertical tabs are disabled."
+  );
+
+  window.SidebarController.hide();
+  await SpecialPowers.popPrefEnv();
 });

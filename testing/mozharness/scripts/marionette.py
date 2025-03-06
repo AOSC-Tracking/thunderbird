@@ -1,9 +1,7 @@
 #!/usr/bin/env python
-# ***** BEGIN LICENSE BLOCK *****
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
-# ***** END LICENSE BLOCK *****
 
 import copy
 import json
@@ -78,6 +76,15 @@ class MarionetteTest(TestingMixin, MercurialScript, TransferMixin, CodeCoverageM
                     "default": "unit-tests.toml",
                     "help": "Path to test manifest to run relative to the Marionette "
                     "tests directory",
+                },
+            ],
+            [
+                ["--tag"],
+                {
+                    "action": "store",
+                    "dest": "test_tag",
+                    "default": "",
+                    "help": "Tag that identifies how to filter which tests to run.",
                 },
             ],
             [
@@ -339,6 +346,9 @@ class MarionetteTest(TestingMixin, MercurialScript, TransferMixin, CodeCoverageM
 
         cmd = [python, "-u", os.path.join(dirs["abs_marionette_dir"], "runtests.py")]
 
+        if self.config.get("test_tag", ""):
+            cmd.extend(["--tag", self.config["test_tag"]])
+
         manifest = os.path.join(
             dirs["abs_marionette_tests_dir"], self.config["test_manifest"]
         )
@@ -404,6 +414,11 @@ class MarionetteTest(TestingMixin, MercurialScript, TransferMixin, CodeCoverageM
 
         # Causes Firefox to crash when using non-local connections.
         env["MOZ_DISABLE_NONLOCAL_CONNECTIONS"] = "1"
+
+        # Avoid issues when printing messages containing unicode characters on
+        # windows (Bug 1800035).
+        if self._is_windows():
+            env["PYTHONIOENCODING"] = "utf-8"
 
         env = self.query_env(partial_env=env)
 

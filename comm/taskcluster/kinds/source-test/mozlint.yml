@@ -47,13 +47,16 @@ eslint:
         using: run-task
         cwd: '{checkout}'
         command: >
-            cp -r /build/node_modules_eslint node_modules &&
-            cp -r /build/node_modules_eslint-plugin-mozilla/ tools/lint/eslint/eslint-plugin-mozilla/node_modules &&
+            cp -r $MOZ_FETCHES_DIR/node_modules node_modules &&
             ln -s ../tools/lint/eslint/eslint-plugin-mozilla node_modules &&
             ln -s ../tools/lint/eslint/eslint-plugin-spidermonkey-js node_modules &&
             ./mach commlint -v -l eslint -f treeherder -f json:/builds/worker/mozlint.json comm/
     optimization:
         skip-unless-mozlint: eslint.yml
+    fetches:
+        toolchain:
+            - linux64-node
+            - node-modules
 
 file-perm:
     description: Check for incorrect permissions on source files
@@ -221,12 +224,18 @@ stylelint:
         using: run-task
         cwd: '{checkout}'
         command: >
-            cp -r /build/node_modules_eslint node_modules &&
+            cp -r $MOZ_FETCHES_DIR/node_modules node_modules &&
+            ln -s ../tools/lint/eslint/eslint-plugin-mozilla node_modules &&
+            ln -s ../tools/lint/eslint/eslint-plugin-spidermonkey-js node_modules &&
             ./mach commlint -v -l stylelint -f treeherder
             -f json:/builds/worker/mozlint.json
-            comm/*
+            comm
     optimization:
         skip-unless-mozlint: stylelint.yml
+    fetches:
+        toolchain:
+            - linux64-node
+            - node-modules
 
 trojan-source:
     description: Trojan Source attack - CVE-2021-42572

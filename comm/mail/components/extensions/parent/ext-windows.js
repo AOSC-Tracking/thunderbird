@@ -5,6 +5,11 @@
 // The ext-* files are imported into the same scopes.
 /* import-globals-from ext-mail.js */
 
+var { getMessageManagerGroup } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionUtilities.sys.mjs"
+);
+var { getClonedPrincipalWithProtocolPermission, openLinkExternally } =
+  ChromeUtils.importESModule("resource:///modules/LinkHelper.sys.mjs");
 var { openURI } = ChromeUtils.importESModule(
   "resource:///modules/MessengerContentHandler.sys.mjs"
 );
@@ -381,9 +386,10 @@ this.windows = class extends ExtensionAPIPersistent {
               createData.cookieStoreId
             );
           }
-          const createWindowArgs = createData => {
-            const url = createData.url || "about:blank";
+          const createWindowArgs = cdata => {
+            const url = cdata.url || "about:blank";
             const urls = Array.isArray(url) ? url : [url];
+            const uri = Services.io.newURI(urls[0]);
 
             for (const idx in urls) {
               try {
@@ -407,15 +413,22 @@ this.windows = class extends ExtensionAPIPersistent {
               }
             }
 
+            const linkHandler = getMessageManagerGroup(cdata?.linkHandler);
             const args = Cc["@mozilla.org/array;1"].createInstance(
               Ci.nsIMutableArray
             );
             const actionData = {
               action: "open",
               allowScriptsToClose: createData.allowScriptsToClose,
-              tabs: urls.map(url => ({
+              linkHandler,
+              triggeringPrincipal: getClonedPrincipalWithProtocolPermission(
+                context.principal,
+                uri,
+                { userContextId }
+              ),
+              tabs: urls.map(u => ({
                 tabType: "contentTab",
-                tabParams: { url, userContextId },
+                tabParams: { url: u, userContextId },
               })),
             };
             actionData.wrappedJSObject = actionData;
@@ -647,9 +660,7 @@ this.windows = class extends ExtensionAPIPersistent {
               `Url scheme "${uri.scheme}" is not supported.`
             );
           }
-          Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-            .getService(Ci.nsIExternalProtocolService)
-            .loadURI(uri);
+          openLinkExternally(uri, { addToHistory: false });
         },
       },
     };

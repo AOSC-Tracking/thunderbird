@@ -291,7 +291,6 @@ add_task(async function testCompactUnreadFolders() {
   const fooRootFolder = foo.incomingServer.rootFolder;
   const fooTrashFolder = fooRootFolder.getChildNamed("Trash");
 
-  const generator = new MessageGenerator();
   fooTrashFolder
     .QueryInterface(Ci.nsIMsgLocalMailFolder)
     .addMessage(generator.makeMessages({}).map(m => m.toMessageString()));
@@ -554,6 +553,25 @@ add_task(async function testSmartFolders() {
     trashFolder,
     ...localExtraFolders,
   ]);
+
+  // Check that marking a unified folder as favorite works and is persistent.
+  const smartMailboxes = { URI: "mailbox://nobody@smart%20mailboxes" };
+  folderPane.activeModes = ["smart", "favorite"];
+  await checkModeListItems("favorite", []);
+
+  smartInbox.setFlag(Ci.nsMsgFolderFlags.Favorite);
+  await checkModeListItems("favorite", [smartMailboxes, smartInbox]);
+
+  folderPane.activeModes = ["smart"];
+  folderPane.activeModes = ["favorite"];
+  await checkModeListItems("favorite", [smartMailboxes, smartInbox]);
+
+  smartInbox.clearFlag(Ci.nsMsgFolderFlags.Favorite);
+  await checkModeListItems("favorite", []);
+
+  folderPane.activeModes = ["smart"];
+  folderPane.activeModes = ["smart", "favorite"];
+  await checkModeListItems("favorite", []);
 });
 
 /**
@@ -1168,7 +1186,6 @@ add_task(async function testAccountOrder() {
   const barFolders = [barRootFolder, barTrashFolder, barOutboxFolder];
   const barExtraFolders = [barRootFolder, barOutboxFolder];
 
-  const generator = new MessageGenerator();
   fooTrashFolder
     .QueryInterface(Ci.nsIMsgLocalMailFolder)
     .addMessage(generator.makeMessage({}).toMessageString());
@@ -1488,25 +1505,27 @@ add_task(async function testMultiSelectionDelete() {
   ]);
 });
 
+/**
+ * @param {string} modeName
+ * @param {nsIMsgFolder[]} folders
+ */
 async function checkModeListItems(modeName, folders) {
   // Jump to the end of the event queue so that any code listening for changes
   // can run first.
   await new Promise(resolve => setTimeout(resolve));
-  expandAll(modeName);
+  for (const folderTreeRow of folderPane._modes[
+    modeName
+  ].containerList.querySelectorAll("li")) {
+    folderTree.expandRow(folderTreeRow);
+    await new Promise(resolve => requestAnimationFrame(resolve));
+  }
 
   Assert.deepEqual(
     Array.from(
       folderPane._modes[modeName].containerList.querySelectorAll("li"),
       folderTreeRow => folderTreeRow.uri
     ),
-    folders.map(folder => folder.URI)
+    folders.map(folder => folder.URI),
+    `should show correct items in ${modeName} mode`
   );
-}
-
-function expandAll(modeName) {
-  for (const folderTreeRow of folderPane._modes[
-    modeName
-  ].containerList.querySelectorAll("li")) {
-    folderTree.expandRow(folderTreeRow);
-  }
 }

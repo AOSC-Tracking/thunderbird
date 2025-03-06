@@ -172,6 +172,10 @@ internal class EngineObserver(
         store.dispatch(ContentAction.UpdateProductUrlStateAction(tabId, isProductUrl))
     }
 
+    override fun onTranslatePageChange() {
+        store.dispatch(TranslationsAction.SetTranslateProcessingAction(tabId, isProcessing = false))
+    }
+
     override fun onLongPress(hitResult: HitResult) {
         store.dispatch(
             ContentAction.UpdateHitResultAction(tabId, hitResult),
@@ -235,7 +239,7 @@ internal class EngineObserver(
 
     override fun onDesktopModeChange(enabled: Boolean) {
         store.dispatch(
-            ContentAction.UpdateDesktopModeAction(
+            ContentAction.UpdateTabDesktopMode(
                 tabId,
                 enabled,
             ),

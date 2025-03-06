@@ -108,6 +108,8 @@ struct MozJemallocPHC : public MozJemalloc {
 
   static void jemalloc_stats_internal(jemalloc_stats_t*, jemalloc_bin_stats_t*);
 
+  static void jemalloc_stats_lite(jemalloc_stats_lite_t*);
+
   static void jemalloc_ptr_info(const void*, jemalloc_ptr_info_t*);
 
 #    define MALLOC_DECL(name, return_type, ...) \
@@ -144,6 +146,17 @@ constexpr uint8_t kAllocPoison = 0xe5;
 // Junk - write this junk value to freshly allocated cells.
 constexpr uint8_t kAllocJunk = 0xe4;
 
+// Maximum size of L1 cache line.  This is used to avoid cache line aliasing,
+// so over-estimates are okay (up to a point), but under-estimates will
+// negatively affect performance.
+constexpr size_t kCacheLineSize =
+#  if defined(XP_DARWIN) && defined(__aarch64__)
+    128
+#  else
+    64
+#  endif
+    ;
+
 #endif  // MOZ_MEMORY
 
 // Dummy implementation of the moz_arena_* API, falling back to a given
@@ -155,6 +168,10 @@ struct DummyArenaAllocator {
   static void moz_dispose_arena(arena_id_t) {}
 
   static void moz_set_max_dirty_page_modifier(int32_t) {}
+
+  static bool moz_enable_deferred_purge(bool aEnable) { return false; }
+
+  static bool moz_may_purge_one_now(bool aPeekOnly) { return false; }
 
 #define MALLOC_DECL(name, return_type, ...)                 \
   static return_type moz_arena_##name(                      \

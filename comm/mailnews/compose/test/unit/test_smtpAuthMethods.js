@@ -94,22 +94,27 @@ function nextTest() {
   kAuthSchemes = curTest.serverAuthMethods;
   smtpServer.authMethod = curTest.clientAuthMethod;
 
+  const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+    .createInstance(Ci.nsIMsgCompUtils)
+    .msgGenerateMessageId(identity, null);
+
   // Run test
-  const requestObserver = new PromiseTestUtils.PromiseRequestObserver();
+  const listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
   smtpServer.sendMailMessage(
     testFile,
-    kTo,
+    MailServices.headerParser.parseEncodedHeaderW(kTo),
+    [],
     identity,
     kSender,
     null,
     null,
     false,
-    "",
-    requestObserver
+    messageId,
+    listener
   );
 
   let resolved = false;
-  requestObserver.promise.catch(() => {}).finally(() => (resolved = true));
+  listener.promise.catch(() => {}).finally(() => (resolved = true));
   Services.tm.spinEventLoopUntil("wait for sending", () => resolved);
 
   do_check_transaction(server.playTransaction(), curTest.transaction);

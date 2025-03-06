@@ -14,7 +14,6 @@ var { AppConstants } = ChromeUtils.importESModule(
 /* Main Composer window UI control */
 
 var gComposerWindowControllerID = 0;
-var prefAuthorString = "";
 
 var kDisplayModeNormal = 0;
 var kDisplayModeAllTags = 1;
@@ -829,10 +828,10 @@ function initLocalFontFaceMenu(menuPopup) {
  * Creates a menuitem element for the font faces menulist. Returns the menuitem
  * but does not add it automatically to the menupopup.
  *
- * @param aFontLabel  Label to be displayed for the item.
- * @param aFontName   The font face value to be used for the item.
- *                    Will be used in <font face="value"> in the edited document.
- * @param aMenuPopup  The menupopup for which this menuitem is created.
+ * @param {string} aFontLabel - Label to be displayed for the item.
+ * @param {string} aFontName - The font face value to be used for the item.
+ *   Will be used in <font face="value"> in the edited document.
+ * @param {Element} aMenuPopup - The menupopup for which this menuitem is created.
  */
 function createFontFaceMenuitem(aFontLabel, aFontName, aMenuPopup) {
   const itemNode = document.createXULElement("menuitem");
@@ -888,10 +887,12 @@ function onBackgroundColorChange() {
   );
 }
 
-/* Helper function that changes the button color.
- *   commandID - The ID of the command element.
- *   id - The ID of the button needing to be changed.
- *   defaultColor - The default color the button gets set to.
+/**
+ * Helper function that changes the button color.
+ *
+ * @param {string} commandID - The ID of the command element.
+ * @param {string} id - The ID of the button needing to be changed.
+ * @param {string} defaultColor - The default color the button gets set to.
  */
 function ChangeButtonColor(commandID, id, defaultColor) {
   var commandNode = document.getElementById(commandID);
@@ -911,7 +912,9 @@ function ChangeButtonColor(commandID, id, defaultColor) {
   }
 }
 
-// Call this when user changes text and/or background colors of the page
+/**
+ * Call this when user changes text and/or background colors of the page.
+ */
 function UpdateDefaultColors() {
   var BrowserColors = GetDefaultBrowserColors();
   var bodyelement = GetBodyElement();
@@ -1749,7 +1752,7 @@ function EditorSetDefaultPrefsAndDoctype() {
 
     // let's start by assuming we have an author in case we don't have the pref
 
-    var prefAuthorString = null;
+    let prefAuthorString = null;
     const authorFound = domdoc.querySelector('meta[name="author"]');
     try {
       prefAuthorString = Services.prefs.getStringPref("editor.author");
@@ -2192,8 +2195,8 @@ function GetNumberOfContiguousSelectedRows() {
   var editor = GetCurrentTableEditor();
   var rowObj = { value: 0 };
   var colObj = { value: 0 };
-  var cell = editor.getFirstSelectedCellInTable(rowObj, colObj);
-  if (!cell) {
+  const firstSelectedCell = editor.getFirstSelectedCellInTable(rowObj, colObj);
+  if (!firstSelectedCell) {
     return 0;
   }
 
@@ -2223,8 +2226,8 @@ function GetNumberOfContiguousSelectedColumns() {
   var editor = GetCurrentTableEditor();
   var colObj = { value: 0 };
   var rowObj = { value: 0 };
-  var cell = editor.getFirstSelectedCellInTable(rowObj, colObj);
-  if (!cell) {
+  const firstSelectedCell = editor.getFirstSelectedCellInTable(rowObj, colObj);
+  if (!firstSelectedCell) {
     return 0;
   }
 

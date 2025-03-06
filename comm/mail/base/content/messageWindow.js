@@ -122,7 +122,7 @@ function delayedOnLoadMessageWindow() {
   MailOfflineMgr.init();
   CreateMailWindowGlobals();
 
-  // Run menubar initialization first, to avoid TabsInTitlebar code picking
+  // Run menubar initialization first, to avoid CustomTitlebar code picking
   // up mutations from it and causing a reflow.
   if (AppConstants.platform != "macosx") {
     AutoHideMenubar.init();
@@ -204,9 +204,9 @@ function actuallyLoadMessage() {
  * supposed to be called whenever a message is supposed to be displayed in this
  * window.
  *
- * @param aMsgHdr the message to display
- * @param aViewWrapperToClone [optional] a DB view wrapper to clone for the
- *                            message window
+ * @param {nsIMsgDBHdr} aMsgHdr - the message to display
+ * @param {DBViewWrapper} [aViewWrapperToClone] a DB view wrapper to clone for
+ *   the message window.
  */
 function displayMessage(aMsgHdr, aViewWrapperToClone) {
   const contentWindow = messageBrowser.contentWindow;
@@ -453,7 +453,10 @@ function OnUnloadMessageWindow() {
   OnMailWindowUnload();
 }
 
-// MessageWindowController object (handles commands when one of the trees does not have focus)
+/**
+ * MessageWindowController - handles commands when one of the trees does not
+ * have focus.
+ */
 var MessageWindowController = {
   supportsCommand(command) {
     switch (command) {
@@ -556,13 +559,13 @@ var MessageWindowController = {
         ReloadMessage();
         break;
       case "cmd_find":
-        document.getElementById("FindToolbar").onFindCommand();
+        document.getElementById("findToolbar").onFindCommand();
         break;
       case "cmd_findAgain":
-        document.getElementById("FindToolbar").onFindAgainCommand(false);
+        document.getElementById("findToolbar").onFindAgainCommand(false);
         break;
       case "cmd_findPrevious":
-        document.getElementById("FindToolbar").onFindAgainCommand(true);
+        document.getElementById("findToolbar").onFindAgainCommand(true);
         break;
       case "cmd_viewAllHeader":
         MsgViewAllHeaders();

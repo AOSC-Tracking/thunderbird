@@ -483,7 +483,7 @@ add_task(async function test_message_pane_width_persistence() {
 
 add_task(async function test_multiple_3pane_periodic_session_persistence() {
   // open a few more 3pane windows
-  for (var i = 0; i < 3; ++i) {
+  for (let i = 0; i < 3; ++i) {
     await open3PaneWindow();
   }
 
@@ -630,10 +630,10 @@ function _move_splitter(aSplitter, aDiffX, aDiffY) {
  * Helper function that checks the fuzzy equivalence of two numeric
  * values against some given tolerance.
  *
- * @param aLeft one value to check equivalence with
- * @param aRight the other value to check equivalence with
- * @param aTolerance how fuzzy can our equivalence be?
- * @param aMessage the message to give off if we're outside of tolerance.
+ * @param {integer} aLeft - One value to check equivalence with.
+ * @param {integer} aRight - The other value to check equivalence with.
+ * @param {integer} aTolerance - how fuzzy can our equivalence be?
+ * @param {string} aMessage - The message to give off if we're outside of tolerance.
  */
 function assert_equals_fuzzy(aLeft, aRight, aTolerance, aMessage) {
   Assert.ok(Math.abs(aLeft - aRight) <= aTolerance, aMessage);

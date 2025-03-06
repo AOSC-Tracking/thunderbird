@@ -78,6 +78,14 @@ add_task(async function test_getEligibleAccounts() {
   );
   const popAccount = await createMailAccount("pop", "tinderbox", "pop3");
 
+  const noOutgoingServerAccount = await createMailAccount(
+    "nooutgoing",
+    "nooutgoing",
+    "imap"
+  );
+  // Nooutgoing is a bit misleading. This will mean: use default smtp server.
+  noOutgoingServerAccount.defaultIdentity.smtpServerKey = null;
+
   // Ineligible accounts
   const unsupportedIncomingAuthAccount = await createMailAccount(
     "incomingauth",
@@ -97,14 +105,9 @@ add_task(async function test_getEligibleAccounts() {
   );
   unspoortedAuthOutgoingServer.authMethod = Ci.nsMsgAuthMethod.GSSAPI;
 
-  const noOutgoingServerAccount = await createMailAccount(
-    "nooutgoing",
-    "nooutgoing",
-    "imap"
-  );
-  noOutgoingServerAccount.defaultIdentity.smtpServerKey = null;
-
-  const otherAccounts = [
+  const accounts = [
+    popAccount,
+    imapAccount,
     unsupportedIncomingAuthAccount,
     unsupportedOutgoingAuthAccount,
     noOutgoingServerAccount,
@@ -117,7 +120,11 @@ add_task(async function test_getEligibleAccounts() {
 
   const eligibleAccounts = QRExport.getEligibleAccounts();
 
-  Assert.equal(eligibleAccounts.length, 2, "Should find an eligible account");
+  Assert.equal(
+    eligibleAccounts.length,
+    3,
+    "Should find correct eligible accounts"
+  );
   Assert.ok(
     eligibleAccounts.includes(imapAccount),
     "Should return eligible IMAP account"
@@ -126,10 +133,12 @@ add_task(async function test_getEligibleAccounts() {
     eligibleAccounts.includes(popAccount),
     "Should return eligible POP account"
   );
+  Assert.ok(
+    eligibleAccounts.includes(noOutgoingServerAccount),
+    "Should return eligible account that's using default stmp"
+  );
 
-  MailServices.accounts.removeAccount(popAccount, false);
-  MailServices.accounts.removeAccount(imapAccount, false);
-  for (const account of otherAccounts) {
+  for (const account of accounts) {
     MailServices.accounts.removeAccount(account, false);
   }
 });
@@ -185,6 +194,32 @@ add_task(async function test_getAccountData() {
       ],
     ],
     "Should contain expected account data with passwords"
+  );
+
+  MailServices.accounts.removeAccount(account, false);
+});
+
+add_task(async function test_getAccountData_nonASCII() {
+  const account = await createMailAccount("ascii", "ascii", "imap");
+  const identity = MailServices.accounts.createIdentity();
+  identity.email = `Ŧé⅞↑@foo.invalid`;
+  identity.fullName = "test with various characters";
+  account.addIdentity(identity);
+
+  const dataWithoutPasswords = QRExport.getAccountData(account.key, false);
+
+  Assert.deepEqual(
+    dataWithoutPasswords,
+    [
+      [0, "foo.invalid", 143, 0, 1, "ascii", "Mail for ascii@foo.invalid", ""],
+      [
+        [
+          [0, "foo.invalid", 587, 0, 1, "ascii", ""],
+          ["ascii@foo.invalid", "ascii"],
+        ],
+      ],
+    ],
+    "Should not contain the extra identity"
   );
 
   MailServices.accounts.removeAccount(account, false);

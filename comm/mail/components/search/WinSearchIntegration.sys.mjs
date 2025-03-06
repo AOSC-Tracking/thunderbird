@@ -87,7 +87,7 @@ class WinSearchStreamListener extends StreamListenerBase {
       const stringStream = Cc[
         "@mozilla.org/io/string-input-stream;1"
       ].createInstance(Ci.nsIStringInputStream);
-      stringStream.setData(this.#message, this.#message.length);
+      stringStream.setByteStringData(this.#message);
       const contentType = {};
       const folder = this._msgHdr.folder;
       const text = folder.getMsgTextFromStream(
@@ -276,10 +276,10 @@ export class SearchIntegration extends SearchSupport {
   }
 
   /**
-   * Add necessary hooks to Windows
+   * Add necessary hooks to Windows.
    *
-   * @returns false if registration did not succeed, because the elevation
-   * request was denied
+   * @returns {boolean} false if registration did not succeed, because the
+   *   elevation request was denied.
    */
   register() {
     // If any of the two are not present, we need to elevate.
@@ -309,8 +309,8 @@ export class SearchIntegration extends SearchSupport {
    * Remove integration from Windows. The only thing removed is the directory
    * from the index list. This will ask for elevation.
    *
-   * @returns false if deregistration did not succeed, because the elevation
-   * request was denied
+   * @returns {boolean} false if registration did not succeed, because the
+   *   elevation request was denied.
    */
   deregister() {
     try {

@@ -40,20 +40,25 @@ async function test_RFC2821() {
     // First do test with identity email address used for smtp MAIL FROM.
     Services.prefs.setBoolPref("mail.smtp.useSenderForSmtpMailFrom", false);
 
-    let requestObserver = new PromiseTestUtils.PromiseRequestObserver();
+    let messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    let listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
     smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
       null,
       false,
-      "",
-      requestObserver
+      messageId,
+      listener
     );
 
-    await requestObserver.promise;
+    await listener.promise;
 
     var transaction = server.playTransaction();
     do_check_transaction(transaction, [
@@ -69,20 +74,25 @@ async function test_RFC2821() {
     // Now do the same test with sender's email address used for smtp MAIL FROM.
     Services.prefs.setBoolPref("mail.smtp.useSenderForSmtpMailFrom", true);
 
-    requestObserver = new PromiseTestUtils.PromiseRequestObserver();
+    messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
     smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
       null,
       false,
-      "",
-      requestObserver
+      messageId,
+      listener
     );
 
-    await requestObserver.promise;
+    await listener.promise;
 
     transaction = server.playTransaction();
     do_check_transaction(transaction, [
@@ -106,20 +116,25 @@ async function test_RFC2821() {
     // First do test with identity email address used for smtp MAIL FROM.
     Services.prefs.setBoolPref("mail.smtp.useSenderForSmtpMailFrom", false);
 
-    requestObserver = new PromiseTestUtils.PromiseRequestObserver();
+    messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
     smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
       null,
       false,
-      "",
-      requestObserver
+      messageId,
+      listener
     );
 
-    await requestObserver.promise;
+    await listener.promise;
 
     transaction = server.playTransaction();
     do_check_transaction(transaction, [
@@ -136,20 +151,25 @@ async function test_RFC2821() {
     // Now do the same test with sender's email address used for smtp MAIL FROM.
     Services.prefs.setBoolPref("mail.smtp.useSenderForSmtpMailFrom", true);
 
-    requestObserver = new PromiseTestUtils.PromiseRequestObserver();
+    messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
     smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
       null,
       false,
-      "",
-      requestObserver
+      messageId,
+      listener
     );
 
-    await requestObserver.promise;
+    await listener.promise;
 
     transaction = server.playTransaction();
     do_check_transaction(transaction, [

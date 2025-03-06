@@ -4,6 +4,7 @@
 
 package org.mozilla.fenix.translations
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,14 +26,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import mozilla.components.compose.base.Divider
+import mozilla.components.compose.base.annotation.LightDarkPreview
 import mozilla.components.concept.engine.translate.TranslationError
 import org.mozilla.fenix.R
-import org.mozilla.fenix.compose.Divider
+import org.mozilla.fenix.compose.InfoCard
+import org.mozilla.fenix.compose.InfoType
 import org.mozilla.fenix.compose.SwitchWithLabel
-import org.mozilla.fenix.compose.annotation.LightDarkPreview
 import org.mozilla.fenix.compose.list.TextListItem
-import org.mozilla.fenix.shopping.ui.ReviewQualityCheckInfoCard
-import org.mozilla.fenix.shopping.ui.ReviewQualityCheckInfoType
 import org.mozilla.fenix.theme.FirefoxTheme
 import java.util.Locale
 
@@ -119,9 +120,9 @@ private fun TranslationPageSettingsErrorWarning() {
         .defaultMinSize(minHeight = 56.dp)
         .wrapContentHeight()
 
-    ReviewQualityCheckInfoCard(
+    InfoCard(
         description = stringResource(id = R.string.translation_option_bottom_sheet_error_warning_text),
-        type = ReviewQualityCheckInfoType.Warning,
+        type = InfoType.Warning,
         verticalRowAlignment = Alignment.CenterVertically,
         modifier = modifier,
     )
@@ -133,6 +134,8 @@ private fun TranslationOptions(
 ) {
     SwitchWithLabel(
         label = translationSwitchItem.textLabel,
+        checked = translationSwitchItem.isChecked,
+        modifier = Modifier.padding(start = 72.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
         description = if (translationSwitchItem.isChecked) {
             translationSwitchItem.type.descriptionId?.let {
                 stringResource(
@@ -143,15 +146,12 @@ private fun TranslationOptions(
             null
         },
         enabled = translationSwitchItem.isEnabled,
-        checked = translationSwitchItem.isChecked,
-        onCheckedChange = { checked ->
-            translationSwitchItem.onStateChange.invoke(
-                translationSwitchItem.type,
-                checked,
-            )
-        },
-        modifier = Modifier.padding(start = 72.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
-    )
+    ) { checked ->
+        translationSwitchItem.onStateChange.invoke(
+            translationSwitchItem.type,
+            checked,
+        )
+    }
 
     if (translationSwitchItem.type.hasDivider) {
         Divider(Modifier.padding(top = 4.dp, bottom = 4.dp))
@@ -247,7 +247,11 @@ fun getTranslationOptionsList(): List<TranslationSwitchItem> {
 @LightDarkPreview
 private fun TranslationSettingsPreview() {
     FirefoxTheme {
-        Column {
+        Column(
+            modifier = Modifier.background(
+                color = FirefoxTheme.colors.layer1,
+            ),
+        ) {
             TranslationOptionsDialog(
                 translationOptionsList = getTranslationOptionsList(),
                 showGlobalSettings = true,

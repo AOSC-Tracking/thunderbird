@@ -55,6 +55,8 @@ SIGNING_SCOPE_ALIAS_TO_PROJECT = [
             "pine",
             # bug 1877483: larch has similar needs for nightlies
             "larch",
+            # maple is also an L3 branch: https://phabricator.services.mozilla.com/D184833
+            "maple",
         },
     ],
     [
@@ -685,6 +687,10 @@ def generate_beetmover_artifact_map(config, job, **kwargs):
                 if file_config.get("balrog_format"):
                     paths[key]["balrog_format"] = file_config["balrog_format"]
 
+            # optional flag: expiry
+            if file_config.get("expiry"):
+                paths[key]["expiry"] = {"relative-datestamp": file_config["expiry"]}
+
         if not paths:
             # No files for this dependency/locale combination.
             continue
@@ -841,6 +847,12 @@ def generate_beetmover_partials_artifact_map(config, job, partials_info, **kwarg
                 # optional flag: from_buildid
                 if file_config.get("from_buildid"):
                     partials_paths[key]["from_buildid"] = file_config["from_buildid"]
+
+                # optional flag: expiry
+                if file_config.get("expiry"):
+                    partials_paths[key]["expiry"] = {
+                        "relative-datestamp": file_config["expiry"]
+                    }
 
                 # render buildid
                 kwargs.update(

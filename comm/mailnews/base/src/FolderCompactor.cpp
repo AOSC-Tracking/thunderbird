@@ -12,9 +12,9 @@
 #include "nsIMsgDatabase.h"
 #include "nsIMsgFolder.h"
 #include "nsIMsgFolderNotificationService.h"
+#include "nsIMsgImapMailFolder.h"
 #include "nsIMsgHdr.h"
 #include "nsIMsgLocalMailFolder.h"  // For QI, needed by IsLocalFolder().
-#include "nsIMsgImapMailFolder.h"
 #include "nsIMsgPluggableStore.h"
 #include "nsIMsgStatusFeedback.h"
 #include "nsIMsgWindow.h"
@@ -33,8 +33,7 @@
 #include "mozilla/RefCounted.h"
 #include "mozilla/Services.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/Telemetry.h"
-#include "nsPrintfCString.h"
+#include "mozilla/glean/CommMailMetrics.h"
 
 mozilla::LazyLogModule gCompactLog("compact");
 using mozilla::LogLevel;
@@ -86,7 +85,7 @@ class FolderCompactor : public nsIStoreCompactListener {
 
    protected:
     ~ShutdownObserver() {}
-    static RefPtr<FolderCompactor::ShutdownObserver> sInstance;
+    MOZ_RUNINIT static RefPtr<FolderCompactor::ShutdownObserver> sInstance;
     bool mIsShuttingDown;
   };
 
@@ -116,7 +115,7 @@ class FolderCompactor : public nsIStoreCompactListener {
   uint32_t mNumKept{0};
 
   // Glean timer.
-  mozilla::TimeStamp mStart;
+  uint64_t mTimerId{0};
 };
 
 NS_IMPL_ISUPPORTS(FolderCompactor, nsIStoreCompactListener)
@@ -337,6 +336,8 @@ static nsresult BuildKeepMap(nsIMsgDatabase* db,
     rv = hdr->GetStoreToken(token);
     NS_ENSURE_SUCCESS(rv, rv);
     if (token.IsEmpty()) {
+      MOZ_LOG(gCompactLog, LogLevel::Verbose,
+              ("keepmap: ignore msgKey=%" PRIu32 " (no storeToken)", msgKey));
       continue;
     }
 
@@ -353,6 +354,9 @@ static nsresult BuildKeepMap(nsIMsgDatabase* db,
       hdr->SetStoreToken(EmptyCString());
       uint32_t resultFlags;
       hdr->AndFlags(~nsMsgMessageFlags::Offline, &resultFlags);
+      MOZ_LOG(gCompactLog, LogLevel::Verbose,
+              ("keepmap: ignore msgKey=%" PRIu32 " (pendingRemoval is set)",
+               msgKey));
       continue;
     }
 
@@ -361,7 +365,8 @@ static nsresult BuildKeepMap(nsIMsgDatabase* db,
     NS_ENSURE_TRUE(keepMap.put(token, msgKey), NS_ERROR_OUT_OF_MEMORY);
 
     MOZ_LOG(gCompactLog, LogLevel::Verbose,
-            ("keepmap '%s' => %" PRIu32 "", token.get(), msgKey));
+            ("keepmap: storeToken '%s' => msgKey %" PRIu32 "", token.get(),
+             msgKey));
   }
   return NS_OK;
 }
@@ -373,7 +378,7 @@ NS_IMETHODIMP FolderCompactor::OnCompactionBegin() {
   }
 
   MOZ_LOG(gCompactLog, LogLevel::Verbose, ("OnCompactionBegin()"));
-  mStart = mozilla::TimeStamp::Now();
+  mTimerId = mozilla::glean::mail::compact_duration.Start();
 
   PROFILER_MARKER_TEXT(
       "FolderCompactor", OTHER,
@@ -502,12 +507,10 @@ NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status,
            (uint32_t)status, oldSize, newSize));
 
   nsPrintfCString statusStr("%x", (uint32_t)status);
-  mozilla::Telemetry::ScalarAdd(mozilla::Telemetry::ScalarID::TB_COMPACT_RESULT,
-                                NS_ConvertASCIItoUTF16(statusStr), 1);
-  if (mStart) {
-    mozilla::Telemetry::AccumulateTimeDelta(
-        mozilla::Telemetry::TB_COMPACT_DURATION, mStart,
-        mozilla::TimeStamp::Now());
+  mozilla::glean::mail::compact_result.Get(statusStr).Add(1);
+  if (mTimerId) {
+    mozilla::glean::mail::compact_duration.StopAndAccumulate(
+        std::move(mTimerId));
   }
   PROFILER_MARKER_TEXT(
       "FolderCompactor", OTHER,
@@ -529,8 +532,8 @@ NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status,
         dbFolderInfo->SetExpungedBytes(0);
       }
       mDB->SetSummaryValid(true);
-      mozilla::Telemetry::Accumulate(
-          mozilla::Telemetry::TB_COMPACT_BYTES_RECOVERED, oldSize - newSize);
+      mozilla::glean::mail::compact_space_recovered.Accumulate(oldSize -
+                                                               newSize);
     } else {
       NS_ERROR("Failed to commit changes to DB!");
       status = rv;  // Make sure our completion fn hears about the failure.
@@ -587,8 +590,8 @@ FolderCompactor::ShutdownObserver::ShutdownObserver() {
 
   if (!mIsShuttingDown) {
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-    obs->AddObserver(this, "profile-before-change", false);
-    obs->AddObserver(this, "test-profile-before-change", false);
+    obs->AddObserver(this, "quit-application", false);
+    obs->AddObserver(this, "test-quit-application", false);
   }
 }
 
@@ -596,12 +599,12 @@ NS_IMETHODIMP
 FolderCompactor::ShutdownObserver::Observe(nsISupports* aSubject,
                                            const char* aTopic,
                                            const char16_t* aData) {
-  if (!strcmp(aTopic, "profile-before-change") ||
-      !strcmp(aTopic, "test-profile-before-change")) {
+  if (!strcmp(aTopic, "quit-application") ||
+      !strcmp(aTopic, "test-quit-application")) {
     mIsShuttingDown = true;
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-    obs->RemoveObserver(this, "profile-before-change");
-    obs->RemoveObserver(this, "test-profile-before-change");
+    obs->RemoveObserver(this, "quit-application");
+    obs->RemoveObserver(this, "test-quit-application");
   }
   return NS_OK;
 }
@@ -639,8 +642,15 @@ class BatchCompactor {
   virtual ~BatchCompactor();
   void OnProgress(int percent);
   void OnDone(nsresult status, int64_t bytesRecovered);
+
+  bool CanCompactNow(nsIMsgFolder* folder);
+  static void RetryCompactTimerCallback(nsITimer* aTimer, void* aClosure);
+  void StopTimer();
+
   // The folders we're compacting.
   nsTArray<RefPtr<nsIMsgFolder>> mFolders;
+  // Folders that were skipped and must be retried.
+  nsTArray<RefPtr<nsIMsgFolder>> mRetryFolders;
   // Which folder in mFolders is up next.
   size_t mNext;
   // OnStopRunningUrl() is called when it's all done.
@@ -651,7 +661,17 @@ class BatchCompactor {
   RefPtr<BatchCompactor> mKungFuDeathGrip;
   // Running total of bytes saved.
   int64_t mTotalBytesRecovered;
+  // Timer used for retrying after skipping a folder.
+  nsCOMPtr<nsITimer> mTimer;
 };
+
+void BatchCompactor::RetryCompactTimerCallback(nsITimer* aTimer,
+                                               void* aClosure) {
+  MOZ_RELEASE_ASSERT(NS_IsMainThread());
+  BatchCompactor* bc = static_cast<BatchCompactor*>(aClosure);
+  bc->StopTimer();
+  bc->OnDone(NS_OK, 0);
+}
 
 BatchCompactor::BatchCompactor(nsTArray<RefPtr<nsIMsgFolder>> const& folders,
                                nsIUrlListener* finalListener,
@@ -662,7 +682,14 @@ BatchCompactor::BatchCompactor(nsTArray<RefPtr<nsIMsgFolder>> const& folders,
       mWindow(window),
       mTotalBytesRecovered(0) {}
 
-BatchCompactor::~BatchCompactor() {}
+BatchCompactor::~BatchCompactor() { StopTimer(); }
+
+void BatchCompactor::StopTimer() {
+  if (mTimer) {
+    mTimer->Cancel();
+    mTimer = nullptr;
+  }
+}
 
 nsresult BatchCompactor::Begin() {
   mKungFuDeathGrip = this;
@@ -684,13 +711,92 @@ void BatchCompactor::OnProgress(int percent) {
   }
 }
 
+// IMAP folders can have pseudo and offline operations that don't
+// interact well with compaction. If we see any of those pending,
+// we cannot compact now, but need to retry later.
+bool BatchCompactor::CanCompactNow(nsIMsgFolder* folder) {
+  nsCOMPtr<nsIMsgImapMailFolder> imapFolder = do_QueryInterface(folder);
+  if (imapFolder) {
+    bool hasPseudo;
+    if (NS_SUCCEEDED(imapFolder->HasPseudoActivity(&hasPseudo))) {
+      MOZ_LOG(
+          gCompactLog, LogLevel::Info,
+          ("BatchCompactor::CanCompactNow, HasPseudoStuff='%d'", hasPseudo));
+      if (hasPseudo) {
+        return false;
+      }
+    }
+  }
+
+  nsCOMPtr<nsIMsgDatabase> folderDB;
+  nsresult rv = folder->GetMsgDatabase(getter_AddRefs(folderDB));
+  if (folderDB) {
+    nsCOMPtr<nsIMsgOfflineOpsDatabase> opsDb = do_QueryInterface(folderDB, &rv);
+    if (NS_SUCCEEDED(rv)) {
+      bool hasOffline;
+      rv = opsDb->HasOfflineActivity(&hasOffline);
+      if (NS_SUCCEEDED(rv)) {
+        MOZ_LOG(gCompactLog, LogLevel::Info,
+                ("BatchCompactor::CanCompactNow, HasOfflineActivity='%d'",
+                 hasOffline));
+        if (hasOffline) {
+          // No, we don't want to compact now.
+          return false;
+        }
+      } else if (rv != NS_ERROR_NOT_IMPLEMENTED) {
+        // We can compact folders that don't support offline ops.
+        // However, we skip folders that fail to give us the status.
+        MOZ_LOG(
+            gCompactLog, LogLevel::Info,
+            ("BatchCompactor::CanCompactNow, failure querying offline ops"));
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 void BatchCompactor::OnDone(nsresult status, int64_t bytesRecovered) {
+  MOZ_ASSERT(!mTimer);
+
   if (NS_SUCCEEDED(status)) {
     mTotalBytesRecovered += bytesRecovered;
+
+    if (mNext == mFolders.Length()) {
+      // is there anything left to retry?
+      if (mRetryFolders.Length()) {
+        MOZ_LOG(gCompactLog, LogLevel::Info,
+                ("BatchCompactor::OnDone, retrying %u skipped folders",
+                 (unsigned)mRetryFolders.Length()));
+        mFolders.Clear();
+        mFolders = mRetryFolders.Clone();
+        mRetryFolders.Clear();
+        mNext = 0;
+      }
+    }
+
     if (mNext < mFolders.Length()) {
       // Kick off the next folder.
       nsIMsgFolder* folder = mFolders[mNext];
       ++mNext;
+      MOZ_LOG(gCompactLog, LogLevel::Info,
+              ("BatchCompactor::OnDone, looking at next folder='%s'",
+               folder->URI().get()));
+
+      if (!CanCompactNow(folder)) {
+        mRetryFolders.AppendElement(folder);
+
+        const uint32_t kRetryDelay = 3000;
+        nsresult rv = NS_NewTimerWithFuncCallback(
+            getter_AddRefs(mTimer), RetryCompactTimerCallback, (void*)this,
+            kRetryDelay, nsITimer::TYPE_ONE_SHOT,
+            "BatchCompactor::RetryCompactTimerCallback", nullptr);
+        if (NS_FAILED(rv)) {
+          NS_WARNING("Could not start RetryCompactTimerCallback timer");
+        }
+        return;
+      }
+
       RefPtr<FolderCompactor> compactor = new FolderCompactor(folder);
       status = compactor->BeginCompacting(
           std::bind(&BatchCompactor::OnProgress, this, std::placeholders::_1),
@@ -740,8 +846,7 @@ void BatchCompactor::OnDone(nsresult status, int64_t bytesRecovered) {
         } else {
           // For local folders, there's not much we can do. If compact can't
           // scan the mbox, then local folder repair won't be able to either.
-          // Show a catch-all error message.
-          folder->ThrowAlertMsg("compactFolderWriteFailed", mWindow);
+          folder->ThrowAlertMsg("compactFolderStorageCorruption", mWindow);
         }
       } else {
         // Show a catch-all error message.

@@ -173,8 +173,8 @@ var gCategoriesPane = {
   /**
    * Saves the given category to the preferences.
    *
-   * @param categoryName      The name of the category.
-   * @param categoryColor     The color of the category
+   * @param {string} categoryName - The name of the category.
+   * @param {string}categoryColor - The color of the category.
    */
   async saveCategory(categoryName, categoryColor) {
     const list = document.getElementById("categorieslist");
@@ -247,8 +247,8 @@ var gCategoriesPane = {
   /**
    * Backs up the category name in case the dialog is canceled.
    *
-   * @see formatStringForCSSRule
-   * @param categoryNameFix     The formatted category name.
+   * @see {formatStringForCSSRule()}
+   * @param {string} categoryNameFix - The formatted category name.
    */
   backupData(categoryNameFix) {
     const currentColor = categoryPrefBranch.getCharPref(categoryNameFix, "##NEW");

@@ -10,6 +10,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
+// MIN_RNP_VERSION is updated by mach vendor when updating librnp from upstream.
 const MIN_RNP_VERSION = [0, 17, 1];
 
 var systemOS = Services.appinfo.OS.toLowerCase();
@@ -630,7 +631,6 @@ function enableRNPLibJS() {
      *
      * @param {rnp_key_handle_t} handle - handle of the key to query
      * @returns {boolean} - true if secret key material is available
-     *
      */
     isSecretKeyMaterialAvailable(handle) {
       const protection_type = new ctypes.char.ptr();

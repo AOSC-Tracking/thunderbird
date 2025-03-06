@@ -49,6 +49,10 @@ async function makeValidators() {
   );
 
   const messageValidators = {
+    bookmarks_bar_button: await schemaValidatorFor(
+      "resource://testing-common/BookmarksBarButton.schema.json",
+      { common: true }
+    ),
     cfr_doorhanger: await schemaValidatorFor(
       "resource://testing-common/ExtensionDoorhanger.schema.json",
       { common: true }
@@ -59,6 +63,10 @@ async function makeValidators() {
     ),
     infobar: await schemaValidatorFor(
       "resource://testing-common/InfoBar.schema.json",
+      { common: true }
+    ),
+    menu_message: await schemaValidatorFor(
+      "resource://testing-common/MenuMessage.schema.json",
       { common: true }
     ),
     pb_newtab: await schemaValidatorFor(

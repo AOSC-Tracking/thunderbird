@@ -148,8 +148,6 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   nsresult CheckWithNewMessagesStatus(bool messageAdded);
   void UpdateNewMessages();
   nsresult OnHdrAddedOrDeleted(nsIMsgDBHdr* hdrChanged, bool added);
-  nsresult CreateFileForDB(const nsAString& userLeafName, nsIFile* baseDir,
-                           nsIFile** dbFile);
 
   nsresult GetFolderCacheKey(nsIFile** aFile);
   nsresult GetFolderCacheElemFromFile(nsIFile* file,
@@ -183,6 +181,7 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
 
   nsresult PerformBiffNotifications(
       void);  // if there are new, non spam messages, do biff
+  nsresult CloseDB();
 
   // Helper function for Move code to call to update the MRU and MRM time.
   void UpdateTimestamps(bool allowUndo);

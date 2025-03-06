@@ -115,7 +115,7 @@ add_setup(async function () {
 function addIdentitiesAndFolder() {
   const server = MailServices.accounts.createIncomingServer(
     "nobody",
-    "Reply Identity Testing",
+    "ReplyIdentityTesting",
     "pop3"
   );
   testFolder = server.rootFolder
@@ -220,7 +220,7 @@ add_task(async function test_reply_to_self_second_id() {
   const replyWin = await open_compose_with_reply();
   // Should have selected the second id, which was in From.
   checkReply(replyWin, identity2Email);
-  await close_compose_window(replyWin, false /* no prompt*/);
+  await close_compose_window(replyWin);
 
   Assert.report(
     false,

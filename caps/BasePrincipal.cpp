@@ -30,8 +30,8 @@
 #include "mozilla/dom/StorageUtils.h"
 #include "mozilla/JSONStringWriteFuncs.h"
 #include "mozilla/JSONWriter.h"
+#include "nsIEffectiveTLDService.h"
 #include "nsIURL.h"
-#include "nsEffectiveTLDService.h"
 #include "nsIURIMutator.h"
 #include "mozilla/StaticPrefs_permissions.h"
 #include "nsIURIMutator.h"
@@ -372,7 +372,7 @@ nsresult BasePrincipal::ToJSON(nsACString& aJSON) {
 }
 
 nsresult BasePrincipal::ToJSON(JSONWriter& aWriter) {
-  static_assert(eKindMax < ArrayLength(JSONEnumKeyStrings));
+  static_assert(eKindMax < std::size(JSONEnumKeyStrings));
 
   aWriter.Start(JSONWriter::CollectionStyle::SingleLineStyle);
 
@@ -538,7 +538,7 @@ BasePrincipal::EqualsForPermission(nsIPrincipal* aOther, bool aExactHost,
   }
 
   nsCOMPtr<nsIEffectiveTLDService> tldService =
-      do_GetService(NS_EFFECTIVETLDSERVICE_CONTRACTID);
+      mozilla::components::EffectiveTLD::Service();
   if (!tldService) {
     NS_ERROR("Should have a tld service!");
     return NS_ERROR_FAILURE;
@@ -610,7 +610,6 @@ BasePrincipal::SubsumesConsideringDomainIgnoringFPD(nsIPrincipal* aOther,
 
 NS_IMETHODIMP
 BasePrincipal::CheckMayLoad(nsIURI* aURI, bool aAllowIfInheritsPrincipal) {
-  AssertIsOnMainThread();
   return CheckMayLoadHelper(aURI, aAllowIfInheritsPrincipal, false, 0);
 }
 
@@ -627,12 +626,11 @@ nsresult BasePrincipal::CheckMayLoadHelper(nsIURI* aURI,
                                            bool aAllowIfInheritsPrincipal,
                                            bool aReport,
                                            uint64_t aInnerWindowID) {
-  AssertIsOnMainThread();  // Accesses non-threadsafe URI flags and the
-                           // non-threadsafe ExtensionPolicyService
   NS_ENSURE_ARG_POINTER(aURI);
   MOZ_ASSERT(
       aReport || aInnerWindowID == 0,
       "Why do we have an inner window id if we're not supposed to report?");
+  MOZ_ASSERT(!aReport || NS_IsMainThread(), "Must be on main thread to report");
 
   // Check the internal method first, which allows us to quickly approve loads
   // for the System Principal.
@@ -653,41 +651,36 @@ nsresult BasePrincipal::CheckMayLoadHelper(nsIURI* aURI,
     }
   }
 
-  // Web Accessible Resources in MV2 Extensions are marked with
-  // URI_FETCHABLE_BY_ANYONE
-  bool fetchableByAnyone;
-  rv = NS_URIChainHasFlags(aURI, nsIProtocolHandler::URI_FETCHABLE_BY_ANYONE,
-                           &fetchableByAnyone);
-  if (NS_SUCCEEDED(rv) && fetchableByAnyone) {
-    return NS_OK;
-  }
-
-  // Get the principal uri for the last flag check or error.
+  // Get the principal uri for the WebExtension access check or error.
   nsCOMPtr<nsIURI> prinURI;
   rv = GetURI(getter_AddRefs(prinURI));
   if (!(NS_SUCCEEDED(rv) && prinURI)) {
     return NS_ERROR_DOM_BAD_URI;
   }
 
-  // If MV3 Extension uris are web accessible by this principal it is allowed to
-  // load.
-  bool maybeWebAccessible = false;
-  NS_URIChainHasFlags(aURI, nsIProtocolHandler::WEBEXT_URI_WEB_ACCESSIBLE,
-                      &maybeWebAccessible);
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (maybeWebAccessible) {
-    bool isWebAccessible = false;
-    rv = ExtensionPolicyService::GetSingleton().SourceMayLoadExtensionURI(
-        prinURI, aURI, &isWebAccessible);
-    if (NS_SUCCEEDED(rv) && isWebAccessible) {
-      return NS_OK;
+  // If the URL being loaded corresponds to a WebExtension URL, ask the policy
+  // if the path should be accessible.
+  bool isWebExtensionResource;
+  rv = NS_URIChainHasFlags(aURI,
+                           nsIProtocolHandler::URI_IS_WEBEXTENSION_RESOURCE,
+                           &isWebExtensionResource);
+  if (NS_SUCCEEDED(rv) && isWebExtensionResource) {
+    extensions::URLInfo urlInfo(aURI);
+    if (RefPtr<extensions::WebExtensionPolicyCore> urlPolicyCore =
+            ExtensionPolicyService::GetCoreByURL(urlInfo)) {
+      extensions::URLInfo prinUrlInfo(prinURI);
+      if (urlPolicyCore->SourceMayAccessPath(prinUrlInfo, urlInfo.FilePath())) {
+        return NS_OK;
+      }
     }
   }
 
   if (aReport) {
-    nsScriptSecurityManager::ReportError(
-        "CheckSameOriginError", prinURI, aURI,
-        mOriginAttributes.mPrivateBrowsingId > 0, aInnerWindowID);
+    // FIXME: Once bug 1900706 is complete, reporting can be updated to work
+    // off-main-thread.
+    nsScriptSecurityManager::ReportError("CheckSameOriginError", prinURI, aURI,
+                                         mOriginAttributes.IsPrivateBrowsing(),
+                                         aInnerWindowID);
   }
 
   return NS_ERROR_DOM_BAD_URI;
@@ -801,18 +794,6 @@ BasePrincipal::IsL10nAllowed(nsIURI* aURI, bool* aRes) {
 }
 
 NS_IMETHODIMP
-BasePrincipal::AllowsRelaxStrictFileOriginPolicy(nsIURI* aURI, bool* aRes) {
-  *aRes = false;
-  nsCOMPtr<nsIURI> prinURI;
-  nsresult rv = GetURI(getter_AddRefs(prinURI));
-  if (NS_FAILED(rv) || !prinURI) {
-    return NS_OK;
-  }
-  *aRes = NS_RelaxStrictFileOriginPolicy(aURI, prinURI);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 BasePrincipal::GetPrefLightCacheKey(nsIURI* aURI, bool aWithCredentials,
                                     const OriginAttributes& aOriginAttributes,
                                     nsACString& _retval) {
@@ -857,13 +838,25 @@ BasePrincipal::HasFirstpartyStorageAccess(mozIDOMWindow* aCheckWindow,
   *aRejectedReason = 0;
   *aOutAllowed = false;
 
+  if (IsSystemPrincipal()) {
+    // System principal is always considered to have first-party storage access.
+    *aOutAllowed = true;
+    return NS_OK;
+  }
+
   nsPIDOMWindowInner* win = nsPIDOMWindowInner::From(aCheckWindow);
   nsCOMPtr<nsIURI> uri;
   nsresult rv = GetURI(getter_AddRefs(uri));
   if (NS_FAILED(rv)) {
     return rv;
   }
-  *aOutAllowed = ShouldAllowAccessFor(win, uri, aRejectedReason);
+
+  // The uri could be null if the principal is an expanded principal.
+  if (!uri) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  *aOutAllowed = ShouldAllowAccessFor(win, uri, true, aRejectedReason);
   return NS_OK;
 }
 
@@ -1194,6 +1187,12 @@ BasePrincipal::GetPrivateBrowsingId(uint32_t* aPrivateBrowsingId) {
   return NS_OK;
 }
 
+NS_IMETHODIMP
+BasePrincipal::GetIsInPrivateBrowsing(bool* aIsInPrivateBrowsing) {
+  *aIsInPrivateBrowsing = mOriginAttributes.IsPrivateBrowsing();
+  return NS_OK;
+}
+
 nsresult BasePrincipal::GetAddonPolicy(
     extensions::WebExtensionPolicy** aResult) {
   AssertIsOnMainThread();
@@ -1417,8 +1416,8 @@ BasePrincipal::GetLocalStorageQuotaKey(nsACString& aKey) {
     rv = url->GetDirectory(baseDomain);
     NS_ENSURE_SUCCESS(rv, rv);
   } else {
-    nsCOMPtr<nsIEffectiveTLDService> eTLDService(
-        do_GetService(NS_EFFECTIVETLDSERVICE_CONTRACTID, &rv));
+    nsCOMPtr<nsIEffectiveTLDService> eTLDService =
+        mozilla::components::EffectiveTLD::Service(&rv);
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsAutoCString eTLDplusOne;
@@ -1460,7 +1459,12 @@ BasePrincipal::GetNextSubDomainPrincipal(
   }
 
   nsCString subDomain;
-  rv = nsEffectiveTLDService::GetInstance()->GetNextSubDomain(host, subDomain);
+  nsCOMPtr<nsIEffectiveTLDService> eTLDService =
+      mozilla::components::EffectiveTLD::Service();
+  if (!eTLDService) {
+    return NS_OK;
+  }
+  rv = eTLDService->GetNextSubDomain(host, subDomain);
 
   if (NS_FAILED(rv) || subDomain.IsEmpty()) {
     return NS_OK;

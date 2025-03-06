@@ -7,10 +7,10 @@
 import copy
 import json
 import os
-import pipes
 import platform
 import random
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -170,7 +170,7 @@ class XPCShellTestThread(Thread):
     def __init__(
         self,
         test_object,
-        retry=True,
+        retry=None,
         verbose=False,
         usingTSan=False,
         usingCrashReporter=False,
@@ -181,6 +181,10 @@ class XPCShellTestThread(Thread):
 
         self.test_object = test_object
         self.retry = retry
+        if retry is None:
+            # Retry in CI, but report results without retry when run locally to
+            # avoid confusion and ease local debugging.
+            self.retry = os.environ.get("MOZ_AUTOMATION", 0) != 0
         self.verbose = verbose
         self.usingTSan = usingTSan
         self.usingCrashReporter = usingCrashReporter
@@ -372,11 +376,11 @@ class XPCShellTestThread(Thread):
         )
         self.log.info("%s | environment: %s" % (name, list(changedEnv)))
         shell_command_tokens = [
-            pipes.quote(tok) for tok in list(changedEnv) + completeCmd
+            shlex.quote(tok) for tok in list(changedEnv) + completeCmd
         ]
         self.log.info(
             "%s | as shell command: (cd %s; %s)"
-            % (name, pipes.quote(testdir), " ".join(shell_command_tokens))
+            % (name, shlex.quote(testdir), " ".join(shell_command_tokens))
         )
 
     def killTimeout(self, proc):
@@ -1112,7 +1116,7 @@ class XPCShellTests(object):
 
         filters = []
         if test_tags:
-            filters.append(tags(test_tags))
+            filters.extend([tags(x) for x in test_tags])
 
         path_filter = None
         if test_paths:
@@ -1133,6 +1137,7 @@ class XPCShellTests(object):
                     mp.active_tests(
                         filters=filters,
                         noDefaultFilters=noDefaultFilters,
+                        strictExpressions=True,
                         **mozinfo.info,
                     ),
                 )
@@ -1486,14 +1491,27 @@ class XPCShellTests(object):
         if sys.platform == "win32":
             binSuffix = ".exe"
         http3ServerPath = self.http3ServerPath
+        serverEnv = self.env.copy()
         if not http3ServerPath:
-            http3ServerPath = os.path.join(
-                SCRIPT_DIR, "http3server", "http3server" + binSuffix
-            )
-            if build:
+            if self.mozInfo["buildapp"] == "mobile/android":
+                # For android, use binary from host utilities.
+                http3ServerPath = os.path.join(self.xrePath, "http3server" + binSuffix)
+                serverEnv["LD_LIBRARY_PATH"] = self.xrePath
+            elif build:
                 http3ServerPath = os.path.join(
                     build.topobjdir, "dist", "bin", "http3server" + binSuffix
                 )
+            else:
+                http3ServerPath = os.path.join(
+                    SCRIPT_DIR, "http3server", "http3server" + binSuffix
+                )
+
+        # Treat missing http3server as a non-fatal error, because tests that do not
+        # depend on http3server may work just fine.
+        if not os.path.exists(http3ServerPath):
+            self.log.error("Cannot find http3server at path %s" % (http3ServerPath))
+            return
+
         dbPath = os.path.join(SCRIPT_DIR, "http3server", "http3serverDB")
         if build:
             dbPath = os.path.join(build.topsrcdir, "netwerk", "test", "http3serverDB")
@@ -1502,7 +1520,6 @@ class XPCShellTests(object):
         options["profilePath"] = dbPath
         options["isMochitest"] = False
         options["isWin"] = sys.platform == "win32"
-        serverEnv = self.env.copy()
         serverLog = self.env.get("MOZHTTP3_SERVER_LOG")
         if serverLog is not None:
             serverEnv["RUST_LOG"] = serverLog
@@ -1565,23 +1582,33 @@ class XPCShellTests(object):
             "fission"
         ] or not prefs.get("fission.disableSessionHistoryInParent", False)
 
-        self.mozInfo["serviceworker_e10s"] = True
-
         self.mozInfo["verify"] = options.get("verify", False)
 
         self.mozInfo["socketprocess_networking"] = prefs.get(
             "network.http.network_access_on_socket_process.enabled", False
         )
 
-        self.mozInfo["condprof"] = options.get("conditionedProfile", False)
+        self.mozInfo["inc_origin_init"] = (
+            os.environ.get("MOZ_ENABLE_INC_ORIGIN_INIT") == "1"
+        )
 
-        if options.get("variant", ""):
-            self.mozInfo["msix"] = options["variant"] == "msix"
+        self.mozInfo["condprof"] = options.get("conditionedProfile", False)
+        self.mozInfo["msix"] = options.get("variant", "") == "msix"
 
         self.mozInfo["is_ubuntu"] = "Ubuntu" in platform.version()
 
-        mozinfo.update(self.mozInfo)
+        # TODO: remove this when crashreporter is fixed on mac via bug 1910777
+        if self.mozInfo["os"] == "mac":
+            (release, versioninfo, machine) = platform.mac_ver()
+            versionNums = release.split(".")[:2]
+            os_version = "%s.%s" % (versionNums[0], versionNums[1].ljust(2, "0"))
+            if os_version.split(".")[0] == "14":
+                self.mozInfo["crashreporter"] = False
 
+        # we default to false for e10s on xpcshell
+        self.mozInfo["e10s"] = self.mozInfo.get("e10s", False)
+
+        mozinfo.update(self.mozInfo)
         return True
 
     @property
@@ -1806,9 +1833,6 @@ class XPCShellTests(object):
                 "full", self.appPath
             )
             options["self_test"] = False
-            if not options["test_tags"]:
-                options["test_tags"] = []
-            options["test_tags"].append("condprof")
 
         self.setAbsPath()
 
@@ -1891,6 +1915,33 @@ class XPCShellTests(object):
             random.shuffle(self.alltests)
 
         self.cleanup_dir_list = []
+
+        # If any of the tests that are about to be run uses npm packages
+        # we should install them now. It would also be possible for tests
+        # to define the location where they want the npm modules to be
+        # installed, but for now only netwerk xpcshell tests use it.
+        installNPM = False
+        for test in self.alltests:
+            if "usesNPM" in test:
+                installNPM = True
+                break
+
+        if installNPM:
+            command = "npm ci"
+            working_directory = os.path.join(SCRIPT_DIR, "moz-http2")
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=working_directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            # Print the output
+            self.log.info("npm output: " + result.stdout)
+            self.log.info("npm error: " + result.stderr)
+            self.log.info("npm return code: " + str(result.returncode))
 
         kwargs = {
             "appPath": self.appPath,
@@ -2037,6 +2088,11 @@ class XPCShellTests(object):
                 # Run tests sequentially, with MOZ_CHAOSMODE enabled.
                 sequential_tests = []
                 self.env["MOZ_CHAOSMODE"] = "0xfb"
+
+                # for android, adjust flags to avoid slow down
+                if self.env.get("MOZ_ANDROID_DATA_DIR", ""):
+                    self.env["MOZ_CHAOSMODE"] = "0x3b"
+
                 # chaosmode runs really slow, allow tests extra time to pass
                 kwargs["harness_timeout"] = self.harness_timeout * 2
                 for i in range(VERIFY_REPEAT):
@@ -2197,9 +2253,7 @@ class XPCShellTests(object):
                 self.start_test(test)
                 test.join()
                 self.test_ended(test)
-                if (test.failCount > 0 or test.passCount <= 0) and os.environ.get(
-                    "MOZ_AUTOMATION", 0
-                ) != 0:
+                if (test.failCount > 0 or test.passCount <= 0) and test.retry:
                     self.try_again_list.append(test.test_object)
                     continue
                 self.addTestResults(test)

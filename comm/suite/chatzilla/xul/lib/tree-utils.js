@@ -528,16 +528,9 @@ function xtvr_setcol (colID, propertyName)
 
     if (!("_colValues" in this))
         this._colValues = new Object();
-    
-    if (typeof propertyName == "function")
-    {
-        this._colValues.__defineGetter__(colID, propertyName);
-    }
-    else
-    {
-        this.__defineGetter__(propertyName, xtvr_getValueShim);
-        this.__defineSetter__(propertyName, xtvr_setValueShim);
-    }
+
+    this.__defineGetter__(propertyName, xtvr_getValueShim);
+    this.__defineSetter__(propertyName, xtvr_setValueShim);
 }
 
 XULTreeViewRecord.prototype.setColumnPropertyValue =
@@ -692,7 +685,7 @@ XULTreeViewRecord.prototype.appendChild =
 function xtvr_appchild (child)
 {
     if (!isinstance(child, XULTreeViewRecord))
-        throw Components.results.NS_ERROR_INVALID_ARG;
+        throw Cr.NS_ERROR_INVALID_ARG;
     
     child.isHidden = false;
     child.parentRecord = this;
@@ -760,7 +753,7 @@ function xtvr_remchild(index)
     var delta = -orphan.visualFootprint;
     var changeStart = orphan.calculateVisualRow();
     delete orphan.parentRecord;
-    arrayRemoveAt(this.childData, index);
+    this.childData.splice(index, 1);
 
     if (!orphan.isHidden && "isContainerOpen" in this && this.isContainerOpen)
         this.onVisualFootprintChanged(changeStart, delta);
@@ -1028,42 +1021,6 @@ function xtvr_find (targetRow, myRow)
 
     return null;
 }   
-
-/**
- * Used to drop a label into an arbitrary place in an arbitrary tree.
- *
- * Normally, specializations of |XULTreeViewRecord| are tied to a specific
- * tree because of implementation details.  |XTLabelRecords| are specially
- * designed (err, hacked) to work around these details - this makes them
- * slower, but more generic.
- *
- * We set up a getter for |_share| that defers to the parent object. This lets
- * |XTLabelRecords| work in any tree.
- */
-function XTLabelRecord (columnName, label, blankCols)
-{
-    this.setColumnPropertyName (columnName, "label");
-    this.label = label;
-    this.property = null;
-    
-    if (typeof blankCols == "object")
-    {
-        for (var i in blankCols)
-            this._colValues[blankCols[i]] = "";
-    }
-}
-
-XTLabelRecord.prototype = new XULTreeViewRecord (null);
-
-XTLabelRecord.prototype.__defineGetter__("_share", tolr_getshare);
-function tolr_getshare()
-{
-    if ("parentRecord" in this)
-        return this.parentRecord._share;
-
-    ASSERT (0, "XTLabelRecord cannot be the root of a visible tree.");
-    return null;
-}
 
 // @internal
 function XTRootRecord (tree, share)

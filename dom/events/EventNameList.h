@@ -158,11 +158,13 @@ EVENT(CheckboxStateChange, eFormCheckboxStateChange, EventNameType_None,
       eBasicEventClass)
 EVENT(RadioStateChange, eFormRadioStateChange, EventNameType_None,
       eBasicEventClass)
-EVENT(auxclick, eMouseAuxClick, EventNameType_All, eMouseEventClass)
-EVENT(click, eMouseClick, EventNameType_All, eMouseEventClass)
+EVENT(auxclick, ePointerAuxClick, EventNameType_All, ePointerEventClass)
+EVENT(click, ePointerClick, EventNameType_All, ePointerEventClass)
 EVENT(close, eClose, EventNameType_HTMLXUL, eBasicEventClass)
+EVENT(contentvisibilityautostatechange, eContentVisibilityAutoStateChange,
+      EventNameType_All, eBasicEventClass)
 EVENT(contextmenu, eContextMenu,
-      EventNameType_HTMLXUL | EventNameType_SVGGraphic, eMouseEventClass)
+      EventNameType_HTMLXUL | EventNameType_SVGGraphic, ePointerEventClass)
 NON_IDL_EVENT(mouselongtap, eMouseLongTap, EventNameType_HTMLXUL,
               eMouseEventClass)
 EVENT(cuechange, eCueChange, EventNameType_All, eBasicEventClass)
@@ -177,6 +179,7 @@ EVENT(dragstart, eDragStart, EventNameType_HTMLXUL, eDragEventClass)
 EVENT(drop, eDrop, EventNameType_HTMLXUL, eDragEventClass)
 EVENT(durationchange, eDurationChange, EventNameType_HTML, eBasicEventClass)
 EVENT(emptied, eEmptied, EventNameType_HTML, eBasicEventClass)
+EVENT(encrypted, eEncrypted, EventNameType_HTMLMedia, eBasicEventClass)
 EVENT(ended, eEnded, EventNameType_HTML, eBasicEventClass)
 EVENT(formdata, eFormData, EventNameType_HTML, eBasicEventClass)
 EVENT(fullscreenchange, eFullscreenChange, EventNameType_HTML, eBasicEventClass)
@@ -252,6 +255,7 @@ EVENT(timeupdate, eTimeUpdate, EventNameType_HTML, eBasicEventClass)
 EVENT(toggle, eToggle, EventNameType_HTML, eBasicEventClass)
 EVENT(volumechange, eVolumeChange, EventNameType_HTML, eBasicEventClass)
 EVENT(waiting, eWaiting, EventNameType_HTML, eBasicEventClass)
+EVENT(waitingforkey, eWaitingForKey, EventNameType_HTMLMedia, eBasicEventClass)
 EVENT(wheel, eWheel, EventNameType_All, eWheelEventClass)
 EVENT(copy, eCopy, EventNameType_HTMLXUL | EventNameType_SVGGraphic,
       eClipboardEventClass)

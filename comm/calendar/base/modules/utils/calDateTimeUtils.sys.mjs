@@ -13,24 +13,31 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   cal: "resource:///modules/calendar/calUtils.sys.mjs",
 });
+ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
 
 export var dtz = {
   /**
-   * Shortcut to the timezone service's defaultTimezone
+   * Shortcut to the timezone service's defaultTimezone.
+   *
+   * @returns {calITimezoneService}
    */
   get defaultTimezone() {
     return lazy.cal.timezoneService.defaultTimezone;
   },
 
   /**
-   * Shorcut to the UTC timezone
+   * Shorcut to the UTC timezone.
+   *
+   * @returns {calITimezoneService}
    */
   get UTC() {
     return lazy.cal.timezoneService.UTC;
   },
 
   /**
-   * Shortcut to the floating (local) timezone
+   * Shortcut to the floating (local) timezone.
+   *
+   * @returns {calITimezoneService}
    */
   get floating() {
     return lazy.cal.timezoneService.floating;
@@ -39,7 +46,7 @@ export var dtz = {
   /**
    * Makes sure the given timezone id is part of the list of recent timezones.
    *
-   * @param aTzid     The timezone id to add
+   * @param {strimg} aTzid - The timezone id to add.
    */
   saveRecentTimezone(aTzid) {
     const recentTimezones = dtz.getRecentTimezones();
@@ -56,6 +63,8 @@ export var dtz = {
   /**
    * Returns a calIDateTime that corresponds to the current time in the user's
    * default timezone.
+   *
+   * @returns {calIDateTime}
    */
   now() {
     const date = dtz.jsDateToDateTime(new Date());
@@ -66,8 +75,8 @@ export var dtz = {
    * Get the default event start date. This is the next full hour, or 23:00 if it
    * is past 23:00.
    *
-   * @param aReferenceDate    If passed, the time of this date will be modified,
-   *                            keeping the date and timezone intact.
+   * @param {calIDateTime} [aReferenceDate] - If passed, the time of this date
+   *   will be modified, keeping the date and timezone intact.
    */
   getDefaultStartDate(aReferenceDate) {
     let startDate = dtz.now();
@@ -93,9 +102,9 @@ export var dtz = {
    * Setup the default start and end hours of the given item. This can be a task
    * or an event.
    *
-   * @param aItem             The item to set up the start and end date for.
-   * @param aReferenceDate    If passed, the time of this date will be modified,
-   *                            keeping the date and timezone intact.
+   * @param {calIItemBase} aItem - The item to set up the start and end date for.
+   * @param {calIDateTime} [aReferenceDate] - If passed, the time of this date
+   *   will be modified, keeping the date and timezone intact.
    */
   setDefaultStartEndHour(aItem, aReferenceDate) {
     aItem[dtz.startDateProp(aItem)] = dtz.getDefaultStartDate(aReferenceDate);
@@ -139,9 +148,9 @@ export var dtz = {
   /**
    * Check if the two dates are on the same day (ignoring time)
    *
-   * @param date1     The left date to compare
-   * @param date2     The right date to compare
-   * @returns True, if dates are on the same day
+   * @param {calIDateTime} date1 - The left date to compare.
+   * @param {calIDateTime} date2 - The right date to compare.
+   * @returns {boolean} True, if dates are on the same day.
    */
   sameDay(date1, date2) {
     if (date1 && date2) {
@@ -157,7 +166,8 @@ export var dtz = {
    * method will return a proper datetime (set to midnight) for a date object.  If
    * the object is already a datetime, it will simply be returned.
    *
-   * @param aDate  the date or datetime to check
+   * @param {calIDateTime} aDate - The date or datetime to check.
+   * @returns {calIDateTime};
    */
   ensureDateTime(aDate) {
     if (!aDate || !aDate.isDate) {
@@ -169,16 +179,16 @@ export var dtz = {
   },
 
   /**
-   * Returns a calIDateTime corresponding to a javascript Date.
+   * Returns a calIDateTime corresponding to a JavaScript Date.
    *
-   * @param aDate     a javascript date
-   * @param aTimezone (optional) a timezone that should be enforced
-   * @returns a calIDateTime
+   * @param {Date} aDate - A JavaScript Date.
+   * @param {calITimezone} [aTimezone] - A timezone that should be enforced.
+   * @returns {calIDateTime}
    *
-   * @warning  Use of this function is strongly discouraged.  calIDateTime should
-   *           be used directly whenever possible.
-   *           If you pass a timezone, then the passed jsDate's timezone will be ignored,
-   *           but only its local time portions are be taken.
+   * Warning: Use of this function is strongly discouraged.
+   *   calIDateTime should be used directly whenever possible.
+   *   If you pass a timezone, then the passed jsDate's timezone will be ignored,
+   *   but only its local time portions are be taken.
    */
   jsDateToDateTime(aDate, aTimezone) {
     const newDate = lazy.cal.createDateTime();
@@ -212,8 +222,8 @@ export var dtz = {
    * Convert a calIDateTime to a Javascript date object. This is the
    * replacement for the former .jsDate property.
    *
-   * @param cdt       The calIDateTime instance
-   * @returns The Javascript date equivalent.
+   * @param {calIDateTime} cdt - The calIDateTime instance
+   * @returns {Date} The JavaScript date equivalent.
    */
   dateTimeToJsDate(cdt) {
     if (cdt.isDate) {
@@ -227,12 +237,11 @@ export var dtz = {
   },
 
   /**
-   * fromRFC3339
    * Convert a RFC3339 compliant Date string to a calIDateTime.
    *
-   * @param aStr          The RFC3339 compliant Date String
-   * @param aTimezone     The timezone this date string is most likely in
-   * @returns A calIDateTime object
+   * @param {string} aStr - The RFC3339 compliant date string.
+   * @param {calITimezone} aTimezone - The timezone this date string is most likely in.
+   * @returns {calIDateTime}
    */
   fromRFC3339(aStr, aTimezone) {
     // XXX I have not covered leapseconds (matches[8]), this might need to
@@ -308,11 +317,10 @@ export var dtz = {
   },
 
   /**
-   * toRFC3339
    * Convert a calIDateTime to a RFC3339 compliant Date string
    *
-   * @param aDateTime     The calIDateTime object
-   * @returns The RFC3339 compliant date string
+   * @param {calIDateTime} aDateTime - The calIDateTime object.
+   * @returns {string} The RFC3339 compliant date string.
    */
   toRFC3339(aDateTime) {
     if (!aDateTime) {
@@ -361,8 +369,8 @@ export var dtz = {
    * Gets the list of recent timezones. Optionally returns the list as
    * calITimezones.
    *
-   * @param aConvertZones     (optional) If true, return calITimezones instead
-   * @returns An array of timezone ids or calITimezones.
+   * @param {boolean} [aConvertZones] - If true, return calITimezones instead.
+   * @returns {string[]|calITimezones[]} An array of timezone ids or calITimezones.
    */
   getRecentTimezones(aConvertZones) {
     let recentTimezones = JSON.parse(
@@ -413,10 +421,10 @@ export var dtz = {
 
     if (!dateTime.timezone.isFloating && dateTime.timezone.tzid != kDefaultTimezone.tzid) {
       // Additionally display the original datetime with timezone.
-      const originalTime = lazy.cal.l10n.getCalString("datetimeWithTimezone", [
-        formatter.formatDateTime(dateTime),
-        dateTime.timezone.tzid,
-      ]);
+      const originalTime = lazy.l10n.formatValueSync("datetime-with-timezone", {
+        datetime: formatter.formatDateTime(dateTime),
+        timezone: dateTime.timezone.tzid,
+      });
       return `${formattedLocalTime} (${originalTime})`;
     }
     return formattedLocalTime;

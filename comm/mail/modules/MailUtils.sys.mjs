@@ -4,10 +4,12 @@
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
   MailConsts: "resource:///modules/MailConsts.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
   MimeParser: "resource:///modules/mimeParser.sys.mjs",
   NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   PluralForm: "resource:///modules/PluralForm.sys.mjs",
 });
 
@@ -72,9 +74,9 @@ export var MailUtils = {
    * the search result corresponding to a mozeml/wdseml file, we need to figure
    * out the folder using the file's path.
    *
-   * @param aFile the nsIFile to convert to a folder
-   * @returns the nsIMsgFolder corresponding to aFile, or null if the folder
-   *          isn't found
+   * @param {nsIFile} aFile - The nsIFile to convert to a folder.
+   * @returns {?nsIMsgFolder} the nsIMsgFolder corresponding to aFile, or null
+   *   if the folder isn't found.
    */
   getFolderForFileInProfile(aFile) {
     for (const folder of lazy.MailServices.accounts.allFolders) {
@@ -88,8 +90,8 @@ export var MailUtils = {
   /**
    * Get the nsIMsgFolder corresponding to this URI.
    *
-   * @param aFolderURI the URI of the target folder
-   * @returns {nsIMsgFolder} Folder corresponding to this URI, or null if
+   * @param {string} aFolderURI - The URI of the target folder
+   * @returns {?nsIMsgFolder} Folder corresponding to this URI, or null if
    *          the folder doesn't already exist.
    */
   getExistingFolder(aFolderURI) {
@@ -103,8 +105,9 @@ export var MailUtils = {
    * Get the nsIMsgFolder corresponding to this URI, or create a detached
    * folder if it doesn't already exist.
    *
-   * @param aFolderURI the URI of the target folder
-   * @returns {nsIMsgFolder} Folder corresponding to this URI.
+   * @param {string} aFolderURI - The URI of the target folder
+   * @returns {?nsIMsgFolder} Folder corresponding to this URI. Will return null
+   *   if aUrl is not a folder url.
    */
   getOrCreateFolder(aFolderURI) {
     const fls = Cc["@mozilla.org/mail/folder-lookup;1"].getService(
@@ -119,10 +122,10 @@ export var MailUtils = {
    * window is already open. This function should be called when you'd like to
    * display a message to the user according to the pref set.
    *
-   * @note Do not use this if you want to open multiple messages at once. Use
-   *       |displayMessages| instead.
+   * Note: Do not use this if you want to open multiple messages at once. Use
+   *  |displayMessages| instead.
    *
-   * @param {nsIMsgHdr} aMsgHdr - The message header to display.
+   * @param {nsIMsgDBHdr} aMsgHdr - The message header to display.
    * @param {DBViewWrapper} [aViewWrapperToClone] - A view wrapper to clone.
    *   If null or not given, the message header's folder's default view will
    *   be used.
@@ -141,10 +144,10 @@ export var MailUtils = {
    * Display the warning if the number of messages to be displayed is greater than
    * the limit set in preferences.
    *
-   * @param aNumMessages: number of messages to be displayed
-   * @param aConfirmTitle: title ID
-   * @param aConfirmMsg: message ID
-   * @param aLiitingPref: the name of the pref to retrieve the limit from
+   * @param {integer} aNumMessages - Number of messages to be displayed.
+   * @param {string} aConfirmTitle - Title ID.
+   * @param {string} aConfirmMsg - Message ID.
+   * @param {string} aLimitingPref - Name of the pref for limit.
    */
   confirmAction(aNumMessages, aConfirmTitle, aConfirmMsg, aLimitingPref) {
     const openWarning = Services.prefs.getIntPref(aLimitingPref);
@@ -315,7 +318,7 @@ export var MailUtils = {
   /**
    * Show this message in an existing window.
    *
-   * @param {nsIMsgHdr} aMsgHdr - The message header to display.
+   * @param {nsIMsgDBHdr} aMsgHdr - The message header to display.
    * @param {DBViewWrapper} [aViewWrapperToClone] - A DB view wrapper to clone
    *   for the message window.
    * @returns {boolean} true if an existing window was found and the message
@@ -333,7 +336,7 @@ export var MailUtils = {
   /**
    * Open a new standalone message window with this header.
    *
-   * @param {nsIMsgHdr} aMsgHdr the message header to display
+   * @param {nsIMsgDBHdr} aMsgHdr the message header to display
    * @param {DBViewWrapper} [aViewWrapperToClone] - A DB view wrapper to clone
    *   for the message window.
    * @returns {DOMWindow} the opened window
@@ -401,7 +404,7 @@ export var MailUtils = {
    * useful when the message needs to be displayed in the context of its folder
    * or thread.
    *
-   * @param {nsIMsgHdr} msgHdr - The message header to display.
+   * @param {nsIMsgDBHdr} msgHdr - The message header to display.
    * @param {boolean} [openIfMessagePaneHidden] - If true, and the folder tab's
    *   message pane is hidden, opens the message in a new tab or window.
    *   Otherwise uses the folder tab.
@@ -549,13 +552,13 @@ export var MailUtils = {
    * in severe danger of extreme memory bloat unless you force garbage
    * collections after every time you close a database.
    *
-   * @param {nsIMsgFolder} folder - The parent folder; we take action on it and all
+   * @param {nsIMsgFolder} parentFolder - The parent folder; we take action on it and all
    *     of its descendents.
    * @param {Function} action - the function to call on each folder.
    */
-  async takeActionOnFolderAndDescendents(folder, action) {
+  async takeActionOnFolderAndDescendents(parentFolder, action) {
     // We need to add the base folder as it is not included by .descendants.
-    const allFolders = [folder, ...folder.descendants];
+    const allFolders = [parentFolder, ...parentFolder.descendants];
 
     // - worker function
     function* folderWorker() {
@@ -660,7 +663,7 @@ export var MailUtils = {
   /**
    * Get the identity for the given header.
    *
-   * @param {nsIMsgHdr} hdr - Message header.
+   * @param {nsIMsgDBHdr} hdr - Message header.
    * @param {nsIMsgCompType} type - Compose type the identity is used for.
    * @returns {Array} - An array of two elements, [identity, matchingHint].
    *   identity is an nsIMsgIdentity and matchingHint is a string.
@@ -755,31 +758,39 @@ export var MailUtils = {
    *
    * @param {string} msgId - The message id to find.
    * @param {nsIMsgFolder} folder - The folder to check.
+   * @param {boolean} [recursively=true] - Whether to search the folder recursively.
    * @returns {nsIMsgDBHdr}
    */
-  findMsgIdInFolder(msgId, folder) {
+  findMsgIdInFolder(msgId, folder, recursively = true) {
     let msgHdr;
 
     // Search in folder.
     if (!folder.isServer) {
       try {
+        const weOpenedDB = !folder.databaseOpen;
         msgHdr = folder.msgDatabase.getMsgHdrForMessageID(msgId);
         if (msgHdr) {
           return msgHdr;
         }
-        folder.closeDBIfFolderNotOpen(true);
+        if (weOpenedDB) {
+          folder.msgDatabase.forceClosed();
+          folder.msgDatabase = null;
+        }
       } catch (ex) {
-        console.error(`Database for ${folder.name} not accessible`);
+        console.error(`Database for ${folder.URI} not accessible`);
       }
     }
 
-    // Search subfolders recursively.
-    for (const currentFolder of folder.subFolders) {
-      msgHdr = this.findMsgIdInFolder(msgId, currentFolder);
-      if (msgHdr) {
-        return msgHdr;
+    if (recursively) {
+      // Search subfolders recursively.
+      for (const currentFolder of folder.subFolders) {
+        msgHdr = this.findMsgIdInFolder(msgId, currentFolder, recursively);
+        if (msgHdr) {
+          return msgHdr;
+        }
       }
     }
+
     return null;
   },
 
@@ -862,9 +873,7 @@ export var MailUtils = {
       "mailnews.messageid_browser.url"
     );
     browserURL = browserURL.replace(/%mid/, encodeURIComponent(messageId));
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(Services.io.newURI(browserURL));
+    lazy.openLinkExternally(browserURL, { addToHistory: false });
   },
 
   /**
@@ -961,9 +970,9 @@ export var MailUtils = {
       "@mozilla.org/messenger/messageservice;1?type=news"
     ].getService(Ci.nsIMsgMessageService);
     const urlListener = {
-      OnStopRunningUrl(url, aExitCode) {
-        if (!Components.isSuccessCode(aExitCode) || tempFile.fileSize <= 0) {
-          console.warn(`Could not open URI ${url.asciiSpec}`);
+      OnStopRunningUrl(emlUrl, exitCode) {
+        if (!Components.isSuccessCode(exitCode) || tempFile.fileSize <= 0) {
+          console.warn(`Could not open URI ${emlUrl.asciiSpec}`);
           return;
         }
         MailUtils.openEMLFile(win, tempFile, Services.io.newFileURI(tempFile));
@@ -1064,6 +1073,114 @@ export var MailUtils = {
       Services.prefs.setBoolPref(activePref, false);
     }
     return true;
+  },
+
+  /**
+   * Set the favicon for the currently visited http(s) page in the favicons db.
+   *
+   * @param {nsIURI} pageURI
+   * @param {nsIURI} iconURI
+   */
+  async setFaviconForPage(pageURI, iconURI) {
+    if (!pageURI.schemeIs("http") && !pageURI.schemeIs("https")) {
+      // Don't try to store favion if this isn't a http(s) page.
+      return;
+    }
+    try {
+      // If the given faviconURI is data URL, set it as is.
+      if (iconURI.schemeIs("data")) {
+        await lazy.PlacesUtils.favicons.setFaviconForPage(
+          pageURI,
+          iconURI,
+          iconURI
+        );
+        return;
+      }
+
+      // Try to find the favicon data from DB.
+      const faviconInfo = await this.getFaviconInfo(pageURI);
+      if (faviconInfo?.faviconSize) {
+        // As valid favicon data is already stored for the page,
+        // we don't have to update.
+        return;
+      }
+
+      // Otherwise, fetch from network.
+      const dataURL = await this.getFaviconDataURLFromNetwork(iconURI);
+      await lazy.PlacesUtils.favicons.setFaviconForPage(
+        pageURI,
+        iconURI,
+        dataURL
+      );
+    } catch (ex) {
+      console.error(`Set favicon for page ${pageURI.spec} FAILED`, ex);
+    }
+  },
+
+  /**
+   * Get favicon info (uri and size) for a uri from Places.
+   *
+   * @param {nsIURI} uri - Page to check for favicon data.
+   * @returns {?Promise} A promise of an object containing the data if found.
+   */
+  getFaviconInfo(uri) {
+    return new Promise(resolve =>
+      lazy.PlacesUtils.favicons.getFaviconDataForPage(
+        uri,
+        // Package up the icon data in an object if we have it; otherwise null
+        (iconUri, faviconLength, favicon, mimeType, faviconSize) =>
+          resolve(iconUri ? { iconUri, faviconSize } : null),
+        96
+      )
+    );
+  },
+
+  /**
+   * Get favicon data for given URL from network.
+   * Copied from mozilla-central repo: FaviconFeed.sys.mjs
+   *
+   * @param {nsIURI} faviconURI - nsIURI for the favicon.
+   * @returns {nsIURI} data URL
+   */
+  async getFaviconDataURLFromNetwork(faviconURI) {
+    const channel = lazy.NetUtil.newChannel({
+      uri: faviconURI,
+      loadingPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+      securityFlags:
+        Ci.nsILoadInfo.SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT |
+        Ci.nsILoadInfo.SEC_ALLOW_CHROME |
+        Ci.nsILoadInfo.SEC_DISALLOW_SCRIPT,
+      contentPolicyType: Ci.nsIContentPolicy.TYPE_INTERNAL_IMAGE_FAVICON,
+    });
+
+    const resolver = Promise.withResolvers();
+
+    lazy.NetUtil.asyncFetch(channel, async (input, status, request) => {
+      if (!Components.isSuccessCode(status)) {
+        resolver.reject(new Error(`Fetching ${faviconURI.spec} FAILED!`));
+        return;
+      }
+
+      try {
+        const data = lazy.NetUtil.readInputStream(input, input.available());
+        const { contentType } = request.QueryInterface(Ci.nsIChannel);
+        input.close();
+
+        const buffer = new Uint8ClampedArray(data);
+        const blob = new Blob([buffer], { type: contentType });
+        const dataURL = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.addEventListener("load", () => resolve(reader.result));
+          reader.addEventListener("error", reject);
+          reader.readAsDataURL(blob);
+        });
+        resolver.resolve(Services.io.newURI(dataURL));
+      } catch (e) {
+        resolver.reject(e);
+      }
+    });
+
+    return resolver.promise;
   },
 };
 

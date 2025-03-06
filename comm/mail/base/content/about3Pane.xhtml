@@ -51,11 +51,13 @@
   <script type="module" src="chrome://messenger/content/thread-row.mjs"></script>
   <script type="module" src="chrome://messenger/content/folder-tree-row.mjs"></script>
   <script type="module" src="chrome://messenger/content/tree-view.mjs"></script>
+  <script type="module" src="chrome://messenger/content/pane-layout.mjs"></script>
+  <script type="module" src="chrome://messenger/content/message-pane.mjs"></script>
   <script defer="defer" src="chrome://messenger/content/mailContext.js"></script>
   <script defer="defer" src="chrome://messenger/content/mailCommon.js"></script>
   <script defer="defer" src="chrome://messenger/content/about3Pane.js"></script>
 </head>
-<body class="layout-classic">
+<body id="paneLayout" is="pane-layout" class="layout-classic">
   <div id="folderPane" class="collapsed-by-splitter" tabindex="-1">
     <div id="folderPaneHeaderBar" class="sidebar-panel-header" hidden="hidden">
 # Force a reverse tabindex to work alongside the `flex-direction: row-reverse`
@@ -355,26 +357,8 @@
       resize-id="messagePane"
       collapse-width="300"
       collapse-height="100" />
-  <div id="messagePane" class="collapsed-by-splitter">
-    <xul:browser id="webBrowser"
-                 type="content"
-                 manualactiveness="true"
-                 hidden="true"
-                 nodefaultsrc="true"
-                 context="browserContext"
-                 autocompletepopup="PopupAutoComplete"
-                 forcemessagemanager="true"
-                 messagemanagergroup="single-page"
-                 maychangeremoteness="true" />
-    <xul:browser id="messageBrowser"
-                 hidden="true"
-                 src="about:message" />
-    <xul:browser id="multiMessageBrowser"
-                 type="content"
-                 hidden="true"
-                 context="aboutPagesContext"
-                 src="chrome://messenger/content/multimessageview.xhtml" />
-  </div>
+#include templates/messagePaneTemplate.inc.xhtml
+  <message-pane id="messagePane" class="collapsed-by-splitter"></message-pane>
   <xul:browser id="accountCentralBrowser" hidden="true"/>
 </body>
 <popupset xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
@@ -435,8 +419,8 @@
                  showAccountsFileHere="true"
                  showFileHereLabel="true"
                  showRecent="true"
-                 recentLabel="&contextMoveCopyMsgRecentMenu.label;"
-                 recentAccessKey="&contextMoveCopyMsgRecentMenu.accesskey;"
+                 recentLabel="&contextMoveCopyMsgRecentDestinationMenu.label;"
+                 recentAccessKey="&contextMoveCopyMsgRecentDestinationMenu.accesskey;"
                  showFavorites="true"
                  favoritesLabel="&contextMoveCopyMsgFavoritesMenu.label;"
                  favoritesAccessKey="&contextMoveCopyMsgFavoritesMenu.accesskey;"
@@ -451,8 +435,8 @@
                  showAccountsFileHere="true"
                  showFileHereLabel="true"
                  showRecent="true"
-                 recentLabel="&contextMoveCopyMsgRecentMenu.label;"
-                 recentAccessKey="&contextMoveCopyMsgRecentMenu.accesskey;"
+                 recentLabel="&contextMoveCopyMsgRecentDestinationMenu.label;"
+                 recentAccessKey="&contextMoveCopyMsgRecentDestinationMenu.accesskey;"
                  showFavorites="true"
                  favoritesLabel="&contextMoveCopyMsgFavoritesMenu.label;"
                  favoritesAccessKey="&contextMoveCopyMsgFavoritesMenu.accesskey;"
@@ -506,6 +490,10 @@
               class="menuitem-iconic"
               label="&folderContextSettings2.label;"
               accesskey="&folderContextSettings2.accesskey;"/>
+    <menuitem id="folderPaneContext-filters"
+              class="menuitem-iconic"
+              label="&filtersCmd2.label;"
+              accesskey="&filtersCmd2.accesskey;"/>
     <menuitem id="folderPaneContext-manageTags"
               class="menuitem-iconic"
               label="&manageTags.label;"

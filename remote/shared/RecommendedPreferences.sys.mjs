@@ -111,6 +111,7 @@ const COMMON_PREFERENCES = new Map([
 
   // Make sure newtab wallpapers don't hit the network to retrieve wallpaper data.
   ["browser.newtabpage.activity-stream.newtabWallpapers.enabled", false],
+  ["browser.newtabpage.activity-stream.newtabWallpapers.v2.enabled", false],
 
   // Make sure Topsites doesn't hit the network to retrieve sponsored tiles.
   ["browser.newtabpage.activity-stream.showSponsoredTopSites", false],
@@ -264,10 +265,7 @@ const COMMON_PREFERENCES = new Map([
     "http://%(server)s/extensions-dummy/blocklistItemURL",
   ],
   ["extensions.hotfix.url", "http://%(server)s/extensions-dummy/hotfixURL"],
-  [
-    "extensions.systemAddon.update.url",
-    "http://%(server)s/dummy-system-addons.xml",
-  ],
+  ["extensions.systemAddon.update.enabled", false],
   [
     "extensions.update.background.url",
     "http://%(server)s/extensions-dummy/updateBackgroundURL",
@@ -337,6 +335,9 @@ const COMMON_PREFERENCES = new Map([
 
   // Do not download intermediate certificates
   ["security.remote_settings.intermediates.enabled", false],
+
+  // Disable logging for remote settings
+  ["services.settings.loglevel", "off"],
 
   // Ensure remote settings do not hit the network
   ["services.settings.server", "data:,#remote-settings-dummy/v1"],

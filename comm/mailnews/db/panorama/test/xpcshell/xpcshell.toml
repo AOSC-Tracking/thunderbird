@@ -1,0 +1,33 @@
+[DEFAULT]
+head = "head.js"
+prefs = [
+  "logging.config.modules=panorama:4",
+]
+generated-files = [
+  "db/lookup.sqlite",
+  "db/messages.sqlite",
+  "db/move.sqlite",
+  "db/relations.sqlite",
+  "db/sort.sqlite",
+]
+support-files = [
+  "db/lookup.sqlite",
+  "db/messages.sqlite",
+  "db/move.sqlite",
+  "db/relations.sqlite",
+  "db/sort.sqlite",
+]
+
+["test_delete.js"]
+["test_findFolders.js"]
+["test_flags.js"]
+["test_insert.js"]
+["test_liveView.js"]
+["test_liveViewDataAdapter.js"]
+["test_lookup.js"]
+["test_messages.js"]
+["test_move.js"]
+["test_reconcile.js"]
+["test_relations.js"]
+["test_sort.js"]
+["test_sqlFunctions.js"]

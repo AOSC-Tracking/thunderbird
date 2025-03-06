@@ -24,6 +24,7 @@ const ignoreFiles = [
 
 module.exports = {
   extends: ["stylelint-config-recommended"],
+  plugins: ["@stylistic/stylelint-plugin"],
   ignoreFiles,
   rules: {
     /* Disabled because of `-moz-element(#foo)` which gets misparsed. */
@@ -45,6 +46,16 @@ module.exports = {
       true,
       {
         ignoreFunctions: ["add" /* Used in mathml.css */],
+      },
+    ],
+    /*
+     * Disabled on custom properties due to issues with calc:
+     * https://github.com/stylelint/stylelint/issues/2586
+     */
+    "length-zero-no-unit": [
+      true,
+      {
+        ignore: ["custom-properties"],
       },
     ],
 
@@ -232,5 +243,17 @@ module.exports = {
         ignorePseudoClasses: ["popover-open"],
       },
     ],
+    "selector-pseudo-element-no-unknown": [
+      true,
+      {
+        ignorePseudoElements: ["slider-track", "slider-fill", "slider-thumb"],
+      },
+    ],
+
+    "media-feature-name-no-unknown": true,
+    "media-feature-name-value-no-unknown": true,
+    "max-nesting-depth": 5,
+
+    "@stylistic/color-hex-case": "lower",
   },
 };

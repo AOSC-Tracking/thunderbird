@@ -33,6 +33,7 @@ DIRS += [
 TEST_DIRS += ["tests"]
 
 EXPORTS += [
+    "nsAppShell.h",
     "nsdefs.h",
     "WindowHook.h",
     "WinUtils.h",
@@ -76,7 +77,6 @@ UNIFIED_SOURCES += [
     "IMMHandler.cpp",
     "JumpListBuilder.cpp",
     "KeyboardLayout.cpp",
-    "LegacyJumpListItem.cpp",
     "LSPAnnotator.cpp",
     "nsAppShell.cpp",
     "nsClipboard.cpp",
@@ -107,12 +107,12 @@ UNIFIED_SOURCES += [
     "TaskbarPreviewButton.cpp",
     "TaskbarTabPreview.cpp",
     "TaskbarWindowPreview.cpp",
-    "WidgetTraceEvent.cpp",
     "WinCompositorWindowThread.cpp",
     "WindowHook.cpp",
     "WindowsConsole.cpp",
     "WinEventObserver.cpp",
     "WinIMEHandler.cpp",
+    "WinMouseScrollHandler.cpp",
     "WinPointerEvents.cpp",
     "WinRegistry.cpp",
     "WinTaskbar.cpp",
@@ -125,7 +125,6 @@ UNIFIED_SOURCES += [
 SOURCES += [
     "CompositorWidgetParent.cpp",
     "InProcessWinCompositorWidget.cpp",
-    "LegacyJumpListBuilder.cpp",
     "MediaKeysEventSourceFactory.cpp",
     "nsBidiKeyboard.cpp",
     "nsFilePicker.cpp",
@@ -135,7 +134,6 @@ SOURCES += [
     "WinCompositorWidget.cpp",
     "WindowsSMTCProvider.cpp",
     "WindowsUIUtils.cpp",
-    "WinMouseScrollHandler.cpp",
 ]
 
 # Needs INITGUID and we don't allow INITGUID in unified sources since bug 970429.

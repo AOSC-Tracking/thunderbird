@@ -206,23 +206,7 @@ export class Pop3Client {
     await this._loadUidlState();
 
     const uidlState = this._uidlMap.get(uidl);
-    if (!uidlState) {
-      // This uidl is no longer on the server, use this._sink to delete the
-      // msgHdr.
-      try {
-        this._sink.beginMailDelivery(true, null);
-        this._folderLocked = true;
-        this._logger.debug(
-          `Folder lock acquired uri=${this._sink.folder.URI}.`
-        );
-        this._sink.incorporateBegin(uidl, 0);
-        this._actionDone(Cr.NS_ERROR_FAILURE);
-      } catch (e) {
-        this._actionError("pop3MessageWriteError");
-      }
-      return;
-    }
-    if (uidlState.status != UIDL_TOO_BIG) {
+    if (uidlState?.status != UIDL_TOO_BIG) {
       this._actionDone(Cr.NS_ERROR_FAILURE);
       return;
     }
@@ -268,6 +252,7 @@ export class Pop3Client {
 
   /**
    * Send `QUIT` request to the server.
+   *
    * @param {Function} nextAction - Callback function after QUIT response.
    */
   async quit(nextAction) {
@@ -471,7 +456,7 @@ export class Pop3Client {
     const content = await IOUtils.readUTF8(stateFile.path);
     this._uidlMap = new Map();
     let uidlLine = false;
-    for (const line of content.split(this._lineSeparator)) {
+    for (const line of content.split(/\r?\n/)) {
       if (!line) {
         continue;
       }
@@ -856,7 +841,7 @@ export class Pop3Client {
     }
 
     if (
-      ["USERPASS", "PLAIN", "LOGIN", "CRAM-MD5"].includes(
+      ["USERPASS", "PLAIN", "LOGIN", "CRAM-MD5", "APOP"].includes(
         this._currentAuthMethod
       )
     ) {
@@ -1259,7 +1244,7 @@ export class Pop3Client {
           this._newMessageTotal++;
           // Fetch the full message or only headers depending on server settings
           // and message size.
-          const status =
+          const fetchHeaderStatus =
             this._server.headersOnly ||
             this._messageSizeMap.get(messageNumber) > this._maxMessageSize
               ? UIDL_TOO_BIG
@@ -1267,7 +1252,7 @@ export class Pop3Client {
           this._messagesToHandle.push({
             messageNumber,
             uidl,
-            status,
+            status: fetchHeaderStatus,
           });
         }
         this._sendNoopIfInactive();
@@ -1293,6 +1278,14 @@ export class Pop3Client {
           this._messagesToHandle = this._messagesToHandle.filter(
             msg => msg.uidl == this._singleUidlToDownload
           );
+          // The message may have since been removed from the server.
+          if (!this._messagesToHandle.length) {
+            this._logger.error(
+              `Single UIDL ${this._singleUidlToDownload} not found on server.`
+            );
+            this._actionDone(Cr.NS_ERROR_FILE_NOT_FOUND);
+            return;
+          }
           this._newUidlMap = this._uidlMap;
         }
 
@@ -1662,6 +1655,7 @@ export class Pop3Client {
 
   /**
    * Save popstate.dat when necessary, send QUIT.
+   *
    * @param {nsresult} status - Indicate if the last action succeeded.
    */
   _actionDone = async (status = Cr.NS_OK) => {
@@ -1702,6 +1696,7 @@ export class Pop3Client {
 
   /**
    * Notify listeners, close the socket and rest states.
+   *
    * @param {nsresult} status - Indicate if the last action succeeded.
    */
   _cleanUp = status => {
@@ -1712,7 +1707,7 @@ export class Pop3Client {
     if (runningUrl.value) {
       this.urlListener?.OnStopRunningUrl(this.runningUri, status);
     }
-    this.runningUri.SetUrlState(false, Cr.NS_OK);
+    this.runningUri.SetUrlState(false, status);
     this.onDone?.(status);
     if (this._folderLocked) {
       this._sink.abortMailDelivery(this);

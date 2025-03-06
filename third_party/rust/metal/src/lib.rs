@@ -10,10 +10,6 @@
 #![allow(non_upper_case_globals)]
 
 #[macro_use]
-pub extern crate bitflags;
-#[macro_use]
-pub extern crate log;
-#[macro_use]
 pub extern crate objc;
 #[macro_use]
 pub extern crate foreign_types;
@@ -540,7 +536,8 @@ impl MetalLayerRef {
     }
 }
 
-mod accelerator_structure;
+mod acceleration_structure;
+mod acceleration_structure_pass;
 mod argument;
 mod blitpass;
 mod buffer;
@@ -571,7 +568,8 @@ mod vertexdescriptor;
 
 #[rustfmt::skip]
 pub use {
-    accelerator_structure::*,
+    acceleration_structure::*,
+    acceleration_structure_pass::*,
     argument::*,
     blitpass::*,
     buffer::*,

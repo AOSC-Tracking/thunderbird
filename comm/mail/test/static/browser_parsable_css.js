@@ -27,25 +27,14 @@ const ignoreList = [
   },
   {
     sourceName:
-      /\b(contenteditable|EditorOverride|svg|forms|html|mathml|ua)\.css$/i,
+      /\b(contenteditable|EditorOverride|svg|forms|html|mathml|ua|scrollbars|xul)\.css$/i,
     errorMessage: /Unknown pseudo-class.*-moz-/i,
     isFromDevTools: false,
   },
   {
     sourceName:
-      /\b(scrollbars|xul|html|mathml|ua|forms|svg|manageDialog|autocomplete-item-shared|formautofill)\.css$/i,
+      /\b(scrollbars|xul|html|mathml|ua|EditorOverride|contenteditable|forms|svg|manageDialog|autocomplete-item-shared|formautofill)\.css$/i,
     errorMessage: /Unknown property.*-moz-/i,
-    isFromDevTools: false,
-  },
-  {
-    sourceName: /(scrollbars|xul)\.css$/i,
-    errorMessage: /Unknown pseudo-class.*-moz-/i,
-    isFromDevTools: false,
-  },
-  // Reserved to UA sheets unless layout.css.overflow-clip-box.enabled flipped to true.
-  {
-    sourceName: /(?:res|gre-resources)\/forms\.css$/i,
-    errorMessage: /Unknown property.*overflow-clip-box/i,
     isFromDevTools: false,
   },
   {
@@ -87,20 +76,16 @@ if (!Services.prefs.getBoolPref("layout.css.scroll-anchoring.enabled")) {
   });
 }
 
-if (!Services.prefs.getBoolPref("layout.css.forced-colors.enabled")) {
+if (!Services.prefs.getBoolPref("dom.viewTransitions.enabled")) {
+  // view-transition selectors
   ignoreList.push({
-    sourceName: /pdf\.js\/web\/viewer\.css$/,
-    errorMessage: /Expected media feature name but found ‘forced-colors’*/i,
+    sourceName: /\b(ua)\.css$/i,
+    errorMessage: /Unknown pseudo-class.*view-transition/i,
     isFromDevTools: false,
   });
-}
-
-if (!Services.prefs.getBoolPref("layout.css.forced-color-adjust.enabled")) {
-  // PDF.js uses a property that is currently not enabled.
   ignoreList.push({
-    sourceName: /web\/viewer\.css$/i,
-    errorMessage:
-      /Unknown property ‘forced-color-adjust’\. {2}Declaration dropped\./i,
+    sourceName: /\b(ua)\.css$/i,
+    errorMessage: /Unknown property.*view-transition/i,
     isFromDevTools: false,
   });
 }
@@ -143,8 +128,8 @@ function dumpAllowlistItem(item) {
  * Check if an error should be ignored due to matching one of the allowlist
  * objects.
  *
- * @param aErrorObject the error to check
- * @returns true if the error should be ignored, false otherwise.
+ * @param {object} aErrorObject - The error to check.
+ * @returns {boolean} true if the error should be ignored, false otherwise.
  */
 function ignoredError(aErrorObject) {
   for (const list of [ignoreList, thunderbirdIgnoreList]) {

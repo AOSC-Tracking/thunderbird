@@ -124,9 +124,6 @@ AccountConfig.prototype = {
       // Override `addThisServer` for a specific incoming server
       useGlobalPreferredServer: false,
 
-      // OAuth2 configuration, if needed.
-      oauthSettings: null,
-
       // for Microsoft Exchange servers. Optional.
       owaURL: null,
       ewsURL: null,
@@ -161,9 +158,6 @@ AccountConfig.prototype = {
       existingServerKey: null,
       // user display value for existingServerKey
       existingServerLabel: null,
-
-      // OAuth2 configuration, if needed.
-      oauthSettings: null,
     };
   },
 
@@ -241,6 +235,28 @@ AccountConfig.prototype = {
           this.outgoing.socketType != -1 &&
           !!this.outgoing.auth &&
           !!this.outgoing.username))
+    );
+  },
+
+  validateSocketType() {
+    this.incoming.socketType = lazy.Sanitizer.enum(
+      this.incoming.socketType,
+      [0, 1, 2, 3],
+      0
+    );
+
+    this.outgoing.socketType = lazy.Sanitizer.enum(
+      this.outgoing.socketType,
+      [0, 1, 2, 3],
+      0
+    );
+  },
+
+  isIncomingEditedComplete() {
+    return (
+      !!this.incoming.hostname &&
+      !!this.incoming.port &&
+      !!this.incoming.username
     );
   },
 
@@ -381,20 +397,17 @@ AccountConfig.kSourceExchange = "exchange"; // from Microsoft Exchange AutoDisco
  * insert them in the fields, returning a fully filled-out account ready to be
  * created.
  *
- * @param account {AccountConfig}
- * The account data to be modified. It may or may not contain placeholders.
- * After this function, it should not contain placeholders anymore.
- * This object will be modified in-place.
- *
- * @param emailfull {String}
- * Full email address of this account, e.g. "joe@example.com".
- * Empty of incomplete email addresses will/may be rejected.
- *
- * @param realname {String}
- * Real name of user, as will appear in From of outgoing messages
- *
- * @param password {String}
- * The password for the incoming server and (if necessary) the outgoing server
+ * @param {AccountConfig} account - The account data to be modified. It may or
+ *   may not contain placeholders.
+ *   After this function, it should not contain placeholders anymore.
+ *   This object will be modified in-place.
+ * @param {string} realname - Real name of user, as will appear in From of
+ *   outgoing messages
+ * @param {string} emailfull - Full email address of this account,
+ *   e.g. "joe@example.com".
+ *   Empty of incomplete email addresses will/may be rejected.
+ * @param {string} password - The password for the incoming server and
+ *   (if necessary) the outgoing server.
  */
 AccountConfig.replaceVariables = function (
   account,

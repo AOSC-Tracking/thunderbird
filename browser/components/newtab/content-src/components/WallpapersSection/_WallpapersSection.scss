@@ -56,6 +56,14 @@
   padding: 0;
   width: 100%;
 
+  &.theme-solid-color-picker {
+    // Used input[type="color"] element
+    &::-moz-color-swatch {
+      border-color: transparent;
+      border-radius: 8px;
+    }
+  }
+
   $wallpapers: dark-landscape, dark-color, dark-mountain, dark-panda, dark-sky, dark-beach, light-beach, light-color, light-landscape, light-mountain, light-panda, light-sky;
 
   @each $wallpaper in $wallpapers {
@@ -64,6 +72,7 @@
     }
   }
 
+  &.theme-solid-color-picker.active,
   &:checked {
     outline-color: var(--color-accent-primary-active);
     padding: 2px;
@@ -95,7 +104,11 @@
     gap: unset;
     grid-auto-rows: unset;
     grid-template-columns: unset;
-    height: 100%;
+
+    /* XXXdholbert The 32px subtraction here is to account for our 16px of
+     * margin on top and bottom. Ideally this should change to use
+     * 'height: stretch' when bug 1789477 lands. */
+    height: calc(100% - 32px);
     inset-inline-start: 25px;
     position: absolute;
     top: 0;

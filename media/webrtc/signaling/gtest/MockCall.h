@@ -76,6 +76,8 @@ class MockAudioReceiveStream : public webrtc::AudioReceiveStreamInterface {
     return mRtpSources;
   }
 
+  void SetRtcpMode(webrtc::RtcpMode mode) override {}
+
   virtual void SetDepacketizerToDecoderFrameTransformer(
       rtc::scoped_refptr<webrtc::FrameTransformerInterface> frame_transformer)
       override {
@@ -192,7 +194,7 @@ class MockVideoReceiveStream : public webrtc::VideoReceiveStreamInterface {
   virtual void SetAssociatedPayloadTypes(
       std::map<int, int> associated_payload_types) override {}
 
-  virtual void UpdateRtxSsrc(uint32_t ssrc) override{};
+  virtual void UpdateRtxSsrc(uint32_t ssrc) override {};
 
   virtual ~MockVideoReceiveStream() {}
 
@@ -299,9 +301,14 @@ class MockCall : public webrtc::Call {
   void SetClientBitratePreferences(
       const webrtc::BitrateSettings& preferences) override {}
 
+  void SetEncoderInfo(const webrtc::VideoEncoder::EncoderInfo& aInfo) {
+    mEncoderInfo = aInfo;
+  }
+
   std::vector<webrtc::VideoStream> CreateEncoderStreams(int width, int height) {
+    mVideoSendEncoderConfig->video_stream_factory->SetEncoderInfo(mEncoderInfo);
     return mVideoSendEncoderConfig->video_stream_factory->CreateEncoderStreams(
-        width, height, *mVideoSendEncoderConfig);
+        mUnusedConfig, width, height, *mVideoSendEncoderConfig);
   }
 
   virtual const webrtc::FieldTrialsView& trials() const override {
@@ -316,7 +323,7 @@ class MockCall : public webrtc::Call {
     return nullptr;
   }
 
-  virtual ~MockCall(){};
+  virtual ~MockCall() {};
 
   const RefPtr<MockCallWrapper> mCallWrapper;
   mozilla::Maybe<webrtc::AudioReceiveStreamInterface::Config>
@@ -327,7 +334,8 @@ class MockCall : public webrtc::Call {
   mozilla::Maybe<webrtc::VideoSendStream::Config> mVideoSendConfig;
   mozilla::Maybe<webrtc::VideoEncoderConfig> mVideoSendEncoderConfig;
   webrtc::Call::Stats mStats;
-  webrtc::NoTrialsConfig mUnusedConfig;
+  webrtc::MozTrialsConfig mUnusedConfig;
+  webrtc::VideoEncoder::EncoderInfo mEncoderInfo;
 };
 
 class MockCallWrapper : public mozilla::WebrtcCallWrapper {

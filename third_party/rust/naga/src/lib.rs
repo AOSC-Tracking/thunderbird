@@ -34,25 +34,6 @@ with optional span info, representing a series of statements executed in order. 
 `EntryPoint`s or `Function` is a `Block`, and `Statement` has a
 [`Block`][Statement::Block] variant.
 
-## Arenas
-
-To improve translator performance and reduce memory usage, most structures are
-stored in an [`Arena`]. An `Arena<T>` stores a series of `T` values, indexed by
-[`Handle<T>`](Handle) values, which are just wrappers around integer indexes.
-For example, a `Function`'s expressions are stored in an `Arena<Expression>`,
-and compound expressions refer to their sub-expressions via `Handle<Expression>`
-values. (When examining the serialized form of a `Module`, note that the first
-element of an `Arena` has an index of 1, not 0.)
-
-A [`UniqueArena`] is just like an `Arena`, except that it stores only a single
-instance of each value. The value type must implement `Eq` and `Hash`. Like an
-`Arena`, inserting a value into a `UniqueArena` returns a `Handle` which can be
-used to efficiently access the value, without a hash lookup. Inserting a value
-multiple times returns the same `Handle`.
-
-If the `span` feature is enabled, both `Arena` and `UniqueArena` can associate a
-source code span with each element.
-
 ## Function Calls
 
 Naga's representation of function calls is unusual. Most languages treat
@@ -272,11 +253,14 @@ An override expression can be evaluated at pipeline creation time.
 mod arena;
 pub mod back;
 mod block;
+pub mod common;
 #[cfg(feature = "compact")]
 pub mod compact;
+pub mod diagnostic_filter;
 pub mod error;
 pub mod front;
 pub mod keywords;
+mod non_max_u32;
 pub mod proc;
 mod span;
 pub mod valid;
@@ -286,6 +270,7 @@ pub use crate::arena::{Arena, Handle, Range, UniqueArena};
 pub use crate::span::{SourceLocation, Span, SpanContext, WithSpan};
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
+use diagnostic_filter::DiagnosticFilterNode;
 #[cfg(feature = "deserialize")]
 use serde::Deserialize;
 #[cfg(feature = "serialize")]
@@ -418,6 +403,7 @@ pub enum BuiltIn {
     InstanceIndex,
     PointSize,
     VertexIndex,
+    DrawID,
     // fragment
     FragDepth,
     PointCoord,
@@ -501,6 +487,15 @@ pub struct Scalar {
     pub width: Bytes,
 }
 
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum PendingArraySize {
+    Expression(Handle<Expression>),
+    Override(Handle<Override>),
+}
+
 /// Size of an array.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
@@ -510,6 +505,8 @@ pub struct Scalar {
 pub enum ArraySize {
     /// The array size is constant.
     Constant(std::num::NonZeroU32),
+    /// The array size is an override-expression.
+    Pending(PendingArraySize),
     /// The array size can change at runtime.
     Dynamic,
 }
@@ -548,6 +545,13 @@ pub enum Sampling {
     /// Interpolate the value at each sample location. In multisampling, invoke
     /// the fragment shader once per sample.
     Sample,
+
+    /// Use the value provided by the first vertex of the current primitive.
+    First,
+
+    /// Use the value provided by the first or last vertex of the current primitive. The exact
+    /// choice is implementation-dependent.
+    Either,
 }
 
 /// Member of a user-defined structure.
@@ -593,6 +597,8 @@ bitflags::bitflags! {
         const LOAD = 0x1;
         /// Storage can be used as a target for store ops.
         const STORE = 0x2;
+        /// Storage can be used as a target for atomic ops.
+        const ATOMIC = 0x4;
     }
 }
 
@@ -633,7 +639,7 @@ pub enum StorageFormat {
     // Packed 32-bit formats
     Rgb10a2Uint,
     Rgb10a2Unorm,
-    Rg11b10Float,
+    Rg11b10Ufloat,
 
     // 64-bit formats
     Rg32Uint,
@@ -891,7 +897,7 @@ pub enum Literal {
 }
 
 /// Pipeline-overridable constant.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
@@ -909,7 +915,7 @@ pub struct Override {
 }
 
 /// Constant value.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
@@ -986,7 +992,7 @@ pub struct GlobalVariable {
     pub ty: Handle<Type>,
     /// Initial value for this variable.
     ///
-    /// Expression handle lives in global_expressions
+    /// This refers to an [`Expression`] in [`Module::global_expressions`].
     pub init: Option<Handle<Expression>>,
 }
 
@@ -1002,9 +1008,9 @@ pub struct LocalVariable {
     pub ty: Handle<Type>,
     /// Initial value for this variable.
     ///
-    /// This handle refers to this `LocalVariable`'s function's
-    /// [`expressions`] arena, but it is required to be an evaluated
-    /// override expression.
+    /// This handle refers to an expression in this `LocalVariable`'s function's
+    /// [`expressions`] arena, but it is required to be an evaluated override
+    /// expression.
     ///
     /// [`expressions`]: Function::expressions
     pub init: Option<Handle<Expression>>,
@@ -1092,6 +1098,9 @@ pub enum BinaryOperator {
 ///
 /// Note: these do not include load/store, which use the existing
 /// [`Expression::Load`] and [`Statement::Store`].
+///
+/// All `Handle<Expression>` values here refer to an expression in
+/// [`Function::expressions`].
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
@@ -1205,6 +1214,7 @@ pub enum MathFunction {
     Inverse,
     Transpose,
     Determinant,
+    QuantizeToF16,
     // bits
     CountTrailingZeros,
     CountLeadingZeros,
@@ -1212,8 +1222,8 @@ pub enum MathFunction {
     ReverseBits,
     ExtractBits,
     InsertBits,
-    FindLsb,
-    FindMsb,
+    FirstTrailingBit,
+    FirstLeadingBit,
     // data packing
     Pack4x8snorm,
     Pack4x8unorm,
@@ -1233,6 +1243,9 @@ pub enum MathFunction {
 }
 
 /// Sampling modifier to control the level of detail.
+///
+/// All `Handle<Expression>` values here refer to an expression in
+/// [`Function::expressions`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
@@ -1249,6 +1262,9 @@ pub enum SampleLevel {
 }
 
 /// Type of an image query.
+///
+/// All `Handle<Expression>` values here refer to an expression in
+/// [`Function::expressions`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
@@ -1283,6 +1299,12 @@ pub enum SwizzleComponent {
     W = 3,
 }
 
+/// The specific behavior of a [`SubgroupGather`] statement.
+///
+/// All `Handle<Expression>` values here refer to an expression in
+/// [`Function::expressions`].
+///
+/// [`SubgroupGather`]: Statement::SubgroupGather
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
@@ -1335,11 +1357,11 @@ bitflags::bitflags! {
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     pub struct Barrier: u32 {
-        /// Barrier affects all `AddressSpace::Storage` accesses.
+        /// Barrier affects all [`AddressSpace::Storage`] accesses.
         const STORAGE = 1 << 0;
-        /// Barrier affects all `AddressSpace::WorkGroup` accesses.
+        /// Barrier affects all [`AddressSpace::WorkGroup`] accesses.
         const WORK_GROUP = 1 << 1;
-        /// Barrier synchronizes execution across all invocations within a subgroup that exectue this instruction.
+        /// Barrier synchronizes execution across all invocations within a subgroup that execute this instruction.
         const SUB_GROUP = 1 << 2;
     }
 }
@@ -1347,6 +1369,15 @@ bitflags::bitflags! {
 /// An expression that can be evaluated to obtain a value.
 ///
 /// This is a Single Static Assignment (SSA) scheme similar to SPIR-V.
+///
+/// When an `Expression` variant holds `Handle<Expression>` fields, they refer
+/// to another expression in the same arena, unless explicitly noted otherwise.
+/// One `Arena<Expression>` may only refer to a different arena indirectly, via
+/// [`Constant`] or [`Override`] expressions, which hold handles for their
+/// respective types.
+///
+/// [`Constant`]: Expression::Constant
+/// [`Override`]: Expression::Override
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
@@ -1389,21 +1420,20 @@ pub enum Expression {
     /// ## Dynamic indexing restrictions
     ///
     /// To accommodate restrictions in some of the shader languages that Naga
-    /// targets, it is not permitted to subscript a matrix or array with a
-    /// dynamically computed index unless that matrix or array appears behind a
-    /// pointer. In other words, if the inner type of `base` is [`Array`] or
-    /// [`Matrix`], then `index` must be a constant. But if the type of `base`
-    /// is a [`Pointer`] to an array or matrix or a [`ValuePointer`] with a
-    /// `size`, then the index may be any expression of integer type.
+    /// targets, it is not permitted to subscript a matrix with a dynamically
+    /// computed index unless that matrix appears behind a pointer. In other
+    /// words, if the inner type of `base` is [`Matrix`], then `index` must be a
+    /// constant. But if the type of `base` is a [`Pointer`] to an matrix, then
+    /// the index may be any expression of integer type.
     ///
     /// You can use the [`Expression::is_dynamic_index`] method to determine
-    /// whether a given index expression requires matrix or array base operands
-    /// to be behind a pointer.
+    /// whether a given index expression requires matrix base operands to be
+    /// behind a pointer.
     ///
     /// (It would be simpler to always require the use of `AccessIndex` when
-    /// subscripting arrays and matrices that are not behind pointers, but to
-    /// accommodate existing front ends, Naga also permits `Access`, with a
-    /// restricted `index`.)
+    /// subscripting matrices that are not behind pointers, but to accommodate
+    /// existing front ends, Naga also permits `Access`, with a restricted
+    /// `index`.)
     ///
     /// [`Vector`]: TypeInner::Vector
     /// [`Matrix`]: TypeInner::Matrix
@@ -1483,7 +1513,7 @@ pub enum Expression {
         gather: Option<SwizzleComponent>,
         coordinate: Handle<Expression>,
         array_index: Option<Handle<Expression>>,
-        /// Expression handle lives in global_expressions
+        /// This refers to an expression in [`Module::global_expressions`].
         offset: Option<Handle<Expression>>,
         level: SampleLevel,
         depth_ref: Option<Handle<Expression>>,
@@ -1612,8 +1642,29 @@ pub enum Expression {
     },
     /// Result of calling another function.
     CallResult(Handle<Function>),
+
     /// Result of an atomic operation.
+    ///
+    /// This expression must be referred to by the [`result`] field of exactly one
+    /// [`Atomic`][stmt] statement somewhere in the same function. Let `T` be the
+    /// scalar type contained by the [`Atomic`][type] value that the statement
+    /// operates on.
+    ///
+    /// If `comparison` is `false`, then `ty` must be the scalar type `T`.
+    ///
+    /// If `comparison` is `true`, then `ty` must be a [`Struct`] with two members:
+    ///
+    /// - A member named `old_value`, whose type is `T`, and
+    ///
+    /// - A member named `exchanged`, of type [`BOOL`].
+    ///
+    /// [`result`]: Statement::Atomic::result
+    /// [stmt]: Statement::Atomic
+    /// [type]: TypeInner::Atomic
+    /// [`Struct`]: TypeInner::Struct
+    /// [`BOOL`]: Scalar::BOOL
     AtomicResult { ty: Handle<Type>, comparison: bool },
+
     /// Result of a [`WorkGroupUniformLoad`] statement.
     ///
     /// [`WorkGroupUniformLoad`]: Statement::WorkGroupUniformLoad
@@ -1725,6 +1776,9 @@ pub enum RayQueryFunction {
 
 //TODO: consider removing `Clone`. It's not valid to clone `Statement::Emit` anyway.
 /// Instructions which make up an executable block.
+///
+/// `Handle<Expression>` and `Range<Expression>` values in `Statement` variants
+/// refer to expressions in [`Function::expressions`], unless otherwise noted.
 // Clone is used only for error reporting and is not intended for end users
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -1890,15 +1944,123 @@ pub enum Statement {
     /// Atomic function.
     Atomic {
         /// Pointer to an atomic value.
+        ///
+        /// This must be a [`Pointer`] to an [`Atomic`] value. The atomic's
+        /// scalar type may be [`I32`] or [`U32`].
+        ///
+        /// If [`SHADER_INT64_ATOMIC_MIN_MAX`] or [`SHADER_INT64_ATOMIC_ALL_OPS`] are
+        /// enabled, this may also be [`I64`] or [`U64`].
+        ///
+        /// If [`SHADER_FLOAT32_ATOMIC`] is enabled, this may be [`F32`].
+        ///
+        /// [`Pointer`]: TypeInner::Pointer
+        /// [`Atomic`]: TypeInner::Atomic
+        /// [`I32`]: Scalar::I32
+        /// [`U32`]: Scalar::U32
+        /// [`SHADER_INT64_ATOMIC_MIN_MAX`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX
+        /// [`SHADER_INT64_ATOMIC_ALL_OPS`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
+        /// [`SHADER_FLOAT32_ATOMIC`]: crate::valid::Capabilities::SHADER_FLOAT32_ATOMIC
+        /// [`I64`]: Scalar::I64
+        /// [`U64`]: Scalar::U64
+        /// [`F32`]: Scalar::F32
         pointer: Handle<Expression>,
-        /// Function to run on the atomic.
+
+        /// Function to run on the atomic value.
+        ///
+        /// If [`pointer`] refers to a 64-bit atomic value, then:
+        ///
+        /// - The [`SHADER_INT64_ATOMIC_ALL_OPS`] capability allows any [`AtomicFunction`]
+        ///   value here.
+        ///
+        /// - The [`SHADER_INT64_ATOMIC_MIN_MAX`] capability allows
+        ///   [`AtomicFunction::Min`] and [`AtomicFunction::Max`]
+        ///   in the [`Storage`] address space here.
+        ///
+        /// - If neither of those capabilities are present, then 64-bit scalar
+        ///   atomics are not allowed.
+        ///
+        /// If [`pointer`] refers to a 32-bit floating-point atomic value, then:
+        ///
+        /// - The [`SHADER_FLOAT32_ATOMIC`] capability allows [`AtomicFunction::Add`],
+        ///   [`AtomicFunction::Subtract`], and [`AtomicFunction::Exchange { compare: None }`]
+        ///   in the [`Storage`] address space here.
+        ///
+        /// [`AtomicFunction::Exchange { compare: None }`]: AtomicFunction::Exchange
+        /// [`pointer`]: Statement::Atomic::pointer
+        /// [`Storage`]: AddressSpace::Storage
+        /// [`SHADER_INT64_ATOMIC_MIN_MAX`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX
+        /// [`SHADER_INT64_ATOMIC_ALL_OPS`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
+        /// [`SHADER_FLOAT32_ATOMIC`]: crate::valid::Capabilities::SHADER_FLOAT32_ATOMIC
         fun: AtomicFunction,
+
         /// Value to use in the function.
+        ///
+        /// This must be a scalar of the same type as [`pointer`]'s atomic's scalar type.
+        ///
+        /// [`pointer`]: Statement::Atomic::pointer
         value: Handle<Expression>,
+
         /// [`AtomicResult`] expression representing this function's result.
         ///
+        /// If [`fun`] is [`Exchange { compare: None }`], this must be `Some`,
+        /// as otherwise that operation would be equivalent to a simple [`Store`]
+        /// to the atomic.
+        ///
+        /// Otherwise, this may be `None` if the return value of the operation is not needed.
+        ///
+        /// If `pointer` refers to a 64-bit atomic value, [`SHADER_INT64_ATOMIC_MIN_MAX`]
+        /// is enabled, and [`SHADER_INT64_ATOMIC_ALL_OPS`] is not, this must be `None`.
+        ///
         /// [`AtomicResult`]: crate::Expression::AtomicResult
-        result: Handle<Expression>,
+        /// [`fun`]: Statement::Atomic::fun
+        /// [`Store`]: Statement::Store
+        /// [`Exchange { compare: None }`]: AtomicFunction::Exchange
+        /// [`SHADER_INT64_ATOMIC_MIN_MAX`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX
+        /// [`SHADER_INT64_ATOMIC_ALL_OPS`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
+        result: Option<Handle<Expression>>,
+    },
+    /// Performs an atomic operation on a texel value of an image.
+    ///
+    /// Doing atomics on images with mipmaps is not supported, so there is no
+    /// `level` operand.
+    ImageAtomic {
+        /// The image to perform an atomic operation on. This must have type
+        /// [`Image`]. (This will necessarily be a [`GlobalVariable`] or
+        /// [`FunctionArgument`] expression, since no other expressions are
+        /// allowed to have that type.)
+        ///
+        /// [`Image`]: TypeInner::Image
+        /// [`GlobalVariable`]: Expression::GlobalVariable
+        /// [`FunctionArgument`]: Expression::FunctionArgument
+        image: Handle<Expression>,
+
+        /// The coordinate of the texel we wish to load. This must be a scalar
+        /// for [`D1`] images, a [`Bi`] vector for [`D2`] images, and a [`Tri`]
+        /// vector for [`D3`] images. (Array indices, sample indices, and
+        /// explicit level-of-detail values are supplied separately.) Its
+        /// component type must be [`Sint`].
+        ///
+        /// [`D1`]: ImageDimension::D1
+        /// [`D2`]: ImageDimension::D2
+        /// [`D3`]: ImageDimension::D3
+        /// [`Bi`]: VectorSize::Bi
+        /// [`Tri`]: VectorSize::Tri
+        /// [`Sint`]: ScalarKind::Sint
+        coordinate: Handle<Expression>,
+
+        /// The index into an arrayed image. If the [`arrayed`] flag in
+        /// `image`'s type is `true`, then this must be `Some(expr)`, where
+        /// `expr` is a [`Sint`] scalar. Otherwise, it must be `None`.
+        ///
+        /// [`arrayed`]: TypeInner::Image::arrayed
+        /// [`Sint`]: ScalarKind::Sint
+        array_index: Option<Handle<Expression>>,
+
+        /// The kind of atomic operation to perform on the texel.
+        fun: AtomicFunction,
+
+        /// The value with which to perform the atomic operation.
+        value: Handle<Expression>,
     },
     /// Load uniformly from a uniform pointer in the workgroup address space.
     ///
@@ -2013,13 +2175,31 @@ pub struct Function {
     pub local_variables: Arena<LocalVariable>,
     /// Expressions used inside this function.
     ///
-    /// An `Expression` must occur before all other `Expression`s that use its
-    /// value.
+    /// If an [`Expression`] is in this arena, then its subexpressions are in this
+    /// arena too. In other words, every `Handle<Expression>` in this arena
+    /// refers to an [`Expression`] in this arena too. The only way this arena
+    /// can refer to [`Module::global_expressions`] is indirectly, via
+    /// [`Constant`] and [`Override`] expressions, which hold handles for their
+    /// respective types.
+    ///
+    /// An [`Expression`] must occur before all other [`Expression`]s that use
+    /// its value.
+    ///
+    /// [`Constant`]: Expression::Constant
+    /// [`Override`]: Expression::Override
     pub expressions: Arena<Expression>,
     /// Map of expressions that have associated variable names
     pub named_expressions: NamedExpressions,
     /// Block of instructions comprising the body of the function.
     pub body: Block,
+    /// The leaf of all diagnostic filter rules tree (stored in [`Module::diagnostic_filters`])
+    /// parsed on this function.
+    ///
+    /// In WGSL, this corresponds to `@diagnostic(…)` attributes.
+    ///
+    /// See [`DiagnosticFilterNode`] for details on how the tree is represented and used in
+    /// validation.
+    pub diagnostic_filter_leaf: Option<Handle<DiagnosticFilterNode>>,
 }
 
 /// The main function for a pipeline stage.
@@ -2077,6 +2257,8 @@ pub struct EntryPoint {
     pub early_depth_test: Option<EarlyDepthTest>,
     /// Workgroup size for compute stages
     pub workgroup_size: [u32; 3],
+    /// Override expressions for workgroup size in the global_expressions arena
+    pub workgroup_size_overrides: Option<[Option<Handle<Expression>>; 3]>,
     /// The entrance function.
     pub function: Function,
 }
@@ -2094,11 +2276,11 @@ pub enum PredeclaredType {
     AtomicCompareExchangeWeakResult(Scalar),
     ModfResult {
         size: Option<VectorSize>,
-        width: Bytes,
+        scalar: Scalar,
     },
     FrexpResult {
         size: Option<VectorSize>,
-        width: Bytes,
+        scalar: Scalar,
     },
 }
 
@@ -2125,6 +2307,62 @@ pub struct SpecialTypes {
     /// Call [`Module::generate_predeclared_type`] to populate this if
     /// needed and return the handle.
     pub predeclared_types: FastIndexMap<PredeclaredType, Handle<Type>>,
+}
+
+bitflags::bitflags! {
+    /// Ray flags used when casting rays.
+    /// Matching vulkan constants can be found in
+    /// https://github.com/KhronosGroup/SPIRV-Registry/blob/main/extensions/KHR/ray_common/ray_flags_section.txt
+    #[cfg_attr(feature = "serialize", derive(Serialize))]
+    #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    pub struct RayFlag: u32 {
+        /// Force all intersections to be treated as opaque.
+        const FORCE_OPAQUE = 0x1;
+        /// Force all intersections to be treated as non-opaque.
+        const FORCE_NO_OPAQUE = 0x2;
+        /// Stop traversal after the first hit.
+        const TERMINATE_ON_FIRST_HIT = 0x4;
+        /// Don't execute the closest hit shader.
+        const SKIP_CLOSEST_HIT_SHADER = 0x8;
+        /// Cull back facing geometry.
+        const CULL_BACK_FACING = 0x10;
+        /// Cull front facing geometry.
+        const CULL_FRONT_FACING = 0x20;
+        /// Cull opaque geometry.
+        const CULL_OPAQUE = 0x40;
+        /// Cull non-opaque geometry.
+        const CULL_NO_OPAQUE = 0x80;
+        /// Skip triangular geometry.
+        const SKIP_TRIANGLES = 0x100;
+        /// Skip axis-aligned bounding boxes.
+        const SKIP_AABBS = 0x200;
+    }
+}
+
+/// Type of a ray query intersection.
+/// Matching vulkan constants can be found in
+/// <https://github.com/KhronosGroup/SPIRV-Registry/blob/main/extensions/KHR/SPV_KHR_ray_query.asciidoc>
+/// but the actual values are different for candidate intersections.
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RayQueryIntersection {
+    /// No intersection found.
+    /// Matches `RayQueryCommittedIntersectionNoneKHR`.
+    #[default]
+    None = 0,
+    /// Intersecting with triangles.
+    /// Matches `RayQueryCommittedIntersectionTriangleKHR` and `RayQueryCandidateIntersectionTriangleKHR`.
+    Triangle = 1,
+    /// Intersecting with generated primitives.
+    /// Matches `RayQueryCommittedIntersectionGeneratedKHR`.
+    Generated = 2,
+    /// Intersecting with Axis Aligned Bounding Boxes.
+    /// Matches `RayQueryCandidateIntersectionAABBKHR`.
+    Aabb = 3,
 }
 
 /// Shader module.
@@ -2155,6 +2393,10 @@ pub struct Module {
     pub global_variables: Arena<GlobalVariable>,
     /// [Constant expressions] and [override expressions] used by this module.
     ///
+    /// If an expression is in this arena, then its subexpressions are in this
+    /// arena too. In other words, every `Handle<Expression>` in this arena
+    /// refers to an [`Expression`] in this arena too.
+    ///
     /// Each `Expression` must occur in the arena before any
     /// `Expression` that uses its value.
     ///
@@ -2168,4 +2410,17 @@ pub struct Module {
     pub functions: Arena<Function>,
     /// Entry points.
     pub entry_points: Vec<EntryPoint>,
+    /// Arena for all diagnostic filter rules parsed in this module, including those in functions
+    /// and statements.
+    ///
+    /// This arena contains elements of a _tree_ of diagnostic filter rules. When nodes are built
+    /// by a front-end, they refer to a parent scope
+    pub diagnostic_filters: Arena<DiagnosticFilterNode>,
+    /// The leaf of all diagnostic filter rules tree parsed from directives in this module.
+    ///
+    /// In WGSL, this corresponds to `diagnostic(…);` directives.
+    ///
+    /// See [`DiagnosticFilterNode`] for details on how the tree is represented and used in
+    /// validation.
+    pub diagnostic_filter_leaf: Option<Handle<DiagnosticFilterNode>>,
 }

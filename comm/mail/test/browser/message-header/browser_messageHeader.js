@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- * Test functionality in the message header,
+ * Test functionality in the message header.
  */
 
 "use strict";
@@ -33,7 +33,6 @@ var {
   select_click_row,
   select_none,
   wait_for_message_display_completion,
-  wait_for_popup_to_open,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
@@ -553,8 +552,9 @@ add_task(async function test_msg_id_context_menu() {
     { type: "contextmenu" },
     aboutMessage
   );
-  await wait_for_popup_to_open(
-    aboutMessage.document.getElementById("messageIdContext")
+  await BrowserTestUtils.waitForPopupEvent(
+    aboutMessage.document.getElementById("messageIdContext"),
+    "shown"
   );
 
   // Ensure Open Message For ID is shown and that Open Browser With Message-ID
@@ -697,22 +697,21 @@ add_task(
  */
 add_task(async function test_add_contact_from_context_menu() {
   const popup = aboutMessage.document.getElementById("emailAddressPopup");
-  const popupShown = BrowserTestUtils.waitForEvent(popup, "popupshown");
   // Click the contact to show the emailAddressPopup popup menu.
   const recipient = aboutMessage.document.querySelector(
     "#expandedfromBox .header-recipient"
   );
   EventUtils.synthesizeMouseAtCenter(recipient, {}, aboutMessage);
-  await popupShown;
+  await BrowserTestUtils.waitForPopupEvent(popup, "shown");
 
   const addToAddressBookItem = aboutMessage.document.getElementById(
     "addToAddressBookItem"
   );
-  Assert.ok(!addToAddressBookItem.hidden, "addToAddressBookItem is not hidden");
+  Assert.ok(!addToAddressBookItem.hidden, "#addToAddressBookItem should show");
 
   const editContactItem =
     aboutMessage.document.getElementById("editContactItem");
-  Assert.ok(editContactItem.hidden, "editContactItem is hidden");
+  Assert.ok(editContactItem.hidden, "#editContactItem should be hidden");
 
   const recipientAdded = TestUtils.waitForCondition(
     () => recipient.abIndicator.classList.contains("in-address-book"),
@@ -722,30 +721,66 @@ add_task(async function test_add_contact_from_context_menu() {
   // Click the Add to Address Book context menu entry.
   // NOTE: Use activateItem because macOS uses native context menus.
   popup.activateItem(addToAddressBookItem);
-  // (for reasons unknown, the pop-up does not close itself)
-  await close_popup(window, popup);
+  await BrowserTestUtils.waitForPopupEvent(popup, "hidden");
   await recipientAdded;
-
-  // NOTE: We need to redefine these selectors otherwise the popup will not
-  // properly close for some reason.
-  const popup2 = aboutMessage.document.getElementById("emailAddressPopup");
-  const popupShown2 = BrowserTestUtils.waitForEvent(popup, "popupshown");
 
   // Now click the contact again, the context menu should now show the Edit
   // Contact menu instead.
   EventUtils.synthesizeMouseAtCenter(recipient, {}, aboutMessage);
-  await popupShown2;
-  // (for reasons unknown, the pop-up does not close itself)
-  await close_popup(window, popup2);
 
-  Assert.ok(addToAddressBookItem.hidden, "addToAddressBookItem is hidden");
-  Assert.ok(!editContactItem.hidden, "editContactItem is not hidden");
+  await BrowserTestUtils.waitForPopupEvent(popup, "shown");
+
+  Assert.ok(
+    addToAddressBookItem.hidden,
+    "#addToAddressBookItem should be hidden"
+  );
+  Assert.ok(!editContactItem.hidden, "#editContactItem should be show");
+
+  await close_popup(window, popup);
+
+  // Delete the added conctact, and try adding by double clicking the
+  // abIndicator button.
+  MailServices.ab
+    .getDirectory(recipient.cardDetails.book.URI)
+    .deleteCards([recipient.cardDetails.card]);
+
+  Assert.equal(
+    MailServices.ab.cardForEmailAddress(recipient.emailAddress),
+    null,
+    "card should be gone"
+  );
+
+  // Double click (to ignore).
+  EventUtils.synthesizeMouseAtCenter(
+    recipient.abIndicator,
+    { clickCount: 2 },
+    aboutMessage
+  );
+  // ... need to simulate the regular click too.
+  // During normal usage dblclick will trigger click event as well.
+  EventUtils.synthesizeMouseAtCenter(recipient.abIndicator, {}, aboutMessage);
+
+  await TestUtils.waitForTick();
+
+  const addedCard = MailServices.ab.cardForEmailAddress(recipient.emailAddress);
+  Assert.ok(addedCard, "card should have been added");
+
+  // ... but only once. Delete this and make sure there wasn't another one added.
+  MailServices.ab
+    .getDirectoryFromUID(addedCard.directoryUID)
+    .deleteCards([addedCard]);
+
+  Assert.equal(
+    MailServices.ab.cardForEmailAddress(recipient.emailAddress),
+    null,
+    "should not find a (second) card as we deleted it already"
+  );
 });
 
 /**
  * Test that clicking the <List-ID> header works as it should.
  */
-add_task(async function test_add_contact_from_context_menu() {
+add_task(async function test_context_menu_list_id() {
   // Add a new message.
   const msg = create_message({
     clobberHeaders: {
@@ -774,8 +809,9 @@ add_task(async function test_add_contact_from_context_menu() {
     aboutMessage
   );
   const listIdPopup = aboutMessage.document.getElementById("listIdPopup");
-  await wait_for_popup_to_open(
-    aboutMessage.document.getElementById("listIdPopup")
+  await BrowserTestUtils.waitForPopupEvent(
+    aboutMessage.document.getElementById("listIdPopup"),
+    "shown"
   );
 
   const listIdPlaceHolder =

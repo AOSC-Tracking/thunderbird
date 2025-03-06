@@ -1191,13 +1191,10 @@ async function reloadOpenPgpUI() {
       });
       publishButton.classList.add("button-small");
 
-      const description = document.createXULElement("description");
-      document.l10n.setAttributes(
-        description,
-        "openpgp-suggest-publishing-key"
-      );
+      const desc = document.createXULElement("description");
+      document.l10n.setAttributes(desc, "openpgp-suggest-publishing-key");
 
-      publishContainer.appendChild(description);
+      publishContainer.appendChild(desc);
       publishContainer.appendChild(publishButton);
     }
 
@@ -1602,7 +1599,7 @@ function updateUIForSelectedOpenPgpKey() {
 /**
  * Generic method to copy a string in the user's clipboard.
  *
- * @param {string} val - The formatted string to be copied in the clipboard.
+ * @param {string} keyId - The formatted string to be copied in the clipboard.
  */
 async function openPgpCopyToClipboard(keyId) {
   const exitCodeObj = {};

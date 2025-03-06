@@ -56,24 +56,22 @@ nsPop3Sink::~nsPop3Sink() {
   ReleaseFolderLock();
 }
 
-partialRecord::partialRecord() : m_msgDBHdr(nullptr) {}
+nsresult nsPop3Sink::DiscardStalePartialMessages(nsIPop3Protocol* protocol) {
+  struct PartialRecord {
+    nsCOMPtr<nsIMsgDBHdr> m_msgDBHdr = nullptr;
+    nsCString m_uidl;
+  };
+  nsTArray<PartialRecord> partialMsgsArray;
 
-partialRecord::~partialRecord() {}
+  // Walk through all the messages in this folder and look for any
+  // partial messages. For each of those, dig through the mailbox and
+  // find the account that the message belongs to. If that account
+  // matches the current Account, then look for the UIDL and save
+  // this message for later processing.
 
-// Walk through all the messages in this folder and look for any
-// PARTIAL messages. For each of those, dig through the mailbox and
-// find the Account that the message belongs to. If that Account
-// matches the current Account, then look for the Uidl and save
-// this message for later processing.
-nsresult nsPop3Sink::FindPartialMessages() {
   nsCOMPtr<nsIMsgLocalMailFolder> localFolder = do_QueryInterface(m_folder);
   if (!localFolder) {
     return NS_ERROR_FAILURE;
-  }
-  bool downloadInProgress = false;
-  localFolder->GetDownloadInProgress(&downloadInProgress);
-  if (downloadInProgress) {
-    return NS_OK;
   }
 
   nsCOMPtr<nsIMsgEnumerator> messages;
@@ -96,10 +94,11 @@ nsresult nsPop3Sink::FindPartialMessages() {
       // Open the various streams we need to seek and read from the mailbox
       if (!isOpen) {
         rv = localFolder->GetFolderScanState(&folderScanState);
-        if (NS_SUCCEEDED(rv))
+        if (NS_SUCCEEDED(rv)) {
           isOpen = true;
-        else
+        } else {
           break;
+        }
       }
       rv = localFolder->GetUidlFromFolder(&folderScanState, msgDBHdr);
       if (!NS_SUCCEEDED(rv)) break;
@@ -109,60 +108,42 @@ nsresult nsPop3Sink::FindPartialMessages() {
       if (folderScanState.m_uidl &&
           m_accountKey.Equals(folderScanState.m_accountKey,
                               nsCaseInsensitiveCStringComparator)) {
-        partialRecord* partialMsg = new partialRecord();
-        if (partialMsg) {
-          partialMsg->m_uidl = folderScanState.m_uidl;
-          partialMsg->m_msgDBHdr = msgDBHdr;
-          m_partialMsgsArray.AppendElement(partialMsg);
-        }
+        partialMsgsArray.AppendElement(
+            PartialRecord{msgDBHdr, nsCString{folderScanState.m_uidl}});
       }
     }
     messages->HasMoreElements(&hasMore);
   }
-  if (isOpen && folderScanState.m_inputStream)
+  if (isOpen && folderScanState.m_inputStream) {
     folderScanState.m_inputStream->Close();
-  return rv;
-}
-
-// For all the partial messages saved by FindPartialMessages,
-// ask the protocol handler if they still exist on the server.
-// Any messages that don't exist any more are deleted from the
-// msgDB.
-void nsPop3Sink::CheckPartialMessages(nsIPop3Protocol* protocol) {
-  nsCOMPtr<nsIMsgLocalMailFolder> localFolder = do_QueryInterface(m_folder);
-  if (!localFolder) {
-    return;
   }
-  bool downloadInProgress = false;
-  localFolder->GetDownloadInProgress(&downloadInProgress);
-  if (downloadInProgress) {
-    return;
-  }
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  uint32_t count = m_partialMsgsArray.Length();
+  // For all the partial messages saved above, ask the protocol handler if they
+  // still exist on the server. Any messages that don't exist any more are
+  // deleted from the msgDB.
+
   bool deleted = false;
-
-  for (uint32_t i = 0; i < count; i++) {
-    partialRecord* partialMsg;
+  for (PartialRecord& partialMsg : partialMsgsArray) {
     bool found = true;
-    partialMsg = m_partialMsgsArray.ElementAt(i);
-    protocol->CheckMessage(partialMsg->m_uidl.get(), &found);
-    if (!found && partialMsg->m_msgDBHdr) {
-      if (m_newMailParser)
-        m_newMailParser->m_mailDB->DeleteHeader(partialMsg->m_msgDBHdr, nullptr,
-                                                false, true);
+    protocol->CheckMessage(partialMsg.m_uidl.get(), &found);
+    if (!found && partialMsg.m_msgDBHdr) {
+      rv = db->DeleteHeader(partialMsg.m_msgDBHdr, nullptr, false, true);
+      if (NS_FAILED(rv)) {
+        continue;
+      }
       deleted = true;
     }
-    delete partialMsg;
   }
-  m_partialMsgsArray.Clear();
+  partialMsgsArray.Clear();
   if (deleted) {
     localFolder->NotifyDelete();
   }
+  return NS_OK;
 }
 
 nsresult nsPop3Sink::BeginMailDelivery(bool uidlDownload,
-                                       nsIMsgWindow* aMsgWindow, bool* aBool) {
+                                       nsIMsgWindow* aMsgWindow) {
   nsresult rv;
   nsCOMPtr<nsIMsgIncomingServer> server = do_QueryInterface(m_popServer);
   if (!server) return NS_ERROR_UNEXPECTED;
@@ -192,7 +173,6 @@ nsresult nsPop3Sink::BeginMailDelivery(bool uidlDownload,
     return NS_MSG_FOLDER_BUSY;
   }
   m_uidlDownload = uidlDownload;
-  if (!uidlDownload) FindPartialMessages();
 
   m_folder->GetNumNewMessages(false, &m_numNewMessagesInFolder);
 
@@ -203,16 +183,17 @@ nsresult nsPop3Sink::BeginMailDelivery(bool uidlDownload,
       do_GetService("@mozilla.org/messenger/popservice;1", &rv));
   NS_ENSURE_SUCCESS(rv, rv);
   pop3Service->NotifyDownloadStarted(m_folder);
-  if (aBool) *aBool = true;
   return NS_OK;
 }
 
 nsresult nsPop3Sink::EndMailDelivery(nsIPop3Protocol* protocol) {
-  CheckPartialMessages(protocol);
+  if (!m_uidlDownload) {
+    DiscardStalePartialMessages(protocol);
+  }
 
   if (m_newMailParser) {
     if (m_outFileStream) m_outFileStream->Flush();  // try this.
-    m_newMailParser->OnStopRequest(nullptr, NS_OK);
+    m_newMailParser->DoneParsing();
     m_newMailParser->EndMsgDownload();
   }
   if (m_outFileStream) {
@@ -266,37 +247,6 @@ nsresult nsPop3Sink::EndMailDelivery(nsIPop3Protocol* protocol) {
   // in case it's not the open folder
   m_folder->UpdateSummaryTotals(true);
 
-  // check if the folder open in this window is not the current folder, and if
-  // it has new message, in which case we need to try to run the filter plugin.
-  if (m_newMailParser) {
-    nsCOMPtr<nsIMsgWindow> msgWindow;
-    m_newMailParser->GetMsgWindow(getter_AddRefs(msgWindow));
-    // this breaks down if it's biff downloading new mail because
-    // there's no msgWindow...
-    if (msgWindow) {
-      nsCOMPtr<nsIMsgFolder> openFolder;
-      (void)msgWindow->GetOpenFolder(getter_AddRefs(openFolder));
-      if (openFolder && openFolder != m_folder) {
-        // only call filter plugins if folder is a local folder, because only
-        // local folders get messages filtered into them synchronously by pop3.
-        nsCOMPtr<nsIMsgLocalMailFolder> localFolder =
-            do_QueryInterface(openFolder);
-        if (localFolder) {
-          bool hasNew, isLocked;
-          (void)openFolder->GetHasNewMessages(&hasNew);
-          if (hasNew) {
-            // if the open folder is locked, we shouldn't run the spam filters
-            // on it because someone is using the folder. see 218433.
-            // Ideally, the filter plugin code would try to grab the folder lock
-            // and hold onto it until done, but that's more difficult and I
-            // think this will actually fix the problem.
-            openFolder->GetLocked(&isLocked);
-            if (!isLocked) openFolder->CallFilterPlugins(nullptr, &filtersRun);
-          }
-        }
-      }
-    }
-  }
 #ifdef DEBUG
   printf("End mail message delivery.\n");
 #endif
@@ -324,8 +274,6 @@ nsresult nsPop3Sink::ReleaseFolderLock() {
 }
 
 nsresult nsPop3Sink::AbortMailDelivery(nsIPop3Protocol* protocol) {
-  CheckPartialMessages(protocol);
-
   // ### PS TODO - discard any new message?
 
   if (m_outFileStream) {
@@ -379,9 +327,13 @@ nsPop3Sink::IncorporateBegin(const char* uidlString, uint32_t flags) {
   // messages, hence this hoop-jumping.
   int32_t oldNotNewCount = 0;
   RefPtr<nsImapMoveCoalescer> oldCoalescer;
+  mozilla::UniquePtr<nsTHashMap<nsCStringHashKey, int32_t>>
+      oldFilterTargetFoldersMsgMovedCount;
   if (m_newMailParser) {
     oldNotNewCount = m_newMailParser->m_numNotNewMessages;
     oldCoalescer = m_newMailParser->m_moveCoalescer;
+    oldFilterTargetFoldersMsgMovedCount.swap(
+        m_newMailParser->m_filterTargetFoldersMsgMovedCount);
     m_newMailParser->m_moveCoalescer = nullptr;
     m_newMailParser = nullptr;
   }
@@ -392,6 +344,8 @@ nsPop3Sink::IncorporateBegin(const char* uidlString, uint32_t flags) {
                              m_outFileStream);
   m_newMailParser->m_numNotNewMessages = oldNotNewCount;
   m_newMailParser->m_moveCoalescer = oldCoalescer;
+  m_newMailParser->m_filterTargetFoldersMsgMovedCount.swap(
+      oldFilterTargetFoldersMsgMovedCount);
 
   if (m_uidlDownload) m_newMailParser->DisableFilters();
 
@@ -399,7 +353,8 @@ nsPop3Sink::IncorporateBegin(const char* uidlString, uint32_t flags) {
   // We can still continue without one.
   if (NS_FAILED(rv)) {
     m_newMailParser = nullptr;
-    rv = NS_OK;
+    MOZ_LOG(POP3LOGMODULE, mozilla::LogLevel::Warning,
+            (POP3LOG("Failed to initialize m_newMailParser")));
   }
 
   nsCString outputString;
@@ -530,8 +485,7 @@ nsresult nsPop3Sink::WriteLineToMailbox(const nsACString& buffer) {
                   "or to bug 1308335 at bugzilla.mozilla.org. "
                   "Resolving this problem will allow speeding up message "
                   "downloads."_ns,
-              NS_LITERAL_STRING_FROM_CSTRING(__FILE__), __LINE__,
-              nsIScriptError::errorFlag);
+              nsCString(__FILE__), __LINE__, nsIScriptError::errorFlag);
 #  ifdef DEBUG
           // Debugging, see bug 1116055.
           if (!folderName.IsEmpty()) {
@@ -574,14 +528,24 @@ nsPop3Sink::IncorporateComplete(nsIMsgWindow* aMsgWindow, int32_t aSize) {
     nsBuildLocalMessageURI(m_baseMessageUri, msgKey, m_messageUri);
   }
 
-  bool leaveOnServer = false;
-  m_popServer->GetLeaveMessagesOnServer(&leaveOnServer);
-  // We need to flush the output stream, in case mail filters move
-  // the new message, which relies on all the data being flushed.
-  nsresult rv =
-      m_outFileStream->Flush();  // Make sure the message is written to the disk
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsresult rv;
+
   NS_ASSERTION(m_newMailParser, "could not get m_newMailParser");
+
+  // If line separators in server response are just LF instead of stardard CRLF,
+  // the blank line between the headers and the message body will not be
+  // detected. The detection of this blank line causes the header content to
+  // be parsed to correctly display the message list information. Send parser an
+  // empty/blank line to cause a header parse if it has not yet occurred.
+  if (m_newMailParser) {
+    rv = m_newMailParser->HandleLine("", 0);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // We need to flush the output stream in case mail filters move/copy the new
+  // message. This relies on all the data being flushed (i.e., written to disk).
+  rv = m_outFileStream->Flush();
+  NS_ENSURE_SUCCESS(rv, rv);
   if (m_newMailParser) {
     // PublishMsgHdr clears m_newMsgHdr, so we need a comptr to
     // hold onto it.

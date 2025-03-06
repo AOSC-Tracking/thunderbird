@@ -27,6 +27,7 @@
 #include "nsTHashSet.h"
 #include "nsWeakReference.h"
 #include "nsNetCID.h"
+#include "SimpleURIUnknownSchemes.h"
 
 // We don't want to expose this observer topic.
 // Intended internal use only for remoting offline/inline events.
@@ -79,6 +80,7 @@ class nsIOService final : public nsIIOService,
                                   nsAsyncRedirectVerifyHelper* helper);
 
   bool IsOffline() { return mOffline; }
+  bool InSleepMode() { return mInSleepMode; }
   PRIntervalTime LastOfflineStateChange() { return mLastOfflineStateChange; }
   PRIntervalTime LastConnectivityChange() { return mLastConnectivityChange; }
   PRIntervalTime LastNetworkLinkChange() { return mLastNetworkLinkChange; }
@@ -180,8 +182,7 @@ class nsIOService final : public nsIIOService,
       const mozilla::Maybe<mozilla::dom::ClientInfo>& aLoadingClientInfo,
       const mozilla::Maybe<mozilla::dom::ServiceWorkerDescriptor>& aController,
       uint32_t aSecurityFlags, nsContentPolicyType aContentPolicyType,
-      uint32_t aSandboxFlags, bool aSkipCheckForBrokenURLOrZeroSized,
-      nsIChannel** result);
+      uint32_t aSandboxFlags, nsIChannel** result);
 
   nsresult NewChannelFromURIWithProxyFlagsInternal(nsIURI* aURI,
                                                    nsIURI* aProxyURI,
@@ -216,6 +217,7 @@ class nsIOService final : public nsIIOService,
 
   mozilla::Atomic<bool, mozilla::Relaxed> mShutdown{false};
   mozilla::Atomic<bool, mozilla::Relaxed> mHttpHandlerAlreadyShutingDown{false};
+  mozilla::Atomic<bool, mozilla::Relaxed> mInSleepMode{false};
 
   nsCOMPtr<nsPISocketTransportService> mSocketTransportService;
   nsCOMPtr<nsICaptivePortalService> mCaptivePortalService;
@@ -264,6 +266,8 @@ class nsIOService final : public nsIIOService,
   nsTHashSet<nsCString> mIOServiceTopicList;
 
   nsCOMPtr<nsIObserverService> mObserverService;
+
+  SimpleURIUnknownSchemes mSimpleURIUnknownSchemes;
 
  public:
   // Used for all default buffer sizes that necko allocates.

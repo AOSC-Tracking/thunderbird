@@ -1,218 +1,211 @@
-/*! A cross-platform unsafe graphics abstraction.
- *
- * This crate defines a set of traits abstracting over modern graphics APIs,
- * with implementations ("backends") for Vulkan, Metal, Direct3D, and GL.
- *
- * `wgpu-hal` is a spiritual successor to
- * [gfx-hal](https://github.com/gfx-rs/gfx), but with reduced scope, and
- * oriented towards WebGPU implementation goals. It has no overhead for
- * validation or tracking, and the API translation overhead is kept to the bare
- * minimum by the design of WebGPU. This API can be used for resource-demanding
- * applications and engines.
- *
- * The `wgpu-hal` crate's main design choices:
- *
- * - Our traits are meant to be *portable*: proper use
- *   should get equivalent results regardless of the backend.
- *
- * - Our traits' contracts are *unsafe*: implementations perform minimal
- *   validation, if any, and incorrect use will often cause undefined behavior.
- *   This allows us to minimize the overhead we impose over the underlying
- *   graphics system. If you need safety, the [`wgpu-core`] crate provides a
- *   safe API for driving `wgpu-hal`, implementing all necessary validation,
- *   resource state tracking, and so on. (Note that `wgpu-core` is designed for
- *   use via FFI; the [`wgpu`] crate provides more idiomatic Rust bindings for
- *   `wgpu-core`.) Or, you can do your own validation.
- *
- * - In the same vein, returned errors *only cover cases the user can't
- *   anticipate*, like running out of memory or losing the device. Any errors
- *   that the user could reasonably anticipate are their responsibility to
- *   avoid. For example, `wgpu-hal` returns no error for mapping a buffer that's
- *   not mappable: as the buffer creator, the user should already know if they
- *   can map it.
- *
- * - We use *static dispatch*. The traits are not
- *   generally object-safe. You must select a specific backend type
- *   like [`vulkan::Api`] or [`metal::Api`], and then use that
- *   according to the main traits, or call backend-specific methods.
- *
- * - We use *idiomatic Rust parameter passing*,
- *   taking objects by reference, returning them by value, and so on,
- *   unlike `wgpu-core`, which refers to objects by ID.
- *
- * - We map buffer contents *persistently*. This means that the buffer
- *   can remain mapped on the CPU while the GPU reads or writes to it.
- *   You must explicitly indicate when data might need to be
- *   transferred between CPU and GPU, if `wgpu-hal` indicates that the
- *   mapping is not coherent (that is, automatically synchronized
- *   between the two devices).
- *
- * - You must record *explicit barriers* between different usages of a
- *   resource. For example, if a buffer is written to by a compute
- *   shader, and then used as and index buffer to a draw call, you
- *   must use [`CommandEncoder::transition_buffers`] between those two
- *   operations.
- *
- * - Pipeline layouts are *explicitly specified* when setting bind
- *   group. Incompatible layouts disturb groups bound at higher indices.
- *
- * - The API *accepts collections as iterators*, to avoid forcing the user to
- *   store data in particular containers. The implementation doesn't guarantee
- *   that any of the iterators are drained, unless stated otherwise by the
- *   function documentation. For this reason, we recommend that iterators don't
- *   do any mutating work.
- *
- * Unfortunately, `wgpu-hal`'s safety requirements are not fully documented.
- * Ideally, all trait methods would have doc comments setting out the
- * requirements users must meet to ensure correct and portable behavior. If you
- * are aware of a specific requirement that a backend imposes that is not
- * ensured by the traits' documented rules, please file an issue. Or, if you are
- * a capable technical writer, please file a pull request!
- *
- * [`wgpu-core`]: https://crates.io/crates/wgpu-core
- * [`wgpu`]: https://crates.io/crates/wgpu
- * [`vulkan::Api`]: vulkan/struct.Api.html
- * [`metal::Api`]: metal/struct.Api.html
- *
- * ## Primary backends
- *
- * The `wgpu-hal` crate has full-featured backends implemented on the following
- * platform graphics APIs:
- *
- * - Vulkan, available on Linux, Android, and Windows, using the [`ash`] crate's
- *   Vulkan bindings. It's also available on macOS, if you install [MoltenVK].
- *
- * - Metal on macOS, using the [`metal`] crate's bindings.
- *
- * - Direct3D 12 on Windows, using the [`d3d12`] crate's bindings.
- *
- * [`ash`]: https://crates.io/crates/ash
- * [MoltenVK]: https://github.com/KhronosGroup/MoltenVK
- * [`metal`]: https://crates.io/crates/metal
- * [`d3d12`]: ahttps://crates.io/crates/d3d12
- *
- * ## Secondary backends
- *
- * The `wgpu-hal` crate has a partial implementation based on the following
- * platform graphics API:
- *
- * - The GL backend is available anywhere OpenGL, OpenGL ES, or WebGL are
- *   available. See the [`gles`] module documentation for details.
- *
- * [`gles`]: gles/index.html
- *
- * You can see what capabilities an adapter is missing by checking the
- * [`DownlevelCapabilities`][tdc] in [`ExposedAdapter::capabilities`], available
- * from [`Instance::enumerate_adapters`].
- *
- * The API is generally designed to fit the primary backends better than the
- * secondary backends, so the latter may impose more overhead.
- *
- * [tdc]: wgt::DownlevelCapabilities
- *
- * ## Traits
- *
- * The `wgpu-hal` crate defines a handful of traits that together
- * represent a cross-platform abstraction for modern GPU APIs.
- *
- * - The [`Api`] trait represents a `wgpu-hal` backend. It has no methods of its
- *   own, only a collection of associated types.
- *
- * - [`Api::Instance`] implements the [`Instance`] trait. [`Instance::init`]
- *   creates an instance value, which you can use to enumerate the adapters
- *   available on the system. For example, [`vulkan::Api::Instance::init`][Ii]
- *   returns an instance that can enumerate the Vulkan physical devices on your
- *   system.
- *
- * - [`Api::Adapter`] implements the [`Adapter`] trait, representing a
- *   particular device from a particular backend. For example, a Vulkan instance
- *   might have a Lavapipe software adapter and a GPU-based adapter.
- *
- * - [`Api::Device`] implements the [`Device`] trait, representing an active
- *   link to a device. You get a device value by calling [`Adapter::open`], and
- *   then use it to create buffers, textures, shader modules, and so on.
- *
- * - [`Api::Queue`] implements the [`Queue`] trait, which you use to submit
- *   command buffers to a given device.
- *
- * - [`Api::CommandEncoder`] implements the [`CommandEncoder`] trait, which you
- *   use to build buffers of commands to submit to a queue. This has all the
- *   methods for drawing and running compute shaders, which is presumably what
- *   you're here for.
- *
- * - [`Api::Surface`] implements the [`Surface`] trait, which represents a
- *   swapchain for presenting images on the screen, via interaction with the
- *   system's window manager.
- *
- * The [`Api`] trait has various other associated types like [`Api::Buffer`] and
- * [`Api::Texture`] that represent resources the rest of the interface can
- * operate on, but these generally do not have their own traits.
- *
- * [Ii]: Instance::init
- *
- * ## Validation is the calling code's responsibility, not `wgpu-hal`'s
- *
- * As much as possible, `wgpu-hal` traits place the burden of validation,
- * resource tracking, and state tracking on the caller, not on the trait
- * implementations themselves. Anything which can reasonably be handled in
- * backend-independent code should be. A `wgpu_hal` backend's sole obligation is
- * to provide portable behavior, and report conditions that the calling code
- * can't reasonably anticipate, like device loss or running out of memory.
- *
- * The `wgpu` crate collection is intended for use in security-sensitive
- * applications, like web browsers, where the API is available to untrusted
- * code. This means that `wgpu-core`'s validation is not simply a service to
- * developers, to be provided opportunistically when the performance costs are
- * acceptable and the necessary data is ready at hand. Rather, `wgpu-core`'s
- * validation must be exhaustive, to ensure that even malicious content cannot
- * provoke and exploit undefined behavior in the platform's graphics API.
- *
- * Because graphics APIs' requirements are complex, the only practical way for
- * `wgpu` to provide exhaustive validation is to comprehensively track the
- * lifetime and state of all the resources in the system. Implementing this
- * separately for each backend is infeasible; effort would be better spent
- * making the cross-platform validation in `wgpu-core` legible and trustworthy.
- * Fortunately, the requirements are largely similar across the various
- * platforms, so cross-platform validation is practical.
- *
- * Some backends have specific requirements that aren't practical to foist off
- * on the `wgpu-hal` user. For example, properly managing macOS Objective-C or
- * Microsoft COM reference counts is best handled by using appropriate pointer
- * types within the backend.
- *
- * A desire for "defense in depth" may suggest performing additional validation
- * in `wgpu-hal` when the opportunity arises, but this must be done with
- * caution. Even experienced contributors infer the expectations their changes
- * must meet by considering not just requirements made explicit in types, tests,
- * assertions, and comments, but also those implicit in the surrounding code.
- * When one sees validation or state-tracking code in `wgpu-hal`, it is tempting
- * to conclude, "Oh, `wgpu-hal` checks for this, so `wgpu-core` needn't worry
- * about it - that would be redundant!" The responsibility for exhaustive
- * validation always rests with `wgpu-core`, regardless of what may or may not
- * be checked in `wgpu-hal`.
- *
- * To this end, any "defense in depth" validation that does appear in `wgpu-hal`
- * for requirements that `wgpu-core` should have enforced should report failure
- * via the `unreachable!` macro, because problems detected at this stage always
- * indicate a bug in `wgpu-core`.
- *
- * ## Debugging
- *
- * Most of the information on the wiki [Debugging wgpu Applications][wiki-debug]
- * page still applies to this API, with the exception of API tracing/replay
- * functionality, which is only available in `wgpu-core`.
- *
- * [wiki-debug]: https://github.com/gfx-rs/wgpu/wiki/Debugging-wgpu-Applications
- */
+//! A cross-platform unsafe graphics abstraction.
+//!
+//! This crate defines a set of traits abstracting over modern graphics APIs,
+//! with implementations ("backends") for Vulkan, Metal, Direct3D, and GL.
+//!
+//! `wgpu-hal` is a spiritual successor to
+//! [gfx-hal](https://github.com/gfx-rs/gfx), but with reduced scope, and
+//! oriented towards WebGPU implementation goals. It has no overhead for
+//! validation or tracking, and the API translation overhead is kept to the bare
+//! minimum by the design of WebGPU. This API can be used for resource-demanding
+//! applications and engines.
+//!
+//! The `wgpu-hal` crate's main design choices:
+//!
+//! - Our traits are meant to be *portable*: proper use
+//!   should get equivalent results regardless of the backend.
+//!
+//! - Our traits' contracts are *unsafe*: implementations perform minimal
+//!   validation, if any, and incorrect use will often cause undefined behavior.
+//!   This allows us to minimize the overhead we impose over the underlying
+//!   graphics system. If you need safety, the [`wgpu-core`] crate provides a
+//!   safe API for driving `wgpu-hal`, implementing all necessary validation,
+//!   resource state tracking, and so on. (Note that `wgpu-core` is designed for
+//!   use via FFI; the [`wgpu`] crate provides more idiomatic Rust bindings for
+//!   `wgpu-core`.) Or, you can do your own validation.
+//!
+//! - In the same vein, returned errors *only cover cases the user can't
+//!   anticipate*, like running out of memory or losing the device. Any errors
+//!   that the user could reasonably anticipate are their responsibility to
+//!   avoid. For example, `wgpu-hal` returns no error for mapping a buffer that's
+//!   not mappable: as the buffer creator, the user should already know if they
+//!   can map it.
+//!
+//! - We use *static dispatch*. The traits are not
+//!   generally object-safe. You must select a specific backend type
+//!   like [`vulkan::Api`] or [`metal::Api`], and then use that
+//!   according to the main traits, or call backend-specific methods.
+//!
+//! - We use *idiomatic Rust parameter passing*,
+//!   taking objects by reference, returning them by value, and so on,
+//!   unlike `wgpu-core`, which refers to objects by ID.
+//!
+//! - We map buffer contents *persistently*. This means that the buffer can
+//!   remain mapped on the CPU while the GPU reads or writes to it. You must
+//!   explicitly indicate when data might need to be transferred between CPU and
+//!   GPU, if [`Device::map_buffer`] indicates that this is necessary.
+//!
+//! - You must record *explicit barriers* between different usages of a
+//!   resource. For example, if a buffer is written to by a compute
+//!   shader, and then used as and index buffer to a draw call, you
+//!   must use [`CommandEncoder::transition_buffers`] between those two
+//!   operations.
+//!
+//! - Pipeline layouts are *explicitly specified* when setting bind groups.
+//!   Incompatible layouts disturb groups bound at higher indices.
+//!
+//! - The API *accepts collections as iterators*, to avoid forcing the user to
+//!   store data in particular containers. The implementation doesn't guarantee
+//!   that any of the iterators are drained, unless stated otherwise by the
+//!   function documentation. For this reason, we recommend that iterators don't
+//!   do any mutating work.
+//!
+//! Unfortunately, `wgpu-hal`'s safety requirements are not fully documented.
+//! Ideally, all trait methods would have doc comments setting out the
+//! requirements users must meet to ensure correct and portable behavior. If you
+//! are aware of a specific requirement that a backend imposes that is not
+//! ensured by the traits' documented rules, please file an issue. Or, if you are
+//! a capable technical writer, please file a pull request!
+//!
+//! [`wgpu-core`]: https://crates.io/crates/wgpu-core
+//! [`wgpu`]: https://crates.io/crates/wgpu
+//! [`vulkan::Api`]: vulkan/struct.Api.html
+//! [`metal::Api`]: metal/struct.Api.html
+//!
+//! ## Primary backends
+//!
+//! The `wgpu-hal` crate has full-featured backends implemented on the following
+//! platform graphics APIs:
+//!
+//! - Vulkan, available on Linux, Android, and Windows, using the [`ash`] crate's
+//!   Vulkan bindings. It's also available on macOS, if you install [MoltenVK].
+//!
+//! - Metal on macOS, using the [`metal`] crate's bindings.
+//!
+//! - Direct3D 12 on Windows, using the [`windows`] crate's bindings.
+//!
+//! [`ash`]: https://crates.io/crates/ash
+//! [MoltenVK]: https://github.com/KhronosGroup/MoltenVK
+//! [`metal`]: https://crates.io/crates/metal
+//! [`windows`]: https://crates.io/crates/windows
+//!
+//! ## Secondary backends
+//!
+//! The `wgpu-hal` crate has a partial implementation based on the following
+//! platform graphics API:
+//!
+//! - The GL backend is available anywhere OpenGL, OpenGL ES, or WebGL are
+//!   available. See the [`gles`] module documentation for details.
+//!
+//! [`gles`]: gles/index.html
+//!
+//! You can see what capabilities an adapter is missing by checking the
+//! [`DownlevelCapabilities`][tdc] in [`ExposedAdapter::capabilities`], available
+//! from [`Instance::enumerate_adapters`].
+//!
+//! The API is generally designed to fit the primary backends better than the
+//! secondary backends, so the latter may impose more overhead.
+//!
+//! [tdc]: wgt::DownlevelCapabilities
+//!
+//! ## Traits
+//!
+//! The `wgpu-hal` crate defines a handful of traits that together
+//! represent a cross-platform abstraction for modern GPU APIs.
+//!
+//! - The [`Api`] trait represents a `wgpu-hal` backend. It has no methods of its
+//!   own, only a collection of associated types.
+//!
+//! - [`Api::Instance`] implements the [`Instance`] trait. [`Instance::init`]
+//!   creates an instance value, which you can use to enumerate the adapters
+//!   available on the system. For example, [`vulkan::Api::Instance::init`][Ii]
+//!   returns an instance that can enumerate the Vulkan physical devices on your
+//!   system.
+//!
+//! - [`Api::Adapter`] implements the [`Adapter`] trait, representing a
+//!   particular device from a particular backend. For example, a Vulkan instance
+//!   might have a Lavapipe software adapter and a GPU-based adapter.
+//!
+//! - [`Api::Device`] implements the [`Device`] trait, representing an active
+//!   link to a device. You get a device value by calling [`Adapter::open`], and
+//!   then use it to create buffers, textures, shader modules, and so on.
+//!
+//! - [`Api::Queue`] implements the [`Queue`] trait, which you use to submit
+//!   command buffers to a given device.
+//!
+//! - [`Api::CommandEncoder`] implements the [`CommandEncoder`] trait, which you
+//!   use to build buffers of commands to submit to a queue. This has all the
+//!   methods for drawing and running compute shaders, which is presumably what
+//!   you're here for.
+//!
+//! - [`Api::Surface`] implements the [`Surface`] trait, which represents a
+//!   swapchain for presenting images on the screen, via interaction with the
+//!   system's window manager.
+//!
+//! The [`Api`] trait has various other associated types like [`Api::Buffer`] and
+//! [`Api::Texture`] that represent resources the rest of the interface can
+//! operate on, but these generally do not have their own traits.
+//!
+//! [Ii]: Instance::init
+//!
+//! ## Validation is the calling code's responsibility, not `wgpu-hal`'s
+//!
+//! As much as possible, `wgpu-hal` traits place the burden of validation,
+//! resource tracking, and state tracking on the caller, not on the trait
+//! implementations themselves. Anything which can reasonably be handled in
+//! backend-independent code should be. A `wgpu_hal` backend's sole obligation is
+//! to provide portable behavior, and report conditions that the calling code
+//! can't reasonably anticipate, like device loss or running out of memory.
+//!
+//! The `wgpu` crate collection is intended for use in security-sensitive
+//! applications, like web browsers, where the API is available to untrusted
+//! code. This means that `wgpu-core`'s validation is not simply a service to
+//! developers, to be provided opportunistically when the performance costs are
+//! acceptable and the necessary data is ready at hand. Rather, `wgpu-core`'s
+//! validation must be exhaustive, to ensure that even malicious content cannot
+//! provoke and exploit undefined behavior in the platform's graphics API.
+//!
+//! Because graphics APIs' requirements are complex, the only practical way for
+//! `wgpu` to provide exhaustive validation is to comprehensively track the
+//! lifetime and state of all the resources in the system. Implementing this
+//! separately for each backend is infeasible; effort would be better spent
+//! making the cross-platform validation in `wgpu-core` legible and trustworthy.
+//! Fortunately, the requirements are largely similar across the various
+//! platforms, so cross-platform validation is practical.
+//!
+//! Some backends have specific requirements that aren't practical to foist off
+//! on the `wgpu-hal` user. For example, properly managing macOS Objective-C or
+//! Microsoft COM reference counts is best handled by using appropriate pointer
+//! types within the backend.
+//!
+//! A desire for "defense in depth" may suggest performing additional validation
+//! in `wgpu-hal` when the opportunity arises, but this must be done with
+//! caution. Even experienced contributors infer the expectations their changes
+//! must meet by considering not just requirements made explicit in types, tests,
+//! assertions, and comments, but also those implicit in the surrounding code.
+//! When one sees validation or state-tracking code in `wgpu-hal`, it is tempting
+//! to conclude, "Oh, `wgpu-hal` checks for this, so `wgpu-core` needn't worry
+//! about it - that would be redundant!" The responsibility for exhaustive
+//! validation always rests with `wgpu-core`, regardless of what may or may not
+//! be checked in `wgpu-hal`.
+//!
+//! To this end, any "defense in depth" validation that does appear in `wgpu-hal`
+//! for requirements that `wgpu-core` should have enforced should report failure
+//! via the `unreachable!` macro, because problems detected at this stage always
+//! indicate a bug in `wgpu-core`.
+//!
+//! ## Debugging
+//!
+//! Most of the information on the wiki [Debugging wgpu Applications][wiki-debug]
+//! page still applies to this API, with the exception of API tracing/replay
+//! functionality, which is only available in `wgpu-core`.
+//!
+//! [wiki-debug]: https://github.com/gfx-rs/wgpu/wiki/Debugging-wgpu-Applications
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![allow(
     // this happens on the GL backend, where it is both thread safe and non-thread safe in the same code.
     clippy::arc_with_non_send_sync,
-    // for `if_then_panic` until it reaches stable
-    unknown_lints,
-    // We use loops for getting early-out of scope without closures.
-    clippy::never_loop,
     // We don't use syntax sugar where it's not necessary.
     clippy::match_like_matches_macro,
     // Redundant matching is more explicit.
@@ -225,23 +218,20 @@
     clippy::single_match,
     // Push commands are more regular than macros.
     clippy::vec_init_then_push,
-    // "if panic" is a good uniform construct.
-    clippy::if_then_panic,
     // We unsafe impl `Send` for a reason.
     clippy::non_send_fields_in_send_ty,
     // TODO!
     clippy::missing_safety_doc,
-    // Clashes with clippy::pattern_type_mismatch
-    clippy::needless_borrowed_reference,
+    // It gets in the way a lot and does not prevent bugs in practice.
+    clippy::pattern_type_mismatch,
 )]
 #![warn(
+    clippy::ptr_as_ptr,
     trivial_casts,
     trivial_numeric_casts,
     unsafe_op_in_unsafe_fn,
     unused_extern_crates,
-    unused_qualifications,
-    // We don't match on a reference, unless required.
-    clippy::pattern_type_mismatch,
+    unused_qualifications
 )]
 
 /// DirectX12 API internals.
@@ -272,6 +262,17 @@ pub mod api {
     pub use super::vulkan::Api as Vulkan;
 }
 
+mod dynamic;
+
+pub(crate) use dynamic::impl_dyn_resource;
+pub use dynamic::{
+    DynAccelerationStructure, DynAcquiredSurfaceTexture, DynAdapter, DynBindGroup,
+    DynBindGroupLayout, DynBuffer, DynCommandBuffer, DynCommandEncoder, DynComputePipeline,
+    DynDevice, DynExposedAdapter, DynFence, DynInstance, DynOpenDevice, DynPipelineCache,
+    DynPipelineLayout, DynQuerySet, DynQueue, DynRenderPipeline, DynResource, DynSampler,
+    DynShaderModule, DynSurface, DynSurfaceTexture, DynTexture, DynTextureView,
+};
+
 use std::{
     borrow::{Borrow, Cow},
     fmt,
@@ -300,9 +301,41 @@ pub const QUERY_SIZE: wgt::BufferAddress = 8;
 pub type Label<'a> = Option<&'a str>;
 pub type MemoryRange = Range<wgt::BufferAddress>;
 pub type FenceValue = u64;
+pub type AtomicFenceValue = std::sync::atomic::AtomicU64;
 
-/// Drop guard to signal wgpu-hal is no longer using an externally created object.
-pub type DropGuard = Box<dyn std::any::Any + Send + Sync>;
+/// A callback to signal that wgpu is no longer using a resource.
+#[cfg(any(gles, vulkan))]
+pub type DropCallback = Box<dyn FnOnce() + Send + Sync + 'static>;
+
+#[cfg(any(gles, vulkan))]
+pub struct DropGuard {
+    callback: Option<DropCallback>,
+}
+
+#[cfg(all(any(gles, vulkan), any(native, Emscripten)))]
+impl DropGuard {
+    fn from_option(callback: Option<DropCallback>) -> Option<Self> {
+        callback.map(|callback| Self {
+            callback: Some(callback),
+        })
+    }
+}
+
+#[cfg(any(gles, vulkan))]
+impl Drop for DropGuard {
+    fn drop(&mut self) {
+        if let Some(cb) = self.callback.take() {
+            (cb)();
+        }
+    }
+}
+
+#[cfg(any(gles, vulkan))]
+impl fmt::Debug for DropGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DropGuard").finish()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum DeviceError {
@@ -312,6 +345,20 @@ pub enum DeviceError {
     Lost,
     #[error("Creation of a resource failed for a reason other than running out of memory.")]
     ResourceCreationFailed,
+    #[error("Unexpected error variant (driver implementation is at fault)")]
+    Unexpected,
+}
+
+#[allow(dead_code)] // may be unused on some platforms
+#[cold]
+fn hal_usage_error<T: fmt::Display>(txt: T) -> ! {
+    panic!("wgpu-hal invariant was violated (usage error): {txt}")
+}
+
+#[allow(dead_code)] // may be unused on some platforms
+#[cold]
+fn hal_internal_error<T: fmt::Display>(txt: T) -> ! {
+    panic!("wgpu-hal ran into a preventable internal error: {txt}")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -330,6 +377,8 @@ pub enum PipelineError {
     EntryPoint(naga::ShaderStage),
     #[error(transparent)]
     Device(#[from] DeviceError),
+    #[error("Pipeline constant error for stage {0:?}: {1}")]
+    PipelineConstants(wgt::ShaderStages, String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -388,13 +437,13 @@ impl InstanceError {
 }
 
 pub trait Api: Clone + fmt::Debug + Sized {
-    type Instance: Instance<A = Self>;
-    type Surface: Surface<A = Self>;
-    type Adapter: Adapter<A = Self>;
-    type Device: Device<A = Self>;
+    type Instance: DynInstance + Instance<A = Self>;
+    type Surface: DynSurface + Surface<A = Self>;
+    type Adapter: DynAdapter + Adapter<A = Self>;
+    type Device: DynDevice + Device<A = Self>;
 
-    type Queue: Queue<A = Self>;
-    type CommandEncoder: CommandEncoder<A = Self>;
+    type Queue: DynQueue + Queue<A = Self>;
+    type CommandEncoder: DynCommandEncoder + CommandEncoder<A = Self>;
 
     /// This API's command buffer type.
     ///
@@ -404,14 +453,14 @@ pub trait Api: Clone + fmt::Debug + Sized {
     /// them to [`CommandEncoder::reset_all`].
     ///
     /// [`CommandEncoder`]: Api::CommandEncoder
-    type CommandBuffer: WasmNotSendSync + fmt::Debug;
+    type CommandBuffer: DynCommandBuffer;
 
-    type Buffer: fmt::Debug + WasmNotSendSync + 'static;
-    type Texture: fmt::Debug + WasmNotSendSync + 'static;
-    type SurfaceTexture: fmt::Debug + WasmNotSendSync + Borrow<Self::Texture>;
-    type TextureView: fmt::Debug + WasmNotSendSync;
-    type Sampler: fmt::Debug + WasmNotSendSync;
-    type QuerySet: fmt::Debug + WasmNotSendSync;
+    type Buffer: DynBuffer;
+    type Texture: DynTexture;
+    type SurfaceTexture: DynSurfaceTexture + Borrow<Self::Texture>;
+    type TextureView: DynTextureView;
+    type Sampler: DynSampler;
+    type QuerySet: DynQuerySet;
 
     /// A value you can block on to wait for something to finish.
     ///
@@ -430,17 +479,17 @@ pub trait Api: Clone + fmt::Debug + Sized {
     /// before a lower-valued operation, then waiting for the fence to reach the
     /// lower value could return before the lower-valued operation has actually
     /// finished.
-    type Fence: fmt::Debug + WasmNotSendSync;
+    type Fence: DynFence;
 
-    type BindGroupLayout: fmt::Debug + WasmNotSendSync;
-    type BindGroup: fmt::Debug + WasmNotSendSync;
-    type PipelineLayout: fmt::Debug + WasmNotSendSync;
-    type ShaderModule: fmt::Debug + WasmNotSendSync;
-    type RenderPipeline: fmt::Debug + WasmNotSendSync;
-    type ComputePipeline: fmt::Debug + WasmNotSendSync;
-    type PipelineCache: fmt::Debug + WasmNotSendSync;
+    type BindGroupLayout: DynBindGroupLayout;
+    type BindGroup: DynBindGroup;
+    type PipelineLayout: DynPipelineLayout;
+    type ShaderModule: DynShaderModule;
+    type RenderPipeline: DynRenderPipeline;
+    type ComputePipeline: DynComputePipeline;
+    type PipelineCache: DynPipelineCache;
 
-    type AccelerationStructure: fmt::Debug + WasmNotSendSync + 'static;
+    type AccelerationStructure: DynAccelerationStructure + 'static;
 }
 
 pub trait Instance: Sized + WasmNotSendSync {
@@ -452,8 +501,11 @@ pub trait Instance: Sized + WasmNotSendSync {
         display_handle: raw_window_handle::RawDisplayHandle,
         window_handle: raw_window_handle::RawWindowHandle,
     ) -> Result<<Self::A as Api>::Surface, InstanceError>;
-    unsafe fn destroy_surface(&self, surface: <Self::A as Api>::Surface);
-    unsafe fn enumerate_adapters(&self) -> Vec<ExposedAdapter<Self::A>>;
+    /// `surface_hint` is only used by the GLES backend targeting WebGL2
+    unsafe fn enumerate_adapters(
+        &self,
+        surface_hint: Option<&<Self::A as Api>::Surface>,
+    ) -> Vec<ExposedAdapter<Self::A>>;
 }
 
 pub trait Surface: WasmNotSendSync {
@@ -564,6 +616,7 @@ pub trait Adapter: WasmNotSendSync {
         &self,
         features: wgt::Features,
         limits: &wgt::Limits,
+        memory_hints: &wgt::MemoryHints,
     ) -> Result<OpenDevice<Self::A>, DeviceError>;
 
     /// Return the set of supported capabilities for a texture format.
@@ -623,7 +676,7 @@ pub trait Adapter: WasmNotSendSync {
 /// 1)  Free resources with methods like [`Device::destroy_texture`] or
 ///     [`Device::destroy_shader_module`].
 ///
-/// 1)  Shut down the device by calling [`Device::exit`].
+/// 1)  Drop the device.
 ///
 /// [`vkDevice`]: https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#VkDevice
 /// [`ID3D12Device`]: https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nn-d3d12-id3d12device
@@ -653,8 +706,6 @@ pub trait Adapter: WasmNotSendSync {
 pub trait Device: WasmNotSendSync {
     type A: Api;
 
-    /// Exit connection to this logical device.
-    unsafe fn exit(self, queue: <Self::A as Api>::Queue);
     /// Creates a new buffer.
     ///
     /// The initial usage is `BufferUses::empty()`.
@@ -662,17 +713,100 @@ pub trait Device: WasmNotSendSync {
         &self,
         desc: &BufferDescriptor,
     ) -> Result<<Self::A as Api>::Buffer, DeviceError>;
+
+    /// Free `buffer` and any GPU resources it owns.
+    ///
+    /// Note that backends are allowed to allocate GPU memory for buffers from
+    /// allocation pools, and this call is permitted to simply return `buffer`'s
+    /// storage to that pool, without making it available to other applications.
+    ///
+    /// # Safety
+    ///
+    /// - The given `buffer` must not currently be mapped.
     unsafe fn destroy_buffer(&self, buffer: <Self::A as Api>::Buffer);
-    //TODO: clarify if zero-sized mapping is allowed
+
+    /// A hook for when a wgpu-core buffer is created from a raw wgpu-hal buffer.
+    unsafe fn add_raw_buffer(&self, buffer: &<Self::A as Api>::Buffer);
+
+    /// Return a pointer to CPU memory mapping the contents of `buffer`.
+    ///
+    /// Buffer mappings are persistent: the buffer may remain mapped on the CPU
+    /// while the GPU reads or writes to it. (Note that `wgpu_core` does not use
+    /// this feature: when a `wgpu_core::Buffer` is unmapped, the underlying
+    /// `wgpu_hal` buffer is also unmapped.)
+    ///
+    /// If this function returns `Ok(mapping)`, then:
+    ///
+    /// - `mapping.ptr` is the CPU address of the start of the mapped memory.
+    ///
+    /// - If `mapping.is_coherent` is `true`, then CPU writes to the mapped
+    ///   memory are immediately visible on the GPU, and vice versa.
+    ///
+    /// # Safety
+    ///
+    /// - The given `buffer` must have been created with the [`MAP_READ`] or
+    ///   [`MAP_WRITE`] flags set in [`BufferDescriptor::usage`].
+    ///
+    /// - The given `range` must fall within the size of `buffer`.
+    ///
+    /// - The caller must avoid data races between the CPU and the GPU. A data
+    ///   race is any pair of accesses to a particular byte, one of which is a
+    ///   write, that are not ordered with respect to each other by some sort of
+    ///   synchronization operation.
+    ///
+    /// - If this function returns `Ok(mapping)` and `mapping.is_coherent` is
+    ///   `false`, then:
+    ///
+    ///   - Every CPU write to a mapped byte followed by a GPU read of that byte
+    ///     must have at least one call to [`Device::flush_mapped_ranges`]
+    ///     covering that byte that occurs between those two accesses.
+    ///
+    ///   - Every GPU write to a mapped byte followed by a CPU read of that byte
+    ///     must have at least one call to [`Device::invalidate_mapped_ranges`]
+    ///     covering that byte that occurs between those two accesses.
+    ///
+    ///   Note that the data race rule above requires that all such access pairs
+    ///   be ordered, so it is meaningful to talk about what must occur
+    ///   "between" them.
+    ///
+    /// - Zero-sized mappings are not allowed.
+    ///
+    /// - The returned [`BufferMapping::ptr`] must not be used after a call to
+    ///   [`Device::unmap_buffer`].
+    ///
+    /// [`MAP_READ`]: BufferUses::MAP_READ
+    /// [`MAP_WRITE`]: BufferUses::MAP_WRITE
     unsafe fn map_buffer(
         &self,
         buffer: &<Self::A as Api>::Buffer,
         range: MemoryRange,
     ) -> Result<BufferMapping, DeviceError>;
-    unsafe fn unmap_buffer(&self, buffer: &<Self::A as Api>::Buffer) -> Result<(), DeviceError>;
+
+    /// Remove the mapping established by the last call to [`Device::map_buffer`].
+    ///
+    /// # Safety
+    ///
+    /// - The given `buffer` must be currently mapped.
+    unsafe fn unmap_buffer(&self, buffer: &<Self::A as Api>::Buffer);
+
+    /// Indicate that CPU writes to mapped buffer memory should be made visible to the GPU.
+    ///
+    /// # Safety
+    ///
+    /// - The given `buffer` must be currently mapped.
+    ///
+    /// - All ranges produced by `ranges` must fall within `buffer`'s size.
     unsafe fn flush_mapped_ranges<I>(&self, buffer: &<Self::A as Api>::Buffer, ranges: I)
     where
         I: Iterator<Item = MemoryRange>;
+
+    /// Indicate that GPU writes to mapped buffer memory should be made visible to the CPU.
+    ///
+    /// # Safety
+    ///
+    /// - The given `buffer` must be currently mapped.
+    ///
+    /// - All ranges produced by `ranges` must fall within `buffer`'s size.
     unsafe fn invalidate_mapped_ranges<I>(&self, buffer: &<Self::A as Api>::Buffer, ranges: I)
     where
         I: Iterator<Item = MemoryRange>;
@@ -685,6 +819,10 @@ pub trait Device: WasmNotSendSync {
         desc: &TextureDescriptor,
     ) -> Result<<Self::A as Api>::Texture, DeviceError>;
     unsafe fn destroy_texture(&self, texture: <Self::A as Api>::Texture);
+
+    /// A hook for when a wgpu-core texture is created from a raw wgpu-hal texture.
+    unsafe fn add_raw_texture(&self, texture: &<Self::A as Api>::Texture);
+
     unsafe fn create_texture_view(
         &self,
         texture: &<Self::A as Api>::Texture,
@@ -702,9 +840,8 @@ pub trait Device: WasmNotSendSync {
     /// The new `CommandEncoder` is in the "closed" state.
     unsafe fn create_command_encoder(
         &self,
-        desc: &CommandEncoderDescriptor<Self::A>,
+        desc: &CommandEncoderDescriptor<<Self::A as Api>::Queue>,
     ) -> Result<<Self::A as Api>::CommandEncoder, DeviceError>;
-    unsafe fn destroy_command_encoder(&self, pool: <Self::A as Api>::CommandEncoder);
 
     /// Creates a bind group layout.
     unsafe fn create_bind_group_layout(
@@ -714,12 +851,20 @@ pub trait Device: WasmNotSendSync {
     unsafe fn destroy_bind_group_layout(&self, bg_layout: <Self::A as Api>::BindGroupLayout);
     unsafe fn create_pipeline_layout(
         &self,
-        desc: &PipelineLayoutDescriptor<Self::A>,
+        desc: &PipelineLayoutDescriptor<<Self::A as Api>::BindGroupLayout>,
     ) -> Result<<Self::A as Api>::PipelineLayout, DeviceError>;
     unsafe fn destroy_pipeline_layout(&self, pipeline_layout: <Self::A as Api>::PipelineLayout);
+
+    #[allow(clippy::type_complexity)]
     unsafe fn create_bind_group(
         &self,
-        desc: &BindGroupDescriptor<Self::A>,
+        desc: &BindGroupDescriptor<
+            <Self::A as Api>::BindGroupLayout,
+            <Self::A as Api>::Buffer,
+            <Self::A as Api>::Sampler,
+            <Self::A as Api>::TextureView,
+            <Self::A as Api>::AccelerationStructure,
+        >,
     ) -> Result<<Self::A as Api>::BindGroup, DeviceError>;
     unsafe fn destroy_bind_group(&self, group: <Self::A as Api>::BindGroup);
 
@@ -729,16 +874,29 @@ pub trait Device: WasmNotSendSync {
         shader: ShaderInput,
     ) -> Result<<Self::A as Api>::ShaderModule, ShaderError>;
     unsafe fn destroy_shader_module(&self, module: <Self::A as Api>::ShaderModule);
+
+    #[allow(clippy::type_complexity)]
     unsafe fn create_render_pipeline(
         &self,
-        desc: &RenderPipelineDescriptor<Self::A>,
+        desc: &RenderPipelineDescriptor<
+            <Self::A as Api>::PipelineLayout,
+            <Self::A as Api>::ShaderModule,
+            <Self::A as Api>::PipelineCache,
+        >,
     ) -> Result<<Self::A as Api>::RenderPipeline, PipelineError>;
     unsafe fn destroy_render_pipeline(&self, pipeline: <Self::A as Api>::RenderPipeline);
+
+    #[allow(clippy::type_complexity)]
     unsafe fn create_compute_pipeline(
         &self,
-        desc: &ComputePipelineDescriptor<Self::A>,
+        desc: &ComputePipelineDescriptor<
+            <Self::A as Api>::PipelineLayout,
+            <Self::A as Api>::ShaderModule,
+            <Self::A as Api>::PipelineCache,
+        >,
     ) -> Result<<Self::A as Api>::ComputePipeline, PipelineError>;
     unsafe fn destroy_compute_pipeline(&self, pipeline: <Self::A as Api>::ComputePipeline);
+
     unsafe fn create_pipeline_cache(
         &self,
         desc: &PipelineCacheDescriptor<'_>,
@@ -802,7 +960,7 @@ pub trait Device: WasmNotSendSync {
     ) -> Result<<Self::A as Api>::AccelerationStructure, DeviceError>;
     unsafe fn get_acceleration_structure_build_sizes(
         &self,
-        desc: &GetAccelerationStructureBuildSizesDescriptor<Self::A>,
+        desc: &GetAccelerationStructureBuildSizesDescriptor<<Self::A as Api>::Buffer>,
     ) -> AccelerationStructureBuildSizes;
     unsafe fn get_acceleration_structure_device_address(
         &self,
@@ -812,6 +970,13 @@ pub trait Device: WasmNotSendSync {
         &self,
         acceleration_structure: <Self::A as Api>::AccelerationStructure,
     );
+    fn tlas_instance_to_bytes(&self, instance: TlasInstance) -> Vec<u8>;
+
+    fn get_internal_counters(&self) -> wgt::HalCounters;
+
+    fn generate_allocator_report(&self) -> Option<wgt::AllocatorReport> {
+        None
+    }
 }
 
 pub trait Queue: WasmNotSendSync {
@@ -873,6 +1038,9 @@ pub trait Queue: WasmNotSendSync {
     ///
     /// - All calls to this function that include a given [`SurfaceTexture`][st]
     ///   in `surface_textures` must use the same [`Fence`].
+    ///
+    /// - The [`Fence`] passed as `signal_fence.0` must remain alive until
+    ///   all submissions that will signal it have completed.
     ///
     /// [`Fence`]: Api::Fence
     /// [cb]: Api::CommandBuffer
@@ -940,8 +1108,6 @@ pub trait Queue: WasmNotSendSync {
 ///
 /// - A `CommandBuffer` must not outlive the `CommandEncoder` that
 ///   built it.
-///
-/// - A `CommandEncoder` must not outlive its `Device`.
 ///
 /// It is the user's responsibility to meet this requirements. This
 /// allows `CommandEncoder` implementations to keep their state
@@ -1012,11 +1178,11 @@ pub trait CommandEncoder: WasmNotSendSync + fmt::Debug {
 
     unsafe fn transition_buffers<'a, T>(&mut self, barriers: T)
     where
-        T: Iterator<Item = BufferBarrier<'a, Self::A>>;
+        T: Iterator<Item = BufferBarrier<'a, <Self::A as Api>::Buffer>>;
 
     unsafe fn transition_textures<'a, T>(&mut self, barriers: T)
     where
-        T: Iterator<Item = TextureBarrier<'a, Self::A>>;
+        T: Iterator<Item = TextureBarrier<'a, <Self::A as Api>::Texture>>;
 
     // copy operations
 
@@ -1037,7 +1203,7 @@ pub trait CommandEncoder: WasmNotSendSync + fmt::Debug {
     #[cfg(webgl)]
     unsafe fn copy_external_image_to_texture<T>(
         &mut self,
-        src: &wgt::ImageCopyExternalImage,
+        src: &wgt::CopyExternalImageSourceInfo,
         dst: &<Self::A as Api>::Texture,
         dst_premultiplication: bool,
         regions: T,
@@ -1083,8 +1249,40 @@ pub trait CommandEncoder: WasmNotSendSync + fmt::Debug {
 
     // pass common
 
-    /// Sets the bind group at `index` to `group`, assuming the layout
-    /// of all the preceding groups to be taken from `layout`.
+    /// Sets the bind group at `index` to `group`.
+    ///
+    /// If this is not the first call to `set_bind_group` within the current
+    /// render or compute pass:
+    ///
+    /// - If `layout` contains `n` bind group layouts, then any previously set
+    ///   bind groups at indices `n` or higher are cleared.
+    ///
+    /// - If the first `m` bind group layouts of `layout` are equal to those of
+    ///   the previously passed layout, but no more, then any previously set
+    ///   bind groups at indices `m` or higher are cleared.
+    ///
+    /// It follows from the above that passing the same layout as before doesn't
+    /// clear any bind groups.
+    ///
+    /// # Safety
+    ///
+    /// - This [`CommandEncoder`] must be within a render or compute pass.
+    ///
+    /// - `index` must be the valid index of some bind group layout in `layout`.
+    ///   Call this the "relevant bind group layout".
+    ///
+    /// - The layout of `group` must be equal to the relevant bind group layout.
+    ///
+    /// - The length of `dynamic_offsets` must match the number of buffer
+    ///   bindings [with dynamic offsets][hdo] in the relevant bind group
+    ///   layout.
+    ///
+    /// - If those buffer bindings are ordered by increasing [`binding` number]
+    ///   and paired with elements from `dynamic_offsets`, then each offset must
+    ///   be a valid offset for the binding's corresponding buffer in `group`.
+    ///
+    /// [hdo]: wgt::BindingType::Buffer::has_dynamic_offset
+    /// [`binding` number]: wgt::BindGroupLayoutEntry::binding
     unsafe fn set_bind_group(
         &mut self,
         layout: &<Self::A as Api>::PipelineLayout,
@@ -1136,18 +1334,57 @@ pub trait CommandEncoder: WasmNotSendSync + fmt::Debug {
 
     // render passes
 
-    // Begins a render pass, clears all active bindings.
-    unsafe fn begin_render_pass(&mut self, desc: &RenderPassDescriptor<Self::A>);
+    /// Begin a new render pass, clearing all active bindings.
+    ///
+    /// This clears any bindings established by the following calls:
+    ///
+    /// - [`set_bind_group`](CommandEncoder::set_bind_group)
+    /// - [`set_push_constants`](CommandEncoder::set_push_constants)
+    /// - [`begin_query`](CommandEncoder::begin_query)
+    /// - [`set_render_pipeline`](CommandEncoder::set_render_pipeline)
+    /// - [`set_index_buffer`](CommandEncoder::set_index_buffer)
+    /// - [`set_vertex_buffer`](CommandEncoder::set_vertex_buffer)
+    ///
+    /// # Safety
+    ///
+    /// - All prior calls to [`begin_render_pass`] on this [`CommandEncoder`] must have been followed
+    ///   by a call to [`end_render_pass`].
+    ///
+    /// - All prior calls to [`begin_compute_pass`] on this [`CommandEncoder`] must have been followed
+    ///   by a call to [`end_compute_pass`].
+    ///
+    /// [`begin_render_pass`]: CommandEncoder::begin_render_pass
+    /// [`begin_compute_pass`]: CommandEncoder::begin_compute_pass
+    /// [`end_render_pass`]: CommandEncoder::end_render_pass
+    /// [`end_compute_pass`]: CommandEncoder::end_compute_pass
+    unsafe fn begin_render_pass(
+        &mut self,
+        desc: &RenderPassDescriptor<<Self::A as Api>::QuerySet, <Self::A as Api>::TextureView>,
+    );
+
+    /// End the current render pass.
+    ///
+    /// # Safety
+    ///
+    /// - There must have been a prior call to [`begin_render_pass`] on this [`CommandEncoder`]
+    ///   that has not been followed by a call to [`end_render_pass`].
+    ///
+    /// [`begin_render_pass`]: CommandEncoder::begin_render_pass
+    /// [`end_render_pass`]: CommandEncoder::end_render_pass
     unsafe fn end_render_pass(&mut self);
 
     unsafe fn set_render_pipeline(&mut self, pipeline: &<Self::A as Api>::RenderPipeline);
 
     unsafe fn set_index_buffer<'a>(
         &mut self,
-        binding: BufferBinding<'a, Self::A>,
+        binding: BufferBinding<'a, <Self::A as Api>::Buffer>,
         format: wgt::IndexFormat,
     );
-    unsafe fn set_vertex_buffer<'a>(&mut self, index: u32, binding: BufferBinding<'a, Self::A>);
+    unsafe fn set_vertex_buffer<'a>(
+        &mut self,
+        index: u32,
+        binding: BufferBinding<'a, <Self::A as Api>::Buffer>,
+    );
     unsafe fn set_viewport(&mut self, rect: &Rect<f32>, depth_range: Range<f32>);
     unsafe fn set_scissor_rect(&mut self, rect: &Rect<u32>);
     unsafe fn set_stencil_reference(&mut self, value: u32);
@@ -1199,8 +1436,41 @@ pub trait CommandEncoder: WasmNotSendSync + fmt::Debug {
 
     // compute passes
 
-    // Begins a compute pass, clears all active bindings.
-    unsafe fn begin_compute_pass(&mut self, desc: &ComputePassDescriptor<Self::A>);
+    /// Begin a new compute pass, clearing all active bindings.
+    ///
+    /// This clears any bindings established by the following calls:
+    ///
+    /// - [`set_bind_group`](CommandEncoder::set_bind_group)
+    /// - [`set_push_constants`](CommandEncoder::set_push_constants)
+    /// - [`begin_query`](CommandEncoder::begin_query)
+    /// - [`set_compute_pipeline`](CommandEncoder::set_compute_pipeline)
+    ///
+    /// # Safety
+    ///
+    /// - All prior calls to [`begin_render_pass`] on this [`CommandEncoder`] must have been followed
+    ///   by a call to [`end_render_pass`].
+    ///
+    /// - All prior calls to [`begin_compute_pass`] on this [`CommandEncoder`] must have been followed
+    ///   by a call to [`end_compute_pass`].
+    ///
+    /// [`begin_render_pass`]: CommandEncoder::begin_render_pass
+    /// [`begin_compute_pass`]: CommandEncoder::begin_compute_pass
+    /// [`end_render_pass`]: CommandEncoder::end_render_pass
+    /// [`end_compute_pass`]: CommandEncoder::end_compute_pass
+    unsafe fn begin_compute_pass(
+        &mut self,
+        desc: &ComputePassDescriptor<<Self::A as Api>::QuerySet>,
+    );
+
+    /// End the current compute pass.
+    ///
+    /// # Safety
+    ///
+    /// - There must have been a prior call to [`begin_compute_pass`] on this [`CommandEncoder`]
+    ///   that has not been followed by a call to [`end_compute_pass`].
+    ///
+    /// [`begin_compute_pass`]: CommandEncoder::begin_compute_pass
+    /// [`end_compute_pass`]: CommandEncoder::end_compute_pass
     unsafe fn end_compute_pass(&mut self);
 
     unsafe fn set_compute_pipeline(&mut self, pipeline: &<Self::A as Api>::ComputePipeline);
@@ -1225,7 +1495,13 @@ pub trait CommandEncoder: WasmNotSendSync + fmt::Debug {
         descriptors: T,
     ) where
         Self::A: 'a,
-        T: IntoIterator<Item = BuildAccelerationStructureDescriptor<'a, Self::A>>;
+        T: IntoIterator<
+            Item = BuildAccelerationStructureDescriptor<
+                'a,
+                <Self::A as Api>::Buffer,
+                <Self::A as Api>::AccelerationStructure,
+            >,
+        >;
 
     unsafe fn place_acceleration_structure_barrier(
         &mut self,
@@ -1237,10 +1513,15 @@ bitflags!(
     /// Pipeline layout creation flags.
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     pub struct PipelineLayoutFlags: u32 {
-        /// Include support for `first_vertex` / `first_instance` drawing.
+        /// D3D12: Add support for `first_vertex` and `first_instance` builtins
+        /// via push constants for direct execution.
         const FIRST_VERTEX_INSTANCE = 1 << 0;
-        /// Include support for num work groups builtin.
+        /// D3D12: Add support for `num_workgroups` builtins via push constants
+        /// for direct execution.
         const NUM_WORK_GROUPS = 1 << 1;
+        /// D3D12: Add support for the builtins that the other flags enable for
+        /// indirect execution.
+        const INDIRECT_BUILTIN_UPDATE = 1 << 2;
     }
 );
 
@@ -1264,36 +1545,38 @@ bitflags!(
         /// Format can be sampled with a min/max reduction sampler.
         const SAMPLED_MINMAX = 1 << 2;
 
+        /// Format can be used as storage with read-only access.
+        const STORAGE_READ_ONLY = 1 << 3;
         /// Format can be used as storage with write-only access.
-        const STORAGE = 1 << 3;
-        /// Format can be used as storage with read and read/write access.
-        const STORAGE_READ_WRITE = 1 << 4;
+        const STORAGE_WRITE_ONLY = 1 << 4;
+        /// Format can be used as storage with both read and write access.
+        const STORAGE_READ_WRITE = 1 << 5;
         /// Format can be used as storage with atomics.
-        const STORAGE_ATOMIC = 1 << 5;
+        const STORAGE_ATOMIC = 1 << 6;
 
         /// Format can be used as color and input attachment.
-        const COLOR_ATTACHMENT = 1 << 6;
+        const COLOR_ATTACHMENT = 1 << 7;
         /// Format can be used as color (with blending) and input attachment.
-        const COLOR_ATTACHMENT_BLEND = 1 << 7;
+        const COLOR_ATTACHMENT_BLEND = 1 << 8;
         /// Format can be used as depth-stencil and input attachment.
-        const DEPTH_STENCIL_ATTACHMENT = 1 << 8;
+        const DEPTH_STENCIL_ATTACHMENT = 1 << 9;
 
         /// Format can be multisampled by x2.
-        const MULTISAMPLE_X2   = 1 << 9;
+        const MULTISAMPLE_X2   = 1 << 10;
         /// Format can be multisampled by x4.
-        const MULTISAMPLE_X4   = 1 << 10;
+        const MULTISAMPLE_X4   = 1 << 11;
         /// Format can be multisampled by x8.
-        const MULTISAMPLE_X8   = 1 << 11;
+        const MULTISAMPLE_X8   = 1 << 12;
         /// Format can be multisampled by x16.
-        const MULTISAMPLE_X16  = 1 << 12;
+        const MULTISAMPLE_X16  = 1 << 13;
 
         /// Format can be used for render pass resolve targets.
-        const MULTISAMPLE_RESOLVE = 1 << 13;
+        const MULTISAMPLE_RESOLVE = 1 << 14;
 
         /// Format can be copied from.
-        const COPY_SRC = 1 << 14;
+        const COPY_SRC = 1 << 15;
         /// Format can be copied to.
-        const COPY_DST = 1 << 15;
+        const COPY_DST = 1 << 16;
     }
 );
 
@@ -1327,7 +1610,7 @@ impl FormatAspects {
 
     /// Returns `true` if only one flag is set
     pub fn is_one(&self) -> bool {
-        self.bits().count_ones() == 1
+        self.bits().is_power_of_two()
     }
 
     pub fn map(&self) -> wgt::TextureAspect {
@@ -1396,8 +1679,8 @@ bitflags::bitflags! {
         /// A uniform buffer bound in a bind group.
         const UNIFORM = 1 << 6;
         /// A read-only storage buffer used in a bind group.
-        const STORAGE_READ = 1 << 7;
-        /// A read-write or write-only buffer used in a bind group.
+        const STORAGE_READ_ONLY = 1 << 7;
+        /// A read-write buffer used in a bind group.
         const STORAGE_READ_WRITE = 1 << 8;
         /// The indirect or count buffer in a indirect draw or dispatch.
         const INDIRECT = 1 << 9;
@@ -1409,7 +1692,7 @@ bitflags::bitflags! {
         /// The combination of states that a buffer may be in _at the same time_.
         const INCLUSIVE = Self::MAP_READ.bits() | Self::COPY_SRC.bits() |
             Self::INDEX.bits() | Self::VERTEX.bits() | Self::UNIFORM.bits() |
-            Self::STORAGE_READ.bits() | Self::INDIRECT.bits() | Self::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_INPUT.bits() | Self::TOP_LEVEL_ACCELERATION_STRUCTURE_INPUT.bits();
+            Self::STORAGE_READ_ONLY.bits() | Self::INDIRECT.bits() | Self::BOTTOM_LEVEL_ACCELERATION_STRUCTURE_INPUT.bits() | Self::TOP_LEVEL_ACCELERATION_STRUCTURE_INPUT.bits();
         /// The combination of states that a buffer must exclusively be in.
         const EXCLUSIVE = Self::MAP_WRITE.bits() | Self::COPY_DST.bits() | Self::STORAGE_READ_WRITE.bits() | Self::ACCELERATION_STRUCTURE_SCRATCH.bits();
         /// The combination of all usages that the are guaranteed to be be ordered by the hardware.
@@ -1439,24 +1722,28 @@ bitflags::bitflags! {
         const DEPTH_STENCIL_READ = 1 << 6;
         /// Read-write depth stencil usage
         const DEPTH_STENCIL_WRITE = 1 << 7;
-        /// Read-only storage buffer usage. Corresponds to a UAV in d3d, so is exclusive, despite being read only.
-        const STORAGE_READ = 1 << 8;
-        /// Read-write or write-only storage buffer usage.
-        const STORAGE_READ_WRITE = 1 << 9;
+        /// Read-only storage texture usage. Corresponds to a UAV in d3d, so is exclusive, despite being read only.
+        const STORAGE_READ_ONLY = 1 << 8;
+        /// Write-only storage texture usage.
+        const STORAGE_WRITE_ONLY = 1 << 9;
+        /// Read-write storage texture usage.
+        const STORAGE_READ_WRITE = 1 << 10;
+        /// Image atomic enabled storage
+        const STORAGE_ATOMIC = 1 << 11;
         /// The combination of states that a texture may be in _at the same time_.
         const INCLUSIVE = Self::COPY_SRC.bits() | Self::RESOURCE.bits() | Self::DEPTH_STENCIL_READ.bits();
         /// The combination of states that a texture must exclusively be in.
-        const EXCLUSIVE = Self::COPY_DST.bits() | Self::COLOR_TARGET.bits() | Self::DEPTH_STENCIL_WRITE.bits() | Self::STORAGE_READ.bits() | Self::STORAGE_READ_WRITE.bits() | Self::PRESENT.bits();
+        const EXCLUSIVE = Self::COPY_DST.bits() | Self::COLOR_TARGET.bits() | Self::DEPTH_STENCIL_WRITE.bits() | Self::STORAGE_READ_ONLY.bits() | Self::STORAGE_WRITE_ONLY.bits() | Self::STORAGE_READ_WRITE.bits() | Self::STORAGE_ATOMIC.bits() | Self::PRESENT.bits();
         /// The combination of all usages that the are guaranteed to be be ordered by the hardware.
         /// If a usage is ordered, then if the texture state doesn't change between draw calls, there
         /// are no barriers needed for synchronization.
-        const ORDERED = Self::INCLUSIVE.bits() | Self::COLOR_TARGET.bits() | Self::DEPTH_STENCIL_WRITE.bits() | Self::STORAGE_READ.bits();
+        const ORDERED = Self::INCLUSIVE.bits() | Self::COLOR_TARGET.bits() | Self::DEPTH_STENCIL_WRITE.bits() | Self::STORAGE_READ_ONLY.bits();
 
         /// Flag used by the wgpu-core texture tracker to say a texture is in different states for every sub-resource
-        const COMPLEX = 1 << 10;
+        const COMPLEX = 1 << 12;
         /// Flag used by the wgpu-core texture tracker to say that the tracker does not know the state of the sub-resource.
         /// This is different from UNINITIALIZED as that says the tracker does know, but the texture has not been initialized.
-        const UNKNOWN = 1 << 11;
+        const UNKNOWN = 1 << 13;
     }
 }
 
@@ -1472,9 +1759,33 @@ pub struct InstanceDescriptor<'a> {
 pub struct Alignments {
     /// The alignment of the start of the buffer used as a GPU copy source.
     pub buffer_copy_offset: wgt::BufferSize,
+
     /// The alignment of the row pitch of the texture data stored in a buffer that is
     /// used in a GPU copy operation.
     pub buffer_copy_pitch: wgt::BufferSize,
+
+    /// The finest alignment of bound range checking for uniform buffers.
+    ///
+    /// When `wgpu_hal` restricts shader references to the [accessible
+    /// region][ar] of a [`Uniform`] buffer, the size of the accessible region
+    /// is the bind group binding's stated [size], rounded up to the next
+    /// multiple of this value.
+    ///
+    /// We don't need an analogous field for storage buffer bindings, because
+    /// all our backends promise to enforce the size at least to a four-byte
+    /// alignment, and `wgpu_hal` requires bound range lengths to be a multiple
+    /// of four anyway.
+    ///
+    /// [ar]: struct.BufferBinding.html#accessible-region
+    /// [`Uniform`]: wgt::BufferBindingType::Uniform
+    /// [size]: BufferBinding::size
+    pub uniform_bounds_check_alignment: wgt::BufferSize,
+
+    /// The size of the raw TLAS instance
+    pub raw_tlas_instance_size: usize,
+
+    /// What the scratch buffer for building an acceleration structure must be aligned to
+    pub ray_tracing_scratch_buffer_alignment: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -1637,17 +1948,51 @@ pub struct BindGroupLayoutDescriptor<'a> {
 }
 
 #[derive(Clone, Debug)]
-pub struct PipelineLayoutDescriptor<'a, A: Api> {
+pub struct PipelineLayoutDescriptor<'a, B: DynBindGroupLayout + ?Sized> {
     pub label: Label<'a>,
     pub flags: PipelineLayoutFlags,
-    pub bind_group_layouts: &'a [&'a A::BindGroupLayout],
+    pub bind_group_layouts: &'a [&'a B],
     pub push_constant_ranges: &'a [wgt::PushConstantRange],
 }
 
+/// A region of a buffer made visible to shaders via a [`BindGroup`].
+///
+/// [`BindGroup`]: Api::BindGroup
+///
+/// ## Accessible region
+///
+/// `wgpu_hal` guarantees that shaders compiled with
+/// [`ShaderModuleDescriptor::runtime_checks`] set to `true` cannot read or
+/// write data via this binding outside the *accessible region* of [`buffer`]:
+///
+/// - The accessible region starts at [`offset`].
+///
+/// - For [`Storage`] bindings, the size of the accessible region is [`size`],
+///   which must be a multiple of 4.
+///
+/// - For [`Uniform`] bindings, the size of the accessible region is [`size`]
+///   rounded up to the next multiple of
+///   [`Alignments::uniform_bounds_check_alignment`].
+///
+/// Note that this guarantee is stricter than WGSL's requirements for
+/// [out-of-bounds accesses][woob], as WGSL allows them to return values from
+/// elsewhere in the buffer. But this guarantee is necessary anyway, to permit
+/// `wgpu-core` to avoid clearing uninitialized regions of buffers that will
+/// never be read by the application before they are overwritten. This
+/// optimization consults bind group buffer binding regions to determine which
+/// parts of which buffers shaders might observe. This optimization is only
+/// sound if shader access is bounds-checked.
+///
+/// [`buffer`]: BufferBinding::buffer
+/// [`offset`]: BufferBinding::offset
+/// [`size`]: BufferBinding::size
+/// [`Storage`]: wgt::BufferBindingType::Storage
+/// [`Uniform`]: wgt::BufferBindingType::Uniform
+/// [woob]: https://gpuweb.github.io/gpuweb/wgsl/#out-of-bounds-access-sec
 #[derive(Debug)]
-pub struct BufferBinding<'a, A: Api> {
+pub struct BufferBinding<'a, B: DynBuffer + ?Sized> {
     /// The buffer being bound.
-    pub buffer: &'a A::Buffer,
+    pub buffer: &'a B,
 
     /// The offset at which the bound region starts.
     ///
@@ -1670,10 +2015,9 @@ pub struct BufferBinding<'a, A: Api> {
     pub size: Option<wgt::BufferSize>,
 }
 
-// Rust gets confused about the impl requirements for `A`
-impl<A: Api> Clone for BufferBinding<'_, A> {
+impl<'a, T: DynBuffer + ?Sized> Clone for BufferBinding<'a, T> {
     fn clone(&self) -> Self {
-        Self {
+        BufferBinding {
             buffer: self.buffer,
             offset: self.offset,
             size: self.size,
@@ -1682,15 +2026,14 @@ impl<A: Api> Clone for BufferBinding<'_, A> {
 }
 
 #[derive(Debug)]
-pub struct TextureBinding<'a, A: Api> {
-    pub view: &'a A::TextureView,
+pub struct TextureBinding<'a, T: DynTextureView + ?Sized> {
+    pub view: &'a T,
     pub usage: TextureUses,
 }
 
-// Rust gets confused about the impl requirements for `A`
-impl<A: Api> Clone for TextureBinding<'_, A> {
+impl<'a, T: DynTextureView + ?Sized> Clone for TextureBinding<'a, T> {
     fn clone(&self) -> Self {
-        Self {
+        TextureBinding {
             view: self.view,
             usage: self.usage,
         }
@@ -1714,20 +2057,27 @@ pub struct BindGroupEntry {
 ///    of the corresponding resource array, selected by the relevant
 ///    `BindGroupLayoutEntry`.
 #[derive(Clone, Debug)]
-pub struct BindGroupDescriptor<'a, A: Api> {
+pub struct BindGroupDescriptor<
+    'a,
+    Bgl: DynBindGroupLayout + ?Sized,
+    B: DynBuffer + ?Sized,
+    S: DynSampler + ?Sized,
+    T: DynTextureView + ?Sized,
+    A: DynAccelerationStructure + ?Sized,
+> {
     pub label: Label<'a>,
-    pub layout: &'a A::BindGroupLayout,
-    pub buffers: &'a [BufferBinding<'a, A>],
-    pub samplers: &'a [&'a A::Sampler],
-    pub textures: &'a [TextureBinding<'a, A>],
+    pub layout: &'a Bgl,
+    pub buffers: &'a [BufferBinding<'a, B>],
+    pub samplers: &'a [&'a S],
+    pub textures: &'a [TextureBinding<'a, T>],
     pub entries: &'a [BindGroupEntry],
-    pub acceleration_structures: &'a [&'a A::AccelerationStructure],
+    pub acceleration_structures: &'a [&'a A],
 }
 
 #[derive(Clone, Debug)]
-pub struct CommandEncoderDescriptor<'a, A: Api> {
+pub struct CommandEncoderDescriptor<'a, Q: DynQueue + ?Sized> {
     pub label: Label<'a>,
-    pub queue: &'a A::Queue,
+    pub queue: &'a Q,
 }
 
 /// Naga shader module.
@@ -1757,7 +2107,13 @@ pub enum ShaderInput<'a> {
 
 pub struct ShaderModuleDescriptor<'a> {
     pub label: Label<'a>,
-    pub runtime_checks: bool,
+
+    /// # Safety
+    ///
+    /// See the documentation for each flag in [`ShaderRuntimeChecks`][src].
+    ///
+    /// [src]: wgt::ShaderRuntimeChecks
+    pub runtime_checks: wgt::ShaderRuntimeChecks,
 }
 
 #[derive(Debug, Clone)]
@@ -1768,9 +2124,9 @@ pub struct DebugSource {
 
 /// Describes a programmable pipeline stage.
 #[derive(Debug)]
-pub struct ProgrammableStage<'a, A: Api> {
+pub struct ProgrammableStage<'a, M: DynShaderModule + ?Sized> {
     /// The compiled shader module for this stage.
-    pub module: &'a A::ShaderModule,
+    pub module: &'a M,
     /// The name of the entry point in the compiled shader. There must be a function with this name
     ///  in the shader.
     pub entry_point: &'a str,
@@ -1781,33 +2137,34 @@ pub struct ProgrammableStage<'a, A: Api> {
     /// This is required by the WebGPU spec, but may have overhead which can be avoided
     /// for cross-platform applications
     pub zero_initialize_workgroup_memory: bool,
-    /// Should the pipeline attempt to transform vertex shaders to use vertex pulling.
-    pub vertex_pulling_transform: bool,
 }
 
-// Rust gets confused about the impl requirements for `A`
-impl<A: Api> Clone for ProgrammableStage<'_, A> {
+impl<M: DynShaderModule + ?Sized> Clone for ProgrammableStage<'_, M> {
     fn clone(&self) -> Self {
         Self {
             module: self.module,
             entry_point: self.entry_point,
             constants: self.constants,
             zero_initialize_workgroup_memory: self.zero_initialize_workgroup_memory,
-            vertex_pulling_transform: self.vertex_pulling_transform,
         }
     }
 }
 
 /// Describes a compute pipeline.
 #[derive(Clone, Debug)]
-pub struct ComputePipelineDescriptor<'a, A: Api> {
+pub struct ComputePipelineDescriptor<
+    'a,
+    Pl: DynPipelineLayout + ?Sized,
+    M: DynShaderModule + ?Sized,
+    Pc: DynPipelineCache + ?Sized,
+> {
     pub label: Label<'a>,
     /// The layout of bind groups for this pipeline.
-    pub layout: &'a A::PipelineLayout,
+    pub layout: &'a Pl,
     /// The compiled compute stage and its entry point.
-    pub stage: ProgrammableStage<'a, A>,
+    pub stage: ProgrammableStage<'a, M>,
     /// The cache which will be used and filled when compiling this pipeline
-    pub cache: Option<&'a A::PipelineCache>,
+    pub cache: Option<&'a Pc>,
 }
 
 pub struct PipelineCacheDescriptor<'a> {
@@ -1828,14 +2185,19 @@ pub struct VertexBufferLayout<'a> {
 
 /// Describes a render (graphics) pipeline.
 #[derive(Clone, Debug)]
-pub struct RenderPipelineDescriptor<'a, A: Api> {
+pub struct RenderPipelineDescriptor<
+    'a,
+    Pl: DynPipelineLayout + ?Sized,
+    M: DynShaderModule + ?Sized,
+    Pc: DynPipelineCache + ?Sized,
+> {
     pub label: Label<'a>,
     /// The layout of bind groups for this pipeline.
-    pub layout: &'a A::PipelineLayout,
+    pub layout: &'a Pl,
     /// The format of any vertex buffers used with this pipeline.
     pub vertex_buffers: &'a [VertexBufferLayout<'a>],
     /// The vertex stage for this pipeline.
-    pub vertex_stage: ProgrammableStage<'a, A>,
+    pub vertex_stage: ProgrammableStage<'a, M>,
     /// The properties of the pipeline at the primitive assembly and rasterization level.
     pub primitive: wgt::PrimitiveState,
     /// The effect of draw calls on the depth and stencil aspects of the output target, if any.
@@ -1843,14 +2205,14 @@ pub struct RenderPipelineDescriptor<'a, A: Api> {
     /// The multi-sampling properties of the pipeline.
     pub multisample: wgt::MultisampleState,
     /// The fragment stage for this pipeline.
-    pub fragment_stage: Option<ProgrammableStage<'a, A>>,
+    pub fragment_stage: Option<ProgrammableStage<'a, M>>,
     /// The effect of draw calls on the color aspect of the output target.
     pub color_targets: &'a [Option<wgt::ColorTargetState>],
     /// If the pipeline will be used with a multiview render pass, this indicates how many array
     /// layers the attachments will have.
     pub multiview: Option<NonZeroU32>,
     /// The cache which will be used and filled when compiling this pipeline
-    pub cache: Option<&'a A::PipelineCache>,
+    pub cache: Option<&'a Pc>,
 }
 
 #[derive(Debug, Clone)]
@@ -1882,17 +2244,23 @@ pub struct Rect<T> {
     pub h: T,
 }
 
-#[derive(Debug, Clone)]
-pub struct BufferBarrier<'a, A: Api> {
-    pub buffer: &'a A::Buffer,
-    pub usage: Range<BufferUses>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateTransition<T> {
+    pub from: T,
+    pub to: T,
 }
 
 #[derive(Debug, Clone)]
-pub struct TextureBarrier<'a, A: Api> {
-    pub texture: &'a A::Texture,
+pub struct BufferBarrier<'a, B: DynBuffer + ?Sized> {
+    pub buffer: &'a B,
+    pub usage: StateTransition<BufferUses>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TextureBarrier<'a, T: DynTexture + ?Sized> {
+    pub texture: &'a T,
     pub range: wgt::ImageSubresourceRange,
-    pub usage: Range<TextureUses>,
+    pub usage: StateTransition<TextureUses>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1928,109 +2296,58 @@ pub struct TextureCopy {
 
 #[derive(Clone, Debug)]
 pub struct BufferTextureCopy {
-    pub buffer_layout: wgt::ImageDataLayout,
+    pub buffer_layout: wgt::TexelCopyBufferLayout,
     pub texture_base: TextureCopyBase,
     pub size: CopyExtent,
 }
 
-#[derive(Debug)]
-pub struct Attachment<'a, A: Api> {
-    pub view: &'a A::TextureView,
+#[derive(Clone, Debug)]
+pub struct Attachment<'a, T: DynTextureView + ?Sized> {
+    pub view: &'a T,
     /// Contains either a single mutating usage as a target,
     /// or a valid combination of read-only usages.
     pub usage: TextureUses,
 }
 
-// Rust gets confused about the impl requirements for `A`
-impl<A: Api> Clone for Attachment<'_, A> {
-    fn clone(&self) -> Self {
-        Self {
-            view: self.view,
-            usage: self.usage,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct ColorAttachment<'a, A: Api> {
-    pub target: Attachment<'a, A>,
-    pub resolve_target: Option<Attachment<'a, A>>,
+#[derive(Clone, Debug)]
+pub struct ColorAttachment<'a, T: DynTextureView + ?Sized> {
+    pub target: Attachment<'a, T>,
+    pub resolve_target: Option<Attachment<'a, T>>,
     pub ops: AttachmentOps,
     pub clear_value: wgt::Color,
 }
 
-// Rust gets confused about the impl requirements for `A`
-impl<A: Api> Clone for ColorAttachment<'_, A> {
-    fn clone(&self) -> Self {
-        Self {
-            target: self.target.clone(),
-            resolve_target: self.resolve_target.clone(),
-            ops: self.ops,
-            clear_value: self.clear_value,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
-pub struct DepthStencilAttachment<'a, A: Api> {
-    pub target: Attachment<'a, A>,
+pub struct DepthStencilAttachment<'a, T: DynTextureView + ?Sized> {
+    pub target: Attachment<'a, T>,
     pub depth_ops: AttachmentOps,
     pub stencil_ops: AttachmentOps,
     pub clear_value: (f32, u32),
 }
 
-#[derive(Debug)]
-pub struct RenderPassTimestampWrites<'a, A: Api> {
-    pub query_set: &'a A::QuerySet,
+#[derive(Clone, Debug)]
+pub struct PassTimestampWrites<'a, Q: DynQuerySet + ?Sized> {
+    pub query_set: &'a Q,
     pub beginning_of_pass_write_index: Option<u32>,
     pub end_of_pass_write_index: Option<u32>,
 }
 
-// Rust gets confused about the impl requirements for `A`
-impl<A: Api> Clone for RenderPassTimestampWrites<'_, A> {
-    fn clone(&self) -> Self {
-        Self {
-            query_set: self.query_set,
-            beginning_of_pass_write_index: self.beginning_of_pass_write_index,
-            end_of_pass_write_index: self.end_of_pass_write_index,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
-pub struct RenderPassDescriptor<'a, A: Api> {
+pub struct RenderPassDescriptor<'a, Q: DynQuerySet + ?Sized, T: DynTextureView + ?Sized> {
     pub label: Label<'a>,
     pub extent: wgt::Extent3d,
     pub sample_count: u32,
-    pub color_attachments: &'a [Option<ColorAttachment<'a, A>>],
-    pub depth_stencil_attachment: Option<DepthStencilAttachment<'a, A>>,
+    pub color_attachments: &'a [Option<ColorAttachment<'a, T>>],
+    pub depth_stencil_attachment: Option<DepthStencilAttachment<'a, T>>,
     pub multiview: Option<NonZeroU32>,
-    pub timestamp_writes: Option<RenderPassTimestampWrites<'a, A>>,
-    pub occlusion_query_set: Option<&'a A::QuerySet>,
-}
-
-#[derive(Debug)]
-pub struct ComputePassTimestampWrites<'a, A: Api> {
-    pub query_set: &'a A::QuerySet,
-    pub beginning_of_pass_write_index: Option<u32>,
-    pub end_of_pass_write_index: Option<u32>,
-}
-
-// Rust gets confused about the impl requirements for `A`
-impl<A: Api> Clone for ComputePassTimestampWrites<'_, A> {
-    fn clone(&self) -> Self {
-        Self {
-            query_set: self.query_set,
-            beginning_of_pass_write_index: self.beginning_of_pass_write_index,
-            end_of_pass_write_index: self.end_of_pass_write_index,
-        }
-    }
+    pub timestamp_writes: Option<PassTimestampWrites<'a, Q>>,
+    pub occlusion_query_set: Option<&'a Q>,
 }
 
 #[derive(Clone, Debug)]
-pub struct ComputePassDescriptor<'a, A: Api> {
+pub struct ComputePassDescriptor<'a, Q: DynQuerySet + ?Sized> {
     pub label: Label<'a>,
-    pub timestamp_writes: Option<ComputePassTimestampWrites<'a, A>>,
+    pub timestamp_writes: Option<PassTimestampWrites<'a, Q>>,
 }
 
 /// Stores the text of any validation errors that have occurred since
@@ -2105,24 +2422,28 @@ pub struct AccelerationStructureBuildSizes {
 /// Updates use source_acceleration_structure if present, else the update will be performed in place.
 /// For updates, only the data is allowed to change (not the meta data or sizes).
 #[derive(Clone, Debug)]
-pub struct BuildAccelerationStructureDescriptor<'a, A: Api> {
-    pub entries: &'a AccelerationStructureEntries<'a, A>,
+pub struct BuildAccelerationStructureDescriptor<
+    'a,
+    B: DynBuffer + ?Sized,
+    A: DynAccelerationStructure + ?Sized,
+> {
+    pub entries: &'a AccelerationStructureEntries<'a, B>,
     pub mode: AccelerationStructureBuildMode,
     pub flags: AccelerationStructureBuildFlags,
-    pub source_acceleration_structure: Option<&'a A::AccelerationStructure>,
-    pub destination_acceleration_structure: &'a A::AccelerationStructure,
-    pub scratch_buffer: &'a A::Buffer,
+    pub source_acceleration_structure: Option<&'a A>,
+    pub destination_acceleration_structure: &'a A,
+    pub scratch_buffer: &'a B,
     pub scratch_buffer_offset: wgt::BufferAddress,
 }
 
 /// - All buffers, buffer addresses and offsets will be ignored.
 /// - The build mode will be ignored.
 /// - Reducing the amount of Instances, Triangle groups or AABB groups (or the number of Triangles/AABBs in corresponding groups),
-/// may result in reduced size requirements.
+///   may result in reduced size requirements.
 /// - Any other change may result in a bigger or smaller size requirement.
 #[derive(Clone, Debug)]
-pub struct GetAccelerationStructureBuildSizesDescriptor<'a, A: Api> {
-    pub entries: &'a AccelerationStructureEntries<'a, A>,
+pub struct GetAccelerationStructureBuildSizesDescriptor<'a, B: DynBuffer + ?Sized> {
+    pub entries: &'a AccelerationStructureEntries<'a, B>,
     pub flags: AccelerationStructureBuildFlags,
 }
 
@@ -2131,31 +2452,31 @@ pub struct GetAccelerationStructureBuildSizesDescriptor<'a, A: Api> {
 /// * `Triangles` - Multiple triangle meshes for a bottom level acceleration structure
 /// * `AABBs` - List of list of axis aligned bounding boxes for a bottom level acceleration structure
 #[derive(Debug)]
-pub enum AccelerationStructureEntries<'a, A: Api> {
-    Instances(AccelerationStructureInstances<'a, A>),
-    Triangles(Vec<AccelerationStructureTriangles<'a, A>>),
-    AABBs(Vec<AccelerationStructureAABBs<'a, A>>),
+pub enum AccelerationStructureEntries<'a, B: DynBuffer + ?Sized> {
+    Instances(AccelerationStructureInstances<'a, B>),
+    Triangles(Vec<AccelerationStructureTriangles<'a, B>>),
+    AABBs(Vec<AccelerationStructureAABBs<'a, B>>),
 }
 
 /// * `first_vertex` - offset in the vertex buffer (as number of vertices)
 /// * `indices` - optional index buffer with attributes
 /// * `transform` - optional transform
 #[derive(Clone, Debug)]
-pub struct AccelerationStructureTriangles<'a, A: Api> {
-    pub vertex_buffer: Option<&'a A::Buffer>,
+pub struct AccelerationStructureTriangles<'a, B: DynBuffer + ?Sized> {
+    pub vertex_buffer: Option<&'a B>,
     pub vertex_format: wgt::VertexFormat,
     pub first_vertex: u32,
     pub vertex_count: u32,
     pub vertex_stride: wgt::BufferAddress,
-    pub indices: Option<AccelerationStructureTriangleIndices<'a, A>>,
-    pub transform: Option<AccelerationStructureTriangleTransform<'a, A>>,
+    pub indices: Option<AccelerationStructureTriangleIndices<'a, B>>,
+    pub transform: Option<AccelerationStructureTriangleTransform<'a, B>>,
     pub flags: AccelerationStructureGeometryFlags,
 }
 
 /// * `offset` - offset in bytes
 #[derive(Clone, Debug)]
-pub struct AccelerationStructureAABBs<'a, A: Api> {
-    pub buffer: Option<&'a A::Buffer>,
+pub struct AccelerationStructureAABBs<'a, B: DynBuffer + ?Sized> {
+    pub buffer: Option<&'a B>,
     pub offset: u32,
     pub count: u32,
     pub stride: wgt::BufferAddress,
@@ -2164,25 +2485,25 @@ pub struct AccelerationStructureAABBs<'a, A: Api> {
 
 /// * `offset` - offset in bytes
 #[derive(Clone, Debug)]
-pub struct AccelerationStructureInstances<'a, A: Api> {
-    pub buffer: Option<&'a A::Buffer>,
+pub struct AccelerationStructureInstances<'a, B: DynBuffer + ?Sized> {
+    pub buffer: Option<&'a B>,
     pub offset: u32,
     pub count: u32,
 }
 
 /// * `offset` - offset in bytes
 #[derive(Clone, Debug)]
-pub struct AccelerationStructureTriangleIndices<'a, A: Api> {
+pub struct AccelerationStructureTriangleIndices<'a, B: DynBuffer + ?Sized> {
     pub format: wgt::IndexFormat,
-    pub buffer: Option<&'a A::Buffer>,
+    pub buffer: Option<&'a B>,
     pub offset: u32,
     pub count: u32,
 }
 
 /// * `offset` - offset in bytes
 #[derive(Clone, Debug)]
-pub struct AccelerationStructureTriangleTransform<'a, A: Api> {
-    pub buffer: &'a A::Buffer,
+pub struct AccelerationStructureTriangleTransform<'a, B: DynBuffer + ?Sized> {
+    pub buffer: &'a B,
     pub offset: u32,
 }
 
@@ -2203,5 +2524,13 @@ bitflags::bitflags! {
 
 #[derive(Debug, Clone)]
 pub struct AccelerationStructureBarrier {
-    pub usage: Range<AccelerationStructureUses>,
+    pub usage: StateTransition<AccelerationStructureUses>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct TlasInstance {
+    pub transform: [f32; 12],
+    pub custom_index: u32,
+    pub mask: u8,
+    pub blas_address: u64,
 }

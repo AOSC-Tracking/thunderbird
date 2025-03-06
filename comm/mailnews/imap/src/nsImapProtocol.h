@@ -319,7 +319,7 @@ class nsImapProtocol : public nsIImapProtocol,
   void UidExpunge(const nsCString& messageSet);
   void ImapClose(bool shuttingDown = false, bool waitForResponse = true);
   void Check();
-  void SelectMailbox(const char* mailboxName);
+  void SelectMailbox(const char* mailboxName, bool noUpdate = false);
   // more imap commands
   void Logout(bool shuttingDown = false, bool waitForResponse = true);
   void Noop();
@@ -534,9 +534,7 @@ class nsImapProtocol : public nsIImapProtocol,
   RefPtr<nsImapFlagAndUidState> m_flagState;
   nsMsgBiffState m_currentBiffState;
   // manage the IMAP server command tags
-  // 11 = enough memory for the decimal representation of MAX_UINT + trailing
-  // nul
-  char m_currentServerCommandTag[11];
+  nsCString m_currentServerCommandTag;
   uint32_t m_currentServerCommandTagNumber;
   void IncrementCommandTagNumber();
   const char* GetServerCommandTag();

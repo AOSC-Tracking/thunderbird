@@ -38,8 +38,7 @@ class nsMailDatabase : public nsMsgDatabase {
 
   NS_IMETHOD ListAllOfflineOpIds(nsTArray<nsMsgKey>& offlineOpIds) override;
   NS_IMETHOD ListAllOfflineDeletes(nsTArray<nsMsgKey>& offlineDeletes) override;
-
-  friend class nsMsgOfflineOpEnumerator;
+  NS_IMETHOD HasOfflineActivity(bool* _retval) override;
 
  protected:
   nsresult GetAllOfflineOpsTable();  // get this on demand

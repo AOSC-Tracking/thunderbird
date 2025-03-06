@@ -13,6 +13,9 @@ var { MailUtils } = ChromeUtils.importESModule(
 var { PluralForm } = ChromeUtils.importESModule(
   "resource:///modules/PluralForm.sys.mjs"
 );
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
 
 // The actual filter that we're editing if it is a _saved_ filter or prefill;
 // void otherwise.
@@ -149,8 +152,8 @@ function filterEditorOnLoad() {
 
         // copy the actions
         for (let i = 0; i < copiedFilter.actionCount; i++) {
-          const filterAction = copiedFilter.getActionAt(i);
-          newFilter.appendAction(filterAction);
+          const copiedFilterAction = copiedFilter.getActionAt(i);
+          newFilter.appendAction(copiedFilterAction);
         }
 
         // copy the search terms
@@ -195,6 +198,8 @@ function filterEditorOnLoad() {
   gFilterNameElement.select();
   // This call is required on mac and linux.  It has no effect under win32.  See bug 94800.
   gFilterNameElement.focus();
+
+  UIFontSize.registerWindow(window);
 }
 
 function onEnterInSearchTerm(event) {
@@ -314,8 +319,7 @@ function initializeFilterTypeSelector() {
     /**
      * Sets the checkboxes to represent the filter type passed in.
      *
-     * @param aType  the filter type to set in terms
-     *               of Ci.Ci.nsMsgFilterType values.
+     * @param {nsMsgFilterType}aType - The filter type to set in terms.
      */
     setType(aType) {
       // If there is no type (event) requested, force "when manually run"
@@ -495,10 +499,9 @@ function saveFilter() {
         );
       }
     } else {
-      const otherHeader = Ci.nsMsgSearchAttrib.OtherHeader;
       const attribValue =
-        obj.searchattribute.value > otherHeader
-          ? otherHeader
+        obj.searchattribute.value > Ci.nsMsgSearchAttrib.OtherHeader
+          ? Ci.nsMsgSearchAttrib.OtherHeader
           : obj.searchattribute.value;
       if (
         !obj.searchattribute.validityTable.getAvailable(

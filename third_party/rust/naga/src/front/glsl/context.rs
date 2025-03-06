@@ -393,7 +393,7 @@ impl<'a> Context<'a> {
     /// # Panics
     ///
     /// - If more than one [`StmtContext`] are active at the same time or if the
-    /// previous call didn't use it in lowering.
+    ///   previous call didn't use it in lowering.
     #[must_use]
     pub fn stmt_ctx(&mut self) -> StmtContext {
         self.stmt_ctx.take().unwrap()
@@ -630,7 +630,8 @@ impl<'a> Context<'a> {
                             frontend.errors.push(Error {
                                 kind: ErrorKind::SemanticError(
                                     format!(
-                                        "Cannot apply operation to {left_inner:?} and {right_inner:?}"
+                                        "Cannot apply operation to {:?} and {:?}",
+                                        left_inner, right_inner
                                     )
                                     .into(),
                                 ),
@@ -828,7 +829,8 @@ impl<'a> Context<'a> {
                             frontend.errors.push(Error {
                                 kind: ErrorKind::SemanticError(
                                     format!(
-                                        "Cannot apply operation to {left_inner:?} and {right_inner:?}"
+                                        "Cannot apply operation to {:?} and {:?}",
+                                        left_inner, right_inner
                                     )
                                     .into(),
                                 ),
@@ -908,7 +910,8 @@ impl<'a> Context<'a> {
                             frontend.errors.push(Error {
                                 kind: ErrorKind::SemanticError(
                                     format!(
-                                        "Cannot apply operation to {left_inner:?} and {right_inner:?}"
+                                        "Cannot apply operation to {:?} and {:?}",
+                                        left_inner, right_inner
                                     )
                                     .into(),
                                 ),

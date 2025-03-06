@@ -395,13 +395,6 @@ ToastNotification::ShowAlertNotification(
 }
 
 NS_IMETHODIMP
-ToastNotification::ShowPersistentNotification(const nsAString& aPersistentData,
-                                              nsIAlertNotification* aAlert,
-                                              nsIObserver* aAlertListener) {
-  return ShowAlert(aAlert, aAlertListener);
-}
-
-NS_IMETHODIMP
 ToastNotification::SetManualDoNotDisturb(bool aDoNotDisturb) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -730,7 +723,7 @@ ToastNotification::HandleWindowsTag(const nsAString& aWindowsTag,
   ErrorResult rv;
   RefPtr<dom::Promise> promise =
       dom::Promise::Create(xpc::CurrentNativeGlobal(aCx), rv);
-  ENSURE_SUCCESS(rv, rv.StealNSResult());
+  RETURN_NSRESULT_ON_FAILURE(rv);
 
   this->VerifyTagPresentOrFallback(aWindowsTag)
       ->Then(

@@ -15,6 +15,7 @@
 #include <string>
 #include <utility>
 
+#include "api/priority.h"
 #include "media/sctp/sctp_transport_internal.h"
 #include "pc/proxy.h"
 #include "rtc_base/checks.h"
@@ -44,13 +45,13 @@ BYPASS_PROXY_CONSTMETHOD0(bool, reliable)
 BYPASS_PROXY_CONSTMETHOD0(bool, ordered)
 BYPASS_PROXY_CONSTMETHOD0(uint16_t, maxRetransmitTime)
 BYPASS_PROXY_CONSTMETHOD0(uint16_t, maxRetransmits)
-BYPASS_PROXY_CONSTMETHOD0(absl::optional<int>, maxRetransmitsOpt)
-BYPASS_PROXY_CONSTMETHOD0(absl::optional<int>, maxPacketLifeTime)
+BYPASS_PROXY_CONSTMETHOD0(std::optional<int>, maxRetransmitsOpt)
+BYPASS_PROXY_CONSTMETHOD0(std::optional<int>, maxPacketLifeTime)
 BYPASS_PROXY_CONSTMETHOD0(std::string, protocol)
 BYPASS_PROXY_CONSTMETHOD0(bool, negotiated)
 // Can't bypass the proxy since the id may change.
 PROXY_SECONDARY_CONSTMETHOD0(int, id)
-BYPASS_PROXY_CONSTMETHOD0(Priority, priority)
+BYPASS_PROXY_CONSTMETHOD0(PriorityValue, priority)
 BYPASS_PROXY_CONSTMETHOD0(DataState, state)
 BYPASS_PROXY_CONSTMETHOD0(RTCError, error)
 PROXY_SECONDARY_CONSTMETHOD0(uint32_t, messages_sent)
@@ -84,7 +85,7 @@ InternalDataChannelInit::InternalDataChannelInit(const DataChannelInit& base)
     if (*maxRetransmits < 0) {
       RTC_LOG(LS_ERROR)
           << "Accepting maxRetransmits < 0 for backwards compatibility";
-      maxRetransmits = absl::nullopt;
+      maxRetransmits = std::nullopt;
     } else if (*maxRetransmits > std::numeric_limits<uint16_t>::max()) {
       maxRetransmits = std::numeric_limits<uint16_t>::max();
     }
@@ -94,7 +95,7 @@ InternalDataChannelInit::InternalDataChannelInit(const DataChannelInit& base)
     if (*maxRetransmitTime < 0) {
       RTC_LOG(LS_ERROR)
           << "Accepting maxRetransmitTime < 0 for backwards compatibility";
-      maxRetransmitTime = absl::nullopt;
+      maxRetransmitTime = std::nullopt;
     } else if (*maxRetransmitTime > std::numeric_limits<uint16_t>::max()) {
       maxRetransmitTime = std::numeric_limits<uint16_t>::max();
     }
@@ -118,7 +119,7 @@ bool InternalDataChannelInit::IsValid() const {
   return true;
 }
 
-absl::optional<StreamId> SctpSidAllocator::AllocateSid(rtc::SSLRole role) {
+std::optional<StreamId> SctpSidAllocator::AllocateSid(rtc::SSLRole role) {
   RTC_DCHECK_RUN_ON(&sequence_checker_);
   int potential_sid = (role == rtc::SSL_CLIENT) ? 0 : 1;
   while (potential_sid <= static_cast<int>(cricket::kMaxSctpSid)) {
@@ -128,7 +129,7 @@ absl::optional<StreamId> SctpSidAllocator::AllocateSid(rtc::SSLRole role) {
     potential_sid += 2;
   }
   RTC_LOG(LS_ERROR) << "SCTP sid allocation pool exhausted.";
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 bool SctpSidAllocator::ReserveSid(StreamId sid) {
@@ -314,7 +315,7 @@ SctpDataChannel::SctpDataChannel(
     rtc::Thread* network_thread)
     : signaling_thread_(signaling_thread),
       network_thread_(network_thread),
-      id_n_(config.id == -1 ? absl::nullopt : absl::make_optional(config.id)),
+      id_n_(config.id == -1 ? std::nullopt : std::make_optional(config.id)),
       internal_id_(GenerateUniqueId()),
       label_(label),
       protocol_(config.protocol),
@@ -458,11 +459,11 @@ uint16_t SctpDataChannel::maxRetransmits() const {
   return max_retransmits_ ? *max_retransmits_ : static_cast<uint16_t>(-1);
 }
 
-absl::optional<int> SctpDataChannel::maxPacketLifeTime() const {
+std::optional<int> SctpDataChannel::maxPacketLifeTime() const {
   return max_retransmit_time_;
 }
 
-absl::optional<int> SctpDataChannel::maxRetransmitsOpt() const {
+std::optional<int> SctpDataChannel::maxRetransmitsOpt() const {
   return max_retransmits_;
 }
 
@@ -479,13 +480,16 @@ int SctpDataChannel::id() const {
   return id_n_.has_value() ? id_n_->stream_id_int() : -1;
 }
 
-Priority SctpDataChannel::priority() const {
-  return priority_ ? *priority_ : Priority::kLow;
+PriorityValue SctpDataChannel::priority() const {
+  return priority_.value_or(PriorityValue(Priority::kLow));
 }
 
 uint64_t SctpDataChannel::buffered_amount() const {
   RTC_DCHECK_RUN_ON(network_thread_);
-  return queued_send_data_.byte_count();
+  if (controller_ != nullptr && id_n_.has_value()) {
+    return controller_->buffered_amount(*id_n_);
+  }
+  return 0u;
 }
 
 void SctpDataChannel::Close() {
@@ -574,17 +578,11 @@ bool SctpDataChannel::Send(const DataBuffer& buffer) {
 
 // RTC_RUN_ON(network_thread_);
 RTCError SctpDataChannel::SendImpl(DataBuffer buffer) {
+  // The caller increases the cached `bufferedAmount` even if there are errors.
+  expected_buffer_amount_ += buffer.size();
+
   if (state_ != kOpen) {
     error_ = RTCError(RTCErrorType::INVALID_STATE);
-    return error_;
-  }
-
-  // If the queue is non-empty, we're waiting for SignalReadyToSend,
-  // so just add to the end of the queue and keep waiting.
-  if (!queued_send_data_.Empty()) {
-    error_ = QueueSendDataMessage(buffer)
-                 ? RTCError::OK()
-                 : RTCError(RTCErrorType::RESOURCE_EXHAUSTED);
     return error_;
   }
 
@@ -625,8 +623,11 @@ void SctpDataChannel::OnClosingProcedureStartedRemotely() {
     // Don't bother sending queued data since the side that initiated the
     // closure wouldn't receive it anyway. See crbug.com/559394 for a lengthy
     // discussion about this.
-    queued_send_data_.Clear();
-    queued_control_data_.Clear();
+
+    // Note that this is handled by the SctpTransport, when an incoming stream
+    // reset notification comes in, the outgoing stream is closed, which
+    // discards data.
+
     // Just need to change state to kClosing, SctpTransport will handle the
     // rest of the closing procedure and OnClosingProcedureComplete will be
     // called later.
@@ -640,7 +641,9 @@ void SctpDataChannel::OnClosingProcedureComplete() {
   // If the closing procedure is complete, we should have finished sending
   // all pending data and transitioned to kClosing already.
   RTC_DCHECK_EQ(state_, kClosing);
-  RTC_DCHECK(queued_send_data_.Empty());
+  if (controller_ && id_n_.has_value()) {
+    RTC_DCHECK_EQ(controller_->buffered_amount(*id_n_), 0);
+  }
   SetState(kClosed);
 }
 
@@ -656,6 +659,17 @@ void SctpDataChannel::OnTransportChannelClosed(RTCError error) {
   // - the DTLS transport is closed
   // - the SCTP transport is closed
   CloseAbruptlyWithError(std::move(error));
+}
+
+void SctpDataChannel::OnBufferedAmountLow() {
+  RTC_DCHECK_RUN_ON(network_thread_);
+  MaybeSendOnBufferedAmountChanged();
+
+  if (state_ == DataChannelInterface::kClosing && !started_closing_procedure_ &&
+      id_n_.has_value() && buffered_amount() == 0) {
+    started_closing_procedure_ = true;
+    controller_->RemoveSctpDataStream(*id_n_);
+  }
 }
 
 DataChannelStats SctpDataChannel::GetStats() const {
@@ -731,9 +745,6 @@ void SctpDataChannel::OnTransportReady() {
   RTC_DCHECK(connected_to_transport());
   RTC_DCHECK(id_n_.has_value());
 
-  SendQueuedControlMessages();
-  SendQueuedDataMessages();
-
   UpdateState();
 }
 
@@ -745,10 +756,6 @@ void SctpDataChannel::CloseAbruptlyWithError(RTCError error) {
   }
 
   network_safety_->SetNotAlive();
-
-  // Closing abruptly means any queued data gets thrown away.
-  queued_send_data_.Clear();
-  queued_control_data_.Clear();
 
   // Still go to "kClosing" before "kClosed", since observers may be expecting
   // that.
@@ -802,10 +809,10 @@ void SctpDataChannel::UpdateState() {
       break;
     }
     case kClosing: {
-      if (connected_to_transport() && controller_) {
+      if (connected_to_transport() && controller_ && id_n_.has_value()) {
         // Wait for all queued data to be sent before beginning the closing
         // procedure.
-        if (queued_send_data_.Empty() && queued_control_data_.Empty()) {
+        if (controller_->buffered_amount(*id_n_) == 0) {
           // For SCTP data channels, we need to wait for the closing procedure
           // to complete; after calling RemoveSctpDataStream,
           // OnClosingProcedureComplete will end up called asynchronously
@@ -818,8 +825,6 @@ void SctpDataChannel::UpdateState() {
       } else {
         // When we're not connected to a transport, we'll transition
         // directly to the `kClosed` state from here.
-        queued_send_data_.Clear();
-        queued_control_data_.Clear();
         SetState(kClosed);
       }
       break;
@@ -858,22 +863,50 @@ void SctpDataChannel::DeliverQueuedReceivedData() {
   }
 }
 
-// RTC_RUN_ON(network_thread_).
-void SctpDataChannel::SendQueuedDataMessages() {
-  if (queued_send_data_.Empty()) {
+// RTC_RUN_ON(network_thread_)
+void SctpDataChannel::MaybeSendOnBufferedAmountChanged() {
+  // The `buffered_amount` in the signaling thread (RTCDataChannel in Blink)
+  // has a cached variant of the SCTP socket's buffered_amount, which it
+  // increases for every data sent and decreased when `OnBufferedAmountChange`
+  // is sent.
+  //
+  // To ensure it's consistent, this object maintains its own view of that value
+  // and if it changes with a reasonable amount (10kb, or down to zero), send
+  // the `OnBufferedAmountChange` to update the caller's cached variable.
+  if (!controller_ || !id_n_.has_value() || !observer_) {
     return;
   }
 
-  RTC_DCHECK(state_ == kOpen || state_ == kClosing);
-
-  while (!queued_send_data_.Empty()) {
-    std::unique_ptr<DataBuffer> buffer = queued_send_data_.PopFront();
-    if (!SendDataMessage(*buffer, false).ok()) {
-      // Return the message to the front of the queue if sending is aborted.
-      queued_send_data_.PushFront(std::move(buffer));
-      break;
-    }
+  // This becomes the resolution of how often the bufferedAmount is updated on
+  // the signaling thread and exists to avoid doing cross-thread communication
+  // too often. On benchmarks, Chrome handle around 300Mbps, which with this
+  // size results in a rate of ~400 updates per second - a reasonable number.
+  static constexpr int64_t kMinBufferedAmountDiffToTriggerCallback = 100 * 1024;
+  size_t actual_buffer_amount = controller_->buffered_amount(*id_n_);
+  if (actual_buffer_amount > expected_buffer_amount_) {
+    RTC_DLOG(LS_ERROR) << "Actual buffer_amount larger than expected";
+    return;
   }
+
+  // Fire OnBufferedAmountChange to decrease the cached view if it represents a
+  // big enough change (to reduce the frequency of cross-thread communication),
+  // or if it reaches zero.
+  if ((actual_buffer_amount == 0 && expected_buffer_amount_ != 0) ||
+      (expected_buffer_amount_ - actual_buffer_amount >
+       kMinBufferedAmountDiffToTriggerCallback)) {
+    uint64_t diff = expected_buffer_amount_ - actual_buffer_amount;
+    expected_buffer_amount_ = actual_buffer_amount;
+    observer_->OnBufferedAmountChange(diff);
+  }
+
+  // The threshold is always updated to ensure it's lower than what it's now.
+  // This ensures that this function will be called again, until the channel is
+  // completely drained.
+  controller_->SetBufferedAmountLowThreshold(
+      *id_n_,
+      actual_buffer_amount > kMinBufferedAmountDiffToTriggerCallback
+          ? actual_buffer_amount - kMinBufferedAmountDiffToTriggerCallback
+          : 0);
 }
 
 // RTC_RUN_ON(network_thread_).
@@ -900,25 +933,13 @@ RTCError SctpDataChannel::SendDataMessage(const DataBuffer& buffer,
       buffer.binary ? DataMessageType::kBinary : DataMessageType::kText;
 
   error_ = controller_->SendData(*id_n_, send_params, buffer.data);
+  MaybeSendOnBufferedAmountChanged();
   if (error_.ok()) {
     ++messages_sent_;
     bytes_sent_ += buffer.size();
-
-    if (observer_ && buffer.size() > 0) {
-      observer_->OnBufferedAmountChange(buffer.size());
-    }
     return error_;
   }
 
-  if (error_.type() == RTCErrorType::RESOURCE_EXHAUSTED) {
-    if (!queue_if_blocked)
-      return error_;
-
-    if (QueueSendDataMessage(buffer)) {
-      error_ = RTCError::OK();
-      return error_;
-    }
-  }
   // Close the channel if the error is not SDR_BLOCK, or if queuing the
   // message failed.
   RTC_LOG(LS_ERROR) << "Closing the DataChannel due to a failure to send data, "
@@ -928,30 +949,6 @@ RTCError SctpDataChannel::SendDataMessage(const DataBuffer& buffer,
       RTCError(RTCErrorType::NETWORK_ERROR, "Failure to send data"));
 
   return error_;
-}
-
-// RTC_RUN_ON(network_thread_).
-bool SctpDataChannel::QueueSendDataMessage(const DataBuffer& buffer) {
-  size_t start_buffered_amount = queued_send_data_.byte_count();
-  if (start_buffered_amount + buffer.size() >
-      DataChannelInterface::MaxSendQueueSize()) {
-    RTC_LOG(LS_ERROR) << "Can't buffer any more data for the data channel.";
-    error_ = RTCError(RTCErrorType::RESOURCE_EXHAUSTED);
-    return false;
-  }
-  queued_send_data_.PushBack(std::make_unique<DataBuffer>(buffer));
-  return true;
-}
-
-// RTC_RUN_ON(network_thread_).
-void SctpDataChannel::SendQueuedControlMessages() {
-  PacketQueue control_packets;
-  control_packets.Swap(&queued_control_data_);
-
-  while (!control_packets.Empty()) {
-    std::unique_ptr<DataBuffer> buf = control_packets.PopFront();
-    SendControlMessage(buf->data);
-  }
 }
 
 // RTC_RUN_ON(network_thread_).
@@ -980,8 +977,6 @@ bool SctpDataChannel::SendControlMessage(const rtc::CopyOnWriteBuffer& buffer) {
     } else if (handshake_state_ == kHandshakeShouldSendOpen) {
       handshake_state_ = kHandshakeWaitingForAck;
     }
-  } else if (err.type() == RTCErrorType::RESOURCE_EXHAUSTED) {
-    queued_control_data_.PushBack(std::make_unique<DataBuffer>(buffer, true));
   } else {
     RTC_LOG(LS_ERROR) << "Closing the DataChannel due to a failure to send"
                          " the CONTROL message, send_result = "

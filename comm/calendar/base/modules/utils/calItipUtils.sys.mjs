@@ -21,6 +21,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   CalRelation: "resource:///modules/CalRelation.sys.mjs",
   cal: "resource:///modules/calendar/calUtils.sys.mjs",
 });
+ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
 
 export var itip = {
   /**
@@ -604,7 +605,7 @@ export var itip = {
    * @param {Function} aActionFunc - The function to call to do the scheduling
    *                                 operation
    * @param {calIItipItem} aItipItem - Scheduling item
-   * @param {array} aFoundItems - The items found when looking for the calendar item
+   * @param {Array} aFoundItems - The items found when looking for the calendar item
    * @param {Function} aUpdateFunction - A function to call which will update the UI
    * @returns {boolean} true, if the action succeeded
    */
@@ -632,6 +633,7 @@ export var itip = {
      *                                property
      * @returns {boolean} true, if the action succeeded
      */
+    // eslint-disable-next-line no-shadow
     function _execAction(aActionFunc, aItipItem, aWindow, aPartStat, aExtResponse) {
       const method = aActionFunc.method;
       if (lazy.cal.itip.promptCalendar(aActionFunc.method, aItipItem, aWindow)) {
@@ -822,9 +824,9 @@ export var itip = {
           const methods = { receivedMethod: "PUBLISH", responseMethod: "PUBLISH" };
           const newItipItem = lazy.cal.itip.getModifiedItipItem(aItipItem, saveitems, methods);
           // setup callback and trigger re-processing
-          const storeCopy = function (aItipItem, aRc, aActionFunc) {
-            if (isFirstProcessing && aActionFunc && Components.isSuccessCode(aRc)) {
-              _execAction(aActionFunc, aItipItem, aWindow, aParticipantStatus);
+          const storeCopy = function (iIipItem, rc, actionFunc) {
+            if (isFirstProcessing && actionFunc && Components.isSuccessCode(rc)) {
+              _execAction(actionFunc, iIipItem, aWindow, aParticipantStatus);
             }
           };
           lazy.cal.itip.processItipItem(newItipItem, storeCopy);
@@ -898,7 +900,7 @@ export var itip = {
         args.onOk = aCal => {
           targetCalendar = aCal;
         };
-        args.promptText = lazy.cal.l10n.getCalString("importPrompt");
+        args.promptText = lazy.l10n.formatValueSync("import-prompt");
         aWindow.openDialog(
           "chrome://calendar/content/chooseCalendarDialog.xhtml",
           "_blank",
@@ -1377,12 +1379,14 @@ export var itip = {
    * @param {calIItemBase} item
    */
   getImipTransport(item) {
-    const id = item.getProperty("X-MOZ-INVITED-ATTENDEE");
+    const email = item
+      .getProperty("X-MOZ-INVITED-ATTENDEE")
+      ?.replace(/^mailto:/i, "")
+      .toLowerCase();
 
-    if (id) {
-      const email = id.replace(/^mailto:/i, "").toLowerCase();
+    if (email) {
       const identity = MailServices.accounts.allIdentities.find(
-        identity => identity.email.toLowerCase() == email
+        id => id.email.toLowerCase() == email
       );
 
       if (identity) {
@@ -1538,7 +1542,7 @@ ItipOpListener.prototype = {
   mExtResponse: null,
 
   onOperationComplete(aCalendar, aStatus, aOperationType, aId, aDetail) {
-    lazy.cal.ASSERT(Components.isSuccessCode(aStatus), "error on iTIP processing");
+    lazy.cal.ASSERT(Components.isSuccessCode(aStatus), `iTIP processing failed: ${aDetail}`);
     if (Components.isSuccessCode(aStatus)) {
       itip.checkAndSend(aOperationType, aDetail, this.mOldItem, this.mExtResponse);
     }
@@ -1775,13 +1779,13 @@ ItipItemFinder.prototype = {
                     const newItem = updateItem(item, itipItemItem);
                     const action = function (opListener) {
                       return newItem.calendar.modifyItem(newItem, item).then(
-                        item =>
+                        modifiedItem =>
                           opListener.onOperationComplete(
-                            item.calendar,
+                            modifiedItem.calendar,
                             Cr.NS_OK,
                             Ci.calIOperationListener.MODIFY,
-                            item.id,
-                            item
+                            modifiedItem.id,
+                            modifiedItem
                           ),
                         e =>
                           opListener.onOperationComplete(
@@ -1850,13 +1854,13 @@ ItipItemFinder.prototype = {
                           extResponse
                         );
                         return changedItem.calendar.modifyItem(changedItem, firstFoundItem).then(
-                          item =>
+                          modifiedItem =>
                             listener.onOperationComplete(
-                              item.calendar,
+                              modifiedItem.calendar,
                               Cr.NS_OK,
                               Ci.calIOperationListener.MODIFY,
-                              item.id,
-                              item
+                              modifiedItem.id,
+                              modifiedItem
                             ),
                           e =>
                             listener.onOperationComplete(
@@ -1889,13 +1893,13 @@ ItipItemFinder.prototype = {
 
                         const listener = new ItipOpListener(opListener, item, extResponse);
                         return newItem.calendar.modifyItem(newItem, item).then(
-                          item =>
+                          modifiedItem =>
                             listener.onOperationComplete(
-                              item.calendar,
+                              modifiedItem.calendar,
                               Cr.NS_OK,
                               Ci.calIOperationListener.MODIFY,
-                              item.id,
-                              item
+                              modifiedItem.id,
+                              modifiedItem
                             ),
                           e =>
                             listener.onOperationComplete(
@@ -1970,13 +1974,13 @@ ItipItemFinder.prototype = {
                         ? new ItipOpListener(opListener, item, extResponse)
                         : opListener;
                       return newItem.calendar.modifyItem(newItem, item).then(
-                        item =>
+                        modifiedItem =>
                           listener.onOperationComplete(
-                            item.calendar,
+                            modifiedItem.calendar,
                             Cr.NS_OK,
                             Ci.calIOperationListener.MODIFY,
-                            item.id,
-                            item
+                            modifiedItem.id,
+                            modifiedItem
                           ),
                         e =>
                           listener.onOperationComplete(
@@ -2015,13 +2019,13 @@ ItipItemFinder.prototype = {
 
                     operations.push(opListener =>
                       newItem.calendar.modifyItem(newItem, item).then(
-                        item =>
+                        modifiedItem =>
                           opListener.onOperationComplete(
-                            item.calendar,
+                            modifiedItem.calendar,
                             Cr.NS_OK,
                             Ci.calIOperationListener.MODIFY,
-                            item.id,
-                            item
+                            modifiedItem.id,
+                            modifiedItem
                           ),
                         e =>
                           opListener.onOperationComplete(
@@ -2050,7 +2054,7 @@ ItipItemFinder.prototype = {
                       e =>
                         opListener.onOperationComplete(
                           item.calendar,
-                          e.result,
+                          e.result || Cr.NS_ERROR_FAILURE,
                           Ci.calIOperationListener.DELETE,
                           item.id,
                           e
@@ -2072,7 +2076,7 @@ ItipItemFinder.prototype = {
                     e =>
                       opListener.onOperationComplete(
                         item.calendar,
-                        e.result,
+                        e.result || Cr.NS_ERROR_FAILURE,
                         Ci.calIOperationListener.DELETE,
                         item.id,
                         e
@@ -2143,7 +2147,7 @@ ItipItemFinder.prototype = {
                 e =>
                   listener.onOperationComplete(
                     newItem.calendar,
-                    e.result,
+                    e.result || Cr.NS_ERROR_FAILURE,
                     Ci.calIOperationListener.ADD,
                     newItem.id,
                     e
@@ -2155,7 +2159,7 @@ ItipItemFinder.prototype = {
           }
           case "CANCEL": // has already been processed
           case "REPLY": // item has been previously removed from the calendar
-          case "COUNTER": // the item has been previously removed form the calendar
+          case "COUNTER": // the item has been previously removed from the calendar
             break;
           default:
             rc = Cr.NS_ERROR_NOT_IMPLEMENTED;

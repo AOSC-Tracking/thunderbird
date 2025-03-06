@@ -3,10 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { actionTypes as at } from "resource://activity-stream/common/Actions.mjs";
-import { Dedupe } from "resource://activity-stream/common/Dedupe.sys.mjs";
+import { Dedupe } from "resource:///modules/Dedupe.sys.mjs";
 
-export const TOP_SITES_DEFAULT_ROWS = 1;
-export const TOP_SITES_MAX_SITES_PER_ROW = 8;
+export {
+  TOP_SITES_DEFAULT_ROWS,
+  TOP_SITES_MAX_SITES_PER_ROW,
+} from "resource:///modules/topsites/constants.mjs";
+
 const PREF_COLLECTION_DISMISSIBLE = "discoverystream.isCollectionDismissible";
 
 const dedupe = new Dedupe(site => site && site.url);
@@ -19,7 +22,11 @@ export const INITIAL_STATE = {
     isForStartupCache: false,
     customizeMenuVisible: false,
   },
-  ASRouter: { initialized: false },
+  Ads: {
+    initialized: false,
+    lastUpdated: null,
+    topsites: {},
+  },
   TopSites: {
     // Have we received real data from history yet?
     initialized: false,
@@ -61,12 +68,19 @@ export const INITIAL_STATE = {
     layout: [],
     isPrivacyInfoModalVisible: false,
     isCollectionDismissible: false,
+    topicsLoading: false,
     feeds: {
       data: {
         // "https://foo.com/feed1": {lastUpdated: 123, data: [], personalized: false}
       },
       loaded: false,
     },
+    // Used to show impressions in newtab devtools.
+    impressions: {
+      feed: {},
+    },
+    // Used to show blocks in newtab devtools.
+    blocks: {},
     spocs: {
       spocs_endpoint: "",
       lastUpdated: null,
@@ -87,6 +101,15 @@ export const INITIAL_STATE = {
     recentSavesData: [],
     isUserLoggedIn: false,
     recentSavesEnabled: false,
+    showTopicSelection: false,
+  },
+  Notifications: {
+    showNotifications: false,
+    toastCounter: 0,
+    toastId: "",
+    // This queue is reset each time SHOW_TOAST_MESSAGE is ran.
+    // For can be a queue in the future, but for now is one item
+    toastQueue: [],
   },
   Personalization: {
     lastUpdated: null,
@@ -135,6 +158,12 @@ function App(prevState = INITIAL_STATE.App, action) {
       return Object.assign({}, prevState, action.data || {}, {
         isForStartupCache: false,
       });
+    case at.DISCOVERY_STREAM_SPOCS_UPDATE:
+      // Toggle `isForStartupCache` when receiving the `DISCOVERY_STREAM_SPOCS_UPDATE_STARTUPCACHE` action
+      // so that spoc cards can be rendered as usual.
+      return Object.assign({}, prevState, action.data || {}, {
+        isForStartupCache: false,
+      });
     case at.SHOW_PERSONALIZE:
       return Object.assign({}, prevState, {
         customizeMenuVisible: true,
@@ -146,52 +175,6 @@ function App(prevState = INITIAL_STATE.App, action) {
     default:
       return prevState;
   }
-}
-
-function ASRouter(prevState = INITIAL_STATE.ASRouter, action) {
-  switch (action.type) {
-    case at.AS_ROUTER_INITIALIZED:
-      return { ...action.data, initialized: true };
-    default:
-      return prevState;
-  }
-}
-
-/**
- * insertPinned - Inserts pinned links in their specified slots
- *
- * @param {array} a list of links
- * @param {array} a list of pinned links
- * @return {array} resulting list of links with pinned links inserted
- */
-export function insertPinned(links, pinned) {
-  // Remove any pinned links
-  const pinnedUrls = pinned.map(link => link && link.url);
-  let newLinks = links.filter(link =>
-    link ? !pinnedUrls.includes(link.url) : false
-  );
-  newLinks = newLinks.map(link => {
-    if (link && link.isPinned) {
-      delete link.isPinned;
-      delete link.pinIndex;
-    }
-    return link;
-  });
-
-  // Then insert them in their specified location
-  pinned.forEach((val, index) => {
-    if (!val) {
-      return;
-    }
-    let link = Object.assign({}, val, { isPinned: true, pinIndex: index });
-    if (index > newLinks.length) {
-      newLinks[index] = link;
-    } else {
-      newLinks.splice(index, 0, link);
-    }
-  });
-
-  return newLinks;
 }
 
 function TopSites(prevState = INITIAL_STATE.TopSites, action) {
@@ -328,7 +311,8 @@ function Dialog(prevState = INITIAL_STATE.Dialog, action) {
       return Object.assign({}, prevState, { visible: true, data: action.data });
     case at.DIALOG_CANCEL:
       return Object.assign({}, prevState, { visible: false });
-    case at.DELETE_HISTORY_URL:
+    case at.DIALOG_CLOSE:
+      // Reset and hide the confirmation dialog once the action is complete.
       return Object.assign({}, INITIAL_STATE.Dialog);
     default:
       return prevState;
@@ -666,6 +650,11 @@ function DiscoveryStream(prevState = INITIAL_STATE.DiscoveryStream, action) {
         ...prevState,
         isCollectionDismissible: action.data.value,
       };
+    case at.DISCOVERY_STREAM_TOPICS_LOADING:
+      return {
+        ...prevState,
+        topicsLoading: action.data,
+      };
     case at.DISCOVERY_STREAM_PREFS_SETUP:
       return {
         ...prevState,
@@ -724,6 +713,19 @@ function DiscoveryStream(prevState = INITIAL_STATE.DiscoveryStream, action) {
         },
       };
     }
+    case at.DISCOVERY_STREAM_DEV_IMPRESSIONS:
+      return {
+        ...prevState,
+        impressions: {
+          ...prevState.impressions,
+          feed: action.data,
+        },
+      };
+    case at.DISCOVERY_STREAM_DEV_BLOCKS:
+      return {
+        ...prevState,
+        blocks: action.data,
+      };
     case at.DISCOVERY_STREAM_SPOCS_CAPS:
       return {
         ...prevState,
@@ -846,6 +848,22 @@ function DiscoveryStream(prevState = INITIAL_STATE.DiscoveryStream, action) {
         };
       }
       return prevState;
+    case at.TOPIC_SELECTION_SPOTLIGHT_OPEN:
+      return {
+        ...prevState,
+        showTopicSelection: true,
+      };
+    case at.TOPIC_SELECTION_SPOTLIGHT_CLOSE:
+      return {
+        ...prevState,
+        showTopicSelection: false,
+      };
+    case at.SECTION_BLOCKED:
+      return {
+        ...prevState,
+        showBlockSectionConfirmation: true,
+        sectionData: action.data,
+      };
     default:
       return prevState;
   }
@@ -883,6 +901,34 @@ function Wallpapers(prevState = INITIAL_STATE.Wallpapers, action) {
   }
 }
 
+function Notifications(prevState = INITIAL_STATE.Notifications, action) {
+  switch (action.type) {
+    case at.SHOW_TOAST_MESSAGE:
+      return {
+        ...prevState,
+        showNotifications: action.data.showNotifications,
+        toastCounter: prevState.toastCounter + 1,
+        toastId: action.data.toastId,
+        toastQueue: [action.data.toastId],
+      };
+    case at.HIDE_TOAST_MESSAGE: {
+      const { showNotifications, toastId: hiddenToastId } = action.data;
+      const queuedToasts = [...prevState.toastQueue].filter(
+        toastId => toastId !== hiddenToastId
+      );
+      return {
+        ...prevState,
+        toastCounter: queuedToasts.length,
+        toastQueue: queuedToasts,
+        toastId: "",
+        showNotifications,
+      };
+    }
+    default:
+      return prevState;
+  }
+}
+
 function Weather(prevState = INITIAL_STATE.Weather, action) {
   switch (action.type) {
     case at.WEATHER_UPDATE:
@@ -906,13 +952,31 @@ function Weather(prevState = INITIAL_STATE.Weather, action) {
   }
 }
 
+function Ads(prevState = INITIAL_STATE.Ads, action) {
+  switch (action.type) {
+    case at.ADS_INIT:
+      return {
+        ...prevState,
+        initialized: true,
+      };
+    case at.ADS_UPDATE_DATA:
+      return {
+        ...prevState,
+        topsites: action.data,
+      };
+    default:
+      return prevState;
+  }
+}
+
 export const reducers = {
   TopSites,
   App,
-  ASRouter,
+  Ads,
   Prefs,
   Dialog,
   Sections,
+  Notifications,
   Pocket,
   Personalization,
   DiscoveryStream,

@@ -176,8 +176,8 @@ class nsHTTPSOnlyUtils {
    * @param aLoadInfo The loadinfo of the request triggering this exception to
    *                  be added (needs to match aURI)
    */
-  static nsresult AddHTTPSFirstExceptionForSession(
-      nsCOMPtr<nsIURI> aURI, nsILoadInfo* const aLoadInfo);
+  static nsresult AddHTTPSFirstException(nsCOMPtr<nsIURI> aURI,
+                                         nsILoadInfo* const aLoadInfo);
 
   /**
    * Determines which HTTPS-Only status flags should get propagated to
@@ -249,6 +249,14 @@ class nsHTTPSOnlyUtils {
    * @return      true if the URI is either loopback or local
    */
   static bool LoopbackOrLocalException(nsIURI* aURI);
+
+  /**
+   * Checks whether the host of the URI ends with a suffix that is not in the
+   * public suffix list.
+   * @param aURI URI object
+   * @return     true if the host of the URI ends with a unknown suffix
+   */
+  static bool UnknownPublicSuffixException(nsIURI* aURI);
 };
 
 /**

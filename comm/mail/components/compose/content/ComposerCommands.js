@@ -31,7 +31,6 @@
 /* import-globals-from ../../../base/content/globalOverlay.js */
 /* import-globals-from ../../../base/content/utilityOverlay.js */
 /* import-globals-from editor.js */
-/* import-globals-from editorUtilities.js */
 /* import-globals-from MsgComposeCommands.js */
 
 var gComposerJSCommandControllerID = 0;
@@ -665,7 +664,7 @@ function PromptForSaveLocation(
  * If needed, prompt for document title and set the document title to the
  * preferred value.
  *
- * @returns true if the title was set up successfully;
+ * @returns {boolean} true if the title was set up successfully;
  *         false if the user cancelled the title prompt
  */
 function PromptAndSetTitleIfNone() {
@@ -721,7 +720,7 @@ function OutputFileWithPersistAPI(
     try {
       var tmp = aDestinationLocation.QueryInterface(Ci.nsIURI);
       isLocalFile = tmp.schemeIs("file");
-    } catch (e) {}
+    } catch (ex) {}
   }
 
   try {

@@ -49,7 +49,7 @@ int32_t nsScreen::PixelDepth() {
 }
 
 nsPIDOMWindowOuter* nsScreen::GetOuter() const {
-  if (nsPIDOMWindowInner* inner = GetOwner()) {
+  if (nsPIDOMWindowInner* inner = GetOwnerWindow()) {
     return inner->GetOuterWindow();
   }
   return nullptr;
@@ -67,7 +67,7 @@ CSSIntRect nsScreen::GetRect() {
 
   // Here we manipulate the value of aRect to represent the screen size,
   // if in RDM.
-  if (nsPIDOMWindowInner* owner = GetOwner()) {
+  if (nsPIDOMWindowInner* owner = GetOwnerWindow()) {
     if (Document* doc = owner->GetExtantDoc()) {
       Maybe<CSSIntSize> deviceSize =
           nsGlobalWindowOuter::GetRDMDeviceSize(*doc);
@@ -82,10 +82,7 @@ CSSIntRect nsScreen::GetRect() {
   if (NS_WARN_IF(!context)) {
     return {};
   }
-
-  nsRect r;
-  context->GetRect(r);
-  return CSSIntRect::FromAppUnitsRounded(r);
+  return CSSIntRect::FromAppUnitsRounded(context->GetRect());
 }
 
 CSSIntRect nsScreen::GetAvailRect() {
@@ -96,7 +93,7 @@ CSSIntRect nsScreen::GetAvailRect() {
 
   // Here we manipulate the value of aRect to represent the screen size,
   // if in RDM.
-  if (nsPIDOMWindowInner* owner = GetOwner()) {
+  if (nsPIDOMWindowInner* owner = GetOwnerWindow()) {
     if (Document* doc = owner->GetExtantDoc()) {
       Maybe<CSSIntSize> deviceSize =
           nsGlobalWindowOuter::GetRDMDeviceSize(*doc);
@@ -111,10 +108,7 @@ CSSIntRect nsScreen::GetAvailRect() {
   if (NS_WARN_IF(!context)) {
     return {};
   }
-
-  nsRect r;
-  context->GetClientRect(r);
-  return CSSIntRect::FromAppUnitsRounded(r);
+  return CSSIntRect::FromAppUnitsRounded(context->GetClientRect());
 }
 
 uint16_t nsScreen::GetOrientationAngle() const {
@@ -166,7 +160,7 @@ JSObject* nsScreen::WrapObject(JSContext* aCx,
 }
 
 CSSIntRect nsScreen::GetTopWindowInnerRectForRFP() {
-  if (nsPIDOMWindowInner* inner = GetOwner()) {
+  if (nsPIDOMWindowInner* inner = GetOwnerWindow()) {
     if (BrowsingContext* bc = inner->GetBrowsingContext()) {
       CSSIntSize size = bc->Top()->GetTopInnerSizeForRFP();
       return {0, 0, size.width, size.height};
@@ -176,7 +170,6 @@ CSSIntRect nsScreen::GetTopWindowInnerRectForRFP() {
 }
 
 bool nsScreen::ShouldResistFingerprinting(RFPTarget aTarget) const {
-  nsCOMPtr<nsPIDOMWindowInner> owner = GetOwner();
-  return owner &&
-         nsGlobalWindowInner::Cast(owner)->ShouldResistFingerprinting(aTarget);
+  nsGlobalWindowInner* owner = GetOwnerWindow();
+  return owner && owner->ShouldResistFingerprinting(aTarget);
 }

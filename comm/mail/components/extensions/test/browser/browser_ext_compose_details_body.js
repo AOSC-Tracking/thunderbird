@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const account = createAccount();
+const account = createAccount("pop3");
 const defaultIdentity = addIdentity(account);
+MailServices.accounts.defaultAccount = account;
 const nonDefaultIdentity = addIdentity(account);
 const gRootFolder = account.incomingServer.rootFolder;
 
@@ -191,9 +192,8 @@ add_task(async function testBody() {
 
       // Get details, plain text message.
 
-      let plainTextDetails = await browser.compose.getComposeDetails(
-        plainTextTabId
-      );
+      let plainTextDetails =
+        await browser.compose.getComposeDetails(plainTextTabId);
       browser.test.log(JSON.stringify(plainTextDetails));
       browser.test.assertTrue(plainTextDetails.isPlainText);
       browser.test.assertTrue(
@@ -212,9 +212,8 @@ add_task(async function testBody() {
         plainTextBody:
           plainTextDetails.plainTextBody + "\nIndeed, it is plain.",
       });
-      plainTextDetails = await browser.compose.getComposeDetails(
-        plainTextTabId
-      );
+      plainTextDetails =
+        await browser.compose.getComposeDetails(plainTextTabId);
       browser.test.log(JSON.stringify(plainTextDetails));
       browser.test.assertTrue(plainTextDetails.isPlainText);
       browser.test.assertTrue(
@@ -563,6 +562,7 @@ add_task(async function testCJK() {
 
   const extension = ExtensionTestUtils.loadExtension({
     background: async () => {
+      // eslint-disable-next-line no-shadow
       const longCJKString = "안".repeat(400);
       const windows = await browser.windows.getAll({
         populate: true,
@@ -608,9 +608,8 @@ add_task(async function testCJK() {
 
       // Get details, plain text message.
 
-      let plainTextDetails = await browser.compose.getComposeDetails(
-        plainTextTabId
-      );
+      let plainTextDetails =
+        await browser.compose.getComposeDetails(plainTextTabId);
       browser.test.log(JSON.stringify(plainTextDetails));
       browser.test.assertTrue(plainTextDetails.isPlainText);
       browser.test.assertTrue(
@@ -628,9 +627,8 @@ add_task(async function testCJK() {
       await browser.compose.setComposeDetails(plainTextTabId, {
         plainTextBody: longCJKString,
       });
-      plainTextDetails = await browser.compose.getComposeDetails(
-        plainTextTabId
-      );
+      plainTextDetails =
+        await browser.compose.getComposeDetails(plainTextTabId);
       browser.test.log(JSON.stringify(plainTextDetails));
       browser.test.assertTrue(plainTextDetails.isPlainText);
       browser.test.assertTrue(

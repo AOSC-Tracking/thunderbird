@@ -12,7 +12,9 @@ EXTRA_JS_MODULES += [
     "ExtensionMailTabs.sys.mjs",
     "ExtensionMessages.sys.mjs",
     "ExtensionPopups.sys.mjs",
+    "ExtensionSpaces.sys.mjs",
     "ExtensionToolbarButtons.sys.mjs",
+    "ExtensionUtilities.sys.mjs",
     "MailExtensionShortcuts.sys.mjs",
 ]
 

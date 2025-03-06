@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
 
 // Cancel() is in EdDialogCommon.js
@@ -772,9 +771,9 @@ function MoveSelection(forward) {
   try {
     var selectionController = gActiveEditor.selectionController;
     selectionController.scrollSelectionIntoView(
-      selectionController.SELECTION_NORMAL,
-      selectionController.SELECTION_ANCHOR_REGION,
-      true
+      Ci.nsISelectionController.SELECTION_NORMAL,
+      Ci.nsISelectionController.SELECTION_ANCHOR_REGION,
+      Ci.nsISelectionController.SCROLL_SYNCHRONOUS
     );
   } catch (e) {}
 

@@ -14,7 +14,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 /**
- * @extends {MsgIncomingServer}
+ * @augments {MsgIncomingServer}
  * @implements {nsIImapServerSink}
  * @implements {nsIImapIncomingServer}
  * @implements {nsIMsgIncomingServer}
@@ -244,9 +244,8 @@ export class ImapIncomingServer extends MsgIncomingServer {
       return;
     }
 
-    folder.QueryInterface(
-      Ci.nsIMsgImapMailFolder
-    ).verifiedAsOnlineFolder = false;
+    folder.QueryInterface(Ci.nsIMsgImapMailFolder).verifiedAsOnlineFolder =
+      false;
     for (const child of folder.subFolders) {
       this._setFolderToUnverified(child);
     }
@@ -596,10 +595,7 @@ export class ImapIncomingServer extends MsgIncomingServer {
       }
     }
 
-    if (
-      Services.prefs.getBoolPref("mail.imap.use_status_for_biff", false) &&
-      !MailServices.mailSession.IsFolderOpenInWindow(folder)
-    ) {
+    if (Services.prefs.getBoolPref("mail.imap.use_status_for_biff", false)) {
       folder.updateStatus(this, msgWindow);
     } else {
       folder.updateFolder(msgWindow);

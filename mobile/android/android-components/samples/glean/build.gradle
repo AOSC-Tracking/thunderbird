@@ -57,6 +57,7 @@ android {
 }
 
 dependencies {
+    implementation ComponentsDependencies.mozilla_glean
     implementation project(':service-glean')
     implementation project(':service-nimbus')
     implementation project(':support-base')
@@ -72,6 +73,7 @@ dependencies {
     implementation project(':samples-glean-library')
 
     androidTestImplementation ComponentsDependencies.androidx_test_core
+    androidTestImplementation ComponentsDependencies.androidx_test_monitor
     androidTestImplementation ComponentsDependencies.androidx_test_runner
     androidTestImplementation ComponentsDependencies.androidx_test_rules
     androidTestImplementation ComponentsDependencies.androidx_test_junit
@@ -81,4 +83,8 @@ dependencies {
     androidTestImplementation ComponentsDependencies.testing_mockwebserver
 }
 
+ext {
+    gleanNamespace = "mozilla.telemetry.glean"
+    gleanPythonEnvDir = gradle.mozconfig.substs.GRADLE_GLEAN_PARSER_VENV
+}
 apply plugin: "org.mozilla.telemetry.glean-gradle-plugin"

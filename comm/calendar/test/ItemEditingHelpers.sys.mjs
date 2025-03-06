@@ -58,7 +58,7 @@ export function formatTime(time) {
 
 /**
  * @callback dialogCallback
- * @param {Window} - The calendar-event-dialog-recurrence.xhtml dialog.
+ * @param {Window} win - The calendar-event-dialog-recurrence.xhtml dialog.
  */
 
 /**
@@ -621,7 +621,7 @@ async function setTimezone(dialogWindow, iframeWindow, timezone) {
         synthesizeMouseAtCenter(timezoneMenulist, {}, timezoneWindow);
         await popupshown;
 
-        timezoneMenuitem.scrollIntoView();
+        timezoneMenuitem.scrollIntoView({ block: "start", behavior: "instant" });
 
         const popuphidden = BrowserTestUtils.waitForEvent(timezoneMenulist, "popuphidden");
         synthesizeMouseAtCenter(timezoneMenuitem, {}, timezoneWindow);

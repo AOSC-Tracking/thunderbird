@@ -59,7 +59,7 @@ dependencies {
     api (ComponentsDependencies.mozilla_appservices_nimbus) {
         // Use our own version of the Glean dependency,
         // which might be different from the version declared by A-S.
-        exclude group: 'org.mozilla.components', module: 'service-glean'
+        exclude group: 'org.mozilla.telemetry', module: 'glean'
     }
 
     implementation ComponentsDependencies.androidx_core_ktx
@@ -79,9 +79,9 @@ dependencies {
 
     // We only compile against GeckoView and Glean. It's up to the app to add those dependencies if it wants to
     // send crash reports to Socorro (GV).
-    compileOnly project(":service-glean")
+    compileOnly ComponentsDependencies.mozilla_glean
 
-    testImplementation ComponentsDependencies.mozilla_appservices_full_megazord_forUnitTests
+    testImplementation ComponentsDependencies.mozilla_appservices_full_megazord_libsForTests
     testImplementation ComponentsDependencies.androidx_test_core
     testImplementation ComponentsDependencies.androidx_test_junit
     testImplementation ComponentsDependencies.testing_mockwebserver
@@ -90,12 +90,12 @@ dependencies {
     testImplementation ComponentsDependencies.mozilla_glean_forUnitTests
     testImplementation ComponentsDependencies.androidx_work_testing
     testImplementation project(':support-test')
-    testImplementation project(":service-glean")
+    testImplementation ComponentsDependencies.mozilla_glean
 }
 
 apply from: '../../../android-lint.gradle'
 apply from: '../../../publish.gradle'
-ext.configurePublish(config.componentsGroupId, archivesBaseName, project.ext.description)
+ext.configurePublish(config.componentsGroupId, project.name, project.ext.description)
 
 
 apply plugin: "org.mozilla.appservices.nimbus-gradle-plugin"
@@ -119,4 +119,8 @@ nimbus {
             ? gradle.getProperty('localProperties.autoPublish.application-services.dir') : null
 }
 
+ext {
+    gleanNamespace = "mozilla.telemetry.glean"
+    gleanPythonEnvDir = gradle.mozconfig.substs.GRADLE_GLEAN_PARSER_VENV
+}
 apply plugin: "org.mozilla.telemetry.glean-gradle-plugin"

@@ -4,10 +4,9 @@
 
 "use strict";
 
-var { assert_content_tab_has_favicon, open_content_tab_with_url } =
-  ChromeUtils.importESModule(
-    "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
-  );
+var { open_content_tab_with_url } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
+);
 var { assert_element_visible, assert_element_not_visible } =
   ChromeUtils.importESModule(
     "resource://testing-common/mail/DOMHelpers.sys.mjs"
@@ -17,10 +16,9 @@ var { be_in_folder, inboxFolder } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
-var { assert_tab_has_title, close_popup, wait_for_popup_to_open } =
-  ChromeUtils.importESModule(
-    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
-  );
+var { assert_tab_has_title, close_popup } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
 
 var url =
   "http://mochi.test:8888/browser/comm/mail/test/browser/content-tabs/html/";
@@ -34,7 +32,7 @@ add_task(async function test_content_tab_open() {
   assert_tab_has_title(tab, "What's New Content Test");
   // Check the location of the what's new image, this is via the link element
   // and therefore should be set and not favicon.png.
-  // assert_content_tab_has_favicon(tab, url + "whatsnew.png");
+  // Assert.equal(tab.favIconUrl, url + "whatsnew.png", "Checking tab favicon");
 
   // Check that window.content is set up correctly wrt content-primary and
   // content-targetable.
@@ -72,7 +70,7 @@ add_task(async function test_spellcheck_in_content_tabs() {
     tabmail.selectedTab.browser
   );
   const browserContext = document.getElementById("browserContext");
-  await wait_for_popup_to_open(browserContext);
+  await BrowserTestUtils.waitForPopupEvent(browserContext, "shown");
   assert_element_visible("browserContext-spell-dictionaries");
   assert_element_visible("browserContext-spell-check-enabled");
   await close_popup(window, browserContext);
@@ -83,7 +81,7 @@ add_task(async function test_spellcheck_in_content_tabs() {
     { type: "contextmenu" },
     tabmail.selectedTab.browser
   );
-  await wait_for_popup_to_open(browserContext);
+  await BrowserTestUtils.waitForPopupEvent(browserContext, "shown");
   assert_element_not_visible("browserContext-spell-dictionaries");
   assert_element_not_visible("browserContext-spell-check-enabled");
   await close_popup(window, browserContext);
@@ -96,7 +94,7 @@ add_task(async function test_spellcheck_in_content_tabs() {
     { type: "contextmenu", button: 2 },
     tabmail.selectedTab.browser
   );
-  await wait_for_popup_to_open(browserContext);
+  await BrowserTestUtils.waitForPopupEvent(browserContext, "shown");
   let suggestions = document.getElementsByClassName("spell-suggestion");
   Assert.ok(suggestions.length > 0, "What, is zombocom a registered word now?");
   const addToDict = document.getElementById(
@@ -119,7 +117,7 @@ add_task(async function test_spellcheck_in_content_tabs() {
     { type: "contextmenu", button: 2 },
     tabmail.selectedTab.browser
   );
-  await wait_for_popup_to_open(browserContext);
+  await BrowserTestUtils.waitForPopupEvent(browserContext, "shown");
   suggestions = document.getElementsByClassName("spell-suggestion");
   Assert.ok(suggestions.length == 0, "But I just taught you this word!");
   await close_popup(window, browserContext);
@@ -132,7 +130,10 @@ add_task(async function test_content_tab_default_favicon() {
   assert_tab_has_title(tab, "What's New Content Test 1");
   // Check the location of the favicon, this should be the site favicon in this
   // test.
-  assert_content_tab_has_favicon(tab, "http://mochi.test:8888/favicon.ico");
+  await TestUtils.waitForCondition(
+    () => tab.favIconUrl == "http://mochi.test:8888/favicon.ico",
+    `Checking tab favicon; tab.favIconUrl=${tab.favIconUrl}`
+  );
 });
 
 add_task(async function test_content_tab_onbeforeunload() {

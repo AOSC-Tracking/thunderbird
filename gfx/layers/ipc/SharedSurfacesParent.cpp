@@ -193,7 +193,7 @@ void SharedSurfacesParent::AddSameProcess(const wr::ExternalImageId& aId,
   if (sInstance->mSurfaces.Contains(id)) {
     gfxCriticalNote << "SSP:Ads " << wr::AsUint64(aId) << " dupe";
     SharedSurfacesParent::RemoveTrackingLocked(surface, lock);
-    MOZ_DIAGNOSTIC_ASSERT(false, "External image ID reused!");
+    MOZ_DIAGNOSTIC_CRASH("External image ID reused!");
     return;
   }
 
@@ -261,7 +261,7 @@ void SharedSurfacesParent::Add(const wr::ExternalImageId& aId,
   if (sInstance->mSurfaces.Contains(id)) {
     gfxCriticalNote << "SSP:Add " << wr::AsUint64(aId) << " dupe";
     SharedSurfacesParent::RemoveTrackingLocked(surface, lock);
-    MOZ_DIAGNOSTIC_ASSERT(false, "External image ID reused!");
+    MOZ_DIAGNOSTIC_CRASH("External image ID reused!");
     return;
   }
 

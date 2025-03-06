@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/SVGAnimationElement.h"
 #include "mozilla/dom/SVGSVGElement.h"
+#include "mozilla/dom/SVGSwitchElement.h"
 #include "mozilla/dom/BindContext.h"
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/SMILAnimationController.h"
@@ -50,7 +51,7 @@ nsresult SVGAnimationElement::Init() {
 //----------------------------------------------------------------------
 
 Element* SVGAnimationElement::GetTargetElementContent() {
-  if (HasAttr(kNameSpaceID_XLink, nsGkAtoms::href) ||
+  if ((HasAttr(kNameSpaceID_XLink, nsGkAtoms::href) && SupportsXLinkHref()) ||
       HasAttr(nsGkAtoms::href)) {
     return mHrefTarget.get();
   }
@@ -138,10 +139,10 @@ nsresult SVGAnimationElement::BindToTree(BindContext& aContext,
     if (SMILAnimationController* controller = doc->GetAnimationController()) {
       controller->RegisterAnimationElement(this);
     }
-    const nsAttrValue* href =
-        HasAttr(nsGkAtoms::href)
-            ? mAttrs.GetAttr(nsGkAtoms::href, kNameSpaceID_None)
-            : mAttrs.GetAttr(nsGkAtoms::href, kNameSpaceID_XLink);
+    const nsAttrValue* href = mAttrs.GetAttr(nsGkAtoms::href);
+    if (!href && SupportsXLinkHref()) {
+      href = mAttrs.GetAttr(nsGkAtoms::href, kNameSpaceID_XLink);
+    }
     if (href) {
       nsAutoString hrefStr;
       href->ToString(hrefStr);
@@ -152,6 +153,7 @@ nsresult SVGAnimationElement::BindToTree(BindContext& aContext,
     mTimedElement.BindToTree(*this);
   }
 
+  mTimedElement.SetIsDisabled(IsDisabled());
   AnimationNeedsResample();
 
   return NS_OK;
@@ -228,8 +230,7 @@ void SVGAnimationElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
                                         aSubjectPrincipal, aNotify);
 
   if (SVGTests::IsConditionalProcessingAttribute(aName)) {
-    bool isDisabled = !SVGTests::PassesConditionalProcessingTests();
-    if (mTimedElement.SetIsDisabled(isDisabled)) {
+    if (mTimedElement.SetIsDisabled(IsDisabled())) {
       AnimationNeedsResample();
     }
   }
@@ -249,14 +250,17 @@ void SVGAnimationElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
       mHrefTarget.Unlink();
       AnimationTargetChanged();
 
-      // After unsetting href, we may still have xlink:href, so we
-      // should try to add it back.
-      const nsAttrValue* xlinkHref =
-          mAttrs.GetAttr(nsGkAtoms::href, kNameSpaceID_XLink);
-      if (xlinkHref) {
-        UpdateHrefTarget(xlinkHref->GetStringValue());
+      if (SupportsXLinkHref()) {
+        // After unsetting href, we may still have xlink:href, so we
+        // should try to add it back.
+        const nsAttrValue* xlinkHref =
+            mAttrs.GetAttr(nsGkAtoms::href, kNameSpaceID_XLink);
+        if (xlinkHref) {
+          UpdateHrefTarget(xlinkHref->GetStringValue());
+        }
       }
-    } else if (!HasAttr(nsGkAtoms::href)) {
+    } else if (!HasAttr(kNameSpaceID_None, nsGkAtoms::href) &&
+               SupportsXLinkHref()) {
       mHrefTarget.Unlink();
       AnimationTargetChanged();
     }  // else: we unset xlink:href, but we still have href attribute, so keep
@@ -270,6 +274,38 @@ void SVGAnimationElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
     UpdateHrefTarget(aValue->GetStringValue());
   }  // else: we're not yet in a document -- we'll update the target on
      // next BindToTree call.
+}
+
+bool SVGAnimationElement::IsDisabled() {
+  if (!SVGTests::PassesConditionalProcessingTests()) {
+    return true;
+  }
+  nsIContent* child = this;
+  while (nsIContent* parent = child->GetFlattenedTreeParent()) {
+    if (!parent->IsSVGElement()) {
+      return false;
+    }
+    if (auto* svgSwitch = SVGSwitchElement::FromNodeOrNull(parent)) {
+      nsIFrame* frame = svgSwitch->GetPrimaryFrame();
+      // If we've been reflowed then the active child has been determined,
+      // otherwise we'll have to calculate whether this is the active child.
+      if (frame && !frame->HasAnyStateBits(NS_FRAME_FIRST_REFLOW)) {
+        if (child != svgSwitch->GetActiveChild()) {
+          return true;
+        }
+      } else {
+        if (child != SVGTests::FindActiveSwitchChild(svgSwitch)) {
+          return true;
+        }
+      }
+    } else if (auto* svgGraphics = SVGGraphicsElement::FromNode(parent)) {
+      if (!svgGraphics->PassesConditionalProcessingTests()) {
+        return true;
+      }
+    }
+    child = parent;
+  }
+  return false;
 }
 
 //----------------------------------------------------------------------
@@ -344,7 +380,7 @@ bool SVGAnimationElement::IsEventAttributeNameInternal(nsAtom* aName) {
 
 void SVGAnimationElement::UpdateHrefTarget(const nsAString& aHrefStr) {
   if (nsContentUtils::IsLocalRefURL(aHrefStr)) {
-    mHrefTarget.ResetWithLocalRef(*this, aHrefStr);
+    mHrefTarget.ResetToLocalFragmentID(*this, aHrefStr);
   } else {
     mHrefTarget.Unlink();
   }

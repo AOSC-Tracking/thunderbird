@@ -276,7 +276,7 @@ input:user-invalid ~ .form-icon {
   background-color: rgba(215, 215, 219, 0.2);
 
   &.selected {
-    border: 1px solid #45A1FF;
+    border: 1px solid #45a1ff;
     background-color: rgba(69, 161, 255, 0.2);
 
     & .result-details {
@@ -553,7 +553,7 @@ select[disabled] {
   grid-template-columns: min-content 1fr min-content;
   align-items: center;
   color: inherit;
-  background-color: var(--in-content-box-background);
+  background-color: var(--background-color-box);
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.15);
   column-gap: 6px;
   padding: 3px 9px;

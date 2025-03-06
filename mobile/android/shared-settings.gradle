@@ -5,7 +5,11 @@
 import org.yaml.snakeyaml.Yaml
 
 buildscript {
-    apply from: file('./gradle/mozconfig.gradle')
+    if (!gradle.root.hasProperty("mozconfig")){
+        apply from: file('./gradle/mozconfig.gradle')
+    } else {
+        gradle.ext.mozconfig = gradle.root.mozconfig
+    }
 
     repositories {
         gradle.mozconfig.substs.GRADLE_MAVEN_REPOSITORIES.each { repository ->
@@ -23,7 +27,11 @@ buildscript {
     }
 }
 
-apply from: file('./gradle/mozconfig.gradle')
+if (!gradle.root.hasProperty("mozconfig")){
+    apply from: file('./gradle/mozconfig.gradle')
+} else {
+    gradle.ext.mozconfig = gradle.root.mozconfig
+}
 
 // Synchronized library configuration for all modules
 // This "componentsVersion" number is defined in "version.txt" and should follow

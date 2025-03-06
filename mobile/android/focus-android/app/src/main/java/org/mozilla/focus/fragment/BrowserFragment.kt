@@ -23,6 +23,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.net.toUri
 import androidx.core.view.isVisible
+import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
@@ -51,6 +52,7 @@ import mozilla.components.feature.downloads.manager.FetchDownloadManager
 import mozilla.components.feature.downloads.temporary.ShareDownloadFeature
 import mozilla.components.feature.media.fullscreen.MediaSessionFullscreenFeature
 import mozilla.components.feature.prompts.PromptFeature
+import mozilla.components.feature.prompts.file.AndroidPhotoPicker
 import mozilla.components.feature.session.PictureInPictureFeature
 import mozilla.components.feature.session.SessionFeature
 import mozilla.components.feature.sitepermissions.SitePermissionsFeature
@@ -59,14 +61,15 @@ import mozilla.components.feature.top.sites.TopSitesConfig
 import mozilla.components.feature.top.sites.TopSitesFeature
 import mozilla.components.lib.crash.Crash
 import mozilla.components.lib.state.ext.flowScoped
-import mozilla.components.service.glean.private.NoExtras
 import mozilla.components.support.base.feature.UserInteractionHandler
 import mozilla.components.support.base.feature.ViewBoundFeatureWrapper
+import mozilla.components.support.ktx.android.content.createChooserExcludingCurrentApp
 import mozilla.components.support.ktx.android.view.exitImmersiveMode
 import mozilla.components.support.locale.ActivityContextWrapper
 import mozilla.components.support.utils.Browsers
 import mozilla.components.support.utils.StatusBarUtils
 import mozilla.components.support.utils.ext.requestInPlacePermissions
+import mozilla.telemetry.glean.private.NoExtras
 import org.mozilla.focus.GleanMetrics.Browser
 import org.mozilla.focus.GleanMetrics.CookieBanner
 import org.mozilla.focus.GleanMetrics.Downloads
@@ -111,7 +114,6 @@ import org.mozilla.focus.topsites.DefaultTopSitesStorage.Companion.TOP_SITES_MAX
 import org.mozilla.focus.topsites.DefaultTopSitesView
 import org.mozilla.focus.utils.FocusSnackbar
 import org.mozilla.focus.utils.FocusSnackbarDelegate
-import org.mozilla.focus.utils.IntentUtils
 import org.mozilla.focus.utils.ViewUtils
 import java.net.URLEncoder
 
@@ -166,6 +168,28 @@ class BrowserFragment :
         get() = requireComponents.store.state.findTabOrCustomTab(tabId)
             // Workaround for tab not existing temporarily.
             ?: createTab("about:blank")
+
+    // Registers a photo picker activity launcher in single-select mode.
+    private val singleMediaPicker =
+        AndroidPhotoPicker.singleMediaPicker(
+            { getFragment() },
+            { getPromptFeature() },
+        )
+
+    // Registers a photo picker activity launcher in multi-select mode.
+    private val multipleMediaPicker =
+        AndroidPhotoPicker.multipleMediaPicker(
+            { getFragment() },
+            { getPromptFeature() },
+        )
+
+    private fun getFragment(): Fragment {
+        return this
+    }
+
+    private fun getPromptFeature(): PromptFeature? {
+        return promptFeature.get()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -271,7 +295,6 @@ class BrowserFragment :
                 binding.browserToolbar,
                 binding.statusBarBackground,
                 binding.engineView,
-                parentFragmentManager,
             ),
             this,
             view,
@@ -339,6 +362,11 @@ class BrowserFragment :
                         )
                     }
                 },
+                androidPhotoPicker = AndroidPhotoPicker(
+                    requireContext(),
+                    singleMediaPicker,
+                    multipleMediaPicker,
+                ),
             ),
             this,
             view,
@@ -804,6 +832,7 @@ class BrowserFragment :
         tabsPopup?.dismiss()
         trackingProtectionPanel?.hide()
         siteNotSupportedSnackBarScope?.cancel()
+        requireComponents.sessionUseCases.exitFullscreen()
     }
 
     override fun onHomePressed() = pictureInPictureFeature?.onHomePressed() ?: false
@@ -871,10 +900,9 @@ class BrowserFragment :
             shareIntent.putExtra(Intent.EXTRA_SUBJECT, title)
         }
         startActivity(
-            IntentUtils.getIntentChooser(
+            shareIntent.createChooserExcludingCurrentApp(
                 context = requireContext(),
-                intent = shareIntent,
-                chooserTitle = getString(R.string.share_dialog_title),
+                title = getString(R.string.share_dialog_title),
             ),
         )
     }
@@ -935,8 +963,7 @@ class BrowserFragment :
             tab.content.url,
             store,
         )
-        @Suppress("DEPRECATION")
-        fragment.show(requireFragmentManager(), OpenWithFragment.FRAGMENT_TAG)
+        fragment.show(getParentFragmentManager(), OpenWithFragment.FRAGMENT_TAG)
 
         OpenWith.listDisplayed.record(OpenWith.ListDisplayedExtra(apps.size))
     }

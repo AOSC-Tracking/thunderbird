@@ -8,6 +8,7 @@ import android.content.Context
 import android.net.Uri
 import mozilla.components.concept.engine.prompt.PromptRequest.Authentication.Level
 import mozilla.components.concept.engine.prompt.PromptRequest.Authentication.Method
+import mozilla.components.concept.engine.prompt.PromptRequest.File
 import mozilla.components.concept.engine.prompt.PromptRequest.TimeSelection.Type
 import mozilla.components.concept.identitycredential.Account
 import mozilla.components.concept.identitycredential.Provider
@@ -88,12 +89,14 @@ sealed class PromptRequest(
      * @property title of the dialog.
      * @property onLeave callback to notify that the user wants leave the site.
      * @property onStay callback to notify that the user wants stay in the site.
+     * @property onDismiss callback to let the page know the user dismissed the dialog.
      */
     data class BeforeUnload(
         val title: String,
         val onLeave: () -> Unit,
         val onStay: () -> Unit,
-    ) : PromptRequest()
+        override val onDismiss: () -> Unit,
+    ) : PromptRequest(shouldDismissOnLoad = false), Dismissible
 
     /**
      * Value type that represents a request for a save credit card prompt.
@@ -191,7 +194,7 @@ sealed class PromptRequest(
      * Value type that represents a request for a select login prompt.
      * @property logins a list of logins that are associated with the current domain.
      * @property generatedPassword the suggested strong password that was generated.
-     * @property onConfirm callback that is called when the user wants to save the login.
+     * @property onConfirm callback that is called when the user wants to select the login.
      * @property onDismiss callback to let the page know the user dismissed the dialog.
      */
     data class SelectLoginPrompt(
@@ -442,4 +445,22 @@ sealed class PromptRequest(
     interface Dismissible {
         val onDismiss: () -> Unit
     }
+}
+
+/**
+ * Checks if the current [PromptRequest] is a request to pick an image.
+ *
+ * @return true if the current request is a request for selecting one or more images, false otherwise.
+ */
+fun PromptRequest?.isPhotoRequest(): Boolean {
+    return this is File && mimeTypes.any { it.startsWith("image/") }
+}
+
+/**
+ * Checks if the current [PromptRequest] is a request to pick a video.
+ *
+ * @return true if the current request is a request for selecting one or more videos, false otherwise.
+ */
+fun PromptRequest?.isVideoRequest(): Boolean {
+    return this is File && mimeTypes.any { it.startsWith("video/") }
 }

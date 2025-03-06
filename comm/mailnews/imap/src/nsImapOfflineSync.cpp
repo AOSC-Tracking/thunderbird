@@ -674,6 +674,8 @@ nsImapOfflineSync::ProcessNextOperation() {
     if (m_singleFolderToUpdate) {
       if (!m_pseudoOffline) {
         AdvanceToFirstIMAPFolder();
+        // Because IMAP folder creation is async, we might exit now and
+        // continue later on (via OnStopRunningUrl()).
         if (CreateOfflineFolders()) return NS_OK;
       }
     } else {
@@ -724,7 +726,10 @@ nsImapOfflineSync::ProcessNextOperation() {
             nsOfflineImapOperationType opType;
             currentOp->GetOperation(&opType);
 
+            // kMoveResult op holds the source folder URI and the source
+            // msgKey.
             if (opType == nsIMsgOfflineImapOperation::kMoveResult) {
+              // Get the destination msgKey.
               nsMsgKey curKey;
               currentOp->GetMessageKey(&curKey);
               m_currentDB->RemoveOfflineOp(currentOp);

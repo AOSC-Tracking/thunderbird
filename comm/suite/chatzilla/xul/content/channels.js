@@ -79,7 +79,6 @@ function onLoad()
     window.ASSERT = client.mainWindow.ASSERT;
     window.toUnicode = client.mainWindow.toUnicode;
     window.getMsg = client.mainWindow.getMsg;
-    window.MSG_CHANNEL_OPENED = client.mainWindow.MSG_CHANNEL_OPENED;
     window.MSG_FMT_JSEXCEPTION = client.mainWindow.MSG_FMT_JSEXCEPTION;
     window.MT_INFO = client.mainWindow.MT_INFO;
 
@@ -93,32 +92,19 @@ function onLoad()
     // Cache all the XUL DOM elements.
     var elements = ["network", "networks", "channel", "includeTopic",
                     "lastUpdated", "join", "minUsers", "maxUsers", "refresh",
-                    "bottomPanel", "channels", "loadContainer", "loadLabel",
-                    "loadBarDeck", "loadBar"];
+                    "bottomPanel", "channels", "loadLabel", "loadBarDeck",
+                    "loadBar"];
     for (var i = 0; i < elements.length; i++)
         xul[elements[i]] = document.getElementById(elements[i]);
 
-    // Set the <dialog>'s class so we can do platform-specific CSS.
-    var dialog = document.getElementById("chatzilla-window");
-    dialog.className = "platform-" + client.platform;
+    // Set attribute on documentElement so we can do platform-specific CSS.
+    document.documentElement.setAttribute("platform", client.platform);
 
     // Set up the channel tree view.
     tree.view = new XULTreeView(tree.share);
     tree.view.onRowCommand = doJoin;
     tree.view.cycleHeader = changeSort;
     xul.channels.treeBoxObject.view = tree.view;
-
-    // If the new "search" binding is not working (i.e. doesn't exist)...
-    if (!("searchButton" in xul.channel))
-    {
-        // ...restore the text boxes to their former selves.
-        xul.channel.setAttribute("timeout", "500");
-        xul.channel.setAttribute("type", "timed");
-        xul.minUsers.setAttribute("timeout", "500");
-        xul.minUsers.setAttribute("type", "timed");
-        xul.maxUsers.setAttribute("timeout", "500");
-        xul.maxUsers.setAttribute("type", "timed");
-    }
 
     // Sort by user count, descending.
     changeSort("chanColUsers");
@@ -646,6 +632,22 @@ function processOpLoadStop(opData)
 
 function processOpFilterStart(opData)
 {
+    function equalsObject(o1, o2)
+    {
+        for (let p in o1)
+        {
+            if (!(p in o2) || (o1[p] != o2[p]))
+                return false;
+        }
+        for (let p in o2)
+        {
+            // If the property did exist in o1, the previous loop tested it:
+            if (!(p in o1))
+                return false;
+        }
+        return true;
+    };
+
     // Catch filtering with the same options on the same channels:
     var newOptions = {network: xul.network.value.toLowerCase(),
                       text: xul.channel.value.toLowerCase(),
@@ -682,7 +684,7 @@ function processOpFilterStart(opData)
         filters.push("max-users");
 
     if (opData.channelText &&
-        (arrayIndexOf(["#", "&", "+", "!"], opData.channelText[0]) == -1))
+        !["#", "&", "+", "!"].includes(opData.channelText[0]))
     {
         opData.channelText = "#" + opData.channelText;
     }
@@ -807,14 +809,10 @@ function ensureRowIsVisible()
         xul.channels.treeBoxObject.ensureRowIsVisible(0);
 }
 
-function getListFile(temp)
+function getListFile()
 {
-    ASSERT(network, "No network");
     var file = new LocalFile(network.prefs["logFileName"]);
-    if (temp)
-        file.localFile.leafName = "list.temp";
-    else
-        file.localFile.leafName = "list.txt";
+    file.localFile.leafName = "list.txt";
     return file.localFile;
 }
 

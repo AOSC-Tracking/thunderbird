@@ -12,7 +12,22 @@ set_config("MOZ_APPUPDATE_HOST", "aus.thunderbird.net")
 
 imply_option("--enable-default-browser-agent", False)
 imply_option("MOZ_REQUIRE_SIGNING", False)
-imply_option("MOZ_SERVICES_SYNC", True)
+
+
+@depends(milestone)
+def enable_sync(milestone):
+    return milestone.is_nightly
+
+
+imply_option("MOZ_SERVICES_SYNC", True, when=enable_sync)
+
+imply_option("NSS_EXTRA_SYMBOLS_FILE", "../comm/mailnews/nss-extra.symbols")
+
+imply_option("MOZ_APP_ID", "{3550f703-e582-4d05-9a08-453d09bdfdc6}")
+imply_option("MOZ_APP_VENDOR", "Mozilla")
+imply_option("BROWSER_CHROME_URL", "chrome://messenger/content/extensionPopup.xhtml")
+# Include the DevTools client, not just the server (which is the default)
+imply_option("MOZ_DEVTOOLS", "all")
 
 
 @depends(target_is_windows, target_has_linux_kernel)
@@ -40,6 +55,7 @@ imply_option("MOZ_PLACES", True)
 imply_option("MOZ_SERVICES_HEALTHREPORT", True)
 imply_option("MOZ_DEDICATED_PROFILES", True)
 imply_option("MOZ_BLOCK_PROFILE_DOWNGRADE", True)
+imply_option("MOZ_PROFILE_MIGRATOR", True)
 
 with only_when(target_has_linux_kernel & compile_environment):
     option(env="MOZ_NO_PIE_COMPAT", help="Enable non-PIE wrapper")
@@ -47,9 +63,11 @@ with only_when(target_has_linux_kernel & compile_environment):
     set_config("MOZ_NO_PIE_COMPAT", depends_if("MOZ_NO_PIE_COMPAT")(lambda _: True))
 
 
-@depends("MOZ_AUTOMATION")
+@depends("MOZ_AUTOMATION", target)
 @imports(_from="os", _import="environ")
-def pkg_libotr(automation):
+def pkg_libotr(automation, target):
+    if target.os == "WINNT" and target.cpu == "aarch64":
+        return
     if automation:
         fetch_dir = environ.get("MOZ_FETCHES_DIR", None)
         if fetch_dir:
@@ -61,13 +79,19 @@ def pkg_libotr(automation):
 
 set_config("TB_LIBOTR_PREBUILT", pkg_libotr)
 
-
 set_config(
-    "MOZ_TELEMETRY_EXTRA_HISTOGRAM_FILES",
-    ["/comm/mail/components/telemetry/Histograms.json"],
+    "MOZ_GLEAN_EXTRA_METRICS_FILES",
+    [
+        "comm/mail/metrics.yaml",
+        "comm/mail/components/addrbook/metrics.yaml",
+        "comm/mail/components/cloudfile/metrics.yaml",
+        "comm/mail/components/compose/metrics.yaml",
+        "comm/mail/components/inappnotifications/metrics.yaml",
+        "comm/calendar/metrics.yaml",
+    ],
 )
-set_config("MOZ_TELEMETRY_EXTRA_SCALAR_FILES", ["/comm/mail/components/telemetry/Scalars.yaml"])
-set_config("MOZ_TELEMETRY_EXTRA_EVENT_FILES", ["/comm/mail/components/telemetry/Events.yaml"])
+# set_config("MOZ_GLEAN_EXTRA_PINGS_FILES", ["comm/mail/pings.yaml"])
+set_config("MOZ_GLEAN_EXTRA_TAGS_FILES", ["comm/mail/tags.yaml"])
 
 include("../build/moz.configure/gecko_source.configure")
 
@@ -80,7 +104,10 @@ imply_option("--enable-app-system-headers", True)
 @imports("re")
 def thunderbird_official_branding(milestone, update_channel):
     rv = "nightly"
-    if update_channel in ("release", "esr"):  # No separate "esr" branding, use same as release
+    if update_channel in (
+        "release",
+        "esr",
+    ):  # No separate "esr" branding, use same as release
         rv = "thunderbird"
     elif update_channel == "beta":
         rv = "tb_beta"
@@ -116,7 +143,9 @@ def moz_override_cargo_config(enable_rust):
 
 
 set_config(
-    "MOZ_OVERRIDE_CARGO_CONFIG", moz_override_cargo_config, when="--enable-thunderbird-rust"
+    "MOZ_OVERRIDE_CARGO_CONFIG",
+    moz_override_cargo_config,
+    when="--enable-thunderbird-rust",
 )
 
 include("../../toolkit/moz.configure")

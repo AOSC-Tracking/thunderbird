@@ -232,6 +232,10 @@ context-menu-mark-junk =
     .aria-label = Mark as Junk
     .tooltiptext = Mark as Junk
 
+context-menu-mark-not-junk =
+    .aria-label = Mark as not Junk
+    .tooltiptext = Mark as not Junk
+
 mail-context-menu-open =
     .label = Open
     .accesskey = O
@@ -359,6 +363,10 @@ message-header-large-subject =
 message-header-all-headers =
     .label = Show all headers
     .accesskey = a
+
+message-header-dark-message-toggle =
+    .label = Show the dark message mode toggle
+    .accesskey = d
 
 ## Action Button Context Menu
 

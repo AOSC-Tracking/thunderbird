@@ -13,7 +13,7 @@ function checkSteps(importDocument, currentStep, totalSteps) {
   ok(
     stepNav
       .querySelector(`*:nth-child(${currentStep})`)
-      .classList.contains("current"),
+      ?.classList.contains("current"),
     `Expected step ${currentStep} is active`
   );
 }
@@ -23,7 +23,7 @@ function checkVisiblePane(importDocument, activePaneId, activeStepId) {
   for (const pane of panes) {
     if (pane.id === activePaneId) {
       ok(BrowserTestUtils.isVisible(pane), `Pane ${activePaneId} is visible`);
-      const steps = pane.querySelectorAll("section");
+      const steps = pane.querySelectorAll("section[id]");
       for (const step of steps) {
         if (step.id === activeStepId) {
           ok(
@@ -48,6 +48,8 @@ add_setup(() => {
 });
 
 add_task(async function testProfileImport() {
+  Services.fog.testResetFOG();
+
   const profileDir = await IOUtils.createUniqueDirectory(
     PathUtils.tempDir,
     "profile-tmp"
@@ -82,10 +84,10 @@ add_task(async function testProfileImport() {
   });
 
   const tab = await new Promise(resolve => {
-    const tab = window.openTab("contentTab", {
+    const newTab = window.openTab("contentTab", {
       url: "about:import",
       onLoad() {
-        resolve(tab);
+        resolve(newTab);
       },
     });
   });
@@ -214,6 +216,22 @@ add_task(async function testProfileImport() {
   // We close the tab ourselves instead of hitting the finish button, since
   // restarting Thunderbird within the test is a headache.
   document.getElementById("tabmail").closeTab(tab);
+
+  const gleanEvents = Glean.mail.import.testGetValue();
+  Assert.equal(
+    gleanEvents.length,
+    1,
+    "the import should have been recorded in telemetry"
+  );
+  Assert.deepEqual(
+    gleanEvents[0].extra,
+    {
+      importer: "Thunderbird,directory",
+      types: "accounts,addressBooks,calendars,mailMessages",
+      result: "succeeded",
+    },
+    "the telemetry data should be correct"
+  );
 });
 
 add_task(async function testImportLargeZIP() {
@@ -253,10 +271,10 @@ add_task(async function testImportLargeZIP() {
   });
 
   const tab = await new Promise(resolve => {
-    const tab = window.openTab("contentTab", {
+    const newTab = window.openTab("contentTab", {
       url: "about:import",
       onLoad() {
-        resolve(tab);
+        resolve(newTab);
       },
     });
   });

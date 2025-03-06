@@ -20,9 +20,8 @@ add_task(async function test_formatFileSize() {
           { sizeInBytes: 2344234234, expectedFormat: "2.2 GB" },
         ];
         for (const { sizeInBytes, expectedFormat } of tests) {
-          const formated = await browser.messengerUtilities.formatFileSize(
-            sizeInBytes
-          );
+          const formated =
+            await browser.messengerUtilities.formatFileSize(sizeInBytes);
           // On some systems we get a , seperator.
           browser.test.assertEq(
             formated.replaceAll(",", "."),
@@ -236,6 +235,133 @@ ipsum dolor sit amet.`,
     manifest: {
       manifest_version: 2,
       background: { scripts: ["background.js"] },
+    },
+  });
+
+  await extension.startup();
+  await extension.awaitFinish("finished");
+  await extension.unload();
+});
+
+add_task(async function test_decodeMimeHeader() {
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        const value =
+          "=?UTF-8?Q?H=C3=B6rst=2C_Kenny?= <K.Hoerst@invalid>, new@thunderbird.bug";
+
+        // Test default mailbox handling.
+        window.assertDeepEqual(
+          [`"Hörst, Kenny" <K.Hoerst@invalid>, new@thunderbird.bug`],
+          await browser.messengerUtilities.decodeMimeHeader("TO", value),
+          `The mailbox header should be decoded correctly.`
+        );
+
+        // Test enforced mailbox handling.
+        window.assertDeepEqual(
+          [`"Hörst, Kenny" <K.Hoerst@invalid>, new@thunderbird.bug`],
+          await browser.messengerUtilities.decodeMimeHeader("TO", value, true),
+          `The mailbox header should be decoded correctly.`
+        );
+
+        // Test enforced non-mailbox handling.
+        window.assertDeepEqual(
+          [`Hörst, Kenny <K.Hoerst@invalid>, new@thunderbird.bug`],
+          await browser.messengerUtilities.decodeMimeHeader("TO", value, false),
+          `The mailbox header should be decoded as expected (wrongly).`
+        );
+
+        // Test multi-line subject header provided as string and not as array.
+        const encoded_subject = `=?UTF-8?B?c2RzYWQgw7bDpMO8IGFzZGEgZCAiw7zDtsOkInNkZsOkIGRzaiBhbGRq?=
+ =?UTF-8?B?IGFzamQgaiBkaiDDtsO8IMO8w7bDpCBkaiBrYWRqcyDDtsO8w6Qgc2tsamQgYXNs?=
+ =?UTF-8?B?ZGtqIGFscyBkasO2w7zDpCBzamRsYXNqZCBsYXNkaiBsYXPDvMO2w6RsIGFkaiBs?=
+ =?UTF-8?B?YWTDvMO2w6TDvCBsYXNkaiBsYXMgZGrDvMO2w6Q=?=`;
+        const decoded_subject = `sdsad öäü asda d "üöä"sdfä dsj aldj asjd j dj öü üöä dj kadjs öüä skljd asldkj als djöüä sjdlasjd lasdj lasüöäl adj ladüöäü lasdj las djüöä`;
+        window.assertDeepEqual(
+          [decoded_subject],
+          await browser.messengerUtilities.decodeMimeHeader(
+            "Subject",
+            encoded_subject
+          ),
+          `The subject header should be decoded correctly.`
+        );
+
+        browser.test.notifyPass("finished");
+      },
+      "utils.js": await getUtilsJS(),
+    },
+    manifest: {
+      manifest_version: 2,
+      background: { scripts: ["utils.js", "background.js"] },
+    },
+  });
+
+  await extension.startup();
+  await extension.awaitFinish("finished");
+  await extension.unload();
+});
+
+add_task(async function test_encodeMimeHeader() {
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        // Test default mailbox handling.
+        window.assertDeepEqual(
+          [
+            "=?UTF-8?Q?H=C3=B6rst=2C_Kenny?= <K.Hoerst@invalid>,\r\n new@thunderbird.bug",
+          ],
+          await browser.messengerUtilities.encodeMimeHeader(
+            "TO",
+            `"Hörst, Kenny" <K.Hoerst@invalid>, new@thunderbird.bug`
+          ),
+          `The mailbox header should be encoded correctly, including auto-folding.`
+        );
+
+        // Test enforced mailbox handling.
+        window.assertDeepEqual(
+          [
+            "=?UTF-8?Q?H=C3=B6rst=2C_Kenny?= <K.Hoerst@invalid>,\r\n new@thunderbird.bug",
+          ],
+          await browser.messengerUtilities.encodeMimeHeader(
+            "TO",
+            `"Hörst, Kenny" <K.Hoerst@invalid>, new@thunderbird.bug`,
+            true
+          ),
+          `The mailbox header should be encoded correctly, including auto-folding.`
+        );
+
+        // Test enforced non-mailbox handling.
+        window.assertDeepEqual(
+          [
+            "=?UTF-8?B?IkjDtnJzdCwgS2VubnkiIDxLLkhvZXJzdEBpbnZhbGlkPiwgbmV3?=\r\n =?UTF-8?Q?=40thunderbird=2Ebug?=",
+          ],
+          await browser.messengerUtilities.encodeMimeHeader(
+            "TO",
+            `"Hörst, Kenny" <K.Hoerst@invalid>, new@thunderbird.bug`,
+            false
+          ),
+          `The mailbox header should be encoded as expected (wrongly).`
+        );
+
+        // Test multiline subject.
+        window.assertDeepEqual(
+          [
+            "=?UTF-8?B?c2RzYWQgw7bDpMO8IGFzZGEgZCAiw7zDtsOkInNkZsOkIGRz?=\r\n =?UTF-8?B?aiBhbGRqIGFzamQgaiBkaiDDtsO8IMO8w7bDpCBkaiBrYWRqcyDDtsO8?=\r\n =?UTF-8?Q?=C3=A4_skljd_asldkj_als_dj=C3=B6=C3=BC=C3=A4_sjdlasjd_lasdj?=\r\n =?UTF-8?B?IGxhc8O8w7bDpGwgYWRqIGxhZMO8w7bDpMO8IGxhc2RqIGxhcyBkasO8?=\r\n =?UTF-8?B?w7bDpA==?=",
+          ],
+          await browser.messengerUtilities.encodeMimeHeader(
+            "Subject",
+            `sdsad öäü asda d "üöä"sdfä dsj aldj asjd j dj öü üöä dj kadjs öüä skljd asldkj als djöüä sjdlasjd lasdj lasüöäl adj ladüöäü lasdj las djüöä`
+          ),
+          `The subject header should be encode correctly, including auto-folding.`
+        );
+
+        browser.test.notifyPass("finished");
+      },
+      "utils.js": await getUtilsJS(),
+    },
+    manifest: {
+      manifest_version: 2,
+      background: { scripts: ["utils.js", "background.js"] },
     },
   });
 

@@ -36,9 +36,6 @@ var gSearchResultsPane = {
     }
     this.inited = true;
     this.searchInput = document.getElementById("searchInput");
-    this.searchInput.hidden = !Services.prefs.getBoolPref(
-      "browser.preferences.search"
-    );
     if (!this.searchInput.hidden) {
       this.searchInput.addEventListener("input", this);
       this.searchInput.addEventListener("command", this);
@@ -512,8 +509,8 @@ var gSearchResultsPane = {
   /**
    * Search for a phrase in l10n messages associated with the element.
    *
-   * @param {Node} nodeObject The parent DOM Element.
-   * @param {string} searchPhrase.
+   * @param {Node} nodeObject - The parent DOM Element.
+   * @param {string} searchPhrase - Phrase to search for.
    * @returns {boolean} true when the text content contains the query string else false.
    */
   async matchesSearchL10nIDs(nodeObject, searchPhrase) {

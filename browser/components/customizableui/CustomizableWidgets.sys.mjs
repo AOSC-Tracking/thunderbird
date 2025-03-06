@@ -48,6 +48,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "sidebarRevampEnabled",
+  "sidebar.revamp",
+  false
+);
+
 function setAttributes(aNode, aAttrs) {
   let doc = aNode.ownerDocument;
   for (let [name, value] of Object.entries(aAttrs)) {
@@ -210,8 +217,8 @@ export const CustomizableWidgets = [
       const utils = lazy.RecentlyClosedTabsAndWindowsMenuUtils;
       const fragment =
         panelview.id == this.recentlyClosedTabsPanel
-          ? utils.getTabsFragment(window, "toolbarbutton", true)
-          : utils.getWindowsFragment(window, "toolbarbutton", true);
+          ? utils.getTabsFragment(window, "toolbarbutton")
+          : utils.getWindowsFragment(window, "toolbarbutton");
       let elementCount = fragment.childElementCount;
       this._panelMenuView._setEmptyPopupStatus(panelview, !elementCount);
       if (!elementCount) {
@@ -225,13 +232,12 @@ export const CustomizableWidgets = [
       let footer;
       while (--elementCount >= 0) {
         let element = body.children[elementCount];
+        if (element.tagName != "toolbarbutton") {
+          continue;
+        }
         lazy.CustomizableUI.addShortcut(element);
-        element.classList.add("subviewbutton");
         if (element.classList.contains("restoreallitem")) {
           footer = element;
-          element.classList.add("panel-subview-footer-button");
-        } else {
-          element.classList.add("subviewbutton-iconic", "bookmark-item");
         }
       }
       panelview.appendChild(body);
@@ -277,29 +283,34 @@ export const CustomizableWidgets = [
   },
   {
     id: "sidebar-button",
-    tooltiptext: "sidebar-button.tooltiptext2",
+    l10nId: "show-sidebars",
     defaultArea: "nav-bar",
     _introducedByPref: "sidebar.revamp",
     onCommand(aEvent) {
-      let { SidebarController } = aEvent.target.ownerGlobal;
-      if (SidebarController.sidebarRevampEnabled) {
-        SidebarController.toggleExpanded();
+      const { SidebarController } = aEvent.target.ownerGlobal;
+      if (lazy.sidebarRevampEnabled) {
+        SidebarController.handleToolbarButtonClick();
       } else {
         SidebarController.toggle();
       }
     },
     onCreated(aNode) {
-      // Add an observer so the button is checked while the sidebar is open
-      let doc = aNode.ownerDocument;
-      let obChecked = doc.createXULElement("observes");
-      obChecked.setAttribute("element", "sidebar-box");
-      obChecked.setAttribute("attribute", "checked");
-      let obPosition = doc.createXULElement("observes");
-      obPosition.setAttribute("element", "sidebar-box");
-      obPosition.setAttribute("attribute", "positionend");
-
-      aNode.appendChild(obChecked);
-      aNode.appendChild(obPosition);
+      if (lazy.sidebarRevampEnabled) {
+        const { SidebarController } = aNode.ownerGlobal;
+        SidebarController.updateToolbarButton(aNode);
+        aNode.setAttribute("overflows", "false");
+      } else {
+        // Add an observer so the button is checked while the sidebar is open
+        let doc = aNode.ownerDocument;
+        let obChecked = doc.createXULElement("observes");
+        obChecked.setAttribute("element", "sidebar-box");
+        obChecked.setAttribute("attribute", "checked");
+        let obPosition = doc.createXULElement("observes");
+        obPosition.setAttribute("element", "sidebar-box");
+        obPosition.setAttribute("attribute", "positionend");
+        aNode.appendChild(obChecked);
+        aNode.appendChild(obPosition);
+      }
     },
   },
   {
@@ -461,7 +472,7 @@ export const CustomizableWidgets = [
     l10nId: "toolbar-button-logins",
     onCommand(aEvent) {
       let window = aEvent.view;
-      lazy.LoginHelper.openPasswordManager(window, { entryPoint: "toolbar" });
+      lazy.LoginHelper.openPasswordManager(window, { entryPoint: "Toolbar" });
     },
   },
 ];
@@ -550,7 +561,7 @@ if (!lazy.screenshotsDisabled) {
         Services.obs.notifyObservers(
           aEvent.currentTarget.ownerGlobal,
           "menuitem-screenshot",
-          "toolbar_button"
+          "ToolbarButton"
         );
       } else {
         Services.obs.notifyObservers(

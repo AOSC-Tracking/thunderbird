@@ -34,7 +34,7 @@
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/Preferences.h"
 #include "nsNetUtil.h"
-#include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/glean/NetwerkMetrics.h"
 
 #ifdef MOZ_BACKGROUNDTASKS
 #  include "mozilla/BackgroundTasksRunner.h"
@@ -1311,7 +1311,7 @@ nsresult CacheFileIOManager::OnProfile() {
   nsCOMPtr<nsIFile> profilelessDirectory;
   char* cachePath = getenv("CACHE_DIRECTORY");
   if (!directory && cachePath && *cachePath) {
-    rv = NS_NewNativeLocalFile(nsDependentCString(cachePath), true,
+    rv = NS_NewNativeLocalFile(nsDependentCString(cachePath),
                                getter_AddRefs(directory));
     if (NS_SUCCEEDED(rv)) {
       // Save this directory as the profileless path.
@@ -3314,7 +3314,7 @@ nsresult CacheFileIOManager::EvictByContextInternal(
       }
 
       // Filter by LoadContextInfo.
-      if (aLoadContextInfo && !info->Equals(aLoadContextInfo)) {
+      if (aLoadContextInfo && !info->EqualsIgnoringFPD(aLoadContextInfo)) {
         return false;
       }
 
@@ -3333,7 +3333,6 @@ nsresult CacheFileIOManager::EvictByContextInternal(
           return false;
         }
       }
-
       return true;
     }();
 

@@ -47,7 +47,7 @@ add_setup(function () {
   const account = MailServices.accounts.createAccount();
   account.incomingServer = MailServices.accounts.createIncomingServer(
     "nobody",
-    "Reply Addresses Testing",
+    "ReplyAddressesTesting",
     "pop3"
   );
 
@@ -75,8 +75,8 @@ add_setup(function () {
  * Helper to open a reply, check the fields are as expected, and close the
  * reply window.
  *
- * @param aReplyFunction which reply function to call
- * @param aExpectedFields the fields expected
+ * @param {Function} aReplyFunction - Which reply function to call.
+ * @param {object} aExpectedFields - The fields expected.
  */
 async function checkReply(aReplyFunction, aExpectedFields) {
   const rwc = await aReplyFunction();

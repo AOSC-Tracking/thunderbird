@@ -4,21 +4,26 @@
 
 package org.mozilla.fenix.components.toolbar
 
+import android.content.Context
 import androidx.coordinatorlayout.widget.CoordinatorLayout
 import io.mockk.confirmVerified
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
 import io.mockk.spyk
+import io.mockk.unmockkStatic
 import io.mockk.verify
 import mozilla.components.browser.toolbar.BrowserToolbar
 import mozilla.components.lib.publicsuffixlist.PublicSuffixList
 import mozilla.components.support.test.robolectric.testContext
 import mozilla.components.ui.widgets.behavior.EngineViewScrollingBehavior
+import org.junit.After
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mozilla.fenix.components.toolbar.navbar.shouldAddNavigationBar
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.helpers.FenixRobolectricTestRunner
@@ -37,6 +42,10 @@ class BrowserToolbarViewTest {
         toolbar = BrowserToolbar(testContext)
         toolbar.layoutParams = CoordinatorLayout.LayoutParams(100, 100)
 
+        mockkStatic(Context::shouldAddNavigationBar) {
+            every { testContext.shouldAddNavigationBar() } returns false
+        }
+
         settings = mockk(relaxed = true)
         every { testContext.components.useCases } returns mockk(relaxed = true)
         every { testContext.components.core } returns mockk(relaxed = true)
@@ -46,6 +55,7 @@ class BrowserToolbarViewTest {
             context = testContext,
             settings = settings,
             container = CoordinatorLayout(testContext),
+            snackbarParent = mockk(),
             interactor = mockk(),
             customTabSession = mockk(relaxed = true),
             lifecycleOwner = mockk(),
@@ -57,8 +67,13 @@ class BrowserToolbarViewTest {
         (toolbarView.layout.layoutParams as CoordinatorLayout.LayoutParams).behavior = behavior
     }
 
+    @After
+    fun tearDown() {
+        unmockkStatic(Context::shouldAddNavigationBar)
+    }
+
     @Test
-    fun `setToolbarBehavior(false) should setDynamicToolbarBehavior if no a11y, bottom toolbar is dynamic and the tab is not for a PWA or TWA`() {
+    fun `setToolbarBehavior(false) should setDynamicToolbarBehavior if no a11y and bottom toolbar is dynamic`() {
         val toolbarViewSpy = spyk(toolbarView)
         every { settings.toolbarPosition } returns ToolbarPosition.BOTTOM
         every { settings.isDynamicToolbarEnabled } returns true
@@ -84,7 +99,7 @@ class BrowserToolbarViewTest {
     }
 
     @Test
-    fun `setToolbarBehavior(false) should expandToolbarAndMakeItFixed if bottom toolbar is dynamic but the tab is for a PWA or TWA`() {
+    fun `setToolbarBehavior(false) should setDynamicToolbarBehavior if bottom toolbar is dynamic and the tab is for a PWA or TWA`() {
         val toolbarViewSpy = spyk(toolbarView)
         every { settings.toolbarPosition } returns ToolbarPosition.BOTTOM
         every { settings.isDynamicToolbarEnabled } returns true
@@ -93,11 +108,11 @@ class BrowserToolbarViewTest {
 
         toolbarViewSpy.setToolbarBehavior(false)
 
-        verify { toolbarViewSpy.expandToolbarAndMakeItFixed() }
+        verify { toolbarViewSpy.setDynamicToolbarBehavior(MozacToolbarPosition.BOTTOM) }
     }
 
     @Test
-    fun `setToolbarBehavior(false) should expandToolbarAndMakeItFixed if bottom toolbar is dynamic tab is not for a PWA or TWA but a11y is enabled`() {
+    fun `setToolbarBehavior(false) should expandToolbarAndMakeItFixed if bottom toolbar is dynamic and a11y is enabled`() {
         val toolbarViewSpy = spyk(toolbarView)
         every { settings.toolbarPosition } returns ToolbarPosition.BOTTOM
         every { settings.isDynamicToolbarEnabled } returns true
@@ -110,7 +125,7 @@ class BrowserToolbarViewTest {
     }
 
     @Test
-    fun `setToolbarBehavior(true) should expandToolbarAndMakeItFixed bottom toolbar is dynamic, the tab is not for a PWA or TWA and a11y is disabled`() {
+    fun `setToolbarBehavior(true) should expandToolbarAndMakeItFixed bottom toolbar is dynamic and a11y is disabled`() {
         // All intrinsic checks are met but the method was called with `shouldDisableScroll` = true
 
         val toolbarViewSpy = spyk(toolbarView)
@@ -138,7 +153,7 @@ class BrowserToolbarViewTest {
     }
 
     @Test
-    fun `setToolbarBehavior(true) should expandToolbarAndMakeItFixed if bottom toolbar is dynamic but the tab is for a PWA or TWA`() {
+    fun `setToolbarBehavior(true) should setDynamicToolbarBehavior if bottom toolbar is dynamic and the tab is for a PWA or TWA`() {
         val toolbarViewSpy = spyk(toolbarView)
         every { settings.toolbarPosition } returns ToolbarPosition.BOTTOM
         every { settings.isDynamicToolbarEnabled } returns true
@@ -147,11 +162,11 @@ class BrowserToolbarViewTest {
 
         toolbarViewSpy.setToolbarBehavior(false)
 
-        verify { toolbarViewSpy.expandToolbarAndMakeItFixed() }
+        verify { toolbarViewSpy.setDynamicToolbarBehavior(MozacToolbarPosition.BOTTOM) }
     }
 
     @Test
-    fun `setToolbarBehavior(true) should expandToolbarAndMakeItFixed if bottom toolbar is dynamic, the tab is for a PWA or TWA and a11 is enabled`() {
+    fun `setToolbarBehavior(true) should expandToolbarAndMakeItFixed if bottom toolbar is dynamic and and a11 is enabled`() {
         val toolbarViewSpy = spyk(toolbarView)
         every { settings.toolbarPosition } returns ToolbarPosition.BOTTOM
         every { settings.isDynamicToolbarEnabled } returns true
@@ -205,6 +220,20 @@ class BrowserToolbarViewTest {
         toolbarViewSpy.setToolbarBehavior(true)
 
         verify { toolbarViewSpy.expandToolbarAndMakeItFixed() }
+    }
+
+    @Test
+    fun `GIVEN the navigation bar should be shown WHEN setting the toolbar behavior THEN don't set a dynamic toolbar behavior`() {
+        val toolbarViewSpy = spyk(toolbarView)
+        every { settings.toolbarPosition } returns ToolbarPosition.BOTTOM
+        every { settings.shouldUseFixedTopToolbar } returns false
+        every { settings.isDynamicToolbarEnabled } returns true
+        every { testContext.shouldAddNavigationBar() } returns true
+
+        toolbarViewSpy.setToolbarBehavior(true)
+
+        verify(exactly = 0) { toolbarViewSpy.setDynamicToolbarBehavior(any()) }
+        assertNull((toolbarView.layout.layoutParams as CoordinatorLayout.LayoutParams).behavior)
     }
 
     @Test
@@ -283,5 +312,19 @@ class BrowserToolbarViewTest {
         toolbarViewSpy.collapse()
 
         verify { behavior.forceCollapse(toolbarView.layout) }
+    }
+
+    @Test
+    fun `enable scrolling is forwarded to the toolbar behavior`() {
+        toolbarView.enableScrolling()
+
+        verify { behavior.enableScrolling() }
+    }
+
+    @Test
+    fun `disable scrolling is forwarded to the toolbar behavior`() {
+        toolbarView.disableScrolling()
+
+        verify { behavior.disableScrolling() }
     }
 }

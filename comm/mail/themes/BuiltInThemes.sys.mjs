@@ -11,7 +11,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
 // List of themes built in to the browser. The themes are represented by objects
 // containing their id, current version, and path relative to
 // resource://builtin-themes/.
-const STANDARD_THEMES = new Map([
+const STANDARD_THEMES_DATA = [
   [
     "thunderbird-compact-light@mozilla.org",
     {
@@ -26,7 +26,9 @@ const STANDARD_THEMES = new Map([
       path: "dark/",
     },
   ],
-]);
+];
+
+const STANDARD_THEMES = new Map(STANDARD_THEMES_DATA);
 
 class _BuiltInThemes {
   constructor() {}
@@ -57,14 +59,14 @@ class _BuiltInThemes {
   }
 
   /**
-   * @param {string} id
+   * @param {string} _id
    *   The theme's id.
    * @returns {boolean}
-   *   True if the theme with id `id` is both expired and retained. That is,
+   *   True if the theme with id `_id` is both expired and retained. That is,
    *   the user has the ability to use it after its expiry date.
    *   Or it would - this is just a shim not to break assumptions...
    */
-  isRetainedExpiredTheme() {
+  isRetainedExpiredTheme(_id) {
     return false;
   }
 
@@ -82,7 +84,7 @@ class _BuiltInThemes {
       lazy.AddonManager.maybeInstallBuiltinAddon(
         activeThemeID,
         activeBuiltInTheme.version,
-        `resource://builtin-themes/${activeBuiltInTheme.path}`
+        activeBuiltInTheme.path
       );
     }
   }
@@ -103,6 +105,11 @@ class _BuiltInThemes {
     }
 
     await Promise.all(installPromises);
+  }
+
+  getBuiltInThemesDataMap() {
+    // Expose a clone of the internal data.
+    return new Map(STANDARD_THEMES_DATA);
   }
 }
 

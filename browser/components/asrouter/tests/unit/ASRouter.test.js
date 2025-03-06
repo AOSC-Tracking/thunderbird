@@ -14,7 +14,7 @@ import {
 } from "modules/ASRouterPreferences.sys.mjs";
 import { ASRouterTriggerListeners } from "modules/ASRouterTriggerListeners.sys.mjs";
 import { CFRPageActions } from "modules/CFRPageActions.sys.mjs";
-import { GlobalOverrider } from "test/unit/utils";
+import { GlobalOverrider } from "tests/unit/utils";
 import { PanelTestProvider } from "modules/PanelTestProvider.sys.mjs";
 import ProviderResponseSchema from "content-src/schemas/provider-response.schema.json";
 
@@ -237,7 +237,7 @@ describe("ASRouter", () => {
       return features;
     }, {});
     globals.set({
-      // Testing framework doesn't know how to `defineLazyModuleGetters` so we're
+      // Testing framework doesn't know how to `defineESModuleGetters` so we're
       // importing these modules into the global scope ourselves.
       GroupsConfigurationProvider: { getMessages: () => Promise.resolve([]) },
       ASRouterPreferences,
@@ -497,9 +497,9 @@ describe("ASRouter", () => {
       );
     });
     describe("lazily loading local test providers", () => {
-      afterEach(() => {
-        Router.uninit();
-      });
+      let justIdAndContent = ({ id, content }) => ({ id, content });
+      afterEach(() => Router.uninit());
+
       it("should add the local test providers on init if devtools are enabled", async () => {
         sandbox.stub(ASRouterPreferences, "devtoolsEnabled").get(() => true);
 
@@ -513,6 +513,38 @@ describe("ASRouter", () => {
         await createRouterAndInit();
 
         assert.notProperty(Router._localProviders, "PanelTestProvider");
+      });
+      it("should flatten experiment translated messages from local test providers if devtools are enabled...", async () => {
+        sandbox.stub(ASRouterPreferences, "devtoolsEnabled").get(() => true);
+
+        await createRouterAndInit();
+
+        assert.property(Router._localProviders, "PanelTestProvider");
+
+        expect(
+          Router.state.messages.map(justIdAndContent)
+        ).to.deep.include.members([
+          { id: "experimentL10n", content: { text: "UniqueText" } },
+        ]);
+      });
+      it("...but not if devtools are disabled", async () => {
+        sandbox.stub(ASRouterPreferences, "devtoolsEnabled").get(() => false);
+
+        await createRouterAndInit();
+
+        assert.notProperty(Router._localProviders, "PanelTestProvider");
+
+        let justIdAndContentMessages =
+          Router.state.messages.map(justIdAndContent);
+        expect(justIdAndContentMessages).not.to.deep.include.members([
+          { id: "experimentL10n", content: { text: "UniqueText" } },
+        ]);
+        expect(justIdAndContentMessages).to.deep.include.members([
+          {
+            id: "experimentL10n",
+            content: { text: { $l10n: { text: "UniqueText" } } },
+          },
+        ]);
       });
     });
   });
@@ -530,7 +562,7 @@ describe("ASRouter", () => {
         Router.onPrefChange
       );
     });
-    it("should send a AS_ROUTER_TARGETING_UPDATE message", async () => {
+    it("should call clearChildMessages (does nothing, see bug 1899028)", async () => {
       const messageTargeted = {
         id: "1",
         campaign: "foocampaign",
@@ -959,14 +991,13 @@ describe("ASRouter", () => {
         .rejects("fake error");
       await createRouterAndInit();
       assert.calledWith(initParams.dispatchCFRAction, {
+        type: "AS_ROUTER_TELEMETRY_USER_EVENT",
         data: {
           action: "asrouter_undesired_event",
+          message_id: "n/a",
           event: "ASR_RS_ERROR",
           event_context: "remotey-settingsy",
-          message_id: "n/a",
         },
-        meta: { from: "ActivityStream:Content", to: "ActivityStream:Main" },
-        type: "AS_ROUTER_TELEMETRY_USER_EVENT",
       });
     });
     it("should dispatch undesired event if RemoteSettings returns no messages", async () => {
@@ -974,14 +1005,13 @@ describe("ASRouter", () => {
         .stub(MessageLoaderUtils, "_getRemoteSettingsMessages")
         .resolves([]);
       assert.calledWith(initParams.dispatchCFRAction, {
+        type: "AS_ROUTER_TELEMETRY_USER_EVENT",
         data: {
           action: "asrouter_undesired_event",
+          message_id: "n/a",
           event: "ASR_RS_NO_MESSAGES",
           event_context: "remotey-settingsy",
-          message_id: "n/a",
         },
-        meta: { from: "ActivityStream:Content", to: "ActivityStream:Main" },
-        type: "AS_ROUTER_TELEMETRY_USER_EVENT",
       });
     });
     it("should download the attachment if RemoteSettings returns some messages", async () => {
@@ -1022,14 +1052,13 @@ describe("ASRouter", () => {
       await createRouterAndInit([provider]);
 
       assert.calledWith(initParams.dispatchCFRAction, {
+        type: "AS_ROUTER_TELEMETRY_USER_EVENT",
         data: {
           action: "asrouter_undesired_event",
+          message_id: "n/a",
           event: "ASR_RS_NO_MESSAGES",
           event_context: "ms-language-packs",
-          message_id: "n/a",
         },
-        meta: { from: "ActivityStream:Content", to: "ActivityStream:Main" },
-        type: "AS_ROUTER_TELEMETRY_USER_EVENT",
       });
     });
   });
@@ -1450,12 +1479,12 @@ describe("ASRouter", () => {
       assert.isEmpty(Router.state.messages.filter(Router.isUnblockedMessage));
     });
     it("should be able to add multiple items to the messageBlockList", async () => {
-      await await Router.blockMessageById(FAKE_BUNDLE.map(b => b.id));
+      await Router.blockMessageById(FAKE_BUNDLE.map(b => b.id));
       assert.isTrue(Router.state.messageBlockList.includes(FAKE_BUNDLE[0].id));
       assert.isTrue(Router.state.messageBlockList.includes(FAKE_BUNDLE[1].id));
     });
     it("should save the messageBlockList", async () => {
-      await await Router.blockMessageById(FAKE_BUNDLE.map(b => b.id));
+      await Router.blockMessageById(FAKE_BUNDLE.map(b => b.id));
       assert.calledWithExactly(Router._storage.set, "messageBlockList", [
         FAKE_BUNDLE[0].id,
         FAKE_BUNDLE[1].id,
@@ -1681,7 +1710,7 @@ describe("ASRouter", () => {
         },
       ];
       sandbox.stub(Router, "handleMessageRequest").resolves(messages);
-      sandbox.spy(Services.telemetry, "recordEvent");
+      sandbox.spy(Glean.messagingExperiments.reachCfr, "record");
 
       await Router.sendTriggerMessage({
         tabId: 0,
@@ -1689,7 +1718,7 @@ describe("ASRouter", () => {
         id: "foo",
       });
 
-      assert.calledTwice(Services.telemetry.recordEvent);
+      assert.calledTwice(Glean.messagingExperiments.reachCfr.record);
     });
     it("should not record the Reach event if it's already sent", async () => {
       let messages = [
@@ -1704,14 +1733,14 @@ describe("ASRouter", () => {
         },
       ];
       sandbox.stub(Router, "handleMessageRequest").resolves(messages);
-      sandbox.spy(Services.telemetry, "recordEvent");
+      sandbox.spy(Glean.messagingExperiments.reachCfr, "record");
 
       await Router.sendTriggerMessage({
         tabId: 0,
         browser: {},
         id: "foo",
       });
-      assert.notCalled(Services.telemetry.recordEvent);
+      assert.notCalled(Glean.messagingExperiments.reachCfr.record);
     });
     it("should record the Exposure event for each valid feature", async () => {
       ["cfr_doorhanger", "update_action", "infobar", "spotlight"].forEach(

@@ -1,3 +1,25 @@
+function promiseTabLoadEvent(tab, url) {
+  info("Wait tab event: load");
+
+  function handle(loadedUrl) {
+    if (loadedUrl === "about:blank" || (url && loadedUrl !== url)) {
+      info(`Skipping spurious load event for ${loadedUrl}`);
+      return false;
+    }
+
+    info("Tab event received: load");
+    return true;
+  }
+
+  let loaded = BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, handle);
+
+  if (url) {
+    BrowserTestUtils.startLoadingURIString(tab.linkedBrowser, url);
+  }
+
+  return loaded;
+}
+
 function updateTabContextMenu(tab) {
   let menu = document.getElementById("tabContextMenu");
   if (!tab) {
@@ -262,7 +284,8 @@ async function dragAndDrop(
   tab2,
   copy,
   destWindow = window,
-  afterTab = true
+  afterTab = true,
+  origWindow = window
 ) {
   let rect = tab2.getBoundingClientRect();
   let event = {
@@ -272,10 +295,10 @@ async function dragAndDrop(
     clientY: rect.top + rect.height / 2,
   };
 
-  if (destWindow != window) {
+  if (destWindow != origWindow) {
     // Make sure that both tab1 and tab2 are visible
-    window.focus();
-    window.moveTo(rect.left, rect.top + rect.height * 3);
+    origWindow.focus();
+    origWindow.moveTo(rect.left, rect.top + rect.height * 3);
   }
 
   let originalTPos = tab1._tPos;
@@ -284,18 +307,17 @@ async function dragAndDrop(
     tab2,
     null,
     copy ? "copy" : "move",
-    window,
+    origWindow,
     destWindow,
     event
   );
   // Ensure dnd suppression is cleared.
   EventUtils.synthesizeMouseAtCenter(tab2, { type: "mouseup" }, destWindow);
-  if (!copy && destWindow == window) {
-    await BrowserTestUtils.waitForCondition(
-      () => tab1._tPos != originalTPos,
-      "Waiting for tab position to be updated"
-    );
-  } else if (destWindow != window) {
+  if (!copy && destWindow == origWindow) {
+    await BrowserTestUtils.waitForCondition(() => {
+      return tab1._tPos != originalTPos;
+    }, "Waiting for tab position to be updated");
+  } else if (destWindow != origWindow) {
     await BrowserTestUtils.waitForCondition(
       () => tab1.closing,
       "Waiting for tab closing"
@@ -561,4 +583,21 @@ function httpURL(filename, host = "https://example.com/") {
 
 function loadTestSubscript(filePath) {
   Services.scriptloader.loadSubScript(new URL(filePath, gTestPath).href, this);
+}
+
+/**
+ * Removes a tab group (along with its tabs). Resolves when the tab group
+ * is gone.
+ *
+ * @param {MozTabbrowserTabGroup} group
+ * @returns {Promise<void>}
+ */
+async function removeTabGroup(group) {
+  if (!group.parentNode) {
+    ok(false, "group was already removed");
+    return;
+  }
+  let removePromise = BrowserTestUtils.waitForEvent(group, "TabGroupRemoved");
+  group.ownerGlobal.gBrowser.removeTabGroup(group, { animate: false });
+  await removePromise;
 }

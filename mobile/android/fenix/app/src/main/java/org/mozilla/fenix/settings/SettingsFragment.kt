@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
+import android.view.View
 import android.widget.Toast
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AlertDialog
@@ -23,6 +24,7 @@ import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavDirections
 import androidx.navigation.findNavController
+import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
@@ -37,9 +39,10 @@ import mozilla.components.concept.sync.AuthType
 import mozilla.components.concept.sync.OAuthAccount
 import mozilla.components.concept.sync.Profile
 import mozilla.components.feature.addons.ui.AddonFilePicker
-import mozilla.components.service.glean.private.NoExtras
+import mozilla.components.support.base.feature.ViewBoundFeatureWrapper
 import mozilla.components.support.ktx.android.view.showKeyboard
 import mozilla.components.ui.widgets.withCenterAlignedButtons
+import mozilla.telemetry.glean.private.NoExtras
 import org.mozilla.fenix.BrowserDirection
 import org.mozilla.fenix.Config
 import org.mozilla.fenix.FeatureFlags
@@ -63,6 +66,8 @@ import org.mozilla.fenix.ext.showToolbar
 import org.mozilla.fenix.nimbus.FxNimbus
 import org.mozilla.fenix.perf.ProfilerViewModel
 import org.mozilla.fenix.settings.account.AccountUiView
+import org.mozilla.fenix.snackbar.FenixSnackbarDelegate
+import org.mozilla.fenix.snackbar.SnackbarBinding
 import org.mozilla.fenix.utils.Settings
 import kotlin.system.exitProcess
 import org.mozilla.fenix.GleanMetrics.Settings as SettingsMetrics
@@ -74,6 +79,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
     private lateinit var accountUiView: AccountUiView
     private lateinit var addonFilePicker: AddonFilePicker
     private val profilerViewModel: ProfilerViewModel by activityViewModels()
+    private val snackbarBinding = ViewBoundFeatureWrapper<SnackbarBinding>()
 
     @VisibleForTesting
     internal val accountObserver = object : AccountObserver {
@@ -124,22 +130,26 @@ class SettingsFragment : PreferenceFragmentCompat() {
             requireComponents.backgroundServices.accountManager.accountProfile(),
         )
 
-        val booleanPreferenceTelemetryAllowList = listOf(
-            requireContext().getString(R.string.pref_key_show_search_suggestions),
-            requireContext().getString(R.string.pref_key_remote_debugging),
-            requireContext().getString(R.string.pref_key_telemetry),
-            requireContext().getString(R.string.pref_key_tracking_protection),
-            requireContext().getString(R.string.pref_key_search_bookmarks),
-            requireContext().getString(R.string.pref_key_search_browsing_history),
-            requireContext().getString(R.string.pref_key_show_clipboard_suggestions),
-            requireContext().getString(R.string.pref_key_show_search_engine_shortcuts),
-            requireContext().getString(R.string.pref_key_open_links_in_a_private_tab),
-            requireContext().getString(R.string.pref_key_sync_logins),
-            requireContext().getString(R.string.pref_key_sync_bookmarks),
-            requireContext().getString(R.string.pref_key_sync_history),
-            requireContext().getString(R.string.pref_key_show_voice_search),
-            requireContext().getString(R.string.pref_key_show_search_suggestions_in_private),
-        )
+        val booleanPreferenceTelemetryAllowList = with(requireContext()) {
+            listOf(
+                getString(R.string.pref_key_show_search_suggestions),
+                getString(R.string.pref_key_remote_debugging),
+                getString(R.string.pref_key_telemetry),
+                getString(R.string.pref_key_marketing_telemetry),
+                getString(R.string.pref_key_learn_about_marketing_telemetry),
+                getString(R.string.pref_key_tracking_protection),
+                getString(R.string.pref_key_search_bookmarks),
+                getString(R.string.pref_key_search_browsing_history),
+                getString(R.string.pref_key_show_clipboard_suggestions),
+                getString(R.string.pref_key_show_search_engine_shortcuts),
+                getString(R.string.pref_key_open_links_in_a_private_tab),
+                getString(R.string.pref_key_sync_logins),
+                getString(R.string.pref_key_sync_bookmarks),
+                getString(R.string.pref_key_sync_history),
+                getString(R.string.pref_key_show_voice_search),
+                getString(R.string.pref_key_show_search_suggestions_in_private),
+            )
+        }
 
         preferenceManager?.sharedPreferences
             ?.registerOnSharedPreferenceChangeListener(this) { sharedPreferences, key ->
@@ -162,11 +172,29 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
         findPreference<Preference>(
             getPreferenceKey(R.string.pref_key_translation),
-        )?.isVisible = FxNimbus.features.translations.value().globalSettingsEnabled
+        )?.isVisible = FxNimbus.features.translations.value().globalSettingsEnabled &&
+            requireContext().components.core.store.state.translationEngine.isEngineSupported == true
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.preferences, rootKey)
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        snackbarBinding.set(
+            feature = SnackbarBinding(
+                context = requireContext(),
+                browserStore = requireContext().components.core.store,
+                appStore = requireContext().components.appStore,
+                snackbarDelegate = FenixSnackbarDelegate(view),
+                navController = findNavController(),
+                sendTabUseCases = null,
+                customTabSessionId = null,
+            ),
+            owner = this,
+            view = view,
+        )
     }
 
     @SuppressLint("RestrictedApi")
@@ -362,7 +390,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
             /* Advanced preferences */
             resources.getString(R.string.pref_key_addons) -> {
-                Addons.openAddonsInSettings.record(mozilla.components.service.glean.private.NoExtras())
+                Addons.openAddonsInSettings.record(NoExtras())
                 SettingsFragmentDirections.actionSettingsFragmentToAddonsFragment()
             }
 
@@ -737,10 +765,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
     @VisibleForTesting
     internal fun setupInstallAddonFromFilePreference(settings: Settings) {
         with(requirePreference<Preference>(R.string.pref_key_install_local_addon)) {
-            // Below Android 10, the OS doesn't seem to recognize
-            // the "application/x-xpinstall" mime type (for XPI files).
-            isVisible =
-                settings.showSecretDebugMenuThisSession && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+            isVisible = settings.showSecretDebugMenuThisSession
         }
     }
 

@@ -43,6 +43,7 @@ ChromeUtils.defineESModuleGetters(this, {
   FolderPaneUtils: "resource:///modules/FolderPaneUtils.sys.mjs",
   FolderTreeProperties: "resource:///modules/FolderTreeProperties.sys.mjs",
   FolderUtils: "resource:///modules/FolderUtils.sys.mjs",
+  Gloda: "resource:///modules/gloda/GlodaPublic.sys.mjs",
   MailE10SUtils: "resource:///modules/MailE10SUtils.sys.mjs",
   MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
@@ -93,6 +94,22 @@ var multiMessageBrowser;
 var accountCentralBrowser;
 
 /**
+ * HTML body element handling the general layout of the about3pane.
+ */
+var paneLayout;
+
+/**
+ * HTML element handling the swap between message, multimessage, and browser
+ * XUL views.
+ */
+var messagePane;
+
+/**
+ * A Promise with resolvers, indicating if DOMContentLoaded has finished.
+ */
+var hasDOMContentLoaded = Promise.withResolvers();
+
+/**
  * This is called at midnight to have messages grouped by their relative date
  * (such as today, yesterday, etc.) correctly categorized.
  */
@@ -124,6 +141,8 @@ window.addEventListener("DOMContentLoaded", async event => {
   }
 
   // Ensure all the necessary custom elements have been defined.
+  await customElements.whenDefined("pane-layout");
+  await customElements.whenDefined("message-pane");
   await customElements.whenDefined("tree-view-table-row");
   await customElements.whenDefined("folder-tree-row");
   await customElements.whenDefined("thread-row");
@@ -132,15 +151,30 @@ window.addEventListener("DOMContentLoaded", async event => {
   UIDensity.registerWindow(window);
   UIFontSize.registerWindow(window);
 
+  messagePane = document.getElementById("messagePane");
+  messagePane.addEventListener("request-count-update", threadPaneHeader);
+  messagePane.addEventListener("show-single-message", threadPane);
+
+  paneLayout = document.getElementById("paneLayout");
+  paneLayout.addEventListener("request-message-clear", messagePane);
+  paneLayout.addEventListener("request-message-selection", threadPane);
+
   folderTree = document.getElementById("folderTree");
   accountCentralBrowser = document.getElementById("accountCentralBrowser");
 
-  paneLayout.init();
   folderPaneContextMenu.init();
   await folderPane.init();
   await threadPane.init();
   threadPaneHeader.init();
-  await messagePane.init();
+  await messagePane.isReady();
+  webBrowser = messagePane.webBrowser;
+  messageBrowser = messagePane.messageBrowser;
+  multiMessageBrowser = messagePane.multiMessageBrowser;
+
+  // Attach the progress listener for the webBrowser. For the messageBrowser this
+  // happens in the "aboutMessageLoaded" event from aboutMessage.js.
+  // For the webBrowser, we can do it here directly.
+  top.contentProgress.addProgressListenerToBrowser(webBrowser);
 
   // Set up the initial state using information which may have been provided
   // by mailTabs.js, or the saved state from the XUL store, or the defaults.
@@ -164,16 +198,14 @@ window.addEventListener("DOMContentLoaded", async event => {
   await new Promise(resolve => setTimeout(resolve));
   folderTree.dispatchEvent(new CustomEvent("select"));
 
-  // Attach the progress listener for the webBrowser. For the messageBrowser this
-  // happens in the "aboutMessageLoaded" event from aboutMessage.js.
-  // For the webBrowser, we can do it here directly.
-  top.contentProgress.addProgressListenerToBrowser(webBrowser);
-
   mailContextMenu.init();
 
   CalMetronome.on("day", refreshGroupedBySortView);
 
   updateZoomCommands();
+
+  // Update the state of the about:3pane being fully loaded.
+  hasDOMContentLoaded.resolve();
 });
 
 window.addEventListener("unload", () => {
@@ -185,96 +217,6 @@ window.addEventListener("unload", () => {
   threadPaneHeader.uninit();
 });
 
-var paneLayout = {
-  init() {
-    this.folderPaneSplitter = document.getElementById("folderPaneSplitter");
-    this.messagePaneSplitter = document.getElementById("messagePaneSplitter");
-
-    for (const [splitter, properties, storeID] of [
-      [this.folderPaneSplitter, ["width"], "folderPaneBox"],
-      [this.messagePaneSplitter, ["height", "width"], "messagepaneboxwrapper"],
-    ]) {
-      for (const property of properties) {
-        const value = XULStoreUtils.getValue("messenger", storeID, property);
-        if (value) {
-          splitter[property] = value;
-        }
-      }
-
-      splitter.storeAttr = function (attrName, attrValue) {
-        XULStoreUtils.setValue("messenger", storeID, attrName, attrValue);
-      };
-
-      splitter.addEventListener("splitter-resized", () => {
-        if (splitter.resizeDirection == "vertical") {
-          splitter.storeAttr("height", splitter.height);
-        } else {
-          splitter.storeAttr("width", splitter.width);
-        }
-      });
-    }
-
-    this.messagePaneSplitter.addEventListener("splitter-collapsed", () => {
-      // Clear any loaded page or messages.
-      messagePane.clearAll();
-      this.messagePaneSplitter.storeAttr("collapsed", true);
-    });
-
-    this.messagePaneSplitter.addEventListener("splitter-expanded", () => {
-      // Load the selected messages.
-      threadTree.dispatchEvent(new CustomEvent("select"));
-      this.messagePaneSplitter.storeAttr("collapsed", false);
-    });
-
-    XPCOMUtils.defineLazyPreferenceGetter(
-      this,
-      "layoutPreference",
-      "mail.pane_config.dynamic",
-      null,
-      (name, oldValue, newValue) => this.setLayout(newValue)
-    );
-    this.setLayout(this.layoutPreference);
-  },
-
-  setLayout(preference) {
-    document.body.classList.remove(
-      "layout-classic",
-      "layout-vertical",
-      "layout-wide"
-    );
-    switch (preference) {
-      case 1:
-        document.body.classList.add("layout-wide");
-        this.messagePaneSplitter.resizeDirection = "vertical";
-        break;
-      case 2:
-        document.body.classList.add("layout-vertical");
-        this.messagePaneSplitter.resizeDirection = "horizontal";
-        break;
-      default:
-        document.body.classList.add("layout-classic");
-        this.messagePaneSplitter.resizeDirection = "vertical";
-        break;
-    }
-  },
-
-  get accountCentralVisible() {
-    return document.body.classList.contains("account-central");
-  },
-  get folderPaneVisible() {
-    return !this.folderPaneSplitter.isCollapsed;
-  },
-  set folderPaneVisible(visible) {
-    this.folderPaneSplitter.isCollapsed = !visible;
-  },
-  get messagePaneVisible() {
-    return !this.messagePaneSplitter?.isCollapsed;
-  },
-  set messagePaneVisible(visible) {
-    this.messagePaneSplitter.isCollapsed = !visible;
-  },
-};
-
 var folderPaneContextMenu = {
   /**
    * @type {XULPopupElement}
@@ -284,7 +226,7 @@ var folderPaneContextMenu = {
   /**
    * Commands handled by commandController.
    *
-   * @type {Object.<string, string>}
+   * @type {object} - An object {Object.<string, string>}
    */
   _commands: {
     "folderPaneContext-new": "cmd_newFolder",
@@ -299,7 +241,7 @@ var folderPaneContextMenu = {
    * Current state of commandController commands. Set to null to invalidate
    * the states.
    *
-   * @type {Object.<string, boolean>|null}
+   * @type {object} - An object {Object.<string, boolean>|null}
    */
   _commandStates: null,
 
@@ -379,8 +321,10 @@ var folderPaneContextMenu = {
    * @returns {boolean}
    */
   getCommandState(command) {
-    const folder = this.activeFolder;
-    if (!folder || FolderUtils.isSmartTagsFolder(folder)) {
+    if (
+      !this.activeFolder ||
+      FolderUtils.isSmartTagsFolder(this.activeFolder)
+    ) {
       return false;
     }
 
@@ -462,15 +406,16 @@ var folderPaneContextMenu = {
           isServer,
           server,
           URI,
-        } = folder);
-        isCompactEnabled = folder.isCommandEnabled("cmd_compactFolder");
+        } = this.activeFolder);
+        isCompactEnabled =
+          this.activeFolder.isCommandEnabled("cmd_compactFolder");
         isNNTP = server.type == "nntp";
         isJunk = flags & Ci.nsMsgFolderFlags.Junk;
         isVirtual = flags & Ci.nsMsgFolderFlags.Virtual;
         isInbox = flags & Ci.nsMsgFolderFlags.Inbox;
         isSpecialUse = flags & Ci.nsMsgFolderFlags.SpecialUse;
         canRenameDeleteJunkMail = FolderUtils.canRenameDeleteJunkMail(URI);
-        isSmartTagsFolder = FolderUtils.isSmartTagsFolder(folder);
+        isSmartTagsFolder = FolderUtils.isSmartTagsFolder(this.activeFolder);
       }
 
       if (isNNTP && !isServer) {
@@ -676,6 +621,7 @@ var folderPaneContextMenu = {
     this._showMenuItem("folderPaneContext-markAllFoldersRead", isServer);
 
     this._showMenuItem("folderPaneContext-settings", isServer);
+    this._showMenuItem("folderPaneContext-filters", isServer);
 
     this._showMenuItem("folderPaneContext-manageTags", isSmartTagsFolder);
 
@@ -745,6 +691,7 @@ var folderPaneContextMenu = {
     this._showMenuItem("folderPaneContext-sendUnsentMessages", false);
     this._showMenuItem("folderPaneContext-markAllFoldersRead", false);
     this._showMenuItem("folderPaneContext-settings", false);
+    this._showMenuItem("folderPaneContext-filters", false);
     this._showMenuItem("folderPaneContext-manageTags", false);
 
     // Show only the standard commands that don't require special conditions.
@@ -932,6 +879,9 @@ var folderPaneContextMenu = {
       case "folderPaneContext-settings":
         folderPane.editFolder(folder);
         break;
+      case "folderPaneContext-filters":
+        topChromeWindow.MsgFilters(undefined, folder);
+        break;
       case "folderPaneContext-manageTags":
         goDoCommand("cmd_manageTags");
         break;
@@ -965,6 +915,7 @@ var folderPane = {
 
   /**
    * If the local folders should be hidden.
+   *
    * @type {boolean}
    */
   _hideLocalFolders: false,
@@ -1554,14 +1505,13 @@ var folderPane = {
         this._smartMailbox = SmartMailboxUtils.getSmartMailbox();
 
         for (const tag of MailServices.tags.getAllTags()) {
-          try {
-            const folder = this._smartMailbox.getTagFolder(tag);
-            this.containerList.appendChild(
-              folderPane._createTagRow(this.name, folder, tag)
-            );
-          } catch (ex) {
-            console.error(ex);
+          const folder = this._smartMailbox.getTagFolder(tag);
+          if (!folder) {
+            continue;
           }
+          this.containerList.appendChild(
+            folderPane._createTagRow(this.name, folder, tag)
+          );
         }
         MailServices.accounts.saveVirtualFolders();
       },
@@ -1584,6 +1534,10 @@ var folderPane = {
 
         const tag = MailServices.tags.getAllTags().find(t => t.key == key);
         const folder = this._smartMailbox.getTagFolder(tag);
+        if (!folder) {
+          return;
+        }
+
         const row = folderPane.getRowForFolder(folder);
         folder.prettyName = tag.tag;
         if (row) {
@@ -1600,6 +1554,7 @@ var folderPane = {
 
   /**
    * Initialize the folder pane if needed.
+   *
    * @returns {Promise<void>} when the folder pane is initialized.
    */
   async init() {
@@ -1831,7 +1786,7 @@ var folderPane = {
   /**
    * Reload the folder tree when the option changes.
    *
-   * @param {boolean} - True if local folders should be hidden.
+   * @param {boolean} value - True if local folders should be hidden.
    */
   set hideLocalFolders(value) {
     if (value == this._hideLocalFolders) {
@@ -1902,6 +1857,7 @@ var folderPane = {
   /**
    * Ensures all the folder pane mode context menuitems in the folder
    * pane mode context menu are checked to reflect the current compact mode.
+   *
    * @param {Event} event - The DOMEvent.
    */
   onFolderPaneModeContextOpening(event) {
@@ -1957,9 +1913,9 @@ var folderPane = {
   /**
    * Moves active folder mode up
    *
-   * @param {Event} event - The DOMEvent.
+   * @param {Event} _event - The DOMEvent.
    */
-  moveFolderModeUp() {
+  moveFolderModeUp(_event) {
     const currentModes = this.activeModes;
     const mode = this.mode;
     const index = currentModes.indexOf(mode);
@@ -1975,9 +1931,9 @@ var folderPane = {
   /**
    * Moves active folder mode down
    *
-   * @param {Event} event - The DOMEvent.
+   * @param {Event} _event - The DOMEvent.
    */
-  moveFolderModeDown() {
+  moveFolderModeDown(_event) {
     const currentModes = this.activeModes;
     const mode = this.mode;
     const index = currentModes.indexOf(mode);
@@ -2156,6 +2112,18 @@ var folderPane = {
       }
       mode.initServer(account.incomingServer);
     }
+
+    if (mode.name == "favorite") {
+      // Add favorite unified folders as well.
+      const smartServer = MailServices.accounts.findServer(
+        "nobody",
+        "smart mailboxes",
+        "none"
+      );
+      if (smartServer) {
+        mode.initServer(smartServer);
+      }
+    }
   },
 
   /**
@@ -2302,7 +2270,7 @@ var folderPane = {
    * @param {string} modeName - The name of the mode this row belongs to.
    * @param {folderFilterCallback} [filterFunction] - Optional callback to stop
    *   ascending.
-   * @param {boolean=false} childAlreadyGone - Is this function being called
+   * @param {boolean} [childAlreadyGone=false] - Is this function being called
    *   to remove the parent of a row that's already been removed?
    */
   _removeFolderAndAncestors(
@@ -2631,7 +2599,6 @@ var folderPane = {
    * Called when a folder's total count changes, to update the UI.
    *
    * @param {nsIMsgFolder} folder
-   * @param {integer} newValue
    */
   changeTotalCount(folder) {
     this._changeRows(folder, row => {
@@ -2709,7 +2676,6 @@ var folderPane = {
       }
 
       gViewWrapper?.close();
-      messagePane.hideCurrentFindBar();
       gFolder = gDBView = gViewWrapper = threadTree.view = null;
       threadPaneHeader.onFolderSelected();
       this._updateStatusQuota();
@@ -2733,9 +2699,6 @@ var folderPane = {
     // Clean up any existing view wrapper. This will invalidate the thread tree.
     gViewWrapper?.close();
 
-    // Hide any currently visible findbar.
-    messagePane.hideCurrentFindBar();
-
     if (gFolder.isServer) {
       document.title = gFolder.server.prettyName;
       gViewWrapper = gDBView = threadTree.view = null;
@@ -2753,7 +2716,6 @@ var folderPane = {
       document.body.classList.remove("account-central");
       accountCentralBrowser.hidden = true;
 
-      quickFilterBar.activeElement = null;
       threadPane.restoreColumns();
 
       gViewWrapper = new DBViewWrapper(dbViewWrapperListener);
@@ -2983,17 +2945,17 @@ var folderPane = {
   },
 
   _onDragStart(event) {
-    const row = event.target.closest(`li[is="folder-tree-row"]`);
-    if (!row) {
+    const draggedRow = event.target.closest(`li[is="folder-tree-row"]`);
+    if (!draggedRow) {
       event.preventDefault();
       return;
     }
 
     // If the currently dragged row is not part of the selection map, use it
     // instead of the current selection entries.
-    const rows = folderTree.selection.has(folderTree.rows.indexOf(row))
+    const rows = folderTree.selection.has(folderTree.rows.indexOf(draggedRow))
       ? folderTree.selection.values()
-      : [row];
+      : [draggedRow];
 
     const folders = [];
     let hasServer = false;
@@ -3377,13 +3339,11 @@ var folderPane = {
    * Opens the dialog to create a new sub-folder, and creates it if the user
    * accepts.
    *
-   * @param {?nsIMsgFolder} aParent - The parent for the new subfolder.
+   * @param {nsIMsgFolder} folder - The parent for the new subfolder.
    */
-  newFolder(aParent) {
-    let folder = aParent;
-
+  newFolder(folder) {
     // Make sure we actually can create subfolders.
-    if (!folder?.canCreateSubfolders) {
+    if (!folder.canCreateSubfolders) {
       // Check if we can create them at the root, otherwise use the default
       // account as root folder.
       const rootMsgFolder = folder.server.rootMsgFolder;
@@ -3392,33 +3352,59 @@ var folderPane = {
         : top.GetDefaultAccountRootFolder();
     }
 
-    if (!folder) {
-      return;
-    }
-
     let dualUseFolders = true;
     if (folder.server instanceof Ci.nsIImapIncomingServer) {
       dualUseFolders = folder.server.dualUseFolders;
     }
 
-    function newFolderCallback(aName, aFolder) {
-      // createSubfolder can throw an exception, causing the newFolder dialog
-      // to not close and wait for another input.
+    /**
+     * Callback executed when the user selects OK in the create folder dialog.
+     *
+     * @param {string} subfolderName
+     * @param {nsIMsgFolder} parentFolder
+     */
+    const newFolderOkCallback = async (subfolderName, parentFolder) => {
       // TODO: Rewrite this logic and also move the opening of alert dialogs from
       // nsMsgLocalMailFolder::CreateSubfolderInternal to here (bug 831190#c16).
-      if (!aName) {
+      if (!subfolderName) {
         return;
       }
-      aFolder.createSubfolder(aName, top.msgWindow);
-      // Don't call the rebuildAfterChange() here as we'll need to wait for the
-      // new folder to be properly created before rebuilding the tree.
-    }
+
+      const promiseNewFolder = new Promise(resolve => {
+        const listener = {
+          folderAdded: addedFolder => {
+            if (addedFolder.name == subfolderName) {
+              MailServices.mfn.removeListener(listener);
+              resolve(addedFolder);
+            }
+          },
+        };
+        MailServices.mfn.addListener(
+          listener,
+          Ci.nsIMsgFolderNotificationService.folderAdded
+        );
+      });
+      parentFolder.createSubfolder(subfolderName, top.msgWindow);
+      if (!parentFolder.isServer) {
+        // Inherit view/sort/columns from parent folder.
+        const newFolder = await promiseNewFolder;
+        const parentInfo = parentFolder.msgDatabase.dBFolderInfo;
+        const newInfo = newFolder.msgDatabase.dBFolderInfo;
+        newInfo.viewFlags = parentInfo.viewFlags;
+        newInfo.sortType = parentInfo.sortType;
+        newInfo.sortOrder = parentInfo.sortOrder;
+        newInfo.setCharProperty(
+          "columnStates",
+          parentInfo.getCharProperty("columnStates")
+        );
+      }
+    };
 
     window.openDialog(
       "chrome://messenger/content/newFolderDialog.xhtml",
       "",
       "chrome,modal,resizable=no,centerscreen",
-      { folder, dualUseFolders, okCallback: newFolderCallback }
+      { folder, dualUseFolders, okCallback: newFolderOkCallback }
     );
   },
 
@@ -3510,8 +3496,8 @@ var folderPane = {
    * Opens the dialog to rename a particular folder, and does the renaming if
    * the user clicks OK in that dialog
    *
-   * @param [aFolder] - The folder to rename, if different than the currently
-   *   selected one.
+   * @param {nsIMsgFolder} [aFolder] - The folder to rename, if different than
+   *   the currently selected one.
    */
   renameFolder(aFolder) {
     const folder = aFolder;
@@ -3540,7 +3526,7 @@ var folderPane = {
    * Deletes a folder from its parent. Also handles unsubscribe from newsgroups
    * if the selected folder/s happen to be nntp.
    *
-   * @param {nsIMsgFolder} - The folder to delete.
+   * @param {nsIMsgFolder} folder - The folder to delete.
    */
   deleteFolder(folder) {
     // For newsgroups, "delete" means "unsubscribe".
@@ -3608,8 +3594,8 @@ var folderPane = {
    * Prompts the user to confirm and empties the trash for the selected folder.
    * The folder and its children are only emptied if it has the proper Trash flag.
    *
-   * @param [aFolder] - The trash folder to empty. If unspecified or not a trash
-   *   folder, the currently selected server's trash folder is used.
+   * @param {nsIMsgFolder} [aFolder] - The trash folder to empty. If unspecified
+   *   or not a trash folder, the currently selected server's trash folder is used.
    */
   emptyTrash(aFolder) {
     let folder = aFolder;
@@ -3704,9 +3690,10 @@ var folderPane = {
   /**
    * Opens the dialog to create a new virtual folder
    *
-   * @param aName - The default name for the new folder.
-   * @param aSearchTerms - The search terms associated with the folder.
-   * @param aParent - The folder to run the search terms on.
+   * @param {string} aName - The default name for the new folder.
+   * @param {nsIMsgSearchTerm[]} aSearchTerms - The search terms associated
+   *   with the folder.
+   * @param {nsIMsgFolder} aParent - The folder to run the search terms on.
    */
   newVirtualFolder(aName, aSearchTerms, aParent) {
     const folder = aParent || top.GetDefaultAccountRootFolder();
@@ -3731,6 +3718,9 @@ var folderPane = {
     );
   },
 
+  /**
+   * @param {nsIMsgFolder} aFolder
+   */
   editVirtualFolder(aFolder) {
     const folder = aFolder;
 
@@ -3756,8 +3746,8 @@ var folderPane = {
    * Prompts for confirmation, if the user hasn't already chosen the "don't ask
    * again" option.
    *
-   * @param aCommand - The command to prompt for.
-   * @param aFolder - The folder for which the confirmation is requested.
+   * @param {string} aCommand - The command to prompt for.
+   * @param {nsIMsgFolder} aFolder - The folder for which the confirmation is requested.
    */
   _checkConfirmationPrompt(aCommand, aFolder) {
     // If no folder was specified, reject the operation.
@@ -3982,31 +3972,37 @@ var folderPane = {
 var threadPaneHeader = {
   /**
    * The header bar element.
+   *
    * @type {?HTMLElement}
    */
   bar: null,
   /**
    * The h2 element receiving the folder name.
+   *
    * @type {?HTMLHeadElement}
    */
   folderName: null,
   /**
    * The span element receiving the message count.
+   *
    * @type {?HTMLSpanElement}
    */
   folderCount: null,
   /**
    * The quick filter toolbar toggle button.
+   *
    * @type {?HTMLButtonElement}
    */
   filterButton: null,
   /**
    * The display options button opening the popup.
+   *
    * @type {?HTMLButtonElement}
    */
   displayButton: null,
   /**
    * If the header area is hidden.
+   *
    * @type {boolean}
    */
   isHidden: false,
@@ -4044,6 +4040,9 @@ var threadPaneHeader = {
     switch (event.type) {
       case "qfbtoggle":
         this.onQuickFilterToggle();
+        break;
+      case "request-count-update":
+        this.updateSelectedCount();
         break;
     }
   },
@@ -4256,15 +4255,22 @@ var threadPane = {
 
     this.setUpTagStyles();
     Services.prefs.addObserver("mailnews.tags.", this);
+    Services.prefs.addObserver("mail.threadpane.table.horizontal_scroll", this);
 
     Services.obs.addObserver(this, "addrbook-displayname-changed");
     Services.obs.addObserver(this, "custom-column-added");
     Services.obs.addObserver(this, "custom-column-removed");
     Services.obs.addObserver(this, "custom-column-refreshed");
+    Services.obs.addObserver(this, "global-view-flags-changed");
 
     threadTree = document.getElementById("threadTree");
     this.treeTable = threadTree.table;
     this.treeTable.editable = true;
+    this.treeTable.isHorizontalScroll = Services.prefs.getBoolPref(
+      "mail.threadpane.table.horizontal_scroll",
+      false
+    );
+
     this.treeTable.setPopupMenuTemplates([
       "threadPaneApplyColumnMenu",
       "threadPaneApplyViewMenu",
@@ -4368,15 +4374,26 @@ var threadPane = {
 
   uninit() {
     Services.prefs.removeObserver("mailnews.tags.", this);
+    Services.prefs.removeObserver(
+      "mail.threadpane.table.horizontal_scroll",
+      this
+    );
     Services.obs.removeObserver(this, "addrbook-displayname-changed");
     Services.obs.removeObserver(this, "custom-column-added");
     Services.obs.removeObserver(this, "custom-column-removed");
     Services.obs.removeObserver(this, "custom-column-refreshed");
+    Services.obs.removeObserver(this, "global-view-flags-changed");
   },
 
   handleEvent(event) {
     const notOnEmptySpace = event.target !== threadTree;
     switch (event.type) {
+      case "show-single-message":
+        threadTree.selectedIndices = event.detail.messages;
+        break;
+      case "request-message-selection":
+        threadTree.dispatchEvent(new CustomEvent("select"));
+        break;
       case "click":
         if (notOnEmptySpace && event.target.closest(".tree-button-more")) {
           this._onContextMenu(event);
@@ -4442,17 +4459,34 @@ var threadPane = {
   observe(subject, topic, data) {
     switch (topic) {
       case "nsPref:changed":
-        this.setUpTagStyles();
+        if (data == "mail.threadpane.table.horizontal_scroll") {
+          this.treeTable.isHorizontalScroll = Services.prefs.getBoolPref(
+            "mail.threadpane.table.horizontal_scroll",
+            false
+          );
+          // Only call a columns refresh if a folder is selected. We can skip
+          // this since we already set the isHorizontalScroll variable and it
+          // will be used next time the user selects a folder.
+          if (gFolder) {
+            this.treeTable.updateColumns(this.columns);
+          }
+        } else if (data.startsWith("mailnews.tags.")) {
+          this.setUpTagStyles();
+        }
         break;
       case "addrbook-displayname-changed":
-        // This runs the when mail.displayname.version preference observer is
-        // notified/the mail.displayname.version number has been updated.
-        threadTree.invalidate();
-        break;
       case "custom-column-refreshed":
-        // Invalidate the whole thing. This used to refresh just the column,
+      case "global-view-flags-changed":
+        // addrbook-displayname-changed: This runs when mail.displayname.version
+        // preference observer is notified or the number of the
+        // mail.displayname.version preference has been updated.
+        // custom-column-refreshed: This used to refresh just the column,
         // but now that filling the cells happens asynchronously, that's too
-        // complicated. Kept for add-on compatibility.
+        // complicated, so it's better to invalidate the whole thing. Kept for
+        // add-on compatibility.
+        // global-view-flags-changed: Threading and sorting might have changed
+        // for the currently visible folder. Let's invalidate the tree to avoid
+        // showing a stale thread view.
         threadTree.invalidate();
         break;
       case "custom-column-added":
@@ -4517,7 +4551,7 @@ var threadPane = {
     }
 
     if ((event.key == "Backspace" || event.key == "Delete") && event.repeat) {
-      // Bail on delete event if there is a repeat event to prevent deleteing
+      // Bail on delete event if there is a repeat event to prevent deleting
       // multiple messages by mistake from a longer key press.
       event.preventDefault();
       return;
@@ -4567,39 +4601,38 @@ var threadPane = {
    * Handle threadPane select events.
    */
   _onSelect() {
-    if (!paneLayout.messagePaneVisible.isCollapsed && gDBView) {
-      messagePane.clearWebPage();
-      switch (gDBView.numSelected) {
-        case 0:
-          messagePane.clearMessage();
-          messagePane.clearMessages();
-          threadPaneHeader.selectedCount.hidden = true;
+    if (paneLayout.messagePaneVisible.isCollapsed) {
+      updateZoomCommands();
+      return;
+    }
+
+    const numSelected = gDBView?.numSelected || 0;
+    switch (numSelected) {
+      case 0:
+        messagePane.displayMessage();
+        break;
+      case 1: {
+        if (
+          gDBView.getFlagsAt(threadTree.selectedIndex) & MSG_VIEW_FLAG_DUMMY
+        ) {
+          messagePane.displayMessage();
           break;
-        case 1:
-          if (
-            gDBView.getFlagsAt(threadTree.selectedIndex) & MSG_VIEW_FLAG_DUMMY
-          ) {
-            messagePane.clearMessage();
-            messagePane.clearMessages();
-            threadPaneHeader.selectedCount.hidden = true;
-          } else {
-            const uri = gDBView.getURIForViewIndex(threadTree.selectedIndex);
-            messagePane.displayMessage(uri);
-            threadPaneHeader.updateSelectedCount();
-          }
-          break;
-        default:
-          if (gViewWrapper.showGroupedBySort) {
-            const savedIndex = threadTree.currentIndex;
-            threadTree.selectedIndices
-              .filter(i => gViewWrapper.isExpandedGroupedByHeaderAtIndex(i))
-              .forEach(i => threadTree.toggleSelectionAtIndex(i, false, false));
-            threadTree.currentIndex = savedIndex;
-          }
-          messagePane.displayMessages(gDBView.getSelectedMsgHdrs());
-          threadPaneHeader.updateSelectedCount();
-          break;
+        }
+
+        const uri = gDBView.getURIForViewIndex(threadTree.selectedIndex);
+        messagePane.displayMessage(uri);
+        break;
       }
+      default:
+        if (gViewWrapper.showGroupedBySort) {
+          const savedIndex = threadTree.currentIndex;
+          threadTree.selectedIndices
+            .filter(i => gViewWrapper.isExpandedGroupedByHeaderAtIndex(i))
+            .forEach(i => threadTree.toggleSelectionAtIndex(i, false, false));
+          threadTree.currentIndex = savedIndex;
+        }
+        messagePane.displayMessages(gDBView.getSelectedMsgHdrs());
+        break;
     }
 
     updateZoomCommands();
@@ -4796,9 +4829,13 @@ var threadPane = {
       threadTree.scrollToIndex(threadTree.currentIndex, true);
       if (!row) {
         row = threadTree.getRowAtIndex(threadTree.currentIndex);
-        // Try again once in the next frame.
+        // Try again after the scroll happens.
         if (!row && !retry) {
-          window.requestAnimationFrame(() => this._onContextMenu(event, true));
+          threadTree.addEventListener(
+            "scroll",
+            () => this._onContextMenu(event, true),
+            { once: true }
+          );
           return;
         }
       }
@@ -4864,12 +4901,16 @@ var threadPane = {
 
   _jsTree: {
     QueryInterface: ChromeUtils.generateQI(["nsIMsgJSTree"]),
-    _inBatch: false,
+    _inBatch: 0,
     beginUpdateBatch() {
-      this._inBatch = true;
+      this._inBatch++;
     },
     endUpdateBatch() {
-      this._inBatch = false;
+      this._inBatch--;
+      if (this._inBatch < 0) {
+        this._inBatch = 0;
+        console.warn("Mismatch in batch processing detected.");
+      }
     },
     ensureRowIsVisible(index) {
       if (!this._inBatch) {
@@ -5008,9 +5049,7 @@ var threadPane = {
     if (gViewWrapper?.isSynthetic) {
       return "synthetic";
     }
-    // Identifying messages by key doesn't reliably work on on cross-folder
-    // views since the msgKey may not be unique.
-    if (gFolder && gDBView && !gViewWrapper?.isMultiFolder) {
+    if (gFolder && gDBView) {
       return gFolder.URI;
     }
     return null;
@@ -5025,14 +5064,24 @@ var threadPane = {
       return;
     }
 
+    const currentIndex = threadTree.currentIndex;
+    let currentUri = null;
+    if (
+      currentIndex != -1 &&
+      currentIndex < gDBView.rowCount &&
+      !gViewWrapper.isGroupedByHeaderAtIndex(currentIndex)
+    ) {
+      currentUri = gDBView.getURIForViewIndex(threadTree.currentIndex);
+    }
     this._savedSelections.set(selectionKey, {
-      currentKey: gDBView.getKeyAt(threadTree.currentIndex),
+      currentUri,
       // In views which are "grouped by sort", getting the key for collapsed
       // dummy rows returns the key of the first group member, so we would
       // restore something that wasn't selected. So filter them out.
-      selectedKeys: threadTree.selectedIndices
+      selectedUris: threadTree.selectedIndices
         .filter(i => !gViewWrapper.isGroupedByHeaderAtIndex(i))
-        .map(gDBView.getKeyAt),
+        .map(gDBView.getURIForViewIndex),
+      rowCount: gDBView.rowCount,
     });
   },
 
@@ -5049,13 +5098,13 @@ var threadPane = {
   /**
    * Restore the previously saved thread tree selection.
    *
-   * @param {boolean} [discard=true] - If false, the selection data is kept for
-   *   another call of this function, unless all selections could already be
-   *   restored in this run.
-   * @param {boolean} [notify=true] - Whether a change in "select" event
+   * @param {object} [options={}] - Options.
+   * @param {boolean} [options.discard=true] - If false, the selection data is
+   *   kept for another call of this function.
+   * @param {boolean} [options.notify=true] - Whether a change in "select" event
    *   should be fired and the current index should be scrolled into view.
-   * @param {boolean} [expand=true] - Try to expand threads containing selected
-   *   messages.
+   * @param {boolean} [options.expand=true] - Try to expand threads containing
+   *   selected messages.
    */
   restoreSelection({ discard = true, notify = true, expand = true } = {}) {
     const selectionKey = this._getSavedSelectionKey();
@@ -5067,52 +5116,35 @@ var threadPane = {
       return;
     }
 
-    const { currentKey, selectedKeys } =
-      this._savedSelections.get(selectionKey);
-    let currentIndex = nsMsgViewIndex_None;
-    const indices = new Set();
-    for (const key of selectedKeys) {
-      let index = gDBView.findIndexFromKey(key, expand);
-      // While the first message in a collapsed group returns the index of the
-      // dummy row, other messages return none. To be consistent, we don't
-      // select the dummy row in any case.
-      if (
-        index != nsMsgViewIndex_None &&
-        !gViewWrapper.isGroupedByHeaderAtIndex(index)
-      ) {
-        indices.add(index);
-        if (key == currentKey) {
-          currentIndex = index;
-        }
-        continue;
-      }
-      // Since it does not seem to be possible to reliably find the dummy row
-      // for a message in a group, we continue.
-      if (gViewWrapper.showGroupedBySort) {
-        continue;
-      }
-      // The message for this key can't be found. Perhaps the thread it's in
-      // has been collapsed? Select the root message in that case.
-      try {
-        const folder =
-          gViewWrapper.isVirtual && gViewWrapper.isSingleFolder
-            ? gViewWrapper._underlyingFolders[0]
-            : gFolder;
-        const msgHdr = folder.GetMessageHeader(key);
-        const thread = gDBView.getThreadContainingMsgHdr(msgHdr);
-        const rootMsgHdr = thread.getRootHdr();
-        index = gDBView.findIndexOfMsgHdr(rootMsgHdr, false);
-        if (index != nsMsgViewIndex_None) {
-          indices.add(index);
-          if (key == currentKey) {
-            currentIndex = index;
-          }
-        }
-      } catch (ex) {
-        console.error(ex);
-      }
-    }
-    threadTree.setSelectedIndices(indices.values(), !notify);
+    // Remember what was selected before restoring the selection.
+    const indicesBefore = threadTree.selectedIndices;
+
+    // Ignore any updates from the gDBView caused by findIndexForMsgURI
+    // expanding threads.
+    this._jsTree.beginUpdateBatch();
+
+    const selection = this._savedSelections.get(selectionKey);
+    const currentIndex = selection.currentUri
+      ? gDBView.findIndexForMsgURI(selection.currentUri, expand)
+      : nsMsgViewIndex_None;
+    const indices = new Set(
+      selection.selectedUris
+        .map(uri => gDBView.findIndexForMsgURI(uri, expand))
+        .filter(i => i != nsMsgViewIndex_None)
+    );
+    // Set the selection and stop ignoring updates.
+    threadTree.setSelectedIndices(indices.values(), true);
+    this._jsTree.endUpdateBatch();
+
+    // If any of these conditions are true, the selection changed. If not,
+    // the selection didn't change. Don't tell the tree about it, and
+    // definitely don't fire a "select" event and cause any selected message
+    // to be reloaded (again).
+    const selectionDidChange =
+      gDBView.rowCount != selection.rowCount ||
+      indices.size != indicesBefore.length ||
+      indicesBefore.some(i => !indices.has(i));
+    threadTree.onSelectionChanged(false, !notify || !selectionDidChange);
 
     if (currentIndex == nsMsgViewIndex_None) {
       threadTree.currentIndex = -1;
@@ -5126,9 +5158,13 @@ var threadPane = {
       threadTree._updateCurrentIndexClasses();
     }
 
-    // If all selections have already been restored, discard them as well.
-    if (discard || gDBView.selection.count == selectedKeys.length) {
+    // To avoid problems with restoreThreadState, do not discard any selection
+    // data until explicitly requested.
+    if (discard) {
       this._savedSelections.delete(selectionKey);
+    } else {
+      // Update the count for next time restoreSelection is called.
+      selection.rowCount = gDBView.rowCount;
     }
   },
 
@@ -5434,8 +5470,8 @@ var threadPane = {
     );
 
     // Update the ordinal of the columns to reflect the new positions.
-    this.columns.forEach((column, index) => {
-      column.ordinal = index;
+    this.columns.forEach((col, index) => {
+      col.ordinal = index;
     });
 
     this.persistColumnStates();
@@ -5667,7 +5703,7 @@ var threadPane = {
   },
 
   /**
-   * Prompt the user to confirm applying the current view sate to the chosen
+   * Prompt the user to confirm applying the current view state to the chosen
    * folder and its children.
    *
    * @param {nsIMsgFolder} folder - The chosen message folder.
@@ -5786,7 +5822,7 @@ var threadPane = {
           messages.forEach(function (msg) {
             const msgDb = msg.folder.msgDatabase;
             if (subthreadOnly) {
-              msgDb.markHeaderKilled(msg, false, null);
+              msgDb.markKilled(msg.messageKey, false, null);
             } else if (threadIds.has(msg.threadId)) {
               const thread = msgDb.getThreadContainingMsgHdr(msg);
               msgDb.markThreadIgnored(
@@ -5888,239 +5924,24 @@ var threadPane = {
   },
 };
 
-var messagePane = {
-  async init() {
-    webBrowser = document.getElementById("webBrowser");
-    // Attach the progress listener for the webBrowser. For the messageBrowser this
-    // happens in the "aboutMessageLoaded" event from aboutMessage.js.
-    top.contentProgress.addProgressListenerToBrowser(webBrowser);
-
-    messageBrowser = document.getElementById("messageBrowser");
-    messageBrowser.docShell.allowDNSPrefetch = false;
-
-    multiMessageBrowser = document.getElementById("multiMessageBrowser");
-    multiMessageBrowser.docShell.allowDNSPrefetch = false;
-
-    if (messageBrowser.contentDocument.readyState != "complete") {
-      await new Promise(resolve => {
-        messageBrowser.addEventListener("load", () => resolve(), {
-          capture: true,
-          once: true,
-        });
-      });
-    }
-
-    if (multiMessageBrowser.contentDocument.readyState != "complete") {
-      await new Promise(resolve => {
-        multiMessageBrowser.addEventListener("load", () => resolve(), {
-          capture: true,
-          once: true,
-        });
-      });
-    }
-  },
-
-  /**
-   * Ensure all message pane browsers are blank.
-   */
-  clearAll() {
-    this.clearWebPage();
-    this.clearMessage();
-    this.clearMessages();
-  },
-
-  /**
-   * Ensure the web page browser is blank, unless the start page is shown.
-   */
-  clearWebPage() {
-    if (!this._keepStartPageOpen) {
-      webBrowser.hidden = true;
-      webBrowser.docShellIsActive = false;
-      MailE10SUtils.loadAboutBlank(webBrowser);
-    }
-  },
-
-  /**
-   * Display a web page in the web page browser. If `url` is not given, or is
-   * "about:blank", the web page browser is cleared and hidden.
-   *
-   * @param {string} url - The URL to load.
-   * @param {object} [params] - Any params to pass to MailE10SUtils.loadURI.
-   */
-  displayWebPage(url, params) {
-    if (!paneLayout.messagePaneVisible) {
-      return;
-    }
-    if (!url || url == "about:blank") {
-      this._keepStartPageOpen = false;
-      this.clearWebPage();
-      return;
-    }
-
-    this.clearMessage();
-    this.clearMessages();
-
-    MailE10SUtils.loadURI(webBrowser, url, params);
-    webBrowser.docShellIsActive = window.tabOrWindow.selected;
-    webBrowser.hidden = false;
-  },
-
-  /**
-   * Ensure the message browser is not displaying a message.
-   */
-  clearMessage() {
-    messageBrowser.hidden = true;
-    messageBrowser.contentWindow.displayMessage();
-  },
-
-  /**
-   * Display a single message in the message browser. If `messageURI` is not
-   * given, the message browser is cleared and hidden.
-   *
-   * @param {string} messageURI
-   */
-  displayMessage(messageURI) {
-    // Hide the findbar of webview pane or multimessage pane if opened.
-    const switchingMessages = !messageBrowser.hidden;
-    if (!switchingMessages) {
-      this.hideCurrentFindBar();
-    }
-
-    if (!paneLayout.messagePaneVisible) {
-      return;
-    }
-    if (!messageURI) {
-      this.clearMessage();
-      return;
-    }
-
-    this._keepStartPageOpen = false;
-    messagePane.clearWebPage();
-    messagePane.clearMessages();
-
-    messageBrowser.contentWindow.displayMessage(messageURI, gViewWrapper);
-    messageBrowser.hidden = false;
-  },
-
-  /**
-   * Ensure the multi-message browser is not displaying messages.
-   */
-  clearMessages() {
-    multiMessageBrowser.hidden = true;
-    multiMessageBrowser.contentWindow.gMessageSummary.clear();
-  },
-
-  /**
-   * Display messages in the multi-message browser. For a single message, use
-   * `displayMessage` instead. If `messages` is not given, or an empty array,
-   * the multi-message browser is cleared and hidden.
-   *
-   * @param {nsIMsgDBHdr[]} messages
-   */
-  displayMessages(messages = []) {
-    // Hide the findbar of webview pane or message pane if opened.
-    const switchingThreads = !multiMessageBrowser.hidden;
-    if (!switchingThreads) {
-      this.hideCurrentFindBar();
-    }
-
-    if (!paneLayout.messagePaneVisible) {
-      return;
-    }
-    if (messages.length == 0) {
-      this.clearMessages();
-      return;
-    }
-
-    this._keepStartPageOpen = false;
-    messagePane.clearWebPage();
-    messagePane.clearMessage();
-
-    const getThreadId = function (message) {
-      return gDBView.getThreadContainingMsgHdr(message).getRootHdr().messageKey;
-    };
-
-    let oneThread = true;
-    const firstThreadId = getThreadId(messages[0]);
-    for (let i = 1; i < messages.length; i++) {
-      if (getThreadId(messages[i]) != firstThreadId) {
-        oneThread = false;
-        break;
-      }
-    }
-
-    multiMessageBrowser.contentWindow.gMessageSummary.summarize(
-      oneThread ? "thread" : "multipleselection",
-      messages,
-      gDBView,
-      function (messages) {
-        threadTree.selectedIndices = messages
-          .map(m => gDBView.findIndexOfMsgHdr(m, true))
-          .filter(i => i != nsMsgViewIndex_None);
-      }
-    );
-
-    multiMessageBrowser.hidden = false;
-    window.dispatchEvent(new CustomEvent("MsgsLoaded", { bubbles: true }));
-
-    if (switchingThreads) {
-      const findBar = document.getElementById("multiMessageViewFindToolbar");
-      if (findBar && !findBar?.hidden) {
-        findBar.onFindAgainCommand(false);
-      }
-    }
-  },
-
-  /**
-   * Hide the findbar, in all of messageBrowser, multimessageBrowser,
-   * or webBrowser.
-   */
-  hideCurrentFindBar() {
-    // Multi message view.
-    const multiFindbar = document.getElementById("multiMessageViewFindToolbar");
-    multiFindbar?.clear();
-    multiFindbar?.close();
-
-    // Single message view.
-    messageBrowser.contentDocument.getElementById("FindToolbar").clear();
-    messageBrowser.contentDocument.getElementById("FindToolbar").close();
-
-    // Web Browser view.
-    const browserFindbar = document.getElementById("webBrowserFindToolbar");
-    browserFindbar?.clear();
-    browserFindbar?.close();
-  },
-
-  /**
-   * Show the start page in the web page browser. The start page will remain
-   * shown until a message is displayed.
-   */
-  showStartPage() {
-    this._keepStartPageOpen = true;
-    let url = Services.urlFormatter.formatURLPref("mailnews.start_page.url");
-    if (/^mailbox:|^imap:|^pop:|^s?news:|^nntp:/i.test(url)) {
-      console.warn(`Can't use ${url} as mailnews.start_page.url`);
-      Services.prefs.clearUserPref("mailnews.start_page.url");
-      url = Services.urlFormatter.formatURLPref("mailnews.start_page.url");
-    }
-    messagePane.displayWebPage(url);
-  },
-};
-
 /**
  * Restore the UI to the given state.
  *
- * @param {boolean} folderPaneVisible - Whether to show the folder pane. If undefined,
- *    the folder pane is shown if a folder URI is provided or we're not restoring to a
- *    synthetic view.
- * @param {boolean} messagePaneVisible - Whether to show the message pane. If undefined,
- *    the message pane is shown as long as its wrapper is not collapsed.
- * @param {?nsIMsgFolder|string} folder - The folder to display, or its URI, if any.
- * @param {?GlodaSyntheticView} syntheticView - The synthetic view to restore to, if any.
- * @param {boolean} first - Whether this is the first call to this function (i.e. we're
- *    setting the state at the start of the application), in which case we want to greet
- *    the user with the start page.
- * @param {?string} title - If any, the title to set.
+ * @param {object} [options={}] - Options.
+ * @param {boolean} options.folderPaneVisible - Whether to show the folder pane.
+ *   If undefined, the folder pane is shown if a folder URI is provided or we're
+ *   not restoring to a synthetic view.
+ * @param {boolean} options.messagePaneVisible - Whether to show the message
+ *   pane. If undefined, the message pane is shown as long as its wrapper is
+ *   not collapsed.
+ * @param {?nsIMsgFolder|string} options.folderURI - The folder to display,
+ *   or its URI, if any.
+ * @param {?GlodaSyntheticView} options.syntheticView - The synthetic view to
+ *   restore to, if any.
+ * @param {boolean} options.first - Whether this is the first call to this
+ *   function (i.e. we're setting the state at the start of the application),
+ *   in which case we want to greet the user with the start page.
+ * @param {?string} options.title - If any, the title to set.
  */
 function restoreState({
   folderPaneVisible,
@@ -6200,6 +6021,7 @@ function restoreState({
 
 /**
  * Ensures the given row is visible and all its parent folders are expanded.
+ *
  * @param {FolderTreeRow} row
  */
 function ensureFolderTreeRowIsVisible(row) {
@@ -6214,6 +6036,7 @@ function ensureFolderTreeRowIsVisible(row) {
 
 /**
  * Set up the given folder to be selected in the folder pane.
+ *
  * @param {nsIMsgFolder|string} folder - The folder to display, or its URI.
  */
 function displayFolder(folder) {
@@ -6274,8 +6097,12 @@ var folderListener = {
 
     folderPane.removeFolder(parentFolder, childFolder);
     if (childFolder == gFolder) {
+      // Clean up the display if the deleted folder was being displayed. At this
+      // point, `DBViewWrapper._folderDeleted` has already cleaned up `gDBView`.
       gFolder = null;
       gViewWrapper?.close(true);
+      threadPaneHeader.onFolderSelected();
+      threadPane._onSelect(); // Ensure no message is displayed.
     }
 
     // We need to rebuild the selection map if a folder was removed while we had
@@ -6362,6 +6189,7 @@ var folderListener = {
   },
 };
 
+/* Commands Controller */
 commandController.registerCallback(
   "cmd_newFolder",
   (folder = gFolder) => folderPane.newFolder(folder),
@@ -6823,13 +6651,13 @@ commandController.registerCallback(
   "cmd_print",
   async () => {
     const PrintUtils = top.PrintUtils;
-    if (!webBrowser.hidden) {
+    if (messagePane.isWebBrowserVisible()) {
       PrintUtils.startPrintWindow(webBrowser.browsingContext);
       return;
     }
     const uris = gViewWrapper.dbView.getURIsForSelection();
     if (uris.length == 1) {
-      if (messageBrowser.hidden) {
+      if (!messagePane.isMessageBrowserVisible()) {
         // Load the only message in a hidden browser, then use the print preview UI.
         const messageService = MailServices.messageServiceFromURI(uris[0]);
         await PrintUtils.loadPrintBrowser(
@@ -6839,12 +6667,13 @@ commandController.registerCallback(
           PrintUtils.printBrowser.browsingContext,
           {}
         );
-      } else {
-        PrintUtils.startPrintWindow(
-          messageBrowser.contentWindow.getMessagePaneBrowser().browsingContext,
-          {}
-        );
+        return;
       }
+
+      PrintUtils.startPrintWindow(
+        messageBrowser.contentWindow.getMessagePaneBrowser().browsingContext,
+        {}
+      );
       return;
     }
 
@@ -6869,7 +6698,7 @@ commandController.registerCallback(
     if (!accountCentralBrowser?.hidden) {
       return false;
     }
-    if (webBrowser && !webBrowser.hidden) {
+    if (messagePane.isWebBrowserVisible()) {
       return true;
     }
     return gDBView && gDBView.numSelected > 0;
@@ -6953,146 +6782,40 @@ commandController.registerCallback(
  * causes the findbar to not update with a result status properly. */
 commandController.registerCallback(
   "cmd_find",
-  () => {
-    if (!this.messageBrowser.hidden) {
-      this.messageBrowser.contentWindow.commandController.doCommand("cmd_find");
-      return;
-    }
-
-    if (!this.multiMessageBrowser.hidden) {
-      // Create the findbar for the multi message view if it isn't there.
-      if (!document.getElementById("multiMessageViewFindToolbar")) {
-        const findbar = document.createXULElement("findbar");
-        findbar.setAttribute("id", "multiMessageViewFindToolbar");
-        findbar.setAttribute("browserid", "multiMessageBrowser");
-        this.multiMessageBrowser.after(findbar);
-      }
-
-      document.getElementById("multiMessageViewFindToolbar").onFindCommand();
-      return;
-    }
-
-    if (!this.webBrowser.hidden) {
-      // Create the findbar for the web browser if it isn't there.
-      if (!document.getElementById("webBrowserFindToolbar")) {
-        const findbar = document.createXULElement("findbar");
-        findbar.setAttribute("id", "webBrowserFindToolbar");
-        findbar.setAttribute("browserid", "webBrowser");
-        this.webBrowser.after(findbar);
-      }
-      document.getElementById("webBrowserFindToolbar").onFindCommand();
-    }
-  },
-  () => browserPaneVisible()
+  () => messagePane.onFindCommand(),
+  () => messagePane.browserPaneVisible()
 );
 commandController.registerCallback(
   "cmd_findAgain",
-  () => {
-    if (!this.messageBrowser.hidden) {
-      this.messageBrowser.contentWindow.commandController.doCommand(
-        "cmd_findAgain"
-      );
-      return;
-    }
-
-    if (!this.multiMessageBrowser.hidden) {
-      document
-        .getElementById("multiMessageViewFindToolbar")
-        .onFindAgainCommand(false);
-      return;
-    }
-
-    if (!this.webBrowser.hidden) {
-      document
-        .getElementById("webBrowserFindToolbar")
-        .onFindAgainCommand(false);
-    }
-  },
-  () => browserPaneVisible()
+  () => messagePane.onFindAgainCommand(),
+  () => messagePane.browserPaneVisible()
 );
 commandController.registerCallback(
   "cmd_findPrevious",
-  () => {
-    if (!this.messageBrowser.hidden) {
-      this.messageBrowser.contentWindow.commandController.doCommand(
-        "cmd_findPrevious"
-      );
-      return;
-    }
-
-    if (!this.multiMessageBrowser.hidden) {
-      document
-        .getElementById("multiMessageViewFindToolbar")
-        .onFindAgainCommand(true);
-      return;
-    }
-
-    if (!this.webBrowser.hidden) {
-      document.getElementById("webBrowserFindToolbar").onFindAgainCommand(true);
-    }
-  },
-  () => browserPaneVisible()
+  () => messagePane.onFindPreviousCommand(),
+  () => messagePane.browserPaneVisible()
 );
-
-/**
- * Helper function for the zoom commands, which returns the browser that is
- * currently visible in the message pane or null if no browser is visible.
- *
- * @returns {?XULElement} - A XUL browser or null.
- */
-function visibleMessagePaneBrowser() {
-  if (webBrowser && !webBrowser.hidden) {
-    return webBrowser;
-  }
-
-  if (messageBrowser && !messageBrowser.hidden) {
-    // If the message browser is the one visible, actually return the
-    // element showing the message's content, since that's the one zoom
-    // commands should apply to.
-    return messageBrowser.contentDocument.getElementById("messagepane");
-  }
-
-  if (multiMessageBrowser && !multiMessageBrowser.hidden) {
-    return multiMessageBrowser;
-  }
-
-  return null;
-}
-
-/**
- * Helper function that returns true if one of the three browser panes are
- * visible, and false otherwise.
- *
- * @returns {boolean} - Whether a browser pane is visible or not.
- */
-function browserPaneVisible() {
-  return (
-    (webBrowser && !webBrowser.hidden) ||
-    (messageBrowser && !messageBrowser.hidden) ||
-    (multiMessageBrowser && !multiMessageBrowser.hidden)
-  );
-}
 
 // Zoom.
 commandController.registerCallback(
   "cmd_fullZoomReduce",
-  () => top.ZoomManager.reduce(visibleMessagePaneBrowser()),
-  () => visibleMessagePaneBrowser() != null
+  () => top.ZoomManager.reduce(messagePane.visibleMessagePaneBrowser()),
+  () => !!messagePane.visibleMessagePaneBrowser()
 );
 commandController.registerCallback(
   "cmd_fullZoomEnlarge",
-  () => top.ZoomManager.enlarge(visibleMessagePaneBrowser()),
-  () => visibleMessagePaneBrowser() != null
+  () => top.ZoomManager.enlarge(messagePane.visibleMessagePaneBrowser()),
+  () => !!messagePane.visibleMessagePaneBrowser()
 );
 commandController.registerCallback(
   "cmd_fullZoomReset",
-  () => top.ZoomManager.reset(visibleMessagePaneBrowser()),
-  () => visibleMessagePaneBrowser() != null
+  () => top.ZoomManager.reset(messagePane.visibleMessagePaneBrowser()),
+  () => !!messagePane.visibleMessagePaneBrowser()
 );
 commandController.registerCallback(
   "cmd_fullZoomToggle",
-  () => top.ZoomManager.toggleZoom(visibleMessagePaneBrowser()),
-  () => visibleMessagePaneBrowser() != null
+  () => top.ZoomManager.toggleZoom(messagePane.visibleMessagePaneBrowser()),
+  () => !!messagePane.visibleMessagePaneBrowser()
 );
 
 // Browser commands.
@@ -7126,10 +6849,9 @@ for (const command of [
 ]) {
   commandController.registerCallback(
     command,
-    () => messageBrowser.contentWindow.commandController.doCommand(command),
+    () => messagePane.doMessageBrowserCommand(command),
     () =>
-      messageBrowser &&
-      !messageBrowser.hidden &&
-      messageBrowser.contentWindow.commandController.isCommandEnabled(command)
+      messagePane.isMessageBrowserVisible() &&
+      messagePane.isMessageBrowserCommandEnabled(command)
   );
 }

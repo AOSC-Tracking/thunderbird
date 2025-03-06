@@ -54,6 +54,8 @@
 #  include <sys/signalfd.h>
 #endif
 
+#include "mozilla/Alignment.h"
+
 static const char kCommandQuit = 'x';
 
 namespace google_breakpad {
@@ -72,7 +74,8 @@ CrashGenerationServer::CrashGenerationServer(
     exit_callback_(exit_callback),
     exit_context_(exit_context),
     generate_dumps_(generate_dumps),
-    started_(false)
+    started_(false),
+    reserved_fds_{-1, -1}
 {
   if (dump_path)
     dump_dir_ = *dump_path;
@@ -163,6 +166,8 @@ CrashGenerationServer::CreateReportChannel(int* server_fd, int* client_fd)
 void
 CrashGenerationServer::Run()
 {
+  ReserveFileDescriptors();
+
   struct pollfd pollfds[2];
   memset(&pollfds, 0, sizeof(pollfds));
 
@@ -212,7 +217,7 @@ CrashGenerationServer::ClientEvent(short revents)
 
   struct msghdr msg = {0};
   struct iovec iov[1];
-  char crash_context[kCrashContextSize];
+  MOZ_ALIGNED_DECL(16, char crash_context[kCrashContextSize]);
   char control[kControlMsgSize];
   const ssize_t expected_msg_size = sizeof(crash_context);
 
@@ -268,6 +273,11 @@ CrashGenerationServer::ClientEvent(short revents)
   string minidump_filename;
   if (!MakeMinidumpFilename(minidump_filename))
     return true;
+
+  // We won't re-reserve the file descriptors past this point. If we crash more
+  // than once we'll just accept that we might run out of file descriptors, but
+  // we don't want to make the situation worse by trying  to grab them again.
+  ReleaseFileDescriptors();
 
 #if defined(MOZ_OXIDIZED_BREAKPAD)
   ExceptionHandler::CrashContext* breakpad_cc =
@@ -371,6 +381,32 @@ CrashGenerationServer::MakeMinidumpFilename(string& outFilename)
 
   outFilename = path;
   return true;
+}
+
+void
+CrashGenerationServer::ReserveFileDescriptors() {
+  for (size_t i = 0; i < CrashGenerationServer::RESERVED_FDS_NUM; i++) {
+    assert(reserved_fds_[i] < 0);
+
+    // This fd is just taking up space in the file table, so it can be
+    // anything that's self-contained and simple to create.
+    int fds[2];
+    int rv = pipe2(fds, O_CLOEXEC);
+    if (rv == 0) {
+      close(fds[0]);
+      reserved_fds_[i] = fds[1];
+    }
+  }
+}
+
+void
+CrashGenerationServer::ReleaseFileDescriptors() {
+  for (size_t i = 0; i < CrashGenerationServer::RESERVED_FDS_NUM; i++) {
+    if (reserved_fds_[i] > 0) {
+      close(reserved_fds_[i]);
+      reserved_fds_[i] = -1;
+    }
+  }
 }
 
 // static

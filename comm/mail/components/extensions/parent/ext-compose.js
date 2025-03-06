@@ -2,9 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
@@ -1108,7 +1105,7 @@ class MsgOperationObserver {
   msgsClassified(msgs) {
     // Collect all msgHdrs added to folders during the current message operation.
     for (const msgHdr of msgs) {
-      const cachedMsgHdr = new CachedMsgHeader(msgHdr);
+      const cachedMsgHdr = new CachedMsgHeader(messageTracker, msgHdr);
       const key = JSON.stringify({
         headerMessageId: cachedMsgHdr.messageId,
         folderURI: cachedMsgHdr.folder.URI,
@@ -1173,7 +1170,7 @@ class MsgOperationObserver {
  * @returns {Promise<MsgOperationReturnValue>} - Promise for information about
  *   the performed message operation, which is passed to the WebExtension.
  */
-async function goDoCommand(composeWindow, extension, mode) {
+async function goDoCommand(composeWindow, extension, sendMode) {
   const commands = new Map([
     ["draft", "cmd_saveAsDraft"],
     ["template", "cmd_saveAsTemplate"],
@@ -1181,11 +1178,13 @@ async function goDoCommand(composeWindow, extension, mode) {
     ["sendLater", "cmd_sendLater"],
   ]);
 
-  if (!commands.has(mode)) {
-    throw new ExtensionError(`Unsupported mode: ${mode}`);
+  if (!commands.has(sendMode)) {
+    throw new ExtensionError(`Unsupported mode: ${sendMode}`);
   }
 
-  if (!composeWindow.defaultController.isCommandEnabled(commands.get(mode))) {
+  if (
+    !composeWindow.defaultController.isCommandEnabled(commands.get(sendMode))
+  ) {
     throw new ExtensionError(
       `Message compose window not ready for the requested command`
     );
@@ -1209,14 +1208,14 @@ async function goDoCommand(composeWindow, extension, mode) {
           reject(exception);
         }
       },
-      modes: [mode],
+      modes: [sendMode],
       extension,
     };
     afterSaveSendEventTracker.addListener(listener);
   });
 
   // Initiate send.
-  switch (mode) {
+  switch (sendMode) {
     case "draft":
       composeWindow.SaveAsDraft();
       break;

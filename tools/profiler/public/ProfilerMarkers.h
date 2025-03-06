@@ -37,6 +37,7 @@
 #include "mozilla/ProfilerLabels.h"
 #include "nsJSUtils.h"  // for nsJSUtils::GetCurrentlyRunningCodeInnerWindowID
 #include "nsString.h"
+#include "nsFmtString.h"
 #include "ETWTools.h"
 
 class nsIDocShell;
@@ -136,14 +137,15 @@ inline mozilla::ProfileBufferBlockIndex AddMarkerToBuffer(
 // return true.
 [[nodiscard]] inline bool profiler_thread_is_being_profiled_for_markers() {
   return profiler_thread_is_being_profiled(ThreadProfilingFeatures::Markers) ||
-         profiler_is_etw_collecting_markers();
+         profiler_is_etw_collecting_markers() || profiler_is_perfetto_tracing();
+  ;
 }
 
 [[nodiscard]] inline bool profiler_thread_is_being_profiled_for_markers(
     const ProfilerThreadId& aThreadId) {
   return profiler_thread_is_being_profiled(aThreadId,
                                            ThreadProfilingFeatures::Markers) ||
-         profiler_is_etw_collecting_markers();
+         profiler_is_etw_collecting_markers() || profiler_is_perfetto_tracing();
 }
 
 // Add a marker to the Gecko Profiler buffer.
@@ -167,6 +169,14 @@ mozilla::ProfileBufferBlockIndex profiler_add_marker_impl(
   ETW::EmitETWMarker(aName, aCategory, aOptions, aMarkerType,
                      aPayloadArguments...);
 #  endif
+
+#  ifdef MOZ_PERFETTO
+  if (profiler_is_perfetto_tracing()) {
+    EmitPerfettoTrackEvent(aName, aCategory, aOptions, aMarkerType,
+                           aPayloadArguments...);
+  }
+#  endif
+
   if (!profiler_thread_is_being_gecko_profiled_for_markers(
           aOptions.ThreadId().ThreadId())) {
     return {};
@@ -238,6 +248,18 @@ using Tracing = mozilla::baseprofiler::markers::Tracing;
     profiler_add_marker(markerName, ::geckoprofiler::category::categoryName, \
                         options, ::geckoprofiler::markers::TextMarker{},     \
                         text);                                               \
+  } while (false)
+
+#define PROFILER_MARKER_FMT(markerName, categoryName, options, format, ...)   \
+  do {                                                                        \
+    if (profiler_is_collecting_markers()) {                                   \
+      AUTO_PROFILER_STATS(PROFILER_MARKER_TEXT);                              \
+      nsFmtCString fmt(FMT_STRING(format), ##__VA_ARGS__);                    \
+      profiler_add_marker(                                                    \
+          markerName, ::geckoprofiler::category::categoryName, options,       \
+          ::geckoprofiler::markers::TextMarker{},                             \
+          mozilla::ProfilerString8View::WrapNullTerminatedString(fmt.get())); \
+    }                                                                         \
   } while (false)
 
 // RAII object that adds a PROFILER_MARKER_TEXT when destroyed; the marker's

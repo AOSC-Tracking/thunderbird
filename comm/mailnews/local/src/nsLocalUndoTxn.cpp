@@ -20,7 +20,12 @@
 
 NS_IMPL_ISUPPORTS_INHERITED(nsLocalMoveCopyMsgTxn, nsMsgTxn, nsIFolderListener)
 
-nsLocalMoveCopyMsgTxn::nsLocalMoveCopyMsgTxn() : m_srcIsImap4(false) {}
+nsLocalMoveCopyMsgTxn::nsLocalMoveCopyMsgTxn()
+    : m_isMove(false),
+      m_srcIsImap4(false),
+      m_undoing(false),
+      m_numHdrsCopied(0),
+      mUndoFolderListener(nullptr) {}
 
 nsLocalMoveCopyMsgTxn::~nsLocalMoveCopyMsgTxn() {}
 
@@ -39,7 +44,7 @@ nsresult nsLocalMoveCopyMsgTxn::Init(nsIMsgFolder* srcFolder,
   rv = srcFolder->GetURI(protocolType);
   protocolType.SetLength(protocolType.FindChar(':'));
   if (protocolType.LowerCaseEqualsLiteral("imap")) m_srcIsImap4 = true;
-  return nsMsgTxn::Init();
+  return NS_OK;
 }
 nsresult nsLocalMoveCopyMsgTxn::GetSrcIsImap(bool* isImap) {
   *isImap = m_srcIsImap4;

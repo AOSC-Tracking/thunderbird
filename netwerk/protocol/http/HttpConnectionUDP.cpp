@@ -96,7 +96,6 @@ nsresult HttpConnectionUDP::Init(nsHttpConnectionInfo* info,
   // We need an address here so that we can convey the IP version of the
   // socket.
   NetAddr local;
-  memset(&local, 0, sizeof(local));
   local.raw.family = peerAddr.raw.family;
   rv = mSocket->InitWithAddress(&local, nullptr, false, 1);
   if (NS_FAILED(rv)) {
@@ -155,7 +154,7 @@ nsresult HttpConnectionUDP::Init(nsHttpConnectionInfo* info,
   mPeerAddr = new nsNetAddr(&peerAddr);
   mHttp3Session = new Http3Session();
   rv = mHttp3Session->Init(mConnInfo, mSelfAddr, mPeerAddr, this, providerFlags,
-                           callbacks);
+                           callbacks, mSocket);
   if (NS_FAILED(rv)) {
     LOG(
         ("HttpConnectionUDP::Init mHttp3Session->Init failed "

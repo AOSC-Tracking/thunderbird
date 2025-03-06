@@ -62,8 +62,7 @@ namespace mozilla {
 namespace dom {
 
 static already_AddRefed<const ComputedStyle> GetCleanComputedStyleForElement(
-    dom::Element* aElement, PseudoStyleType aPseudo,
-    nsAtom* aFunctionalPseudoParameter) {
+    dom::Element* aElement, const PseudoStyleRequest& aPseudo) {
   MOZ_ASSERT(aElement);
 
   Document* doc = aElement->GetComposedDoc();
@@ -83,8 +82,7 @@ static already_AddRefed<const ComputedStyle> GetCleanComputedStyleForElement(
 
   presContext->EnsureSafeToHandOutCSSRules();
 
-  return nsComputedDOMStyle::GetComputedStyle(aElement, aPseudo,
-                                              aFunctionalPseudoParameter);
+  return nsComputedDOMStyle::GetComputedStyle(aElement, aPseudo);
 }
 
 /* static */
@@ -250,16 +248,16 @@ static already_AddRefed<const ComputedStyle> GetStartingStyle(
   return styleSet->ResolveStartingStyle(aElement);
 }
 
-static void GetCSSStyleRulesFromComputedValue(
+static void GetCSSRulesFromComputedValues(
     Element& aElement, const ComputedStyle* aComputedStyle,
-    nsTArray<RefPtr<CSSStyleRule>>& aResult) {
+    nsTArray<RefPtr<css::Rule>>& aResult) {
   const PresShell* presShell = aElement.OwnerDoc()->GetPresShell();
   if (!presShell) {
     return;
   }
 
-  AutoTArray<const StyleLockedStyleRule*, 8> rawRuleList;
-  Servo_ComputedValues_GetStyleRuleList(aComputedStyle, &rawRuleList);
+  AutoTArray<const StyleLockedDeclarationBlock*, 8> rawDecls;
+  Servo_ComputedValues_GetMatchingDeclarations(aComputedStyle, &rawDecls);
 
   AutoTArray<ServoStyleRuleMap*, 8> maps;
   {
@@ -295,45 +293,26 @@ static void GetCSSStyleRulesFromComputedValue(
   }
 
   // Find matching rules in the table.
-  for (const StyleLockedStyleRule* rawRule : Reversed(rawRuleList)) {
-    CSSStyleRule* rule = nullptr;
+  for (const StyleLockedDeclarationBlock* rawDecl : Reversed(rawDecls)) {
     for (ServoStyleRuleMap* map : maps) {
-      rule = map->Lookup(rawRule);
-      if (rule) {
+      if (css::Rule* rule = map->Lookup(rawDecl)) {
+        aResult.AppendElement(rule);
         break;
       }
-    }
-    if (rule) {
-      aResult.AppendElement(rule);
-    } else {
-#ifdef DEBUG
-      aElement.Dump();
-      printf_stderr("\n\n----\n\n");
-      aComputedStyle->DumpMatchedRules();
-      nsAutoCString str;
-      Servo_StyleRule_Debug(rawRule, &str);
-      printf_stderr("\n\n----\n\n");
-      printf_stderr("%s\n", str.get());
-      MOZ_CRASH_UNSAFE_PRINTF(
-          "We should be able to map raw rule %p to a rule in one of the %zu "
-          "maps: %s\n",
-          rawRule, maps.Length(), str.get());
-#endif
     }
   }
 }
 
 /* static */
-void InspectorUtils::GetCSSStyleRules(GlobalObject& aGlobalObject,
-                                      Element& aElement,
-                                      const nsAString& aPseudo,
-                                      bool aIncludeVisitedStyle,
-                                      bool aWithStartingStyle,
-                                      nsTArray<RefPtr<CSSStyleRule>>& aResult) {
-  auto [type, functionalPseudoParameter] =
-      nsCSSPseudoElements::ParsePseudoElement(aPseudo,
-                                              CSSEnabledState::ForAllContent);
-  if (!type) {
+void InspectorUtils::GetMatchingCSSRules(GlobalObject& aGlobalObject,
+                                         Element& aElement,
+                                         const nsAString& aPseudo,
+                                         bool aIncludeVisitedStyle,
+                                         bool aWithStartingStyle,
+                                         nsTArray<RefPtr<css::Rule>>& aResult) {
+  auto pseudo = nsCSSPseudoElements::ParsePseudoElement(
+      aPseudo, CSSEnabledState::ForAllContent);
+  if (!pseudo) {
     return;
   }
 
@@ -346,8 +325,7 @@ void InspectorUtils::GetCSSStyleRules(GlobalObject& aGlobalObject,
   // inside @starting-style. For this case, we would like to return the primay
   // rules of this element.
   if (!computedStyle) {
-    computedStyle = GetCleanComputedStyleForElement(&aElement, *type,
-                                                    functionalPseudoParameter);
+    computedStyle = GetCleanComputedStyleForElement(&aElement, *pseudo);
   }
 
   if (!computedStyle) {
@@ -362,7 +340,7 @@ void InspectorUtils::GetCSSStyleRules(GlobalObject& aGlobalObject,
     }
   }
 
-  GetCSSStyleRulesFromComputedValue(aElement, computedStyle, aResult);
+  GetCSSRulesFromComputedValues(aElement, computedStyle, aResult);
 }
 
 /* static */
@@ -473,6 +451,8 @@ static uint32_t CollectAtRules(ServoCSSRuleList& aRuleList,
       case StyleCssRuleType::FontPaletteValues:
       case StyleCssRuleType::Scope:
       case StyleCssRuleType::StartingStyle:
+      case StyleCssRuleType::PositionTry:
+      case StyleCssRuleType::NestedDeclarations:
         break;
     }
 
@@ -1042,6 +1022,37 @@ void InspectorUtils::GetCSSRegisteredProperties(
     }
     property.mFromJS = propDef.from_js;
   }
+}
+
+/* static */
+void InspectorUtils::GetCSSRegisteredProperty(
+    GlobalObject& aGlobalObject, Document& aDocument, const nsACString& aName,
+    Nullable<InspectorCSSPropertyDefinition>& aResult) {
+  StylePropDef result{StyleAtom(NS_Atomize(aName))};
+
+  // Update the rules before looking up @property rules.
+  ServoStyleSet& styleSet = aDocument.EnsureStyleSet();
+  styleSet.UpdateStylistIfNeeded();
+
+  if (!Servo_GetRegisteredCustomProperty(styleSet.RawData(), &aName, &result)) {
+    aResult.SetNull();
+    return;
+  }
+
+  InspectorCSSPropertyDefinition& propDef = aResult.SetValue();
+
+  // Servo does not include the "--" prefix in the property definition name.
+  // Add it back as it's easier for DevTools to handle them _with_ "--".
+  propDef.mName.AssignLiteral("--");
+  propDef.mName.Append(nsAtomCString(result.name.AsAtom()));
+  propDef.mSyntax.Append(result.syntax);
+  propDef.mInherits = result.inherits;
+  if (result.has_initial_value) {
+    propDef.mInitialValue.Append(result.initial_value);
+  } else {
+    propDef.mInitialValue.SetIsVoid(true);
+  }
+  propDef.mFromJS = result.from_js;
 }
 
 /* static */

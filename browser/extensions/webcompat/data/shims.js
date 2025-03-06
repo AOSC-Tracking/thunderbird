@@ -105,6 +105,29 @@ const AVAILABLE_SHIMS = [
     ],
   },
   {
+    id: "EmbedTestShim",
+    platform: "desktop",
+    name: "Test shim for smartblock embed unblocking",
+    bug: "1892175",
+    runFirst: "embed-test-shim.js",
+    // Blank stub file just so we run the script above when the matched script
+    // files get blocked.
+    file: "empty-script.js",
+    matches: [
+      "https://itisatracker.org/browser/browser/extensions/webcompat/tests/browser/embed_test.js",
+    ],
+    // Use instagram logo as an example
+    logos: ["instagram.svg"],
+    needsShimHelpers: [
+      "embedClicked",
+      "smartblockEmbedReplaced",
+      "smartblockGetFluentString",
+    ],
+    isSmartblockEmbedShim: true,
+    onlyIfBlockedByETP: true,
+    unblocksOnOptIn: ["*://itisatracker.org/*"],
+  },
+  {
     id: "AddThis",
     platform: "all",
     name: "AddThis",
@@ -394,6 +417,7 @@ const AVAILABLE_SHIMS = [
           "*://portal.sds.ox.ac.uk/*",
           "*://curate.nd.edu/*",
           "*://kilthub.cmu.edu/*",
+          "*://publications.cispa.de/*",
         ],
         runAt: "document_start",
       },
@@ -891,6 +915,55 @@ const AVAILABLE_SHIMS = [
         allFrames: true,
       },
     ],
+  },
+  {
+    id: "InstagramEmbed",
+    platform: "desktop",
+    name: "Instagram embed placeholder",
+    bug: "1892173",
+    runFirst: "instagram-embed.js",
+    // Blank stub file just so we run the script above when the matched script
+    // files get blocked.
+    file: "empty-script.js",
+    matches: [
+      "https://www.instagram.com/embed.js",
+      "https://platform.instagram.com/*/embeds.js",
+    ],
+    logos: ["instagram.svg"],
+    webExposedShimHelpers: [],
+    needsShimHelpers: [
+      "embedClicked",
+      "smartblockEmbedReplaced",
+      "smartblockGetFluentString",
+    ],
+    isSmartblockEmbedShim: true,
+    onlyIfBlockedByETP: true,
+    unblocksOnOptIn: [
+      "*://www.instagram.com/*",
+      "*://platform.instagram.com/*",
+      "*://*.fbcdn.net/*",
+    ],
+  },
+  {
+    id: "TiktokEmbed",
+    platform: "desktop",
+    name: "Tiktok embed placeholder",
+    bug: "1892172",
+    runFirst: "tiktok-embed.js",
+    // Blank stub file just so we run the script above when the matched script
+    // files get blocked.
+    file: "empty-script.js",
+    matches: ["https://www.tiktok.com/embed.js"],
+    logos: ["tiktok.svg"],
+    webExposedShimHelpers: [],
+    needsShimHelpers: [
+      "embedClicked",
+      "smartblockEmbedReplaced",
+      "smartblockGetFluentString",
+    ],
+    isSmartblockEmbedShim: true,
+    onlyIfBlockedByETP: true,
+    unblocksOnOptIn: ["*://www.tiktok.com/*"],
   },
 ];
 

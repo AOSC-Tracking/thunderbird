@@ -5,6 +5,7 @@
 
 #include "nsMsgMdnGenerator.h"
 #include "MailNewsTypes.h"
+#include "nsIMsgHeaderParser.h"
 #include "nsImapCore.h"
 #include "nsIMsgImapMailFolder.h"
 #include "nsIMsgAccountManager.h"
@@ -72,7 +73,7 @@ using namespace mozilla::mailnews;
 char DispositionTypes[7][16] = {
     "displayed", "dispatched", "processed", "deleted", "denied", "failed", ""};
 
-NS_IMPL_ISUPPORTS(nsMsgMdnGenerator, nsIMsgMdnGenerator, nsIRequestObserver)
+NS_IMPL_ISUPPORTS(nsMsgMdnGenerator, nsIMsgMdnGenerator, nsIMsgOutgoingListener)
 
 nsMsgMdnGenerator::nsMsgMdnGenerator()
     : m_disposeType(eDisplayed),
@@ -130,9 +131,10 @@ nsresult nsMsgMdnGenerator::StoreMDNSentFlag(nsIMsgFolder* folder,
 
   nsCOMPtr<nsIMsgImapMailFolder> imapFolder = do_QueryInterface(folder);
   // Store the $MDNSent flag if the folder is an Imap Mail Folder
-  if (imapFolder)
+  if (imapFolder) {
     return imapFolder->StoreImapFlags(kImapMsgMDNSentFlag, true, {key},
                                       nullptr);
+  }
   return rv;
 }
 
@@ -154,14 +156,16 @@ bool nsMsgMdnGenerator::ProcessSendMode() {
     const char* accountDomain = strchr(m_email.get(), '@');
     if (!accountDomain) return m_reallySendMdn;
 
-    if (MailAddrMatch(m_email.get(),
-                      m_dntRrt.get()))  // return address is self, don't send
+    if (MailAddrMatch(m_email.get(), m_dntRrt.get())) {
+      // return address is self, don't send
       return false;
+    }
 
     // *** fix me see Bug 132504 for more information
     // *** what if the message has been filtered to different account
-    if (!PL_strcasestr(m_dntRrt.get(), accountDomain))
+    if (!PL_strcasestr(m_dntRrt.get(), accountDomain)) {
       miscState |= MDN_OUTSIDE_DOMAIN;
+    }
     if (NotInToOrCc()) miscState |= MDN_NOT_IN_TO_CC;
     m_reallySendMdn = true;
     // *********
@@ -261,15 +265,16 @@ bool nsMsgMdnGenerator::MailAddrMatch(const char* addr1, const char* addr2) {
   atSign1 = strchr(local1, '@');
   atSign2 = strchr(local2, '@');
   if (!atSign1 || !atSign2  // ill formed addr spec
-      || (atSign1 - local1) != (atSign2 - local2))
+      || (atSign1 - local1) != (atSign2 - local2)) {
     isMatched = false;
-  else if (strncmp(local1, local2, (atSign1 - local1)))  // case sensitive
-    // compare for local part
+  } else if (strncmp(local1, local2, (atSign1 - local1))) {
+    // case sensitive compare for local part
     isMatched = false;
-  else if ((end1 - atSign1) != (end2 - atSign2) ||
-           PL_strncasecmp(atSign1, atSign2, (end1 - atSign1)))  // case
-    // insensitive compare for domain part
+  } else if ((end1 - atSign1) != (end2 - atSign2) ||
+             PL_strncasecmp(atSign1, atSign2, (end1 - atSign1))) {
+    // case insensitive compare for domain part
     isMatched = false;
+  }
   return isMatched;
 }
 
@@ -338,10 +343,11 @@ nsresult nsMsgMdnGenerator::CreateMdnMsg() {
     m_outputStream->Flush();
     m_outputStream->Close();
   }
-  if (NS_FAILED(rv))
+  if (NS_FAILED(rv)) {
     m_file->Remove(false);
-  else
+  } else {
     rv = SendMdnMsg();
+  }
 
   return NS_OK;
 }
@@ -352,11 +358,12 @@ nsresult nsMsgMdnGenerator::CreateFirstPart() {
   nsString firstPart1;
   nsString firstPart2;
   nsresult rv = NS_OK;
-  nsCOMPtr<nsIMsgCompUtils> compUtils;
+
+  nsCOMPtr<nsIMsgCompUtils> compUtils =
+      do_GetService("@mozilla.org/messengercompose/computils;1", &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   if (m_mimeSeparator.IsEmpty()) {
-    compUtils = do_GetService("@mozilla.org/messengercompose/computils;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
     rv = compUtils->MimeMakeSeparator("mdn", getter_Copies(m_mimeSeparator));
     NS_ENSURE_SUCCESS(rv, rv);
   }
@@ -406,14 +413,11 @@ nsresult nsMsgMdnGenerator::CreateFirstPart() {
 
   PR_Free(convbuf);
 
-  if (compUtils) {
-    nsCString msgId;
-    rv = compUtils->MsgGenerateMessageId(m_identity, ""_ns, msgId);
-    NS_ENSURE_SUCCESS(rv, rv);
+  rv = compUtils->MsgGenerateMessageId(m_identity, ""_ns, m_messageId);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    tmpBuffer = PR_smprintf("Message-ID: %s" CRLF, msgId.get());
-    PUSH_N_FREE_STRING(tmpBuffer);
-  }
+  tmpBuffer = PR_smprintf("Message-ID: %s" CRLF, m_messageId.get());
+  PUSH_N_FREE_STRING(tmpBuffer);
 
   nsString receipt_string;
   switch (m_disposeType) {
@@ -468,13 +472,15 @@ nsresult nsMsgMdnGenerator::CreateFirstPart() {
 
   // *** This is not in the spec. I am adding this so we could do
   // threading
-  m_headers->ExtractHeader(HEADER_MESSAGE_ID, false, m_messageId);
+  m_headers->ExtractHeader(HEADER_MESSAGE_ID, false, m_originalMessageId);
 
-  if (!m_messageId.IsEmpty()) {
-    if (*m_messageId.get() == '<')
-      tmpBuffer = PR_smprintf("References: %s" CRLF, m_messageId.get());
-    else
-      tmpBuffer = PR_smprintf("References: <%s>" CRLF, m_messageId.get());
+  if (!m_originalMessageId.IsEmpty()) {
+    if (*m_originalMessageId.get() == '<') {
+      tmpBuffer = PR_smprintf("References: %s" CRLF, m_originalMessageId.get());
+    } else {
+      tmpBuffer =
+          PR_smprintf("References: <%s>" CRLF, m_originalMessageId.get());
+    }
     PUSH_N_FREE_STRING(tmpBuffer);
   }
   tmpBuffer = PR_smprintf("%s" CRLF, "MIME-Version: 1.0");
@@ -630,11 +636,13 @@ nsresult nsMsgMdnGenerator::CreateSecondPart() {
 
   PR_Free(convbuf);
 
-  if (*m_messageId.get() == '<')
-    tmpBuffer = PR_smprintf("Original-Message-ID: %s" CRLF, m_messageId.get());
-  else
+  if (*m_originalMessageId.get() == '<') {
     tmpBuffer =
-        PR_smprintf("Original-Message-ID: <%s>" CRLF, m_messageId.get());
+        PR_smprintf("Original-Message-ID: %s" CRLF, m_originalMessageId.get());
+  } else {
+    tmpBuffer = PR_smprintf("Original-Message-ID: <%s>" CRLF,
+                            m_originalMessageId.get());
+  }
   PUSH_N_FREE_STRING(tmpBuffer);
 
   tmpBuffer =
@@ -726,8 +734,9 @@ nsresult nsMsgMdnGenerator::OutputAllHeaders() {
           !PL_strncasecmp(start, X_MOZILLA_DRAFT_INFO,
                           X_MOZILLA_DRAFT_INFO_LEN) ||
           !PL_strncasecmp(start, "From ", 5)) {
-        while (end < buf_end && (*end == '\n' || *end == '\r' || *end == 0))
+        while (end < buf_end && (*end == '\n' || *end == '\r' || *end == 0)) {
           end++;
+        }
         start = end;
       } else {
         NS_ASSERTION(*end == 0, "content of end should be null");
@@ -735,8 +744,9 @@ nsresult nsMsgMdnGenerator::OutputAllHeaders() {
         NS_ENSURE_SUCCESS(rv, rv);
         rv = WriteString(CRLF);
         NS_ENSURE_SUCCESS(rv, rv);
-        while (end < buf_end && (*end == '\n' || *end == '\r' || *end == 0))
+        while (end < buf_end && (*end == '\n' || *end == '\r' || *end == 0)) {
           end++;
+        }
         start = end;
       }
       buf = start;
@@ -761,8 +771,20 @@ nsresult nsMsgMdnGenerator::SendMdnMsg() {
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ENSURE_TRUE(outgoingServer, NS_ERROR_NULL_POINTER);
 
-  outgoingServer->SendMailMessage(m_file, m_dntRrt, m_identity, identEmail,
-                                  ""_ns, nullptr, false, ""_ns, this);
+  nsCOMPtr<nsIMsgHeaderParser> parserService =
+      do_GetService("@mozilla.org/messenger/headerparser;1", &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsTArray<RefPtr<msgIAddressObject>> recipients;
+  rv = parserService->ParseEncodedHeader(m_dntRrt, "utf-8", false, recipients);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // MDN replies don't have any Bcc recipients, so we just pass an empty array.
+  nsTArray<RefPtr<msgIAddressObject>> bccRecipients;
+
+  outgoingServer->SendMailMessage(m_file, recipients, bccRecipients, m_identity,
+                                  identEmail, ""_ns, nullptr, false,
+                                  m_messageId, this);
 
   return NS_OK;
 }
@@ -786,8 +808,9 @@ nsresult nsMsgMdnGenerator::InitAndProcess(bool* needToAskUser) {
       nsCString accountKey;
       m_headers->ExtractHeader(HEADER_X_MOZILLA_ACCOUNT_KEY, false, accountKey);
       nsCOMPtr<nsIMsgAccount> account;
-      if (!accountKey.IsEmpty())
+      if (!accountKey.IsEmpty()) {
         accountManager->GetAccount(accountKey, getter_AddRefs(account));
+      }
       if (account) account->GetIncomingServer(getter_AddRefs(m_server));
 
       if (m_server) {
@@ -923,12 +946,12 @@ nsresult nsMsgMdnGenerator::NoteMDNRequestHandled() {
   return rv;
 }
 
-NS_IMETHODIMP nsMsgMdnGenerator::OnStartRequest(nsIRequest* req) {
-  return NS_OK;
-}
+NS_IMETHODIMP nsMsgMdnGenerator::OnSendStart(nsIRequest* req) { return NS_OK; }
 
-NS_IMETHODIMP nsMsgMdnGenerator::OnStopRequest(nsIRequest* req,
-                                               nsresult aExitCode) {
+NS_IMETHODIMP nsMsgMdnGenerator::OnSendStop(nsIURI* aServerURI,
+                                            nsresult aExitCode,
+                                            nsITransportSecurityInfo* aSecInfo,
+                                            const nsACString& aErrMsg) {
   nsresult rv;
 
   if (m_file) m_file->Remove(false);

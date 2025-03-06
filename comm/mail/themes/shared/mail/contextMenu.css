@@ -78,7 +78,7 @@ menupopup {
     &[disabled="true"]:hover,
     &[checked="true"][disabled="true"],
     &[checked="true"][disabled="true"]:hover {
-      color: var(--panel-disabled-color);
+      color: var(--text-color-disabled);
       background-color: transparent;
     }
 
@@ -128,7 +128,7 @@ menupopup {
   }
 
   /* Allways show the extension icons. */
-  &.no-icon-menupopup > :is(menu, menuitem)[image^="moz-extension"] > .menu-iconic-left {
+  &.no-icon-menupopup > :is(menu, menuitem).webextension-rootElement > .menu-iconic-left {
     display: flex;
   }
 }
@@ -246,8 +246,13 @@ menu > .menu-right {
   list-style-image: var(--icon-archive);
 }
 
-#navContext-markAsJunk {
+#navContext-markAsJunk,
+#navContext-markAsNotJunk {
   list-style-image: var(--icon-spam);
+
+  &[disabled="true"] {
+    display: none;
+  }
 }
 
 #navContext-delete {

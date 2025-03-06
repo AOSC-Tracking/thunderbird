@@ -43,6 +43,7 @@ let testFolder, testMessages;
 let draftsFolder, draftsMessages;
 let templatesFolder, templatesMessages;
 let listFolder, listMessages;
+let virtualFolder;
 
 const singleSelectionMessagePane = [
   "singleMessage",
@@ -57,6 +58,7 @@ const singleSelectionThreadPane = [
   "draftsFolderTree",
   "templatesFolderTree",
   "listFolderTree",
+  "singleMessageTreeXFVF",
   "syntheticFolderDraftTree",
   "syntheticFolderTree",
 ];
@@ -65,6 +67,7 @@ const external = ["externalMessageTab", "externalMessageWindow"];
 const allSingleSelection = [
   ...singleSelectionMessagePane,
   ...singleSelectionThreadPane,
+  "singleMessageTreeXFVF",
   ...onePane,
   ...external,
 ];
@@ -75,13 +78,16 @@ const allThreePane = [
   "collapsedThreadTree",
   "multipleDraftsFolderTree",
   "multipleTemplatesFolderTree",
+  "multipleMessagesTreeXFVF",
 ];
 const noCollapsedThreads = [
   ...singleSelectionMessagePane,
   ...singleSelectionThreadPane,
+  "singleMessageTreeXFVF",
   "multipleMessagesTree",
   "multipleDraftsFolderTree",
   "multipleTemplatesFolderTree",
+  "multipleMessagesTreeXFVF",
   ...onePane,
   ...external,
 ];
@@ -89,9 +95,10 @@ const notExternal = [...allThreePane, ...onePane];
 const singleNotExternal = [
   ...singleSelectionMessagePane,
   ...singleSelectionThreadPane,
+  "singleMessageTreeXFVF",
   ...onePane,
 ];
-const notSynthetic = [
+const notSyntheticNotXFVF = [
   "singleMessage",
   "draftsFolder",
   "templatesFolder",
@@ -105,8 +112,21 @@ const notSynthetic = [
   "multipleDraftsFolderTree",
   "multipleTemplatesFolderTree",
 ];
+const notSynthetic = [
+  ...notSyntheticNotXFVF,
+  "singleMessageTreeXFVF",
+  "multipleMessagesTreeXFVF",
+];
 
 const mailContextData = {
+  "mailContext-navigation": true,
+  "navContext-markRead": true,
+  "navContext-markUnread": true,
+  "navContext-reply": noCollapsedThreads,
+  "navContext-archive": notExternal,
+  "navContext-markAsJunk": true,
+  "navContext-markAsNotJunk": [],
+  "navContext-delete": notExternal,
   "mailContext-openInBrowser": [],
   "mailContext-openLinkInBrowser": [],
   "mailContext-copylink": [],
@@ -194,12 +214,13 @@ const mailContextData = {
     "collapsedThreadTree",
     "multipleDraftsFolderTree",
     "multipleTemplatesFolderTree",
+    "multipleMessagesTreeXFVF",
   ],
   "mailContext-calendar-convert-menu": singleNotExternal,
-  "mailContext-threads": [...notSynthetic, ...onePane],
-  "mailContext-ignoreThread": notSynthetic,
-  "mailContext-ignoreSubthread": notSynthetic,
-  "mailContext-watchThread": [...notSynthetic, ...onePane],
+  "mailContext-threads": [...notSyntheticNotXFVF, ...onePane],
+  "mailContext-ignoreThread": notSyntheticNotXFVF,
+  "mailContext-ignoreSubthread": notSyntheticNotXFVF,
+  "mailContext-watchThread": [...notSyntheticNotXFVF, ...onePane],
   "mailContext-saveAs": true,
   "mailContext-print": true,
   "mailContext-downloadSelected": [
@@ -207,6 +228,7 @@ const mailContextData = {
     "collapsedThreadTree",
     "multipleDraftsFolderTree",
     "multipleTemplatesFolderTree",
+    "multipleMessagesTreeXFVF",
   ],
 };
 
@@ -230,7 +252,10 @@ async function checkMenuitems(menu, mode) {
 
   const actualItems = [];
   for (const item of menu.children) {
-    if (["menu", "menuitem"].includes(item.localName) && !item.hidden) {
+    if (
+      ["menu", "menuitem", "menugroup"].includes(item.localName) &&
+      !item.hidden
+    ) {
       actualItems.push(item.id);
 
       if (item.localName == "menu" && !item.disabled) {
@@ -247,6 +272,15 @@ async function checkMenuitems(menu, mode) {
         }
         item.menupopup.hidePopup();
         await BrowserTestUtils.waitForPopupEvent(item.menupopup, "hidden");
+      } else if (item.localName == "menugroup") {
+        actualItems.push(
+          ...Array.from(item.children)
+            .filter(
+              subItem =>
+                subItem.localName == "menuitem" && subItem.id && !subItem.hidden
+            )
+            .map(subItem => subItem.id)
+        );
       }
     }
   }
@@ -286,6 +320,7 @@ add_setup(async function () {
   const rootFolder = account.incomingServer.rootFolder.QueryInterface(
     Ci.nsIMsgLocalMailFolder
   );
+
   testFolder = rootFolder
     .createLocalSubfolder("mailContextFolder")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
@@ -297,6 +332,7 @@ add_setup(async function () {
   const messageStrings = messages.map(message => message.toMessageString());
   testFolder.addMessageBatch(messageStrings);
   testMessages = [...testFolder.messages];
+
   draftsFolder = rootFolder
     .createLocalSubfolder("mailContextDrafts")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
@@ -307,6 +343,7 @@ add_setup(async function () {
       .map(message => message.toMessageString())
   );
   draftsMessages = [...draftsFolder.messages];
+
   templatesFolder = rootFolder
     .createLocalSubfolder("mailContextTemplates")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
@@ -317,6 +354,7 @@ add_setup(async function () {
       .map(message => message.toMessageString())
   );
   templatesMessages = [...templatesFolder.messages];
+
   listFolder = rootFolder
     .createLocalSubfolder("mailContextMailingList")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
@@ -334,6 +372,17 @@ add_setup(async function () {
       .toMessageString()
   );
   listMessages = [...listFolder.messages];
+
+  virtualFolder = rootFolder
+    .createLocalSubfolder("mailContextVirtual")
+    .QueryInterface(Ci.nsIMsgLocalMailFolder);
+  virtualFolder.setFlag(Ci.nsMsgFolderFlags.Virtual);
+  const folderInfo = virtualFolder.msgDatabase.dBFolderInfo;
+  folderInfo.setCharProperty("searchStr", "ALL");
+  folderInfo.setCharProperty(
+    "searchFolderUri",
+    [draftsFolder.URI, templatesFolder.URI, listFolder.URI].join("|")
+  );
 
   tabmail.currentAbout3Pane.restoreState({
     folderURI: testFolder.URI,
@@ -521,6 +570,7 @@ add_task(async function testSingleMessage() {
     !threadTree.getRowAtIndex(threadTree.currentIndex),
     "Current row is scrolled out of view"
   );
+  await new Promise(resolve => window.requestAnimationFrame(resolve));
   EventUtils.synthesizeMouseAtCenter(
     threadTree,
     { type: "contextmenu", button: 0 },
@@ -812,6 +862,50 @@ add_task(async function testListMessage() {
   );
   EventUtils.synthesizeMouseAtCenter(row0, { type: "contextmenu" }, about3Pane);
   await checkMenuitems(mailContext, "listFolderTree");
+});
+
+/**
+ * Tests a virtual folder which searches multiple folders.
+ */
+add_task(async function testVirtualFolder() {
+  const about3Pane = tabmail.currentAbout3Pane;
+  about3Pane.restoreState({ folderURI: virtualFolder.URI });
+
+  const mailContext = about3Pane.document.getElementById("mailContext");
+  const { dbViewWrapperListener, threadTree } = about3Pane;
+  await TestUtils.waitForCondition(
+    () => dbViewWrapperListener._allMessagesLoaded,
+    "waiting for virtual folder to finish searching"
+  );
+  threadTree.scrollToIndex(1, true);
+  threadTree.selectedIndices = [1, 2, 3];
+
+  // Open the menu from the thread pane.
+
+  const row2 = await TestUtils.waitForCondition(
+    () => threadTree.getRowAtIndex(2),
+    "waiting for rows to be added"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(row2, { type: "contextmenu" }, about3Pane);
+  await checkMenuitems(mailContext, "multipleMessagesTreeXFVF");
+
+  // Open the menu from an unselected row of the thread pane.
+
+  const row4 = await TestUtils.waitForCondition(
+    () => threadTree.getRowAtIndex(4),
+    "waiting for rows to be added"
+  );
+  EventUtils.synthesizeMouseAtCenter(row4, { type: "contextmenu" }, about3Pane);
+  await checkMenuitems(mailContext, "singleMessageTreeXFVF");
+
+  // Check that the selection was restored.
+
+  Assert.deepEqual(
+    threadTree.selectedIndices,
+    [1, 2, 3],
+    "selection should be restored after the menu closes"
+  );
 });
 
 /**

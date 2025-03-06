@@ -21,6 +21,9 @@ var { PluralForm } = ChromeUtils.importESModule(
 var { TagUtils } = ChromeUtils.importESModule(
   "resource:///modules/TagUtils.sys.mjs"
 );
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
 
 var messenger;
 var msgWindow;
@@ -230,6 +233,7 @@ SearchFolderDisplayWidget.prototype = {
 };
 
 function searchOnLoad() {
+  UIFontSize.registerWindow(window);
   TagUtils.loadTagsIntoCSS(document);
   initializeSearchWidgets();
   initializeSearchWindowWidgets();
@@ -405,7 +409,7 @@ function getSearchTerms() {
 }
 
 /**
- * @returns the list of folders the search should cover.
+ * @returns {nsIMsgFolder[]} the list of folders the search should cover.
  */
 function getSearchFolders() {
   const searchFolders = [];
@@ -577,7 +581,7 @@ function MsgDeleteSelectedMessages(aCommandType) {
 /**
  * Move selected messages to the destination folder
  *
- * @param destFolder {nsIMsgFolder} - destination folder
+ * @param {nsIMsgFolder} destFolder - Destination folder.
  */
 function MoveMessageInSearch(destFolder) {
   gFolderDisplay.hintAboutToDeleteMessages();

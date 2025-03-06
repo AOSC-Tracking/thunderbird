@@ -13,6 +13,11 @@ function getAccessKey(str)
     return str[i + 1];
 }
 
+function objectContains(o, p)
+{
+    return Object.hasOwnProperty.call(o, p);
+}
+
 // @internal
 function CommandRecord(name, func, usage, help, label, accesskey, flags,
                        keystr, tip, format, helpUsage)
@@ -543,7 +548,7 @@ function cmgr_list(partialName, flags, exact)
     }
 
     var ary = new Array();
-    var commandNames = keys(this.commands);
+    var commandNames = Object.keys(this.commands);
 
     for (var name of commandNames)
     {

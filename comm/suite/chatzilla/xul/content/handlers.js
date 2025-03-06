@@ -83,9 +83,34 @@ function initHandlers()
 
     client.inputPopup = null;
 
-    // Should fail silently pre-moz1.4
-    doCommandWithParams("cmd_clipboardDragDropHook",
-                        {addhook: CopyPasteHandler});
+    var singleInput = document.getElementById("input");
+    singleInput.addEventListener("paste", onPaste);
+}
+
+function onPaste(event)
+{
+    let startPos = client.input.selectionStart;
+    if (startPos == undefined)
+        return;
+    let endPos = client.input.selectionEnd;
+    let clipboard = event.clipboardData.getData("text/plain");
+    clipboard = clipboard.replace(/(^\s*[\r\n]+|[\r\n]+\s*$)/g, "");
+
+    if (clipboard.indexOf("\n") == -1)
+    {
+        // If, after stripping leading/trailing empty lines, the string is a
+        // single line, return.
+        return;
+    }
+
+    var str = client.input.value.substr(0, startPos) +
+              clipboard + client.input.value.substr(endPos);
+    client.prefs["multiline"] = true;
+    // We want to auto-collapse after send, so the user is not thrown off by the
+    // "strange" input box if they didn't specifically ask for it:
+    client.multiLineForPaste = true;
+    client.input.value = str;
+    return;
 }
 
 function onClose()
@@ -148,11 +173,6 @@ function onUnload()
     uninitOfflineIcon();
     uninitIdleAutoAway(client.prefs["awayIdleTime"]);
     destroy();
-}
-
-function onNotImplemented()
-{
-    alert (getMsg("onNotImplementedMsg"));
 }
 
 /* tab click */
@@ -426,6 +446,30 @@ function onInputKeyPress (e)
 
 function onTabCompleteRequest (e)
 {
+    function getCommonPfx(list, lcFn)
+    {
+        let pfx = list[0];
+
+        for (let item of list)
+        {
+            for (let c = 0; c < pfx.length; ++c)
+            {
+                if (c >= item.length)
+                {
+                    pfx = pfx.substr(0, c);
+                    break;
+                }
+                else
+                {
+                    if (lcFn(pfx[c]) != lcFn(item[c]))
+                        pfx = pfx.substr(0, c);
+                }
+            }
+        }
+
+        return pfx;
+    };
+
     var elem = document.commandDispatcher.focusedElement;
     var singleInput = document.getElementById("input");
     if (document.getBindingParent(elem) != singleInput)
@@ -485,6 +529,8 @@ function onTabCompleteRequest (e)
         var lcFn;
         if ("getLCFunction" in co)
             lcFn = co.getLCFunction();
+        else
+            lcFn = function(text) { return text.toLowerCase(); }
 
         var matches = co.performTabMatch(line, wordStart, wordEnd, wordLower,
                                          selStart, lcFn);
@@ -844,14 +890,51 @@ function onUserDoubleClick(event)
     {
         return;
     }
-    var userList = document.getElementById("user-list");
-    if (!userList.view || !userList.view.selection)
-        return;
-    var currentIndex = userList.view.selection.currentIndex;
-    if (currentIndex < 0)
-        return;
-    var nickname = getNicknameForUserlistRow(currentIndex);
+    let nickname = getNicknameForUserlistRow(event.target);
     dispatch("query", {nickname: nickname, source: "mouse"});
+}
+
+function onUserDragStart(event)
+{
+    let nickname = getNicknameForUserlistRow(event.target);
+    event.dataTransfer.setData("text/unicode", nickname);
+    event.dataTransfer.setData("text/plain", nickname);
+}
+
+/* the offset should be in seconds, it will be rounded to 2 decimal places */
+function formatDateOffset(offset)
+{
+    let seconds = offset % 60;
+    seconds = Math.round((seconds + Number.EPSILON) * 100) / 100;
+    let minutes = Math.floor(offset / 60);
+    let hours = Math.floor(minutes / 60);
+    minutes = minutes % 60;
+    let days = Math.floor(hours / 24);
+    hours = hours % 24;
+
+    let ary = new Array();
+
+    if (days == 1)
+        ary.push(MSG_DAY);
+    else if (days > 0)
+        ary.push(getMsg(MSG_DAYS, days));
+
+    if (hours == 1)
+        ary.push(MSG_HOUR);
+    else if (hours > 0)
+        ary.push(getMsg(MSG_HOURS, hours));
+
+    if (minutes == 1)
+        ary.push(MSG_MINUTE);
+    else if (minutes > 0)
+        ary.push(getMsg(MSG_MINUTES, minutes));
+
+    if (seconds == 1)
+        ary.push(MSG_SECOND);
+    else if (seconds > 0 || offset == 0)
+        ary.push(getMsg(MSG_SECONDS, seconds));
+
+    return ary.join(", ");
 }
 
 client.onFindEnd =
@@ -1012,7 +1095,7 @@ function my_unknown (e)
     var msg = getMsg("msg.irc." + e.code, null, "");
     if (msg)
     {
-        if (arrayIndexOf(e.server.channelTypes, e.params[0][0]) != -1)
+        if (e.server.channelTypes.includes(e.params[0][0]))
         {
             // Message about a channel (e.g. join failed).
             e.channel = new CIRCChannel(e.server, null, e.params[0]);
@@ -1306,7 +1389,7 @@ function my_303 (e)
     // split() gives an array of one item ("") when splitting "", which we
     // don't want, so only do the split if there's something to split.
     if (e.params[2])
-        onList = stringTrim(e.server.toLowerCase(e.params[2])).split(/\s+/);
+        onList = e.server.toLowerCase(e.params[2]).trim().split(/\s+/);
     var offList = new Array();
     var newArrivals = new Array();
     var newDepartures = new Array();
@@ -1319,7 +1402,7 @@ function my_303 (e)
 
     for (i = 0; i < this.prefs["notifyList"].length; i++)
     {
-        if (!arrayContains(onList, lower(this.prefs["notifyList"][i])))
+        if (!onList.includes(lower(this.prefs["notifyList"][i])))
             /* user is not on */
             offList.push(lower(this.prefs["notifyList"][i]));
     }
@@ -1327,7 +1410,7 @@ function my_303 (e)
     if ("onList" in this)
     {
         for (i in onList)
-            if (!arrayContains(this.onList, onList[i]))
+            if (!this.onList.includes(onList[i]))
                 /* we didn't know this person was on */
                 newArrivals.push(onList[i]);
     }
@@ -1337,7 +1420,7 @@ function my_303 (e)
     if ("offList" in this)
     {
         for (i in offList)
-            if (!arrayContains(this.offList, offList[i]))
+            if (!this.offList.includes(offList[i]))
                 /* we didn't know this person was off */
                 newDepartures.push(offList[i]);
     }
@@ -1447,7 +1530,7 @@ function my_734(e)
     {
         var j = this.prefs["notifyList"].indexOf(nickList[i]);
         if (j >= 0)
-            arrayRemoveAt(this.prefs["notifyList"], j);
+            this.prefs["notifyList"].splice(j, 1);
     }
     this.prefs["notifyList"].update();
 
@@ -1526,8 +1609,6 @@ function my_running_list()
 CIRCNetwork.prototype.list =
 function my_list(word, file)
 {
-    const NORMAL_FILE_TYPE = Components.interfaces.nsIFile.NORMAL_FILE_TYPE;
-
     if (("_list" in this) && !this._list.done)
         return false;
 
@@ -1542,7 +1623,8 @@ function my_list(word, file)
         if (!lfile.localFile.exists())
         {
             // futils.umask may be 0022. Result is 0644.
-            lfile.localFile.create(NORMAL_FILE_TYPE, 0o666 & ~futils.umask);
+            lfile.localFile.create(Ci.nsIFile.NORMAL_FILE_TYPE,
+                                   0o666 & ~futils.umask);
         }
         this._list.file = new LocalFile(lfile.localFile, ">");
     }
@@ -1727,7 +1809,7 @@ function my_401(e)
      */
     if (e.code == 402)
         server = e.decodeParam(2);
-    else if (arrayIndexOf(e.server.channelTypes, e.params[2][0]) != -1)
+    else if (e.server.channelTypes.includes(e.params[2][0]))
         channel = new CIRCChannel(e.server, null, e.params[2]);
     else
         user = new CIRCUser(e.server, null, e.params[2]);
@@ -1787,14 +1869,8 @@ function my_315 (e)
 
     if ("whoUpdates" in this)
     {
-        var userlist = document.getElementById("user-list");
         for (var c in this.whoUpdates)
         {
-            for (var i = 0; i < this.whoUpdates[c].length; i++)
-            {
-                var index = this.whoUpdates[c][i].chanListEntry.childIndex;
-                userlist.treeBoxObject.invalidateRow(index);
-            }
             this.primServ.channels[c].updateUsers(this.whoUpdates[c]);
         }
         delete this.whoUpdates;
@@ -1940,7 +2016,7 @@ function my_whoisreply (e)
             break;
 
         case 319:
-            var ary = stringTrim(e.decodeParam(3)).split(" ");
+            var ary = e.decodeParam(3).trim().split(" ");
             text = getMsg(MSG_WHOIS_CHANNELS, [nick, arraySpeak(ary)]);
             break;
 
@@ -2034,8 +2110,7 @@ function my_433 (e)
 
     if (this.state == NET_CONNECTING)
     {
-        // Force a number, thanks.
-        var nickIndex = 1 * arrayIndexOf(this.prefs["nicknameList"], nick);
+        var nickIndex = this.prefs["nicknameList"].indexOf(nick);
         var newnick = null;
 
         dd("433: failed with " + nick + " (" + nickIndex + ")");
@@ -2267,10 +2342,19 @@ function my_netdisconnect (e)
                 break;
 
             default:
-                var errClass = getNSSErrorClass(e.disconnectStatus);
+                
+                let nssErrSvc = Cc["@mozilla.org/nss_errors_service;1"]
+                                  .getService(Ci.nsINSSErrorsService);
+                let errClass = 0;
+                // Check if e.disconnectStatus is within the valid range for
+                // NSS Errors.
+                if (e.disconnectStatus >= 8192 && e.disconnectStatus < 20480)
+                {
+                    errClass = nssErrSvc.getErrorClass(e.disconnectStatus);
+                }
                 // Check here if it's a cert error.
                 // The exception adding dialog will explain the reasons.
-                if (errClass == ERROR_CLASS_BAD_CERT)
+                if (errClass == Ci.nsINSSErrorsService.ERROR_CLASS_BAD_CERT)
                 {
                     var cmd = "ssl-exception";
                     cmd += " " + e.server.hostname + " " + e.server.port;
@@ -2282,10 +2366,8 @@ function my_netdisconnect (e)
 
                 // If it's a protocol error, we can still display a useful message.
                 var statusMsg = e.disconnectStatus;
-                if (errClass == ERROR_CLASS_SSL_PROTOCOL)
+                if (errClass == Ci.nsINSSErrorsService.ERROR_CLASS_SSL_PROTOCOL)
                 {
-                    var nssErrSvc = getService("@mozilla.org/nss_errors_service;1",
-                                               "nsINSSErrorsService");
                     var errMsg = nssErrSvc.getErrorMessage(e.disconnectStatus);
                     errMsg = errMsg.replace(/\.$/, "");
                     statusMsg += " (" + errMsg + ")";
@@ -2423,7 +2505,7 @@ CIRCNetwork.prototype.onCTCPReplyPing =
 function my_replyping (e)
 {
     // see bug 326523
-    if (stringTrim(e.CTCPData).length != 13)
+    if (e.CTCPData.trim().length != 13)
     {
         this.display(getMsg(MSG_PING_REPLY_INVALID, e.user.unicodeName),
                      "INFO", e.user, "ME!", e.tags);
@@ -2582,7 +2664,7 @@ function my_cap(e)
     else if (e.params[2] == "NEW")
     {
         // Handle a new STS policy
-        if (client.sts.ENABLED && (arrayContains(e.newcaps, "sts")))
+        if (client.sts.ENABLED && e.newcaps.includes("sts"))
         {
             var policy = client.sts.parseParameters(e.server.capvals["sts"]);
             if (!e.server.isSecure && policy.port)
@@ -2730,15 +2812,13 @@ function my_unknown_batch(e)
 CIRCNetwork.prototype.onAway =
 function my_away(e)
 {
-    var userlist = document.getElementById("user-list");
     for (var c in e.server.channels)
     {
         var chan = e.server.channels[c];
         if (chan.active && (e.user.collectionKey in chan.users))
         {
-            let index = chan.users[e.user.collectionKey].chanListEntry.childIndex;
-            userlist.treeBoxObject.invalidateRow(index);
-            e.server.channels[c].updateUsers([e.user.collectionKey]);
+            let user = chan.users[e.user.collectionKey];
+            e.server.channels[c].updateUsers([user]);
         }
     }
 }
@@ -2902,24 +2982,9 @@ CIRCChannel.prototype.on366 =
 function my_366 (e)
 {
     // First clear up old users:
-    var removals = new Array();
-    while (this.userList.childData.childData.length > 0)
-    {
-        var userToRemove = this.userList.childData.childData[0]._userObj;
-        this.removeFromList(userToRemove);
-        removals.push(userToRemove);
-    }
-    this.removeUsers(removals);
+    this._clearUserList();
 
-    var entries = new Array(), updates = new Array();
-    for (var u in this.users)
-    {
-        entries.push(new UserEntry(this.users[u], this.userListShare));
-        updates.push(this.users[u]);
-    }
-    this.addUsers(updates);
-
-    this.userList.childData.appendChildren(entries);
+    this.addUsers(Object.values(this.users));
 
     if (this.pendingNamesReply)
     {
@@ -3128,9 +3193,6 @@ function my_cjoin (e)
     if (!userIsMe(e.user))
     {
         this.addUsers([e.user]);
-        var entry = new UserEntry(e.user, this.userListShare);
-        this.userList.childData.appendChild(entry);
-        this.userList.childData.reSort();
     }
     this.updateHeader();
 }
@@ -3235,15 +3297,73 @@ function my_ckick (e)
     this.updateHeader();
 }
 
+CIRCChannel.prototype.addUsers =
+function my_caddUsers(updates)
+{
+    let updateListBox = client.currentObject == this;
+    let entries = updates.map(item => new UserEntry(item));
+    for (let entry of entries)
+    {
+        this.userList.push(entry);
+        if (updateListBox)
+        {
+            client.list.appendChild(entry);
+        }
+    }
+    this.updateUserList(updateListBox);
+}
+
+CIRCChannel.prototype.updateUsers =
+function my_cupdateUsers(updates)
+{
+    for (let update of updates)
+    {
+        if (update.chanListEntry)
+        {
+            let idx = this.userList.indexOf(update.chanListEntry);
+            this.userList[idx] = updateListItem(update.chanListEntry, update);
+        }
+    }
+}
+
+CIRCChannel.prototype.updateUser =
+function my_cupdateUser(user)
+{
+    this.updateUsers([this.getUser(user)]);
+    this.updateUserList(true);
+}
+
 CIRCChannel.prototype.removeFromList =
 function my_removeFromList(user)
 {
     // Remove the user from the list and 'disconnect' the user from their entry:
-    var idx = user.chanListEntry.childIndex;
-    this.userList.childData.removeChildAtIndex(idx);
+    var idx = client.list.getIndexOfItem(user.chanListEntry);
+    client.list.removeItemAt(idx);
+    idx = this.userList.indexOf(user.chanListEntry);
+    if (idx > -1)
+    {
+        this.userList.splice(idx, 1);
+    }
 
     delete user.chanListEntry._userObj;
     delete user.chanListEntry;
+}
+
+CIRCChannel.prototype.updateUserList =
+function my_updateUserList(updateListBox)
+{
+    if (client.prefs["sortUsersByMode"])
+    {
+        this.userList.sort(ule_sortByMode);
+    }
+    else
+    {
+        this.userList.sort(ule_sortByName);
+    }
+    if (updateListBox)
+    {
+        this.userList.forEach((item) => client.list.appendChild(item));
+    }
 }
 
 CIRCChannel.prototype.onChanMode =
@@ -3270,15 +3390,12 @@ function my_cmode (e)
                      undefined, undefined, e.tags);
         delete this.pendingModeReply;
     }
-    var updates = new Array();
-    for (var u in e.usersAffected)
-        updates.push(e.usersAffected[u]);
-    this.updateUsers(updates);
+    this.updateUsers(Object.values(e.usersAffected));
 
     this.updateHeader();
     updateTitle(this);
     if (client.currentObject == this)
-        updateUserList();
+        this.updateUserList(true);
 }
 
 CIRCChannel.prototype.onNick =
@@ -3302,7 +3419,7 @@ function my_cnick (e)
 
     this.updateUsers([e.user]);
     if (client.currentObject == this)
-        updateUserList();
+        this.updateUserList(true);
 }
 
 CIRCChannel.prototype.onQuit =
@@ -3327,11 +3444,10 @@ function my_cquit (e)
                                  e.server.parent.unicodeName, e.reason]),
                          "QUIT", e.user, this, e.tags);
         }
+        this.removeFromList(e.user);
     }
 
     this.removeUsers([e.user]);
-    this.removeFromList(e.user);
-
     this.updateHeader();
 }
 
@@ -3351,20 +3467,17 @@ function my_cautoperform()
 CIRCChannel.prototype._clearUserList =
 function _my_clearuserlist()
 {
-    if (this.userList && this.userList.childData &&
-        this.userList.childData.childData)
+    if (client.currentObject == this)
     {
-        this.userList.freeze();
-        var len = this.userList.childData.childData.length;
-        while (len > 0)
+        while (client.list.firstChild &&
+               client.list.firstChild.localName == "listitem")
         {
-            var entry = this.userList.childData.childData[--len];
-            this.userList.childData.removeChildAtIndex(len);
-            delete entry._userObj.chanListEntry;
-            delete entry._userObj;
+            delete client.list.firstChild._userObj.chanListEntry;
+            delete client.list.firstChild._userObj;
+            client.list.firstChild.remove();
         }
-        this.userList.thaw();
     }
+    this.userList = new Array();
 }
 
 CIRCUser.prototype.onInit =
@@ -3834,127 +3947,45 @@ function my_dccfiledisconnect(e)
     client.munger.getRule(".inline-buttons").enabled = false;
 }
 
-var CopyPasteHandler = new Object();
-
-CopyPasteHandler.allowDrop =
-CopyPasteHandler.allowStartDrag =
-CopyPasteHandler.onCopyOrDrag =
-function phand_bogus()
+function updateListItem(item, userObj)
 {
-    return true;
+    item.setAttribute("label", userObj.unicodeName);
+    item.setAttribute("value", userObj.unicodeName.toLowerCase());
+    item.setAttribute("sortName", userObj.sortName.toLowerCase());
+    item.setAttribute("voice", userObj.isVoice);
+    item.setAttribute("op", userObj.isOp);
+    item.setAttribute("halfop", userObj.isHalfOp);
+    item.setAttribute("admin", userObj.isAdmin);
+    item.setAttribute("founder", userObj.isFounder);
+    item.setAttribute("away", userObj.isAway);
+    return item;
 }
 
-CopyPasteHandler.onPasteOrDrop =
-function phand_onpaste(e, data)
+function UserEntry(userObj)
 {
-    // XXXbug 329487: The effect of onPasteOrDrop's return value is actually the
-    //                exact opposite of the definition in the IDL.
-
-    // Don't mess with the multiline box at all.
-    if (client.prefs["multiline"])
-        return true;
-
-    var str = new Object();
-    var strlen = new Object();
-    data.getTransferData("text/unicode", str, strlen);
-    str.value.QueryInterface(Components.interfaces.nsISupportsString);
-    str.value.data = str.value.data.replace(/(^\s*[\r\n]+|[\r\n]+\s*$)/g, "");
-
-    // XXX part of what follows is a very ugly hack to make links (with a title)
-    // not open the multiline box. We 'should' be able to ask the transferable
-    // what flavours it supports, but testing showed that by the time we can ask
-    // for that info, it's forgotten about everything apart from text/unicode.
-    var lines = str.value.data.split("\n");
-    var m = lines[0].match(client.linkRE);
-
-    if ((str.value.data.indexOf("\n") == -1) ||
-        (m && (m[0] == lines[0]) && (lines.length == 2)))
-    {
-        // If, after stripping leading/trailing empty lines, the string is a
-        // single line, or it's a link with a title, put it back in
-        // the transferable and return.
-        data.setTransferData("text/unicode", str.value,
-                             str.value.data.length * 2);
-        return true;
-    }
-
-    // If it's a drop, move the text cursor to the mouse position.
-    if (e && ("rangeOffset" in e))
-        client.input.setSelectionRange(e.rangeOffset, e.rangeOffset);
-
-    str = client.input.value.substr(0, client.input.selectionStart) +
-          str.value.data + client.input.value.substr(client.input.selectionEnd);
-    client.prefs["multiline"] = true;
-    // We want to auto-collapse after send, so the user is not thrown off by the
-    // "strange" input box if they didn't specifically ask for it:
-    client.multiLineForPaste = true;
-    client.input.value = str;
-    return false;
-}
-
-CopyPasteHandler.QueryInterface =
-function phand_qi(iid)
-{
-    if (iid.equals(Components.interfaces.nsISupports) ||
-        iid.equals(Components.interfaces.nsIClipboardDragDropHooks))
-        return this;
-
-    throw Components.results.NS_ERROR_NO_INTERFACE;
-}
-
-function UserEntry(userObj, channelListShare)
-{
-    var self = this;
-    function getUName()
-    {
-        return userObj.unicodeName;
-    };
-    function getSortFn()
-    {
-        if (client.prefs["sortUsersByMode"])
-            return ule_sortByMode;
-        return ule_sortByName;
-    };
-
-    // This object is used to represent a user in the userlist. To work with our
-    // JS tree view, it needs a bunch of stuff that is set through the
-    // constructor and the prototype (see also a couple of lines down). Here we
-    // call the original constructor to do some work for us:
-    XULTreeViewRecord.call(this, channelListShare);
-
-    // This magic function means the unicodeName is used for display:
-    this.setColumnPropertyName("usercol", getUName);
+    let item = document.createElement("listitem");
+    item.setAttribute("class", "listitem-iconic");
+    item = updateListItem(item, userObj);
 
     // We need this for sorting by mode (op, hop, voice, etc.)
-    this._userObj = userObj;
+    item._userObj = userObj;
 
     // When the user leaves, we need to have the entry so we can remove it:
-    userObj.chanListEntry = this;
+    userObj.chanListEntry = item;
 
-    // Gross hack: we set up the sort function by getter so we don't have to go
-    // back (array sort -> xpc -> our pref lib -> xpc -> pref interfaces) for
-    // every bloody compare. Now it will be a function that doesn't need prefs
-    // after being retrieved, which is much much faster.
-    this.__defineGetter__("sortCompare", getSortFn);
+    return item;
 }
-
-// See explanation in the constructor.
-UserEntry.prototype = XULTreeViewRecord.prototype;
 
 function ule_sortByName(a, b)
 {
-    if (a._userObj.unicodeName == b._userObj.unicodeName)
-        return 0;
-    var aName = a._userObj.unicodeName.toLowerCase();
-    var bName = b._userObj.unicodeName.toLowerCase();
-    return (aName < bName ? -1 : 1);
+    let aName = a.getAttribute("value");
+    let bName = b.getAttribute("value");
+    return aName.localeCompare(bName);
 }
 
 function ule_sortByMode(a, b)
 {
-    if (a._userObj.sortName == b._userObj.sortName)
-        return 0;
-    var aName = a._userObj.sortName.toLowerCase();
-    var bName = b._userObj.sortName.toLowerCase();
-    return (aName < bName ? -1 : 1);
+    let aName = a.getAttribute("sortName");
+    let bName = b.getAttribute("sortName");
+    return aName.localeCompare(bName);
 }

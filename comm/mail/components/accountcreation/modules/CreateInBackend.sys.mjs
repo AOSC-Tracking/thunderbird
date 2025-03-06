@@ -74,17 +74,6 @@ async function createAccountInBackend(config) {
     await rememberPassword(inServer, config.incoming.password);
   }
 
-  if (inServer.authMethod == Ci.nsMsgAuthMethod.OAuth2) {
-    inServer.setUnicharValue(
-      "oauth2.scope",
-      config.incoming.oauthSettings.scope
-    );
-    inServer.setUnicharValue(
-      "oauth2.issuer",
-      config.incoming.oauthSettings.issuer
-    );
-  }
-
   // SSL
   inServer.socketType = config.incoming.socketType;
 
@@ -168,13 +157,19 @@ async function createAccountInBackend(config) {
       const smtpServer = outServer.QueryInterface(Ci.nsISmtpServer);
       smtpServer.hostname = config.outgoing.hostname;
       smtpServer.port = config.outgoing.port;
+
       // Note: The client ID will only be set on the server if either its own
       // `clientidEnabled` pref, or the default SMTP pref with the same name, is
       // set to true.
       smtpServer.clientid = newOutgoingClientid;
+
+      // Setting the socket type only makes sense with SMTP, since for other
+      // types (e.g. EWS) it is derived from the URL used to configure the
+      // server.
+      outServer.socketType = config.outgoing.socketType;
     } else if (config.outgoing.type == "ews") {
       const ewsServer = outServer.QueryInterface(Ci.nsIEwsServer);
-      ewsServer.ewsURL = config.outgoing.ewsURL;
+      ewsServer.initialize(config.outgoing.ewsURL);
     } else {
       // Note: createServer should already have thrown if given a type we don't
       // support, so if we're able to reach this then something has gone very
@@ -193,19 +188,6 @@ async function createAccountInBackend(config) {
       }
     }
 
-    if (outServer.authMethod == Ci.nsMsgAuthMethod.OAuth2) {
-      const prefBranch = "mail.smtpserver." + outServer.key + ".";
-      Services.prefs.setCharPref(
-        prefBranch + "oauth2.scope",
-        config.outgoing.oauthSettings.scope
-      );
-      Services.prefs.setCharPref(
-        prefBranch + "oauth2.issuer",
-        config.outgoing.oauthSettings.issuer
-      );
-    }
-
-    outServer.socketType = config.outgoing.socketType;
     outServer.description = config.displayName;
 
     // If this is the first SMTP server, set it as default
@@ -348,10 +330,9 @@ async function rememberPassword(server, password) {
  * in the config.
  * (We also check the email address as username.)
  *
- * @param config {AccountConfig} filled in (no placeholders)
- * @returns {nsIMsgIncomingServer} If it already exists, the server
- *     object is returned.
- *     If it's a new server, |null| is returned.
+ * @param {AccountConfig} config - AccountConfig filled in (no placeholders)
+ * @returns {?nsIMsgIncomingServer} If it already exists, the server object is
+ *   returned. If it's a new server, |null| is returned.
  */
 function checkIncomingServerAlreadyExists(config) {
   lazy.AccountCreationUtils.assert(config instanceof lazy.AccountConfig);
@@ -381,10 +362,9 @@ function checkIncomingServerAlreadyExists(config) {
  * which matches (hostname, port, username) the primary one
  * in the config.
  *
- * @param {AccountConfig} config - filled in (no placeholders).
- * @returns {nsIMsgOutgoingServer} If it already exists, the server
- *     object is returned.
- *     If it's a new server, |null| is returned.
+ * @param {AccountConfig} config - AccountConfig filled in (no placeholders).
+ * @returns {?nsIMsgOutgoingServer} If it already exists, the server object is
+ *   returned. If it's a new server, |null| is returned.
  */
 function checkOutgoingServerAlreadyExists(config) {
   lazy.AccountCreationUtils.assert(config instanceof lazy.AccountConfig);
@@ -408,7 +388,7 @@ function checkOutgoingServerAlreadyExists(config) {
  * protocols (eg. IMAP and POP3).
  *
  * @param {string} name - The name or email address of the new account.
- * @returns {boolean} True if an account with the same name is found.
+ * @returns {boolean} true if an account with the same name is found.
  */
 function checkAccountNameAlreadyExists(name) {
   return MailServices.accounts.accounts.some(
@@ -445,6 +425,8 @@ function generateUniqueAccountName(config) {
 /**
  * Check if there already is a "Local Folders". If not, create it.
  * Copied from AccountWizard.js with minor updates.
+ *
+ * @param {nsIMsgAccountManager} am - MailServices.accounts (FIXME, use directly!)
  */
 function verifyLocalFoldersAccount(am) {
   let localMailServer;

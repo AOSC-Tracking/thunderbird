@@ -139,7 +139,7 @@ class NativeJumpListBackend : public JumpListBackend {
   }
 
  protected:
-  virtual ~NativeJumpListBackend() override{};
+  virtual ~NativeJumpListBackend() override {};
 
  private:
   RefPtr<ICustomDestinationList> mWindowsDestList;
@@ -234,6 +234,41 @@ JumpListBuilder::ObtainAndCacheFavicon(nsIURI* aFaviconURI,
   NS_ENSURE_SUCCESS(rv, rv);
 
   aCachedIconPath = iconFilePath;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+JumpListBuilder::ObtainAndCacheFaviconAsync(nsIURI* aFaviconURI, JSContext* aCx,
+                                            Promise** aPromise) {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(aPromise);
+  MOZ_ASSERT(mIOThread);
+
+  ErrorResult result;
+  RefPtr<Promise> promise =
+      Promise::Create(xpc::CurrentNativeGlobal(aCx), result);
+
+  if (MOZ_UNLIKELY(result.Failed())) {
+    return result.StealNSResult();
+  }
+
+  nsMainThreadPtrHandle<Promise> promiseHolder(
+      new nsMainThreadPtrHolder<Promise>(
+          "JumpListBuilder::ObtainAndCacheFaviconAsync promise", promise));
+
+  mozilla::widget::FaviconHelper::ObtainCachedIconFileAsync(
+      aFaviconURI, mIOThread,
+      mozilla::widget::FaviconHelper::IconCacheDir::JumpListCacheDir)
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [promiseHolder](nsString aIcoFilePath) {
+            promiseHolder.get()->MaybeResolve(aIcoFilePath);
+          },
+          [promiseHolder](nsresult aResult) {
+            promiseHolder.get()->MaybeReject(aResult);
+          });
+
+  promise.forget(aPromise);
   return NS_OK;
 }
 
@@ -755,7 +790,7 @@ void JumpListBuilder::DeleteIconFromDisk(const nsAString& aPath) {
   if (StringTail(aPath, 4).LowerCaseEqualsASCII(".ico")) {
     // Construct the parent path of the passed in path
     nsCOMPtr<nsIFile> icoFile;
-    nsresult rv = NS_NewLocalFile(aPath, true, getter_AddRefs(icoFile));
+    nsresult rv = NS_NewLocalFile(aPath, getter_AddRefs(icoFile));
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return;
     }

@@ -12,13 +12,19 @@ import { CustomizeMenu } from "content-src/components/CustomizeMenu/CustomizeMen
 import React from "react";
 import { Search } from "content-src/components/Search/Search";
 import { Sections } from "content-src/components/Sections/Sections";
+import { Logo } from "content-src/components/Logo/Logo";
 import { Weather } from "content-src/components/Weather/Weather";
+import { Notifications } from "content-src/components/Notifications/Notifications";
+import { TopicSelection } from "content-src/components/DiscoveryStreamComponents/TopicSelection/TopicSelection";
 import { WallpaperFeatureHighlight } from "../DiscoveryStreamComponents/FeatureHighlight/WallpaperFeatureHighlight";
 
 const VISIBLE = "visible";
 const VISIBILITY_CHANGE_EVENT = "visibilitychange";
 const WALLPAPER_HIGHLIGHT_DISMISSED_PREF =
   "newtabWallpapers.highlightDismissed";
+const PREF_THUMBS_UP_DOWN_ENABLED = "discoverystream.thumbsUpDown.enabled";
+const PREF_THUMBS_UP_DOWN_LAYOUT_ENABLED =
+  "discoverystream.thumbsUpDown.searchTopsitesCompact";
 
 export const PrefsButton = ({ onClick, icon }) => (
   <div className="prefs-button">
@@ -119,10 +125,13 @@ export class BaseContent extends React.PureComponent {
     this.updateWallpaper = this.updateWallpaper.bind(this);
     this.prefersDarkQuery = null;
     this.handleColorModeChange = this.handleColorModeChange.bind(this);
+    this.shouldDisplayTopicSelectionModal =
+      this.shouldDisplayTopicSelectionModal.bind(this);
     this.state = {
       fixedSearch: false,
       firstVisibleTimestamp: null,
       colorMode: "",
+      fixedNavStyle: {},
     };
   }
 
@@ -139,10 +148,12 @@ export class BaseContent extends React.PureComponent {
     global.addEventListener("keydown", this.handleOnKeyDown);
     if (this.props.document.visibilityState === VISIBLE) {
       this.setFirstVisibleTimestamp();
+      this.shouldDisplayTopicSelectionModal();
     } else {
       this._onVisibilityChange = () => {
         if (this.props.document.visibilityState === VISIBLE) {
           this.setFirstVisibleTimestamp();
+          this.shouldDisplayTopicSelectionModal();
           this.props.document.removeEventListener(
             VISIBILITY_CHANGE_EVENT,
             this._onVisibilityChange
@@ -188,12 +199,117 @@ export class BaseContent extends React.PureComponent {
   }
 
   onWindowScroll() {
+    if (window.innerHeight <= 700) {
+      // Bug 1937296: Only apply fixed-search logic
+      // if the page is tall enough to support it.
+      return;
+    }
+
     const prefs = this.props.Prefs.values;
-    const SCROLL_THRESHOLD = prefs["logowordmark.alwaysVisible"] ? 179 : 34;
+    const { showSearch } = prefs;
+
+    if (!showSearch) {
+      // Bug 1944718: Only apply fixed-search logic
+      // if search is visible.
+      return;
+    }
+
+    const logoAlwaysVisible = prefs["logowordmark.alwaysVisible"];
+    const layoutsVariantAEnabled = prefs["newtabLayouts.variant-a"];
+    const layoutsVariantBEnabled = prefs["newtabLayouts.variant-b"];
+    const layoutsVariantAorB = layoutsVariantAEnabled || layoutsVariantBEnabled;
+    const thumbsUpDownEnabled = prefs[PREF_THUMBS_UP_DOWN_ENABLED];
+    // For the compact layout to be active,
+    // thumbs also has to be enabled until Bug 1932242 is fixed
+    const thumbsUpDownLayoutEnabled =
+      prefs[PREF_THUMBS_UP_DOWN_LAYOUT_ENABLED] && thumbsUpDownEnabled;
+
+    /* Bug 1917937: The logic presented below is fragile but accurate to the pixel. As new tab experiments with layouts, we have a tech debt of competing styles and classes the slightly modify where the search bar sits on the page. The larger solution for this is to replace everything with an intersection observer, but would require a larger refactor of this file. In the interim, we can programmatically calculate when to fire the fixed-scroll event and account for the moved elements so that topsites/etc stays in the same place. The CSS this references has been flagged to reference this logic so (hopefully) keep them in sync. */
+
+    let SCROLL_THRESHOLD = 0; // When the fixed-scroll event fires
+    let MAIN_OFFSET_PADDING = 0; // The padding to compensate for the moved elements
+
+    let layout = {
+      outerWrapperPaddingTop: 30,
+      searchWrapperPaddingTop: 34,
+      searchWrapperPaddingBottom: 38,
+      searchWrapperFixedScrollPaddingTop: 27,
+      searchWrapperFixedScrollPaddingBottom: 27,
+      searchInnerWrapperMinHeight: 52,
+      logoAndWordmarkWrapperHeight: 64,
+      logoAndWordmarkWrapperMarginBottom: 48,
+    };
+
+    const CSS_VAR_SPACE_XXLARGE = 34.2; // Custom Acorn themed variable (8 * 0.267rem);
+
+    // Experimental layouts
+    // (Note these if statements are ordered to match the CSS cascade)
+    if (thumbsUpDownLayoutEnabled || layoutsVariantAorB) {
+      // Thumbs Compact View Layout
+      if (thumbsUpDownLayoutEnabled) {
+        layout.logoAndWordmarkWrapperMarginBottom = CSS_VAR_SPACE_XXLARGE;
+        if (!logoAlwaysVisible) {
+          layout.searchWrapperPaddingTop = CSS_VAR_SPACE_XXLARGE;
+          layout.searchWrapperPaddingBottom = CSS_VAR_SPACE_XXLARGE;
+        }
+      }
+
+      // Variant B Layout
+      if (layoutsVariantAEnabled) {
+        layout.outerWrapperPaddingTop = 24;
+        if (!thumbsUpDownLayoutEnabled) {
+          layout.searchWrapperPaddingTop = 0;
+          layout.searchWrapperPaddingBottom = 32;
+          layout.logoAndWordmarkWrapperMarginBottom = 32;
+        }
+      }
+
+      // Variant B Layout
+      if (layoutsVariantBEnabled) {
+        layout.outerWrapperPaddingTop = 24;
+        // Logo is positioned absolute, so remove it
+        layout.logoAndWordmarkWrapperHeight = 0;
+        layout.logoAndWordmarkWrapperMarginBottom = 0;
+        layout.searchWrapperPaddingTop = 16;
+        layout.searchWrapperPaddingBottom = CSS_VAR_SPACE_XXLARGE;
+        if (!thumbsUpDownLayoutEnabled) {
+          layout.searchWrapperPaddingBottom = 32;
+        }
+      }
+    }
+
+    // Logo visibility applies to all layouts
+    if (!logoAlwaysVisible) {
+      layout.logoAndWordmarkWrapperHeight = 0;
+      layout.logoAndWordmarkWrapperMarginBottom = 0;
+    }
+
+    SCROLL_THRESHOLD =
+      layout.outerWrapperPaddingTop +
+      layout.searchWrapperPaddingTop +
+      layout.logoAndWordmarkWrapperHeight +
+      layout.logoAndWordmarkWrapperMarginBottom -
+      layout.searchWrapperFixedScrollPaddingTop;
+
+    MAIN_OFFSET_PADDING =
+      layout.searchWrapperPaddingTop +
+      layout.searchWrapperPaddingBottom +
+      layout.searchInnerWrapperMinHeight +
+      layout.logoAndWordmarkWrapperHeight +
+      layout.logoAndWordmarkWrapperMarginBottom;
+
+    // Edge case if logo and thums are turned off, but Var A is enabled
+    if (SCROLL_THRESHOLD < 1) {
+      SCROLL_THRESHOLD = 1;
+    }
+
     if (global.scrollY > SCROLL_THRESHOLD && !this.state.fixedSearch) {
-      this.setState({ fixedSearch: true });
+      this.setState({
+        fixedSearch: true,
+        fixedNavStyle: { paddingBlockStart: `${MAIN_OFFSET_PADDING}px` },
+      });
     } else if (global.scrollY <= SCROLL_THRESHOLD && this.state.fixedSearch) {
-      this.setState({ fixedSearch: false });
+      this.setState({ fixedSearch: false, fixedNavStyle: {} });
     }
   }
 
@@ -236,22 +352,22 @@ export class BaseContent extends React.PureComponent {
       return null;
     }
 
-    const { name, webpage } = selected.attribution;
-    if (activeWallpaper && wallpaperList && name.url) {
+    const { name: authorDetails, webpage } = selected.attribution;
+    if (activeWallpaper && wallpaperList && authorDetails.url) {
       return (
         <p
           className={`wallpaper-attribution`}
-          key={name.string}
+          key={authorDetails.string}
           data-l10n-id="newtab-wallpaper-attribution"
           data-l10n-args={JSON.stringify({
-            author_string: name.string,
-            author_url: name.url,
+            author_string: authorDetails.string,
+            author_url: authorDetails.url,
             webpage_string: webpage.string,
             webpage_url: webpage.url,
           })}
         >
-          <a data-l10n-name="name-link" href={name.url}>
-            {name.string}
+          <a data-l10n-name="name-link" href={authorDetails.url}>
+            {authorDetails.string}
           </a>
           <a data-l10n-name="webpage-link" href={webpage.url}>
             {webpage.string}
@@ -266,13 +382,48 @@ export class BaseContent extends React.PureComponent {
     const prefs = this.props.Prefs.values;
     const wallpaperLight = prefs["newtabWallpapers.wallpaper-light"];
     const wallpaperDark = prefs["newtabWallpapers.wallpaper-dark"];
+    // selected wallpaper is used for v2 of wallpapers
+    const selectedWallpaper = prefs["newtabWallpapers.wallpaper"];
     const { wallpaperList } = this.props.Wallpapers;
 
     if (wallpaperList) {
-      const lightWallpaper =
-        wallpaperList.find(wp => wp.title === wallpaperLight) || "";
-      const darkWallpaper =
-        wallpaperList.find(wp => wp.title === wallpaperDark) || "";
+      let lightWallpaper;
+      let darkWallpaper;
+      if (selectedWallpaper) {
+        // if selectedWallpaper exists - we override what light and dark prefs are to match that
+        const wallpaper = wallpaperList.find(
+          wp => wp.title === selectedWallpaper
+        );
+        lightWallpaper = wallpaper;
+        darkWallpaper = wallpaper;
+      } else {
+        lightWallpaper =
+          wallpaperList.find(wp => wp.title === wallpaperLight) || "";
+        darkWallpaper =
+          wallpaperList.find(wp => wp.title === wallpaperDark) || "";
+      }
+
+      // solid-color-picker-#00d100
+      const regexRGB = /#([a-fA-F0-9]{6})/;
+
+      // Override Remote Settings to set custom HEX bg color
+      if (wallpaperLight.includes("solid-color-picker")) {
+        lightWallpaper = {
+          theme: "light",
+          title: "solid-color-picker",
+          category: "solid-colors",
+          solid_color: wallpaperLight.match(regexRGB)[0],
+        };
+      }
+
+      if (wallpaperDark.includes("solid-color-picker")) {
+        darkWallpaper = {
+          theme: "dark",
+          title: "solid-color-picker",
+          category: "solid-colors",
+          solid_color: wallpaperDark.match(regexRGB)[0],
+        };
+      }
 
       const wallpaperColor =
         darkWallpaper?.solid_color || lightWallpaper?.solid_color || "";
@@ -382,17 +533,66 @@ export class BaseContent extends React.PureComponent {
     return 0.2125 * r + 0.7154 * g + 0.0721 * b <= 110;
   }
 
+  shouldDisplayTopicSelectionModal() {
+    const prefs = this.props.Prefs.values;
+    const pocketEnabled =
+      prefs["feeds.section.topstories"] && prefs["feeds.system.topstories"];
+    const topicSelectionOnboardingEnabled =
+      prefs["discoverystream.topicSelection.onboarding.enabled"] &&
+      pocketEnabled;
+    const maybeShowModal =
+      prefs["discoverystream.topicSelection.onboarding.maybeDisplay"];
+    const displayTimeout =
+      prefs["discoverystream.topicSelection.onboarding.displayTimeout"];
+    const lastDisplayed =
+      prefs["discoverystream.topicSelection.onboarding.lastDisplayed"];
+    const displayCount =
+      prefs["discoverystream.topicSelection.onboarding.displayCount"];
+
+    if (
+      !maybeShowModal ||
+      !prefs["discoverystream.topicSelection.enabled"] ||
+      !topicSelectionOnboardingEnabled
+    ) {
+      return;
+    }
+
+    const day = 24 * 60 * 60 * 1000;
+    const now = new Date().getTime();
+
+    const timeoutOccured = now - parseFloat(lastDisplayed) > displayTimeout;
+    if (displayCount < 3) {
+      if (displayCount === 0 || timeoutOccured) {
+        this.props.dispatch(
+          ac.BroadcastToContent({ type: at.TOPIC_SELECTION_SPOTLIGHT_OPEN })
+        );
+        this.setPref(
+          "discoverystream.topicSelection.onboarding.displayTimeout",
+          day
+        );
+      }
+    }
+  }
+
   render() {
     const { props } = this;
-    const { App } = props;
+    const { App, DiscoveryStream } = props;
     const { initialized, customizeMenuVisible } = App;
     const prefs = props.Prefs.values;
+
+    const layoutsVariantAEnabled = prefs["newtabLayouts.variant-a"];
+    const layoutsVariantBEnabled = prefs["newtabLayouts.variant-b"];
+    const shortcutsRefresh = prefs["newtabShortcuts.refresh"];
+    const layoutsVariantAorB = layoutsVariantAEnabled || layoutsVariantBEnabled;
 
     const activeWallpaper =
       prefs[`newtabWallpapers.wallpaper-${this.state.colorMode}`];
     const wallpapersEnabled = prefs["newtabWallpapers.enabled"];
     const wallpapersV2Enabled = prefs["newtabWallpapers.v2.enabled"];
     const weatherEnabled = prefs.showWeather;
+    const { showTopicSelection } = DiscoveryStream;
+    const mayShowTopicSelection =
+      showTopicSelection && prefs["discoverystream.topicSelection.enabled"];
 
     const { pocketConfig } = prefs;
 
@@ -432,6 +632,33 @@ export class BaseContent extends React.PureComponent {
     const mayHaveSponsoredStories = prefs["system.showSponsored"];
     const mayHaveWeather = prefs["system.showWeather"];
     const { mayHaveSponsoredTopSites } = prefs;
+    const supportUrl = prefs["support.url"];
+
+    const hasThumbsUpDownLayout =
+      prefs["discoverystream.thumbsUpDown.searchTopsitesCompact"];
+    const hasThumbsUpDown = prefs["discoverystream.thumbsUpDown.enabled"];
+    const sectionsEnabled = prefs["discoverystream.sections.enabled"];
+    const topicLabelsEnabled = prefs["discoverystream.topicLabels.enabled"];
+    const sectionsCustomizeMenuPanelEnabled =
+      prefs["discoverystream.sections.customizeMenuPanel.enabled"];
+    // Logic to show follow/block topic mgmt panel in Customize panel
+    const mayHaveTopicSections =
+      topicLabelsEnabled &&
+      sectionsEnabled &&
+      sectionsCustomizeMenuPanelEnabled &&
+      DiscoveryStream.feeds.loaded;
+
+    const featureClassName = [
+      weatherEnabled && mayHaveWeather && "has-weather", // Show is weather is enabled/visible
+      prefs.showSearch ? "has-search" : "no-search",
+      layoutsVariantAEnabled ? "layout-variant-a" : "", // Layout experiment variant A
+      layoutsVariantBEnabled ? "layout-variant-b" : "", // Layout experiment variant B
+      shortcutsRefresh ? "shortcuts-refresh" : "", // Shortcuts refresh experiment
+      pocketEnabled ? "has-recommended-stories" : "no-recommended-stories",
+      sectionsEnabled ? "has-sections-grid" : "",
+    ]
+      .filter(v => v)
+      .join(" ");
 
     const outerClassName = [
       "outer-wrapper",
@@ -442,7 +669,13 @@ export class BaseContent extends React.PureComponent {
         !noSectionsEnabled &&
         "fixed-search",
       prefs.showSearch && noSectionsEnabled && "only-search",
+      prefs["feeds.topsites"] &&
+        !pocketEnabled &&
+        !prefs.showSearch &&
+        "only-topsites",
+      noSectionsEnabled && "no-sections",
       prefs["logowordmark.alwaysVisible"] && "visible-logo",
+      hasThumbsUpDownLayout && hasThumbsUpDown && "thumbs-ui-compact",
     ]
       .filter(v => v)
       .join(" ");
@@ -451,7 +684,7 @@ export class BaseContent extends React.PureComponent {
     }
 
     return (
-      <div>
+      <div className={featureClassName}>
         {/* Floating menu for customize menu toggle */}
         <menu className="personalizeButtonWrapper">
           <CustomizeMenu
@@ -464,6 +697,7 @@ export class BaseContent extends React.PureComponent {
             wallpapersV2Enabled={wallpapersV2Enabled}
             activeWallpaper={activeWallpaper}
             pocketRegion={pocketRegion}
+            mayHaveTopicSections={mayHaveTopicSections}
             mayHaveSponsoredTopSites={mayHaveSponsoredTopSites}
             mayHaveSponsoredStories={mayHaveSponsoredStories}
             mayHaveWeather={mayHaveWeather}
@@ -477,9 +711,16 @@ export class BaseContent extends React.PureComponent {
             />
           )}
         </menu>
+        <div className="weatherWrapper">
+          {weatherEnabled && (
+            <ErrorBoundary>
+              <Weather />
+            </ErrorBoundary>
+          )}
+        </div>
         {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions*/}
         <div className={outerClassName} onClick={this.closeCustomizationMenu}>
-          <main>
+          <main className="newtab-main" style={this.state.fixedNavStyle}>
             {prefs.showSearch && (
               <div className="non-collapsible-section">
                 <ErrorBoundary>
@@ -492,6 +733,14 @@ export class BaseContent extends React.PureComponent {
                   />
                 </ErrorBoundary>
               </div>
+            )}
+            {/* Bug 1914055: Show logo regardless if search is enabled */}
+            {!prefs.showSearch && layoutsVariantAorB && !noSectionsEnabled && (
+              <Logo
+                isAprilFoolsLogo={
+                  this.props.Prefs.values["newtabLogo.aprilfools"]
+                }
+              />
             )}
             <div className={`body-wrapper${initialized ? " on" : ""}`}>
               {isDiscoveryStream ? (
@@ -510,12 +759,16 @@ export class BaseContent extends React.PureComponent {
             {wallpapersEnabled && this.renderWallpaperAttribution()}
           </main>
           <aside>
-            {weatherEnabled && (
+            {this.props.Notifications?.showNotifications && (
               <ErrorBoundary>
-                <Weather />
+                <Notifications dispatch={this.props.dispatch} />
               </ErrorBoundary>
             )}
           </aside>
+          {/* Only show the modal on currently visible pages (not preloaded) */}
+          {mayShowTopicSelection && pocketEnabled && (
+            <TopicSelection supportUrl={supportUrl} />
+          )}
         </div>
       </div>
     );
@@ -531,6 +784,7 @@ export const Base = connect(state => ({
   Prefs: state.Prefs,
   Sections: state.Sections,
   DiscoveryStream: state.DiscoveryStream,
+  Notifications: state.Notifications,
   Search: state.Search,
   Wallpapers: state.Wallpapers,
   Weather: state.Weather,

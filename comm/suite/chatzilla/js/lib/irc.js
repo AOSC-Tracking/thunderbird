@@ -31,6 +31,17 @@ const JSIRCV3_SUPPORTED_CAPS = [
     "userhost-in-names",
 ];
 
+function renameProperty(obj, oldname, newname)
+{
+
+    if (oldname == newname)
+        return;
+
+    obj[newname] = obj[oldname];
+    delete obj[oldname];
+
+}
+
 function userIsMe (user)
 {
 
@@ -410,7 +421,7 @@ function net_doconnect(e)
                 });
                 if (matches.length > 0)
                 {
-                    host = arrayIndexOf(this.serverList, matches[0]);
+                    host = this.serverList.indexOf(matches[0]);
                 }
                 else
                 {
@@ -781,7 +792,10 @@ function serv_decodetagdata(str)
     for (var i = 0; i < tags.length; i++)
     {
         var [key, val] = tags[i].split("=");
-        val = unescapeTagValue(val);
+        if (val)
+            val = unescapeTagValue(val);
+        else
+            val = "";
         obj[key] = val;
     }
 
@@ -1042,7 +1056,7 @@ function serv_monitorlist(nicks, isAdd)
 CIRCServer.prototype.addTarget =
 function serv_addtarget(name)
 {
-    if (arrayIndexOf(this.channelTypes, name[0]) != -1) {
+    if (this.channelTypes.includes(name[0])) {
         return this.addChannel(name);
     } else {
         return this.addUser(name);
@@ -1095,7 +1109,7 @@ function serv_senddata (msg)
     if (this.sendQueue.length == 0)
         this.parent.eventPump.addEvent (new CEvent ("server", "senddata",
                                                     this, "onSendData"));
-    arrayInsertAt (this.sendQueue, 0, new String(msg));
+    this.sendQueue.unshift(new String(msg));
 }
 
 // Utility method for splitting large lines prior to sending.
@@ -1278,13 +1292,21 @@ function serv_disconnect(e)
     if (!this.isConnected)
         return;
 
+    let errorClass = 0;
+    // Check if e.disconnectStatus is within the valid range for NSS Errors.
+    if (e.disconnectStatus >= 8192 && e.disconnectStatus < 20480)
+    {
+        errorClass = Cc["@mozilla.org/nss_errors_service;1"]
+                       .getService(Ci.nsINSSErrorsService)
+                       .getErrorClass(e.disconnectStatus);
+    }
     // Don't reconnect from a certificate error.
-    var certError = (getNSSErrorClass(e.disconnectStatus) == ERROR_CLASS_BAD_CERT);
+    let badCert = (errorClass == Ci.nsINSSErrorsService.ERROR_CLASS_BAD_CERT);
 
     // Don't reconnect if our connection was aborted.
-    var wasAborted = (e.disconnectStatus == NS_ERROR_ABORT);
-    var dontReconnect = certError || wasAborted;
+    let wasAborted = (e.disconnectStatus == NS_ERROR_ABORT);
 
+    let dontReconnect = badCert || wasAborted;
     if (((this.parent.state == NET_CONNECTING) && !dontReconnect) ||
         /* fell off while connecting, try again */
         (this.parent.primServ == this) && (this.parent.state == NET_ONLINE) &&
@@ -2472,7 +2494,7 @@ function my_cap (e)
             var cap = caps[i].split(/=(.+)/)[0];
             cap = cap.trim();
 
-            if (arrayContains(caps_nodel, cap))
+            if (caps_nodel.includes(cap))
                 continue;
 
             this.caps[cap] = null;
@@ -2689,7 +2711,7 @@ function serv_mode (e)
 {
     e.destObject = this;
     /* modes are not allowed in +channels -> no need to test that here.. */
-    if (arrayIndexOf(this.channelTypes, e.params[1][0]) != -1)
+    if (this.channelTypes.includes(e.params[1][0]))
     {
         e.channel = new CIRCChannel(this, null, e.params[1]);
         if ("user" in e && e.user)
@@ -2788,7 +2810,7 @@ function serv_chanmode (e)
             e.channel.mode[modeMap[mode_str[i]].name] = canonicalModeValue;
         }
 
-        if (arrayContains(cmList.a, mode_str[i]))
+        if (cmList.a.includes(mode_str[i]))
         {
             var data = e.params[BASE_PARAM + params_eaten++];
             if (modifier == "+")
@@ -2808,7 +2830,7 @@ function serv_chanmode (e)
                 }
             }
         }
-        else if (arrayContains(cmList.b, mode_str[i]))
+        else if (cmList.b.includes(mode_str[i]))
         {
             var data = e.params[BASE_PARAM + params_eaten++];
             if (modifier == "+")
@@ -2821,7 +2843,7 @@ function serv_chanmode (e)
                 e.channel.mode.modeB[mode_str[i]] = null;
             }
         }
-        else if (arrayContains(cmList.c, mode_str[i]))
+        else if (cmList.c.includes(mode_str[i]))
         {
             if (modifier == "+")
             {
@@ -2833,7 +2855,7 @@ function serv_chanmode (e)
                 e.channel.mode.modeC[mode_str[i]] = null;
             }
         }
-        else if (arrayContains(cmList.d, mode_str[i]))
+        else if (cmList.d.includes(mode_str[i]))
         {
             e.channel.mode.modeD[mode_str[i]] = (modifier == "+");
         }
@@ -3004,12 +3026,12 @@ function serv_join(e)
                 return;
 
             // Get a full list of bans and exceptions, if supported.
-            if (arrayContains(t.channelModes.a, "b"))
+            if (t.channelModes.a.includes("b"))
             {
                 e.server.sendData("MODE " + e.channel.encodedName + " +b\n");
                 e.channel.pendingBanList = true;
             }
-            if (arrayContains(t.channelModes.a, "e"))
+            if (t.channelModes.a.includes("e"))
             {
                 e.server.sendData("MODE " + e.channel.encodedName + " +e\n");
                 e.channel.pendingExceptList = true;
@@ -3118,7 +3140,7 @@ function serv_notice_privmsg (e)
 
     /* setting replyTo provides a standard place to find the target for     */
     /* replies associated with this event.                                  */
-    if (arrayIndexOf(this.channelTypes, targetName[0]) != -1)
+    if (this.channelTypes && this.channelTypes.includes(targetName[0]))
     {
         e.channel = new CIRCChannel(this, null, targetName);
         if ("user" in e)
@@ -3555,7 +3577,7 @@ function chan_geturl()
     var flags = this.mode.key ? ["needkey"] : [];
 
     if ((target[0] == "#") && (target.length > 1) &&
-        arrayIndexOf(this.parent.channelTypes, target[1]) == -1)
+        !this.parent.channelTypes.includes(target[1]))
     {
         /* First character is "#" (which we're allowed to omit), and the
          * following character is NOT a valid prefix, so it's safe to remove.
@@ -3634,7 +3656,7 @@ function chan_userslen (mode)
     else
     {
         for (p in this.users)
-            if (arrayContains(this.users[p].modes, mode))
+            if (this.users[p].modes.includes(mode))
                 i++;
     }
 
@@ -4087,30 +4109,25 @@ function CIRCChanUser(parent, unicodeName, encodedName, modes, userInChannel, na
                     var mode = modes[m][1];
                     if (modes[m][0] == "-")
                     {
-                        if (arrayContains(existingUser.modes, mode))
+                        let idx = existingUser.modes.indexOf(mode);
+                        if (idx >= 0)
                         {
-                            var i = arrayIndexOf(existingUser.modes, mode);
-                            arrayRemoveAt(existingUser.modes, i);
+                            existingUser.modes.splice(idx, 1);
                         }
                     }
                     else
                     {
-                        if (!arrayContains(existingUser.modes, mode))
+                        if (!existingUser.modes.includes(mode))
                             existingUser.modes.push(mode);
                     }
                 }
             }
         }
-        existingUser.isFounder = (arrayContains(existingUser.modes, "q")) ?
-            true : false;
-        existingUser.isAdmin = (arrayContains(existingUser.modes, "a")) ?
-            true : false;
-        existingUser.isOp = (arrayContains(existingUser.modes, "o")) ?
-            true : false;
-        existingUser.isHalfOp = (arrayContains(existingUser.modes, "h")) ?
-            true : false;
-        existingUser.isVoice = (arrayContains(existingUser.modes, "v")) ?
-            true : false;
+        existingUser.isFounder = existingUser.modes.includes("q");
+        existingUser.isAdmin = existingUser.modes.includes("a");
+        existingUser.isOp = existingUser.modes.includes("o");
+        existingUser.isHalfOp = existingUser.modes.includes("h");
+        existingUser.isVoice = existingUser.modes.includes("v");
         existingUser.updateSortName();
         return existingUser;
     }
@@ -4136,11 +4153,11 @@ function CIRCChanUser(parent, unicodeName, encodedName, modes, userInChannel, na
     this.modes = new Array();
     if (typeof modes != "undefined")
         this.modes = modes;
-    this.isFounder = (arrayContains(this.modes, "q")) ? true : false;
-    this.isAdmin = (arrayContains(this.modes, "a")) ? true : false;
-    this.isOp = (arrayContains(this.modes, "o")) ? true : false;
-    this.isHalfOp = (arrayContains(this.modes, "h")) ? true : false;
-    this.isVoice = (arrayContains(this.modes, "v")) ? true : false;
+    this.isFounder = this.modes.includes("q");
+    this.isAdmin = this.modes.includes("a");
+    this.isOp = this.modes.includes("o");
+    this.isHalfOp = this.modes.includes("h");
+    this.isVoice = this.modes.includes("v");
     this.updateSortName();
 
     if (userInChannel)

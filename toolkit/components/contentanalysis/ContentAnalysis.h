@@ -12,10 +12,13 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/MaybeDiscarded.h"
 #include "mozilla/dom/Promise.h"
+#include "nsIClipboard.h"
 #include "nsIContentAnalysis.h"
+#include "nsITransferable.h"
 #include "nsProxyRelease.h"
 #include "nsString.h"
 #include "nsTHashMap.h"
+#include "nsTHashSet.h"
 
 #include <atomic>
 #include <regex>
@@ -77,12 +80,14 @@ class ContentAnalysisRequest final : public nsIContentAnalysisRequest {
   NS_DECL_ISUPPORTS
   NS_DECL_NSICONTENTANALYSISREQUEST
 
-  ContentAnalysisRequest(AnalysisType aAnalysisType, nsString aString,
-                         bool aStringIsFilePath, nsCString aSha256Digest,
-                         nsCOMPtr<nsIURI> aUrl, OperationType aOperationType,
+  ContentAnalysisRequest(AnalysisType aAnalysisType, Reason aReason,
+                         nsString aString, bool aStringIsFilePath,
+                         nsCString aSha256Digest, nsCOMPtr<nsIURI> aUrl,
+                         OperationType aOperationType,
                          dom::WindowGlobalParent* aWindowGlobalParent);
   ContentAnalysisRequest(const nsTArray<uint8_t> aPrintData,
                          nsCOMPtr<nsIURI> aUrl, nsString aPrinterName,
+                         Reason aReason,
                          dom::WindowGlobalParent* aWindowGlobalParent);
   static nsresult GetFileDigest(const nsAString& aFilePath,
                                 nsCString& aDigestString);
@@ -96,6 +101,9 @@ class ContentAnalysisRequest final : public nsIContentAnalysisRequest {
 
   // See nsIContentAnalysisRequest for values
   AnalysisType mAnalysisType;
+
+  // See nsIContentAnalysisRequest for values
+  Reason mReason;
 
   // Text content to analyze.  Only one of textContent or filePath is defined.
   nsString mTextContent;
@@ -140,12 +148,8 @@ class ContentAnalysisRequest final : public nsIContentAnalysisRequest {
   friend class ::ContentAnalysisTest;
 };
 
-#define CONTENTANALYSIS_IID                          \
-  {                                                  \
-    0xa37bed74, 0x4b50, 0x443a, {                    \
-      0xbf, 0x58, 0xf4, 0xeb, 0xbd, 0x30, 0x67, 0xb4 \
-    }                                                \
-  }
+#define CONTENTANALYSIS_IID \
+  {0xa37bed74, 0x4b50, 0x443a, {0xbf, 0x58, 0xf4, 0xeb, 0xbd, 0x30, 0x67, 0xb4}}
 
 class ContentAnalysisResponse;
 class ContentAnalysis final : public nsIContentAnalysis {
@@ -155,10 +159,7 @@ class ContentAnalysis final : public nsIContentAnalysis {
   NS_DECL_NSICONTENTANALYSIS
 
   ContentAnalysis();
-  nsCString GetUserActionId();
   void SetLastResult(nsresult aLastResult) { mLastResult = aLastResult; }
-  void SetCachedDataTimeoutForTesting(uint32_t aNewTimeout);
-  void ResetCachedDataTimeoutForTesting();
 
 #if defined(XP_WIN)
   struct PrintAllowedResult final {
@@ -222,16 +223,24 @@ class ContentAnalysis final : public nsIContentAnalysis {
       dom::CanonicalBrowsingContext* aBrowsingContext);
   static bool CheckClipboardContentAnalysisSync(
       nsBaseClipboard* aClipboard, mozilla::dom::WindowGlobalParent* aWindow,
-      const nsCOMPtr<nsITransferable>& trans, int32_t aClipboardType);
+      const nsCOMPtr<nsITransferable>& trans,
+      nsIClipboard::ClipboardType aClipboardType);
   static void CheckClipboardContentAnalysis(
       nsBaseClipboard* aClipboard, mozilla::dom::WindowGlobalParent* aWindow,
-      nsITransferable* aTransferable, int32_t aClipboardType,
-      SafeContentAnalysisResultCallback* aResolver);
+      nsITransferable* aTransferable,
+      nsIClipboard::ClipboardType aClipboardType,
+      SafeContentAnalysisResultCallback* aResolver,
+      bool aForFullClipboard = false);
+  static RefPtr<ContentAnalysis> GetContentAnalysisFromService();
+  nsresult CancelWithError(nsCString aRequestToken, nsresult aResult);
 
   // Duration the cache holds requests for. This holds strong references
   // to the elements of the request, such as the WindowGlobalParent,
   // for that period.
   static constexpr uint32_t kDefaultCachedDataTimeoutInMs = 5000;
+  // These are the MIME types that Content Analysis can analyze.
+  static constexpr const char* kKnownClipboardTypes[] = {
+      kTextMime, kHTMLMime, kCustomTypesMime, kFileMime};
 
  private:
   ~ContentAnalysis();
@@ -252,13 +261,9 @@ class ContentAnalysis final : public nsIContentAnalysis {
   nsresult RunAcknowledgeTask(
       nsIContentAnalysisAcknowledgement* aAcknowledgement,
       const nsACString& aRequestToken);
-  nsresult CancelWithError(nsCString aRequestToken, nsresult aResult);
-  void GenerateUserActionId();
-  static RefPtr<ContentAnalysis> GetContentAnalysisFromService();
   static void DoAnalyzeRequest(
       nsCString aRequestToken,
       content_analysis::sdk::ContentAnalysisRequest&& aRequest,
-      nsCOMPtr<nsIContentAnalysisRequest> aRequestToCache,
       const std::shared_ptr<content_analysis::sdk::Client>& aClient);
   void IssueResponse(RefPtr<ContentAnalysisResponse>& response);
   bool LastRequestSucceeded();
@@ -269,10 +274,18 @@ class ContentAnalysis final : public nsIContentAnalysis {
   UrlFilterResult FilterByUrlLists(nsIContentAnalysisRequest* aRequest);
   void EnsureParsedUrlFilters();
 
+  // Expand a request to analyze a folder into N requests to scan the files
+  // in the folder (recursively).  Approve the request if all files are
+  // approved.
+  // Returns true if the request was for a folder and spawned new requests,
+  // false if the request was not a folder scan, or an nsresult on error.
+  Result<bool, nsresult> MaybeExpandAndAnalyzeFolderContentRequest(
+      nsIContentAnalysisRequest* aRequest, bool aAutoAcknowledge,
+      nsIContentAnalysisCallback* aCallback);
+
   using ClientPromise =
       MozPromise<std::shared_ptr<content_analysis::sdk::Client>, nsresult,
                  false>;
-  nsCString mUserActionId;
   int64_t mRequestCount = 0;
   RefPtr<ClientPromise::Private> mCaClientPromise;
   // Only accessed from the main thread
@@ -286,15 +299,14 @@ class ContentAnalysis final : public nsIContentAnalysis {
     CallbackData(
         nsMainThreadPtrHandle<nsIContentAnalysisCallback>&& aCallbackHolder,
         bool aAutoAcknowledge)
-        : mCallbackHolder(aCallbackHolder),
-          mAutoAcknowledge(aAutoAcknowledge) {}
+        : mCallbackHolder(aCallbackHolder), mAutoAcknowledge(aAutoAcknowledge) {
+      MOZ_ASSERT(mCallbackHolder);
+    }
 
     nsMainThreadPtrHandle<nsIContentAnalysisCallback> TakeCallbackHolder() {
       return std::move(mCallbackHolder);
     }
     bool AutoAcknowledge() const { return mAutoAcknowledge; }
-    void SetCanceled() { mCallbackHolder = nullptr; }
-    bool Canceled() const { return !mCallbackHolder; }
 
    private:
     nsMainThreadPtrHandle<nsIContentAnalysisCallback> mCallbackHolder;
@@ -302,64 +314,67 @@ class ContentAnalysis final : public nsIContentAnalysis {
   };
   DataMutex<nsTHashMap<nsCString, CallbackData>> mCallbackMap;
 
-  class CachedData final {
+  class CachedClipboardResponse {
    public:
-    nsCOMPtr<nsIContentAnalysisRequest> Request() const {
-      MOZ_ASSERT(NS_IsMainThread());
-      return mRequest;
-    }
-    void SetData(nsCOMPtr<nsIContentAnalysisRequest> aRequest,
-                 nsIContentAnalysisResponse::Action aResultAction) {
-      MOZ_ASSERT(NS_IsMainThread());
-      mRequest = aRequest;
-      mResultAction = Some(aResultAction);
-      // For warn responses, don't set the expiration timer until
-      // we get the updated action in UpdateWarnAction()
-      if (aResultAction != nsIContentAnalysisResponse::Action::eWarn) {
-        SetExpirationTimer();
+    CachedClipboardResponse() = default;
+    Maybe<nsIContentAnalysisResponse::Action> GetCachedResponse(
+        nsIURI* aURI, int32_t aClipboardSequenceNumber,
+        const nsTArray<nsCString>& aFlavors) {
+      MOZ_ASSERT(NS_IsMainThread(),
+                 "Expecting main thread access only to avoid synchronization");
+      if (Some(aClipboardSequenceNumber) != mClipboardSequenceNumber) {
+        return Nothing();
       }
-    }
-    Maybe<nsIContentAnalysisResponse::Action> ResultAction() const {
-      MOZ_ASSERT(NS_IsMainThread());
-      return mResultAction;
-    }
-    void SetExpirationTimer();
-    void Clear() {
-      MOZ_ASSERT(NS_IsMainThread());
-      mRequest = nullptr;
-      mResultAction = Nothing();
-      if (mExpirationTimer) {
-        mExpirationTimer->Cancel();
+      Maybe<nsIContentAnalysisResponse::Action> possibleAction;
+      for (const auto& entry : mData) {
+        bool uriEquals = false;
+        if (NS_SUCCEEDED(aURI->Equals(entry.first, &uriEquals)) && uriEquals) {
+          possibleAction = Some(entry.second);
+          break;
+        }
       }
+      if (possibleAction.isNothing()) {
+        return Nothing();
+      }
+      // Make sure the flavors we have checked are a subset of the ones we
+      // checked before
+      for (const auto& flavor : aFlavors) {
+        if (!mFlavors.Contains(flavor)) {
+          // This only matters if it's a flavor that we check for content
+          // analysis
+          for (const char* knownType : kKnownClipboardTypes) {
+            if (flavor.EqualsASCII(knownType)) {
+              return Nothing();
+            }
+          }
+        }
+      }
+      return possibleAction;
     }
-    void UpdateWarnAction(nsIContentAnalysisResponse::Action aAction) {
-      MOZ_ASSERT(NS_IsMainThread());
-      MOZ_ASSERT(mRequest);
-      MOZ_ASSERT(mResultAction ==
-                 Some(nsIContentAnalysisResponse::Action::eWarn));
-      mResultAction = Some(aAction);
-      // We don't set the expiration timer for warn responses until we get the
-      // updated response, so set it here
-      SetExpirationTimer();
+    void SetCachedResponse(const nsCOMPtr<nsIURI>& aURI,
+                           int32_t aClipboardSequenceNumber,
+                           const nsTArray<nsCString>& aFlavors,
+                           nsIContentAnalysisResponse::Action aAction) {
+      MOZ_ASSERT(NS_IsMainThread(),
+                 "Expecting main thread access only to avoid synchronization");
+      if (mClipboardSequenceNumber != Some(aClipboardSequenceNumber)) {
+        mData.Clear();
+        mClipboardSequenceNumber = Some(aClipboardSequenceNumber);
+      }
+      mFlavors.Clear();
+      for (const auto& flavor : aFlavors) {
+        mFlavors.Insert(flavor);
+      }
+      mData.AppendElement(std::make_pair(aURI, aAction));
     }
-    enum class CacheResult : uint8_t {
-      CannotBeCached = 0,
-      DoesNotMatchExisting = 1,
-      Matches = 2
-    };
-    CacheResult CompareWithRequest(
-        const RefPtr<nsIContentAnalysisRequest>& aRequest);
 
    private:
-    nsCOMPtr<nsIContentAnalysisRequest> mRequest;
-    Maybe<nsIContentAnalysisResponse::Action> mResultAction;
-    nsCOMPtr<nsITimer> mExpirationTimer;
-    uint32_t mClearTimeout = kDefaultCachedDataTimeoutInMs;
-
-    friend class ContentAnalysis;
+    Maybe<int32_t> mClipboardSequenceNumber;
+    nsTArray<std::pair<nsCOMPtr<nsIURI>, nsIContentAnalysisResponse::Action>>
+        mData;
+    nsTHashSet<nsCString> mFlavors;
   };
-  // Must only be accessed from the main thread
-  CachedData mCachedData;
+  CachedClipboardResponse mCachedClipboardResponse;
 
   struct WarnResponseData {
     WarnResponseData(CallbackData&& aCallbackData,
@@ -378,6 +393,7 @@ class ContentAnalysis final : public nsIContentAnalysis {
   bool mParsedUrlLists = false;
 
   friend class ContentAnalysisResponse;
+  friend class AnalyzeFilesInDirectoryCallback;
   friend class ::ContentAnalysisTest;
 };
 

@@ -2,24 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const SUNDAY = 0;
 const THURSDAY = 4;
-
-const lazy = {};
-
-XPCOMUtils.defineLazyPreferenceGetter(lazy, "startWeekday", "calendar.week.start", SUNDAY);
 
 export function CalWeekInfoService() {
   this.wrappedJSObject = this;
 }
 
+/** @implements {calIWeekInfoService} */
 CalWeekInfoService.prototype = {
   QueryInterface: ChromeUtils.generateQI(["calIWeekInfoService"]),
   classID: Components.ID("{6877bbdd-f336-46f5-98ce-fe86d0285cc1}"),
 
-  // calIWeekInfoService:
+  /**
+   * @param {calIDateTime} aDateTime - A date time object
+   */
   getWeekTitle(aDateTime) {
     /**
      * This implementation is based on the ISO 8601 standard.
@@ -56,11 +53,12 @@ CalWeekInfoService.prototype = {
     // The number of days since the start of the week.
     // Notice that the result of the subtraction might be negative.
     // We correct for that by adding 7, and then using the remainder operator.
-    const sinceStartOfWeek = (aDateTime.weekday - lazy.startWeekday + 7) % 7;
+    const startWeekday = Services.prefs.getIntPref("calendar.week.start", SUNDAY);
+    const sinceStartOfWeek = (aDateTime.weekday - startWeekday + 7) % 7;
 
     // The number of days to Thursday is the difference between Thursday
     // and the start-day of the week (again corrected for negative values).
-    const startToThursday = (THURSDAY - lazy.startWeekday + 7) % 7;
+    const startToThursday = (THURSDAY - startWeekday + 7) % 7;
 
     // The yearday number of the Thursday this week.
     let thisWeeksThursday = aDateTime.yearday - sinceStartOfWeek + startToThursday;
@@ -80,16 +78,17 @@ CalWeekInfoService.prototype = {
   },
 
   /**
-   * gets the first day of a week of a passed day under consideration
+   * Gets the first day of a week of a passed day under consideration
    * of the preference setting "calendar.week.start"
    *
-   * @param aDate     a date time object
-   * @returns a dateTime-object denoting the first day of the week
+   * @param {calIDateTime} aDate - A date time object
+   * @returns {calIDateTime} a dateTime-object denoting the first day of the week.
    */
   getStartOfWeek(aDate) {
+    const startWeekday = Services.prefs.getIntPref("calendar.week.start", SUNDAY);
     const date = aDate.clone();
     date.isDate = true;
-    const offset = lazy.startWeekday - aDate.weekday;
+    const offset = startWeekday - aDate.weekday;
     date.day += offset;
     if (offset > 0) {
       date.day -= 7;
@@ -101,8 +100,8 @@ CalWeekInfoService.prototype = {
    * gets the last day of a week of a passed day under consideration
    * of the preference setting "calendar.week.start"
    *
-   * @param aDate     a date time object
-   * @returns a dateTime-object denoting the last day of the week
+   * @param {calIDateTime} aDate - A date time object.
+   * @returns {calIDateTime} a dateTime-object denoting the last day of the week.
    */
   getEndOfWeek(aDate) {
     const date = this.getStartOfWeek(aDate);

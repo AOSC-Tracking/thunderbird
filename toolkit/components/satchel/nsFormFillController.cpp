@@ -179,10 +179,12 @@ void nsFormFillController::ContentInserted(nsIContent* aChild) {
 }
 
 MOZ_CAN_RUN_SCRIPT_BOUNDARY
-void nsFormFillController::ContentRemoved(nsIContent* aChild,
-                                          nsIContent* aPreviousSibling) {
+void nsFormFillController::ContentWillBeRemoved(nsIContent* aChild,
+                                                const BatchRemovalState*) {
   if (mListNode && mListNode->Contains(aChild->GetParent())) {
-    RevalidateDataList();
+    nsContentUtils::AddScriptRunner(
+        NewRunnableMethod("nsFormFillController::ContentWillBeRemoved", this,
+                          &nsFormFillController::RevalidateDataList));
   }
 }
 
@@ -249,17 +251,13 @@ nsFormFillController::MarkAsAutoCompletableField(HTMLInputElement* aInput) {
 
   aInput->EnablePreview();
 
-  nsFocusManager* fm = nsFocusManager::GetFocusManager();
-  if (fm) {
-    nsCOMPtr<nsIContent> focusedContent = fm->GetFocusedElement();
-    if (focusedContent == aInput) {
-      if (!mFocusedInput) {
-        MaybeStartControllingInput(aInput);
-      } else {
-        // See `MarkAsLoginManagerField` for why this is needed.
-        nsCOMPtr<nsIAutoCompleteController> controller = mController;
-        controller->ResetInternalState();
-      }
+  if (nsFocusManager::GetFocusedElementStatic() == aInput) {
+    if (!mFocusedInput) {
+      MaybeStartControllingInput(aInput);
+    } else {
+      // See `MarkAsLoginManagerField` for why this is needed.
+      nsCOMPtr<nsIAutoCompleteController> controller = mController;
+      controller->ResetInternalState();
     }
   }
 
@@ -828,7 +826,7 @@ void nsFormFillController::RemoveForDocument(Document* aDoc) {
 }
 
 bool nsFormFillController::IsTextControl(nsINode* aNode) {
-  nsCOMPtr<nsIFormControl> formControl = do_QueryInterface(aNode);
+  const auto* formControl = nsIFormControl::FromNodeOrNull(aNode);
   return formControl && formControl->IsSingleLineTextControl(false);
 }
 

@@ -38,7 +38,7 @@
 
 #ifdef XP_WIN
 #  include "mozilla/layers/D3D11ShareHandleImage.h"
-#  include "mozilla/layers/D3D11TextureIMFSampleImage.h"
+#  include "mozilla/layers/D3D11ZeroCopyTextureImage.h"
 #  include "mozilla/layers/D3D11YCbCrImage.h"
 #endif
 
@@ -311,6 +311,20 @@ Mat3 SubRectMat3(const gfx::IntRect& bigSubrect, const gfx::IntSize& smallSize,
   const float h = float(bigSubrect.Height()) / divisors.height;
   return SubRectMat3(x / smallSize.width, y / smallSize.height,
                      w / smallSize.width, h / smallSize.height);
+}
+
+Mat3 MatrixToMat3(const gfx::Matrix& aMatrix) {
+  auto ret = Mat3();
+  ret.at(0, 0) = aMatrix._11;
+  ret.at(1, 0) = aMatrix._21;
+  ret.at(2, 0) = aMatrix._31;
+  ret.at(0, 1) = aMatrix._12;
+  ret.at(1, 1) = aMatrix._22;
+  ret.at(2, 1) = aMatrix._32;
+  ret.at(0, 2) = 0.0f;
+  ret.at(1, 2) = 0.0f;
+  ret.at(2, 2) = 1.0f;
+  return ret;
 }
 
 // --
@@ -710,7 +724,7 @@ GLBlitHelper::GLBlitHelper(GLContext* const gl)
         }                                                                    \n\
     ";
   const char* const parts[] = {mDrawBlitProg_VersionLine.get(), kVertSource};
-  mGL->fShaderSource(mDrawBlitProg_VertShader, ArrayLength(parts), parts,
+  mGL->fShaderSource(mDrawBlitProg_VertShader, std::size(parts), parts,
                      nullptr);
   mGL->fCompileShader(mDrawBlitProg_VertShader);
 }
@@ -952,21 +966,17 @@ bool GLBlitHelper::BlitImageToFramebuffer(layers::Image* const srcImage,
     case ImageFormat::D3D11_SHARE_HANDLE_TEXTURE:
       return BlitImage(static_cast<layers::D3D11ShareHandleImage*>(srcImage),
                        destSize, destOrigin);
-    case ImageFormat::D3D11_TEXTURE_IMF_SAMPLE:
+    case ImageFormat::D3D11_TEXTURE_ZERO_COPY:
       return BlitImage(
-          static_cast<layers::D3D11TextureIMFSampleImage*>(srcImage), destSize,
+          static_cast<layers::D3D11ZeroCopyTextureImage*>(srcImage), destSize,
           destOrigin);
-    case ImageFormat::D3D11_YCBCR_IMAGE:
-      return BlitImage(static_cast<layers::D3D11YCbCrImage*>(srcImage),
-                       destSize, destOrigin);
     case ImageFormat::D3D9_RGB32_TEXTURE:
       return false;  // todo
     case ImageFormat::DCOMP_SURFACE:
       return false;
 #else
     case ImageFormat::D3D11_SHARE_HANDLE_TEXTURE:
-    case ImageFormat::D3D11_TEXTURE_IMF_SAMPLE:
-    case ImageFormat::D3D11_YCBCR_IMAGE:
+    case ImageFormat::D3D11_TEXTURE_ZERO_COPY:
     case ImageFormat::D3D9_RGB32_TEXTURE:
     case ImageFormat::DCOMP_SURFACE:
       MOZ_ASSERT(false);
@@ -1015,9 +1025,15 @@ bool GLBlitHelper::Blit(const java::GeckoSurfaceTexture::Ref& surfaceTexture,
   const ScopedBindTexture savedTex(mGL, surfaceTexture->GetTexName(),
                                    LOCAL_GL_TEXTURE_EXTERNAL);
   surfaceTexture->UpdateTexImage();
-  const auto transform3 = Mat3::I();
-  // const auto srcOrigin = OriginPos::TopLeft;
-  const auto srcOrigin = OriginPos::BottomLeft;
+
+  gfx::Matrix4x4 transform;
+  const auto surf = java::sdk::SurfaceTexture::LocalRef::From(surfaceTexture);
+  gl::AndroidSurfaceTexture::GetTransformMatrix(surf, &transform);
+  // SurfaceTexture transforms should always be 2D
+  MOZ_DIAGNOSTIC_ASSERT(transform.Is2D());
+  const auto transform3 = MatrixToMat3(transform.As2D());
+
+  const auto srcOrigin = OriginPos::TopLeft;
   const bool yFlip = (srcOrigin != destOrigin);
   const auto& prog = GetDrawBlitProg(
       {kFragHeader_TexExt, {kFragSample_OnePlane, kFragConvert_None}});
@@ -1550,18 +1566,20 @@ bool GLBlitHelper::Blit(DMABufSurface* surface, const gfx::IntSize& destSize,
     case DMABufSurface::SURFACE_RGBA:
       fragSample = kFragSample_OnePlane;
       break;
-    case DMABufSurface::SURFACE_NV12:
-      fragSample = kFragSample_TwoPlane;
-      pYuvArgs = &yuvArgs;
-      fragConvert = kFragConvert_ColorMatrix;
-      break;
-    case DMABufSurface::SURFACE_YUV420:
-      fragSample = kFragSample_ThreePlane;
+    case DMABufSurface::SURFACE_YUV:
+      if (surface->GetTextureCount() == 2) {
+        fragSample = kFragSample_TwoPlane;
+      } else if (surface->GetTextureCount() == 3) {
+        fragSample = kFragSample_ThreePlane;
+      } else {
+        gfxCriticalError() << "Unexpected planes count: "
+                           << surface->GetTextureCount();
+        return false;
+      }
       pYuvArgs = &yuvArgs;
       fragConvert = kFragConvert_ColorMatrix;
       break;
     default:
-      gfxCriticalError() << "Unexpected pixel format: " << pixelFormat;
       return false;
   }
 
@@ -1601,7 +1619,7 @@ template <size_t N>
 static void PushUnorm(uint32_t* const out, const float inVal) {
   const uint32_t mask = (1 << N) - 1;
   auto fval = inVal;
-  fval = std::max(0.0f, std::min(fval, 1.0f));
+  fval = std::clamp(fval, 0.0f, 1.0f);
   fval *= mask;
   fval = roundf(fval);
   auto ival = static_cast<uint32_t>(fval);
@@ -1699,9 +1717,6 @@ color::ColorspaceDesc ToColorspaceDesc(const gfx::YUVRangedColorSpace cs) {
   MOZ_CRASH("Bad YUVRangedColorSpace.");
 }
 
-static std::optional<color::ColorProfileDesc> ToColorProfileDesc(
-    gfx::ColorSpace2);
-
 }  // namespace gl
 namespace gfx {
 
@@ -1712,7 +1727,8 @@ namespace gl {
 
 // -
 
-static std::optional<color::ColorProfileDesc> ToColorProfileDesc(
+/* static */
+std::optional<color::ColorProfileDesc> GLBlitHelper::ToColorProfileDesc(
     const gfx::ColorSpace2 cspace) {
   color::ColorspaceDesc cspaceDesc;
   switch (cspace) {

@@ -206,7 +206,8 @@ nsresult net_ParseFileURL(const nsACString& inURL, nsACString& outDirectory,
 
 // Replace all /./ with a / while resolving URLs
 // But only till #?
-void net_CoalesceDirs(netCoalesceFlags flags, char* path) {
+mozilla::Maybe<mozilla::CompactPair<uint32_t, uint32_t>> net_CoalesceDirs(
+    netCoalesceFlags flags, char* path) {
   /* Stolen from the old netlib's mkparse.c.
    *
    * modifies a url of the form   /foo/../foo1  ->  /foo1
@@ -215,13 +216,12 @@ void net_CoalesceDirs(netCoalesceFlags flags, char* path) {
    */
   char* fwdPtr = path;
   char* urlPtr = path;
-  char* lastslash = path;
   uint32_t traversal = 0;
   uint32_t special_ftp_len = 0;
 
   MOZ_ASSERT(*path == '/', "We expect the path to begin with /");
   if (*path != '/') {
-    return;
+    return Nothing();
   }
 
   /* Remember if this url is a special ftp one: */
@@ -237,32 +237,47 @@ void net_CoalesceDirs(netCoalesceFlags flags, char* path) {
     }
   }
 
-  /* find the last slash before # or ? */
+  // This function checks if the character terminates the path segment,
+  // meaning it is / or ? or # or null.
+  auto isSegmentEnd = [](char aChar) {
+    return aChar == '/' || aChar == '?' || aChar == '#' || aChar == '\0';
+  };
+
+  // replace all %2E, %2e, %2e%2e, %2e%2E, %2E%2e, %2E%2E, etc with . or ..
+  // respectively if between two "/"s or "/" and NULL terminator
+  constexpr int PERCENT_2E_LENGTH = sizeof("%2e") - 1;
+  constexpr uint32_t PERCENT_2E_WITH_PERIOD_LENGTH = PERCENT_2E_LENGTH + 1;
+
   for (; (*fwdPtr != '\0') && (*fwdPtr != '?') && (*fwdPtr != '#'); ++fwdPtr) {
-  }
-
-  /* found nothing, but go back one only */
-  /* if there is something to go back to */
-  if (fwdPtr != path && *fwdPtr == '\0') {
-    --fwdPtr;
-  }
-
-  /* search the slash */
-  for (; (fwdPtr != path) && (*fwdPtr != '/'); --fwdPtr) {
-  }
-  lastslash = fwdPtr;
-  fwdPtr = path;
-
-  /* replace all %2E or %2e with . in the path */
-  /* but stop at lastslash if non null */
-  for (; (*fwdPtr != '\0') && (*fwdPtr != '?') && (*fwdPtr != '#') &&
-         (*lastslash == '\0' || fwdPtr != lastslash);
-       ++fwdPtr) {
-    if (*fwdPtr == '%' && *(fwdPtr + 1) == '2' &&
-        (*(fwdPtr + 2) == 'E' || *(fwdPtr + 2) == 'e')) {
+    // Assuming that we are currently at '/'
+    if (*fwdPtr == '/' &&
+        nsCRT::strncasecmp(fwdPtr + 1, "%2e", PERCENT_2E_LENGTH) == 0 &&
+        isSegmentEnd(*(fwdPtr + PERCENT_2E_LENGTH + 1))) {
+      *urlPtr++ = '/';
       *urlPtr++ = '.';
-      ++fwdPtr;
-      ++fwdPtr;
+      fwdPtr += PERCENT_2E_LENGTH;
+    }
+    // If the remaining pathname is "%2e%2e" between "/"s, add ".."
+    else if (*fwdPtr == '/' &&
+             nsCRT::strncasecmp(fwdPtr + 1, "%2e%2e", PERCENT_2E_LENGTH * 2) ==
+                 0 &&
+             isSegmentEnd(*(fwdPtr + PERCENT_2E_LENGTH * 2 + 1))) {
+      *urlPtr++ = '/';
+      *urlPtr++ = '.';
+      *urlPtr++ = '.';
+      fwdPtr += PERCENT_2E_LENGTH * 2;
+    }
+    // If the remaining pathname is "%2e." or ".%2e" between "/"s, add ".."
+    else if (*fwdPtr == '/' &&
+             (nsCRT::strncasecmp(fwdPtr + 1, "%2e.",
+                                 PERCENT_2E_WITH_PERIOD_LENGTH) == 0 ||
+              nsCRT::strncasecmp(fwdPtr + 1, ".%2e",
+                                 PERCENT_2E_WITH_PERIOD_LENGTH) == 0) &&
+             isSegmentEnd(*(fwdPtr + PERCENT_2E_WITH_PERIOD_LENGTH + 1))) {
+      *urlPtr++ = '/';
+      *urlPtr++ = '.';
+      *urlPtr++ = '.';
+      fwdPtr += PERCENT_2E_WITH_PERIOD_LENGTH;
     } else {
       *urlPtr++ = *fwdPtr;
     }
@@ -282,10 +297,8 @@ void net_CoalesceDirs(netCoalesceFlags flags, char* path) {
       // remove . followed by slash
       ++fwdPtr;
     } else if (*fwdPtr == '/' && *(fwdPtr + 1) == '.' && *(fwdPtr + 2) == '.' &&
-               (*(fwdPtr + 3) == '/' ||
-                *(fwdPtr + 3) == '\0' ||  // This will take care of
-                *(fwdPtr + 3) == '?' ||   // something like foo/bar/..#sometag
-                *(fwdPtr + 3) == '#')) {
+               isSegmentEnd(*(fwdPtr + 3))) {
+      // This will take care of something like foo/bar/..#sometag
       // remove foo/..
       // reverse the urlPtr to the previous slash if possible
       // if url does not allow relative root then drop .. above root
@@ -310,7 +323,9 @@ void net_CoalesceDirs(netCoalesceFlags flags, char* path) {
         }
         // special case if we have reached the end
         // to preserve the last /
-        if (*fwdPtr == '.' && *(fwdPtr + 1) == '\0') ++urlPtr;
+        if (*fwdPtr == '.' && (*(fwdPtr + 1) == '\0' || *(fwdPtr + 1) == '?' ||
+                               *(fwdPtr + 1) == '#'))
+          ++urlPtr;
       } else {
         // there are to much /.. in this path, just copy them instead.
         // forward the urlPtr past the /.. and copying it
@@ -364,6 +379,27 @@ void net_CoalesceDirs(netCoalesceFlags flags, char* path) {
     *urlPtr++ = *fwdPtr;
   }
   *urlPtr = '\0';  // terminate the url
+
+  uint32_t lastSlash = 0;
+  uint32_t endOfBasename = 0;
+
+  // find the last slash before # or ?
+  // find the end of basename (i.e. hash, query, or end of string)
+  for (; (*(path + endOfBasename) != '\0') &&
+         (*(path + endOfBasename) != '?') && (*(path + endOfBasename) != '#');
+       ++endOfBasename) {
+  }
+
+  // Now find the last slash starting from the end
+  lastSlash = endOfBasename;
+  if (lastSlash != 0 && *(path + lastSlash) == '\0') {
+    --lastSlash;
+  }
+  // search the slash
+  for (; lastSlash != 0 && *(path + lastSlash) != '/'; --lastSlash) {
+  }
+
+  return Some(mozilla::MakeCompactPair(lastSlash, endOfBasename));
 }
 
 //----------------------------------------------------------------------------
@@ -885,7 +921,7 @@ void net_ParseRequestContentType(const nsACString& aHeaderStr,
   *aHadCharset = hadCharset;
 }
 
-bool net_IsValidHostName(const nsACString& host) {
+bool net_IsValidDNSHost(const nsACString& host) {
   // The host name is limited to 253 ascii characters.
   if (host.Length() > 253) {
     return false;

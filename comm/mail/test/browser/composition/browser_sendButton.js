@@ -12,15 +12,10 @@ var { create_contact, create_mailing_list, load_contacts_into_address_book } =
   ChromeUtils.importESModule(
     "resource://testing-common/mail/AddressBookHelpers.sys.mjs"
   );
-var {
-  be_in_folder,
-  click_tree_row,
-  FAKE_SERVER_HOSTNAME,
-  get_special_folder,
-  wait_for_popup_to_open,
-} = ChromeUtils.importESModule(
-  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
-);
+var { be_in_folder, click_tree_row, FAKE_SERVER_HOSTNAME, get_special_folder } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+  );
 var {
   clear_recipients,
   get_first_pill,
@@ -115,7 +110,7 @@ add_task(async function test_send_enabled_manual_address() {
   clear_recipients(cwc);
   EventUtils.synthesizeMouseAtCenter(menuButton, {}, menuButton.ownerGlobal);
   await new Promise(resolve => setTimeout(resolve));
-  await wait_for_popup_to_open(menu);
+  await BrowserTestUtils.waitForPopupEvent(menu, "shown");
   menu.activateItem(
     cwc.document.getElementById("addr_replyShowAddressRowMenuItem")
   );
@@ -341,13 +336,13 @@ add_task(async function test_update_pill_before_send() {
   // if the pill is updated we get an invalid recipient error. Otherwise the
   // error would be an imap error because the email would still be sent to
   // `recipient@fake.invalid`.
-  const dialogPromise = promise_modal_dialog("commonDialogWindow", cwc => {
-    const dialogTitle = cwc.document.getElementById("infoTitle").textContent;
+  const dialogPromise = promise_modal_dialog("commonDialogWindow", cdw => {
+    const dialogTitle = cdw.document.getElementById("infoTitle").textContent;
     Assert.ok(
       dialogTitle.includes("Invalid Recipient Address"),
       "The pill edit has been updated before sending the email"
     );
-    cwc.document.querySelector("dialog").getButton("accept").click();
+    cdw.document.querySelector("dialog").getButton("accept").click();
   });
   // Click the send button.
   EventUtils.synthesizeMouseAtCenter(

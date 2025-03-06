@@ -13,7 +13,6 @@
 // Wrap in a block to prevent leaking to window scope.
 {
   const { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
-
   /**
    * Implements the Drag and Drop class for the Month Day Box view.
    *
@@ -117,7 +116,7 @@
       if (val) {
         this.setAttribute("value", cal.dtz.formatter.formatDateWithoutYear(this.mDate));
       } else {
-        this.setAttribute("value", this.mDate.day);
+        this.setAttribute("value", cal.dtz.formatter.formatDateOnly(this.mDate));
       }
     }
 
@@ -158,7 +157,7 @@
       if (this.mShowMonthLabel) {
         this.setAttribute("value", cal.dtz.formatter.formatDateWithoutYear(this.mDate));
       } else {
-        this.setAttribute("value", aDate.day);
+        this.setAttribute("value", cal.dtz.formatter.formatDateOnly(this.mDate));
       }
     }
 
@@ -304,6 +303,7 @@
       if (this.delayConnectedCallback() || this.hasChildNodes()) {
         return;
       }
+      MozXULElement.insertFTLIfNeeded("calendar/calendar.ftl");
       // NOTE: This is the same structure as EditableItem, except this has a
       // time label and we are missing the location-desc.
       this.appendChild(
@@ -313,7 +313,7 @@
           <html:div class="event-name-label"></html:div>
           <html:input class="plain event-name-input"
                       hidden="hidden"
-                      placeholder='${cal.l10n.getCalString("newEvent")}' />
+                      data-l10n-id="new-event" />
           <html:div class="alarm-icons-box"></html:div>
           <html:img class="item-classification-icon" />
           <html:img class="item-recurrence-icon" />
@@ -632,12 +632,8 @@
       this.rangeEndDate = endDate;
 
       const viewStart = cal.weekInfoService.getStartOfWeek(startDate.getInTimezone(this.mTimezone));
-
       const viewEnd = cal.weekInfoService.getEndOfWeek(endDate.getInTimezone(this.mTimezone));
-
-      viewStart.isDate = true;
       viewStart.makeImmutable();
-      viewEnd.isDate = true;
       viewEnd.makeImmutable();
 
       this.mStartDate = viewStart;
@@ -729,11 +725,6 @@
       switch (preference) {
         case "calendar.previousweeks.inview":
           this.updateDaysOffPrefs();
-          this.refreshView();
-          break;
-
-        case "calendar.week.start":
-          // Refresh the view so the settings take effect.
           this.refreshView();
           break;
 
@@ -910,8 +901,7 @@
             if (j == weekLabelColumnPos) {
               weekLabel.removeAttribute("hidden");
               const weekNumber = cal.weekInfoService.getWeekTitle(date);
-              const weekString = cal.l10n.getCalString("multiweekViewWeek", [weekNumber]);
-              weekLabel.textContent = weekString;
+              document.l10n.setAttributes(weekLabel, "multiweek-view-week", { number: weekNumber });
             } else {
               weekLabel.hidden = true;
             }

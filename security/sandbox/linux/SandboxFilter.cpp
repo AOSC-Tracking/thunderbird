@@ -27,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include "PlatformMacros.h"
 #include "Sandbox.h"  // for ContentProcessSandboxParams
 #include "SandboxBrokerClient.h"
 #include "SandboxFilterUtil.h"
@@ -42,6 +43,11 @@
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
 #include "sandbox/linux/system_headers/linux_seccomp.h"
 #include "sandbox/linux/system_headers/linux_syscalls.h"
+
+#if defined(GP_PLAT_amd64_linux) && defined(GP_ARCH_amd64) && \
+    defined(MOZ_USING_WASM_SANDBOXING)
+#  include <asm/prctl.h>  // For ARCH_SET_GS
+#endif
 
 using namespace sandbox::bpf_dsl;
 #define CASES SANDBOX_BPF_DSL_CASES
@@ -925,8 +931,10 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
         // filter those; pids do need to be restricted to the current
         // process in order to not leak information.
         Arg<clockid_t> clk_id(0);
+#ifdef MOZ_GECKO_PROFILER
         clockid_t this_process =
             MAKE_PROCESS_CPUCLOCK(getpid(), CPUCLOCK_SCHED);
+#endif
         return If(clk_id == CLOCK_MONOTONIC, Allow())
 #ifdef CLOCK_MONOTONIC_COARSE
             // Used by SandboxReporter, among other things.
@@ -1120,6 +1128,22 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
             .Else(PrctlPolicy());
       }
 
+#if defined(GP_PLAT_amd64_linux) && defined(GP_ARCH_amd64) && \
+    defined(MOZ_USING_WASM_SANDBOXING)
+        // arch_prctl
+      case __NR_arch_prctl: {
+        // Bug 1923701 - Needed for by RLBox-wasm2c: Buggy libraries are
+        // sandboxed with RLBox and wasm2c (Wasm). wasm2c offers an optimization
+        // for performance that uses the otherwise-unused GS register on x86.
+        // The GS register is only settable using the arch_prctl platforms on
+        // older x86 CPUs that don't have the wrgsbase instruction. This
+        // optimization is currently only supported on linux+clang+x86_64.
+        Arg<int> op(0);
+        return If(op == ARCH_SET_GS, Allow())
+            .Else(SandboxPolicyBase::EvaluateSyscall(sysno));
+      }
+#endif
+
         // NSPR can call this when creating a thread, but it will accept a
         // polite "no".
       case __NR_getpriority:
@@ -1297,9 +1321,6 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
   Maybe<ResultExpr> EvaluateSocketCall(int aCall,
                                        bool aHasArgs) const override {
     switch (aCall) {
-      case SYS_SENDMMSG:  // libresolv via libasyncns; see bug 1355274
-        return Some(Allow());
-
 #ifdef ANDROID
       case SYS_SOCKET:
         return Some(Error(EACCES));
@@ -1600,6 +1621,10 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
         // usually do something reasonable on error.
       case __NR_clone:
         return ClonePolicy(Error(EPERM));
+#  ifdef __NR_fork
+      case __NR_fork:
+        return Error(ENOSYS);
+#  endif
 
 #  ifdef __NR_fadvise64
       case __NR_fadvise64:
@@ -1633,11 +1658,6 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
       case __NR_sysinfo:
 #endif
         return Allow();
-
-#ifdef MOZ_JPROF
-      case __NR_setitimer:
-        return Allow();
-#endif  // MOZ_JPROF
 
       default:
         return SandboxPolicyCommon::EvaluateSyscall(sysno);
@@ -1910,11 +1930,20 @@ class RDDSandboxPolicy final : public SandboxPolicyCommon {
         static constexpr unsigned long kVideoType =
             static_cast<unsigned long>('V') << _IOC_TYPESHIFT;
 #endif
-        // nvidia uses some ioctls from this range (but not actual
+        // nvidia non-tegra uses some ioctls from this range (but not actual
         // fbdev ioctls; nvidia uses values >= 200 for the NR field
         // (low 8 bits))
         static constexpr unsigned long kFbDevType =
             static_cast<unsigned long>('F') << _IOC_TYPESHIFT;
+
+#if defined(__aarch64__)
+        // NVIDIA decoder, from Linux4Tegra
+        // http://lists.mplayerhq.hu/pipermail/ffmpeg-devel/2024-May/328552.html
+        static constexpr unsigned long kNvidiaNvmapType =
+            static_cast<unsigned long>('N') << _IOC_TYPESHIFT;
+        static constexpr unsigned long kNvidiaNvhostType =
+            static_cast<unsigned long>('H') << _IOC_TYPESHIFT;
+#endif  // defined(__aarch64__)
 
         // Allow DRI and DMA-Buf for VA-API. Also allow V4L2 if enabled
         return If(shifted_type == kDrmType, Allow())
@@ -1922,7 +1951,12 @@ class RDDSandboxPolicy final : public SandboxPolicyCommon {
 #ifdef MOZ_ENABLE_V4L2
             .ElseIf(shifted_type == kVideoType, Allow())
 #endif
-            // Hack for nvidia, which isn't supported yet:
+        // NVIDIA decoder from Linux4Tegra, this is specific to Tegra ARM64 SoC
+#if defined(__aarch64__)
+            .ElseIf(shifted_type == kNvidiaNvmapType, Allow())
+            .ElseIf(shifted_type == kNvidiaNvhostType, Allow())
+#endif  // defined(__aarch64__)
+        // Hack for nvidia non-tegra devices, which isn't supported yet:
             .ElseIf(shifted_type == kFbDevType, Error(ENOTTY))
             .Else(SandboxPolicyCommon::EvaluateSyscall(sysno));
       }
@@ -1978,6 +2012,10 @@ class RDDSandboxPolicy final : public SandboxPolicyCommon {
         // nvidia drivers may attempt to spawn nvidia-modprobe
       case __NR_clone:
         return ClonePolicy(Error(EPERM));
+#ifdef __NR_fork
+      case __NR_fork:
+        return Error(ENOSYS);
+#endif
 
         // Pass through the common policy.
       default:
@@ -2024,7 +2062,12 @@ class SocketProcessSandboxPolicy final : public SandboxPolicyCommon {
       case SYS_BIND:
         return Some(Allow());
 
-        // FIXME(bug 1641401) do we really need this?
+      // sendmsg and recvmmsg needed for HTTP3/QUIC UDP IO. Note sendmsg is
+      // allowed in SandboxPolicyCommon.
+      case SYS_RECVMMSG:
+        return Some(Allow());
+
+      // Required for the DNS Resolver thread.
       case SYS_SENDMMSG:
         return Some(Allow());
 
@@ -2148,6 +2191,9 @@ class UtilitySandboxPolicy : public SandboxPolicyCommon {
                 PR_GET_PDEATHSIG),  // PGO profiling, cf
                                     // https://reviews.llvm.org/D29954
                Allow())
+        .CASES((PR_CAPBSET_READ),  // libcap.so.2 loaded by libpulse.so.0
+                                   // queries for capabilities
+               Error(EINVAL))
         .Default(InvalidSyscall());
   }
 

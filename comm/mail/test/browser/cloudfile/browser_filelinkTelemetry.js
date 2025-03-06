@@ -56,7 +56,7 @@ const kBoxId = "compose-notification-bottom";
  * Check that we're counting file size uploaded.
  */
 add_task(async function test_filelink_uploaded_size() {
-  Services.telemetry.clearScalars();
+  Services.fog.testResetFOG();
   const testFile1Size = 495;
   const testFile2Size = 637;
   const totalSize = testFile1Size + testFile2Size;
@@ -73,12 +73,9 @@ add_task(async function test_filelink_uploaded_size() {
   gMockCloudfileManager.resolveUploads();
   await wait_for_notification_to_stop(cwc, kBoxId, "bigAttachmentUploading");
 
-  const scalars = TelemetryTestUtils.getProcessScalars("parent", true);
-  Assert.equal(
-    scalars["tb.filelink.uploaded_size"][provider.displayName],
-    totalSize,
-    "Count of uploaded size must be correct."
-  );
+  const value =
+    Glean.filelink.uploadedSize[provider.displayName].testGetValue();
+  Assert.equal(value, totalSize, "Count of uploaded size must be correct.");
   await close_compose_window(cwc);
 });
 
@@ -86,7 +83,7 @@ add_task(async function test_filelink_uploaded_size() {
  * Check that we're counting filelink suggestion ignored.
  */
 add_task(async function test_filelink_ignored() {
-  Services.telemetry.clearScalars();
+  Services.fog.testResetFOG();
 
   const cwc = await open_compose_new_mail(window);
   await setup_msg_contents(
@@ -104,10 +101,6 @@ add_task(async function test_filelink_ignored() {
   // Send Later to avoid uncatchable errors from the SMTP code.
   cwc.goDoCommand("cmd_sendLater");
   await aftersend;
-  const scalars = TelemetryTestUtils.getProcessScalars("parent");
-  Assert.equal(
-    scalars["tb.filelink.ignored"],
-    1,
-    "Count of ignored times must be correct."
-  );
+  const count = Glean.filelink.filelinkIgnored.testGetValue();
+  Assert.equal(count, 1, "Count of ignored times must be correct.");
 });

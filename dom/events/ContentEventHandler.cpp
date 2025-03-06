@@ -12,6 +12,7 @@
 #include "mozilla/IMEStateManager.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/MiscEvents.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/RangeBoundary.h"
 #include "mozilla/RangeUtils.h"
@@ -23,6 +24,7 @@
 #include "mozilla/dom/HTMLBRElement.h"
 #include "mozilla/dom/HTMLUnknownElement.h"
 #include "mozilla/dom/Selection.h"
+#include "mozilla/dom/StaticRange.h"
 #include "mozilla/dom/Text.h"
 #include "nsCaret.h"
 #include "nsCOMPtr.h"
@@ -362,8 +364,7 @@ nsresult ContentEventHandler::InitRootContent(
   if (!aNormalSelection.RangeCount()) {
     // If there is no selection range, we should compute the selection root
     // from ancestor limiter or root content of the document.
-    mRootElement =
-        Element::FromNodeOrNull(aNormalSelection.GetAncestorLimiter());
+    mRootElement = aNormalSelection.GetAncestorLimiter();
     if (!mRootElement) {
       mRootElement = mDocument->GetRootElement();
       if (NS_WARN_IF(!mRootElement)) {
@@ -439,10 +440,8 @@ nsresult ContentEventHandler::InitCommon(EventMessage aEventMessage,
   if (mSelection->Type() == SelectionType::eNormal) {
     normalSelection = mSelection;
   } else {
-    normalSelection = frameSel->GetSelection(SelectionType::eNormal);
-    if (NS_WARN_IF(!normalSelection)) {
-      return NS_ERROR_NOT_AVAILABLE;
-    }
+    normalSelection = &frameSel->NormalSelection();
+    MOZ_ASSERT(normalSelection);
   }
 
   rv = InitRootContent(*normalSelection);
@@ -857,6 +856,20 @@ nsresult ContentEventHandler::GenerateFlatTextContent(
   return GenerateFlatTextContent(rawRange, aString, aLineBreakType);
 }
 
+nsresult ContentEventHandler::GenerateFlatTextContent(const nsRange* aRange,
+                                                      nsString& aString) {
+  MOZ_ASSERT(aString.IsEmpty());
+
+  if (NS_WARN_IF(!aRange)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  UnsafeSimpleRange rawRange;
+  rawRange.SetStartAndEnd(aRange);
+
+  return GenerateFlatTextContent(rawRange, aString, LINE_BREAK_TYPE_NATIVE);
+}
+
 template <typename NodeType, typename RangeBoundaryType>
 nsresult ContentEventHandler::GenerateFlatTextContent(
     const SimpleRangeBase<NodeType, RangeBoundaryType>& aSimpleRange,
@@ -1156,6 +1169,27 @@ nsresult ContentEventHandler::ExpandToClusterBoundary(
     *aXPOffset += aForward ? 1 : -1;
   }
   return NS_OK;
+}
+
+already_AddRefed<nsRange> ContentEventHandler::GetRangeFromFlatTextOffset(
+    WidgetContentCommandEvent* aEvent, uint32_t aOffset, uint32_t aLength) {
+  nsresult rv = InitCommon(aEvent->mMessage);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return nullptr;
+  }
+
+  Result<DOMRangeAndAdjustedOffsetInFlattenedText, nsresult> result =
+      ConvertFlatTextOffsetToDOMRange(aOffset, aLength, LINE_BREAK_TYPE_NATIVE,
+                                      false);
+  if (NS_WARN_IF(result.isErr())) {
+    return nullptr;
+  }
+
+  DOMRangeAndAdjustedOffsetInFlattenedText domRangeAndAdjustOffset =
+      result.unwrap();
+
+  return nsRange::Create(domRangeAndAdjustOffset.mRange.Start(),
+                         domRangeAndAdjustOffset.mRange.End(), IgnoreErrors());
 }
 
 template <typename RangeType, typename TextNodeType>
@@ -3033,6 +3067,7 @@ nsresult ContentEventHandler::OnQueryCharacterAtPoint(
 
 nsresult ContentEventHandler::QueryHittestImpl(WidgetQueryContentEvent* aEvent,
                                                bool aFlushLayout,
+                                               bool aPerformRetargeting,
                                                Element** aContentUnderMouse) {
   NS_ASSERTION(aEvent, "aEvent must not be null");
 
@@ -3057,7 +3092,8 @@ nsresult ContentEventHandler::QueryHittestImpl(WidgetQueryContentEvent* aEvent,
       docFrame->PresContext()->DevPixelsToIntCSSPixels(eventLoc.y) -
           docFrameRect.y);
   RefPtr<Element> contentUnderMouse = mDocument->ElementFromPointHelper(
-      eventLocCSS.x, eventLocCSS.y, false, false, ViewportType::Visual);
+      eventLocCSS.x, eventLocCSS.y, false, false, ViewportType::Visual,
+      aPerformRetargeting);
 
   contentUnderMouse.forget(aContentUnderMouse);
   return NS_OK;
@@ -3067,8 +3103,9 @@ nsresult ContentEventHandler::OnQueryDOMWidgetHittest(
     WidgetQueryContentEvent* aEvent) {
   aEvent->mReply->mWidgetIsHit = false;
   RefPtr<Element> contentUnderMouse;
-  nsresult rv =
-      QueryHittestImpl(aEvent, true, getter_AddRefs(contentUnderMouse));
+  nsresult rv = QueryHittestImpl(aEvent, true /* flushLayout */,
+                                 true /* performRetargeting */,
+                                 getter_AddRefs(contentUnderMouse));
   NS_ENSURE_SUCCESS(rv, rv);
   if (contentUnderMouse) {
     if (nsIFrame* targetFrame = contentUnderMouse->GetPrimaryFrame()) {
@@ -3085,8 +3122,9 @@ nsresult ContentEventHandler::OnQueryDOMWidgetHittest(
 nsresult ContentEventHandler::OnQueryDropTargetHittest(
     WidgetQueryContentEvent* aEvent) {
   RefPtr<Element> contentUnderMouse;
-  nsresult rv =
-      QueryHittestImpl(aEvent, true, getter_AddRefs(contentUnderMouse));
+  nsresult rv = QueryHittestImpl(aEvent, true /* flushLayout */,
+                                 false /* performRetargeting */,
+                                 getter_AddRefs(contentUnderMouse));
   NS_ENSURE_SUCCESS(rv, rv);
   aEvent->EmplaceReply();
   aEvent->mReply->mDropElement = contentUnderMouse;
@@ -3116,17 +3154,9 @@ nsresult ContentEventHandler::GetFlatTextLengthInRange(
   // including it forcibly.
   RawNodePosition endPosition(aEndPosition);
 
-  // This may be called for retrieving the text of removed nodes.  Even in this
-  // case, the node thinks it's still in the tree because UnbindFromTree() will
-  // be called after here.  However, the node was already removed from the
-  // array of children of its parent.  So, be careful to handle this case.
+  // This may be called for retrieving the text of removed nodes. So, be careful
+  // to handle this case. FIXME: Do we need this special-case now?
   if (aIsRemovingNode) {
-    DebugOnly<nsIContent*> parent = aStartPosition.Container()->GetParent();
-    MOZ_ASSERT(
-        parent &&
-            parent->ComputeIndexOf(aStartPosition.Container()).isNothing(),
-        "At removing the node, the node shouldn't be in the array of children "
-        "of its parent");
     MOZ_ASSERT(aStartPosition.Container() == endPosition.Container(),
                "At removing the node, start and end node should be same");
     MOZ_ASSERT(*aStartPosition.Offset(
@@ -3155,24 +3185,22 @@ nsresult ContentEventHandler::GetFlatTextLengthInRange(
       if (endPosition.Container()->HasChildren()) {
         // When the end node has some children, move the end position to before
         // the open tag of its first child.
-        nsINode* firstChild = endPosition.Container()->GetFirstChild();
+        nsIContent* const firstChild = endPosition.Container()->GetFirstChild();
         if (NS_WARN_IF(!firstChild)) {
           return NS_ERROR_FAILURE;
         }
-        endPosition = RawNodePositionBefore(firstChild, 0u);
+        endPosition = RawNodePosition::Before(*firstChild);
       } else {
         // When the end node is empty, move the end position after the node.
-        nsIContent* parentContent = endPosition.Container()->GetParent();
+        if (NS_WARN_IF(!endPosition.Container()->IsContent())) {
+          return NS_ERROR_FAILURE;
+        }
+        nsIContent* const parentContent = endPosition.Container()->GetParent();
         if (NS_WARN_IF(!parentContent)) {
           return NS_ERROR_FAILURE;
         }
-        Maybe<uint32_t> indexInParent =
-            parentContent->ComputeIndexOf(endPosition.Container());
-        if (MOZ_UNLIKELY(NS_WARN_IF(indexInParent.isNothing()))) {
-          return NS_ERROR_FAILURE;
-        }
-        MOZ_ASSERT(*indexInParent != UINT32_MAX);
-        endPosition = RawNodePositionBefore(parentContent, *indexInParent + 1u);
+        endPosition =
+            RawNodePosition::After(*endPosition.Container()->AsContent());
       }
     }
 
@@ -3476,8 +3504,7 @@ nsresult ContentEventHandler::OnSelectionEvent(WidgetSelectionEvent* aEvent) {
   // `ContentEventHandler` is a `MOZ_STACK_CLASS`, so `mSelection` is known to
   // be alive.
   MOZ_KnownLive(mSelection)
-      ->ScrollIntoView(nsISelectionController::SELECTION_FOCUS_REGION,
-                       ScrollAxis(), ScrollAxis(), 0);
+      ->ScrollIntoView(nsISelectionController::SELECTION_FOCUS_REGION);
   aEvent->mSucceeded = true;
   return NS_OK;
 }

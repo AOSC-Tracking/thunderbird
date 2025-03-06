@@ -54,7 +54,7 @@ function onAccept(event) {
 
     saveSmtpSettings(gSmtpServer);
   } catch (ex) {
-    console.error("Error saving smtp server: " + ex);
+    console.error("Error saving smtp server: ", ex);
   }
 
   window.arguments[0].result = true;
@@ -117,7 +117,7 @@ function initSmtpSettings(server) {
 
   // Hide OAuth2 option if we can't use it.
   const details = server
-    ? OAuth2Providers.getHostnameDetails(server.serverURI.host)
+    ? OAuth2Providers.getHostnameDetails(server.serverURI.host, "smtp")
     : null;
   document.getElementById("authMethod-oauth2").hidden = !details;
 
@@ -138,7 +138,10 @@ function setLabelFromStringBundle(elementID, stringName) {
 
 function onAuthMethodPopupShowing() {
   // Hide/unhide OAuth2 option depending on if it's usable or not.
-  const details = OAuth2Providers.getHostnameDetails(gSmtpHostname.value);
+  const details = OAuth2Providers.getHostnameDetails(
+    gSmtpHostname.value,
+    "smtp"
+  );
   document.getElementById("authMethod-oauth2").hidden = !details;
 }
 
@@ -155,7 +158,7 @@ function onLockPreference() {
     disableIfLocked(allPrefElements);
   } catch (e) {
     // non-fatal
-    console.error("Error while getting locked prefs: " + e);
+    console.error("Error while getting locked prefs: ", e);
   }
 }
 

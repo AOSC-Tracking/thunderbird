@@ -312,7 +312,7 @@ NetworkConnectivityService::RecheckDNS() {
   }
 
   if (nsIOService::UseSocketProcess()) {
-    SocketProcessParent* parent = SocketProcessParent::GetSingleton();
+    RefPtr<SocketProcessParent> parent = SocketProcessParent::GetSingleton();
     if (parent) {
       Unused << parent->SendRecheckDNS();
     }
@@ -407,6 +407,10 @@ already_AddRefed<nsIChannel> NetworkConnectivityService::SetupIPCheckChannel(
   nsresult rv;
   nsAutoCString url;
 
+  if (AppShutdown::IsInOrBeyond(ShutdownPhase::AppShutdownConfirmed)) {
+    return nullptr;
+  }
+
   if (ipv4) {
     rv = Preferences::GetCString("network.connectivity-service.IPv4.url", url);
   } else {
@@ -478,7 +482,7 @@ NetworkConnectivityService::RecheckIPConnectivity() {
   }
 
   if (nsIOService::UseSocketProcess()) {
-    SocketProcessParent* parent = SocketProcessParent::GetSingleton();
+    RefPtr<SocketProcessParent> parent = SocketProcessParent::GetSingleton();
     if (parent) {
       Unused << parent->SendRecheckIPConnectivity();
     }

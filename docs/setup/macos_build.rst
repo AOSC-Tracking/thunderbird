@@ -74,6 +74,11 @@ the interactive setup process.
 .. code-block:: shell
 
     curl https://hg.mozilla.org/mozilla-central/raw-file/default/python/mozboot/bin/bootstrap.py -O
+
+    # To use Git as your VCS
+    python3 bootstrap.py --vcs=git
+
+    # To use Mercurial as your VCS
     python3 bootstrap.py
 
 .. note::
@@ -169,3 +174,39 @@ If you encounter a build error when trying to setup your development environment
    1. Copy the entire build error to your clipboard
    2. Paste this error to `paste.mozilla.org <https://paste.mozilla.org>`_ in the text area and change the "Expire in one hour" option to "Expire in one week". Note: it won't take a week to get help but it's better to have the snippet be around for a bit longer than expected.
    3. Go to the `introduction channel <https://chat.mozilla.org/#/room/#introduction:mozilla.org>`__ and ask for help with your build error. Make sure to post the link to the paste.mozilla.org snippet you created!
+
+The CLOBBER file has been updated
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This is a normal error to encounter and tends to appear when working on a bug for a long period of time.
+If you encounter this error, you need to run ``./mach clobber`` before running ``./mach build``.
+Running ``./mach clobber`` will remove previous build artifacts to restart a build from scratch.
+If you are using an artifact build, this will mean that the next build will take slightly longer than usual.
+However, if you are using a non-artifact/full build, the next build will take significantly longer to complete.
+
+Python-related errors
+~~~~~~~~~~~~~~~~~~~~~
+
+Building, running, testing, etc. not always support the latest Python versions, therefore it is possible to encounter Python-related errors,
+especially after updating your Python distribution to a new version.
+
+The recommended way to work around this is to use a virtual environment with a compatible Python version.
+Please consider `mach's <https://searchfox.org/mozilla-central/source/mach>`_ ``MIN_PYTHON_VERSION`` and ``MAX_PYTHON_VERSION_TO_CONSIDER``
+for the range of compatible versions.
+
+Should you be using Python through Homebrew, you can install older releases like this:
+
+.. code-block:: shell
+
+   brew install python@3.<your-desired-version>
+
+You can set up the virtual environment manually or use a supporting tool such as `pyenv <https://github.com/pyenv/pyenv>`_ (recommended).
+Below is an example for manual setup.
+
+.. code-block:: shell
+
+   cd mozilla-unified
+   # Creates virtual environment for <your-desired-version> in folder .venv
+   python3.<your-desired-version> -m venv .venv
+   # Activates virtual environment
+   source .venv/bin/activate

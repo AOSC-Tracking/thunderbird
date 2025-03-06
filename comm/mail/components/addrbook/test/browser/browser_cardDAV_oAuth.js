@@ -36,8 +36,10 @@ const defaultLogin = {
 const PATH = "comm/mail/components/addrbook/test/browser/data/";
 const URL = `http://mochi.test:8888/browser/${PATH}`;
 
+let oAuth2Server;
+
 add_setup(async function () {
-  await OAuth2TestUtils.startServer();
+  oAuth2Server = await OAuth2TestUtils.startServer();
 });
 
 /**
@@ -83,7 +85,14 @@ async function handleOAuthDialog(expectedHint) {
   info("oauth2 window shown");
   await SpecialPowers.spawn(
     oAuthWindow.getBrowser(),
-    [{ expectedHint, username: USERNAME, password: PASSWORD }],
+    [
+      {
+        expectedHint,
+        expectedScope: SCOPE,
+        username: USERNAME,
+        password: PASSWORD,
+      },
+    ],
     OAuth2TestUtils.submitOAuthLogin
   );
 }
@@ -101,6 +110,8 @@ async function handleOAuthDialog(expectedHint) {
  *   with this user name.
  */
 async function subtest(dirPrefId, uid, newTokenDetails) {
+  Services.fog.testResetFOG();
+
   const directory = new CardDAVDirectory();
   directory._dirPrefId = dirPrefId;
   directory._uid = uid;
@@ -118,6 +129,18 @@ async function subtest(dirPrefId, uid, newTokenDetails) {
   const headers = JSON.parse(response.text);
 
   Assert.equal(headers.authorization, "Bearer access_token");
+
+  if (newTokenDetails) {
+    OAuth2TestUtils.checkTelemetry([
+      {
+        issuer: "test.test",
+        reason: newTokenDetails.reason,
+        result: "succeeded",
+      },
+    ]);
+  } else {
+    OAuth2TestUtils.checkTelemetry([]);
+  }
 }
 
 /**
@@ -137,6 +160,7 @@ function checkAndClearLogins(expectedLogins) {
 
   Services.logins.removeAllLogins();
   OAuth2TestUtils.forgetObjects();
+  oAuth2Server.grantedScope = null;
 }
 
 // Test making a request when there is no matching token stored.
@@ -145,7 +169,7 @@ function checkAndClearLogins(expectedLogins) {
 add_task(async function testAddressBookOAuth_uid_none() {
   const dirPrefId = "uid_none";
   const uid = "testAddressBookOAuth_uid_none";
-  await subtest(dirPrefId, uid, { username: uid });
+  await subtest(dirPrefId, uid, { username: uid, reason: "no refresh token" });
   checkAndClearLogins([{ ...defaultLogin, username: uid }]);
 });
 
@@ -160,7 +184,7 @@ add_task(async function testAddressBookOAuth_uid_expired() {
     { ...defaultLogin, username: uid, password: "expired_token" },
   ];
   await setLogins(logins);
-  await subtest(dirPrefId, uid, { username: uid });
+  await subtest(dirPrefId, uid, { username: uid, reason: "invalid grant" });
   logins[0].password = VALID_TOKEN;
   checkAndClearLogins(logins);
 });

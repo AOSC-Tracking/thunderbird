@@ -7,8 +7,6 @@
 // Namespaces we happen to need:
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
-var utils = new Object();
-
 var DEBUG = true;
 var dd, warn, TEST, ASSERT;
 
@@ -67,7 +65,7 @@ if (DEBUG) {
                      var m = "** ASSERTION FAILED: " + msg + " **\n" +
                              getStackTrace();
                      try {
-                         alert(m);
+                         Services.prompt.alert(window, MSG_ALERT, m);
                      } catch(ex) {}
                      dd(m);
                      return false;
@@ -257,12 +255,6 @@ function ecmaUnescape(str)
     return str.replace(/%u?([\da-f]{1,4})/ig, replaceEscapes);
 }
 
-function encodeForXMLAttribute(value) {
-    return value.replace(/&/g, "&amp;").replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;").replace(/"/g, "&quot;")
-                .replace(/'/g, "&apos;");
-}
-
 function replaceVars(str, vars)
 {
     // replace "string $with a $variable", with
@@ -296,156 +288,6 @@ function formatException(ex)
     return String(ex);
 }
 
-/*
- * Clones an existing object (Only the enumerable properties
- * of course.) use as a function..
- * var c = Clone (obj);
- * or a constructor...
- * var c = new Clone (obj);
- */
-function Clone (obj)
-{
-    var robj = new Object();
-
-    if ("__proto__" in obj)
-    {
-        // Special clone for Spidermonkey.
-        for (var p in obj)
-        {
-            if (obj.hasOwnProperty(p))
-                robj[p] = obj[p];
-        }
-        robj.__proto__ = obj.__proto__;
-    }
-    else
-    {
-        for (var p in obj)
-            robj[p] = obj[p];
-    }
-
-    return robj;
-
-}
-
-function Copy(source, dest, overwrite)
-{
-    if (!dest)
-        dest = new Object();
-
-    for (var p in source)
-    {
-        if (overwrite || !(p in dest))
-            dest[p] = source[p];
-    }
-
-    return dest;
-}
-
-/*
- * matches a real object against one or more pattern objects.
- * if you pass an array of pattern objects, |negate| controls whether to check
- * if the object matches ANY of the patterns, or NONE of the patterns.
- */
-function matchObject (o, pattern, negate)
-{
-    negate = Boolean(negate);
-
-    function _match (o, pattern)
-    {
-        if (isinstance(pattern, Function))
-            return pattern(o);
-
-        for (var p in pattern)
-        {
-            var val;
-                /* nice to have, but slow as molases, allows you to match
-                 * properties of objects with obj$prop: "foo" syntax      */
-                /*
-                  if (p[0] == "$")
-                  val = eval ("o." +
-                  p.substr(1,p.length).replace (/\$/g, "."));
-                  else
-                */
-            val = o[p];
-
-            if (isinstance(pattern[p], Function))
-            {
-                if (!pattern[p](val))
-                    return false;
-            }
-            else
-            {
-                var ary = (new String(val)).match(pattern[p]);
-                if (ary == null)
-                    return false;
-                else
-                    o.matchresult = ary;
-            }
-        }
-
-        return true;
-
-    }
-
-    if (!isinstance(pattern, Array))
-        return Boolean (negate ^ _match(o, pattern));
-
-    for (var i in pattern)
-        if (_match (o, pattern[i]))
-            return !negate;
-
-    return negate;
-
-}
-
-function equalsObject(o1, o2)
-{
-    for (var p in o1)
-    {
-        if (!(p in o2) || (o1[p] != o2[p]))
-            return false;
-    }
-    for (p in o2)
-    {
-        // If the property did exist in o1, the previous loop tested it:
-        if (!(p in o1))
-            return false;
-    }
-    return true;
-}
-
-function utils_lcfn(text)
-{
-    return text.toLowerCase();
-}
-
-function matchEntry (partialName, list, lcFn)
-{
-
-    if ((typeof partialName == "undefined") ||
-        (String(partialName) == ""))
-    {
-        var ary = new Array();
-        for (var i in list)
-            ary.push(i);
-        return ary;
-    }
-
-    if (typeof lcFn != "function")
-        lcFn = utils_lcfn;
-
-    ary = new Array();
-
-    for (i in list)
-    {
-        if (lcFn(list[i]).indexOf(lcFn(partialName)) == 0)
-            ary.push(i);
-    }
-
-    return ary;
-
-}
-
 function encodeChar(ch)
 {
    return "%" + ch.charCodeAt(0).toString(16);
@@ -457,55 +299,9 @@ function escapeFileName(fileName)
     return fileName.replace(/[\/\\\:\*\?"<>\|]/g, encodeChar);
 }
 
-function getCommonPfx (list, lcFn)
-{
-    var pfx = list[0];
-    var l = list.length;
-
-    if (typeof lcFn != "function")
-        lcFn = utils_lcfn;
-
-    for (var i = 0; i < l; i++)
-    {
-        for (var c = 0; c < pfx.length; ++c)
-        {
-            if (c >= list[i].length)
-            {
-                pfx = pfx.substr(0, c);
-                break;
-            }
-            else
-            {
-                if (lcFn(pfx[c]) != lcFn(list[i][c]))
-                    pfx = pfx.substr(0, c);
-            }
-        }
-    }
-
-    return pfx;
-
-}
-
-function openTopWin (url)
-{
-    return openDialog (getBrowserURL(), "_blank", "chrome,all,dialog=no", url);
-}
-
-function getWindowByType (windowType)
-{
-    const MEDIATOR_CONTRACTID =
-        "@mozilla.org/appshell/window-mediator;1";
-    const nsIWindowMediator  = Components.interfaces.nsIWindowMediator;
-
-    var windowManager =
-        Components.classes[MEDIATOR_CONTRACTID].getService(nsIWindowMediator);
-
-    return windowManager.getMostRecentWindow(windowType);
-}
-
 function toOpenWindowByType(inType, url, features)
 {
-    var topWindow = getWindowByType(inType);
+    var topWindow = Services.wm.getMostRecentWindow(inType);
 
     if (typeof features == "undefined")
         features = "chrome,extrachrome,menubar,resizable," +
@@ -515,93 +311,6 @@ function toOpenWindowByType(inType, url, features)
         topWindow.focus();
     else
         window.open(url, "_blank", features);
-}
-
-function renameProperty (obj, oldname, newname)
-{
-
-    if (oldname == newname)
-        return;
-
-    obj[newname] = obj[oldname];
-    delete obj[oldname];
-
-}
-
-function newObject(contractID, iface)
-{
-    var rv;
-    var cls = Components.classes[contractID];
-
-    if (!cls)
-        return null;
-
-    switch (typeof iface)
-    {
-        case "undefined":
-            rv = cls.createInstance();
-            break;
-
-        case "string":
-            rv = cls.createInstance(Components.interfaces[iface]);
-            break;
-
-        case "object":
-            rv = cls.createInstance(iface);
-            break;
-
-        default:
-            rv = null;
-            break;
-    }
-
-    return rv;
-
-}
-
-function getService(contractID, iface)
-{
-    var rv;
-    var cls = Components.classes[contractID];
-
-    if (!cls)
-        return null;
-
-    switch (typeof iface)
-    {
-        case "undefined":
-            rv = cls.getService();
-            break;
-
-        case "string":
-            rv = cls.getService(Components.interfaces[iface]);
-            break;
-
-        case "object":
-            rv = cls.getService(iface);
-            break;
-
-        default:
-            rv = null;
-            break;
-    }
-
-    return rv;
-
-}
-
-function getNSSErrorClass(errorCode)
-{
-    var nssErrSvc = getService("@mozilla.org/nss_errors_service;1", "nsINSSErrorsService");
-
-    try
-    {
-        return nssErrSvc.getErrorClass(errorCode);
-    }
-    catch
-    {
-        return 0;
-    }
 }
 
 function getContentWindow(frame)
@@ -642,237 +351,9 @@ function getContentDocument(frame)
     }
 }
 
-function getPriv (priv)
-{
-    var rv = true;
-
-    try
-    {
-        netscape.security.PrivilegeManager.enablePrivilege(priv);
-    }
-    catch (e)
-    {
-        dd ("getPriv: unable to get privlege '" + priv + "': " + e);
-        rv = false;
-    }
-
-    return rv;
-
-}
-
-function len(o)
-{
-    var l = 0;
-
-    for (var p in o)
-        ++l;
-
-    return l;
-}
-
-function keys (o)
-{
-    var rv = new Array();
-
-    for (var p in o)
-        rv.push(p);
-
-    return rv;
-
-}
-
-function stringTrim (s)
-{
-    if (!s)
-        return "";
-    s = s.replace (/^\s+/, "");
-    return s.replace (/\s+$/, "");
-
-}
-
-/* the offset should be in seconds, it will be rounded to 2 decimal places */
-function formatDateOffset (offset, format)
-{
-    var seconds = roundTo(offset % 60, 2);
-    var minutes = Math.floor(offset / 60);
-    var hours = Math.floor(minutes / 60);
-    minutes = minutes % 60;
-    var days = Math.floor(hours / 24);
-    hours = hours % 24;
-
-    if (!format)
-    {
-        var ary = new Array();
-
-        if (days == 1)
-            ary.push(MSG_DAY);
-        else if (days > 0)
-            ary.push(getMsg(MSG_DAYS, days));
-
-        if (hours == 1)
-            ary.push(MSG_HOUR);
-        else if (hours > 0)
-            ary.push(getMsg(MSG_HOURS, hours));
-
-        if (minutes == 1)
-            ary.push(MSG_MINUTE);
-        else if (minutes > 0)
-            ary.push(getMsg(MSG_MINUTES, minutes));
-
-        if (seconds == 1)
-            ary.push(MSG_SECOND);
-        else if (seconds > 0 || offset == 0)
-            ary.push(getMsg(MSG_SECONDS, seconds));
-
-        format = ary.join(", ");
-    }
-    else
-    {
-        format = format.replace ("%d", days);
-        format = format.replace ("%h", hours);
-        format = format.replace ("%m", minutes);
-        format = format.replace ("%s", seconds);
-    }
-
-    return format;
-}
-
 function arrayHasElementAt(ary, i)
 {
     return typeof ary[i] != "undefined";
-}
-
-function arrayContains (ary, elem)
-{
-    return (arrayIndexOf (ary, elem) != -1);
-}
-
-function arrayIndexOf (ary, elem)
-{
-    for (var i in ary)
-        if (ary[i] == elem)
-            return i;
-
-    return -1;
-}
-
-function arrayInsertAt (ary, i, o)
-{
-    ary.splice (i, 0, o);
-}
-
-function arrayRemoveAt (ary, i)
-{
-    ary.splice (i, 1);
-}
-
-function objectContains(o, p)
-{
-    return Object.hasOwnProperty.call(o, p);
-}
-
-/* length should be an even number >= 6 */
-function abbreviateWord (str, length)
-{
-    if (str.length <= length || length < 6)
-        return str;
-
-    var left = str.substr (0, (length / 2) - 1);
-    var right = str.substr (str.length - (length / 2) + 1);
-
-    return left + "..." + right;
-}
-
-/*
- * Inserts the string |hyphen| into string |str| every |pos| characters.
- * If there are any wordbreaking characters in |str| within -/+5 characters of
- * of a |pos| then the hyphen is inserted there instead, in order to produce a
- * "cleaner" break.
- */
-function hyphenateWord (str, pos, hyphen)
-{
-    if (str.length <= pos)
-        return str;
-    if (typeof hyphen == "undefined")
-        hyphen = " ";
-
-    /* search for a nice place to break the word, fuzzfactor of +/-5, centered
-     * around |pos| */
-    var splitPos =
-        str.substring(pos - 5, pos + 5).search(/[^A-Za-z0-9]/);
-
-    splitPos = (splitPos != -1) ? pos - 4 + splitPos : pos;
-    var left = str.substr (0, splitPos);
-    var right = hyphenateWord(str.substr (splitPos), pos, hyphen);
-
-    return left + hyphen + right;
-}
-
-/*
- * Like hyphenateWord, except individual chunks of the word are returned as
- * elements of an array.
- */
-function splitLongWord (str, pos)
-{
-    if (str.length <= pos)
-        return [str];
-
-    var ary = new Array();
-    var right = str;
-
-    while (right.length > pos)
-    {
-        /* search for a nice place to break the word, fuzzfactor of +/-5,
-         * centered around |pos| */
-        var splitPos =
-            right.substring(pos - 5, pos + 5).search(/[^A-Za-z0-9]/);
-
-        splitPos = (splitPos != -1) ? pos - 4 + splitPos : pos;
-        ary.push(right.substr (0, splitPos));
-        right = right.substr (splitPos);
-    }
-
-    ary.push (right);
-
-    return ary;
-}
-
-function getRandomElement (ary)
-{
-
-    return ary[Math.floor(Math.random() * ary.length)];
-
-}
-
-function roundTo (num, prec)
-{
-
-    return Math.round(num * Math.pow (10, prec)) / Math.pow (10, prec);
-
-}
-
-function randomRange (min, max)
-{
-
-    if (typeof min == "undefined")
-        min = 0;
-
-    if (typeof max == "undefined")
-        max = 1;
-
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-
-}
-
-// Creates a random string of |len| characters from a-z, A-Z, 0-9.
-function randomString(len) {
-    var chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    var rv = "";
-
-    for (var i = 0; i < len; i++)
-        rv += chars.substr(Math.floor(Math.random() * chars.length), 1);
-
-    return rv;
 }
 
 function getStackTrace ()
@@ -889,80 +370,6 @@ function getStackTrace ()
 
     return str;
 
-}
-
-function getInterfaces (cls)
-{
-    var rv = new Object();
-    var e;
-
-    for (var i in Components.interfaces)
-    {
-        try
-        {
-            var ifc = Components.interfaces[i];
-            cls.QueryInterface(ifc);
-            rv[i] = ifc;
-        }
-        catch (e)
-        {
-            /* nada */
-        }
-    }
-
-    return rv;
-
-}
-
-/**
- * Calls a named function for each element in an array, sending
- * the same parameter each call.
- *
- * @param ary           an array of objects
- * @param func_name     string name of function to call.
- * @param data          data object to pass to each object.
- */
-function mapObjFunc(ary, func_name, data)
-{
-    /*
-     * WARNING: Caller assumes resonsibility to verify ary
-     * and func_name
-     */
-
-    for (var i in ary)
-        ary[i][func_name](data);
-}
-
-/**
- * Passes each element of an array to a given function object.
- *
- * @param func  a function object.
- * @param ary   an array of values.
- */
-function map(func, ary) {
-
-    /*
-     * WARNING: Caller assumnes responsibility to verify
-     * func and ary.
-     */
-
-    for (var i in ary)
-        func(ary[i]);
-
-}
-
-function getSpecialDirectory(name)
-{
-    if (!("directoryService" in utils))
-    {
-        const DS_CTR = "@mozilla.org/file/directory_service;1";
-        const nsIProperties = Components.interfaces.nsIProperties;
-
-        utils.directoryService =
-            Components.classes[DS_CTR].getService(nsIProperties);
-    }
-
-    return utils.directoryService.get(name, Components.interfaces.nsIFile);
 }
 
 function getFileFromURLSpec(url)
@@ -990,32 +397,7 @@ function getURLSpecFromFile(file)
     return fileHandler.getURLSpecFromFile(file);
 }
 
-function alert(msg, parent, title)
-{
-    var PROMPT_CTRID = "@mozilla.org/embedcomp/prompt-service;1";
-    var nsIPromptService = Components.interfaces.nsIPromptService;
-    var ps = Components.classes[PROMPT_CTRID].getService(nsIPromptService);
-    if (!parent)
-        parent = window;
-    if (!title)
-        title = MSG_ALERT;
-    ps.alert (parent, title, msg);
-}
-
-function confirm(msg, parent, title)
-{
-    var PROMPT_CTRID = "@mozilla.org/embedcomp/prompt-service;1";
-    var nsIPromptService = Components.interfaces.nsIPromptService;
-    var ps = Components.classes[PROMPT_CTRID].getService(nsIPromptService);
-    if (!parent)
-        parent = window;
-    if (!title)
-        title = MSG_CONFIRM;
-    return ps.confirm (parent, title, msg);
-}
-
-function confirmEx(msg, buttons, defaultButton, checkText,
-                   checkVal, parent, title)
+function confirmEx(msg, buttons, defaultButton, checkText, checkVal)
 {
     /* Note that on versions before Mozilla 0.9, using 3 buttons,
      * the revert or dontsave button, or custom button titles will NOT work.
@@ -1025,9 +407,7 @@ function confirmEx(msg, buttons, defaultButton, checkText,
      * For example, on Windows this is usually [button 1] [button 3] [button 2],
      * and on Linux [button 3] [button 2] [button 1].
      */
-    var PROMPT_CTRID = "@mozilla.org/embedcomp/prompt-service;1";
-    var nsIPromptService = Components.interfaces.nsIPromptService;
-    var ps = Components.classes[PROMPT_CTRID].getService(nsIPromptService);
+    var ps = Services.prompt;
 
     var buttonConstants = {
         ok: ps.BUTTON_TITLE_OK,
@@ -1062,90 +442,33 @@ function confirmEx(msg, buttons, defaultButton, checkText,
     if (defaultIsNumber && arrayHasElementAt(buttons, defaultButton))
         buttonFlags += ps["BUTTON_POS_" + defaultButton + "_DEFAULT"];
 
-    if (!parent)
-        parent = window;
-    if (!title)
-        title = MSG_CONFIRM;
     if (!checkVal)
         checkVal = new Object();
 
-    var rv = ps.confirmEx(parent, title, msg, buttonFlags, buttonText[0],
-                          buttonText[1], buttonText[2], checkText, checkVal);
-    return rv;
+    return ps.confirmEx(window, MSG_CONFIRM, msg, buttonFlags, buttonText[0],
+                        buttonText[1], buttonText[2], checkText, checkVal);
 }
 
-function prompt(msg, initial, parent, title)
+function prompt(msg, initial)
 {
-    var PROMPT_CTRID = "@mozilla.org/embedcomp/prompt-service;1";
-    var nsIPromptService = Components.interfaces.nsIPromptService;
-    var ps = Components.classes[PROMPT_CTRID].getService(nsIPromptService);
-    if (!parent)
-        parent = window;
-    if (!title)
-        title = MSG_PROMPT;
     var rv = { value: initial };
 
-    if (!ps.prompt (parent, title, msg, rv, null, {value: null}))
+    if (!Services.prompt.prompt(window, MSG_PROMPT, msg, rv, null,
+                                {value: null}))
         return null;
 
     return rv.value;
 }
 
-function promptPassword(msg, initial, parent, title)
+function promptPassword(msg, initial)
 {
-    var PROMPT_CTRID = "@mozilla.org/embedcomp/prompt-service;1";
-    var nsIPromptService = Components.interfaces.nsIPromptService;
-    var ps = Components.classes[PROMPT_CTRID].getService(nsIPromptService);
-    if (!parent)
-        parent = window;
-    if (!title)
-        title = MSG_PROMPT;
     var rv = { value: initial };
 
-    if (!ps.promptPassword (parent, title, msg, rv, null, {value: null}))
+    if (!Services.prompt.promptPassword(window, MSG_PROMPT, msg, rv, null,
+                                        {value: null}))
         return null;
 
     return rv.value;
-}
-
-function viewCert(cert, parent)
-{
-    var cd = getService("@mozilla.org/nsCertificateDialogs;1",
-                        "nsICertificateDialogs");
-    if (!parent)
-        parent = window;
-    cd.viewCert(parent, cert);
-}
-
-function addOrUpdateLogin(url, type, username, password)
-{
-    username = username.toLowerCase();
-    var newinfo = newObject("@mozilla.org/login-manager/loginInfo;1",
-                            "nsILoginInfo");
-    newinfo.init(url, null, type, username, password, "", "");
-    var oldinfo = getLogin(url, type, username);
-
-    if (oldinfo) {
-        Services.logins.modifyLogin(oldinfo, newinfo);
-        return true; //updated
-    }
-
-    Services.logins.addLogin(newinfo);
-    return false; //added
-}
-
-function getLogin(url, realm, username)
-{
-    username = username.toLowerCase();
-
-    let logins = Services.logins.findLogins({}, url, null, realm);
-    for (let login of logins) {
-        if (login.username == username) {
-            return login;
-        }
-    }
-
-    return null;
 }
 
 function getHostmaskParts(hostmask)
@@ -1241,109 +564,55 @@ function isinstance(inst, base)
              (inst.constructor && (inst.constructor.name == base.name))));
 }
 
-function isDefaultPrevented(ev)
+function scaleNumberBy1024(number, msg, prefix)
 {
-    if ("defaultPrevented" in ev)
-        return ev.defaultPrevented;
-    return ev.getPreventDefault();
-}
-
-function scaleNumberBy1024(number)
-{
-    var scale = 0;
-    while ((number >= 1000) && (scale < 6))
+    let scale = 0;
+    if (number > 0)
     {
-        scale++;
-        number /= 1024;
+        scale = parseInt(Math.floor(Math.log(number) / Math.log(1024)));
+        if (scale > 6)
+            scale = 6;
+        number /= Math.pow(1024, scale);
     }
 
-    return [scale, number];
+    let fix = 0;
+    if (number < 10)
+        fix = 2;
+    else if (number < 100)
+        fix = 1;
+
+    return getMsg(msg, [number.toFixed(fix), getMsg(prefix + scale)]);
 }
 
 function getSISize(size)
 {
-    var data = scaleNumberBy1024(size);
-
-    if (data[1] < 10)
-        data[1] = data[1].toFixed(2);
-    else if (data[1] < 100)
-        data[1] = data[1].toFixed(1);
-    else
-        data[1] = data[1].toFixed(0);
-
-    return getMsg(MSG_SI_SIZE, [data[1], getMsg("msg.si.size." + data[0])]);
+    return scaleNumberBy1024(size, MSG_SI_SIZE, "msg.si.size.");
 }
 
 function getSISpeed(speed)
 {
-    var data = scaleNumberBy1024(speed);
-
-    if (data[1] < 10)
-        data[1] = data[1].toFixed(2);
-    else if (data[1] < 100)
-        data[1] = data[1].toFixed(1);
-    else
-        data[1] = data[1].toFixed(0);
-
-    return getMsg(MSG_SI_SPEED, [data[1], getMsg("msg.si.speed." + data[0])]);
-}
-
-// Returns -1 if version 1 is newer, +1 if version 2 is newer, and 0 for same.
-function compareVersions(ver1, ver2)
-{
-    var ver1parts = ver1.split(".");
-    var ver2parts = ver2.split(".");
-
-    while ((ver1parts.length > 0) && (ver2parts.length > 0))
-    {
-        if (ver1parts[0] < ver2parts[0])
-            return 1;
-        if (ver1parts[0] > ver2parts[0])
-            return -1;
-        ver1parts.shift();
-        ver2parts.shift();
-    }
-    if (ver1parts.length > 0)
-        return -1;
-    if (ver2parts.length > 0)
-        return 1;
-    return 0;
+    return scaleNumberBy1024(speed, MSG_SI_SPEED, "msg.si.speed.");
 }
 
 // Zero-pad Numbers (or pad with something else if you wish)
 function padNumber(num, digits, pad)
 {
-    pad = pad || "0";
-    var rv = num.toString();
-    while (rv.length < digits)
-        rv = pad + rv;
-    return rv;
+    return num.toString().padStart(digits, pad || "0");
 }
 
 const timestr = {
-    A: { method: "getDay" },
-    a: { method: "getDay" },
-    B: { method: "getMonth" },
-    b: { method: "getMonth" },
     c: { replace: null },
     D: { replace: "%m/%d/%y" },
-    d: { method: "getDate", pad: 2 },
-    e: { method: "getDate", pad: 2, padwith: " " },
     F: { replace: "%Y-%m-%d" },
-    h: { replace: "%b" },
     H: { method: "getHours", pad: 2 },
     k: { method: "getHours", pad: 2, padwith: " " },
     M: { method: "getMinutes", pad: 2 },
-    p: { AM: null, PM: null },
-    P: { AM: null, PM: null },
-    r: { replace: null },
     R: { replace: "%H:%M" },
     S: { method: "getSeconds", pad: 2 },
     T: { replace: "%H:%M:%S" },
     w: { method: "getDay" },
     x: { replace: null },
     X: { replace: null },
-    Y: { method: "getFullYear" },
     initialized: false
 }
 
@@ -1353,34 +622,19 @@ function strftime(format, time)
 
     if (!timestr.initialized)
     {
-        timestr.A.values = getMsg("datetime.day.long").split("^");
-        timestr.a.values = getMsg("datetime.day.short").split("^");
-        timestr.B.values = getMsg("datetime.month.long").split("^");
-        timestr.b.values = getMsg("datetime.month.short").split("^");
-        // Just make sure the locale isn't playing silly with us.
-        ASSERT(timestr.A.values.length == 7, "datetime.day.long bad!");
-        ASSERT(timestr.a.values.length == 7, "datetime.day.short bad!");
-        ASSERT(timestr.B.values.length == 12, "datetime.month.long bad!");
-        ASSERT(timestr.b.values.length == 12, "datetime.month.short bad!");
-
-        timestr.p.AM = getMsg("datetime.uam");
-        timestr.p.PM = getMsg("datetime.upm");
-        timestr.P.AM = getMsg("datetime.lam");
-        timestr.P.PM = getMsg("datetime.lpm");
-
-        timestr.c.replace = getMsg("datetime.presets.lc");
-        timestr.r.replace = getMsg("datetime.presets.lr");
-        timestr.x.replace = getMsg("datetime.presets.lx");
-        timestr.X.replace = getMsg("datetime.presets.ux");
+        timestr.c.replace = getMsg("datetime.patterns.lc");
+        timestr.x.replace = getMsg("datetime.patterns.lx");
+        timestr.X.replace = getMsg("datetime.patterns.ux");
 
         timestr.initialized = true;
     }
 
-
-    function getDayOfYear(dateobj)
+    function getDayOfYear(date)
     {
-       var yearobj = new Date(dateobj.getFullYear(), 0, 1, 0, 0, 0, 0);
-       return Math.floor((dateobj - yearobj) / 86400000) + 1;
+       var utc_date = new Date.UTC(date.getFullYear(), date.getMonth(),
+                                   date.getDate());
+       var utc_year = new Date.UTC(date.getFullYear(), 0, 0);
+       return (utc_date - utc_year) / (24 * 60 * 60 * 1000);
     };
 
     time = time || new Date();
@@ -1388,50 +642,86 @@ function strftime(format, time)
         throw "Expected date object";
 
     var ary;
-    while ((ary = format.match(/(^|[^%])%(\w)/)))
+    while ((ary = format.match(/(^|[^%])%(-?\w)/)))
     {
         var start = ary[1] ? (ary.index + 1) : ary.index;
         var rpl = "";
         if (ary[2] in timestr)
         {
             var tbranch = timestr[ary[2]];
-            if (("method" in tbranch) && ("values" in tbranch))
-               rpl = tbranch.values[time[tbranch.method]()];
-            else if ("method" in tbranch)
+            if ("method" in tbranch)
                 rpl = time[tbranch.method]().toString();
             else if ("replace" in tbranch)
                 rpl = tbranch.replace;
 
             if ("pad" in tbranch)
             {
-                var padwith = ("padwith" in tbranch) ? tbranch.padwith : "0";
+                let padwith = ("padwith" in tbranch) ? tbranch.padwith : "0";
                 rpl = padNumber(rpl, tbranch.pad, padwith);
             }
         }
         if (!rpl)
         {
+            let option;
+            let padwith;
             switch (ary[2])
             {
+                case "A":
+                    option = { weekday: "long" };
+                    break;
+                case "a":
+                    option = { weekday: "short" };
+                    break;
+                case "B":
+                    option = { month: "long" };
+                    break;
+                case "b":
+                case "h":
+                    option = { month: "short" };
+                    break;
                 case "C":
-                    var century = Math.floor(time.getFullYear() / 100);
-                    rpl = padNumber(century, 2);
+                    rpl = Math.floor(time.getFullYear() / 100);
+                    padwith = "0";
+                    break;
+                case "d":
+                    option = { day: "2-digit" };
+                    break;
+                case "e":
+                    padwith = " ";
+                case "-d":
+                case "-e":
+                    option = { day: "numeric" };
                     break;
                 case "I":
                 case "l":
-                    var hour = (time.getHours() + 11) % 12 + 1;
-                    var padwith = (ary[2] == "I") ? "0" : " ";
-                    rpl = padNumber(hour, 2, padwith);
+                    rpl = (time.getHours() + 11) % 12 + 1;
+                    padwith = (ary[2] == "I") ? "0" : " ";
                     break;
                 case "j":
                     rpl = padNumber(getDayOfYear(time), 3);
                     break;
                 case "m":
-                    rpl = padNumber(time.getMonth() + 1, 2);
+                    option = { month: "2-digit" };
+                    break;
+                case "-m":
+                    option = { month: "numeric" };
                     break;
                 case "p":
                 case "P":
-                    var bit = (time.getHours() < 12) ? "AM" : "PM";
-                    rpl = timestr[ary[2]][bit];
+                    rpl = new Intl.DateTimeFormat(undefined,
+                                                  { hour: "numeric",
+                                                    hour12: true })
+                                  .formatToParts(time)
+                                  .find(part => part.type == "dayPeriod")
+                                  .value;
+                    if (ary[2] == "P")
+                    {
+                        rpl = rpl.toLowerCase();
+                    }
+                    break;
+                case "r":
+                    option = { hour: "2-digit", minute: "2-digit",
+                               second: "2-digit", hour12: true };
                     break;
                 case "s":
                     rpl = Math.round(time.getTime() / 1000);
@@ -1439,8 +729,18 @@ function strftime(format, time)
                 case "u":
                     rpl = (time.getDay() + 6) % 7 + 1;
                     break;
+                case "Y":
+                    option = { year: "numeric" };
+                    break;
                 case "y":
-                    rpl = time.getFullYear().toString().substr(2);
+                    option = { year: "2-digit" };
+                    break;
+                case "Z":
+                    rpl = new Intl.DateTimeFormat(undefined,
+                                                  { timeZoneName: "short" })
+                                  .formatToParts(time)
+                                  .find(part => part.type == "timeZoneName")
+                                  .value;
                     break;
                 case "z":
                     var mins = time.getTimezoneOffset();
@@ -1450,39 +750,20 @@ function strftime(format, time)
                     rpl += padNumber(hours, 2) + padNumber(mins - (hours * 60), 2);
                     break;
             }
+            if (option)
+            {
+                rpl = new Intl.DateTimeFormat(undefined, option).format(time);
+            }
+            if (padwith)
+            {
+                rpl = padNumber(rpl, 2, padwith);
+            }
         }
         if (!rpl)
             rpl = "%%" + ary[2];
         format = format.substr(0, start) + rpl + format.substr(start + 2);
     }
     return format.replace(/%%/, "%");
-}
-
-// This used to be strres.js, copied here to help remove that...
-var strBundleService = null;
-function srGetStrBundle(path)
-{
-    const STRBSCID = "@mozilla.org/intl/stringbundle;1";
-    const STRBSIF = "nsIStringBundleService";
-    var strBundle = null;
-    if (!strBundleService)
-    {
-        try
-        {
-            strBundleService = getService(STRBSCID, STRBSIF);
-        }
-        catch (ex)
-        {
-            dump("\n--** strBundleService failed: " + ex + "\n");
-            return null;
-        }
-    }
-
-    strBundle = strBundleService.createBundle(path);
-    if (!strBundle)
-        dump("\n--** strBundle createInstance failed **--\n");
-
-    return strBundle;
 }
 
 // No-op window.getAttention if it's not found, this is for in-a-tab mode.

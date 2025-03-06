@@ -34,9 +34,9 @@ var TodayPane = {
     this.isLoaded = true;
 
     TodayPane.paneViews = [
-      cal.l10n.getCalString("eventsandtasks"),
-      cal.l10n.getCalString("tasksonly"),
-      cal.l10n.getCalString("eventsonly"),
+      TodayPane.l10n.formatValueSync("events-and-tasks"),
+      TodayPane.l10n.formatValueSync("tasks-only"),
+      TodayPane.l10n.formatValueSync("events-only"),
     ];
 
     this.agenda = document.getElementById("agenda");
@@ -354,8 +354,8 @@ var TodayPane = {
   /**
    * Cycle the view shown in the today pane (event+task, event, task).
    *
-   * @param aCycleForward     If true, the views are cycled in the forward
-   *                            direction, otherwise in the opposite direction
+   * @param {boolean} aCycleForward - If true, the views are cycled in the
+   *   forward direction, otherwise in the opposite direction.
    */
   cyclePaneView(aCycleForward) {
     if (this.paneViews == null) {
@@ -381,7 +381,7 @@ var TodayPane = {
   /**
    * Sets the shown date from a JSDate.
    *
-   * @param aNewDate      The date to show.
+   * @param {Date} aNewDate - The date to show.
    */
   setDaywithjsDate(aNewDate) {
     let newdatetime = cal.dtz.jsDateToDateTime(aNewDate, cal.dtz.floating);
@@ -393,9 +393,9 @@ var TodayPane = {
   /**
    * Sets the first day shown in the today pane.
    *
-   * @param aNewDate                  The calIDateTime to set.
-   * @param aDontUpdateMinimonth      If true, the minimonth will not be
-   *                                    updated to show the same date.
+   * @param {calIDateTime} aNewDate - The calIDateTime to set.
+   * @param {boolean} aDontUpdateMinimonth - If true, the minimonth will not be
+   *   updated to show the same date.
    */
   setDay(aNewDate, aDontUpdateMinimonth) {
     if (this.setDay.alreadySettingDay) {
@@ -410,19 +410,20 @@ var TodayPane = {
       aNewDate.year == today.year && aNewDate.month == today.month && aNewDate.day == today.day;
 
     const daylabel = document.getElementById("datevalue-label");
+    // Only the number of the date is used here. `formatDateOnly` is avoided as
+    // the extra characters in CJK languages won't fit.
     daylabel.value = this.start.day;
 
     document
       .getElementById("weekdayNameLabel")
-      .setAttribute("value", cal.l10n.getDateFmtString(`day.${this.start.weekday + 1}.Mmm`));
+      .setAttribute("value", cal.dtz.formatter.shortWeekdayNames[this.start.weekday]);
 
     const monthnamelabel = document.getElementById("monthNameContainer");
-    monthnamelabel.value =
-      cal.dtz.formatter.shortMonthName(this.start.month) + " " + this.start.year;
+    monthnamelabel.value = cal.dtz.formatter.formatMonthShort(this.start.year, this.start.month);
 
     const currentweeklabel = document.getElementById("currentWeek-label");
     currentweeklabel.value =
-      cal.l10n.getCalString("shortcalendarweek") +
+      TodayPane.l10n.formatValueSync("short-calendar-week") +
       " " +
       cal.weekInfoService.getWeekTitle(this.start);
 
@@ -442,8 +443,8 @@ var TodayPane = {
   /**
    * Advance by a given number of days in the today pane.
    *
-   * @param aDir      The number of days to advance. Negative numbers advance
-   *                    backwards in time.
+   * @param {integer} aDir - The number of days to advance. Negative numbers
+   *   advance backwards in time.
    */
   advance(aDir) {
     if (aDir != 0) {
@@ -474,7 +475,7 @@ var TodayPane = {
   /**
    * Display a certain section in the minday/minimonth part of the todaypane.
    *
-   * @param aSection      The section to display
+   * @param {string} aSection - The section to display.
    */
   displayMiniSection(aSection) {
     document.getElementById("today-minimonth-box").setVisible(aSection == "minimonth");
@@ -504,7 +505,7 @@ var TodayPane = {
   /**
    * Toggle the today-pane and update its visual appearance.
    *
-   * @param aEvent        The DOM event occurring on activated command.
+   * @param {Event} aEvent - The DOM event occurring on activated command.
    */
   toggleVisibility(aEvent) {
     document.getElementById("today-pane-panel").togglePane(aEvent);
@@ -551,5 +552,11 @@ var TodayPane = {
       .toggleAttribute("hideLabel", hideLabel);
   },
 };
+
+ChromeUtils.defineLazyGetter(
+  TodayPane,
+  "l10n",
+  () => new Localization(["calendar/calendar.ftl"], true)
+);
 
 window.addEventListener("unload", TodayPane.onUnload, { capture: false, once: true });

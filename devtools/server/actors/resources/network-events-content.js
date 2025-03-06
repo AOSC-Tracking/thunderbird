@@ -49,7 +49,8 @@ class NetworkEventContentWatcher {
     this.onUpdated = onUpdated;
 
     this.httpFailedOpeningRequest = this.httpFailedOpeningRequest.bind(this);
-    this.httpOnImageCacheResponse = this.httpOnImageCacheResponse.bind(this);
+    this.httpOnResourceCacheResponse =
+      this.httpOnResourceCacheResponse.bind(this);
 
     Services.obs.addObserver(
       this.httpFailedOpeningRequest,
@@ -57,8 +58,8 @@ class NetworkEventContentWatcher {
     );
 
     Services.obs.addObserver(
-      this.httpOnImageCacheResponse,
-      "http-on-image-cache-response"
+      this.httpOnResourceCacheResponse,
+      "http-on-resource-cache-response"
     );
   }
   /**
@@ -93,9 +94,9 @@ class NetworkEventContentWatcher {
     });
   }
 
-  httpOnImageCacheResponse(subject, topic) {
+  httpOnResourceCacheResponse(subject, topic) {
     if (
-      topic != "http-on-image-cache-response" ||
+      topic != "http-on-resource-cache-response" ||
       !(subject instanceof Ci.nsIHttpChannel)
     ) {
       return;
@@ -111,7 +112,8 @@ class NetworkEventContentWatcher {
       return;
     }
 
-    // Only one network request should be created per URI for images from the cache
+    // Only one network request should be created per URI for resources from
+    // the cache
     const hasURI = Array.from(this.networkEvents.values()).some(
       networkEvent => networkEvent.uri === channel.URI.spec
     );
@@ -145,7 +147,6 @@ class NetworkEventContentWatcher {
       browsingContextID: resource.browsingContextID,
       innerWindowId: resource.innerWindowId,
       resourceId: resource.resourceId,
-      resourceType: resource.resourceType,
       receivedUpdates: [],
       resourceUpdates: {
         // Requests already come with request cookies and headers, so those
@@ -246,7 +247,6 @@ class NetworkEventContentWatcher {
   _emitUpdate(networkEvent) {
     this.onUpdated([
       {
-        resourceType: networkEvent.resourceType,
         resourceId: networkEvent.resourceId,
         resourceUpdates: networkEvent.resourceUpdates,
         browsingContextID: networkEvent.browsingContextID,
@@ -269,8 +269,8 @@ class NetworkEventContentWatcher {
     );
 
     Services.obs.removeObserver(
-      this.httpOnImageCacheResponse,
-      "http-on-image-cache-response"
+      this.httpOnResourceCacheResponse,
+      "http-on-resource-cache-response"
     );
   }
 }

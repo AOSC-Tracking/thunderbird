@@ -139,7 +139,7 @@ add_setup(async function () {
 
   var server = MailServices.accounts.createIncomingServer(
     "nobody",
-    "Test Local Folders",
+    "TestLocalFolders",
     "pop3"
   );
 

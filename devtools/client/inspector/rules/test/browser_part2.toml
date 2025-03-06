@@ -43,7 +43,9 @@ support-files = [
   "doc_imported_named_layer.css",
   "doc_imported_no_layer.css",
   "doc_inactive_css_xul.xhtml",
+  "doc_layer_edit.css",
   "head.js",
+  "ostrich-regular.ttf",
   "sjs_imported_stylesheet_edit.sjs",
   "square_svg.sjs",
   "!/devtools/client/inspector/test/head.js",
@@ -192,6 +194,11 @@ skip-if = [
 ["browser_rules_large_base64_background_image.js"]
 
 ["browser_rules_layer.js"]
+skip-if = [
+  "os == 'win' && os_version == '11.26100' && processor == 'x86_64' && opt", # Bug 1845152
+]
+
+["browser_rules_light_dark.js"]
 
 ["browser_rules_lineNumbers.js"]
 
@@ -261,6 +268,7 @@ skip-if = [
 ]
 
 ["browser_rules_preview-tooltips-sizes.js"]
+skip-if = ["os == 'linux' && opt"] # Bug 1905529
 
 ["browser_rules_print_media_simulation.js"]
 
@@ -353,7 +361,6 @@ skip-if = ["!fission"]
 ["browser_rules_shadowdom_slot_rules.js"]
 
 ["browser_rules_shapes-toggle_01.js"]
-skip-if = ["a11y_checks"] # Bugs 1849028 and 1858041 for causing intermittent a11y_checks results
 
 ["browser_rules_shapes-toggle_02.js"]
 
@@ -364,13 +371,10 @@ skip-if = ["a11y_checks"] # Bugs 1849028 and 1858041 for causing intermittent a1
 ["browser_rules_shapes-toggle_05.js"]
 
 ["browser_rules_shapes-toggle_06.js"]
-skip-if = ["a11y_checks"] # Bug 1858041 and 1849028 intermittent a11y_checks results (fails on Try, passes on Autoland)
 
 ["browser_rules_shapes-toggle_07.js"]
-fail-if = ["a11y_checks"] # bug 1687723 ruleview-shapeswatch is not accessible
 
 ["browser_rules_shapes-toggle_basic-shapes-default.js"]
-skip-if = ["a11y_checks"] # Bug 1858037 to investigate intermittent a11y_checks results (fails on Autoland, passes on Try)
 
 ["browser_rules_shorthand-overridden-lists.js"]
 

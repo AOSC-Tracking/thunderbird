@@ -16,8 +16,8 @@ var { ExtensionSupport } = ChromeUtils.importESModule(
   "resource:///modules/ExtensionSupport.sys.mjs"
 );
 
-const account = createAccount();
-const defaultIdentity = addIdentity(account);
+const gAccount = createAccount();
+addIdentity(gAccount);
 
 function findWindow(subject) {
   const windows = Array.from(Services.wm.getEnumerator("msgcompose"));
@@ -307,7 +307,7 @@ add_task(async function test_file_attachments() {
         id: attachment2.id,
         name: "file2 with a new name.txt",
         size: file3.size,
-        htmlSize: 4536,
+        htmlSize: 4635,
       });
 
       // Rename the second/cloud attachment.
@@ -341,7 +341,7 @@ add_task(async function test_file_attachments() {
         id: attachment2.id,
         name: "cloud file2 with a new name.txt",
         size: file3.size,
-        htmlSize: 4554,
+        htmlSize: 4653,
       });
 
       // File retrieved by WebExt API should still be the real file.
@@ -718,15 +718,15 @@ add_task(async function test_compose_attachments() {
       // Convert the second attachment to a cloudFile attachment.
 
       await new Promise(resolve => {
-        function fileListener(account, fileInfo, tab, relatedFileInfo) {
-          browser.cloudFile.onFileUpload.removeListener(fileListener);
-          browser.test.assertEq(1, fileInfo.id);
-          browser.test.assertEq(undefined, relatedFileInfo);
-          setTimeout(() => resolve());
-          return { url: "https://cloud.provider.net/1" };
-        }
-
-        browser.cloudFile.onFileUpload.addListener(fileListener);
+        browser.cloudFile.onFileUpload.addListener(
+          function listen(account, fileInfo, tab, relatedFileInfo) {
+            browser.cloudFile.onFileUpload.removeListener(listen);
+            browser.test.assertEq(1, fileInfo.id);
+            browser.test.assertEq(undefined, relatedFileInfo);
+            setTimeout(() => resolve());
+            return { url: "https://cloud.provider.net/1" };
+          }
+        );
         // Conversion/upload is not yet supported via WebExt API.
         browser.test.sendMessage(
           "convertFile",
@@ -746,7 +746,7 @@ add_task(async function test_compose_attachments() {
           id: tab1_attachment2.id,
           name: "this is file2.txt",
           size: 41,
-          htmlSize: 4300,
+          htmlSize: 4399,
           contentLocation: "https://cloud.provider.net/1",
         }
       );
@@ -761,21 +761,21 @@ add_task(async function test_compose_attachments() {
       // the same url is used in tab1. The original attachment should be passed
       // as relatedFileInfo.
       const tab2_uploadPromise = new Promise(resolve => {
-        function fileListener(account, fileInfo, tab, relatedFileInfo) {
-          browser.cloudFile.onFileUpload.removeListener(fileListener);
-          browser.test.assertEq(2, fileInfo.id);
-          browser.test.assertEq("this is renamed file2.txt", fileInfo.name);
-          browser.test.assertEq(1, relatedFileInfo.id);
-          browser.test.assertEq("this is file2.txt", relatedFileInfo.name);
-          browser.test.assertFalse(
-            relatedFileInfo.dataChanged,
-            `data should not have changed`
-          );
-          setTimeout(() => resolve());
-          return { url: "https://cloud.provider.net/2" };
-        }
-
-        browser.cloudFile.onFileUpload.addListener(fileListener);
+        browser.cloudFile.onFileUpload.addListener(
+          function listen(account, fileInfo, tab, relatedFileInfo) {
+            browser.cloudFile.onFileUpload.removeListener(listen);
+            browser.test.assertEq(2, fileInfo.id);
+            browser.test.assertEq("this is renamed file2.txt", fileInfo.name);
+            browser.test.assertEq(1, relatedFileInfo.id);
+            browser.test.assertEq("this is file2.txt", relatedFileInfo.name);
+            browser.test.assertFalse(
+              relatedFileInfo.dataChanged,
+              `data should not have changed`
+            );
+            setTimeout(() => resolve());
+            return { url: "https://cloud.provider.net/2" };
+          }
+        );
       });
 
       const composeTab2 = await browser.compose.beginNew({
@@ -809,7 +809,7 @@ add_task(async function test_compose_attachments() {
           id: tab2_attachment2.id,
           name: "this is renamed file2.txt",
           size: 41,
-          htmlSize: 4324,
+          htmlSize: 4423,
           contentLocation: "https://cloud.provider.net/2",
         }
       );
@@ -853,7 +853,7 @@ add_task(async function test_compose_attachments() {
           id: tab3_attachment2.id,
           name: "this is file2.txt",
           size: 41,
-          htmlSize: 4300,
+          htmlSize: 4399,
           contentLocation: "https://cloud.provider.net/1",
         }
       );
@@ -862,24 +862,24 @@ add_task(async function test_compose_attachments() {
       // upload, to not invalidate the original url still used in tab1.
 
       const tab3_uploadPromise = new Promise(resolve => {
-        function fileListener(account, fileInfo, tab, relatedFileInfo) {
-          browser.cloudFile.onFileUpload.removeListener(fileListener);
-          browser.test.assertEq(3, fileInfo.id);
-          browser.test.assertEq(
-            "That is going to be interesting.txt",
-            fileInfo.name
-          );
-          browser.test.assertEq(1, relatedFileInfo.id);
-          browser.test.assertEq("this is file2.txt", relatedFileInfo.name);
-          browser.test.assertFalse(
-            relatedFileInfo.dataChanged,
-            `data should not have changed`
-          );
-          setTimeout(() => resolve());
-          return { url: "https://cloud.provider.net/3" };
-        }
-
-        browser.cloudFile.onFileUpload.addListener(fileListener);
+        browser.cloudFile.onFileUpload.addListener(
+          function listen(account, fileInfo, tab, relatedFileInfo) {
+            browser.cloudFile.onFileUpload.removeListener(listen);
+            browser.test.assertEq(3, fileInfo.id);
+            browser.test.assertEq(
+              "That is going to be interesting.txt",
+              fileInfo.name
+            );
+            browser.test.assertEq(1, relatedFileInfo.id);
+            browser.test.assertEq("this is file2.txt", relatedFileInfo.name);
+            browser.test.assertFalse(
+              relatedFileInfo.dataChanged,
+              `data should not have changed`
+            );
+            setTimeout(() => resolve());
+            return { url: "https://cloud.provider.net/3" };
+          }
+        );
       });
 
       const tab3_changed2 = await browser.compose.updateAttachment(
@@ -907,7 +907,7 @@ add_task(async function test_compose_attachments() {
           id: tab3_attachment2.id,
           name: "That is going to be interesting.txt",
           size: 41,
-          htmlSize: 4354,
+          htmlSize: 4453,
           contentLocation: "https://cloud.provider.net/3",
         }
       );
@@ -920,24 +920,24 @@ add_task(async function test_compose_attachments() {
       // renaming both. This should trigger a new file upload.
 
       const tab4_uploadPromise = new Promise(resolve => {
-        function fileListener(account, fileInfo, tab, relatedFileInfo) {
-          browser.cloudFile.onFileUpload.removeListener(fileListener);
-          browser.test.assertEq(4, fileInfo.id);
-          browser.test.assertEq(
-            "I got renamed too, how crazy is that!.txt",
-            fileInfo.name
-          );
-          browser.test.assertEq(1, relatedFileInfo.id);
-          browser.test.assertEq("this is file2.txt", relatedFileInfo.name);
-          browser.test.assertFalse(
-            relatedFileInfo.dataChanged,
-            `data should not have changed`
-          );
-          setTimeout(() => resolve());
-          return { url: "https://cloud.provider.net/4" };
-        }
-
-        browser.cloudFile.onFileUpload.addListener(fileListener);
+        browser.cloudFile.onFileUpload.addListener(
+          function listen(account, fileInfo, tab, relatedFileInfo) {
+            browser.cloudFile.onFileUpload.removeListener(listen);
+            browser.test.assertEq(4, fileInfo.id);
+            browser.test.assertEq(
+              "I got renamed too, how crazy is that!.txt",
+              fileInfo.name
+            );
+            browser.test.assertEq(1, relatedFileInfo.id);
+            browser.test.assertEq("this is file2.txt", relatedFileInfo.name);
+            browser.test.assertFalse(
+              relatedFileInfo.dataChanged,
+              `data should not have changed`
+            );
+            setTimeout(() => resolve());
+            return { url: "https://cloud.provider.net/4" };
+          }
+        );
       });
 
       const tab4_details = { subject: "Message #5" };
@@ -981,7 +981,7 @@ add_task(async function test_compose_attachments() {
           id: tab4_attachment2.id,
           name: "I got renamed too, how crazy is that!.txt",
           size: 41,
-          htmlSize: 4372,
+          htmlSize: 4471,
           contentLocation: "https://cloud.provider.net/4",
         }
       );
@@ -1037,11 +1037,10 @@ add_task(async function test_compose_attachments() {
       // url is not used anywhere anymore.
 
       const tab5_renamePromise = new Promise(resolve => {
-        function fileListener() {
-          browser.cloudFile.onFileRename.removeListener(fileListener);
+        browser.cloudFile.onFileRename.addListener(function listen() {
+          browser.cloudFile.onFileRename.removeListener(listen);
           setTimeout(() => resolve());
-        }
-        browser.cloudFile.onFileRename.addListener(fileListener);
+        });
       });
 
       await browser.compose.updateAttachment(
@@ -1057,11 +1056,12 @@ add_task(async function test_compose_attachments() {
       // delete.
 
       const tab5_deletePromise = new Promise(resolve => {
-        function fileListener(account, id) {
-          browser.cloudFile.onFileDeleted.removeListener(fileListener);
-          setTimeout(() => resolve(id));
-        }
-        browser.cloudFile.onFileDeleted.addListener(fileListener);
+        browser.cloudFile.onFileDeleted.addListener(
+          function listen(account, id) {
+            browser.cloudFile.onFileDeleted.removeListener(listen);
+            setTimeout(() => resolve(id));
+          }
+        );
       });
 
       await browser.compose.removeAttachment(
@@ -1409,15 +1409,15 @@ add_task(async function test_compose_attachments_immutable() {
       // Convert the second attachment to a cloudFile attachment.
 
       await new Promise(resolve => {
-        function fileListener(account, fileInfo, tab, relatedFileInfo) {
-          browser.cloudFile.onFileUpload.removeListener(fileListener);
-          browser.test.assertEq(1, fileInfo.id);
-          browser.test.assertEq(undefined, relatedFileInfo);
-          setTimeout(() => resolve());
-          return { url: "https://cloud.provider.net/1" };
-        }
-
-        browser.cloudFile.onFileUpload.addListener(fileListener);
+        browser.cloudFile.onFileUpload.addListener(
+          function listen(account, fileInfo, tab, relatedFileInfo) {
+            browser.cloudFile.onFileUpload.removeListener(listen);
+            browser.test.assertEq(1, fileInfo.id);
+            browser.test.assertEq(undefined, relatedFileInfo);
+            setTimeout(() => resolve());
+            return { url: "https://cloud.provider.net/1" };
+          }
+        );
         // Conversion/upload is not yet supported via WebExt API.
         browser.test.sendMessage(
           "convertFile",
@@ -1437,7 +1437,7 @@ add_task(async function test_compose_attachments_immutable() {
           id: tab1_attachment2.id,
           name: "this is file2.txt",
           size: 41,
-          htmlSize: 4300,
+          htmlSize: 4399,
           contentLocation: "https://cloud.provider.net/1",
         }
       );
@@ -1478,7 +1478,7 @@ add_task(async function test_compose_attachments_immutable() {
           id: tab2_attachment2.id,
           name: "this is file2.txt",
           size: 41,
-          htmlSize: 4300,
+          htmlSize: 4399,
           contentLocation: "https://cloud.provider.net/1",
         }
       );
@@ -1865,7 +1865,7 @@ add_task(async function test_compose_attachments_no_reuse() {
           id: tab1_attachment2.id,
           name: "this is file2.txt",
           size: 41,
-          htmlSize: 4300,
+          htmlSize: 4399,
           contentLocation: "https://cloud.provider.net/1",
         }
       );
@@ -1926,7 +1926,7 @@ add_task(async function test_compose_attachments_no_reuse() {
           id: tab2_attachment2.id,
           name: "this is file2.txt",
           size: 41,
-          htmlSize: 4300,
+          htmlSize: 4399,
           contentLocation: "https://cloud.provider.net/2",
         }
       );
@@ -2200,7 +2200,7 @@ add_task(async function test_attachment_MV3_event_pages() {
     }
   }
 
-  const composeWindow = await openComposeWindow(account);
+  const composeWindow = await openComposeWindow(gAccount);
   await focusWindow(composeWindow);
 
   await extension.startup();

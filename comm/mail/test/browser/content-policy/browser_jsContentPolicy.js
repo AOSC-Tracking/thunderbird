@@ -6,8 +6,6 @@
  * Tests whether JavaScript in a local/remote message works. The test
  * mailnews/extensions/newsblog/test/browser/browser_feedDisplay.js does the
  * same thing for feeds.
- *
- * @note This assumes an existing local account.
  */
 
 "use strict";
@@ -82,6 +80,12 @@ function addToFolder(aSubject, aBody, aFolder) {
   aFolder.gettingNewMessages = false;
 
   return aFolder.msgDatabase.getMsgHdrForMessageID(msgId);
+}
+
+function simplePageLoad(browser, pageUrl) {
+  const loadedPromise = BrowserTestUtils.browserLoaded(browser, false, pageUrl);
+  MailE10SUtils.loadURI(browser, pageUrl);
+  return loadedPromise;
 }
 
 /**
@@ -195,8 +199,7 @@ add_task(async function testJsInNonMessageContent() {
   await loadedPromise;
 
   await SpecialPowers.spawn(messagePane, [], assertJSEnabled);
-
-  MailE10SUtils.loadURI(messagePane, "about:blank");
+  await simplePageLoad(messagePane, "about:blank");
 });
 
 /**
@@ -205,17 +208,9 @@ add_task(async function testJsInNonMessageContent() {
 add_task(async function testJsInRemoteContent() {
   // load something non-message-like in the message pane
   const pageURL = url + "remote-noscript.html";
-  const loadedPromise = BrowserTestUtils.browserLoaded(
-    messagePane,
-    false,
-    pageURL
-  );
-  MailE10SUtils.loadURI(messagePane, pageURL);
-  await loadedPromise;
-
+  await simplePageLoad(messagePane, pageURL);
   await SpecialPowers.spawn(messagePane, [], assertJSEnabled);
-
-  MailE10SUtils.loadURI(messagePane, "about:blank");
+  await simplePageLoad(messagePane, "about:blank");
 });
 
 /**

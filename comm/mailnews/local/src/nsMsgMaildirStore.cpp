@@ -19,6 +19,7 @@
 #include "nsIInputStreamPump.h"
 #include "nsCOMArray.h"
 #include "nsIFile.h"
+#include "nsLocalFile.h"
 #include "nsNetUtil.h"
 #include "nsIMsgDatabase.h"
 #include "nsMsgUtils.h"
@@ -32,7 +33,6 @@
 #include "nsIMessenger.h"
 #include "nsThreadUtils.h"
 #include "mozilla/Logging.h"
-#include "mozilla/SlicedInputStream.h"
 
 static mozilla::LazyLogModule MailDirLog("MailDirStore");
 
@@ -291,10 +291,9 @@ nsresult nsMsgMaildirStore::CreateMaildir(nsIFile* path) {
   }
 
   // Create tmp, cur leaves
-  nsCOMPtr<nsIFile> leaf(do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv));
+  nsCOMPtr<nsIFile> leaf = new nsLocalFile();
+  rv = leaf->InitWithFile(path);
   NS_ENSURE_SUCCESS(rv, rv);
-
-  leaf->InitWithFile(path);
 
   leaf->AppendNative("tmp"_ns);
   rv = leaf->Create(nsIFile::DIRECTORY_TYPE, 0700);
@@ -484,8 +483,7 @@ NS_IMETHODIMP nsMsgMaildirStore::RenameFolder(nsIMsgFolder* aFolder,
   uint32_t numChildren;
   aFolder->GetNumSubFolders(&numChildren);
   if (numChildren > 0) {
-    sbdPathFile = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    sbdPathFile = new nsLocalFile();
     rv = sbdPathFile->InitWithFile(oldPathFile);
     NS_ENSURE_SUCCESS(rv, rv);
     GetDirectoryForFolder(sbdPathFile);
@@ -1361,16 +1359,6 @@ nsresult nsMsgMaildirStore::CreateDirectoryForFolder(nsIFile* path,
                     : path->Create(nsIFile::DIRECTORY_TYPE, 0700);
   }
   return rv;
-}
-
-NS_IMETHODIMP
-nsMsgMaildirStore::SliceStream(nsIInputStream* inStream, uint64_t start,
-                               uint32_t length, nsIInputStream** result) {
-  nsCOMPtr<nsIInputStream> in(inStream);
-  RefPtr<mozilla::SlicedInputStream> slicedStream =
-      new mozilla::SlicedInputStream(in.forget(), start, uint64_t(length));
-  slicedStream.forget(result);
-  return NS_OK;
 }
 
 // For maildir store, our estimate is just the total of the file sizes.

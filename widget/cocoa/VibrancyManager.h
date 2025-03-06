@@ -18,6 +18,7 @@ namespace mozilla {
 class ViewRegion;
 
 enum class VibrancyType {
+  Sidebar,
   // Add new values here, or update MaxEnumValue below if you add them after.
   Titlebar,
 };
@@ -65,6 +66,8 @@ class VibrancyManager {
    */
   bool UpdateVibrantRegion(VibrancyType aType,
                            const LayoutDeviceIntRegion& aRegion);
+
+  void PrefChanged();
 
  protected:
   const nsChildView& mCoordinateConverter;

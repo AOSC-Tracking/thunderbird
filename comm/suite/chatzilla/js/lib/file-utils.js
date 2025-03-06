@@ -27,28 +27,11 @@ const MODE_TRUNCATE = 0x20;
 const MODE_SYNC     = 0x40;
 const MODE_EXCL     = 0x80;
 
-const PICK_OK      = Components.interfaces.nsIFilePicker.returnOK;
-const PICK_CANCEL  = Components.interfaces.nsIFilePicker.returnCancel;
-const PICK_REPLACE = Components.interfaces.nsIFilePicker.returnReplace;
-
-const FILTER_ALL    = Components.interfaces.nsIFilePicker.filterAll;
-const FILTER_HTML   = Components.interfaces.nsIFilePicker.filterHTML;
-const FILTER_TEXT   = Components.interfaces.nsIFilePicker.filterText;
-const FILTER_IMAGES = Components.interfaces.nsIFilePicker.filterImages;
-const FILTER_XML    = Components.interfaces.nsIFilePicker.filterXML;
-const FILTER_XUL    = Components.interfaces.nsIFilePicker.filterXUL;
-
-const FTYPE_DIR  = Components.interfaces.nsIFile.DIRECTORY_TYPE;
-const FTYPE_FILE = Components.interfaces.nsIFile.NORMAL_FILE_TYPE;
-
-// evald f = fopen("/home/rginda/foo.txt", MODE_WRONLY | MODE_CREATE)
-// evald f = fopen("/home/rginda/vnk.txt", MODE_RDONLY)
-
 var futils = new Object();
 
 futils.umask = PERM_IWOTH | PERM_IWGRP;
-futils.MSG_SAVE_AS = "Save As";
-futils.MSG_OPEN = "Open";
+futils.lastSaveAsDir = null;
+futils.lastOpenDir = null;
 
 /**
  * Internal function used by |pickSaveAs|, |pickOpen| and |pickGetFolder|.
@@ -63,37 +46,18 @@ futils.MSG_OPEN = "Open";
  *                 the following standard filters may be used: |$all|, |$html|,
  *                 |$text|, |$images|, |$xml|, |$xul|, |$noAll| (prevents "All
  *                 Files" filter being included).
- * @param attribs Optional. Takes an object with either or both of the
- *                properties: |defaultString| (*defaultFile* in |pick|
- *                functions) sets the initial/default filename, and
- *                |defaultExtension| XXX FIXME (this seems wrong?) XXX.
+ * @param defaultString Optional. Sets the initial/default filename.
  * @returns An |Object| with |ok| (Boolean), |file| (|nsIFile|) and
  *          |picker| (|nsIFilePicker|) properties.
  */
 futils.getPicker =
-function futils_nosepicker(initialPath, typeList, attribs)
+function futils_nosepicker(initialPath, typeList, defaultString)
 {
-    const classes = Components.classes;
-    const interfaces = Components.interfaces;
-
-    const PICKER_CTRID = "@mozilla.org/filepicker;1";
-    const LOCALFILE_CTRID = "@mozilla.org/file/local;1";
-
-    const nsIFilePicker = interfaces.nsIFilePicker;
-    const nsIFile = interfaces.nsIFile;
-
-    var picker = classes[PICKER_CTRID].createInstance(nsIFilePicker);
-    if (attribs)
+    let picker = Cc["@mozilla.org/filepicker;1"]
+                   .createInstance(Ci.nsIFilePicker);
+    if (defaultString)
     {
-        if (typeof attribs == "object")
-        {
-            for (var a in attribs)
-                picker[a] = attribs[a];
-        }
-        else
-        {
-            throw "bad type for param |attribs|";
-        }
+        picker.defaultString = defaultString;
     }
 
     if (initialPath)
@@ -102,13 +66,13 @@ function futils_nosepicker(initialPath, typeList, attribs)
 
         if (typeof initialPath == "string")
         {
-            localFile =
-                classes[LOCALFILE_CTRID].createInstance(nsIFile);
+            localFile = Cc["@mozilla.org/file/local;1"]
+                          .createInstance(Ci.nsIFile);
             localFile.initWithPath(initialPath);
         }
         else
         {
-            if (!isinstance(initialPath, nsIFile))
+            if (!isinstance(initialPath, Ci.nsIFile))
                 throw "bad type for argument |initialPath|";
 
             localFile = initialPath;
@@ -130,27 +94,27 @@ function futils_nosepicker(initialPath, typeList, attribs)
             {
                 case "$all":
                     allIncluded = true;
-                    picker.appendFilters(FILTER_ALL);
+                    picker.appendFilters(Ci.nsIFilePicker.filterAll);
                     break;
 
                 case "$html":
-                    picker.appendFilters(FILTER_HTML);
+                    picker.appendFilters(Ci.nsIFilePicker.filterHTML);
                     break;
 
                 case "$text":
-                    picker.appendFilters(FILTER_TEXT);
+                    picker.appendFilters(Ci.nsIFilePicker.filterText);
                     break;
 
                 case "$images":
-                    picker.appendFilters(FILTER_IMAGES);
+                    picker.appendFilters(Ci.nsIFilePicker.filterImages);
                     break;
 
                 case "$xml":
-                    picker.appendFilters(FILTER_XML);
+                    picker.appendFilters(Ci.nsIFilePicker.filterXML);
                     break;
 
                 case "$xul":
-                    picker.appendFilters(FILTER_XUL);
+                    picker.appendFilters(Ci.nsIFilePicker.filterXUL);
                     break;
 
                 case "$noAll":
@@ -170,7 +134,7 @@ function futils_nosepicker(initialPath, typeList, attribs)
     }
 
     if (!allIncluded)
-        picker.appendFilters(FILTER_ALL);
+        picker.appendFilters(Ci.nsIFilePicker.filterAll);
 
     return picker;
 }
@@ -192,7 +156,7 @@ function getPickerChoice(picker)
         return obj;
     }
 
-    if (obj.reason != PICK_CANCEL)
+    if (obj.reason != Ci.nsIFilePicker.returnCancel)
     {
         obj.file = picker.file;
         obj.ok = true;
@@ -207,21 +171,13 @@ function getPickerChoice(picker)
  * @param title Optional. The title for the dialog.
  * @param typeList Optional. See |futils.getPicker| for details.
  * @param defaultFile Optional. See |futils.getPicker| for details.
- * @param defaultDir Optional. See |futils.getPicker| for details.
- * @param defaultExt Optional. See |futils.getPicker| for details.
  * @returns An |Object| with "ok" (Boolean), "file" (|nsIFile|) and
  *          "picker" (|nsIFilePicker|) properties.
  */
-function pickSaveAs (title, typeList, defaultFile, defaultDir, defaultExt)
+function pickSaveAs(title, typeList, defaultFile)
 {
-    if (!defaultDir && "lastSaveAsDir" in futils)
-        defaultDir = futils.lastSaveAsDir;
-
-    var picker = futils.getPicker (defaultDir, typeList,
-                                   {defaultString: defaultFile,
-                                    defaultExtension: defaultExt});
-    picker.init (window, title ? title : futils.MSG_SAVE_AS,
-                 Components.interfaces.nsIFilePicker.modeSave);
+    let picker = futils.getPicker(futils.lastSaveAsDir, typeList, defaultFile);
+    picker.init(window, title, Ci.nsIFilePicker.modeSave);
 
     var rv = getPickerChoice(picker);
     if (rv.ok)
@@ -235,20 +191,13 @@ function pickSaveAs (title, typeList, defaultFile, defaultDir, defaultExt)
  *
  * @param title Optional. The title for the dialog.
  * @param typeList Optional. See |futils.getPicker| for details.
- * @param defaultFile Optional. See |futils.getPicker| for details.
- * @param defaultDir Optional. See |futils.getPicker| for details.
  * @returns An |Object| with "ok" (Boolean), "file" (|nsIFile|) and
  *          "picker" (|nsIFilePicker|) properties.
  */
-function pickOpen (title, typeList, defaultFile, defaultDir)
+function pickOpen(title, typeList)
 {
-    if (!defaultDir && "lastOpenDir" in futils)
-        defaultDir = futils.lastOpenDir;
-
-    var picker = futils.getPicker (defaultDir, typeList,
-                                   {defaultString: defaultFile});
-    picker.init (window, title ? title : futils.MSG_OPEN,
-                 Components.interfaces.nsIFilePicker.modeOpen);
+    let picker = futils.getPicker(futils.lastOpenDir, typeList);
+    picker.init(window, title, Ci.nsIFilePicker.modeOpen);
 
     var rv = getPickerChoice(picker);
     if (rv.ok)
@@ -267,12 +216,8 @@ function pickOpen (title, typeList, defaultFile, defaultDir)
  */
 function pickGetFolder(title, defaultDir)
 {
-    if (!defaultDir && "lastOpenDir" in futils)
-        defaultDir = futils.lastOpenDir;
-
-    var picker = futils.getPicker(defaultDir);
-    picker.init(window, title ? title : futils.MSG_OPEN,
-                Components.interfaces.nsIFilePicker.modeGetFolder);
+    let picker = futils.getPicker(defaultDir ? defaultDir : futils.lastOpenDir);
+    picker.init(window, title, Ci.nsIFilePicker.modeGetFolder);
 
     var rv = getPickerChoice(picker);
     if (rv.ok)
@@ -281,12 +226,9 @@ function pickGetFolder(title, defaultDir)
     return rv;
 }
 
-function mkdir (localFile, perms)
+function mkdir(localFile)
 {
-    if (typeof perms == "undefined")
-        perms = 0o766 & ~futils.umask;
-
-    localFile.create(FTYPE_DIR, perms);
+    localFile.create(Ci.nsIFile.DIRECTORY_TYPE, 0o766 & ~futils.umask);
 }
 
 function getTempFile(path, name)
@@ -299,37 +241,14 @@ function getTempFile(path, name)
 
 function nsLocalFile(path)
 {
-    const LOCALFILE_CTRID = "@mozilla.org/file/local;1";
-    const nsIFile = Components.interfaces.nsIFile;
-
-    var localFile =
-        Components.classes[LOCALFILE_CTRID].createInstance(nsIFile);
+    let localFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
     localFile.initWithPath(path);
     return localFile;
 }
 
-function fopen (path, mode, perms, tmp)
+function LocalFile(file, mode)
 {
-    return new LocalFile(path, mode, perms, tmp);
-}
-
-function LocalFile(file, mode, perms, tmp)
-{
-    const classes = Components.classes;
-    const interfaces = Components.interfaces;
-
-    const LOCALFILE_CTRID = "@mozilla.org/file/local;1";
-    const FILEIN_CTRID = "@mozilla.org/network/file-input-stream;1";
-    const FILEOUT_CTRID = "@mozilla.org/network/file-output-stream;1";
-    const SCRIPTSTREAM_CTRID = "@mozilla.org/scriptableinputstream;1";
-
-    const nsIFile = interfaces.nsIFile;
-    const nsIFileOutputStream = interfaces.nsIFileOutputStream;
-    const nsIFileInputStream = interfaces.nsIFileInputStream;
-    const nsIScriptableInputStream = interfaces.nsIScriptableInputStream;
-
-    if (typeof perms == "undefined")
-        perms = 0o666 & ~futils.umask;
+    let perms = 0o666 & ~futils.umask;
 
     if (typeof mode == "string")
     {
@@ -353,7 +272,7 @@ function LocalFile(file, mode, perms, tmp)
     {
         this.localFile = new nsLocalFile(file);
     }
-    else if (isinstance(file, nsIFile))
+    else if (isinstance(file, Ci.nsIFile))
     {
         this.localFile = file;
     }
@@ -366,18 +285,18 @@ function LocalFile(file, mode, perms, tmp)
 
     if (mode & (MODE_WRONLY | MODE_RDWR))
     {
-        this.outputStream =
-            classes[FILEOUT_CTRID].createInstance(nsIFileOutputStream);
+        this.outputStream = Cc["@mozilla.org/network/file-output-stream;1"]
+                              .createInstance(Ci.nsIFileOutputStream);
         this.outputStream.init(this.localFile, mode, perms, 0);
     }
 
     if (mode & (MODE_RDONLY | MODE_RDWR))
     {
-        this.baseInputStream =
-            classes[FILEIN_CTRID].createInstance(nsIFileInputStream);
-        this.baseInputStream.init(this.localFile, mode, perms, tmp);
-        this.inputStream =
-            classes[SCRIPTSTREAM_CTRID].createInstance(nsIScriptableInputStream);
+        this.baseInputStream = Cc["@mozilla.org/network/file-input-stream;1"]
+                                 .createInstance(Ci.nsIFileInputStream);
+        this.baseInputStream.init(this.localFile, mode, perms, 0);
+        this.inputStream = Cc["@mozilla.org/scriptableinputstream;1"]
+                             .createInstance(Ci.nsIScriptableInputStream);
         this.inputStream.init(this.baseInputStream);
     }
 }

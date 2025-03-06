@@ -63,9 +63,9 @@ export class CalStorageItemModel extends CalStorageModelBase {
    * @param {calIItemBase} item - The newest version of the item.
    * @param {calIItemBase} oldItem - The previous version of the item.
    */
-  async updateItem(item, olditem) {
+  async updateItem(item, oldItem) {
     cal.ASSERT(!item.recurrenceId, "no parent item passed!", true);
-    await this.deleteItemById(olditem.id, true);
+    await this.deleteItemById(oldItem.id, true);
     await this.addItem(item);
   }
 
@@ -347,7 +347,7 @@ export class CalStorageItemModel extends CalStorageModelBase {
       // this expands to 0 items.
       expandedItems = item.recurrenceInfo.getOccurrences(rangeStart, rangeEnd, 0);
       if (filters.wantUnrespondedInvitations) {
-        expandedItems = expandedItems.filter(item => this.#checkUnrespondedInvitation(item));
+        expandedItems = expandedItems.filter(inv => this.#checkUnrespondedInvitation(inv));
       }
     } else if (
       (!filters.wantUnrespondedInvitations || this.#checkUnrespondedInvitation(item)) &&
@@ -507,7 +507,7 @@ export class CalStorageItemModel extends CalStorageModelBase {
    * Populates additional data for a Map of items. This method is overridden in
    * CalStorageCachedItemModel to allow the todos to be loaded from the cache.
    *
-   * @param {Map<string, calIItem>} itemMap
+   * @param {object} itemsMap - Object Map<string, calIItem>
    *
    * @returns {Promise<Map<string, calIItem>>} The original Map with items modified.
    */
@@ -1102,7 +1102,7 @@ export class CalStorageItemModel extends CalStorageModelBase {
     const dtstamp = item.stampTime;
     params.bindByName("event_stamp", dtstamp && dtstamp.nativeTime);
 
-    if (item.startDate.isDate) {
+    if (item.startDate?.isDate) {
       flags |= CAL_ITEM_FLAG.EVENT_ALLDAY;
     }
 

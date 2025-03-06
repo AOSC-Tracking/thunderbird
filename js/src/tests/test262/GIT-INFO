@@ -1,5 +1,5 @@
-commit 79e9b39f3a576154b1bc39f9dbd95d25addc4ebf
-Author: Emmanuel Ferdman <emmanuelferdman@gmail.com>
-Date:   Sun Apr 14 01:49:16 2024 +0300
+commit ada06362dc400f272f1726988738cab2b6593baf
+Author: André Bargull <andre.bargull@gmail.com>
+Date:   Tue Dec 17 17:09:14 2024 +0100
 
-    Update the location of `2nd-param-non-object.js`
+    Add linter for parseTestRecord

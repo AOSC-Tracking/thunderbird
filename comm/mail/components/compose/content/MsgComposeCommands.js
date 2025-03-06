@@ -474,8 +474,8 @@ ChromeUtils.defineLazyGetter(this, "gComposeNotification", () => {
 /**
  *  Get the first next sibling element matching the selector (if specified).
  *
- *  @param {HTMLElement} element - The source element whose sibling to look for.
- *  @param {string} [selector] - The CSS query selector to match.
+ * @param {HTMLElement} element - The source element whose sibling to look for.
+ * @param {string} [selector] - The CSS query selector to match.
  *
  *  @returns {(HTMLElement|null)} - The first matching sibling element, or null.
  */
@@ -499,8 +499,8 @@ function getNextSibling(element, selector) {
 /**
  *  Get the first previous sibling element matching the selector (if specified).
  *
- *  @param {HTMLElement} element - The source element whose sibling to look for.
- *  @param {string} [selector] - The CSS query selector to match.
+ * @param {HTMLElement} element - The source element whose sibling to look for.
+ * @param {string} [selector] - The CSS query selector to match.
  *
  *  @returns {(HTMLElement|null)} - The first matching sibling element, or null.
  */
@@ -524,8 +524,8 @@ function getPreviousSibling(element, selector) {
 /**
  * Get a pretty, human-readable shortcut key string from a given <key> id.
  *
- * @param aKeyId   the ID of a <key> element
- * @returns string  pretty, human-readable shortcut key string from the <key>
+ * @param {string} aKeyId - The ID of a <key> element.
+ * @returns {string} pretty, human-readable shortcut key string from the <key>.
  */
 function getPrettyKey(aKeyId) {
   return ShortcutUtils.prettifyShortcut(document.getElementById(aKeyId));
@@ -856,6 +856,7 @@ var gSendListener = {
 
 /**
  * All progress notifications are done through progressListener.
+ *
  * @implements {nsIWebProgressListener}
  */
 var progressListener = {
@@ -2337,8 +2338,8 @@ async function updateAttachmentItemProperties(attachmentItem) {
   <meta charset="utf-8" />
  </head>
  <body>
-  <div style="padding: 15px; font-family: Calibri, sans-serif;">
-   <div style="margin-bottom: 15px;" id="cloudAttachmentListHeader">${introText}</div>
+  <div id="cloudAttachmentListRoot">
+   <div id="cloudAttachmentListHeader">${introText}</div>
    <ul>${
      (
        await gCloudAttachmentLinkManager._createNode(
@@ -2718,9 +2719,7 @@ async function UpdateAttachment(attachmentItem, updateSettings = {}) {
           attachmentItem.attachment.cloudFileAccountKey =
             destCloudFileAccount.accountKey;
 
-          Services.telemetry.keyedScalarAdd(
-            "tb.filelink.uploaded_size",
-            destCloudFileAccount.type,
+          Glean.filelink.uploadedSize[destCloudFileAccount.type].add(
             file.fileSize
           );
         }
@@ -2829,7 +2828,7 @@ async function attachToCloudRepeat(upload, account) {
 /**
  * Prompt the user for a list of files to attach via a cloud provider.
  *
- * @param aAccount the cloud provider to upload the files to
+ * @param {object} aAccount - The cloud provider to upload the files to.
  */
 async function attachToCloudNew(aAccount) {
   // We need to let the user pick local file(s) to upload to the cloud and
@@ -3043,14 +3042,14 @@ function MessageComposeOfflineStateChanged(goingOffline) {
 }
 
 function DoCommandPrint() {
-  const browser = GetCurrentEditorElement();
-  browser.onFirstPrintDialogOpened = () => ToggleWindowLock(true);
-  browser.onLastPrintDialogClosed = () => ToggleWindowLock(false);
+  const editorBrowser = GetCurrentEditorElement();
+  editorBrowser.onFirstPrintDialogOpened = () => ToggleWindowLock(true);
+  editorBrowser.onLastPrintDialogClosed = () => ToggleWindowLock(false);
 
-  browser.contentDocument.title =
+  editorBrowser.contentDocument.title =
     document.getElementById("msgSubject").value.trim() ||
     getComposeBundle().getString("defaultSubject");
-  PrintUtils.startPrintWindow(browser.browsingContext, {});
+  PrintUtils.startPrintWindow(editorBrowser.browsingContext, {});
 }
 
 /**
@@ -3383,10 +3382,10 @@ function manageAttachmentNotification(force = false) {
       },
       [addButton]
     )
-    .then(notification => {
-      notification.setAttribute("id", "attachmentNotificationBox");
-      notification.messageText.appendChild(msg);
-      notification.buttonContainer.appendChild(remindButton);
+    .then(notification2 => {
+      notification2.setAttribute("id", "attachmentNotificationBox");
+      notification2.messageText.appendChild(msg);
+      notification2.buttonContainer.appendChild(remindButton);
     }, console.warn);
 }
 
@@ -4113,11 +4112,12 @@ attachmentWorker.findAttachmentKeywords = (data, keywordsInCsv) =>
  * Update attachment-related internal flags, UI, and commands.
  * Called when number of attachments changes.
  *
- * @param aShowPane {string} "show":  show the attachment pane
- *                           "hide":  hide the attachment pane
- *                           omitted: just update without changing pane visibility
- * @param aContentChanged {Boolean} optional value to assign to gContentChanged;
- *                                  defaults to true.
+ * @param {?string} aShowPane - Command.
+ *  - "show":  show the attachment pane
+ *  - "hide":  hide the attachment pane
+ *  - omitted: just update without changing pane visibility
+ * @param {boolean} [aContentChanged=true] - Optional value to assign to
+ *   gContentChanged; defaults to true.
  */
 function AttachmentsChanged(aShowPane, aContentChanged = true) {
   gContentChanged = aContentChanged;
@@ -4144,7 +4144,7 @@ function AttachmentsChanged(aShowPane, aContentChanged = true) {
  *
  * @param {string[]|null} [draftLanguages] - Languages that the message was
  *  composed in.
- * @returns {string[]}
+ * @returns {string[]} valid dictionaries
  */
 function getValidSpellcheckerDictionaries(draftLanguages) {
   const prefValue = Services.prefs.getCharPref("spellchecker.dictionary");
@@ -4252,15 +4252,15 @@ function EditorClick(event) {
       addLinkPreview(url, true);
       settings.hidden = true;
     };
-    settings.querySelector(".preview-autoadd").onclick = event => {
+    settings.querySelector(".preview-autoadd").onclick = clickEvent => {
       Services.prefs.setBoolPref(
         "mail.compose.add_link_preview",
-        event.target.checked
+        clickEvent.target.checked
       );
     };
     settings.querySelector(".preview-replace").focus();
-    settings.onkeydown = event => {
-      if (event.key == "Escape") {
+    settings.onkeydown = keyEvent => {
+      if (keyEvent.key == "Escape") {
         settings.hidden = true;
       }
     };
@@ -4901,12 +4901,12 @@ async function ComposeStartup() {
       gComposeType == Ci.nsIMsgCompType.ReplyToSenderAndGroup ||
       gComposeType == Ci.nsIMsgCompType.ReplyToList)
   ) {
-    const from = MailServices.headerParser
+    const authors = MailServices.headerParser
       .parseEncodedHeader(params.composeFields.from, null)
       .join(", ");
-    if (from != identityList.value) {
+    if (authors != identityList.value) {
       MakeFromFieldEditable(true);
-      identityList.value = from;
+      identityList.value = authors;
     }
   }
   LoadIdentity(true);
@@ -6469,13 +6469,13 @@ async function CompleteGenericSendMessage(msgType) {
     const items = [...gAttachmentBucket.itemChildren];
 
     // When any big attachment is not sent via filelink, increment
-    // `tb.filelink.ignored`.
+    // `filelink_ignored`.
     if (
       items.some(
         item => item.attachment.size >= maxSize && !item.attachment.sendViaCloud
       )
     ) {
-      Services.telemetry.scalarAdd("tb.filelink.ignored", 1);
+      Glean.filelink.filelinkIgnored.add(1);
     }
   } else if (
     msgType == Ci.nsIMsgCompDeliverMode.Save ||
@@ -6602,7 +6602,7 @@ function updateSendLock() {
 /**
  * Check if the entered addresses are valid and alert the user if they are not.
  *
- * @param aMsgCompFields  A nsIMsgCompFields object containing the fields to check.
+ * @param {nsIMsgCompFields} aMsgCompFields - Fields containing the fields to check.
  */
 function CheckValidEmailAddress(aMsgCompFields) {
   let invalidStr;
@@ -6672,9 +6672,9 @@ async function pillifyRecipients() {
 }
 
 /**
- *  Handle the dragover event on a recipient disclosure label.
+ * Handle the dragover event on a recipient disclosure label.
  *
- *  @param {Event} - The DOM dragover event on a recipient disclosure label.
+ * @param {Event} event - The DOM dragover event on a recipient disclosure label.
  */
 function showAddressRowButtonOnDragover(event) {
   // Prevent dragover event's default action (which resets the current drag
@@ -6685,7 +6685,7 @@ function showAddressRowButtonOnDragover(event) {
 /**
  *  Handle the drop event on a recipient disclosure label.
  *
- *  @param {Event} - The DOM drop event on a recipient disclosure label.
+ * @param {Event} event - The DOM drop event on a recipient disclosure label.
  */
 function showAddressRowButtonOnDrop(event) {
   if (event.dataTransfer.types.includes("text/pills")) {
@@ -6859,10 +6859,10 @@ function checkPublicRecipientsLimit() {
       },
       [bccButton, ignoreButton]
     )
-    .then(notification => {
+    .then(notification2 => {
       if (publicAddressPillsCount > 1) {
         document.l10n.setAttributes(
-          notification.messageText,
+          notification2.messageText,
           "public-recipients-notice-multi",
           {
             count: publicAddressPillsCount,
@@ -6870,7 +6870,7 @@ function checkPublicRecipientsLimit() {
         );
       } else {
         document.l10n.setAttributes(
-          notification.messageText,
+          notification2.messageText,
           "public-recipients-notice-single"
         );
       }
@@ -7330,16 +7330,18 @@ function onRecipientsChanged(automatic) {
  * Except aPopupID, all parameters are optional.
  * Example: showPopupById("aPopupID", "aAnchorID");
  *
- * @param aPopupID   the ID of the popup element to be shown
- * @param aAnchorID  the ID of an element to which the popup should be anchored
- * @param aPosition  a single-word alignment value for the position parameter
- *                   of openPopup() method; defaults to "after_start" if omitted.
- * @param x          x offset from default position
- * @param y          y offset from default position
- * @param isContextMenu {boolean} For details, see documentation.
- * @param attributesOverride {boolean} whether the position attribute on the
- *                                     popup node overrides the position parameter
- * @param triggerEvent the event that triggered the popup
+ * @param {string} aPopupID - The ID of the popup element to be shown.
+ * @param {string} aAnchorID - The ID of an element to which the popup should
+ *   be anchored.
+ * @param {string} [aPosition="after_start"] - A single-word alignment value
+ *   for the position parameter of openPopup() method;
+ *   Defaults to "after_start" if omitted.
+ * @param {integer} x - x offset from default position
+ * @param {integer} y - y offset from default position
+ * @param {boolean} isContextMenu - For details, see documentation.
+ * @param {boolean} attributesOverride - Whether the position attribute on the
+ *   popup node overrides the position parameter.
+ * @param {Event} triggerEvent - The event that triggered the popup
  */
 function showPopupById(
   aPopupID,
@@ -8278,14 +8280,13 @@ async function AddAttachments(aAttachments, aContentChanged = true) {
 /**
  * Returns a sorted-by-index, "non-live" array of attachment list items.
  *
- * @param aAscending {boolean}: true (default): sort return array ascending
- *                              false         : sort return array descending
- * @param aSelectedOnly {boolean}: true: return array of selected items only.
- *                                 false (default): return array of all items.
+ * @param {boolean} [aAscending=true] - If true, sort return array ascending.
+ * @param {boolean} [aSelectedOnly=false] - If true, return array of selected
+ *   items only. If false (default): return array of all items.
  *
- * @returns {Array} an array of (all | selected) listItem elements in
- *                 attachmentBucket listbox, "non-live" and sorted by their index
- *                 in the list; [] if there are (no | no selected) attachments.
+ * @returns {Element[]} an array of (all | selected) listItem elements in
+ *   attachmentBucket listbox, "non-live" and sorted by their index
+ *   in the list; [] if there are (no | no selected) attachments.
  */
 function attachmentsGetSortedArray(aAscending = true, aSelectedOnly = false) {
   let listItems;
@@ -8330,11 +8331,10 @@ function attachmentsGetSortedArray(aAscending = true, aSelectedOnly = false) {
 /**
  * Returns a sorted-by-index, "non-live" array of selected attachment list items.
  *
- * @param aAscending {boolean}: true (default): sort return array ascending
- *                              false         : sort return array descending
- * @returns {Array} an array of selected listitem elements in attachmentBucket
- *                 listbox, "non-live" and sorted by their index in the list;
- *                 [] if no attachments selected
+ * @param {boolean} [aAscending=true] - If true, sort return array ascending.
+ * @returns {Element[]} an array of selected listitem elements in attachmentBucket
+ *  listbox, "non-live" and sorted by their index in the list;
+ *  [] if no attachments selected.
  */
 function attachmentsSelectionGetSortedArray(aAscending = true) {
   return attachmentsGetSortedArray(aAscending, true);
@@ -8344,17 +8344,16 @@ function attachmentsSelectionGetSortedArray(aAscending = true) {
  * Return true if the selected attachment items are a coherent block in the list,
  * otherwise false.
  *
- * @param aListPosition (optional) - "top"   : Return true only if the block is
- *                                            at the top of the list.
- *                                  "bottom": Return true only if the block is
- *                                            at the bottom of the list.
- * @returns {boolean} true : The selected attachment items are a coherent block
- *                          (at the list edge if/as specified by 'aListPosition'),
- *                          or only 1 item selected.
- *                   false: The selected attachment items are NOT a coherent block
- *                          (at the list edge if/as specified by 'aListPosition'),
- *                          or no attachments selected, or no attachments,
- *                          or no attachmentBucket.
+ * @param {string} [aListPosition] Position. For
+ *   - "top": return true only if the block is at the top of the list.
+ *   - "bottom": return true only if the block is at the bottom of the list.
+ * @returns {boolean} true when the selected attachment items are a coherent
+ *   block (at the list edge if/as specified by 'aListPosition'), or only 1
+ *   item selected.
+ *   false when selected attachment items are NOT a coherent block
+ *   (at the list edge if/as specified by 'aListPosition'),
+ *   or no attachments selected, or no attachments,
+ *   or no attachmentBucket.
  */
 function attachmentsSelectionIsBlock(aListPosition) {
   if (!gAttachmentBucket.selectedCount) {
@@ -8461,7 +8460,7 @@ async function RemoveAllAttachments() {
  * Show or hide the attachment pane after updating its header bar information
  * (number and total file size of attachments) and tooltip.
  *
- * @param {boolean} aShowBucket - Show bucket or not.
+ * @param {boolean} aShowBucket - Show bucket or not:
  *   - true: show the attachment pane
  *   - false (or omitted): hide the attachment pane
  */
@@ -8473,9 +8472,10 @@ function UpdateAttachmentBucket(aShowBucket) {
  * Update the header bar information (number and total file size of attachments)
  * and tooltip of attachment pane, then (optionally) show or hide the pane.
  *
- * @param {"show"|"hide"} [aShowPane} "show":  show the attachment pane
+ * @param {"show"|"hide"} [aShowPane] Command:
+ *   - "show": show the attachment pane
  *   - "hide":  hide the attachment pane
- *   -  omitted: just update without changing pane visibility
+ *   - omitted: just update without changing pane visibility
  */
 function updateAttachmentPane(aShowPane) {
   const count = gAttachmentBucket.itemCount;
@@ -9634,6 +9634,7 @@ function LoadIdentity(startup) {
       dump("### Cannot change the identity: " + ex + "\n");
     }
 
+    gContentChanged = true;
     window.dispatchEvent(new CustomEvent("compose-from-changed"));
 
     gComposeNotificationBar.clearIdentityWarning();
@@ -9759,11 +9760,20 @@ function subjectKeyPress(event) {
 }
 
 /**
+ * Handle the input event of the editable from field..
+ *
+ * @param {Event} _event - A DOM input event on #msgIdentity.
+ */
+function msgIdentityOnInput(_event) {
+  gContentChanged = true;
+}
+
+/**
  * Handle the input event of the subject input element.
  *
- * @param {Event} event - A DOM input event on #msgSubject.
+ * @param {Event} _event - A DOM input event on #msgSubject.
  */
-function msgSubjectOnInput() {
+function msgSubjectOnInput(_event) {
   gSubjectChanged = true;
   gContentChanged = true;
   SetComposeWindowTitle();
@@ -9927,19 +9937,20 @@ var envelopeDragObserver = {
       switch (flavor) {
         // Process attachments.
         case "application/x-moz-file": {
-          if (data instanceof Ci.nsIFile) {
+          // Exclude directories.
+          if (data instanceof Ci.nsIFile && data.isFile()) {
             size = data.fileSize;
-          }
-          try {
-            data = Services.io
-              .getProtocolHandler("file")
-              .QueryInterface(Ci.nsIFileProtocolHandler)
-              .getURLSpecFromActualFile(data);
-            isValidAttachment = true;
-          } catch (e) {
-            console.error(
-              "Couldn't process the dragged file " + data.leafName + ":" + e
-            );
+            try {
+              data = Services.io
+                .getProtocolHandler("file")
+                .QueryInterface(Ci.nsIFileProtocolHandler)
+                .getURLSpecFromActualFile(data);
+              isValidAttachment = true;
+            } catch (e) {
+              console.error(
+                "Couldn't process the dragged file " + data.leafName + ":" + e
+              );
+            }
           }
           break;
         }
@@ -10617,10 +10628,9 @@ function focusNotification() {
 /**
  * Focus the first focusable descendant of the status bar.
  *
- * Note, this is used as a {@link moveFocusWithin} method.
+ * NOTE: this is used as a {@link moveFocusWithin} method.
  *
- * @param {Element} attachmentArea - The status bar.
- *
+ * @param {Element} statusBar - The status bar.
  * @returns {boolean} whether a status bar descendant received focused.
  */
 function focusStatusBar(statusBar) {
@@ -10636,7 +10646,7 @@ function focusStatusBar(statusBar) {
  * Fast-track focus ring: Switch focus between important (not all) elements
  * in the message compose window in response to Ctrl+[Shift+]Tab or [Shift+]F6.
  *
- * @param {Event} event - A DOM keyboard event of a fast focus ring shortcut key
+ * @param {Event} event - A DOM keyboard event of a fast focus ring shortcut key.
  */
 function moveFocusToNeighbouringArea(event) {
   event.preventDefault();
@@ -11031,9 +11041,9 @@ function InitEditor() {
   // Set eEditorMailMask flag to avoid using content prefs for spell checker,
   // otherwise dictionary setting in preferences is ignored and dictionary is
   // inconsistent in subject and message body.
-  const eEditorMailMask = Ci.nsIEditor.eEditorMailMask;
-  editor.flags |= eEditorMailMask;
-  document.getElementById("msgSubject").editor.flags |= eEditorMailMask;
+  editor.flags |= Ci.nsIEditor.eEditorMailMask;
+  document.getElementById("msgSubject").editor.flags |=
+    Ci.nsIEditor.eEditorMailMask;
 
   // Control insertion of line breaks.
   editor.returnInParagraphCreatesNewParagraph = Services.prefs.getBoolPref(
@@ -11049,9 +11059,8 @@ function InitEditor() {
   );
   if (gMsgCompose.composeHTML) {
     // Re-enable table/image resizers.
-    editor.QueryInterface(
-      Ci.nsIHTMLAbsPosEditor
-    ).absolutePositioningEnabled = true;
+    editor.QueryInterface(Ci.nsIHTMLAbsPosEditor).absolutePositioningEnabled =
+      true;
     editor.QueryInterface(
       Ci.nsIHTMLInlineTableEditor
     ).inlineTableEditingEnabled = true;
@@ -11192,7 +11201,7 @@ function InitEditor() {
     }
   }
 
-  // Run menubar initialization first, to avoid TabsInTitlebar code picking
+  // Run menubar initialization first, to avoid CustomTitlebar code picking
   // up mutations from it and causing a reflow.
   if (AppConstants.platform != "macosx") {
     AutoHideMenubar.init();

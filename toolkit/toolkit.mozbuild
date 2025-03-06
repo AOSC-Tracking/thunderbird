@@ -14,6 +14,7 @@ PYTHON_UNITTEST_MANIFESTS += [
     "/testing/mochitest/tests/python/python.toml",
     "/testing/raptor/test/python.toml",
     "/testing/talos/talos/unittests/python.toml",
+    "/toolkit/components/featuregates/test/python/python.toml",
 ]
 
 DIRS += [
@@ -117,10 +118,6 @@ else:
     DIRS += ["/accessible/ipc"]
 
 # toolkit
-
-# This must precede xpfe.
-if CONFIG["MOZ_JPROF"]:
-    DIRS += ["/tools/jprof"]
 
 DIRS += [
     "/tools/code-coverage",

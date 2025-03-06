@@ -138,8 +138,7 @@ async function internal_check_delivery_format(editDraft) {
   /**
    * Check if the right format is selected in the menu.
    *
-   * @param aMenuItemId  The id of the menuitem expected to be selected.
-   * @param aValue       A value of nsIMsgCompSendFormat constants of the expected selected format.
+   * @param {string} aMenuItemId - The id of the menuitem expected to be selected.
    */
   async function assert_format_value(aMenuItemId) {
     EventUtils.synthesizeMouseAtCenter(

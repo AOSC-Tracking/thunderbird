@@ -55,7 +55,6 @@ export class NntpIncomingServer extends MsgIncomingServer {
     this.localStoreType = "news";
     this.localDatabaseType = "news";
     this.canSearchMessages = true;
-    this.sortOrder = 500000000;
 
     Object.defineProperty(this, "defaultCopiesAndFoldersPrefsToServer", {
       // No Draft/Sent folder on news servers, will point to "Local Folders".
@@ -155,7 +154,7 @@ export class NntpIncomingServer extends MsgIncomingServer {
     } catch (e) {
       // Group names with double dot, like alt.binaries.sounds..mp3.zappa are
       // not working. Bug 1788572.
-      console.error(`Failed to add group ${name}. ${e}`);
+      console.error(`Failed to add group ${name}`, e);
     }
   }
 

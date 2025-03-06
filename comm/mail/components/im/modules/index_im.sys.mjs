@@ -462,9 +462,8 @@ var GlodaIMIndexer = {
     (async () => {
       // We need to get the log files every time, because a new log file might
       // have been started since we last got them.
-      const logFiles = await IMServices.logs.getLogPathsForConversation(
-        aConversation
-      );
+      const logFiles =
+        await IMServices.logs.getLogPathsForConversation(aConversation);
       if (!logFiles || !logFiles.length) {
         // No log files exist yet, nothing to do!
         return;
@@ -645,6 +644,9 @@ var GlodaIMIndexer = {
   },
 
   /**
+   * @param {Function} aCallbackHandle
+   * @param {string} aLogPath
+   * @param {integer} aLastModifiedTime - Time in ms.
    * @param {object} aCache - An object mapping file names to their last
    *   modified times at the time they were last indexed. The value for the file
    *   currently being indexed is updated to the aLastModifiedTime parameter's

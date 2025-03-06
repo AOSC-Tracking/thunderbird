@@ -9,6 +9,10 @@ var { MailUtils } = ChromeUtils.importESModule(
   "resource:///modules/MailUtils.sys.mjs"
 );
 
+var { OAuth2Providers } = ChromeUtils.importESModule(
+  "resource:///modules/OAuth2Providers.sys.mjs"
+);
+
 var gServer;
 var gOriginalStoreType;
 
@@ -94,10 +98,12 @@ function onInit(aPageId, aServerId) {
   if (serverType == "imap") {
     setupImapDeleteUI(aServerId);
   }
-
-  // OAuth2 are only supported on IMAP and POP.
-  document.getElementById("authMethod-oauth2").hidden =
-    serverType != "imap" && serverType != "pop3";
+  // OAuth2 is only supported on certain servers.
+  const details = OAuth2Providers.getHostnameDetails(
+    document.getElementById("server.hostName").value,
+    serverType
+  );
+  document.getElementById("authMethod-oauth2").hidden = !details;
   // TLS Cert (External) only supported on IMAP.
   document.getElementById("authMethod-external").hidden = serverType != "imap";
 
@@ -596,18 +602,16 @@ function folderPickerChange(aEvent) {
   trashFolderPicker.menupopup.selectFolder(folder);
 }
 
-// Get trash_folder_name from prefs. Despite its name this returns
-// a folder path, for example INBOX/Trash.
+/**
+ * Get trash_folder_name from prefs. Despite its name this returns a folder
+ * path, e.g., "INBOX/Deleted" and "[Gmail]/Trash". If pref not set just return
+ * empty string and leave pref not set. This avoids showing a default name
+ * (e.g., "Trash") in trash folder picker when trash folder is something else or
+ * has yet to be determined.
+ */
 function getTrashFolderName() {
-  let trashFolderName = document
+  const trashFolderName = document
     .getElementById("imap.trashFolderName")
     .getAttribute("value");
-  // if the preference hasn't been set, set it to a sane default
-  if (!trashFolderName) {
-    trashFolderName = "Trash"; // XXX Is this a useful default?
-    document
-      .getElementById("imap.trashFolderName")
-      .setAttribute("value", trashFolderName);
-  }
   return trashFolderName;
 }

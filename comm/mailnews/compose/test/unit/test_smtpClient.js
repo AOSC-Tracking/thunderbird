@@ -25,27 +25,32 @@ add_task(async function testAbort() {
 
   do_test_pending();
 
-  const requestObserver = {
-    onStartRequest() {},
-    onStopRequest(request, status) {
+  const listener = {
+    onSendStart() {},
+    onSendStop(serverUri, status) {
       // Test sending is aborted with NS_ERROR_STARTTLS_FAILED_EHLO_STARTTLS.
       Assert.equal(status, 0x80553126);
       do_test_finished();
     },
   };
 
+  const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+    .createInstance(Ci.nsIMsgCompUtils)
+    .msgGenerateMessageId(identity, null);
+
   // Send a message.
   const testFile = do_get_file("data/message1.eml");
   smtpServer.sendMailMessage(
     testFile,
-    "to@foo.invalid",
+    MailServices.headerParser.parseEncodedHeaderW("to@foo.invalid"),
+    [],
     identity,
     "from@foo.invalid",
     null,
     null,
     false,
-    "",
-    requestObserver
+    messageId,
+    listener
   );
   server.performTest();
 });
@@ -65,21 +70,26 @@ add_task(async function testClientIdentityExtension() {
   smtpServer.QueryInterface(Ci.nsISmtpServer).clientid = "uuid-111";
 
   // Send a message.
-  const requestObserver = new PromiseTestUtils.PromiseRequestObserver();
+  const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+    .createInstance(Ci.nsIMsgCompUtils)
+    .msgGenerateMessageId(identity, null);
+
+  const listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
   const testFile = do_get_file("data/message1.eml");
   smtpServer.sendMailMessage(
     testFile,
-    "to@foo.invalid",
+    MailServices.headerParser.parseEncodedHeaderW("to@foo.invalid"),
+    [],
     identity,
     "from@foo.invalid",
     null,
     null,
     false,
-    "",
-    requestObserver
+    messageId,
+    listener
   );
 
-  await requestObserver.promise;
+  await listener.promise;
 
   // Check CLIENTID command is sent.
   const transaction = server.playTransaction();
@@ -102,21 +112,28 @@ add_task(async function testDeduplicateRecipients() {
   const identity = getSmtpIdentity("identity@foo.invalid", smtpServer);
 
   // Send a message, notice to1 appears twice in the recipients argument.
-  const requestObserver = new PromiseTestUtils.PromiseRequestObserver();
+  const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+    .createInstance(Ci.nsIMsgCompUtils)
+    .msgGenerateMessageId(identity, null);
+
+  const listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
   const testFile = do_get_file("data/message1.eml");
   smtpServer.sendMailMessage(
     testFile,
-    "to1@foo.invalid,to2@foo.invalid,to1@foo.invalid",
+    MailServices.headerParser.parseEncodedHeaderW(
+      "to1@foo.invalid,to2@foo.invalid,to1@foo.invalid"
+    ),
+    [],
     identity,
     "from@foo.invalid",
     null,
     null,
     false,
-    "",
-    requestObserver
+    messageId,
+    listener
   );
 
-  await requestObserver.promise;
+  await listener.promise;
 
   // Check only one RCPT TO is sent for to1.
   const transaction = server.playTransaction();

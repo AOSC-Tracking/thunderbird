@@ -74,12 +74,12 @@ int mime_decompose_file_output_fn(const char* buf, int32_t size,
 int mime_decompose_file_close_fn(MimeClosure stream_closure);
 extern int MimeHeaders_build_heads_list(MimeHeaders* hdrs);
 
-#define NS_MSGCOMPOSESERVICE_CID                    \
-  { /* 588595FE-1ADA-11d3-A715-0060B0EB39B5 */      \
-    0x588595fe, 0x1ada, 0x11d3, {                   \
-      0xa7, 0x15, 0x0, 0x60, 0xb0, 0xeb, 0x39, 0xb5 \
-    }                                               \
-  }
+#define NS_MSGCOMPOSESERVICE_CID              \
+  {/* 588595FE-1ADA-11d3-A715-0060B0EB39B5 */ \
+   0x588595fe,                                \
+   0x1ada,                                    \
+   0x11d3,                                    \
+   {0xa7, 0x15, 0x0, 0x60, 0xb0, 0xeb, 0x39, 0xb5}}
 static NS_DEFINE_CID(kCMsgComposeServiceCID, NS_MSGCOMPOSESERVICE_CID);
 
 mime_draft_data::mime_draft_data()
@@ -1417,7 +1417,11 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
 
           nsresult rv = NS_NewLocalFileInputStream(getter_AddRefs(inputStream),
                                                    mdd->messageBody->m_tmpFile);
-          if (NS_FAILED(rv)) return;
+          if (NS_FAILED(rv)) {
+            delete[] newAttachData;
+            PR_Free(body);
+            return;
+          }
 
           inputStream->Read(body, bodyLen, &bytesRead);
 
@@ -2130,7 +2134,7 @@ FAIL:
   if (mdd) {
     PR_Free(mdd->url_name);
     if (mdd->options) delete mdd->options;
-    PR_Free(mdd);
+    delete mdd;
   }
   PR_Free(stream);
   PR_Free(obj);

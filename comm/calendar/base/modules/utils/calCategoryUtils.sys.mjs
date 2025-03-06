@@ -13,18 +13,23 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   cal: "resource:///modules/calendar/calUtils.sys.mjs",
 });
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["calendar/categories.ftl"], true)
+);
 
 export var category = {
   /**
    * Sets up the default categories from the localized string
    *
-   * @returns The default set of categories as a comma separated string.
+   * @returns {string} The default set of categories as a comma separated string.
    */
   setupDefaultCategories() {
     const defaultBranch = Services.prefs.getDefaultBranch("");
 
     // First, set up the category names
-    const categories = lazy.cal.l10n.getString("categories", "categories2");
+    const categories = lazy.l10n.formatValueSync("categories2");
     defaultBranch.setStringPref("calendar.categories.names", categories);
 
     // Now, initialize the category default colors
@@ -45,7 +50,7 @@ export var category = {
    * Get array of category names from preferences or locale default,
    * unescaping any commas in each category name.
    *
-   * @returns array of category names
+   * @returns {string[]} array of category names.
    */
   fromPrefs() {
     let categories = Services.prefs.getStringPref("calendar.categories.names", null);
@@ -64,9 +69,9 @@ export var category = {
    * categories string at commas, but not at escaped commas (\,). Afterward,
    * replace escaped commas (\,) with commas (,) in each name.
    *
-   * @param aCategoriesPrefValue  string from "calendar.categories.names" pref,
-   *                                which may contain escaped commas (\,) in names.
-   * @returns list of category names
+   * @param {string} aCategories - String from "calendar.categories.names" pref,
+   *   which may contain escaped commas (\,) in names.
+   * @returns {string[]} list of category names
    */
   stringToArray(aCategories) {
     if (!aCategories) {
@@ -93,9 +98,8 @@ export var category = {
    * Category names may contain commas (,). Escape commas (\,) in each, then
    * join them in comma separated string for storage.
    *
-   * @param aSortedCategoriesArray    sorted array of category names, may
-   *                                    contain unescaped commas, which will
-   *                                    be escaped in combined string.
+   * @param {string[]} aSortedCategoriesArray - Sorted array of category names,
+   *   may contain unescaped commas, which will be escaped in combined string.
    */
   arrayToString(aSortedCategoriesArray) {
     return aSortedCategoriesArray.map(cat => cat.replace(/,/g, "\\,")).join(",");

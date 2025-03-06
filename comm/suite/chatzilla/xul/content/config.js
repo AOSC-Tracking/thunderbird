@@ -2,17 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const MEDIATOR_CONTRACTID   = "@mozilla.org/appshell/window-mediator;1";
-
-const nsIWindowMediator     = Components.interfaces.nsIWindowMediator;
-
 const CONFIG_WINDOWTYPE     = "irc:chatzilla:config";
 
 /* Now we create and set up some required items from other Chatzilla JS files 
  * that we really have no reason to load, but the ones we do need won't work 
  * without these...
  */
-var ASSERT = function(cond, msg) { if (!cond) { alert(msg); } return cond; }
+var ASSERT = function(cond, msg)
+{
+    if (!cond)
+    {
+        Services.prompt.alert(window, MSG_ALERT, msg);
+    }
+    return cond;
+}
 var client;
 
 function CIRCNetwork() {}
@@ -369,8 +372,7 @@ function opdata_loadXUL(tabOrder)
     
     this.loadData();
     
-    var prefList = keys(this.prefs);
-    prefList.sort(sortByLabel);
+    var prefList = Object.keys(this.prefs).sort(sortByLabel);
     
     for (var i = 0; i < tabOrder.length; i++)
     {
@@ -946,9 +948,7 @@ function pwin_onLoad()
     client.prettyName = client.viewName;
     
     // Use the window mediator service to prevent mutliple instances.
-    var windowMediator = Components.classes[MEDIATOR_CONTRACTID];
-    var windowManager = windowMediator.getService(nsIWindowMediator);
-    var enumerator = windowManager.getEnumerator(CONFIG_WINDOWTYPE);
+    var enumerator = Services.wm.getEnumerator(CONFIG_WINDOWTYPE);
     
     // We only want one open at a time because don't (currently) cope with
     // pref-change notifications. In fact, it's not easy to cope with.
@@ -957,7 +957,7 @@ function pwin_onLoad()
     enumerator.getNext();
     if (enumerator.hasMoreElements())
     {
-        alert(MSG_PREFS_ALREADYOPEN);
+        Services.prompt.alert(window, MSG_ALERT, MSG_PREFS_ALREADYOPEN);
         window.close();
         return;
     }
@@ -1092,16 +1092,16 @@ function pwin_onLoad()
     /* We sort the keys (property names, i.e. network names). This means the UI
      * will show them in lexographical order, which is good.
      */
-    var sortedNets = keys(client.networks).sort();
+    var sortedNets = Object.keys(client.networks).sort();
     for (i = 0; i < sortedNets.length; i++) {
         net = client.networks[sortedNets[i]];
         this.prefObjects.addObject(net);
         
-        var sortedChans = keys(net.channels).sort();
+        var sortedChans = Object.keys(net.channels).sort();
         for (j = 0; j < sortedChans.length; j++)
             this.prefObjects.addObject(net.channels[sortedChans[j]]);
         
-        var sortedUsers = keys(net.users).sort();
+        var sortedUsers = Object.keys(net.users).sort();
         for (j = 0; j < sortedUsers.length; j++)
             this.prefObjects.addObject(net.users[sortedUsers[j]]);
     }
@@ -1179,9 +1179,9 @@ function pwin_onApply()
     try {
         // Get an array of all the (XUL) items we have to save.
         var list = getPrefTags();
-        
-        //if (!confirm("There are " + list.length + " pref tags to save. OK?")) return false;
-        
+
+        //if (!Services.prompt.confirm(window, MSG_CONFIRM, "There are " + list.length + " pref tags to save. OK?")) return false;
+
         for (var i = 0; i < list.length; i++)
         {
             // Save this one pref...
@@ -1236,7 +1236,7 @@ function pwin_onApply()
     }
     catch (e)
     {
-        alert(getMsg(MSG_PREFS_ERR_SAVE, e));
+        Services.prompt.alert(window, MSG_ALERT, getMsg(MSG_PREFS_ERR_SAVE, e));
         return false;
     }
 }
@@ -1547,7 +1547,8 @@ function pwin_onPrefListDelete(object)
     var list = getRelatedItem(object, "list");
     
     var listItem = list.selectedItems[0];
-    if (confirm(getMsg(MSG_PREFS_LIST_DELETE, listItem.value)))
+    if (Services.prompt.confirm(window, MSG_CONFIRM,
+                                getMsg(MSG_PREFS_LIST_DELETE, listItem.value)))
         list.removeChild(listItem);
 }
 
@@ -1605,7 +1606,8 @@ function pwin_onAddObject()
             break;
         default:
             // Oops. Not good, if we got here.
-            alert("Unknown pref type: " + rv.type);
+            Services.prompt.alert(window, MSG_ALERT,
+                                  "Unknown pref type: " + rv.type);
     }
 }
 
@@ -1617,7 +1619,7 @@ function pwin_onDeleteObject()
     var sel = this.currentObject;
     
     // Check they want to go ahead.
-    if (!confirm(getMsg(MSG_PREFS_OBJECT_DELETE, sel.parent.unicodeName)))
+    if (!Services.prompt.confirm(window, MSG_CONFIRM, getMsg(MSG_PREFS_OBJECT_DELETE, sel.parent.unicodeName)))
         return;
 
     // Select a new item BEFORE removing the current item, so the <tree> 
@@ -1652,7 +1654,7 @@ function pwin_onResetObject()
     var sel = this.currentObject;
     
     // Check they want to go ahead.
-    if (!confirm(getMsg(MSG_PREFS_OBJECT_RESET, sel.parent.unicodeName)))
+    if (!Services.prompt.confirm(window, MSG_CONFIRM, getMsg(MSG_PREFS_OBJECT_RESET, sel.parent.unicodeName)))
         return;
 
     // Reset the prefs.

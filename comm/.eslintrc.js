@@ -10,19 +10,9 @@ const xpcshellTestConfig = require("eslint-plugin-mozilla/lib/configs/xpcshell-t
 const browserTestConfig = require("eslint-plugin-mozilla/lib/configs/browser-test.js");
 const fs = require("fs");
 
-/**
- * Some configurations have overrides, which can't be specified within overrides,
- * so we need to remove them.
- */
-function removeOverrides(config) {
-  config = { ...config };
-  delete config.overrides;
-  return config;
-}
-
-function readFile(path) {
+function readFile(filePath) {
   return fs
-    .readFileSync(path, { encoding: "utf-8" })
+    .readFileSync(filePath, { encoding: "utf-8" })
     .split("\n")
     .filter(p => p && !p.startsWith("#"))
     .map(p => p.replace(/^comm\//, ""));
@@ -57,15 +47,21 @@ module.exports = {
   },
   // Ignore eslint configurations in parent directories.
   root: true,
-
+  env: {
+    es2024: true,
+  },
   ignorePatterns,
 
   // We would like the same base rules as provided by
   // mozilla/tools/lint/eslint/eslint-plugin-mozilla/lib/configs/recommended.js
-  extends: ["plugin:mozilla/recommended"],
+  extends: [
+    "plugin:mozilla/recommended",
+    "plugin:json/recommended-with-comments-legacy",
+    "prettier",
+  ],
 
   // When adding items to this file please check for effects on sub-directories.
-  plugins: ["mozilla", "import"],
+  plugins: ["mozilla", "html", "import", "json", "promise"],
 
   rules: {
     complexity: ["error", 80],
@@ -73,10 +69,38 @@ module.exports = {
     "mozilla/prefer-boolean-length-check": "off",
     // Enforce using `let` only when variables are reassigned.
     "prefer-const": ["error", { destructuring: "all" }],
-    "mozilla/reject-chromeutils-import": "error",
   },
 
   overrides: [
+    {
+      files: ["*.*"],
+      // The browser environment is not available for system modules, sjs, workers
+      // or any of the xpcshell-test files.
+      excludedFiles: [
+        "*.sys.mjs",
+        "*.sjs",
+        "**/?(*.)worker.?(m)js",
+        ...xpcshellTestPaths.map(filePath => `${filePath}**`),
+      ],
+      env: {
+        browser: true,
+      },
+    },
+    {
+      files: ["*.*"],
+      env: {
+        "mozilla/privileged": true,
+        "mozilla/specific": true,
+      },
+      rules: {
+        // Require braces around blocks that start a new line. This must be
+        // configured after eslint-config-prettier is included (via `extends`
+        // above), as otherwise that configuration disables it. Hence, we do
+        // not include it in
+        // `tools/lint/eslint/eslint-plugin-mozilla/lib/configs/recommended.js`.
+        curly: ["error", "all"],
+      },
+    },
     {
       files: [".eslintrc.js"],
       env: {
@@ -119,12 +143,13 @@ module.exports = {
       },
     },
     {
-      ...removeOverrides(xpcshellTestConfig),
-      files: xpcshellTestPaths.map(path => `${path}**`),
+      ...xpcshellTestConfig,
+      files: xpcshellTestPaths.map(filePath => `${filePath}**`),
       rules: {
         ...xpcshellTestConfig.rules,
         "func-names": "off",
       },
+      excludedFiles: ["**/*.mjs", "**/*.sjs"],
     },
     {
       // If it is a test head file, we turn off global unused variable checks, as it
@@ -132,8 +157,8 @@ module.exports = {
       // This would be expensive and slow, and it isn't worth it for head files.
       // We could get developers to declare as exported, but that doesn't seem worth it.
       files: [
-        ...browserTestPaths.map(path => `${path}head*.js`),
-        ...xpcshellTestPaths.map(path => `${path}head*.js`),
+        ...browserTestPaths.map(filePath => `${filePath}head*.js`),
+        ...xpcshellTestPaths.map(filePath => `${filePath}head*.js`),
       ],
       rules: {
         "no-unused-vars": [
@@ -147,35 +172,15 @@ module.exports = {
     },
     {
       ...browserTestConfig,
-      files: browserTestPaths.map(path => `${path}**`),
+      files: browserTestPaths.map(filePath => `${filePath}**`),
       rules: {
         ...browserTestConfig.rules,
         "func-names": "off",
       },
+      excludedFiles: ["**/*.mjs", "**/*.sjs"],
     },
     {
-      files: [
-        "calendar/base/calendar.js",
-
-        "calendar/base/content/calendar-base-view.js",
-        "calendar/base/content/calendar-multiday-view.js",
-        "calendar/base/content/calendar-task-tree-view.js",
-        "calendar/base/content/dialogs/calendar-event-dialog-attendees.js",
-        "calendar/base/content/dialogs/calendar-event-dialog-recurrence.js",
-        "calendar/base/content/item-editing/calendar-item-editing.js",
-        "calendar/base/content/widgets/calendar-filter.js",
-        "calendar/base/content/widgets/calendar-invitation-panel.js",
-        "calendar/base/content/widgets/calendar-notifications-setting.js",
-        "calendar/base/content/widgets/datetimepickers.js",
-        "calendar/base/modules/calUtils.sys.mjs",
-        "calendar/base/modules/utils/calDateTimeFormatter.sys.mjs",
-        "calendar/base/modules/utils/calIteratorUtils.sys.mjs",
-        "calendar/base/src/CalMetronome.sys.mjs",
-
-        "chat/modules/imContentSink.sys.mjs",
-
-        "mail/modules/QuickFilterManager.sys.mjs",
-      ],
+      files: ["*.*"],
       excludedFiles: [".eslintrc.js"],
       extends: ["plugin:mozilla/valid-jsdoc"],
     },

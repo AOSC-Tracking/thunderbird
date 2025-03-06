@@ -29,9 +29,7 @@ class FirefoxSuggestTest : TestSetup() {
         HomeActivityTestRule(
             skipOnboarding = true,
             isPocketEnabled = false,
-            isJumpBackInCFREnabled = false,
             isRecentTabsFeatureEnabled = false,
-            isTCPCFREnabled = false,
             isWallpaperOnboardingEnabled = false,
         ),
     ) { it.activity }
@@ -100,9 +98,9 @@ class FirefoxSuggestTest : TestSetup() {
 
     private val nonSponsoredKeyWord = nonSponsoredKeyWords.keys.random()
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2348361
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2348361
     // Known bug that might affect this UI test: https://bugzilla.mozilla.org/show_bug.cgi?id=1813587
-    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1898416")
+    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1898435")
     @SmokeTest
     @Test
     fun verifyFirefoxSuggestSponsoredSearchResultsTest() {
@@ -123,9 +121,9 @@ class FirefoxSuggestTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2348362
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2348362
     // Known bug that might affect this UI test: https://bugzilla.mozilla.org/show_bug.cgi?id=1813587
-    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1898457")
+    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1898435")
     @Test
     fun verifyFirefoxSuggestSponsoredSearchResultsWithPartialKeywordTest() {
         runWithCondition(TestHelper.appContext.settings().enableFxSuggest) {
@@ -145,9 +143,9 @@ class FirefoxSuggestTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2348363
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2348363
     // Known bug that might affect this UI test: https://bugzilla.mozilla.org/show_bug.cgi?id=1813587
-    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1879011")
+    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1898435")
     @Test
     fun openFirefoxSuggestSponsoredSearchResultsTest() {
         runWithCondition(TestHelper.appContext.settings().enableFxSuggest) {
@@ -170,7 +168,7 @@ class FirefoxSuggestTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2348369
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2348369
     // Known bug that might affect this UI test: https://bugzilla.mozilla.org/show_bug.cgi?id=1813587
     @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1898435")
     @Test
@@ -195,7 +193,7 @@ class FirefoxSuggestTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2348374
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2348374
     // Known bug that might affect this UI test: https://bugzilla.mozilla.org/show_bug.cgi?id=1813587
     @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1882035")
     @SmokeTest
@@ -223,7 +221,7 @@ class FirefoxSuggestTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2348375
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2348375
     // Known bug that might affect this UI test: https://bugzilla.mozilla.org/show_bug.cgi?id=1813587
     @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1882035")
     @Test
@@ -244,7 +242,7 @@ class FirefoxSuggestTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2348376
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2348376
     // Known bug that might affect this UI test: https://bugzilla.mozilla.org/show_bug.cgi?id=1813587
     @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1882035")
     @Test

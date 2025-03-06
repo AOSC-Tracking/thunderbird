@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
 
 window.addEventListener("load", Startup);
@@ -88,7 +87,8 @@ function onAccept() {
   try {
     str = editor.outputToString(
       "text/html",
-      kOutputLFLineBreak | kOutputSelectionOnly
+      Ci.nsIDocumentEncoder.OutputLFLineBreak |
+        Ci.nsIDocumentEncoder.OutputSelectionOnly
     );
   } catch (e) {}
   if (!str) {

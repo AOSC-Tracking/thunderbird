@@ -35,7 +35,6 @@
 #include "mozilla/Logging.h"
 #include "mozilla/MiscEvents.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPrefs_media.h"
@@ -295,7 +294,7 @@ BOOL nsCocoaUtils::WasLaunchedAtLogin() {
   return NO;
 }
 
-BOOL nsCocoaUtils::ShouldRestoreStateDueToLaunchAtLoginImpl() {
+BOOL nsCocoaUtils::ShouldRestoreStateDueToLaunchAtLogin() {
   // Check if we were launched by macOS as a result of having
   // "Reopen windows..." selected during a restart.
   if (!WasLaunchedAtLogin()) {
@@ -319,13 +318,6 @@ BOOL nsCocoaUtils::ShouldRestoreStateDueToLaunchAtLoginImpl() {
   }
 
   return NO;
-}
-
-BOOL nsCocoaUtils::ShouldRestoreStateDueToLaunchAtLogin() {
-  BOOL shouldRestore = ShouldRestoreStateDueToLaunchAtLoginImpl();
-  Telemetry::ScalarSet(Telemetry::ScalarID::STARTUP_IS_RESTORED_BY_MACOS,
-                       !!shouldRestore);
-  return shouldRestore;
 }
 
 void nsCocoaUtils::PrepareForNativeAppModalDialog() {
@@ -376,10 +368,13 @@ void nsCocoaUtils::CleanUpAfterNativeAppModalDialog() {
   if (!hiddenWindowMenuBar) return;
 
   NSWindow* mainWindow = [NSApp mainWindow];
-  if (!mainWindow)
-    hiddenWindowMenuBar->Paint();
-  else
+  if (!mainWindow) {
+    // We do an async paint in order to prevent crashes when macOS is actively
+    // enumerating the menu items in `NSApp.mainMenu`.
+    hiddenWindowMenuBar->PaintAsync();
+  } else {
     [WindowDelegate paintMenubarForWindow:mainWindow];
+  }
 
   NS_OBJC_END_TRY_IGNORE_BLOCK;
 }
@@ -514,25 +509,24 @@ nsresult nsCocoaUtils::CreateNSImageFromCGImage(CGImageRef aInputImage,
 
 nsresult nsCocoaUtils::CreateNSImageFromImageContainer(
     imgIContainer* aImage, uint32_t aWhichFrame,
-    const nsPresContext* aPresContext, const ComputedStyle* aComputedStyle,
-    const NSSize& aPreferredSize, NSImage** aResult, CGFloat scaleFactor,
-    bool* aIsEntirelyBlack) {
+    const SVGImageContext* aSVGContext, const NSSize& aPreferredSize,
+    NSImage** aResult, CGFloat scaleFactor, bool* aIsEntirelyBlack) {
   RefPtr<SourceSurface> surface;
   int32_t width = 0;
   int32_t height = 0;
   {
     const bool gotWidth = NS_SUCCEEDED(aImage->GetWidth(&width));
     const bool gotHeight = NS_SUCCEEDED(aImage->GetHeight(&height));
-    if (auto ratio = aImage->GetIntrinsicRatio(); ratio && *ratio) {
+    if (auto ratio = aImage->GetIntrinsicRatio()) {
       if (gotWidth != gotHeight) {
         if (gotWidth) {
-          height = ratio->Inverted().ApplyTo(width);
+          height = ratio.Inverted().ApplyTo(width);
         } else {
-          width = ratio->ApplyTo(height);
+          width = ratio.ApplyTo(height);
         }
       } else if (!gotWidth) {
         height = std::ceil(aPreferredSize.height);
-        width = ratio->ApplyTo(height);
+        width = ratio.ApplyTo(height);
       }
     }
   }
@@ -552,14 +546,15 @@ nsresult nsCocoaUtils::CreateNSImageFromImageContainer(
 
     gfxContext context(drawTarget);
 
-    SVGImageContext svgContext;
-    if (aPresContext && aComputedStyle) {
-      SVGImageContext::MaybeStoreContextPaint(svgContext, *aPresContext,
-                                              *aComputedStyle, aImage);
+    UniquePtr<SVGImageContext> svgContext;
+    if (!aSVGContext) {
+      svgContext = MakeUnique<SVGImageContext>();
+      aSVGContext = svgContext.get();
     }
+
     mozilla::image::ImgDrawResult res =
         aImage->Draw(&context, scaledSize, ImageRegion::Create(scaledSize),
-                     aWhichFrame, SamplingFilter::POINT, svgContext,
+                     aWhichFrame, SamplingFilter::POINT, *aSVGContext,
                      imgIContainer::FLAG_SYNC_DECODE, 1.0);
 
     if (res != mozilla::image::ImgDrawResult::SUCCESS) {
@@ -597,12 +592,12 @@ nsresult nsCocoaUtils::CreateNSImageFromImageContainer(
 
 nsresult nsCocoaUtils::CreateDualRepresentationNSImageFromImageContainer(
     imgIContainer* aImage, uint32_t aWhichFrame,
-    const nsPresContext* aPresContext, const ComputedStyle* aComputedStyle,
-    const NSSize& aPreferredSize, NSImage** aResult, bool* aIsEntirelyBlack) {
+    const SVGImageContext* aSVGContext, const NSSize& aPreferredSize,
+    NSImage** aResult, bool* aIsEntirelyBlack) {
   NSImage* newRepresentation = nil;
   nsresult rv = CreateNSImageFromImageContainer(
-      aImage, aWhichFrame, aPresContext, aComputedStyle, aPreferredSize,
-      &newRepresentation, 1.0f, aIsEntirelyBlack);
+      aImage, aWhichFrame, aSVGContext, aPreferredSize, &newRepresentation,
+      1.0f, aIsEntirelyBlack);
   if (NS_FAILED(rv) || !newRepresentation) {
     return NS_ERROR_FAILURE;
   }
@@ -617,9 +612,9 @@ nsresult nsCocoaUtils::CreateDualRepresentationNSImageFromImageContainer(
   [newRepresentation release];
   newRepresentation = nil;
 
-  rv = CreateNSImageFromImageContainer(
-      aImage, aWhichFrame, aPresContext, aComputedStyle, aPreferredSize,
-      &newRepresentation, 2.0f, aIsEntirelyBlack);
+  rv = CreateNSImageFromImageContainer(aImage, aWhichFrame, aSVGContext,
+                                       aPreferredSize, &newRepresentation, 2.0f,
+                                       aIsEntirelyBlack);
   if (NS_FAILED(rv) || !newRepresentation) {
     return NS_ERROR_FAILURE;
   }
@@ -713,7 +708,7 @@ NSEvent* nsCocoaUtils::MakeNewCococaEventFromWidgetEvent(
       {MODIFIER_FN, NSEventModifierFlagFunction}};
 
   NSUInteger modifierFlags = 0;
-  for (uint32_t i = 0; i < ArrayLength(sModifierFlagMap); ++i) {
+  for (uint32_t i = 0; i < std::size(sModifierFlagMap); ++i) {
     if (aKeyEvent.mModifiers & sModifierFlagMap[i][0]) {
       modifierFlags |= sModifierFlagMap[i][1];
     }
@@ -801,8 +796,9 @@ Modifiers nsCocoaUtils::ModifiersForEvent(NSEvent* aNativeEvent) {
   // that the event's keyCode falls outside the range of keys that will also set
   // the function modifier.
   if (!!(modifiers & NSEventModifierFlagFunction) &&
-      (aNativeEvent.type == NSKeyDown || aNativeEvent.type == NSKeyUp ||
-       aNativeEvent.type == NSFlagsChanged) &&
+      (aNativeEvent.type == NSEventTypeKeyDown ||
+       aNativeEvent.type == NSEventTypeKeyUp ||
+       aNativeEvent.type == NSEventTypeFlagsChanged) &&
       !(kVK_Return <= aNativeEvent.keyCode &&
         aNativeEvent.keyCode <= NSModeSwitchFunctionKey)) {
     result |= MODIFIER_FN;
@@ -1083,7 +1079,7 @@ uint32_t nsCocoaUtils::ConvertGeckoNameToMacCharCode(
 
   uint32_t keyCodeNameLength = keyCodeName.Length();
   const char* keyCodeNameStr = keyCodeName.get();
-  for (uint16_t i = 0; i < ArrayLength(gKeyConversions); ++i) {
+  for (uint16_t i = 0; i < std::size(gKeyConversions); ++i) {
     if (keyCodeNameLength == gKeyConversions[i].strLength &&
         nsCRT::strcmp(gKeyConversions[i].str, keyCodeNameStr) == 0) {
       return gKeyConversions[i].charCode;
@@ -1098,7 +1094,7 @@ uint32_t nsCocoaUtils::ConvertGeckoKeyCodeToMacCharCode(uint32_t aKeyCode) {
     return 0;
   }
 
-  for (uint16_t i = 0; i < ArrayLength(gKeyConversions); ++i) {
+  for (uint16_t i = 0; i < std::size(gKeyConversions); ++i) {
     if (gKeyConversions[i].geckoKeyCode == aKeyCode) {
       return gKeyConversions[i].charCode;
     }
@@ -1393,6 +1389,19 @@ nsresult nsCocoaUtils::GetScreenCapturePermissionState(
     CFStringRef windowName = reinterpret_cast<CFStringRef>(
         CFDictionaryGetValue(windowDict, kCGWindowName));
     if (!windowName) {
+      continue;
+    }
+
+    // macOS versions 12.2 (Monterey) or later have a status indicator when the
+    // microphone is in use (an orange dot). This is implemented as a window
+    // owned by the window server process. The permission check logic queries
+    // window server for all windows and assumes it has the required permission
+    // if it can read any window name that is at dock or normal level.
+    // The StatusIndicator window is an exception and needs to be skipped
+    // because it is owned by window server process and therefore when querying
+    // the window server, the name is always readable.
+    if (kCFCompareEqualTo ==
+        CFStringCompare(windowName, CFSTR("StatusIndicator"), 0)) {
       continue;
     }
 
@@ -1721,7 +1730,7 @@ void nsCocoaUtils::SetTransferDataForTypeFromPasteboardItem(
     clipboardDataPtr[stringLength] = 0;  // null terminate
 
     nsCOMPtr<nsIFile> file;
-    nsresult rv = NS_NewLocalFile(nsDependentString(clipboardDataPtr), true,
+    nsresult rv = NS_NewLocalFile(nsDependentString(clipboardDataPtr),
                                   getter_AddRefs(file));
     free(clipboardDataPtr);
     if (NS_FAILED(rv)) {

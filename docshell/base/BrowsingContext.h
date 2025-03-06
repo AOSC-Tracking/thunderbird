@@ -240,6 +240,8 @@ struct EmbedderColorSchemes {
   FIELD(MediumOverride, nsString)                                             \
   /* DevTools override for prefers-color-scheme */                            \
   FIELD(PrefersColorSchemeOverride, dom::PrefersColorSchemeOverride)          \
+  /* DevTools override for forced-colors */                                   \
+  FIELD(ForcedColorsOverride, dom::ForcedColorsOverride)                      \
   /* prefers-color-scheme override based on the color-scheme style of our     \
    * <browser> embedder element. */                                           \
   FIELD(EmbedderColorSchemes, EmbedderColorSchemes)                           \
@@ -264,7 +266,7 @@ struct EmbedderColorSchemes {
   FIELD(ParentInitiatedNavigationEpoch, uint64_t)                             \
   /* This browsing context is for a synthetic image document wrapping an      \
    * image embedded in <object> or <embed>. */                                \
-  FIELD(SyntheticDocumentContainer, bool)                                     \
+  FIELD(IsSyntheticDocumentContainer, bool)                                   \
   /* If true, this document is embedded within a content document,  either    \
    * loaded in the parent (e.g. about:addons or the devtools toolbox), or in  \
    * a content process. */                                                    \
@@ -336,13 +338,16 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   //
   // The process which created this BrowsingContext is responsible for detaching
   // it.
-  static already_AddRefed<BrowsingContext> CreateIndependent(Type aType);
+  static already_AddRefed<BrowsingContext> CreateIndependent(Type aType,
+                                                             bool aWindowless);
 
   // Options which can be passed to CreateDetached.
   struct CreateDetachedOptions {
     bool isPopupRequested = false;
     bool createdDynamically = false;
     bool topLevelCreatedByWebContent = false;
+    bool isForPrinting = false;
+    bool windowless = false;
   };
 
   // Create a brand-new BrowsingContext object, but does not immediately attach
@@ -890,6 +895,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   std::tuple<nsCOMPtr<nsIPrincipal>, nsCOMPtr<nsIPrincipal>>
   GetTriggeringAndInheritPrincipalsForCurrentLoad();
 
+  MOZ_CAN_RUN_SCRIPT
   void HistoryGo(int32_t aOffset, uint64_t aHistoryEpoch,
                  bool aRequireUserInteraction, bool aUserActivation,
                  std::function<void(Maybe<int32_t>&&)>&& aResolver);
@@ -940,6 +946,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     return GetPrefersColorSchemeOverride();
   }
 
+  dom::ForcedColorsOverride ForcedColorsOverride() const {
+    return GetForcedColorsOverride();
+  }
+
   bool IsInBFCache() const;
 
   bool AllowJavascript() const { return GetAllowJavascript(); }
@@ -984,7 +994,18 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
                                        bool aHasPostData);
 
  private:
-  mozilla::ipc::IPCResult Attach(bool aFromIPC, ContentParent* aOriginProcess);
+  // Assert that this BrowsingContext is coherent relative to related
+  // BrowsingContexts. This will be run before the BrowsingContext is attached.
+  //
+  // A non-null string return value indicates that there was a coherency check
+  // failure, which will be handled with either a crash or IPC failure.
+  //
+  // If provided, `aOriginProcess` is the process which is responsible for the
+  // creation of this BrowsingContext.
+  [[nodiscard]] const char* BrowsingContextCoherencyChecks(
+      ContentParent* aOriginProcess);
+
+  void Attach(bool aFromIPC, ContentParent* aOriginProcess);
 
   // Recomputes whether we can execute scripts in this BrowsingContext based on
   // the value of AllowJavascript() and whether scripts are allowed in the
@@ -997,10 +1018,6 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   bool CanSetOriginAttributes();
 
   void AssertOriginAttributesMatchPrivateBrowsing();
-
-  // Assert that the BrowsingContext's LoadContext flags appear coherent
-  // relative to related BrowsingContexts.
-  void AssertCoherentLoadContext();
 
   friend class ::nsOuterWindowProxy;
   friend class ::nsGlobalWindowOuter;
@@ -1092,13 +1109,23 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     return IsTop();
   }
 
+  bool CanSet(FieldIndex<IDX_ForcedColorsOverride>, dom::ForcedColorsOverride,
+              ContentParent*) {
+    return IsTop();
+  }
+
   void DidSet(FieldIndex<IDX_InRDMPane>, bool aOldValue);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void DidSet(FieldIndex<IDX_ForceDesktopViewport>,
+                                          bool aOldValue);
 
   void DidSet(FieldIndex<IDX_EmbedderColorSchemes>,
               EmbedderColorSchemes&& aOldValue);
 
   void DidSet(FieldIndex<IDX_PrefersColorSchemeOverride>,
               dom::PrefersColorSchemeOverride aOldValue);
+
+  void DidSet(FieldIndex<IDX_ForcedColorsOverride>,
+              dom::ForcedColorsOverride aOldValue);
 
   template <typename Callback>
   void WalkPresContexts(Callback&&);
@@ -1285,7 +1312,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   bool CanSet(FieldIndex<IDX_IsInBFCache>, bool, ContentParent* aSource);
   void DidSet(FieldIndex<IDX_IsInBFCache>);
 
-  void DidSet(FieldIndex<IDX_SyntheticDocumentContainer>);
+  void DidSet(FieldIndex<IDX_IsSyntheticDocumentContainer>);
 
   void DidSet(FieldIndex<IDX_IsUnderHiddenEmbedderElement>, bool aOldValue);
 

@@ -198,9 +198,8 @@ add_task(async function test_FolderInfo_FolderCapabilities_and_query() {
           "Returned MailFolderInfo should be correct."
         );
 
-        const capabilities = await browser.folders.getFolderCapabilities(
-          InfoTestFolder
-        );
+        const capabilities =
+          await browser.folders.getFolderCapabilities(InfoTestFolder);
         window.assertDeepEqual(
           {
             canAddMessages: account.type != "nntp",
@@ -265,8 +264,8 @@ add_task(async function test_FolderInfo_FolderCapabilities_and_query() {
         ["OtherTest"]
       );
       await queryCheck({ folderId: rootFolder.id, recent: true }, [
-        "InfoTest",
         "OtherTest",
+        "InfoTest",
       ]);
       await queryCheck(
         { folderId: rootFolder.id, recent: false },
@@ -686,6 +685,18 @@ add_task(async function test_FolderInfo_FolderCapabilities_and_query() {
     "OtherTest"
   );
   await createMessages(OtherTestFolder, 1);
+
+  // Enforce different MRUTime values for folders used for recent tests. The
+  // "OtherTest" folder was created after the "InfoTest" folder and should be more
+  // recent.
+  InfoTestFolder.setStringProperty(
+    "MRUTime",
+    Math.floor(startTime.getTime() / 1000) + 1
+  );
+  OtherTestFolder.setStringProperty(
+    "MRUTime",
+    Math.floor(startTime.getTime() / 1000) + 2
+  );
 
   extension.onMessage("markSomeAsUnread", count => {
     const messages = InfoTestFolder.messages;

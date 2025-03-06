@@ -346,6 +346,7 @@ nsMsgStatusFeedback.prototype = {
   _statusFeedbackProgress: -1,
   _statusLastShown: 0,
   _statusQueue: null,
+  _timeoutDelay: ChromeUtils.isInAutomation ? 50 : 500,
 
   // unload - call to remove links to listeners etc.
   unload() {
@@ -511,7 +512,7 @@ nsMsgStatusFeedback.prototype = {
     ) {
       this._startTimeoutID = setTimeout(
         () => window.MsgStatusFeedback._startMeteors(),
-        500
+        this._timeoutDelay
       );
     }
 
@@ -566,7 +567,7 @@ nsMsgStatusFeedback.prototype = {
     ) {
       this._stopTimeoutID = setTimeout(
         () => window.MsgStatusFeedback._stopMeteors(),
-        500
+        this._timeoutDelay
       );
     }
   },
@@ -1111,9 +1112,10 @@ window.addEventListener("aboutMessageLoaded", event => {
   // Also add a copy listener so we can process images.
   event.target.document.addEventListener("copy", onCopyOrDragStart, true);
 
+  // eslint-disable-next-line no-shadow
   event.target.document.addEventListener("keypress", event => {
     if ((event.key == "Backspace" || event.key == "Delete") && event.repeat) {
-      // Bail on delete event if there is a repeat event to prevent deleteing
+      // Bail on delete event if there is a repeat event to prevent deleting
       // multiple messages by mistake from a longer key press.
       event.preventDefault();
     }

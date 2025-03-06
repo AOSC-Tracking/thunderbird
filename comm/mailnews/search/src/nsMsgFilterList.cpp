@@ -13,6 +13,7 @@
 #include "nsMsgUtils.h"
 #include "nsMsgSearchTerm.h"
 #include "nsString.h"
+#include "nsLocalFile.h"
 #include "nsIMsgFilterService.h"
 #include "nsMsgSearchScopeTerm.h"
 #include "nsIStringBundle.h"
@@ -20,7 +21,6 @@
 #include "nsIInputStream.h"
 #include "nsNativeCharsetUtils.h"
 #include "prmem.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Components.h"
 #include "mozilla/Logging.h"
 #include "mozilla/intl/AppDateTimeFormat.h"
@@ -180,9 +180,7 @@ nsresult nsMsgFilterList::GetLogFile(nsIFile** aFile) {
     rv = m_folder->GetFilePath(getter_AddRefs(thisFolder));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIFile> filterLogFile =
-        do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIFile> filterLogFile = new nsLocalFile();
     rv = filterLogFile->InitWithFile(thisFolder);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -431,7 +429,7 @@ static FilterFileAttribEntry FilterFileAttribTable[] = {
 };
 
 static const unsigned int sNumFilterFileAttribTable =
-    MOZ_ARRAY_LENGTH(FilterFileAttribTable);
+    std::size(FilterFileAttribTable);
 
 // If we want to buffer file IO, wrap it in here.
 int nsMsgFilterList::ReadChar(nsIInputStream* aStream) {

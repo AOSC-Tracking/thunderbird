@@ -279,7 +279,7 @@ export function removeGlobalAllowedStyleRule(aStyle) {
  * returns a boolean of whether the attribute should be accepted or not.
  *
  * @typedef Ruleset
- * @type {Object<string, (boolean | ValueRule)>}}
+ * @type {Record<string, (boolean | ValueRule)>}}
  */
 
 /**
@@ -290,18 +290,16 @@ export function removeGlobalAllowedStyleRule(aStyle) {
  *
  * @typedef CleanRules
  * @type {object}
- * @property {Ruleset} attrs
- *    An object whose properties are the allowed attributes for any tag.
- * @property {Object<string, (boolean|Ruleset)>} tags
- *    An object whose properties are the allowed tags.
- *
+ * @property {Ruleset} attrs - An object whose properties are the allowed
+ *   attributes for any tag.
+ * @property {Record<string, (boolean|Ruleset)>} tags - An object whose
+ *   properties are the allowed tags.
  *    The value can point to a {@link Ruleset} for that tag which augments the
  *    ones provided by attrs. If either of the {@link Ruleset}s from attrs or
  *    tags allows an attribute, then it is accepted.
- * @property {Object<string, boolean>} styles
- *    An object whose properties are the allowed CSS style rules.
- *
- *    The value of each property is unused.
+ * @property {Record<string, boolean>} styles - An object whose properties are
+ *   the allowed CSS style rules.
+ *   The value of each property is unused.
  *
  *    FIXME: make styles accept functions to filter the CSS values like Ruleset.
  *
@@ -407,33 +405,33 @@ function cleanupNode(aNode, aRules, aTextModifiers) {
       }
 
       // Cleanup the style attribute.
-      const style = node.style;
-      for (let j = 0; j < style.length; ++j) {
-        if (!(style[j] in aRules.styles)) {
-          style.removeProperty(style[j]);
+      const styles = node.style;
+      for (let j = 0; j < styles.length; ++j) {
+        if (!(styles[j] in aRules.styles)) {
+          styles.removeProperty(styles[j]);
           --j;
         }
       }
 
       // If the style attribute is now empty or if it contained unsupported or
       // unparsable CSS it should be dropped completely.
-      if (!style.length) {
+      if (!styles.length) {
         node.removeAttribute("style");
       }
 
       // Sort the style attributes for easier checking/comparing later.
       if (node.hasAttribute("style")) {
         let trailingSemi = false;
-        let attrs = node.getAttribute("style").trim();
-        if (attrs.endsWith(";")) {
-          attrs = attrs.slice(0, -1);
+        let styleAttrs = node.getAttribute("style").trim();
+        if (styleAttrs.endsWith(";")) {
+          styleAttrs = styleAttrs.slice(0, -1);
           trailingSemi = true;
         }
-        attrs = attrs.split(";").map(a => a.trim());
-        attrs.sort();
+        styleAttrs = styleAttrs.split(";").map(a => a.trim());
+        styleAttrs.sort();
         node.setAttribute(
           "style",
-          attrs.join("; ") + (trailingSemi ? ";" : "")
+          styleAttrs.join("; ") + (trailingSemi ? ";" : "")
         );
       }
     } else {

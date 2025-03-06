@@ -25,7 +25,21 @@
   }
 }
 
-#appcontent,
+#navigator-toolbox {
+  border-bottom: 0.01px solid var(--chrome-content-separator-color);
+
+  /* stylelint-disable-next-line media-query-no-invalid */
+  @media (-moz-bool-pref: "sidebar.revamp") {
+    /* This reserves space for the content area outline */
+    border-bottom-color: var(--toolbar-bgcolor);
+  }
+
+  /* stylelint-disable-next-line media-query-no-invalid */
+  @media (-moz-bool-pref: "sidebar.verticalTabs") {
+    border-bottom-style: none;
+  }
+}
+
 #browser,
 #tabbrowser-tabbox,
 #tabbrowser-tabpanels,
@@ -33,6 +47,44 @@
   /* Allow devtools with large specified width/height to shrink */
   min-width: 0;
   min-height: 0;
+}
+
+#browser:not(.browser-toolbox-background) {
+  background-color: var(--toolbar-bgcolor);
+  color: var(--toolbar-color);
+
+  :root[lwtheme] & {
+    /* Ensure toolbar color displays on top of the frame/toolbox color to
+    * guarantee full opacity */
+    background-color: var(--lwt-accent-color);
+    background-image: linear-gradient(var(--toolbar-bgcolor), var(--toolbar-bgcolor));
+  }
+}
+
+#tabbrowser-tabbox {
+  position: relative;
+  z-index: var(--browser-area-z-index-tabbox);
+  margin: 0;
+
+  /* stylelint-disable-next-line media-query-no-invalid */
+  @media (-moz-bool-pref: "sidebar.revamp") {
+    outline: 0.01px solid var(--chrome-content-separator-color);
+    box-shadow: var(--content-area-shadow);
+
+    /* stylelint-disable-next-line media-query-no-invalid */
+    @media (-moz-bool-pref: "sidebar.revamp.round-content-area") {
+      :root:not([inDOMFullscreen]) &[sidebar-shown] {
+        overflow: clip;
+        border-start-end-radius: var(--border-radius-medium);
+
+        /* stylelint-disable-next-line media-query-no-invalid */
+        @media (-moz-bool-pref: "sidebar.position_start") {
+          border-start-start-radius: var(--border-radius-medium);
+          border-start-end-radius: 0;
+        }
+      }
+    }
+  }
 }
 
 /* We set large flex on both containers to allow the devtools toolbox to
@@ -66,7 +118,7 @@
   background: var(--tabpanel-background-color);
 
   &[pendingpaint] {
-    background-image: url(chrome://browser/skin/tabbrowser/pendingpaint.png);
+    background-image: url("chrome://global/skin/icons/pendingpaint.png");
     background-repeat: no-repeat;
     background-position: center center;
     background-size: 30px;
@@ -176,6 +228,36 @@
     margin-left: 1em;
   }
 }
+
+/**
+ * Shortcuts
+ */
+#selection-shortcut-action-panel {
+  --panel-subview-body-padding: 0;
+ }
+
+#ai-action-button {
+  --button-min-height: 34px;
+  --button-size-icon: 34px;
+  --button-border-radius: 7px;
+  margin: 1px;
+}
+
+
+#ask-chat-shortcuts {
+  max-width: 345px;
+}
+
+.ask-chat-shortcut-warning {
+  margin: var(--arrowpanel-menuitem-margin);
+  margin-bottom: var(--space-xsmall);
+}
+
+.ask-chat-shortcuts-custom-prompt {
+  margin: var(--arrowpanel-menuitem-margin);
+  margin-top: var(--space-small);
+}
+
 
 /**
  * Dialogs

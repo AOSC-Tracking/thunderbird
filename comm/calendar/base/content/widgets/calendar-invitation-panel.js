@@ -298,7 +298,7 @@
      * Map-like object where each key is an InvitationPanel mode and the values
      * are descriptors used to generate the notification bar for that mode.
      *
-     * @type {Object<string, InvitationStatusBarDescriptor>}
+     * @type {Record<string, InvitationStatusBarDescriptor>}
      */
     notices = {
       [InvitationPanel.MODE_NEW]: {
@@ -422,8 +422,7 @@
   customElements.define("calendar-invitation-panel-status-bar", InvitationPanelStatusBar);
 
   /**
-   * InvitationInterval displays the formatted interval of the event. Formatting
-   * relies on cal.dtz.formatter.formatIntervalParts().
+   * InvitationInterval displays the formatted interval of the event.
    */
   class InvitationInterval extends HTMLElement {
     /**
@@ -432,13 +431,7 @@
      * @type {calIEvent}
      */
     set item(value) {
-      const [startDate, endDate] = cal.dtz.formatter.getItemDates(value);
-      const timezone = startDate.timezone.displayName;
-      const parts = cal.dtz.formatter.formatIntervalParts(startDate, endDate);
-      document.l10n.setAttributes(this, `calendar-invitation-interval-${parts.type}`, {
-        ...parts,
-        timezone,
-      });
+      this.textContent = cal.dtz.formatter.formatItemInterval(value);
     }
   }
   customElements.define("calendar-invitation-interval", InvitationInterval);
@@ -564,14 +557,14 @@
      * @returns {[T, number][]}
      */
     getChanges(_oldValue, _newValue) {
-      throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
+      throw new Error(`${this.constructor.name} does not implement getChanges().`);
     }
   }
 
   /**
    * BaseInvitationChangeListItem is the <li> element used for change lists.
    *
-   * @template {T}
+   * @template {T} item
    */
   class BaseInvitationChangeListItem extends HTMLLIElement {
     /**
@@ -604,7 +597,7 @@
      * @abstract
      */
     build(_value) {
-      throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
+      throw new Error(`${this.constructor.name} does not implement build().`);
     }
   }
 
@@ -618,7 +611,7 @@
     getChanges(oldValue, newValue) {
       const diff = [];
       for (const att of newValue) {
-        const oldAtt = oldValue.find(oldAtt => oldAtt.id == att.id);
+        const oldAtt = oldValue.find(v => v.id == att.id);
         if (!oldAtt) {
           diff.push([att, PROPERTY_ADDED]); // New attendee.
         } else if (oldAtt.participationStatus != att.participationStatus) {
@@ -677,9 +670,7 @@
         if (!attch.uri) {
           continue;
         }
-        const oldAttch = oldValue.find(
-          oldAttch => oldAttch.uri && oldAttch.uri.spec == attch.uri.spec
-        );
+        const oldAttch = oldValue.find(v => v.uri?.spec == attch.uri.spec);
 
         if (!oldAttch) {
           // New attachment.

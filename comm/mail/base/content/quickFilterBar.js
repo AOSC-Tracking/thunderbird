@@ -46,15 +46,6 @@ var quickFilterBar = {
   topLevelFilters: ["unread", "starred", "addrBook", "attachment"],
 
   /**
-   * The UI element that last triggered a search. This can be used to avoid
-   * updating the element when a search returns - in particular the text box,
-   * which the user may still be typing into.
-   *
-   * @type {Element}
-   */
-  activeElement: null,
-
-  /**
    * This identifies the timer for the deferred search, which is cleared when
    * another deferred search is scheduled.
    *
@@ -245,7 +236,7 @@ var quickFilterBar = {
             const postValue = domNode.pressed ? true : null;
             this.filterer.setFilterValue(filterDef.name, postValue);
             this.updateFiltersSettings(filterDef.name, postValue);
-            this.deferredUpdateSearch(domNode);
+            this.deferredUpdateSearch();
           } catch (ex) {
             console.error(ex);
           }
@@ -281,7 +272,7 @@ var quickFilterBar = {
           this.filterer.setFilterValue(filterDef.name, postValue, !update);
           this.updateFiltersSettings(filterDef.name, postValue);
           if (update) {
-            this.deferredUpdateSearch(domNode);
+            this.deferredUpdateSearch();
           }
         };
         handlerMenuItems = event => {
@@ -411,7 +402,8 @@ var quickFilterBar = {
   /**
    * Update the UI to reflect the state of the filterer constraints.
    *
-   * @param [aFilterName] If only a single filter needs to be updated, name it.
+   * @param {string} [aFilterName] If only a single filter needs to be updated,
+   *   name it.
    */
   reflectFiltererState(aFilterName) {
     // If we aren't visible then there is no need to update the widgets.
@@ -449,30 +441,15 @@ var quickFilterBar = {
    *  when something happens event-wise in terms of search.
    *
    * We can have one of two states:
-   * - No filter is active; no attributes exposed for CSS to do anything.
-   * - A filter is active and we are still searching; filterActive=searching.
+   * - No filter is active; nothing exposed for CSS to do anything.
+   * - A filter is active and we are still searching; class `searching` added.
    */
   reflectFiltererResults() {
-    const threadPane = document.getElementById("threadTree");
-
-    // bail early if the view is in the process of being created
+    // Bail early if the view is in the process of being created.
     if (!gDBView) {
       return;
     }
-
-    // no filter active
-    if (!gViewWrapper.search || !gViewWrapper.search.userTerms) {
-      threadPane.removeAttribute("filterActive");
-      this.domNode.removeAttribute("filterActive");
-    } else if (gViewWrapper.searching) {
-      // filter active, still searching
-      // Do not set this immediately; wait a bit and then only set this if we
-      //  still are in this same state (and we are still the active tab...)
-      setTimeout(() => {
-        threadPane.setAttribute("filterActive", "searching");
-        this.domNode.setAttribute("filterActive", "searching");
-      }, 500);
-    }
+    this.domNode.classList.toggle("searching", gViewWrapper.searching);
   },
 
   // ----------------------
@@ -492,8 +469,8 @@ var quickFilterBar = {
    *  causes the filter to be the last touched filter for escape undo-ish
    *  purposes.
    *
-   * @param aName Filter name.
-   * @param aValue The new filter state.
+   * @param {string} aName - Filter name.
+   * @param {FilterDefinition} aValue - The new filter state.
    */
   setFilterValue(aName, aValue) {
     this.filterer.setFilterValue(aName, aValue);
@@ -503,28 +480,21 @@ var quickFilterBar = {
    * For UI responsiveness purposes, defer the actual initiation of the search
    * until after the button click handling has completed and had the ability
    * to paint such.
-   *
-   * @param {Element} activeElement - The element that triggered a call to
-   *   this function, if any.
    */
-  deferredUpdateSearch(activeElement) {
+  deferredUpdateSearch() {
     clearTimeout(this.searchTimeoutID);
-    this.searchTimeoutID = setTimeout(() => this.updateSearch(activeElement));
+    this.searchTimeoutID = setTimeout(() => this.updateSearch());
   },
 
   /**
    * Update the user terms part of the search definition to reflect the active
    * filterer's current state.
-   *
-   * @param {Element?} activeElement - The element that triggered a call to
-   *   this function, if any.
    */
-  updateSearch(activeElement) {
+  updateSearch() {
     if (!this._filterer || !gViewWrapper?.search) {
       return;
     }
 
-    this.activeElement = activeElement;
     this.filterer.displayedFolder = gFolder;
 
     const [terms, listeners] = this.filterer.createSearchTerms(

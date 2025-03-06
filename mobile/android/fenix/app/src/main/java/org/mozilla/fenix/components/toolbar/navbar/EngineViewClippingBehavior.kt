@@ -9,10 +9,10 @@ import android.util.AttributeSet
 import android.view.View
 import androidx.annotation.VisibleForTesting
 import androidx.coordinatorlayout.widget.CoordinatorLayout
-import mozilla.components.browser.toolbar.BrowserToolbar
 import mozilla.components.concept.engine.EngineView
 import mozilla.components.concept.toolbar.ScrollableToolbar
 import mozilla.components.support.ktx.android.view.findViewInHierarchy
+import kotlin.math.roundToInt
 
 /**
  * A modification of [mozilla.components.ui.widgets.behavior.EngineViewClippingBehavior] that supports two toolbars.
@@ -51,6 +51,7 @@ class EngineViewClippingBehavior(
 
     override fun layoutDependsOn(parent: CoordinatorLayout, child: View, dependency: View): Boolean {
         if (dependency is ScrollableToolbar) {
+            applyUpdatesDependentViewChanged(parent, dependency)
             return true
         }
 
@@ -63,23 +64,20 @@ class EngineViewClippingBehavior(
     // have different sizes: as the top toolbar moves up, the bottom content clipping should be adjusted at twice the
     // speed to compensate for the increased parent view height. However, once the top toolbar is completely hidden, the
     // bottom content clipping should then move at the normal speed.
-    override fun onDependentViewChanged(parent: CoordinatorLayout, child: View, dependency: View): Boolean {
+    @VisibleForTesting
+    internal fun applyUpdatesDependentViewChanged(parent: CoordinatorLayout, dependency: View) {
         // Added NaN check for translationY as a precaution based on historical issues observed in
         // [https://bugzilla.mozilla.org/show_bug.cgi?id=1823306]. This check aims to prevent similar issues, as
         // confirmed by the test. Further investigation might be needed to identify all possible causes of NaN values.
         if (dependency.translationY.isNaN()) {
-            return true
+            return
         }
 
-        when (dependency) {
-            is BrowserToolbar -> {
-                if (hasTopToolbar) {
-                    recentTopToolbarTranslation = dependency.translationY
-                } else {
-                    recentBottomToolbarTranslation = dependency.translationY
-                }
-            }
-            is ToolbarContainerView -> recentBottomToolbarTranslation = dependency.translationY
+        val dependantAtTop = dependency.top < parent.height / 2
+        if (dependantAtTop) {
+            recentTopToolbarTranslation = dependency.translationY
+        } else {
+            recentBottomToolbarTranslation = dependency.translationY
         }
 
         engineView?.let {
@@ -102,8 +100,7 @@ class EngineViewClippingBehavior(
             // the values should be negative because the baseline
             // for clipping is bottom toolbar height.
             val contentBottomClipping = recentTopToolbarTranslation - recentBottomToolbarTranslation
-            it.setVerticalClipping(contentBottomClipping.toInt())
+            it.setVerticalClipping(contentBottomClipping.roundToInt())
         }
-        return true
     }
 }

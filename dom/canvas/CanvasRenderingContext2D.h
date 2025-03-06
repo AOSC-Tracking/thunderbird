@@ -36,6 +36,7 @@ class nsXULElement;
 
 namespace mozilla {
 class ErrorResult;
+class ISVGFilterObserverList;
 class PresShell;
 
 namespace gl {
@@ -98,6 +99,10 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
   }
 
   void GetContextAttributes(CanvasRenderingContext2DSettings& aSettings) const;
+
+  void GetDebugInfo(bool aEnsureTarget,
+                    CanvasRenderingContext2DDebugInfo& aDebugInfo,
+                    ErrorResult& aError);
 
   void OnMemoryPressure() override;
   void OnBeforePaintTransaction() override;
@@ -457,6 +462,14 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
     }
   }
 
+  CanvasContextProperties ContextProperties() const {
+    return mContextProperties;
+  }
+
+  void SetContextProperties(const CanvasContextProperties& aValue) {
+    mContextProperties = aValue;
+  }
+
   void DrawWindow(nsGlobalWindowInner& aWindow, double aX, double aY, double aW,
                   double aH, const nsACString& aBgColor, uint32_t aFlags,
                   nsIPrincipal& aSubjectPrincipal,
@@ -811,7 +824,7 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
     return CurrentState().font;
   }
 
-  bool GetEffectiveWillReadFrequently() const;
+  bool UseSoftwareRendering() const;
 
   // Member vars
   int32_t mWidth, mHeight;
@@ -857,12 +870,16 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
   // Whether the application expects to use operations that perform poorly with
   // acceleration.
   bool mWillReadFrequently = false;
+  // Whether to force software rendering
+  bool mForceSoftwareRendering = false;
   // Whether or not we have already shutdown.
   bool mHasShutdown = false;
   // Whether or not remote canvas is currently unavailable.
   bool mIsContextLost = false;
   // Whether or not we can restore the context after restoration.
   bool mAllowContextRestore = true;
+  // Which context properties apply to an SVG when calling drawImage.
+  CanvasContextProperties mContextProperties = CanvasContextProperties::None;
 
   bool AddShutdownObserver();
   void RemoveShutdownObserver();
@@ -1077,7 +1094,7 @@ class CanvasRenderingContext2D : public nsICanvasRenderingContextInternal,
     StyleOwnedSlice<StyleFilter> filterChain;
     // RAII object that we obtain when we start to observer SVG filter elements
     // for rendering changes.  When released we stop observing the SVG elements.
-    nsCOMPtr<nsISupports> autoSVGFiltersObserver;
+    nsCOMPtr<ISVGFilterObserverList> autoSVGFiltersObserver;
     mozilla::gfx::FilterDescription filter;
     nsTArray<RefPtr<mozilla::gfx::SourceSurface>> filterAdditionalImages;
 

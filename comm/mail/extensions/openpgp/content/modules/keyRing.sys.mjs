@@ -178,10 +178,8 @@ export var EnigmailKeyRing = {
   emailAddressesWithSecretKey: null,
 
   async _populateEmailHasSecretKeyCache() {
-    this.emailAddressesWithSecretKey = new Set();
-
     this.getAllKeys(); // ensure keylist is loaded;
-
+    const emailAddressesWithSecretKey = new Set();
     for (const key of gKeyListObj.keyList) {
       if (!key.secretAvailable) {
         continue;
@@ -199,19 +197,20 @@ export var EnigmailKeyRing = {
         if (lazy.EnigmailTrust.isInvalid(userId.keyTrust)) {
           continue;
         }
-        this.emailAddressesWithSecretKey.add(
+        emailAddressesWithSecretKey.add(
           lazy.EnigmailFuncs.getEmailFromUserID(userId.userId).toLowerCase()
         );
       }
     }
+    this.emailAddressesWithSecretKey = emailAddressesWithSecretKey;
   },
 
   /**
    * This API uses a cache. It helps when making lookups from multiple
    * places, during a longer transaction.
    * Currently, the cache isn't refreshed automatically.
-   * Set this.emailAddressesWithSecretKey to null when starting a new
-   * operation that needs fresh information.
+   * this.emailAddressesWithSecretKey should be set to null when keys have
+   * changed and the cache needs to be refreshed.
    *
    * @param {string} emailAddr
    */
@@ -383,54 +382,29 @@ export var EnigmailKeyRing = {
     const data = await IOUtils.read(inputFile.path);
     const contents = MailStringUtils.uint8ArrayToByteString(data);
     let res;
-    let tryAgain;
 
-    const allowPermissive = Services.prefs.getBoolPref(
-      "mail.openpgp.allow_permissive_import",
-      false
-    );
+    let failed = true;
 
-    let permissive = false;
-    do {
-      tryAgain = false;
-      let failed = true;
+    try {
+      res = await lazy.RNP.importSecKeyBlockImpl(
+        win,
+        passCB,
+        keepPassphrases,
+        contents
+      );
+      failed =
+        !res || res.exitCode || !res.importedKeys || !res.importedKeys.length;
+    } catch (ex) {
+      Services.prompt.alert(win, null, ex);
+    }
 
-      try {
-        // strict on first attempt, permissive on optional second attempt
-        res = await lazy.RNP.importSecKeyBlockImpl(
-          win,
-          passCB,
-          keepPassphrases,
-          contents,
-          permissive
-        );
-        failed =
-          !res || res.exitCode || !res.importedKeys || !res.importedKeys.length;
-      } catch (ex) {
-        Services.prompt.alert(win, null, ex);
-      }
-
-      if (failed) {
-        if (!permissive && allowPermissive) {
-          if (
-            Services.prompt.confirm(
-              win,
-              null,
-              await lazy.l10n.formatValue("confirm-permissive-import")
-            )
-          ) {
-            permissive = true;
-            tryAgain = true;
-          }
-        } else {
-          Services.prompt.alert(
-            win,
-            null,
-            await lazy.l10n.formatValue("import-keys-failed")
-          );
-        }
-      }
-    } while (tryAgain);
+    if (failed) {
+      Services.prompt.alert(
+        win,
+        null,
+        await lazy.l10n.formatValue("import-keys-failed")
+      );
+    }
 
     if (!res || !res.importedKeys) {
       errorMsgObj.value = res.errorMsg ? res.errorMsg : "";
@@ -489,6 +463,7 @@ export var EnigmailKeyRing = {
    * Empty the key cache, such that it will get loaded next time it is accessed.
    */
   clearCache() {
+    this.emailAddressesWithSecretKey = null;
     gKeyListObj = {
       keyList: [],
       keySortList: [],
@@ -795,7 +770,7 @@ export var EnigmailKeyRing = {
   },
 
   /**
-   * Import key from provided key data (asynchronous).
+   * Import public key from provided key data (asynchronous).
    *
    * @param {window} parent
    * @param {boolean} askToConfirm - If true, display confirmation dialog.
@@ -828,11 +803,6 @@ export var EnigmailKeyRing = {
     limitedUids = [],
     acceptance = null
   ) {
-    const allowPermissiveFallbackWithPrompt = Services.prefs.getBoolPref(
-      "mail.openpgp.allow_permissive_import",
-      false
-    );
-
     var pgpBlock;
     if (!isBinary) {
       const beginIndexObj = {};
@@ -885,51 +855,33 @@ export var EnigmailKeyRing = {
     }
 
     let result = undefined;
-    let tryAgain;
-    let permissive = false;
-    do {
-      // strict on first attempt, permissive on optional second attempt
-      const blockParam = isBinary ? keyBlock : pgpBlock;
+    const blockParam = isBinary ? keyBlock : pgpBlock;
 
-      // TODO: The filtering might not work, because the underlying
-      // implementation wants to filter by fingerprint, but the filter
-      // input is apparently user IDs? Really?
-      result = await lazy.RNP.importPubkeyBlockAutoAcceptImpl(
-        parent,
-        blockParam,
-        acceptance,
-        permissive,
-        limitedUids
-      );
+    // TODO: The filtering might not work, because the underlying
+    // implementation wants to filter by fingerprint, but the filter
+    // input is apparently user IDs? Really?
+    result = await lazy.RNP.importPubkeyBlockAutoAcceptImpl(
+      parent,
+      blockParam,
+      acceptance,
+      limitedUids
+    );
 
-      tryAgain = false;
-      const failed =
-        !result ||
-        result.exitCode ||
-        !result.importedKeys ||
-        !result.importedKeys.length;
-      if (failed) {
-        if (allowPermissiveFallbackWithPrompt && !permissive) {
-          if (
-            Services.prompt.confirm(
-              parent,
-              null,
-              await lazy.l10n.formatValue("confirm-permissive-import")
-            )
-          ) {
-            permissive = true;
-            tryAgain = true;
-          }
-        } else if (askToConfirm) {
-          // if !askToConfirm the caller is responsible to handle the error
-          Services.prompt.alert(
-            parent,
-            null,
-            await lazy.l10n.formatValue("import-keys-failed")
-          );
-        }
+    const failed =
+      !result ||
+      result.exitCode ||
+      !result.importedKeys ||
+      !result.importedKeys.length;
+    if (failed) {
+      if (askToConfirm) {
+        // if !askToConfirm the caller is responsible to inform the user
+        Services.prompt.alert(
+          parent,
+          null,
+          await lazy.l10n.formatValue("import-keys-failed")
+        );
       }
-    } while (tryAgain);
+    }
 
     if (!result) {
       result = {};

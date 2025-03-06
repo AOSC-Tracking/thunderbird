@@ -19,7 +19,7 @@ use crate::values::generics::position::Position as GenericPosition;
 use crate::values::generics::NonNegative;
 use crate::values::specified::position::{HorizontalPositionKeyword, VerticalPositionKeyword};
 use crate::values::specified::position::{Position, PositionComponent, Side};
-use crate::values::specified::url::SpecifiedImageUrl;
+use crate::values::specified::url::SpecifiedUrl;
 use crate::values::specified::{
     Angle, AngleOrPercentage, Color, Length, LengthPercentage, NonNegativeLength,
     NonNegativeLengthPercentage, Resolution,
@@ -28,8 +28,6 @@ use crate::values::specified::{Number, NumberOrPercentage, Percentage};
 use crate::Atom;
 use cssparser::{Delimiter, Parser, Token};
 use selectors::parser::SelectorParseErrorKind;
-#[cfg(feature = "servo")]
-use servo_url::ServoUrl;
 use std::cmp::Ordering;
 use std::fmt::{self, Write};
 use style_traits::{CssType, CssWriter, KeywordsCollectFn, ParseError};
@@ -42,7 +40,7 @@ fn gradient_color_interpolation_method_enabled() -> bool {
 
 /// Specified values for an image according to CSS-IMAGES.
 /// <https://drafts.csswg.org/css-images/#image-values>
-pub type Image = generic::Image<Gradient, SpecifiedImageUrl, Color, Percentage, Resolution>;
+pub type Image = generic::Image<Gradient, SpecifiedUrl, Color, Percentage, Resolution>;
 
 // Images should remain small, see https://github.com/servo/servo/pull/18430
 size_of_test!(Image, 16);
@@ -121,6 +119,7 @@ fn cross_fade_enabled() -> bool {
 fn cross_fade_enabled() -> bool {
     false
 }
+
 
 impl SpecifiedValueInfo for Gradient {
     const SUPPORTED_TYPES: u8 = CssType::GRADIENT;
@@ -217,7 +216,7 @@ impl Image {
         }
 
         if let Ok(url) = input
-            .try_parse(|input| SpecifiedImageUrl::parse_with_cors_mode(context, input, cors_mode))
+            .try_parse(|input| SpecifiedUrl::parse_with_cors_mode(context, input, cors_mode))
         {
             return Ok(generic::Image::Url(url));
         }
@@ -256,7 +255,7 @@ impl Image {
     /// Creates an already specified image value from an already resolved URL
     /// for insertion in the cascade.
     #[cfg(feature = "servo")]
-    pub fn for_cascade(url: ServoUrl) -> Self {
+    pub fn for_cascade(url: ::servo_arc::Arc<::url::Url>) -> Self {
         use crate::values::CssUrl;
         generic::Image::Url(CssUrl::for_cascade(url))
     }
@@ -420,7 +419,7 @@ impl ImageSetItem {
         flags: ParseImageFlags,
     ) -> Result<Self, ParseError<'i>> {
         let image = match input.try_parse(|i| i.expect_url_or_string()) {
-            Ok(url) => Image::Url(SpecifiedImageUrl::parse_from_string(
+            Ok(url) => Image::Url(SpecifiedUrl::parse_from_string(
                 url.as_ref().into(),
                 context,
                 cors_mode,
@@ -787,7 +786,7 @@ impl Gradient {
     ) -> Result<LengthPercentageItemList, ParseError<'i>> {
         let items =
             generic::GradientItem::parse_comma_separated(context, input, LengthPercentage::parse)?;
-        if items.len() < 2 {
+        if items.is_empty() {
             return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
         }
         Ok(items)
@@ -967,7 +966,7 @@ impl Gradient {
             AngleOrPercentage::parse_with_unitless,
         )?;
 
-        if items.len() < 2 {
+        if items.is_empty() {
             return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
         }
 
@@ -1250,7 +1249,7 @@ impl<T> generic::GradientItem<Color, T> {
             }
         }
 
-        if !seen_stop || items.len() < 2 {
+        if !seen_stop || items.is_empty() {
             return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
         }
         Ok(items.into())
@@ -1308,6 +1307,7 @@ impl PaintWorklet {
 #[repr(u8)]
 pub enum ImageRendering {
     Auto,
+    #[cfg(feature = "gecko")]
     Smooth,
     #[parse(aliases = "-moz-crisp-edges")]
     CrispEdges,
@@ -1320,6 +1320,8 @@ pub enum ImageRendering {
     //     as crisp-edges and smooth respectively, and authors must not use
     //     them.
     //
+    #[cfg(feature = "gecko")]
     Optimizespeed,
+    #[cfg(feature = "gecko")]
     Optimizequality,
 }

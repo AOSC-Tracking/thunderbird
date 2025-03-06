@@ -16,7 +16,12 @@
 {
   const { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
   const MINUTES_IN_DAY = 24 * 60;
-
+  const lazy = {};
+  ChromeUtils.defineLazyGetter(
+    lazy,
+    "l10n",
+    () => new Localization(["calendar/calendar.ftl"], true)
+  );
   /**
    * Get the nearest or next snap point for the given minute. The set of snap
    * points is given by `n * snapInterval`, where `n` is some integer.
@@ -219,9 +224,9 @@
        */
       /**
        * Event data for all the events displayed in this column.
+       * A map from an event item's hashId to its data.
        *
-       * @type {Map<string,EventData>} - A map from an event item's hashId to
-       *   its data.
+       * @type {Map<string,EventData>}
        */
       this.eventDataMap = new Map();
 
@@ -675,10 +680,10 @@
         allEventBlocks.push(blockColumns);
       }
 
-      for (const blockColumns of allEventBlocks) {
-        const totalCols = blockColumns.length;
+      for (const column of allEventBlocks) {
+        const totalCols = column.length;
         for (let colIndex = 0; colIndex < totalCols; colIndex++) {
-          for (const eventInfo of blockColumns[colIndex]) {
+          for (const eventInfo of column[colIndex]) {
             if (eventInfo.processed) {
               // Already processed this Event in an earlier Column.
               continue;
@@ -696,7 +701,7 @@
               neighbourColIndex < totalCols;
               neighbourColIndex++
             ) {
-              const neighbourColumn = blockColumns[neighbourColIndex];
+              const neighbourColumn = column[neighbourColIndex];
               // Test if this Event overlaps any of the other Events in the
               // neighbouring Column.
               let overlapsCol = false;
@@ -816,9 +821,9 @@
       const item = this.mDragState.dragOccurrence;
       if (item?.isTodo()) {
         if (!item.dueDate) {
-          startStr = cal.l10n.getCalString("dragLabelTasksWithOnlyEntryDate");
+          startStr = lazy.l10n.formatValueSync("drag-label-tasks-with-only-entry-date");
         } else if (!item.entryDate) {
-          startStr = cal.l10n.getCalString("dragLabelTasksWithOnlyDueDate");
+          startStr = lazy.l10n.formatValueSync("drag-label-tasks-with-only-due-date");
         }
       }
 
@@ -1744,6 +1749,7 @@
       if (this.delayConnectedCallback() || this.hasChildNodes()) {
         return;
       }
+      MozXULElement.insertFTLIfNeeded("calendar/calendar.ftl");
 
       this.appendChild(
         MozXULElement.parseXULToFragment(`
@@ -1754,7 +1760,7 @@
               <html:div class="event-name-label"></html:div>
               <html:input class="plain event-name-input"
                           hidden="hidden"
-                          placeholder='${cal.l10n.getCalString("newEvent")}'/>
+                          data-l10n-id="new-event"/>
               <html:div class="alarm-icons-box"></html:div>
               <html:img class="item-classification-icon" />
               <html:img class="item-recurrence-icon" />
@@ -2670,7 +2676,11 @@
 
       if (this.mStartDate.timezone.tzid == date.timezone.tzid) {
         if (this.mStartDate && this.mEndDate) {
-          if (this.mStartDate.compare(targetDate) <= 0 && this.mEndDate.compare(targetDate) >= 0) {
+          if (
+            this.mStartDate.compare(targetDate) <= 0 &&
+            this.mEndDate.compare(targetDate) >= 0 &&
+            this.mStartDate.weekday == this.weekStartOffset
+          ) {
             return;
           }
         } else if (this.mDateList) {
@@ -2688,7 +2698,9 @@
       if (this.numVisibleDates == 1) {
         this.setDateRange(date, date);
       } else {
-        this.setDateRange(date.startOfWeek, date.endOfWeek);
+        const viewStart = cal.weekInfoService.getStartOfWeek(targetDate);
+        const viewEnd = cal.weekInfoService.getEndOfWeek(targetDate);
+        this.setDateRange(viewStart, viewEnd);
       }
 
       this.selectedDay = targetDate;
@@ -3044,15 +3056,17 @@
           dayCol.date.isDate = true;
           dayCol.date.makeImmutable();
 
-          /* Set up day of the week headings. */
-          dayCol.shortHeading.textContent = cal.l10n.getCalString("dayHeaderLabel", [
-            dateFormatter.shortDayName(dayDate.weekday),
-            dateFormatter.formatDateWithoutYear(dayDate),
-          ]);
-          dayCol.longHeading.textContent = cal.l10n.getCalString("dayHeaderLabel", [
-            dateFormatter.dayName(dayDate.weekday),
-            dateFormatter.formatDateWithoutYear(dayDate),
-          ]);
+          // Set up day of the week headings. This needs to happen synchronously
+          // so that it happens before the layout calculations, so we don't use
+          // `document.l10n.setAttributes` here.
+          dayCol.shortHeading.textContent = lazy.l10n.formatValueSync("day-header", {
+            dayName: dateFormatter.shortWeekdayNames[dayDate.weekday],
+            dayIndex: dateFormatter.formatDateWithoutYear(dayDate),
+          });
+          dayCol.longHeading.textContent = lazy.l10n.formatValueSync("day-header", {
+            dayName: dateFormatter.weekdayNames[dayDate.weekday],
+            dayIndex: dateFormatter.formatDateWithoutYear(dayDate),
+          });
 
           /* Set up all-day header. */
           dayCol.header.date = dayDate;

@@ -24,6 +24,7 @@
 #include "nsIDocShell.h"
 #include "nsIAuthPrompt.h"
 #include "nsNetUtil.h"
+#include "nsLocalFile.h"
 #include "nsIWindowWatcher.h"
 #include "nsIMsgHdr.h"
 #include "nsILoginInfo.h"
@@ -349,14 +350,6 @@ nsMsgIncomingServer::GetCanSearchMessages(bool* canSearchMessages) {
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsMsgIncomingServer::GetCanUndoDeleteOnServer(bool* canUndoDeleteOnServer) {
-  // derived class should override if they need to do this.
-  NS_ENSURE_ARG_POINTER(canUndoDeleteOnServer);
-  *canUndoDeleteOnServer = true;
-  return NS_OK;
-}
-
 // construct <localStoreType>://[<username>@]<hostname
 NS_IMETHODIMP
 nsMsgIncomingServer::GetServerURI(nsACString& aResult) {
@@ -392,7 +385,7 @@ nsresult nsMsgIncomingServer::CreateLocalFolder(const nsAString& folderName) {
   nsresult rv = GetRootFolder(getter_AddRefs(rootFolder));
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIMsgFolder> child;
-  rv = rootFolder->GetChildNamed(folderName, getter_AddRefs(child));
+  rootFolder->GetChildNamed(folderName, getter_AddRefs(child));
   if (child) return NS_OK;
   nsCOMPtr<nsIMsgPluggableStore> msgStore;
   rv = GetMsgStore(getter_AddRefs(msgStore));
@@ -1046,8 +1039,7 @@ nsMsgIncomingServer::GetFilterList(nsIMsgWindow* aMsgWindow,
     rv = msgFolder->GetFilePath(getter_AddRefs(thisFolder));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    mFilterFile = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    mFilterFile = new nsLocalFile();
     rv = mFilterFile->InitWithFile(thisFolder);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1056,9 +1048,7 @@ nsMsgIncomingServer::GetFilterList(nsIMsgWindow* aMsgWindow,
     bool fileExists;
     mFilterFile->Exists(&fileExists);
     if (!fileExists) {
-      nsCOMPtr<nsIFile> oldFilterFile =
-          do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
+      nsCOMPtr<nsIFile> oldFilterFile = new nsLocalFile();
       rv = oldFilterFile->InitWithFile(thisFolder);
       NS_ENSURE_SUCCESS(rv, rv);
       oldFilterFile->AppendNative("rules.dat"_ns);
@@ -2039,12 +2029,5 @@ NS_IMETHODIMP nsMsgIncomingServer::IsNewHdrDuplicate(nsIMsgDBHdr* aNewHdr,
       }
     }
   }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::GetSortOrder(int32_t* aSortOrder) {
-  NS_ENSURE_ARG_POINTER(aSortOrder);
-  *aSortOrder = 100000000;
   return NS_OK;
 }

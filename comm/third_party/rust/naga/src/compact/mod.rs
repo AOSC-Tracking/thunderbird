@@ -4,8 +4,9 @@ mod handle_set_map;
 mod statements;
 mod types;
 
+use crate::arena::HandleSet;
 use crate::{arena, compact::functions::FunctionTracer};
-use handle_set_map::{HandleMap, HandleSet};
+use handle_set_map::HandleMap;
 
 /// Remove unused types, expressions, and constants from `module`.
 ///
@@ -59,6 +60,24 @@ pub fn compact(module: &mut crate::Module) {
         module_tracer.types_used.insert(override_.ty);
         if let Some(init) = override_.init {
             module_tracer.global_expressions_used.insert(init);
+        }
+    }
+
+    for (_, ty) in module.types.iter() {
+        if let crate::TypeInner::Array {
+            size: crate::ArraySize::Pending(crate::PendingArraySize::Expression(size_expr)),
+            ..
+        } = ty.inner
+        {
+            module_tracer.global_expressions_used.insert(size_expr);
+        }
+    }
+
+    for e in module.entry_points.iter() {
+        if let Some(sizes) = e.workgroup_size_overrides {
+            for size in sizes.iter().filter_map(|x| *x) {
+                module_tracer.global_expressions_used.insert(size);
+            }
         }
     }
 
@@ -175,6 +194,18 @@ pub fn compact(module: &mut crate::Module) {
         }
     }
 
+    // Adjust workgroup_size_overrides
+    log::trace!("adjusting workgroup_size_overrides");
+    for e in module.entry_points.iter_mut() {
+        if let Some(sizes) = e.workgroup_size_overrides.as_mut() {
+            for size in sizes.iter_mut() {
+                if let Some(expr) = size.as_mut() {
+                    module_map.global_expressions.adjust(expr);
+                }
+            }
+        }
+    }
+
     // Adjust global variables' types and initializers.
     log::trace!("adjusting global variables");
     for (_, global) in module.global_variables.iter_mut() {
@@ -252,7 +283,6 @@ impl<'module> ModuleTracer<'module> {
         expressions::ExpressionTracer {
             expressions: &self.module.global_expressions,
             constants: &self.module.constants,
-            overrides: &self.module.overrides,
             types_used: &mut self.types_used,
             constants_used: &mut self.constants_used,
             expressions_used: &mut self.global_expressions_used,
@@ -267,7 +297,6 @@ impl<'module> ModuleTracer<'module> {
         FunctionTracer {
             function,
             constants: &self.module.constants,
-            overrides: &self.module.overrides,
             types_used: &mut self.types_used,
             constants_used: &mut self.constants_used,
             global_expressions_used: &mut self.global_expressions_used,

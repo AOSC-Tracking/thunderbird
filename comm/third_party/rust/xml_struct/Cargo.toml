@@ -26,6 +26,7 @@ name = "xml_struct"
 path = "src/lib.rs"
 
 [dependencies]
+anyhow = "1.0.69"
 quick-xml = "0.31.0"
 thiserror = "1.0.56"
 

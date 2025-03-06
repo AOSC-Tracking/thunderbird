@@ -65,20 +65,12 @@
 // old - for backward compatibility only
 #define PREF_MAIL_ROOT_IMAP "mail.root.imap"
 
-#define NS_IMAPURL_CID                             \
-  {                                                \
-    0x21a89611, 0xdc0d, 0x11d2, {                  \
-      0x80, 0x6c, 0x0, 0x60, 0x8, 0x12, 0x8c, 0x4e \
-    }                                              \
-  }
+#define NS_IMAPURL_CID \
+  {0x21a89611, 0xdc0d, 0x11d2, {0x80, 0x6c, 0x0, 0x60, 0x8, 0x12, 0x8c, 0x4e}}
 static NS_DEFINE_CID(kImapUrlCID, NS_IMAPURL_CID);
 
-#define NS_IMAPMOCKCHANNEL_CID                    \
-  {                                               \
-    0x4eca51df, 0x6734, 0x11d3, {                 \
-      0x98, 0x9a, 0x0, 0x10, 0x83, 0x1, 0xe, 0x9b \
-    }                                             \
-  }
+#define NS_IMAPMOCKCHANNEL_CID \
+  {0x4eca51df, 0x6734, 0x11d3, {0x98, 0x9a, 0x0, 0x10, 0x83, 0x1, 0xe, 0x9b}}
 static NS_DEFINE_CID(kCImapMockChannel, NS_IMAPMOCKCHANNEL_CID);
 
 static const char sequenceString[] = "SEQUENCE";
@@ -560,7 +552,7 @@ NS_IMETHODIMP nsImapService::CopyMessages(
   nsCOMPtr<nsIImapMessageSink> imapMessageSink(do_QueryInterface(folder, &rv));
   if (NS_SUCCEEDED(rv)) {
     // we generate the uri for the first message so that way on down the line,
-    // GetMessage in nsCopyMessageStreamListener will get an unescaped
+    // GetMessage in CopyMessageStreamListener will get an unescaped
     // username and be able to find the msg hdr. See bug 259656 for details
     nsCString uri;
     srcFolder->GenerateMessageURI(aKeys[0], uri);

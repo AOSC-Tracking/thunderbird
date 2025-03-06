@@ -11,7 +11,17 @@ ChromeUtils.defineESModuleGetters(lazy, {
   SmartMailboxUtils: "resource:///modules/SmartMailboxUtils.sys.mjs",
 });
 
+async function focusWindow(win) {
+  win.focus();
+  await TestUtils.waitForCondition(
+    () => Services.focus.focusedWindow?.browsingContext.topChromeWindow == win,
+    "waiting for window to be focused"
+  );
+}
+
 async function clickExtensionButton(win, buttonId) {
+  await focusWindow(win.top);
+
   buttonId = CSS.escape(buttonId);
   const actionButton = await TestUtils.waitForCondition(
     () =>
@@ -60,7 +70,7 @@ class MenuTestHelper {
   /**
    * An object describing the state of a <menu> or <menuitem>.
    *
-   * @typedef {Object} MenuItemData
+   * @typedef {object} MenuItemData
    * @property {boolean|string[]} [hidden] - true if the item should be hidden
    *   in all modes, or a list of modes in which it should be hidden.
    * @property {boolean|string[]} [disabled] - true if the item should be
@@ -75,11 +85,12 @@ class MenuTestHelper {
    *   item should be displaying. If not specified, the string should not have
    *   arguments.
    */
+
   /**
    * An object describing the possible states of a menu's items. Object keys
    * are the item's ID, values describe the item's state.
    *
-   * @typedef {Object.<string, MenuItemData>} MenuData
+   * @typedef {object} MenuData - An object like Object.<string,MenuItemData>
    */
 
   /** @type {MenuData} */
@@ -245,8 +256,8 @@ class MenuTestHelper {
 
   /**
    * Activates the item in the menu.
+   * NOTE: This currently only works on top-level items.
    *
-   * @note This currently only works on top-level items.
    * @param {string} menuItemID - The item to activate.
    * @param {MenuData} [data] - If given, the expected state of the menu item
    *   before activation.
@@ -338,6 +349,7 @@ async function openMessageFromFile(file) {
 
 /**
  * Wait for a message to be fully loaded in the given about:message.
+ *
  * @param {browser} aboutMessageBrowser - The browser for the about:message
  *   window displaying the message.
  */
@@ -367,21 +379,71 @@ async function promiseServerIdle(server) {
       () => server.allConnectionsIdle,
       "waiting for IMAP connection to become idle"
     );
-    return;
-  }
-  if (server.type == "pop3") {
+  } else if (server.type == "pop3") {
     await TestUtils.waitForCondition(
       () => !server.wrappedJSObject.runningClient,
       "waiting for POP3 connection to become idle"
     );
-    return;
-  }
-  if (server.type == "nntp") {
+  } else if (server.type == "nntp") {
     await TestUtils.waitForCondition(
       () => server.wrappedJSObject._busyConnections.length == 0,
       "waiting for NNTP connection to become idle"
     );
   }
+
+  const status = window.MsgStatusFeedback;
+  try {
+    await TestUtils.waitForCondition(
+      () =>
+        !status._startTimeoutID &&
+        !status._meteorsSpinning &&
+        !status._stopTimeoutID,
+      "waiting for meteors to stop spinning"
+    );
+  } catch (ex) {
+    // If the meteors don't stop spinning within 5 seconds, something has got
+    // confused somewhere and they'll probably keep spinning forever.
+    // Reset and hope we can continue without more problems.
+    Assert.ok(!status._startTimeoutID, "meteors should not have a start timer");
+    Assert.ok(!status._meteorsSpinning, "meteors should not be spinning");
+    Assert.ok(!status._stopTimeoutID, "meteors should not have a stop timer");
+    if (status._startTimeoutID) {
+      clearTimeout(status._startTimeoutID);
+      status._startTimeoutID = null;
+    }
+    if (status._stopTimeoutID) {
+      clearTimeout(status._stopTimeoutID);
+      status._stopTimeoutID = null;
+    }
+    status._stopMeteors();
+  }
+
+  Assert.ok(
+    BrowserTestUtils.isHidden(status._progressBar),
+    "progress bar should not be visible"
+  );
+  Assert.ok(
+    status._progressBar.hasAttribute("value"),
+    "progress bar should not be in the indeterminate state"
+  );
+  if (BrowserTestUtils.isVisible(status._progressBar)) {
+    // Somehow the progress bar is still visible and probably in the
+    // indeterminate state, meaning vsync timers are still active. Reset it.
+    status._stopMeteors();
+  }
+
+  Assert.equal(
+    status._startRequests,
+    0,
+    "status bar should not have any start requests"
+  );
+  Assert.equal(
+    status._activeProcesses.length,
+    0,
+    "status bar should not have any active processes"
+  );
+  status._startRequests = 0;
+  status._activeProcesses.length = 0;
 }
 
 // Report and remove any remaining accounts/servers. If we register a cleanup

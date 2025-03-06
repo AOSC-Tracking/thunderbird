@@ -32,6 +32,9 @@ var { PluralForm } = ChromeUtils.importESModule(
 var { VirtualFolderHelper } = ChromeUtils.importESModule(
   "resource:///modules/VirtualFolderWrapper.sys.mjs"
 );
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
 
 window.addEventListener("DOMContentLoaded", onLoad);
 
@@ -121,6 +124,7 @@ function onLoad() {
   }
   updateOnlineSearchState();
   updateFoldersCount();
+  UIFontSize.registerWindow(window);
 }
 
 function setupSearchRows(aSearchTerms) {
@@ -292,8 +296,9 @@ function onOK(event) {
     // check to see if we already have a folder with the same name and alert the user if so...
     var parentFolder = MailUtils.getOrCreateFolder(uri);
 
-    // sanity check the name based on the logic used by nsMsgBaseUtils.cpp. It can't start with a '.', it can't end with a '.', '~' or ' '.
-    // it can't contain a ';' or '#'.
+    // See ILLEGAL_FOLDER_CHARS. Name can't start with a '.', it can't end with
+    // a '.', '~' or ' '. It can't contain a ';' or '#'.
+    // TODO: these get hashed by NS_MsgHashIfNecessary(). Skip this check here?
     if (/^\.|[\.\~ ]$|[\;\#]/.test(name)) {
       Services.prompt.alert(
         window,
@@ -302,7 +307,8 @@ function onOK(event) {
       );
       event.preventDefault();
       return;
-    } else if (parentFolder.containsChildNamed(name)) {
+    }
+    if (parentFolder.containsChildNamed(name)) {
       Services.prompt.alert(
         window,
         null,

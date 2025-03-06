@@ -15,7 +15,7 @@
   flex-direction: column;
   text-align: center;
   gap: 22px;
-  height: 264px;
+  min-height: 264px;
 }
 
 [slot="main"].selectedTab .header {
@@ -70,12 +70,6 @@
   &:not([hidden]) {
     display: inline-block;
   }
-}
-
-
-.info {
-  -moz-context-properties: fill;
-  fill: var(--in-content-primary-button-background);
 }
 
 .description {

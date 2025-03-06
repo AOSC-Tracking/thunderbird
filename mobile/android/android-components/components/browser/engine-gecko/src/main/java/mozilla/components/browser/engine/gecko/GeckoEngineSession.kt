@@ -179,6 +179,7 @@ class GeckoEngineSession(
         parent: EngineSession?,
         flags: LoadUrlFlags,
         additionalHeaders: Map<String, String>?,
+        originalInput: String?,
     ) {
         notifyObservers { onLoadUrl() }
 
@@ -195,6 +196,7 @@ class GeckoEngineSession(
         val loader = GeckoSession.Loader()
             .uri(url)
             .flags(flags.getGeckoFlags())
+            .originalInput(originalInput)
 
         if (additionalHeaders != null) {
             val headerFilter = if (flags.contains(ALLOW_ADDITIONAL_HEADERS)) {
@@ -256,7 +258,6 @@ class GeckoEngineSession(
                 // See https://github.com/mozilla-mobile/android-components/issues/12276
                 val fileName = DownloadUtils.guessFileName(
                     disposition,
-                    destinationDirectory = null,
                     url = url,
                     mimeType = contentType,
                 )
@@ -655,6 +656,30 @@ class GeckoEngineSession(
             },
             { throwable ->
                 logger.error("Checking for PDF viewer failed.", throwable)
+                onException(throwable)
+                GeckoResult()
+            },
+        )
+    }
+
+    /**
+     * See [EngineSession.getWebCompatInfo].
+     */
+    override fun getWebCompatInfo(
+        onResult: (JSONObject) -> Unit,
+        onException: (Throwable) -> Unit,
+    ) {
+        geckoSession.webCompatInfo.then(
+            { result ->
+                if (result == null) {
+                    logger.error("No result from GeckoView getWebCompatInfo.")
+                    return@then GeckoResult<JSONObject>()
+                }
+                onResult(result)
+                GeckoResult()
+            },
+            { throwable ->
+                logger.error("Getting web compat info failed.", throwable)
                 onException(throwable)
                 GeckoResult()
             },
@@ -1120,10 +1145,13 @@ class GeckoEngineSession(
                 return
             }
 
-            appRedirectUrl?.let {
-                if (url == appRedirectUrl) {
-                    goBack(false)
-                    return
+            // if it is an initial load then we can't go back. We should update the URL.
+            if (!initialLoad) {
+                appRedirectUrl?.let {
+                    if (url == appRedirectUrl) {
+                        goBack(false)
+                        return
+                    }
                 }
             }
 
@@ -1140,6 +1168,8 @@ class GeckoEngineSession(
             }
             // Reset the status of current page being product or not when user navigates away.
             notifyObservers { onProductUrlChange(false) }
+            // Reset the status of the translation state for the page
+            notifyObservers { onTranslatePageChange() }
             notifyObservers { onLocationChange(url, hasUserGesture) }
         }
 
@@ -1237,8 +1267,10 @@ class GeckoEngineSession(
 
             val interceptor = settings.requestInterceptor
             val interceptionResponse = if (
-                interceptor != null && (!request.isDirectNavigation || interceptor.interceptsAppInitiatedRequests())
+                interceptor == null || (request.isDirectNavigation && !interceptor.interceptsAppInitiatedRequests())
             ) {
+                null
+            } else {
                 val engineSession = this@GeckoEngineSession
                 val isSameDomain =
                     engineSession.currentUrl?.tryGetHostFromUrl() == request.uri.tryGetHostFromUrl()
@@ -1251,27 +1283,28 @@ class GeckoEngineSession(
                     request.isRedirect,
                     request.isDirectNavigation,
                     isSubframeRequest,
-                )?.apply {
+                )?.takeUnless {
+                    it is InterceptionResponse.AppIntent && request.isDirectNavigation
+                }?.apply {
                     when (this) {
-                        is InterceptionResponse.Content -> loadData(data, mimeType, encoding)
-                        is InterceptionResponse.Url -> loadUrl(
-                            url = url,
-                            flags = flags,
-                            additionalHeaders = additionalHeaders,
-                        )
                         is InterceptionResponse.AppIntent -> {
                             appRedirectUrl = lastLoadRequestUri
                             notifyObservers {
                                 onLaunchIntentRequest(url = url, appIntent = appIntent)
                             }
                         }
+
+                        is InterceptionResponse.Content -> loadData(data, mimeType, encoding)
+                        is InterceptionResponse.Url -> loadUrl(
+                            url = url,
+                            flags = flags,
+                            additionalHeaders = additionalHeaders,
+                        )
                         else -> {
                             // no-op
                         }
                     }
                 }
-            } else {
-                null
             }
 
             if (interceptionResponse !is InterceptionResponse.AppIntent) {
@@ -1511,7 +1544,6 @@ class GeckoEngineSession(
                 val url = uri
                 val fileName = DownloadUtils.guessFileName(
                     contentDisposition,
-                    destinationDirectory = null,
                     url = url,
                     mimeType = contentType,
                 )
@@ -1815,7 +1847,7 @@ class GeckoEngineSession(
         internal const val ABOUT_BLANK = "about:blank"
         internal const val JS_SCHEME = "javascript"
         internal val BLOCKED_SCHEMES =
-            listOf("file", "resource", JS_SCHEME) // See 1684761 and 1684947
+            listOf("file", "resource", "fido", JS_SCHEME) // See 1684761 and 1684947
 
         /**
          * Provides an ErrorType corresponding to the error code provided.

@@ -47,7 +47,6 @@ class nsImapIncomingServer : public nsMsgIncomingServer,
   NS_IMETHOD CloseCachedConnections() override;
   NS_IMETHOD GetConstructedPrettyName(nsAString& retval) override;
   NS_IMETHOD GetCanBeDefaultServer(bool* canBeDefaultServer) override;
-  NS_IMETHOD GetCanUndoDeleteOnServer(bool* canUndoDeleteOnServer) override;
   NS_IMETHOD GetCanSearchMessages(bool* canSearchMessages) override;
   NS_IMETHOD GetOfflineSupportLevel(int32_t* aSupportLevel) override;
   NS_IMETHOD GetSupportsDiskSpace(bool* aSupportsDiskSpace) override;
@@ -144,6 +143,9 @@ class nsImapIncomingServer : public nsMsgIncomingServer,
                                 nsACString& folderUriWithNamespace,
                                 bool& namespacePrefixAdded,
                                 bool caseInsensitive, nsIMsgFolder** aFolder);
+
+  // Utility function to obtain the imap (short) path for a folder.
+  static nsresult PathFromFolder(nsIMsgFolder* folder, nsAString& shortPath);
 };
 
 #endif

@@ -27,11 +27,11 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import mozilla.components.compose.base.annotation.LightDarkPreview
+import mozilla.components.compose.base.button.TextButton
 import mozilla.components.feature.downloads.toMegabyteOrKilobyteString
 import org.mozilla.fenix.R
-import org.mozilla.fenix.compose.annotation.LightDarkPreview
 import org.mozilla.fenix.compose.button.PrimaryButton
-import org.mozilla.fenix.compose.button.TextButton
 import org.mozilla.fenix.theme.FirefoxTheme
 
 /**
@@ -40,8 +40,6 @@ import org.mozilla.fenix.theme.FirefoxTheme
  * of type all languages,single file translation request or default.
  * @param fileSize Language file size in bytes that should be displayed in the dialogue title.
  * @param isCheckBoxEnabled Whether saving mode checkbox is checked or unchecked.
- * @param isCacheMessage Whether to use the dialog message version that does describe the use of a cache (true)
- * or the message that does not describe the cache use (false).
  * @param onSavingModeStateChange Invoked when the user clicks on the checkbox of the saving mode state.
  * @param onConfirmDownload Invoked when the user click on the "Download" dialog button.
  * @param onCancel Invoked when the user clicks on the "Cancel" dialog button.
@@ -52,7 +50,6 @@ fun DownloadLanguageFileDialog(
     downloadLanguageDialogType: DownloadLanguageFileDialogType,
     fileSize: Long? = null,
     isCheckBoxEnabled: Boolean,
-    isCacheMessage: Boolean = false,
     onSavingModeStateChange: (Boolean) -> Unit,
     onConfirmDownload: () -> Unit,
     onCancel: () -> Unit,
@@ -90,15 +87,7 @@ fun DownloadLanguageFileDialog(
                 downloadLanguageDialogType is DownloadLanguageFileDialogType.TranslationRequest
             ) {
                 Text(
-                    text = if (isCacheMessage) {
-                        stringResource(
-                            R.string.download_language_file_dialog_message_all_languages,
-                        )
-                    } else {
-                        stringResource(
-                            R.string.download_language_file_dialog_message_all_languages_no_cache,
-                        )
-                    },
+                    text = stringResource(R.string.download_language_file_dialog_message_all_languages),
                     modifier = Modifier.padding(top = 16.dp, bottom = 16.dp),
                     style = FirefoxTheme.typography.body2,
                     color = FirefoxTheme.colors.textPrimary,

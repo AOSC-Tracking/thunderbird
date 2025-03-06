@@ -73,6 +73,17 @@ const click = el => {
 };
 
 add_task(async function toolbarButtons() {
+  info("Adding a bookmark to the bookmarks toolbar.");
+  let addedBookmark = await PlacesUtils.bookmarks.insert({
+    parentGuid: PlacesUtils.bookmarks.toolbarGuid,
+    title: "Test",
+    url: "https://example.com",
+  });
+
+  registerCleanupFunction(async () => {
+    await PlacesUtils.bookmarks.remove(addedBookmark);
+  });
+
   await BrowserTestUtils.withNewTab("https://example.com", async () => {
     let customButton = await new Promise(resolve => {
       CustomizableUI.createWidget({
@@ -86,12 +97,14 @@ add_task(async function toolbarButtons() {
 
     Services.telemetry.getSnapshotForKeyedScalars("main", true);
     Services.fog.testResetFOG();
+    // We want to record events into this ping, so it has to be enabled.
+    GleanPings.prototypeNoCodeEvents.setEnabled(true);
 
     let newTab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
     let tabClose = BrowserTestUtils.waitForTabClosing(newTab);
 
     let tabs = elem("tabbrowser-tabs");
-    if (!tabs.hasAttribute("overflow")) {
+    if (!tabs.overflowing) {
       tabs.setAttribute("overflow", "true");
       registerCleanupFunction(() => {
         tabs.removeAttribute("overflow");
@@ -132,7 +145,7 @@ add_task(async function toolbarButtons() {
       () => {
         return (
           bookmarksToolbar.getAttribute("collapsed") != "true" &&
-          bookmarksToolbar.getAttribute("initialized") == "true"
+          bookmarksToolbar.hasAttribute("initialized")
         );
       }
     );

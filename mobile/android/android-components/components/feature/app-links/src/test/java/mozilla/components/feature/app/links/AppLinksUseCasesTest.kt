@@ -47,12 +47,15 @@ class AppLinksUseCasesTest {
     private val javascriptUrl = "javascript:'hello, world'"
     private val jarUrl = "jar:file://some/path/test.html"
     private val contentUrl = "content://media/external_primary/downloads/12345"
+    private val fidoPath = "fido:12345678"
     private val fileType = "audio/mpeg"
     private val layerUrl = "https://example.com"
     private val layerPackage = "com.example.app"
     private val layerActivity = "com.example2.app.intentActivity"
     private val appIntentWithPackageAndFallback =
         "intent://com.example.app#Intent;package=com.example.com;S.browser_fallback_url=https://example.com;end"
+    private val appIntentWithPackageAndPlayStoreFallback =
+        "intent://com.example.app#Intent;package=com.example.com;S.browser_fallback_url=https://play.google.com/store/abc;end"
 
     @Before
     fun setup() {
@@ -216,6 +219,15 @@ class AppLinksUseCasesTest {
     }
 
     @Test
+    fun `A fido url is not an app link`() {
+        val context = createContext(Triple(fidoPath, appPackage, ""))
+        val subject = AppLinksUseCases(context, { true })
+
+        val redirect = subject.interceptedAppLinkRedirect(fidoPath)
+        assertFalse(redirect.isRedirect())
+    }
+
+    @Test
     fun `Will not redirect app link if browser option set to false and scheme is supported`() {
         val context = createContext(Triple(appUrl, appPackage, ""))
         val subject = AppLinksUseCases(context, { false })
@@ -352,7 +364,8 @@ class AppLinksUseCasesTest {
     fun `An openAppLink use case starts an activity`() {
         val context = createContext()
         val appIntent = Intent()
-        val redirect = AppLinkRedirect(appIntent, appUrl, null)
+        val appName = ""
+        val redirect = AppLinkRedirect(appIntent, appName, appUrl, null)
         val subject = AppLinksUseCases(context, { true })
 
         subject.openAppLink(redirect.appIntent)
@@ -364,8 +377,9 @@ class AppLinksUseCasesTest {
     fun `Start activity fails will perform failure action`() {
         val context = createContext()
         val appIntent = Intent()
+        val appName = ""
         appIntent.putExtra(EXTRA_BROWSER_FALLBACK_URL, appUrl)
-        val redirect = AppLinkRedirect(appIntent, appUrl, null)
+        val redirect = AppLinkRedirect(appIntent, appName, appUrl, null)
         val subject = AppLinksUseCases(context, { true })
 
         var failedToLaunch: String? = null
@@ -381,8 +395,9 @@ class AppLinksUseCasesTest {
     fun `Security exception perform failure action`() {
         val context = createContext()
         val appIntent = Intent()
+        val appName = ""
         appIntent.putExtra(EXTRA_BROWSER_FALLBACK_URL, appUrl)
-        val redirect = AppLinkRedirect(appIntent, appUrl, null)
+        val redirect = AppLinkRedirect(appIntent, appName, appUrl, null)
         val subject = AppLinksUseCases(context, { true })
 
         var failedToLaunch: String? = null
@@ -398,8 +413,9 @@ class AppLinksUseCasesTest {
     fun `Null pointer exception perform failure action`() {
         val context = createContext()
         val appIntent = Intent()
+        val appName = ""
         appIntent.putExtra(EXTRA_BROWSER_FALLBACK_URL, appUrl)
-        val redirect = AppLinkRedirect(appIntent, appUrl, null)
+        val redirect = AppLinkRedirect(appIntent, appName, appUrl, null)
         val subject = AppLinksUseCases(context, { true })
 
         var failedToLaunch: String? = null
@@ -667,5 +683,28 @@ class AppLinksUseCasesTest {
         subject.updateLaunchInApp { true }
         redirect = subject.interceptedAppLinkRedirect(appUrl)
         assertTrue(redirect.isRedirect())
+    }
+
+    @Test
+    fun `WHEN opening a app scheme uri WITH fallback URL WHERE the URL is Google PlayStore THEN ignore fallback URL`() {
+        val context = createContext(Triple(appIntentWithPackageAndPlayStoreFallback, appPackage, ""))
+
+        val subject = AppLinksUseCases(context, { false })
+        val redirect = subject.interceptedAppLinkRedirect(appIntentWithPackageAndPlayStoreFallback)
+        assertTrue(redirect.hasExternalApp())
+        assertFalse(redirect.hasFallback())
+        assertTrue(redirect.marketplaceIntent != null)
+        assertNull(redirect.fallbackUrl)
+    }
+
+    @Test
+    fun `WHEN opening a app scheme uri WITHOUT package installed WHERE the URL is Google PlayStore THEN use fallback URL`() {
+        val context = createContext()
+
+        val subject = AppLinksUseCases(context, { false })
+        val redirect = subject.interceptedAppLinkRedirect(appIntentWithPackageAndPlayStoreFallback)
+        assertFalse(redirect.hasExternalApp())
+        assertTrue(redirect.hasFallback())
+        assertEquals("https://play.google.com/store/abc", redirect.fallbackUrl)
     }
 }

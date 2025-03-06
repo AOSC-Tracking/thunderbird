@@ -5,17 +5,12 @@
 #ifndef __COMM_MAILNEWS_PROTOCOLS_EWS_INCOMING_SERVER_H
 #define __COMM_MAILNEWS_PROTOCOLS_EWS_INCOMING_SERVER_H
 
-#include "IEwsClient.h"
 #include "IEwsIncomingServer.h"
 #include "msgIOAuth2Module.h"
 #include "nsMsgIncomingServer.h"
 
-#define EWS_INCOMING_SERVER_IID                      \
-  {                                                  \
-    0x6eaa0a24, 0x78f6, 0x4ad7, {                    \
-      0xa2, 0x8a, 0x07, 0x7d, 0x24, 0x02, 0x2c, 0xd2 \
-    }                                                \
-  }
+#define EWS_INCOMING_SERVER_IID \
+  {0x6eaa0a24, 0x78f6, 0x4ad7, {0xa2, 0x8a, 0x07, 0x7d, 0x24, 0x02, 0x2c, 0xd2}}
 
 class FolderSyncListener;
 
@@ -32,7 +27,8 @@ class EwsIncomingServer : public nsMsgIncomingServer,
  protected:
   virtual ~EwsIncomingServer();
 
-  // nsMsgIncomingServer
+  // Locally creates a folder with the given properties. Intended to be called
+  // by a friend class such as `FolderSyncListener`.
   nsresult CreateFolderWithDetails(const nsACString& id,
                                    const nsACString& parentId,
                                    const nsAString& name, uint32_t flags);

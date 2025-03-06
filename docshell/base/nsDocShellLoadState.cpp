@@ -7,6 +7,7 @@
 #include "nsDocShellLoadState.h"
 #include "nsIDocShell.h"
 #include "nsDocShell.h"
+#include "nsILoadInfo.h"
 #include "nsIProtocolHandler.h"
 #include "nsISHEntry.h"
 #include "nsIURIFixup.h"
@@ -27,7 +28,7 @@
 #include "mozilla/dom/nsHTTPSOnlyUtils.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_fission.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/AntitrackingMetrics.h"
 
 #include "mozilla/OriginAttributes.h"
 #include "mozilla/NullPrincipal.h"
@@ -65,6 +66,7 @@ nsDocShellLoadState::nsDocShellLoadState(
   mForceAllowDataURI = aLoadState.ForceAllowDataURI();
   mIsExemptFromHTTPSFirstMode = aLoadState.IsExemptFromHTTPSFirstMode();
   mOriginalFrameSrc = aLoadState.OriginalFrameSrc();
+  mShouldCheckForRecursion = aLoadState.ShouldCheckForRecursion();
   mIsFormSubmission = aLoadState.IsFormSubmission();
   mLoadType = aLoadState.LoadType();
   mTarget = aLoadState.Target();
@@ -73,6 +75,7 @@ nsDocShellLoadState::nsDocShellLoadState(
   mInternalLoadFlags = aLoadState.InternalLoadFlags();
   mFirstParty = aLoadState.FirstParty();
   mHasValidUserGestureActivation = aLoadState.HasValidUserGestureActivation();
+  mTextDirectiveUserActivation = aLoadState.TextDirectiveUserActivation();
   mAllowFocusMove = aLoadState.AllowFocusMove();
   mTypeHint = aLoadState.TypeHint();
   mFileName = aLoadState.FileName();
@@ -90,7 +93,8 @@ nsDocShellLoadState::nsDocShellLoadState(
   mTriggeringWindowId = aLoadState.TriggeringWindowId();
   mTriggeringStorageAccess = aLoadState.TriggeringStorageAccess();
   mTriggeringRemoteType = aLoadState.TriggeringRemoteType();
-  mWasSchemelessInput = aLoadState.WasSchemelessInput();
+  mSchemelessInput = aLoadState.SchemelessInput();
+  mHttpsUpgradeTelemetry = aLoadState.HttpsUpgradeTelemetry();
   mCsp = aLoadState.Csp();
   mOriginalURIString = aLoadState.OriginalURIString();
   mCancelContentJSEpoch = aLoadState.CancelContentJSEpoch();
@@ -168,6 +172,7 @@ nsDocShellLoadState::nsDocShellLoadState(const nsDocShellLoadState& aOther)
       mIsExemptFromHTTPSFirstMode(aOther.mIsExemptFromHTTPSFirstMode),
       mHttpsFirstDowngradeData(aOther.GetHttpsFirstDowngradeData()),
       mOriginalFrameSrc(aOther.mOriginalFrameSrc),
+      mShouldCheckForRecursion(aOther.mShouldCheckForRecursion),
       mIsFormSubmission(aOther.mIsFormSubmission),
       mLoadType(aOther.mLoadType),
       mSHEntry(aOther.mSHEntry),
@@ -182,6 +187,7 @@ nsDocShellLoadState::nsDocShellLoadState(const nsDocShellLoadState& aOther)
       mInternalLoadFlags(aOther.mInternalLoadFlags),
       mFirstParty(aOther.mFirstParty),
       mHasValidUserGestureActivation(aOther.mHasValidUserGestureActivation),
+      mTextDirectiveUserActivation(aOther.mTextDirectiveUserActivation),
       mAllowFocusMove(aOther.mAllowFocusMove),
       mTypeHint(aOther.mTypeHint),
       mFileName(aOther.mFileName),
@@ -196,7 +202,8 @@ nsDocShellLoadState::nsDocShellLoadState(const nsDocShellLoadState& aOther)
       mUnstrippedURI(aOther.mUnstrippedURI),
       mRemoteTypeOverride(aOther.mRemoteTypeOverride),
       mTriggeringRemoteType(aOther.mTriggeringRemoteType),
-      mWasSchemelessInput(aOther.mWasSchemelessInput) {
+      mSchemelessInput(aOther.mSchemelessInput),
+      mHttpsUpgradeTelemetry(aOther.mHttpsUpgradeTelemetry) {
   MOZ_DIAGNOSTIC_ASSERT(
       XRE_IsParentProcess(),
       "Cloning a nsDocShellLoadState with the same load identifier is only "
@@ -222,6 +229,7 @@ nsDocShellLoadState::nsDocShellLoadState(nsIURI* aURI, uint64_t aLoadIdentifier)
       mForceAllowDataURI(false),
       mIsExemptFromHTTPSFirstMode(false),
       mOriginalFrameSrc(false),
+      mShouldCheckForRecursion(false),
       mIsFormSubmission(false),
       mLoadType(LOAD_NORMAL),
       mSrcdocData(VoidString()),
@@ -240,8 +248,20 @@ nsDocShellLoadState::nsDocShellLoadState(nsIURI* aURI, uint64_t aLoadIdentifier)
       mTriggeringRemoteType(XRE_IsContentProcess()
                                 ? ContentChild::GetSingleton()->GetRemoteType()
                                 : NOT_REMOTE_TYPE),
-      mWasSchemelessInput(false) {
+      mSchemelessInput(nsILoadInfo::SchemelessInputTypeUnset) {
   MOZ_ASSERT(aURI, "Cannot create a LoadState with a null URI!");
+
+  // For https telemetry we set a flag indicating whether the load is https.
+  // There are some corner cases, e.g. view-source and also about: pages.
+  // about: pages, when hitting the network, always redirect to https.
+  // Since we record https telemetry only within nsHTTPSChannel, it's fine
+  // to set the flag here.
+  nsCOMPtr<nsIURI> innerURI = NS_GetInnermostURI(aURI);
+  if (innerURI->SchemeIs("https") || innerURI->SchemeIs("about")) {
+    mHttpsUpgradeTelemetry = nsILoadInfo::ALREADY_HTTPS;
+  } else {
+    mHttpsUpgradeTelemetry = nsILoadInfo::NO_UPGRADE;
+  }
 }
 
 nsDocShellLoadState::~nsDocShellLoadState() {
@@ -453,6 +473,8 @@ nsresult nsDocShellLoadState::CreateFromLoadURIOptions(
   loadState->SetFirstParty(true);
   loadState->SetHasValidUserGestureActivation(
       aLoadURIOptions.mHasValidUserGestureActivation);
+  loadState->SetTextDirectiveUserActivation(
+      aLoadURIOptions.mTextDirectiveUserActivation);
   loadState->SetTriggeringSandboxFlags(aLoadURIOptions.mTriggeringSandboxFlags);
   loadState->SetTriggeringWindowId(aLoadURIOptions.mTriggeringWindowId);
   loadState->SetTriggeringStorageAccess(
@@ -483,7 +505,8 @@ nsresult nsDocShellLoadState::CreateFromLoadURIOptions(
         aLoadURIOptions.mRemoteTypeOverride.Value());
   }
 
-  loadState->SetWasSchemelessInput(aLoadURIOptions.mWasSchemelessInput);
+  loadState->SetSchemelessInput(static_cast<nsILoadInfo::SchemelessInputType>(
+      aLoadURIOptions.mSchemelessInput));
 
   loadState.forget(aResult);
   return NS_OK;
@@ -651,6 +674,15 @@ void nsDocShellLoadState::SetOriginalFrameSrc(bool aOriginalFrameSrc) {
   mOriginalFrameSrc = aOriginalFrameSrc;
 }
 
+bool nsDocShellLoadState::ShouldCheckForRecursion() const {
+  return mShouldCheckForRecursion;
+}
+
+void nsDocShellLoadState::SetShouldCheckForRecursion(
+    bool aShouldCheckForRecursion) {
+  mShouldCheckForRecursion = aShouldCheckForRecursion;
+}
+
 bool nsDocShellLoadState::IsFormSubmission() const { return mIsFormSubmission; }
 
 void nsDocShellLoadState::SetIsFormSubmission(bool aIsFormSubmission) {
@@ -661,6 +693,16 @@ uint32_t nsDocShellLoadState::LoadType() const { return mLoadType; }
 
 void nsDocShellLoadState::SetLoadType(uint32_t aLoadType) {
   mLoadType = aLoadType;
+}
+
+mozilla::dom::UserNavigationInvolvement
+nsDocShellLoadState::UserNavigationInvolvement() const {
+  return mUserNavigationInvolvement;
+}
+
+void nsDocShellLoadState::SetUserNavigationInvolvement(
+    mozilla::dom::UserNavigationInvolvement aUserNavigationInvolvement) {
+  mUserNavigationInvolvement = aUserNavigationInvolvement;
 }
 
 nsISHEntry* nsDocShellLoadState::SHEntry() const { return mSHEntry; }
@@ -748,8 +790,9 @@ void nsDocShellLoadState::MaybeStripTrackerQueryStrings(
     return;
   }
 
-  Telemetry::AccumulateCategorical(
-      Telemetry::LABELS_QUERY_STRIPPING_COUNT::Navigation);
+  glean::contentblocking::query_stripping_count
+      .EnumGet(glean::contentblocking::QueryStrippingCountLabel::eNavigation)
+      .Add();
 
   nsCOMPtr<nsIURI> strippedURI;
 
@@ -768,9 +811,12 @@ void nsDocShellLoadState::MaybeStripTrackerQueryStrings(
     }
     SetURI(strippedURI);
 
-    Telemetry::AccumulateCategorical(
-        Telemetry::LABELS_QUERY_STRIPPING_COUNT::StripForNavigation);
-    Telemetry::Accumulate(Telemetry::QUERY_STRIPPING_PARAM_COUNT, numStripped);
+    glean::contentblocking::query_stripping_count
+        .EnumGet(glean::contentblocking::QueryStrippingCountLabel::
+                     eStripfornavigation)
+        .Add();
+    glean::contentblocking::query_stripping_param_count.AccumulateSingleSample(
+        numStripped);
   }
 
 #ifdef DEBUG
@@ -898,6 +944,15 @@ bool nsDocShellLoadState::HasValidUserGestureActivation() const {
 void nsDocShellLoadState::SetHasValidUserGestureActivation(
     bool aHasValidUserGestureActivation) {
   mHasValidUserGestureActivation = aHasValidUserGestureActivation;
+}
+
+void nsDocShellLoadState::SetTextDirectiveUserActivation(
+    bool aTextDirectiveUserActivation) {
+  mTextDirectiveUserActivation = aTextDirectiveUserActivation;
+}
+
+bool nsDocShellLoadState::GetTextDirectiveUserActivation() {
+  return mTextDirectiveUserActivation;
 }
 
 const nsCString& nsDocShellLoadState::TypeHint() const { return mTypeHint; }
@@ -1282,14 +1337,17 @@ DocShellLoadStateInit nsDocShellLoadState::Serialize(
   loadState.ForceAllowDataURI() = mForceAllowDataURI;
   loadState.IsExemptFromHTTPSFirstMode() = mIsExemptFromHTTPSFirstMode;
   loadState.OriginalFrameSrc() = mOriginalFrameSrc;
+  loadState.ShouldCheckForRecursion() = mShouldCheckForRecursion;
   loadState.IsFormSubmission() = mIsFormSubmission;
   loadState.LoadType() = mLoadType;
+  loadState.userNavigationInvolvement() = mUserNavigationInvolvement;
   loadState.Target() = mTarget;
   loadState.TargetBrowsingContext() = mTargetBrowsingContext;
   loadState.LoadFlags() = mLoadFlags;
   loadState.InternalLoadFlags() = mInternalLoadFlags;
   loadState.FirstParty() = mFirstParty;
   loadState.HasValidUserGestureActivation() = mHasValidUserGestureActivation;
+  loadState.TextDirectiveUserActivation() = mTextDirectiveUserActivation;
   loadState.AllowFocusMove() = mAllowFocusMove;
   loadState.TypeHint() = mTypeHint;
   loadState.FileName() = mFileName;
@@ -1306,7 +1364,8 @@ DocShellLoadStateInit nsDocShellLoadState::Serialize(
   loadState.TriggeringWindowId() = mTriggeringWindowId;
   loadState.TriggeringStorageAccess() = mTriggeringStorageAccess;
   loadState.TriggeringRemoteType() = mTriggeringRemoteType;
-  loadState.WasSchemelessInput() = mWasSchemelessInput;
+  loadState.SchemelessInput() = mSchemelessInput;
+  loadState.HttpsUpgradeTelemetry() = mHttpsUpgradeTelemetry;
   loadState.Csp() = mCsp;
   loadState.OriginalURIString() = mOriginalURIString;
   loadState.CancelContentJSEpoch() = mCancelContentJSEpoch;

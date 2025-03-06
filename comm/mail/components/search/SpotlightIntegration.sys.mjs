@@ -21,8 +21,8 @@ class SpotlightStreamListener extends StreamListenerBase {
   /**
    * Encodes reserved XML characters
    */
-  #xmlEscapeString(s) {
-    return s.replace(/[<>&]/g, function (s) {
+  #xmlEscapeString(str) {
+    return str.replace(/[<>&]/g, function (s) {
       switch (s) {
         case "<":
           return "&lt;";
@@ -31,7 +31,7 @@ class SpotlightStreamListener extends StreamListenerBase {
         case "&":
           return "&amp;";
         default:
-          throw new Error("Unexpected match");
+          throw new Error(`Unexpected match: ${s}`);
       }
     });
   }
@@ -92,7 +92,7 @@ class SpotlightStreamListener extends StreamListenerBase {
       const stringStream = Cc[
         "@mozilla.org/io/string-input-stream;1"
       ].createInstance(Ci.nsIStringInputStream);
-      stringStream.setData(this.#message, this.#message.length);
+      stringStream.setByteStringData(this.#message);
       const folder = this._msgHdr.folder;
       let text = folder.getMsgTextFromStream(
         stringStream,

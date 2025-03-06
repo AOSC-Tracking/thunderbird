@@ -74,6 +74,7 @@ const SYNC_FOLDER_HIERARCHY_RESPONSE_BASE = `${EWS_SOAP_HEAD}
 export class RemoteFolder {
   /**
    * The unique EWS identifier for this folder.
+   *
    * @type {string}
    * @public
    */
@@ -82,6 +83,7 @@ export class RemoteFolder {
   /**
    * An optional distinguished ID if this is a special folder (e.g. Inbox, root
    * folder, etc.).
+   *
    * @type {?string}
    * @public
    */
@@ -89,6 +91,7 @@ export class RemoteFolder {
 
   /**
    * The display name for the folder. Defaults to its ID.
+   *
    * @type {string}
    * @public
    */
@@ -97,6 +100,7 @@ export class RemoteFolder {
   /**
    * The EWS identifier for the parent of this folder. Only the root folder
    * should be allowed to not have a parent.
+   *
    * @type {?string}
    * @public
    */
@@ -124,12 +128,14 @@ export class MockEWSServer {
   #mHttpServer;
   /**
    * The folders registered on this EWS server.
+   *
    * @type {RemoteFolder[]}
    */
   #mFolders = [];
 
   /**
    * A mapping from EWS identifier to folder specification.
+   *
    * @type {Map<string, RemoteFolder>}
    */
   #mIdToFolder = new Map();
@@ -137,18 +143,21 @@ export class MockEWSServer {
   /**
    * A mapping from EWS distinguished identifier to folder specification. This
    * only includes folders for which a distinguished identifier is specified.
+   *
    * @type {Map<string, RemoteFolder>}
    */
   #mDistinguishedIdToFolder = new Map();
 
   /**
    * The parser to use for parsing XML documents.
+   *
    * @type {DOMParser}
    */
   #mParser;
 
   /**
    * The serializer to use for generating XML documents.
+   *
    * @type {XMLSerializer}
    */
   #mSerializer;
@@ -165,7 +174,7 @@ export class MockEWSServer {
           // it does when any error is thrown is respond with a generic 500. To
           // makes writing tests with this server a bit easier, we want to log
           // the error before responding.
-          console.error(`Error when processing request: ${e}`);
+          console.error("Error when processing request:", e);
           throw e;
         }
       }
@@ -302,7 +311,7 @@ export class MockEWSServer {
    * Generate a response to a GetFolder operation.
    *
    * @see {@link https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/getfolder-operation#getfolder-response-example}
-   * @param {XMLDocument} _reqDoc The parsed document for the request to respond to.
+   * @param {XMLDocument} reqDoc - The parsed document for the request to respond to.
    * @returns {string} A serialized XML document.
    */
   #generateGetFolderResponse(reqDoc) {

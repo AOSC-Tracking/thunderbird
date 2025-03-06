@@ -22,6 +22,8 @@ skip-if = ["true"] # Bug 1939626
 
 ["browser_HomeDepot.js"]
 
+["browser_Inkbox.js"]
+
 ["browser_Lufthansa.js"]
 
 ["browser_Lush.js"]

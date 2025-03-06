@@ -15,13 +15,12 @@
 #include "mozilla/dom/PermissionMessageUtils.h"
 #include "mozilla/dom/GeolocationPositionError.h"
 #include "mozilla/dom/GeolocationPositionErrorBinding.h"
-#include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/glean/DomGeolocationMetrics.h"
 #include "mozilla/ipc/MessageChannel.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_geo.h"
 #include "mozilla/StaticPtr.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
 #include "mozilla/WeakPtr.h"
@@ -44,10 +43,6 @@ class nsIPrincipal;
 
 #ifdef MOZ_WIDGET_ANDROID
 #  include "AndroidLocationProvider.h"
-#endif
-
-#ifdef MOZ_GPSD
-#  include "GpsdLocationProvider.h"
 #endif
 
 #ifdef MOZ_ENABLE_DBUS
@@ -366,13 +361,10 @@ void Geolocation::ReallowWithSystemPermissionOrCancel(
   bool geckoWillPrompt =
       GetLocationOSPermission() ==
       geolocation::SystemGeolocationPermissionBehavior::GeckoWillPromptUser;
-  // This combination of flags removes the default yes and no buttons and adds a
-  // spinner to the title.
-  const auto kSpinnerNoButtonFlags = nsIPromptService::BUTTON_TITLE_IS_STRING *
-                                         nsIPromptService::BUTTON_POS_0 +
-                                     nsIPromptService::BUTTON_TITLE_IS_STRING *
-                                         nsIPromptService::BUTTON_POS_1 +
-                                     nsIPromptService::SHOW_SPINNER;
+  // This combination of flags removes all buttons and adds a spinner to the
+  // title.
+  const auto kSpinnerNoButtonFlags =
+      nsIPromptService::BUTTON_NONE | nsIPromptService::SHOW_SPINNER;
   // This combination of flags indicates there is only one button labeled
   // "Cancel".
   const auto kCancelButtonFlags =
@@ -733,7 +725,7 @@ nsresult nsGeolocationService::Init() {
         .EnumGet(glean::geolocation::LinuxProviderLabel::ePortal)
         .Set(true);
   }
-  // Geoclue includes GPS data so it has higher priority than raw GPSD
+
   if (!mProvider && StaticPrefs::geo_provider_use_geoclue()) {
     nsCOMPtr<nsIGeolocationProvider> gcProvider = new GeoclueLocationProvider();
     MOZ_LOG(gGeolocationLog, LogLevel::Debug,
@@ -749,16 +741,6 @@ nsresult nsGeolocationService::Init() {
           .Set(true);
     }
   }
-#    ifdef MOZ_GPSD
-  if (!mProvider && Preferences::GetBool("geo.provider.use_gpsd", false)) {
-    mProvider = new GpsdLocationProvider();
-    MOZ_LOG(gGeolocationLog, LogLevel::Debug,
-            ("Selected GpsdLocationProvider"));
-    glean::geolocation::linux_provider
-        .EnumGet(glean::geolocation::LinuxProviderLabel::eGpsd)
-        .Set(true);
-  }
-#    endif
 #  endif
 #endif
 
@@ -1147,9 +1129,6 @@ Geolocation::Update(nsIDOMGeoPosition* aSomewhere) {
     if (coords) {
       double accuracy = -1;
       coords->GetAccuracy(&accuracy);
-      mozilla::Telemetry::Accumulate(
-          mozilla::Telemetry::GEOLOCATION_ACCURACY_EXPONENTIAL,
-          static_cast<uint32_t>(accuracy));
       glean::geolocation::accuracy.AccumulateSingleSample(
           static_cast<uint64_t>(accuracy));
     }
@@ -1176,8 +1155,6 @@ Geolocation::NotifyError(uint16_t aErrorCode) {
     Shutdown();
     return NS_OK;
   }
-
-  mozilla::Telemetry::Accumulate(mozilla::Telemetry::GEOLOCATION_ERROR, true);
 
   for (uint32_t i = mPendingCallbacks.Length(); i > 0; i--) {
     RefPtr<nsGeolocationRequest> request = mPendingCallbacks[i - 1];

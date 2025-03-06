@@ -273,7 +273,7 @@ button.tab-close-button {
 #tabmail-arrowscrollbox {
   min-height: var(--tab-min-height);
 
-  &::part(scrollbox-clip) {
+  &::part(scrollbox) {
     contain: inline-size;
   }
 
@@ -353,10 +353,9 @@ button.tab-close-button {
   }
 
   &[busy] {
-    list-style-image: image-set(
-      url("chrome://global/skin/icons/loading.png"),
-      url("chrome://global/skin/icons/loading@2x.png") 1.5x
-    ) !important;
+    list-style-image: url("chrome://messenger/skin/icons/spinning.svg") !important;
+    -moz-context-properties: fill;
+    fill: var(--selected-item-color);
   }
 
   & > .menu-iconic-left {

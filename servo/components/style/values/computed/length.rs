@@ -5,11 +5,12 @@
 //! `<length>` computed values, and related ones.
 
 use super::{Context, Number, ToComputedValue};
-use crate::values::animated::ToAnimatedValue;
+use crate::values::animated::{Context as AnimatedContext, ToAnimatedValue};
 use crate::values::computed::{NonNegativeNumber, Zoom};
 use crate::values::generics::length as generics;
 use crate::values::generics::length::{
-    GenericLengthOrNumber, GenericLengthPercentageOrNormal, GenericMaxSize, GenericSize,
+    GenericAnchorSizeFunction, GenericLengthOrNumber, GenericLengthPercentageOrNormal,
+    GenericMaxSize, GenericSize,
 };
 use crate::values::generics::NonNegative;
 use crate::values::resolved::{Context as ResolvedContext, ToResolvedValue};
@@ -209,7 +210,10 @@ impl Size {
             Self::MaxContent |
             Self::FitContent |
             Self::MozAvailable |
-            Self::FitContentFunction(_) => false,
+            Self::WebkitFillAvailable |
+            Self::Stretch |
+            Self::FitContentFunction(_) |
+            Self::AnchorSizeFunction(_) => false,
         }
     }
 }
@@ -225,7 +229,6 @@ impl Size {
     PartialEq,
     PartialOrd,
     Serialize,
-    ToAnimatedValue,
     ToAnimatedZero,
     ToComputedValue,
     ToShmem,
@@ -242,6 +245,19 @@ impl ToResolvedValue for CSSPixelLength {
 
     #[inline]
     fn from_resolved_value(value: Self::ResolvedValue) -> Self {
+        value
+    }
+}
+
+impl ToAnimatedValue for CSSPixelLength {
+    type AnimatedValue = Self;
+
+    fn to_animated_value(self, context: &AnimatedContext) -> Self::AnimatedValue {
+        Self(context.style.effective_zoom.unzoom(self.0))
+    }
+
+    #[inline]
+    fn from_animated_value(value: Self::AnimatedValue) -> Self {
         value
     }
 }
@@ -481,8 +497,8 @@ impl ToAnimatedValue for NonNegativeLength {
     type AnimatedValue = Length;
 
     #[inline]
-    fn to_animated_value(self) -> Self::AnimatedValue {
-        self.0
+    fn to_animated_value(self, context: &AnimatedContext) -> Self::AnimatedValue {
+        self.0.to_animated_value(context)
     }
 
     #[inline]
@@ -546,5 +562,11 @@ pub type NonNegativeLengthOrNumber = GenericLengthOrNumber<NonNegativeLength, No
 /// A computed value for `min-width`, `min-height`, `width` or `height` property.
 pub type Size = GenericSize<NonNegativeLengthPercentage>;
 
-/// A computed value for `max-width` or `min-height` property.
+/// A computed value for `max-width` or `max-height` property.
 pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
+
+/// A computed value for `anchor-size` runction.
+pub type AnchorSizeFunction = GenericAnchorSizeFunction<LengthPercentage>;
+
+/// A computed type for `margin` properties.
+pub type Margin = generics::GenericMargin<LengthPercentage>;

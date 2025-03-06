@@ -18,11 +18,8 @@ var { DNS } = ChromeUtils.importESModule("resource:///modules/DNS.sys.mjs");
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
-const { TelemetryTestUtils } = ChromeUtils.importESModule(
-  "resource://testing-common/TelemetryTestUtils.sys.mjs"
-);
 
-var user = {
+var testUser = {
   name: "Yamato Nadeshiko",
   email: "yamato.nadeshiko@example.com",
   password: "abc12345",
@@ -185,6 +182,8 @@ add_task(async function test_mail_account_setup() {
   // test failure messages.
   Services.prefs.setBoolPref("mail.suppressAlertsForTests", true);
 
+  Services.fog.testResetFOG();
+
   const tab = await openAccountSetup();
   const tabDocument = tab.browser.contentWindow.document;
 
@@ -199,11 +198,11 @@ add_task(async function test_mail_account_setup() {
     // If any realname is already filled, clear it out, we have our own.
     delete_all_existing(window, tabDocument.getElementById("realname"));
   }
-  input_value(window, user.name);
+  input_value(window, testUser.name);
   EventUtils.synthesizeKey("VK_TAB", {}, window);
-  input_value(window, user.email);
+  input_value(window, testUser.email);
   EventUtils.synthesizeKey("VK_TAB", {}, window);
-  input_value(window, user.password);
+  input_value(window, testUser.password);
 
   const notificationBox =
     tab.browser.contentWindow.gAccountSetup.notificationBox;
@@ -269,7 +268,7 @@ add_task(async function test_mail_account_setup() {
   );
 
   const advancedSetupButton = tabDocument.getElementById("advancedSetupButton");
-  advancedSetupButton.scrollIntoView();
+  advancedSetupButton.scrollIntoView({ block: "start", behavior: "instant" });
 
   // Handle the confirmation dialog.
   const dialogPromise = BrowserTestUtils.promiseAlertDialog("accept");
@@ -284,7 +283,15 @@ add_task(async function test_mail_account_setup() {
   // Settings tab to open before running other sub tests.
   await tabChanged;
 
-  await subtest_verify_account(tabmail.selectedTab, user);
+  await subtest_verify_account(tabmail.selectedTab, testUser);
+
+  // FIXME: the test doesn't get a successful config, so we do not yet test
+  // this probe. Should add something like:
+  /*
+  const xmlFromDbValue =
+    Glean.mail.successfulEmailAccountSetup["xml-from-db"].testGetValue();
+  Assert.equal(xmlFromDbValue, 1, "should get correct count for xml-from-db");
+  */
 
   // Close the Account Settings tab.
   tabmail.closeTab(tabmail.currentTabInfo);
@@ -367,7 +374,7 @@ add_task(async function test_bad_password_uses_old_settings() {
     "http://mochi.test:8888/browser/comm/mail/test/browser/account/xml/";
   Services.prefs.setCharPref(PREF_NAME, url);
 
-  Services.telemetry.clearScalars();
+  Services.fog.testResetFOG();
 
   const tab = await openAccountSetup();
   const tabDocument = tab.browser.contentWindow.document;
@@ -383,11 +390,11 @@ add_task(async function test_bad_password_uses_old_settings() {
     // If any realname is already filled, clear it out, we have our own.
     delete_all_existing(window, tabDocument.getElementById("realname"));
   }
-  input_value(window, user.name);
+  input_value(window, testUser.name);
   EventUtils.synthesizeKey("VK_TAB", {}, window);
-  input_value(window, user.email);
+  input_value(window, testUser.email);
   EventUtils.synthesizeKey("VK_TAB", {}, window);
-  input_value(window, user.password);
+  input_value(window, testUser.password);
 
   // Load the autoconfig file from http://localhost:433**/autoconfig/example.com
   EventUtils.synthesizeMouseAtCenter(
@@ -410,7 +417,7 @@ add_task(async function test_bad_password_uses_old_settings() {
     "Timeout waiting for error notification to be showed"
   );
 
-  createButton.scrollIntoView();
+  createButton.scrollIntoView({ block: "start", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(
     createButton,
     {},
@@ -425,7 +432,7 @@ add_task(async function test_bad_password_uses_old_settings() {
   );
 
   const manualConfigButton = tabDocument.getElementById("manualConfigButton");
-  manualConfigButton.scrollIntoView();
+  manualConfigButton.scrollIntoView({ block: "start", behavior: "instant" });
 
   EventUtils.synthesizeMouseAtCenter(
     manualConfigButton,
@@ -440,7 +447,7 @@ add_task(async function test_bad_password_uses_old_settings() {
 
   const outgoingAuthSelect = tabDocument.getElementById("outgoingAuthMethod");
   // Make sure the select field is inside the viewport.
-  outgoingAuthSelect.scrollIntoView();
+  outgoingAuthSelect.scrollIntoView({ block: "start", behavior: "instant" });
   outgoingAuthSelect.focus();
 
   let popupOpened = BrowserTestUtils.waitForEvent(
@@ -490,7 +497,7 @@ add_task(async function test_bad_password_uses_old_settings() {
     "Timeout waiting for error notification to be removed"
   );
 
-  createButton.scrollIntoView();
+  createButton.scrollIntoView({ block: "start", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(
     createButton,
     {},
@@ -503,12 +510,12 @@ add_task(async function test_bad_password_uses_old_settings() {
   // Make sure all the values are the same as in the user object.
   Assert.equal(
     tabDocument.getElementById("outgoingHostname").value,
-    user.outgoingHost,
+    testUser.outgoingHost,
     "Outgoing server changed!"
   );
   Assert.equal(
     tabDocument.getElementById("incomingHostname").value,
-    user.incomingHost,
+    testUser.incomingHost,
     "incoming server changed!"
   );
 
@@ -518,23 +525,23 @@ add_task(async function test_bad_password_uses_old_settings() {
     "Timeout waiting for error notification to be showed"
   );
 
-  const scalars = TelemetryTestUtils.getProcessScalars("parent", true);
   Assert.equal(
-    scalars["tb.account.failed_email_account_setup"]["xml-from-db"],
+    Glean.mail.failedEmailAccountSetup["xml-from-db"].testGetValue(),
     1,
-    "Count of failed email account setup with xml config must be correct"
+    "count of failed email account setup with xml config must be correct"
   );
+
   Assert.equal(
-    scalars["tb.account.failed_email_account_setup"].user,
+    Glean.mail.failedEmailAccountSetup.user.testGetValue(),
     1,
-    "Count of failed email account setup with manual config must be correct"
+    "count of failed email account setup with manual config must be correct"
   );
 
   // Clean up
   Services.prefs.setCharPref(PREF_NAME, PREF_VALUE);
 
   const closeButton = tabDocument.getElementById("cancelButton");
-  closeButton.scrollIntoView();
+  closeButton.scrollIntoView({ block: "start", behavior: "instant" });
 
   EventUtils.synthesizeMouseAtCenter(
     closeButton,
@@ -612,7 +619,7 @@ async function remember_password_test(aPrefValue) {
   );
 
   const closeButton = tabDocument.getElementById("cancelButton");
-  closeButton.scrollIntoView();
+  closeButton.scrollIntoView({ block: "start", behavior: "instant" });
 
   // Close the wizard.
   EventUtils.synthesizeMouseAtCenter(
@@ -693,7 +700,7 @@ add_task(async function test_full_account_setup() {
 
   // Click the acknowledge checkbox and confirm the insecure dialog.
   const acknowledgeCheckbox = tabDocument.getElementById("acknowledgeWarning");
-  acknowledgeCheckbox.scrollIntoView();
+  acknowledgeCheckbox.scrollIntoView({ block: "start", behavior: "instant" });
 
   EventUtils.synthesizeMouseAtCenter(
     acknowledgeCheckbox,
@@ -715,7 +722,7 @@ add_task(async function test_full_account_setup() {
   );
 
   const confirmButton = tabDocument.getElementById("insecureConfirmButton");
-  confirmButton.scrollIntoView();
+  confirmButton.scrollIntoView({ block: "start", behavior: "instant" });
 
   // Close the insecure dialog.
   EventUtils.synthesizeMouseAtCenter(
@@ -887,7 +894,7 @@ add_task(async function test_full_account_setup() {
 
   const finishButton = tabDocument.getElementById("finishButton");
   finishButton.focus();
-  finishButton.scrollIntoView();
+  finishButton.scrollIntoView({ block: "start", behavior: "instant" });
 
   // Close the wizard.
   EventUtils.synthesizeMouseAtCenter(

@@ -330,6 +330,22 @@ export class Messenger {
     this.onMessageEx = new MessageEvent(context, "runtime.onMessageExternal");
   }
 
+  get onUserScriptConnect() {
+    return redefineGetter(
+      this,
+      "onUserScriptConnect",
+      new SimpleEventAPI(this.context, "runtime.onUserScriptConnect")
+    );
+  }
+
+  get onUserScriptMessage() {
+    return redefineGetter(
+      this,
+      "onUserScriptMessage",
+      new MessageEvent(this.context, "runtime.onUserScriptMessage")
+    );
+  }
+
   sendNativeMessage(nativeApp, json) {
     let holder = holdMessage(
       `Messenger/${this.context.extension.id}/sendNativeMessage/${nativeApp}`,
@@ -340,7 +356,11 @@ export class Messenger {
     return this.conduit.queryNativeMessage({ nativeApp, holder });
   }
 
-  sendRuntimeMessage({ extensionId, message, callback, ...args }) {
+  sendRuntimeMessage({ context, extensionId, message, callback, ...args }) {
+    // this.context is usually used, except with user scripts, where we pass a
+    // custom context to ensure that the return value is cloned into the right
+    // USER_SCRIPT world.
+    context ??= this.context;
     let response = this.conduit.queryRuntimeMessage({
       extensionId: extensionId || this.context.extension.id,
       holder: holdMessage(
@@ -352,28 +372,40 @@ export class Messenger {
     });
     // If |response| is a rejected promise, the value will be sanitized by
     // wrapPromise, according to the rules of context.normalizeError.
-    return this.context.wrapPromise(response, callback);
+    return context.wrapPromise(response, callback);
   }
 
-  connect({ name, native, ...args }) {
+  connect({ context, name, native, ...args }) {
+    // this.context is usually used, except with user scripts, where we pass a
+    // custom context to ensure that the return value is cloned into the right
+    // USER_SCRIPT world.
+    context ??= this.context;
     let portId = getUniqueId();
-    let port = new Port(this.context, portId, name, !!native);
+    let port = new Port(context, portId, name, !!native);
     this.conduit
       .queryPortConnect({ portId, name, native, ...args })
       .catch(error => port.recvPortDisconnect({ error }));
     return port.api;
   }
 
-  recvPortConnect({ extensionId, portId, name, sender }) {
+  recvPortConnect({ extensionId, portId, name, sender, userScriptWorldId }) {
     let event = sender.id === extensionId ? this.onConnect : this.onConnectEx;
+    if (typeof userScriptWorldId == "string") {
+      sender = { ...sender, userScriptWorldId };
+      event = this.onUserScriptConnect;
+    }
     if (this.context.active && event.fires.size) {
       let port = new Port(this.context, portId, name, false, sender);
       return event.emit(port.api).length;
     }
   }
 
-  recvRuntimeMessage({ extensionId, holder, sender }) {
+  recvRuntimeMessage({ extensionId, holder, sender, userScriptWorldId }) {
     let event = sender.id === extensionId ? this.onMessage : this.onMessageEx;
+    if (typeof userScriptWorldId == "string") {
+      sender = { ...sender, userScriptWorldId };
+      return this.onUserScriptMessage.emit(holder, sender);
+    }
     return event.emit(holder, sender);
   }
 }
@@ -522,6 +554,21 @@ export class ExtensionChild extends EventEmitter {
 
   getContext(window) {
     return lazy.ExtensionContent.getContext(this, window);
+  }
+
+  // Implementation of runtime.getURL / extension.getURL.
+  // ExtensionData.prototype.getURL has a similar signature and return value.
+  getURL(path = "") {
+    if (path.startsWith(this.baseURL)) {
+      // Historically, when the input is an already-resolved extension URL,
+      // we return the parsed version of it as-is.
+      return path;
+    }
+    if (path.startsWith("/")) {
+      // this.baseURL already contains a "/".
+      path = path.slice(1);
+    }
+    return this.baseURL + path;
   }
 
   emit(event, ...args) {

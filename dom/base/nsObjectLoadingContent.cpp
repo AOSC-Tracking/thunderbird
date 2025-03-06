@@ -236,8 +236,7 @@ nsObjectLoadingContent::nsObjectLoadingContent()
       mIsStopping(false),
       mIsLoading(false),
       mScriptRequested(false),
-      mRewrittenYoutubeEmbed(false),
-      mLoadingSyntheticDocument(false) {}
+      mRewrittenYoutubeEmbed(false) {}
 
 nsObjectLoadingContent::~nsObjectLoadingContent() {
   // Should have been unbound from the tree at this point, and
@@ -673,6 +672,15 @@ bool nsObjectLoadingContent::CheckProcessPolicy(int16_t* aContentPolicy) {
   return true;
 }
 
+bool nsObjectLoadingContent::IsSyntheticImageDocument() const {
+  if (mType != ObjectType::Document || !mFrameLoader) {
+    return false;
+  }
+
+  BrowsingContext* browsingContext = mFrameLoader->GetExtantBrowsingContext();
+  return browsingContext && browsingContext->GetIsSyntheticDocumentContainer();
+}
+
 nsObjectLoadingContent::ParameterUpdateFlags
 nsObjectLoadingContent::UpdateObjectParameters() {
   Element* el = AsElement();
@@ -700,7 +708,7 @@ nsObjectLoadingContent::UpdateObjectParameters() {
   // already opened a channel or tried to instantiate content, whereas channel
   // parameter changes require re-opening the channel even if we haven't gotten
   // that far.
-  nsObjectLoadingContent::ParameterUpdateFlags retval = eParamNoChange;
+  ParameterUpdateFlags retval = eParamNoChange;
 
   ///
   /// Initial MIME Type
@@ -764,6 +772,7 @@ nsObjectLoadingContent::UpdateObjectParameters() {
   }
 
   mRewrittenYoutubeEmbed = false;
+
   // Note that the baseURI changing could affect the newURI, even if uriStr did
   // not change.
   if (!uriStr.IsEmpty()) {
@@ -954,9 +963,6 @@ nsObjectLoadingContent::UpdateObjectParameters() {
     newType = ObjectType::Fallback;
     LOG(("OBJLC [%p]: NewType #4: %u", this, uint32_t(newType)));
   }
-
-  mLoadingSyntheticDocument = newType == ObjectType::Document &&
-                              imgLoader::SupportImageWithMimeType(newMime);
 
   ///
   /// Handle existing channels
@@ -1462,6 +1468,19 @@ nsresult nsObjectLoadingContent::OpenChannel() {
     auto referrerInfo = MakeRefPtr<ReferrerInfo>(*doc);
     loadState->SetReferrerInfo(referrerInfo);
 
+    loadState->SetShouldCheckForRecursion(true);
+
+    // When loading using DocumentChannel, ensure that the MIME type hint is
+    // propagated to DocumentLoadListener. Object elements can override MIME
+    // handling in some scenarios.
+    if (!mOriginalContentType.IsEmpty()) {
+      nsAutoCString parsedMime, dummy;
+      NS_ParseResponseContentType(mOriginalContentType, parsedMime, dummy);
+      if (!parsedMime.IsEmpty()) {
+        loadState->SetTypeHint(parsedMime);
+      }
+    }
+
     chan =
         DocumentChannel::CreateForObject(loadState, loadInfo, loadFlags, shim);
     MOZ_ASSERT(chan);
@@ -1618,6 +1637,8 @@ nsObjectLoadingContent::ObjectType nsObjectLoadingContent::GetTypeOfContent(
   Element* el = AsElement();
   NS_ASSERTION(el, "must be a content");
 
+  Document* doc = el->OwnerDoc();
+
   // Images and documents are always supported.
   MOZ_ASSERT((GetCapabilities() & (eSupportImages | eSupportDocuments)) ==
              (eSupportImages | eSupportDocuments));
@@ -1626,8 +1647,9 @@ nsObjectLoadingContent::ObjectType nsObjectLoadingContent::GetTypeOfContent(
       ("OBJLC [%p]: calling HtmlObjectContentTypeForMIMEType: aMIMEType: %s - "
        "el: %p\n",
        this, aMIMEType.get(), el));
-  auto ret = static_cast<ObjectType>(
-      nsContentUtils::HtmlObjectContentTypeForMIMEType(aMIMEType));
+  auto ret =
+      static_cast<ObjectType>(nsContentUtils::HtmlObjectContentTypeForMIMEType(
+          aMIMEType, doc->GetSandboxFlags()));
   LOG(("OBJLC [%p]: called HtmlObjectContentTypeForMIMEType\n", this));
   return ret;
 }
@@ -1806,8 +1828,6 @@ void nsObjectLoadingContent::SubdocumentIntrinsicSizeOrRatioChanged(
 
 void nsObjectLoadingContent::SubdocumentImageLoadComplete(nsresult aResult) {
   ObjectType oldType = mType;
-  mLoadingSyntheticDocument = false;
-
   if (NS_FAILED(aResult)) {
     UnloadObject();
     mType = ObjectType::Fallback;

@@ -58,20 +58,25 @@ add_task(async function () {
     smtpServer.authMethod = Ci.nsMsgAuthMethod.passwordCleartext;
     smtpServer.username = kUsername;
 
-    const requestObserver = new PromiseTestUtils.PromiseRequestObserver();
+    const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    const listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
     smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
       null,
       false,
-      "",
-      requestObserver
+      messageId,
+      listener
     );
 
-    await requestObserver.promise;
+    await listener.promise;
 
     var transaction = server.playTransaction();
     do_check_transaction(transaction, [

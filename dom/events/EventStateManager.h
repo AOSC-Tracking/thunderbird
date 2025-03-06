@@ -496,7 +496,7 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
    *
    * @param aPresShell              The PresShell for the ESM.  This lifetime
    *                                should be guaranteed by the caller.
-   * @param aMouseEvent             The eMouseClick event which caused the
+   * @param aMouseEvent             The ePointerClick event which caused the
    *                                paste.
    * @param aStatus                 The event status of aMouseEvent.
    * @param aEditorBase             EditorBase which may be pasted the
@@ -517,6 +517,14 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   // a notification to any child processes that are in the drag service that
   // tried to start a drag.
   void StopTrackingDragGesture(bool aClearInChildProcesses);
+
+  /**
+   * Return the last "mouseover" (or next "mouseout"), the last deepest
+   * "mouseenter" (or next deepest "mouseleave") targets.
+   */
+  const OverOutElementsWrapper* GetExtantMouseBoundaryEventTarget() const {
+    return mMouseEnterLeaveHelper;
+  }
 
  protected:
   /*
@@ -610,8 +618,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
    *                                If the status indicates consumed, the
    *                                value won't be overwritten with
    *                                nsEventStatus_eIgnore.
-   * @param aMessage                Should be eMouseClick, eMouseDoubleClick or
-   *                                eMouseAuxClick.
+   * @param aMessage                Should be ePointerClick, eMouseDoubleClick
+   *                                or ePointerAuxClick.
    * @param aPresShell              The PresShell.
    * @param aMouseUpContent         The event target of aMouseUpEvent.
    * @param aCurrentTarget          Current target of the caller.
@@ -634,8 +642,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
 
   /**
    * EventCausesClickEvents() returns true when aMouseEvent is an eMouseUp
-   * event and it should cause eMouseClick, eMouseDoubleClick and/or
-   * eMouseAuxClick events.  Note that this method assumes that
+   * event and it should cause ePointerClick, eMouseDoubleClick and/or
+   * ePointerAuxClick events.  Note that this method assumes that
    * aMouseEvent.mClickCount has already been initialized with SetClickCount().
    */
   static bool EventCausesClickEvents(const WidgetMouseEvent& aMouseEvent);
@@ -660,8 +668,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
                              nsIContent* aOverrideClickTarget);
 
   /**
-   * DispatchClickEvents() dispatches eMouseClick, eMouseDoubleClick and
-   * eMouseAuxClick events for aMouseUpEvent.  aMouseUpEvent should cause
+   * DispatchClickEvents() dispatches ePointerClick, eMouseDoubleClick and
+   * ePointerAuxClick events for aMouseUpEvent.  aMouseUpEvent should cause
    * click event.
    *
    * @param aPresShell              The PresShell.
@@ -1048,6 +1056,7 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   void DoScrollText(ScrollContainerFrame* aScrollContainerFrame,
                     WidgetWheelEvent* aEvent);
 
+  MOZ_CAN_RUN_SCRIPT
   void DoScrollHistory(int32_t direction);
   void DoScrollZoom(nsIFrame* aTargetFrame, int32_t adjustment);
   void ChangeZoom(bool aIncrease);
@@ -1219,6 +1228,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   nsresult DoContentCommandEvent(WidgetContentCommandEvent* aEvent);
   MOZ_CAN_RUN_SCRIPT
   nsresult DoContentCommandInsertTextEvent(WidgetContentCommandEvent* aEvent);
+  MOZ_CAN_RUN_SCRIPT
+  nsresult DoContentCommandReplaceTextEvent(WidgetContentCommandEvent* aEvent);
   nsresult DoContentCommandScrollEvent(WidgetContentCommandEvent* aEvent);
 
   dom::BrowserParent* GetCrossProcessTarget();
@@ -1402,8 +1413,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
 // Click and double-click events need to be handled even for content that
 // has no frame. This is required for Web compatibility.
 #define NS_EVENT_NEEDS_FRAME(event)          \
-  ((event)->mMessage != eMouseClick &&       \
+  ((event)->mMessage != ePointerClick &&     \
    (event)->mMessage != eMouseDoubleClick && \
-   (event)->mMessage != eMouseAuxClick)
+   (event)->mMessage != ePointerAuxClick)
 
 #endif  // mozilla_EventStateManager_h_

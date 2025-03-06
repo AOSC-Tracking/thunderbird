@@ -23,7 +23,7 @@ class CookieBannerBlockerTest : TestSetup() {
     @get:Rule
     val activityTestRule = HomeActivityIntentTestRule.withDefaultSettingsOverrides(skipOnboarding = true)
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2419260
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2419260
     @SmokeTest
     @Test
     fun verifyCookieBannerBlockerSettingsOptionTest() {
@@ -36,7 +36,7 @@ class CookieBannerBlockerTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2419273
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2419273
     @SmokeTest
     @Test
     fun verifyCFRAfterBlockingTheCookieBanner() {
@@ -45,8 +45,7 @@ class CookieBannerBlockerTest : TestSetup() {
             }.togglePrivateBrowsingMode()
 
             navigationToolbar {
-            }.enterURLAndEnterToBrowser("voetbal24.be".toUri()) {
-                waitForPageToLoad()
+            }.enterURLAndEnterToBrowser("materiel.net".toUri()) {
                 verifyCookieBannerExists(exists = false)
                 verifyCookieBannerBlockerCFRExists(exists = true)
             }

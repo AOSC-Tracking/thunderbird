@@ -16,8 +16,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "resource://gre/modules/ContextualIdentityService.sys.mjs",
 
   MsgAuthPrompt: "resource:///modules/MsgAsyncPrompter.sys.mjs",
-  OAuth2: "resource:///modules/OAuth2.sys.mjs",
-  OAuth2Providers: "resource:///modules/OAuth2Providers.sys.mjs",
+  OAuth2Module: "resource:///modules/OAuth2Module.sys.mjs",
 });
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -82,8 +81,8 @@ export var CardDAVUtils = {
    * @param {object}  [details.headers]
    * @param {string}  [details.body]
    * @param {string}  [details.contentType]
-   * @param {msgIOAuth2Module}  [details.oAuth] - If this is present the
-   *     request will use OAuth2 authorization.
+   * @param {OAuth2Module}  [details.oAuth] - If this is present the request
+   *     will use OAuth2 authorization.
    * @param {NotificationCallbacks} [details.callbacks] - Handles usernames
    *     and passwords for this request.
    * @param {integer} [details.userContextId] - See _contextForUsername.
@@ -142,7 +141,7 @@ export var CardDAVUtils = {
         const stream = Cc[
           "@mozilla.org/io/string-input-stream;1"
         ].createInstance(Ci.nsIStringInputStream);
-        stream.setUTF8Data(body, body.length);
+        stream.setUTF8Data(body);
 
         channel.QueryInterface(Ci.nsIUploadChannel);
         channel.setUploadStream(stream, contentType, -1);
@@ -312,7 +311,6 @@ export var CardDAVUtils = {
       }
     }
 
-    let oAuth = null;
     const callbacks = new NotificationCallbacks(
       username,
       password,
@@ -336,62 +334,28 @@ export var CardDAVUtils = {
         </propfind>`,
     };
 
-    const details = lazy.OAuth2Providers.getHostnameDetails(url.host);
-    if (details) {
-      const [issuer, scope] = details;
-      const issuerDetails = lazy.OAuth2Providers.getIssuerDetails(issuer);
-
-      oAuth = new lazy.OAuth2(scope, issuerDetails);
-      oAuth._isNew = true;
-      oAuth._loginOrigin = `oauth://${issuer}`;
-      oAuth._scope = scope;
-      for (const login of Services.logins.findLogins(
-        oAuth._loginOrigin,
-        null,
-        ""
-      )) {
-        if (
-          login.username == username &&
-          (login.httpRealm == scope ||
-            login.httpRealm.split(" ").includes(scope))
-        ) {
-          oAuth.refreshToken = login.password;
-          oAuth._isNew = false;
-          break;
-        }
-      }
-
-      if (username) {
-        oAuth.extraAuthParams = [["login_hint", username]];
-      }
-
-      // Implement msgIOAuth2Module.connect, which CardDAVUtils.makeRequest expects.
-      requestParams.oAuth = {
-        QueryInterface: ChromeUtils.generateQI(["msgIOAuth2Module"]),
-        getAccessToken(listener) {
-          oAuth.connect(true, false).then(
-            () => listener.onSuccess(oAuth.accessToken),
-            () => listener.onFailure(Cr.NS_ERROR_ABORT)
-          );
-        },
-      };
+    let oAuth = new lazy.OAuth2Module();
+    if (oAuth.initFromHostname(url.host, username, "carddav")) {
+      requestParams.oAuth = oAuth;
+    } else {
+      oAuth = null;
     }
 
     let response;
     const triedURLs = new Set();
-    async function tryURL(url) {
-      if (triedURLs.has(url)) {
+    async function tryURL(urlCandidate) {
+      if (triedURLs.has(urlCandidate)) {
         return;
       }
-      triedURLs.add(url);
+      triedURLs.add(urlCandidate);
 
-      log.log(`Attempting to connect to ${url}`);
-      response = await CardDAVUtils.makeRequest(url, requestParams);
+      log.log(`Attempting to connect to ${urlCandidate}`);
+      response = await CardDAVUtils.makeRequest(urlCandidate, requestParams);
       if (response.status == 207 && response.dom) {
-        log.log(`${url} ... success`);
+        log.log(`${urlCandidate} ... success`);
       } else {
         log.log(
-          `${url} ... response was "${response.status} ${response.statusText}"`
+          `${urlCandidate} ... response was "${response.status} ${response.statusText}"`
         );
         response = null;
       }
@@ -529,27 +493,6 @@ export var CardDAVUtils = {
           }
 
           if (oAuth) {
-            if (oAuth._isNew) {
-              log.log(`Saving refresh token for ${username}`);
-              const newLoginInfo = Cc[
-                "@mozilla.org/login-manager/loginInfo;1"
-              ].createInstance(Ci.nsILoginInfo);
-              newLoginInfo.init(
-                oAuth._loginOrigin,
-                null,
-                oAuth._scope,
-                username,
-                oAuth.refreshToken,
-                "",
-                ""
-              );
-              try {
-                await Services.logins.addLoginAsync(newLoginInfo);
-              } catch (ex) {
-                console.error(ex);
-              }
-              oAuth._isNew = false;
-            }
             book.setStringValue("carddav.username", username);
           } else if (callbacks.authInfo?.username) {
             log.log(`Saving login info for ${callbacks.authInfo.username}`);

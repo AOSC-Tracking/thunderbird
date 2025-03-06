@@ -302,9 +302,7 @@ class NetworkEventWatcher {
       browsingContextID: resource.browsingContextID,
       innerWindowId: resource.innerWindowId,
       resourceId: resource.resourceId,
-      resourceType: resource.resourceType,
       isBlocked,
-      isFileRequest: resource.isFileRequest,
       receivedUpdates: [],
       resourceUpdates: {
         // Requests already come with request cookies and headers, so those
@@ -349,6 +347,7 @@ class NetworkEventWatcher {
         resourceUpdates.httpVersion = updateResource.httpVersion;
         resourceUpdates.status = updateResource.status;
         resourceUpdates.statusText = updateResource.statusText;
+        resourceUpdates.earlyHintsStatus = updateResource.earlyHintsStatus;
         resourceUpdates.remoteAddress = updateResource.remoteAddress;
         resourceUpdates.remotePort = updateResource.remotePort;
         // The mimetype is only set when then the contentType is available
@@ -383,11 +382,10 @@ class NetworkEventWatcher {
     resourceUpdates[`${updateResource.updateType}Available`] = true;
     receivedUpdates.push(updateResource.updateType);
 
-    const isComplete = networkEvent.isFileRequest
-      ? receivedUpdates.includes("responseStart")
-      : receivedUpdates.includes("eventTimings") &&
-        receivedUpdates.includes("responseContent") &&
-        receivedUpdates.includes("securityInfo");
+    const isComplete =
+      receivedUpdates.includes("eventTimings") &&
+      receivedUpdates.includes("responseContent") &&
+      receivedUpdates.includes("securityInfo");
 
     if (isComplete) {
       this._emitUpdate(networkEvent);
@@ -397,7 +395,6 @@ class NetworkEventWatcher {
   _emitUpdate(networkEvent) {
     this.onNetworkEventUpdated([
       {
-        resourceType: networkEvent.resourceType,
         resourceId: networkEvent.resourceId,
         resourceUpdates: networkEvent.resourceUpdates,
         browsingContextID: networkEvent.browsingContextID,

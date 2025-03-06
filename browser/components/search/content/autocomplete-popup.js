@@ -69,7 +69,11 @@
         if (!engine) {
           return;
         }
-        this.oneOffButtons.handleSearchCommand(event, engine);
+        if (this.searchbar.value) {
+          this.oneOffButtons.handleSearchCommand(event, engine);
+        } else if (event.shiftKey) {
+          this.openSearchForm(event, engine);
+        }
       });
 
       this._bundle = null;
@@ -256,6 +260,14 @@
     /* eslint-disable-next-line valid-jsdoc */
     handleOneOffSearch(event, engine, where, params) {
       this.searchbar.handleSearchCommandWhere(event, engine, where, params);
+    }
+
+    openSearchForm(event, engine, forceNewTab = false) {
+      let { where, params } = this.oneOffButtons._whereToOpen(
+        event,
+        forceNewTab
+      );
+      this.searchbar.openSearchFormWhere(event, engine, where, params);
     }
 
     /**

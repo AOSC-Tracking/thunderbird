@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
 
 var tagName = "hr";
@@ -65,7 +64,7 @@ function Startup() {
 function InitDialog() {
   // Just to be confusing, "size" is used instead of height because it does
   // not accept % values, only pixels
-  var height = GetHTMLOrCSSStyleValue(globalElement, "size", "height");
+  height = GetHTMLOrCSSStyleValue(globalElement, "size", "height");
   if (height.includes("px")) {
     height = height.substr(0, height.indexOf("px"));
   }

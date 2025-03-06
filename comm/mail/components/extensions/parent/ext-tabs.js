@@ -6,8 +6,11 @@ ChromeUtils.defineESModuleGetters(this, {
   MailE10SUtils: "resource:///modules/MailE10SUtils.sys.mjs",
 });
 
-var { ExtensionError } = ExtensionUtils;
-
+var { getMessageManagerGroup } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionUtilities.sys.mjs"
+);
+var { getClonedPrincipalWithProtocolPermission, openLinkExternally } =
+  ChromeUtils.importESModule("resource:///modules/LinkHelper.sys.mjs");
 var { openURI } = ChromeUtils.importESModule(
   "resource:///modules/MessengerContentHandler.sys.mjs"
 );
@@ -36,9 +39,6 @@ const tabListener = {
    *
    * @param {Element} browser - The browser element that caused the change
    * @param {nsIWebProgress} webProgress - The web progress for the location change
-   * @param {nsIRequest} request - The xpcom request for this change
-   * @param {nsIURI} locationURI - The target uri
-   * @param {Integer} flags - The web progress flags for this change
    */
   onLocationChange(browser, webProgress) {
     if (webProgress && webProgress.isTopLevel) {
@@ -526,6 +526,19 @@ this.tabs = class extends ExtensionAPIPersistent {
               createProperties.cookieStoreId
             );
           }
+          const triggeringPrincipal =
+            url &&
+            getClonedPrincipalWithProtocolPermission(
+              context.principal,
+              Services.io.newURI(url),
+              {
+                userContextId,
+              }
+            );
+
+          const linkHandler = getMessageManagerGroup(
+            createProperties?.linkHandler
+          );
 
           const currentTab = tabmail.selectedTab;
           const active = createProperties.active ?? true;
@@ -533,11 +546,11 @@ this.tabs = class extends ExtensionAPIPersistent {
 
           const nativeTabInfo = tabmail.openTab("contentTab", {
             url: url || "about:blank",
-            linkHandler: "single-site",
+            linkHandler,
             background: !active,
             initialBrowsingContextGroupId:
               context.extension.policy.browsingContextGroupId,
-            principal: context.extension.principal,
+            triggeringPrincipal,
             duplicate: true,
             userContextId,
           });
@@ -615,7 +628,10 @@ this.tabs = class extends ExtensionAPIPersistent {
                 flags: updateProperties.loadReplace
                   ? Ci.nsIWebNavigation.LOAD_FLAGS_REPLACE_HISTORY
                   : Ci.nsIWebNavigation.LOAD_FLAGS_NONE,
-                triggeringPrincipal: context.principal,
+                triggeringPrincipal: getClonedPrincipalWithProtocolPermission(
+                  context.principal,
+                  uri
+                ),
               };
 
               if (tab.type == "mail") {
@@ -636,9 +652,7 @@ this.tabs = class extends ExtensionAPIPersistent {
             } else {
               // Send unknown URLs schema to the external protocol handler.
               // This does not change the current tab.
-              Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-                .getService(Ci.nsIExternalProtocolService)
-                .loadURI(uri);
+              openLinkExternally(uri, { addToHistory: false });
             }
           }
 

@@ -86,6 +86,7 @@ add_task(async function testDayViewDateLabel() {
   const heading = CalendarTestUtils.dayView.getColumnHeading(window);
   const labelSpan = heading.querySelector("span:not([hidden])");
 
+  await document.l10n.translateRoots();
   Assert.equal(
     labelSpan.textContent,
     "Wednesday Apr 13",
@@ -148,6 +149,8 @@ add_task(async function testDayViewNavbar() {
     "Wednesday, April 13, 2022",
     "interval description should contain a description of the displayed date"
   );
+
+  await document.l10n.translateRoots();
 
   // Note that the value 14 here tests calculation of the calendar week based on
   // the starting day of the week; if the calculation built in an assumption of

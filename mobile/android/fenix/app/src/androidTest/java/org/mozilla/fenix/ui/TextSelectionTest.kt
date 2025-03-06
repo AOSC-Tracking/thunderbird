@@ -4,12 +4,14 @@
 
 package org.mozilla.fenix.ui
 
+import androidx.test.filters.SdkSuppress
 import mozilla.components.feature.sitepermissions.SitePermissionsRules
 import org.junit.Rule
 import org.junit.Test
 import org.mozilla.fenix.customannotations.SmokeTest
 import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
 import org.mozilla.fenix.helpers.MatcherHelper.itemContainingText
+import org.mozilla.fenix.helpers.MatcherHelper.itemWithResIdAndText
 import org.mozilla.fenix.helpers.MatcherHelper.itemWithText
 import org.mozilla.fenix.helpers.RetryTestRule
 import org.mozilla.fenix.helpers.TestAssetHelper
@@ -29,13 +31,14 @@ class TextSelectionTest : TestSetup() {
     @get:Rule
     val activityIntentTestRule = HomeActivityIntentTestRule(
         isLocationPermissionEnabled = SitePermissionsRules.Action.BLOCKED,
+        isPageLoadTranslationsPromptEnabled = false,
     )
 
     @Rule
     @JvmField
     val retryTestRule = RetryTestRule(3)
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326832
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326832
     @SmokeTest
     @Test
     fun verifySelectAllTextOptionTest() {
@@ -56,11 +59,11 @@ class TextSelectionTest : TestSetup() {
             clickPasteText()
             // With Select all, white spaces are copied
             // Potential bug https://bugzilla.mozilla.org/show_bug.cgi?id=1821310
-            verifyTypedToolbarText("  Page content: 1 ")
+            verifyTypedToolbarText("  Page content: 1 ", exists = true)
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326828
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326828
     @Test
     fun verifyCopyTextOptionTest() {
         val genericURL = TestAssetHelper.getGenericAsset(mockWebServer, 1)
@@ -70,18 +73,17 @@ class TextSelectionTest : TestSetup() {
             longClickPageObject(itemContainingText("content"))
             clickContextMenuItem("Copy")
         }.openNavigationToolbar {
-            openEditURLView()
         }
 
         searchScreen {
             clickClearButton()
             longClickToolbar()
             clickPasteText()
-            verifyTypedToolbarText("content")
+            verifyTypedToolbarText("content", exists = true)
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326829
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326829
     @Test
     fun verifyShareSelectedTextOptionTest() {
         val genericURL = TestAssetHelper.getGenericAsset(mockWebServer, 1)
@@ -94,7 +96,7 @@ class TextSelectionTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326830
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326830
     @Test
     fun verifySearchTextOptionTest() {
         val genericURL = TestAssetHelper.getGenericAsset(mockWebServer, 1)
@@ -109,7 +111,7 @@ class TextSelectionTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326831
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326831
     @SmokeTest
     @Test
     fun verifyPrivateSearchTextTest() {
@@ -128,7 +130,8 @@ class TextSelectionTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326834
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326834
+    @SdkSuppress(maxSdkVersion = 30)
     @Test
     fun verifySelectAllPDFTextOptionTest() {
         val genericURL =
@@ -148,11 +151,14 @@ class TextSelectionTest : TestSetup() {
             clickClearButton()
             longClickToolbar()
             clickPasteText()
-            verifyTypedToolbarText("Washington Crossing the Delaware Wikipedia linkName: Android")
+            verifyTypedToolbarText(
+                "Washington Crossing the Delaware Wikipedia linkName: Android",
+                exists = true,
+            )
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/243839
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/243839
     @SmokeTest
     @Test
     fun verifyCopyPDFTextOptionTest() {
@@ -162,21 +168,21 @@ class TextSelectionTest : TestSetup() {
         navigationToolbar {
         }.enterURLAndEnterToBrowser(genericURL.url) {
             clickPageObject(itemWithText("PDF form file"))
+            clickPageObject(itemWithResIdAndText("android:id/button2", "CANCEL"))
             longClickPageObject(itemContainingText("Crossing"))
             clickContextMenuItem("Copy")
         }.openNavigationToolbar {
-            openEditURLView()
         }
 
         searchScreen {
             clickClearButton()
             longClickToolbar()
             clickPasteText()
-            verifyTypedToolbarText("Crossing")
+            verifyTypedToolbarText("Crossing", exists = true)
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326835
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326835
     @Test
     fun verifyShareSelectedPDFTextOptionTest() {
         val genericURL =
@@ -185,13 +191,14 @@ class TextSelectionTest : TestSetup() {
         navigationToolbar {
         }.enterURLAndEnterToBrowser(genericURL.url) {
             clickPageObject(itemWithText("PDF form file"))
+            clickPageObject(itemWithResIdAndText("android:id/button2", "CANCEL"))
             longClickPageObject(itemContainingText("Crossing"))
         }.clickShareSelectedText {
             verifyAndroidShareLayout()
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326836
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326836
     @SmokeTest
     @Test
     fun verifySearchPDFTextOptionTest() {
@@ -201,6 +208,7 @@ class TextSelectionTest : TestSetup() {
         navigationToolbar {
         }.enterURLAndEnterToBrowser(genericURL.url) {
             clickPageObject(itemWithText("PDF form file"))
+            clickPageObject(itemWithResIdAndText("android:id/button2", "CANCEL"))
             longClickPageObject(itemContainingText("Crossing"))
             clickContextMenuItem("Search")
             verifyUrl("Crossing")
@@ -208,7 +216,7 @@ class TextSelectionTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326837
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326837
     @Test
     fun verifyPrivateSearchPDFTextOptionTest() {
         val genericURL =
@@ -220,6 +228,7 @@ class TextSelectionTest : TestSetup() {
         navigationToolbar {
         }.enterURLAndEnterToBrowser(genericURL.url) {
             clickPageObject(itemWithText("PDF form file"))
+            clickPageObject(itemWithResIdAndText("android:id/button2", "CANCEL"))
             longClickPageObject(itemContainingText("Crossing"))
             clickContextMenuItem("Private Search")
             verifyUrl("Crossing")
@@ -227,7 +236,7 @@ class TextSelectionTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326813
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326813
     @Test
     fun verifyUrlBarTextSelectionOptionsTest() {
         val genericURL = TestAssetHelper.getGenericAsset(mockWebServer, 1)
@@ -240,7 +249,7 @@ class TextSelectionTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326814
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326814
     @Test
     fun verifyCopyUrlBarTextSelectionOptionTest() {
         val genericURL = TestAssetHelper.getGenericAsset(mockWebServer, 1)
@@ -258,7 +267,7 @@ class TextSelectionTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2326815
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2326815
     @Test
     fun verifyCutUrlBarTextSelectionOptionTest() {
         val genericURL = TestAssetHelper.getGenericAsset(mockWebServer, 1)
@@ -275,7 +284,7 @@ class TextSelectionTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/243845
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/243845
     @SmokeTest
     @Test
     fun verifyShareUrlBarTextSelectionOptionTest() {
@@ -292,7 +301,7 @@ class TextSelectionTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/414316
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/414316
     @Test
     fun urlBarQuickActionsTest() {
         val firstWebsite = TestAssetHelper.getGenericAsset(mockWebServer, 1)
@@ -309,7 +318,7 @@ class TextSelectionTest : TestSetup() {
             clickContextMenuItem("Paste")
         }
         searchScreen {
-            verifyTypedToolbarText(firstWebsite.url.toString())
+            verifyTypedToolbarText(firstWebsite.url.toString(), exists = true)
         }.dismissSearchBar {
         }
         browserScreen {

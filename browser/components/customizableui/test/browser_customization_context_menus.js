@@ -34,7 +34,9 @@ add_task(async function home_button_context() {
   expectedEntries.push(
     ["#toggle_PersonalToolbar", true],
     ["---"],
-    [".viewCustomizeToolbar", true]
+    [".viewCustomizeToolbar", true],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true]
   );
   checkContextMenu(contextMenu, expectedEntries);
 
@@ -79,7 +81,9 @@ add_task(async function tabstrip_context() {
   expectedEntries.push(
     ["#toggle_PersonalToolbar", true],
     ["---"],
-    [".viewCustomizeToolbar", true]
+    [".viewCustomizeToolbar", true],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true]
   );
   checkContextMenu(contextMenu, expectedEntries);
 
@@ -92,7 +96,7 @@ add_task(async function tabstrip_context() {
 // Right-click on the title bar spacer before the tabstrip should show a
 // context menu without options to move it and no tab-specific options.
 add_task(async function titlebar_spacer_context() {
-  if (!TabsInTitlebar.enabled) {
+  if (!CustomTitlebar.enabled) {
     info("Skipping test that requires tabs in the title bar.");
     return;
   }
@@ -119,7 +123,9 @@ add_task(async function titlebar_spacer_context() {
   expectedEntries.push(
     ["#toggle_PersonalToolbar", true],
     ["---"],
-    [".viewCustomizeToolbar", true]
+    [".viewCustomizeToolbar", true],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true]
   );
   checkContextMenu(contextMenu, expectedEntries);
 
@@ -155,7 +161,9 @@ add_task(async function empty_toolbar_context() {
     ["#toggle_PersonalToolbar", true],
     ["#toggle_880164_empty_toolbar", true],
     ["---"],
-    [".viewCustomizeToolbar", true]
+    [".viewCustomizeToolbar", true],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true]
   );
   checkContextMenu(contextMenu, expectedEntries);
 
@@ -189,7 +197,9 @@ add_task(async function urlbar_context() {
   expectedEntries.push(
     ["#toggle_PersonalToolbar", true],
     ["---"],
-    [".viewCustomizeToolbar", true]
+    [".viewCustomizeToolbar", true],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true]
   );
   checkContextMenu(contextMenu, expectedEntries);
 
@@ -204,9 +214,7 @@ add_task(async function searchbar_context_move_to_panel_and_back() {
   // This is specifically testing the addToPanel function for the search bar, so
   // we have to move it to its correct position in the navigation toolbar first.
   // The preference will be restored when the customizations are reset later.
-  Services.prefs.setBoolPref("browser.search.widget.inNavBar", true);
-
-  let searchbar = document.getElementById("searchbar");
+  let searchbar = await gCUITestUtils.addSearchBar();
   // This fails if the screen resolution is small and the search bar overflows
   // from the nav bar.
   await gCustomizeMode.addToPanel(searchbar);
@@ -270,6 +278,8 @@ add_task(async function context_within_panel() {
     [".customize-context-removeFromPanel", true],
     ["---"],
     [".viewCustomizeToolbar", true],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true],
   ];
   checkContextMenu(contextMenu, expectedEntries);
 
@@ -308,7 +318,9 @@ add_task(async function context_home_button_in_customize_mode() {
   expectedEntries.push(
     ["#toggle_PersonalToolbar", true],
     ["---"],
-    [".viewCustomizeToolbar", false]
+    [".viewCustomizeToolbar", false],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true]
   );
   checkContextMenu(contextMenu, expectedEntries);
 
@@ -365,6 +377,8 @@ add_task(async function context_click_in_customize_mode() {
     [".customize-context-removeFromPanel", true],
     ["---"],
     [".viewCustomizeToolbar", false],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true],
   ];
   checkContextMenu(contextMenu, expectedEntries);
 
@@ -409,6 +423,8 @@ add_task(async function context_click_customize_mode_panel_not_opened() {
     [".customize-context-removeFromPanel", true],
     ["---"],
     [".viewCustomizeToolbar", false],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true],
   ];
   checkContextMenu(contextMenu, expectedEntries, this.otherWin);
 
@@ -477,7 +493,9 @@ add_task(async function context_combined_buttons_toolbar() {
   expectedEntries.push(
     ["#toggle_PersonalToolbar", true],
     ["---"],
-    [".viewCustomizeToolbar", true]
+    [".viewCustomizeToolbar", true],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true]
   );
   checkContextMenu(contextMenu, expectedEntries);
 
@@ -520,6 +538,8 @@ add_task(async function context_after_customization_panel() {
     [".customize-context-removeFromPanel", true],
     ["---"],
     [".viewCustomizeToolbar", true],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true],
   ];
   checkContextMenu(contextMenu, expectedEntries);
 
@@ -619,6 +639,8 @@ add_task(async function flexible_space_context_menu() {
     ["#toggle_PersonalToolbar", true],
     ["---"],
     [".viewCustomizeToolbar", true],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true],
   ];
 
   if (!isOSX) {

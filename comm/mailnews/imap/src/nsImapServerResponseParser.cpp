@@ -57,6 +57,22 @@ nsImapServerResponseParser::nsImapServerResponseParser(
   fReceivedHeaderOrSizeForUID = nsMsgKey_None;
   fUtf8AcceptEnabled = false;
   fStdJunkNotJunkUseOk = false;
+  fUseModSeq = false;
+  fCurrentCommandFailed = false;
+  fUntaggedResponse = false;
+  fFetchingAllFlags = false;
+  fWaitingForMoreClientInput = false;
+  fCurrentCommandIsSingleMessageFetch = false;
+  fSavedFlagInfo = false;
+  fCurrentResponseUID = 0;
+  fHighestRecordedUID = 0;
+  fNumberOfTaggedResponsesExpected = 0;
+  fMsgID = 0;
+  fThreadID = 0;
+  fLabels = nullptr;
+  fFetchResponseIndex = 0;
+  numberOfCharsInThisChunk = 0;
+  charsReadSoFar = 0;
 }
 
 nsImapServerResponseParser::~nsImapServerResponseParser() {
@@ -1051,13 +1067,10 @@ void nsImapServerResponseParser::msg_fetch() {
 
         if (fSizeOfMostRecentMessage == 0 && CurrentResponseUID()) {
           // on no, bogus Netscape 2.0 mail server bug
-          char uidString[100];
-          sprintf(uidString, "%ld", (long)CurrentResponseUID());
-
           if (!fZeroLengthMessageUidString.IsEmpty())
             fZeroLengthMessageUidString += ",";
 
-          fZeroLengthMessageUidString += uidString;
+          fZeroLengthMessageUidString.AppendInt(CurrentResponseUID());
         }
 
         // if this token ends in ')', then it is the last token
@@ -1635,6 +1648,7 @@ void nsImapServerResponseParser::resp_text_code() {
           AdvanceToNextToken();
           // clear copy response uid
           fServerConnection.SetCopyResponseUid(fNextToken);
+          fCopyUidSet = fNextToken;  // New UIDs for the copy destination
         }
         if (ContinueParse()) AdvanceToNextToken();
       }
@@ -1935,6 +1949,7 @@ void nsImapServerResponseParser::xmailboxinfo_data() {
       }
     } while (fNextToken && !fAtEndOfLine && ContinueParse());
   }
+  PR_FREEIF(mailboxName);
 }
 
 void nsImapServerResponseParser::xserverinfo_data() {

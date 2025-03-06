@@ -303,6 +303,7 @@ class GeckoEngineSessionTest {
         var observedCanGoForward = false
         var cookieBanner = CookieBannerHandlingStatus.HANDLED
         var displaysProduct = false
+        var translationsProcessing = true
         engineSession.register(
             object : EngineSession.Observer {
                 override fun onLocationChange(url: String, hasUserGesture: Boolean) {
@@ -319,6 +320,10 @@ class GeckoEngineSessionTest {
                 override fun onProductUrlChange(isProductUrl: Boolean) {
                     displaysProduct = isProductUrl
                 }
+
+                override fun onTranslatePageChange() {
+                    translationsProcessing = false
+                }
             },
         )
 
@@ -330,6 +335,7 @@ class GeckoEngineSessionTest {
         assertEquals(CookieBannerHandlingStatus.NO_DETECTED, cookieBanner)
         // TO DO: add a positive test case after a test endpoint is implemented in desktop (Bug 1846341)
         assertEquals(false, displaysProduct)
+        assertEquals(false, translationsProcessing)
 
         navigationDelegate.value.onCanGoBack(mock(), true)
         assertEquals(true, observedCanGoBack)
@@ -631,6 +637,11 @@ class GeckoEngineSessionTest {
         engineSession.loadUrl("RESOURCE://package/test.text")
         verify(geckoSession, never()).load(GeckoSession.Loader().uri("resource://package/test.text"))
         verify(geckoSession, never()).load(GeckoSession.Loader().uri("RESOURCE://package/test.text"))
+
+        engineSession.loadUrl("fido:/12345678")
+        engineSession.loadUrl("FIDO:/12345678")
+        verify(geckoSession, never()).load(GeckoSession.Loader().uri("fido:/12345678"))
+        verify(geckoSession, never()).load(GeckoSession.Loader().uri("FIDO:/12345678"))
     }
 
     @Test
@@ -1049,6 +1060,7 @@ class GeckoEngineSessionTest {
         )
         engineSession.settings.historyTrackingDelegate = historyTrackingDelegate
         engineSession.appRedirectUrl = emptyPageUrl
+        engineSession.initialLoad = false
 
         class MockHistoryList(
             items: List<GeckoSession.HistoryDelegate.HistoryItem>,
@@ -1090,6 +1102,33 @@ class GeckoEngineSessionTest {
         verify(historyTrackingDelegate, never()).onVisited(eq(emptyPageUrl), any())
         assertEquals("https://www.google.com", observedUrl)
         assertEquals("Google Search", observedTitle)
+    }
+
+    @Test
+    fun `GIVEN an app initiated request AND initial load WHEN user swipe back THEN the tab should display the loaded page`() = runTestOnMain {
+        val engineSession = GeckoEngineSession(
+            mock(),
+            geckoSessionProvider = geckoSessionProvider,
+            context = coroutineContext,
+        )
+
+        captureDelegates()
+
+        var observedUrl = "https://www.google.com"
+        val emptyPageUrl = "https://example.com"
+
+        engineSession.register(
+            object : EngineSession.Observer {
+                override fun onLocationChange(url: String, hasUserGesture: Boolean) { observedUrl = url }
+            },
+        )
+        engineSession.appRedirectUrl = emptyPageUrl
+        engineSession.initialLoad = true
+
+        navigationDelegate.value.onLocationChange(geckoSession, emptyPageUrl, emptyList(), false)
+        contentDelegate.value.onTitleChange(geckoSession, emptyPageUrl)
+
+        assertEquals("https://example.com", observedUrl)
     }
 
     @Test
@@ -1851,15 +1890,15 @@ class GeckoEngineSessionTest {
             geckoSessionProvider = geckoSessionProvider,
         ).settings
 
-        expectException(UnsupportedSettingException::class) {
+        expectException<UnsupportedSettingException> {
             settings.javascriptEnabled = true
         }
 
-        expectException(UnsupportedSettingException::class) {
+        expectException<UnsupportedSettingException> {
             settings.domStorageEnabled = false
         }
 
-        expectException(UnsupportedSettingException::class) {
+        expectException<UnsupportedSettingException> {
             settings.trackingProtectionPolicy = TrackingProtectionPolicy.strict()
         }
     }
@@ -2546,6 +2585,39 @@ class GeckoEngineSessionTest {
         )
 
         ruleResult.complete(true)
+        shadowOf(getMainLooper()).idle()
+
+        assertTrue(onResultCalled)
+        assertFalse(onExceptionCalled)
+    }
+
+    @Test
+    fun `getWebCompatInfo should correctly process a GV response`() {
+        val engineSession = GeckoEngineSession(
+            mock(),
+            geckoSessionProvider = geckoSessionProvider,
+        )
+        var onResultCalled = false
+        var onExceptionCalled = false
+
+        val ruleResult = GeckoResult<JSONObject>()
+        whenever(geckoSession.webCompatInfo).thenReturn(ruleResult)
+
+        engineSession.getWebCompatInfo(
+            onResult = { onResultCalled = true },
+            onException = { onExceptionCalled = true },
+        )
+
+        val json = JSONObject().apply {
+            put("devicePixelRatio", 2.5)
+            put(
+                "antitracking",
+                JSONObject().apply {
+                    put("hasTrackingContentBlocked", false)
+                },
+            )
+        }
+        ruleResult.complete(json)
         shadowOf(getMainLooper()).idle()
 
         assertTrue(onResultCalled)
@@ -3901,16 +3973,13 @@ class GeckoEngineSessionTest {
     }
 
     @Test
-    fun `onLoadRequest will notify onLaunchIntent observers if request was intercepted with app intent`() {
+    fun `onLoadRequest will notify onLaunchIntent observers if request on non-direct navigation was intercepted with app intent`() {
         val engineSession = GeckoEngineSession(
             mock(),
             geckoSessionProvider = geckoSessionProvider,
         )
 
         captureDelegates()
-
-        var observedUrl: String? = null
-        var observedIntent: Intent? = null
 
         engineSession.settings.requestInterceptor = object : RequestInterceptor {
             override fun interceptsAppInitiatedRequests() = true
@@ -3926,39 +3995,59 @@ class GeckoEngineSessionTest {
                 isSubframeRequest: Boolean,
             ): RequestInterceptor.InterceptionResponse? {
                 return when (uri) {
-                    "sample:about" -> RequestInterceptor.InterceptionResponse.AppIntent(mock(), "result")
+                    "sample:triggeredByRedirect" -> RequestInterceptor.InterceptionResponse.AppIntent(mock(), "result1")
+                    "sample:NotTriggeredByRedirect" -> RequestInterceptor.InterceptionResponse.AppIntent(mock(), "result2")
+                    "sample:isDirectNavigation" -> RequestInterceptor.InterceptionResponse.AppIntent(mock(), "result3")
                     else -> null
                 }
             }
         }
 
-        engineSession.register(
-            object : EngineSession.Observer {
-                override fun onLaunchIntentRequest(
-                    url: String,
-                    appIntent: Intent?,
-                ) {
-                    observedUrl = url
-                    observedIntent = appIntent
-                }
-            },
-        )
+        val observer = object : EngineSession.Observer {
+            var url: String? = null
+            var intent: Intent? = null
+
+            override fun onLaunchIntentRequest(
+                url: String,
+                appIntent: Intent?,
+            ) {
+                this.url = url
+                intent = appIntent
+            }
+
+            fun reset() {
+                url = null
+                intent = null
+            }
+        }
+
+        engineSession.register(observer)
 
         navigationDelegate.value.onLoadRequest(
             mock(),
-            mockLoadRequest("sample:about", triggeredByRedirect = true),
+            mockLoadRequest("sample:triggeredByRedirect", triggeredByRedirect = true, isDirectNavigation = false),
         )
 
-        assertNotNull(observedIntent)
-        assertEquals("result", observedUrl)
+        assertNotNull(observer.intent)
+        assertEquals("result1", observer.url)
 
+        observer.reset()
         navigationDelegate.value.onLoadRequest(
             mock(),
-            mockLoadRequest("sample:about", triggeredByRedirect = false),
+            mockLoadRequest("sample:NotTriggeredByRedirect", triggeredByRedirect = false, isDirectNavigation = false),
         )
 
-        assertNotNull(observedIntent)
-        assertEquals("result", observedUrl)
+        assertNotNull(observer.intent)
+        assertEquals("result2", observer.url)
+
+        observer.reset()
+        navigationDelegate.value.onLoadRequest(
+            mock(),
+            mockLoadRequest("sample:isDirectNavigation", triggeredByRedirect = false, isDirectNavigation = true),
+        )
+
+        assertNull(observer.intent)
+        assertNull(observer.url)
     }
 
     @Test

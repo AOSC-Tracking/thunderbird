@@ -14,9 +14,6 @@
 const { PromiseTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-const { TelemetryTestUtils } = ChromeUtils.importESModule(
-  "resource://testing-common/TelemetryTestUtils.sys.mjs"
-);
 
 Services.prefs.setCharPref(
   "mail.serverDefaultStoreContractID",
@@ -135,13 +132,7 @@ add_setup(async function () {
 });
 
 add_task(async function testCompactFolder() {
-  Services.telemetry.clearScalars();
-  const duration = TelemetryTestUtils.getAndClearHistogram(
-    "TB_COMPACT_DURATION"
-  );
-  const bytesRecovered = TelemetryTestUtils.getAndClearHistogram(
-    "TB_COMPACT_BYTES_RECOVERED"
-  );
+  Services.fog.testResetFOG();
 
   showMessages(gFolder3, "before deleting 1 message");
 
@@ -173,33 +164,25 @@ add_task(async function testCompactFolder() {
   await verifyMboxSize(gFolder3, expectedFolderSize);
   Assert.equal(gFolder3.expungedBytes, 0, "folder3 should not need compaction");
 
-  const scalars = TelemetryTestUtils.getProcessScalars("parent", true);
-  TelemetryTestUtils.assertKeyedScalar(
-    scalars,
-    "tb.compact.result",
-    Cr.NS_OK.toString(16),
-    1
-  );
   Assert.equal(
-    Object.values(duration.snapshot().values).reduce((a, c) => a + c, 0),
+    Glean.mail.compactResult[Cr.NS_OK.toString(16)].testGetValue(),
     1,
-    "duration should be recorded in telemetry"
+    "success result should be recorded in Glean"
   );
   Assert.equal(
-    bytesRecovered.snapshot().sum,
+    Glean.mail.compactDuration.testGetValue().count,
+    1,
+    "duration should be recorded in Glean"
+  );
+  Assert.equal(
+    Glean.mail.compactSpaceRecovered.testGetValue().sum,
     expungedBytes + fromLineLength,
-    "bytes saved should be recorded in telemetry"
+    "bytes saved should be recorded in Glean"
   );
 });
 
 add_task(async function testCompactAllFolders() {
-  Services.telemetry.clearScalars();
-  const duration = TelemetryTestUtils.getAndClearHistogram(
-    "TB_COMPACT_DURATION"
-  );
-  const bytesRecovered = TelemetryTestUtils.getAndClearHistogram(
-    "TB_COMPACT_BYTES_RECOVERED"
-  );
+  Services.fog.testResetFOG();
 
   showMessages(gFolder2, "before deleting 1 message");
 
@@ -241,33 +224,25 @@ add_task(async function testCompactAllFolders() {
   await verifyMboxSize(gFolder3, expectedFolder3Size);
   Assert.equal(gFolder3.expungedBytes, 0, "folder3 should not need compaction");
 
-  const scalars = TelemetryTestUtils.getProcessScalars("parent", true);
-  TelemetryTestUtils.assertKeyedScalar(
-    scalars,
-    "tb.compact.result",
-    Cr.NS_OK.toString(16),
-    2
-  );
   Assert.equal(
-    Object.values(duration.snapshot().values).reduce((a, c) => a + c, 0),
+    Glean.mail.compactResult[Cr.NS_OK.toString(16)].testGetValue(),
     2,
-    "duration should be recorded in telemetry"
+    "success results should be recorded in Glean"
   );
   Assert.equal(
-    bytesRecovered.snapshot().sum,
+    Glean.mail.compactDuration.testGetValue().count,
+    2,
+    "duration should be recorded in Glean"
+  );
+  Assert.equal(
+    Glean.mail.compactSpaceRecovered.testGetValue().sum,
     expungedBytes + fromLineLength * 3,
-    "bytes saved should be recorded in telemetry"
+    "bytes saved should be recorded in Glean"
   );
 });
 
 add_task(async function testAbortCompactingFolder() {
-  Services.telemetry.clearScalars();
-  const duration = TelemetryTestUtils.getAndClearHistogram(
-    "TB_COMPACT_DURATION"
-  );
-  const bytesRecovered = TelemetryTestUtils.getAndClearHistogram(
-    "TB_COMPACT_BYTES_RECOVERED"
-  );
+  Services.fog.testResetFOG();
 
   showMessages(gFolder2, "before deleting 1 message");
 
@@ -290,7 +265,7 @@ add_task(async function testAbortCompactingFolder() {
 
   // Shut down (or pretend to)! This can happen after starting compact because
   // compact is event driven and we haven't released the event loop yet.
-  Services.obs.notifyObservers(null, "test-profile-before-change");
+  Services.obs.notifyObservers(null, "test-quit-application");
   await Assert.rejects(
     listener.promise,
     /2147500036/,
@@ -299,24 +274,6 @@ add_task(async function testAbortCompactingFolder() {
 
   await verifyMboxSize(gFolder2, unchangedFolderSize);
   Assert.greater(gFolder2.expungedBytes, 0, "folder2 should need compaction");
-
-  const scalars = TelemetryTestUtils.getProcessScalars("parent", true);
-  TelemetryTestUtils.assertKeyedScalar(
-    scalars,
-    "tb.compact.result",
-    Cr.NS_ERROR_ABORT.toString(16),
-    1
-  );
-  Assert.equal(
-    Object.values(duration.snapshot().values).reduce((a, c) => a + c, 0),
-    0,
-    "duration should not be recorded in telemetry"
-  );
-  Assert.equal(
-    bytesRecovered.snapshot().sum,
-    0,
-    "bytes saved should not be recorded in telemetry"
-  );
 
   const filesAfter = new Set(
     Array.from(gFolder2.filePath.parent.directoryEntries, f => f.leafName)
@@ -330,5 +287,26 @@ add_task(async function testAbortCompactingFolder() {
     [...filesAfter.difference(filesBefore)],
     [],
     "there should be no new files after compaction aborted"
+  );
+
+  Assert.equal(
+    Glean.mail.compactResult[Cr.NS_OK.toString(16)].testGetValue(),
+    null,
+    "success result should not be recorded in Glean"
+  );
+  Assert.equal(
+    Glean.mail.compactResult[Cr.NS_ERROR_ABORT.toString(16)].testGetValue(),
+    1,
+    "abort result should be recorded in Glean"
+  );
+  Assert.equal(
+    Glean.mail.compactDuration.testGetValue(),
+    null,
+    "duration should not be recorded in Glean"
+  );
+  Assert.equal(
+    Glean.mail.compactSpaceRecovered.testGetValue(),
+    null,
+    "bytes saved should not be recorded in Glean"
   );
 });

@@ -6,10 +6,8 @@
 
 /* import-globals-from ../calendar-ui-utils.js */
 
-var { PluralForm } = ChromeUtils.importESModule("resource:///modules/PluralForm.sys.mjs");
 var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
-
 ChromeUtils.defineESModuleGetters(this, {
   CalAlarm: "resource:///modules/CalAlarm.sys.mjs",
 });
@@ -22,6 +20,11 @@ ChromeUtils.defineLazyGetter(this, "gReminderNotification", () => {
     document.getElementById("reminder-notifications").append(element);
   });
 });
+ChromeUtils.defineLazyGetter(
+  this,
+  "l10n",
+  () => new Localization(["calendar/calendar-alarms.ftl"], true)
+);
 
 window.addEventListener("load", onLoad);
 
@@ -33,24 +36,25 @@ function onLoad() {
 
   // Make sure the origin menulist uses the right labels, depending on if the
   // dialog is showing an event or task.
-  function _sn(x) {
-    return cal.l10n.getString("calendar-alarms", getItemBundleStringName(x));
-  }
 
-  document.getElementById("reminder-before-start-menuitem").label = _sn(
-    "reminderCustomOriginBeginBefore"
+  document.l10n.setAttributes(
+    document.getElementById("reminder-before-start-menuitem"),
+    getItemBundleStringName("reminder-custom-origin-begin-before")
   );
 
-  document.getElementById("reminder-after-start-menuitem").label = _sn(
-    "reminderCustomOriginBeginAfter"
+  document.l10n.setAttributes(
+    document.getElementById("reminder-after-start-menuitem"),
+    getItemBundleStringName("reminder-custom-origin-begin-after")
   );
 
-  document.getElementById("reminder-before-end-menuitem").label = _sn(
-    "reminderCustomOriginEndBefore"
+  document.l10n.setAttributes(
+    document.getElementById("reminder-before-end-menuitem"),
+    getItemBundleStringName("reminder-custom-origin-end-before")
   );
 
-  document.getElementById("reminder-after-end-menuitem").label = _sn(
-    "reminderCustomOriginEndAfter"
+  document.l10n.setAttributes(
+    document.getElementById("reminder-after-end-menuitem"),
+    getItemBundleStringName("reminder-custom-origin-end-after")
   );
 
   // Set up the action map
@@ -131,8 +135,8 @@ function loadReminders() {
  * switching between absolute and relative alarms to disable and enable the
  * needed controls.
  *
- * @param aDisableAll       Disable all relation controls. Used when no alarms
- *                            are added yet.
+ * @param {boolean} aDisableAll - Disable all relation controls. Used when no
+ *   alarms are added yet.
  */
 function setupRadioEnabledState(aDisableAll) {
   const relationItem = document.getElementById("reminder-relation-radiogroup").selectedItem;
@@ -177,21 +181,20 @@ async function setupMaxReminders() {
   // disable the new button.
   document.getElementById("reminder-new-button").disabled = hitMaxReminders;
 
-  const localeErrorString = cal.l10n.getString(
-    "calendar-alarms",
-    getItemBundleStringName("reminderErrorMaxCountReached"),
-    [maxReminders]
-  );
-  const pluralErrorLabel = PluralForm.get(maxReminders, localeErrorString).replace(
-    "#1",
-    maxReminders
-  );
+  // const localeErrorString = this.l10n.formatValueSync("reminder-error-max-count-reached", {
+  //   count: maxReminders,
+  // });
 
   if (hitMaxReminders) {
     const notification = await gReminderNotification.appendNotification(
       "reminderNotification",
       {
-        label: pluralErrorLabel,
+        label: {
+          "l10n-id": "reminder-error-max-count-reached",
+          "l10n-args": {
+            count: maxReminders,
+          },
+        },
         priority: gReminderNotification.PRIORITY_WARNING_MEDIUM,
       },
       null
@@ -205,12 +208,12 @@ async function setupMaxReminders() {
 /**
  * Sets up a reminder listitem for the list of reminders applied to this item.
  *
- * @param aListItem     (optional) A reference listitem to set up. If not
- *                                   passed, a new listitem will be created.
- * @param aReminder     The calIAlarm to display in this listitem
- * @param aItem         The item the alarm is set up on.
- * @returns The  XUL listitem node showing the passed reminder, or
- *   null if no list item should be shown.
+ * @param {?calIAlarm[]} aListItem - An optional reference listitem to set up.
+ *  If notpassed, a new listitem will be created.
+ * @param {calIAlarm} aReminder - The calIAlarm to display in this listitem
+ * @param {calIItemBase} aItem - The item the alarm is set up on.
+ * @returns {?MozElements.MozRichlistitem} The richlistitem node showing the
+ *   passed reminder, or null if no list item should be shown.
  */
 function setupListItem(aListItem, aReminder, aItem) {
   let src;
@@ -338,7 +341,7 @@ function onReminderSelected() {
  * Handler function to be called when an aspect of the alarm has been changed
  * using the dialog controls.
  *
- * @param event         The DOM event caused by the change.
+ * @param {Event} event - The DOM event caused by the change.
  */
 function updateReminder(event) {
   if (
@@ -404,14 +407,14 @@ function updateReminder(event) {
  * Gets the locale stringname that is dependent on the item type. This function
  * appends the item type, i.e |aPrefix + "Event"|.
  *
- * @param aPrefix       The prefix to prepend to the item type
- * @returns The full string name.
+ * @param {string} aPrefix - The prefix to prepend to the item type
+ * @returns {string} The full string name.
  */
 function getItemBundleStringName(aPrefix) {
   if (window.arguments[0].item.isEvent()) {
-    return aPrefix + "Event";
+    return `${aPrefix}-event-dom`;
   }
-  return aPrefix + "Task";
+  return `${aPrefix}-task-dom`;
 }
 
 /**

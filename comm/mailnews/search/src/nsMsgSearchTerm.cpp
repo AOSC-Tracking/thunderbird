@@ -34,7 +34,6 @@
 #include "nsIMsgFilterService.h"
 #include "nsIMsgPluggableStore.h"
 #include "nsIAbManager.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
 #include "mozilla/Utf8.h"
 
@@ -80,7 +79,7 @@ nsMsgSearchAttribEntry SearchAttribEntryTable[] = {
 };
 
 static const unsigned int sNumSearchAttribEntryTable =
-    MOZ_ARRAY_LENGTH(SearchAttribEntryTable);
+    std::size(SearchAttribEntryTable);
 
 // Take a string which starts off with an attribute
 // and return the matching attribute. If the string is not in the table, and it
@@ -221,7 +220,7 @@ nsMsgSearchOperatorEntry SearchOperatorEntryTable[] = {
     {nsMsgSearchOp::DoesntMatch, "doesn't match"}};
 
 static const unsigned int sNumSearchOperatorEntryTable =
-    MOZ_ARRAY_LENGTH(SearchOperatorEntryTable);
+    std::size(SearchOperatorEntryTable);
 
 nsresult NS_MsgGetOperatorFromString(const char* string, int16_t* op) {
   NS_ENSURE_ARG_POINTER(string);
@@ -890,7 +889,7 @@ nsresult nsMsgSearchTerm::MatchInAddressBook(const nsAString& aAddress,
     nsCOMPtr<nsIAbCard> cardForAddress = nullptr;
     rv = mDirectory->CardForEmailAddress(NS_ConvertUTF16toUTF8(aAddress),
                                          getter_AddRefs(cardForAddress));
-    if (NS_FAILED(rv) && rv != NS_ERROR_NOT_IMPLEMENTED) return rv;
+    if (NS_FAILED(rv)) return rv;
     switch (m_operator) {
       case nsMsgSearchOp::IsInAB:
         if (cardForAddress) *pResult = true;
@@ -1588,7 +1587,12 @@ nsMsgSearchScopeTerm::nsMsgSearchScopeTerm(nsIMsgSearchSession* session,
   m_searchSession = do_GetWeakReference(session);
 }
 
-nsMsgSearchScopeTerm::nsMsgSearchScopeTerm() { m_searchServer = true; }
+nsMsgSearchScopeTerm::nsMsgSearchScopeTerm() {
+  m_attribute = 0;
+  m_folder = nullptr;
+  m_searchServer = true;
+  m_searchSession = nullptr;
+}
 
 nsMsgSearchScopeTerm::~nsMsgSearchScopeTerm() {
   if (m_inputStream) m_inputStream->Close();

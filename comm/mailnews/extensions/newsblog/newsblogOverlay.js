@@ -18,6 +18,9 @@ var { FeedUtils } = ChromeUtils.importESModule(
 var { MailE10SUtils } = ChromeUtils.importESModule(
   "resource:///modules/MailE10SUtils.sys.mjs"
 );
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 
 ChromeUtils.defineESModuleGetters(this, {
   MsgHdrToMimeMessage: "resource:///modules/gloda/MimeMessage.sys.mjs",
@@ -52,13 +55,6 @@ var FeedMessageHandler = {
   },
 
   /**
-   * Load web page on threadpane select.
-   */
-  get loadWebPageOnSelectPref() {
-    return Services.prefs.getIntPref("rss.message.loadWebPageOnSelect");
-  },
-
-  /**
    * How to load message on open (enter/dbl click in threadpane, contextmenu).
    */
   get onOpenPref() {
@@ -76,7 +72,7 @@ var FeedMessageHandler = {
    * @param {nsIMsgDBHdr} aMsgHdr - The message.
    * @param {boolean} aToggle - true if in toggle mode, false otherwise.
    *
-   * @returns {Boolean} - true if summary is to be displayed, false if web page.
+   * @returns {boolean} - true if summary is to be displayed, false if web page.
    */
   shouldShowSummary(aMsgHdr, aToggle) {
     // Not a feed message, always show summary (the message).
@@ -165,14 +161,6 @@ var FeedMessageHandler = {
       }
     }
 
-    // Auto load web page in browser on select, per pref; shouldShowSummary() is
-    // always called first to 1)test if feed, 2)get summary pref, so do it here.
-    if (this.loadWebPageOnSelectPref) {
-      setTimeout(FeedMessageHandler.loadWebPage, 20, aMsgHdr, {
-        browser: true,
-      });
-    }
-
     return showSummary;
   },
 
@@ -184,7 +172,7 @@ var FeedMessageHandler = {
    * is not streamed.
    *
    * @param {nsIMsgDBHdr} aMessageHdr - The message.
-   * @param {Object} aWhere - name value=true pair, where name is in:
+   * @param {object} aWhere - name value=true pair, where name is in:
    *                                    'messagepane', 'browser', 'tab', 'window'.
    * @returns {void}
    */
@@ -211,10 +199,9 @@ var FeedMessageHandler = {
           );
           return;
         }
+        //TODO browser currently only used from SearchDialog for kOpenLoadInBrowser
         if (aWhere.browser) {
-          Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-            .getService(Ci.nsIExternalProtocolService)
-            .loadURI(uri);
+          openLinkExternally(uri, { addToHistory: false });
         } else if (aWhere.messagepane) {
           const browser = getMessagePaneBrowser();
           // Load about:blank in the browser before (potentially) switching
@@ -241,7 +228,7 @@ var FeedMessageHandler = {
    * know if the message is a feed message.
    *
    * @param {nsIMsgDBHdr} aMsgHdr - The message.
-   * @param {Boolean} aShowSummary - true if summary is to be displayed,
+   * @param {boolean} aShowSummary - true if summary is to be displayed,
    *                                 false if web page.
    * @returns {void}
    */
@@ -372,7 +359,7 @@ function openComposeWindowForRSSArticle(
       MsgHdrToMimeMessage(
         msgHdr,
         null,
-        function (aMsgHdr, aMimeMsg) {
+        function (messageHeader, aMimeMsg) {
           if (
             aMimeMsg &&
             aMimeMsg.headers["content-base"] &&
@@ -388,7 +375,7 @@ function openComposeWindowForRSSArticle(
             // No content-base url, use the summary.
             MailServices.compose.OpenComposeWindow(
               aMsgComposeWindow,
-              aMsgHdr,
+              messageHeader,
               aMessageUri,
               aType,
               aFormat,

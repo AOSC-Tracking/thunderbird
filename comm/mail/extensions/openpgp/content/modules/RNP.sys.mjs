@@ -528,7 +528,7 @@ export var RNP = {
       }
       await lazy.OpenPGPMasterpass.ensurePasswordIsCached();
     } catch (e) {
-      console.warn("Loading RNP FAILED!", e);
+      lazy.log.warn("Loading RNP FAILED!", e);
     }
   },
 
@@ -754,7 +754,7 @@ export var RNP = {
    * @param {rnp_ffi_t} ffi - RNP library handle to key storage area
    * @param {boolean} forListing - Request additional attributes
    *   in the returned objects, for backwards compatibility.
-   * @param {string[]} onlyKeys - An array of key IDs or fingerprints.
+   * @param {?string[]} onlyKeys - An array of key IDs or fingerprints.
    *   If non-null, only the given elements will be returned.
    *   If null, all elements are returned.
    * @param {boolean} onlySecret - If true, only information for
@@ -762,8 +762,8 @@ export var RNP = {
    * @param {boolean} withPubKey - If true, an additional attribute
    *   "pubKey" will be added to each returned KeyObj, which will
    *   contain an ascii armor copy of the public key.
-   * @returns {KeyObj[]} - An array of KeyObj objects that describe the
-   *                       available keys.
+   * @returns {KeyObj[]} an array of KeyObj objects that describe the
+   *   available keys.
    */
   async getKeysFromFFI(
     ffi,
@@ -781,8 +781,8 @@ export var RNP = {
     const keys = [];
 
     if (onlyKeys) {
-      for (let ki = 0; ki < onlyKeys.length; ki++) {
-        const handle = await this.getKeyHandleByIdentifier(ffi, onlyKeys[ki]);
+      for (const id of onlyKeys) {
+        const handle = await this.getKeyHandleByIdentifier(ffi, id);
         if (!handle || handle.isNull()) {
           continue;
         }
@@ -802,7 +802,8 @@ export var RNP = {
             continue;
           }
         } catch (ex) {
-          console.warn(`Get key info from handle FAILED for 0x${keyObj.id}`);
+          lazy.log.warn(`Get key info from handle FAILED for 0x${id}`);
+          continue;
         } finally {
           RNPLib.rnp_key_handle_destroy(handle);
         }
@@ -861,7 +862,9 @@ export var RNP = {
             continue;
           }
         } catch (ex) {
-          console.warn(`Get key info from handle FAILED for 0x${keyObj.id}`);
+          const id = RNP.getKeyIDFromHandle(handle);
+          lazy.log.warn(`Get key info from handle FAILED for 0x${id}`);
+          continue;
         } finally {
           RNPLib.rnp_key_handle_destroy(handle);
         }
@@ -1713,7 +1716,7 @@ export var RNP = {
         RNPLib.rnp_uid_handle_destroy(uid_handle);
       }
     } catch (ex) {
-      console.warn("Getting signatures FAILED!", ex);
+      lazy.log.warn(`Getting signatures for 0x{keyObj.keyId} FAILED!`, ex);
     }
     return rList;
   },
@@ -2057,13 +2060,14 @@ export var RNP = {
       const cipher = prot_cipher_str.readString();
       const validIntegrityProtection = prot_is_valid.value;
 
+      lazy.log.debug(`Decryption mode=${mode}, cipher=${cipher}`);
       if (mode != "none") {
         if (!validIntegrityProtection) {
           useDecodedData = false;
           result.statusFlags |=
             lazy.EnigmailConstants.MISSING_MDC |
             lazy.EnigmailConstants.DECRYPTION_FAILED;
-        } else if (mode == "null" || this.policyForbidsAlg(cipher)) {
+        } else if (cipher == "null" || this.policyForbidsAlg(cipher)) {
           // don't indicate decryption, because a non-protecting or insecure cipher was used
           result.statusFlags |= lazy.EnigmailConstants.UNKNOWN_ALGO;
         } else {
@@ -2705,7 +2709,12 @@ export var RNP = {
     Services.obs.notifyObservers(null, "openpgp-key-change");
   },
 
-  importToFFI(ffi, keyBlockStr, usePublic, useSecret, permissive) {
+  importToFFI(ffi, keyBlockStr, usePublic, useSecret) {
+    if (usePublic && useSecret) {
+      throw new Error("Cannot import public and secret keys at the same time");
+    }
+    const permissive = !useSecret; // permissive only for public keys
+
     const input_from_memory = new RNPLib.rnp_input_t();
 
     if (!keyBlockStr) {
@@ -2756,7 +2765,7 @@ export var RNP = {
       flags |= RNPLib.RNP_LOAD_SAVE_PERMISSIVE;
     }
 
-    const rv = RNPLib.rnp_import_keys(
+    let rv = RNPLib.rnp_import_keys(
       ffi,
       input_from_memory,
       flags,
@@ -2764,6 +2773,12 @@ export var RNP = {
     );
     if (rv) {
       lazy.log.warn(`rnp_import_keys FAILED; rv=${rv}`);
+    } else {
+      const info = JSON.parse(jsonInfo.readString());
+      if (!("keys" in info) || !info.keys.length) {
+        lazy.log.warn("rnp_import_keys found no supported keys");
+        rv = -1;
+      }
     }
 
     // TODO: parse jsonInfo and return a list of keys,
@@ -2778,7 +2793,7 @@ export var RNP = {
 
   maxImportKeyBlockSize: 5000000,
 
-  async getOnePubKeyFromKeyBlock(keyBlockStr, fpr, permissive = true) {
+  async getOnePubKeyFromKeyBlock(keyBlockStr, fpr) {
     if (!keyBlockStr) {
       throw new Error(`Invalid parameter; keyblock: ${keyBlockStr}`);
     }
@@ -2793,7 +2808,7 @@ export var RNP = {
     }
 
     let pubKey;
-    if (!this.importToFFI(tempFFI, keyBlockStr, true, false, permissive)) {
+    if (!this.importToFFI(tempFFI, keyBlockStr, true, false)) {
       pubKey = await this.getPublicKey("0x" + fpr, tempFFI);
     }
 
@@ -2805,7 +2820,6 @@ export var RNP = {
     keyBlockStr,
     pubkey = true,
     seckey = false,
-    permissive = true,
     withPubKey = false
   ) {
     if (!keyBlockStr) {
@@ -2822,7 +2836,7 @@ export var RNP = {
     }
 
     let keyList = null;
-    if (!this.importToFFI(tempFFI, keyBlockStr, pubkey, seckey, permissive)) {
+    if (!this.importToFFI(tempFFI, keyBlockStr, pubkey, seckey)) {
       keyList = await this.getKeysFromFFI(
         tempFFI,
         true,
@@ -2858,11 +2872,8 @@ export var RNP = {
       throw new Error("Couldn't initialize librnp.");
     }
 
-    const pubkey = true;
-    const seckey = false;
-    const permissive = false;
     for (const block of new Set(keyBlocks)) {
-      if (this.importToFFI(tempFFI, block, pubkey, seckey, permissive)) {
+      if (this.importToFFI(tempFFI, block, true, false)) {
         throw new Error("Merging public keys failed");
       }
     }
@@ -2919,7 +2930,6 @@ export var RNP = {
     passCB,
     keepPassphrases,
     keyBlockStr,
-    permissive = false,
     limitedFPRs = []
   ) {
     return this._importKeyBlockWithAutoAccept(
@@ -2930,7 +2940,6 @@ export var RNP = {
       false,
       true,
       null,
-      permissive,
       limitedFPRs
     );
   },
@@ -2939,7 +2948,6 @@ export var RNP = {
     win,
     keyBlockStr,
     acceptance,
-    permissive = false,
     limitedFPRs = []
   ) {
     return this._importKeyBlockWithAutoAccept(
@@ -2950,7 +2958,6 @@ export var RNP = {
       true,
       false,
       acceptance,
-      permissive,
       limitedFPRs
     );
   },
@@ -2979,9 +2986,6 @@ export var RNP = {
    * @param {string} acceptance - The key acceptance level that should
    *   be assigned to imported public keys.
    *   TODO: Write better documentation for the allowed values.
-   * @param {boolean} permissive - Whether it's allowed to fall back
-   *   to a permissive import, if strict import fails.
-   *   (See RNP documentation for RNP_LOAD_SAVE_PERMISSIVE.)
    * @param {string[]} limitedFPRs - This is a filtering parameter.
    *   If the array is empty, all keys will be imported.
    *   If the array contains at least one entry, a key will be imported
@@ -2996,18 +3000,15 @@ export var RNP = {
     pubkey,
     seckey,
     acceptance,
-    permissive = false,
     limitedFPRs = []
   ) {
     if (keyBlockStr.length > RNP.maxImportKeyBlockSize) {
       throw new Error("rejecting big keyblock");
     }
     if (pubkey && seckey) {
-      // Currently no caller needs to import both at the save time,
-      // and the implementation hasn't been reviewed, whether it
-      // supports it or not, so we refuse this request.
       throw new Error("Cannot import public and secret keys at the same time");
     }
+    const permissive = !seckey; // permissive only for public keys
 
     /*
      * Import strategy:
@@ -3033,7 +3034,7 @@ export var RNP = {
     }
 
     // TODO: check result
-    if (this.importToFFI(tempFFI, keyBlockStr, pubkey, seckey, permissive)) {
+    if (this.importToFFI(tempFFI, keyBlockStr, pubkey, seckey)) {
       result.errorMsg = "RNP.importToFFI failed";
       return result;
     }
@@ -3403,6 +3404,12 @@ export var RNP = {
     return result;
   },
 
+  /**
+   * Delete the given key.
+   *
+   * @param {string} keyFingerprint - Fingerprint.
+   * @param {boolean} deleteSecret - Whether to delete secret key as well.
+   */
   async deleteKey(keyFingerprint, deleteSecret) {
     const handle = new RNPLib.rnp_key_handle_t();
     if (
@@ -3413,7 +3420,7 @@ export var RNP = {
         handle.address()
       )
     ) {
-      throw new Error("rnp_locate_key failed");
+      throw new Error(`rnp_locate_key failed for ${keyFingerprint}`);
     }
 
     let flags = RNPLib.RNP_KEY_REMOVE_PUBLIC | RNPLib.RNP_KEY_REMOVE_SUBKEYS;
@@ -3422,13 +3429,18 @@ export var RNP = {
     }
 
     if (RNPLib.rnp_key_remove(handle, flags)) {
-      throw new Error("rnp_key_remove failed");
+      throw new Error(`rnp_key_remove failed; deleteSecret=${deleteSecret}`);
     }
 
     RNPLib.rnp_key_handle_destroy(handle);
     await this.saveKeyRings();
   },
 
+  /**
+   * Revoke the given key.
+   *
+   * @param {string} keyFingerprint - Fingerprint.
+   */
   async revokeKey(keyFingerprint) {
     const tracker =
       RnpPrivateKeyUnlockTracker.constructFromFingerprint(keyFingerprint);
@@ -4334,7 +4346,6 @@ export var RNP = {
    * @param {rnp_key_handle_t} expKey - RNP key handle
    * @param {boolean} keepUserIDs - if true keep users IDs
    * @param {rnp_output_t} out_binary - output stream handle
-   *
    */
   export_pubkey_strip_sigs_uids(expKey, keepUserIDs, out_binary) {
     const expKeyId = this.getKeyIDFromHandle(expKey);

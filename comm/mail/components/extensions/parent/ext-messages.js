@@ -5,17 +5,23 @@
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
+
 ChromeUtils.defineESModuleGetters(this, {
   AttachmentInfo: "resource:///modules/AttachmentInfo.sys.mjs",
   MessageArchiver: "resource:///modules/MessageArchiver.sys.mjs",
-  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+  MimeParser: "resource:///modules/mimeParser.sys.mjs",
 });
 
 var {
   getMsgPartUrl,
   getMessagesInFolder,
+  messagePartToRaw,
   parseEncodedAddrHeader,
   CachedMsgHeader,
+  MAILBOX_HEADERS,
   MessageQuery,
   MsgHdrProcessor,
 } = ChromeUtils.importESModule("resource:///modules/ExtensionMessages.sys.mjs");
@@ -28,66 +34,60 @@ var { MailStringUtils } = ChromeUtils.importESModule(
   "resource:///modules/MailStringUtils.sys.mjs"
 );
 
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
 XPCOMUtils.defineLazyGlobalGetters(this, ["File"]);
 
 var { DefaultMap } = ExtensionUtils;
 
 /**
- * Takes a MimeTreePart and returns the processed headers, to be used in the
+ * Takes a MimeTreePart and returns the raw headers, to be used in the
  * WebExtension MessagePart.
  *
  * @param {MimeTreePart} mimeTreePart
- * @returns {Object<string, string[]>} The headers of the part. Each key is the
- *   name of a header and its value is an array of the header values.
+ * @returns {object} An <string, string[]> mapping. The headers of the part.
+ *   Each key is the name of a header and its value is an array of the header
+ *   values.
+ * @see {MimeTree}
+ */
+function convertRawHeaders(mimeTreePart) {
+  const partHeaders = {};
+  for (const [headerName, headerValue] of mimeTreePart.headers._rawHeaders) {
+    // Return an array, even for single values.
+    const valueArray = Array.isArray(headerValue) ? headerValue : [headerValue];
+    partHeaders[headerName] = valueArray;
+  }
+
+  return partHeaders;
+}
+
+/**
+ * Takes a MimeTreePart and returns the processed headers, to be used in the
+ * WebExtension MessagePart. Adds a content-type header if missing.
  *
- * @see mail/extensions/openpgp/content/modules/MimeTree.sys.mjs
+ * @param {MimeTreePart} mimeTreePart
+ * @returns {object} An <string, string[]> mapping. The headers of the part.
+ *   Each key is the name of a header and its value is an array of the header
+ *   values.
+ * @see {MimeTree}
  */
 function convertHeaders(mimeTreePart) {
   // For convenience, the API has always decoded the returned headers. That turned
   // out to make it impossible to parse certain headers. For example, the following
   // TO header
-  //   To: =?UTF-8?Q?H=C3=B6rst=2C_Kenny?= <K.Hoerst@invalid>, new@thunderbird.bug
+  //   =?UTF-8?Q?H=C3=B6rst=2C_Kenny?= <K.Hoerst@invalid>, new@thunderbird.bug
   // was decoded to
-  //   To: Hörst, Kenny <K.Hoerst@invalid>, new@thunderbird.bug
+  //   Hörst, Kenny <K.Hoerst@invalid>, new@thunderbird.bug
   // This issue seems to be specific to address headers. Similar to jsmime, which
   // is using a dedicated parser for well known address headers, we will handle
-  // these address headers separately as well. It is obviously not a perfect fix,
-  // but the best we can do.
-  const addressHeaders = [
-    // Addressing headers from RFC 5322:
-    "bcc",
-    "cc",
-    "from",
-    "reply-to",
-    "resent-bcc",
-    "resent-cc",
-    "resent-from",
-    "resent-reply-to",
-    "resent-sender",
-    "resent-to",
-    "sender",
-    "to",
-    // From RFC 5536:
-    "approved",
-    // From RFC 3798:
-    "disposition-notification-to",
-    // Non-standard headers:
-    "delivered-to",
-    "return-receipt-to",
-    // http://cr.yp.to/proto/replyto.html
-    "mail-reply-to",
-    "mail-followup-to",
-  ];
+  // these address headers separately as well. Add-on developers may request raw
+  // headers and manually decode them using messengerUtilities.decodeMimeHeader(),
+  // which allows to specify whether the header is a mailbox header or not.
 
   const partHeaders = {};
   for (const [headerName, headerValue] of mimeTreePart.headers._rawHeaders) {
     // Return an array, even for single values.
     const valueArray = Array.isArray(headerValue) ? headerValue : [headerValue];
 
-    partHeaders[headerName] = addressHeaders.includes(headerName)
+    partHeaders[headerName] = MAILBOX_HEADERS.includes(headerName)
       ? valueArray.map(value => parseEncodedAddrHeader(value).join(", "))
       : valueArray.map(value => {
           return MailServices.mimeConverter.decodeMimeHeader(
@@ -105,24 +105,31 @@ function convertHeaders(mimeTreePart) {
 }
 
 /**
- * @typedef MessagePart
+ * @typedef {object} MessagePart
  *
  * The WebExtension type "MessagePart", as defined in messages.json.
  *
- * @property {string} [body] - The content of the part.
+ * @property {string} [body] - The quoted-printable or base64 decoded content of
+ *   the part. Only present for parts with a content type of <var>text/*</var>
+ *   and only if requested.
  * @property {string} [contentType] - The contentType of the part.
  * @property {string} [decryptionStatus] - The decryptionStatus of the part, one
  *   of "none", "skipped", "success" or "fail".
- * @property {Object<string, string[]>} [headers] - The headers of the part. Each
- *   key is the name of a header and its value is an array of the header values.
+ * @property {object} [headers] - A <string, string[]> mapping.
+ *   The RFC2047 decoded headers of the part. Each key is the name of a header
+ *   and its value is an array of header values (if header is specified more
+ *   than once).
  * @property {string} [name] - Name of the part, if it is an attachment/file.
  * @property {string} [partName] - The identifier of this part in the message
  *   (for example "1.2").
  * @property {MessagePart[]} [parts] - Any sub-parts of this part.
+ * @property {string} [rawBody] - The raw content of the part.
+ * @property {object} [rawHeaders] - An <string, string[]> mapping. The raw
+ *   headers of the part. Each key is the name of a header and its value is an
+ *   array of the header values (if header is specified more than once).
  * @property {integer} [size] - The size of this part. The size of message/* parts
  *   is not the actual message size (on disc), but the total size of its decoded
  *   body parts, excluding headers.
- *
  * @see mail/components/extensions/schemas/messages.json
  */
 
@@ -131,25 +138,48 @@ function convertHeaders(mimeTreePart) {
  * extensions and converts it to a WebExtension MessagePart.
  *
  * @param {MimeTreePart} mimeTreePart
- * @param {boolean} isRoot - if this is the root part, while working through the
- *   tree recursivly
+ * @param {boolean} isRoot - If this is the root part, while working through the
+ *   tree recursivly.
+ * @param {boolean} decodeHeaders - If decoded or raw headers should be returned.
+ * @param {boolean} decodeContent - If decoded or raw content should be returned,
+ *   this determines if a "body" member only for text/* parts, or if a "rawBody"
+ *   member for all parts is to be returned. The actual decoding is done elsewhere
+ *   and the option should match the content data in the provided mimeTreePart.
  * @returns {MessagePart}
- *
  * @see mail/extensions/openpgp/content/modules/MimeTree.sys.mjs
  */
-function convertMessagePart(mimeTreePart, isRoot = true) {
+function convertMessagePart(
+  mimeTreePart,
+  isRoot,
+  decodeHeaders,
+  decodeContent
+) {
   const partObject = {
     contentType: mimeTreePart.headers.contentType.type || "text/plain",
-    headers: convertHeaders(mimeTreePart),
     size: mimeTreePart.size,
     partName: mimeTreePart.partNum,
   };
 
-  // Supress content of attachments or other binary parts.
-  const mediatype = mimeTreePart.headers.contentType.mediatype || "text";
-  if (mimeTreePart.body && !mimeTreePart.isAttachment && mediatype == "text") {
-    partObject.body = mimeTreePart.body;
+  if (decodeContent) {
+    // Supress content of attachments or other binary parts.
+    const mediatype = mimeTreePart.headers.contentType.mediatype || "text";
+    if (
+      mimeTreePart.body &&
+      !mimeTreePart.isAttachment &&
+      mediatype == "text"
+    ) {
+      partObject.body = mimeTreePart.body;
+    }
+  } else {
+    partObject.rawBody = mimeTreePart.body;
   }
+
+  if (decodeHeaders) {
+    partObject.headers = convertHeaders(mimeTreePart);
+  } else {
+    partObject.rawHeaders = convertRawHeaders(mimeTreePart);
+  }
+
   if (mimeTreePart.isAttachment) {
     partObject.name = mimeTreePart.name || "";
   }
@@ -161,7 +191,7 @@ function convertMessagePart(mimeTreePart, isRoot = true) {
     mimeTreePart.subParts.length > 0
   ) {
     partObject.parts = mimeTreePart.subParts.map(part =>
-      convertMessagePart(part, false)
+      convertMessagePart(part, false, decodeHeaders, decodeContent)
     );
   }
 
@@ -169,25 +199,40 @@ function convertMessagePart(mimeTreePart, isRoot = true) {
   // multipart/* or a text/plain part). WebExtensions should get an outer
   // message/rfc822 part. Most headers are also moved to the outer message part.
   if (isRoot) {
-    const rootHeaders = Object.fromEntries(
-      Object.entries(partObject.headers).filter(
-        h => !h[0].startsWith("content-")
-      )
-    );
-    rootHeaders["content-type"] = ["message/rfc822"];
-    partObject.headers = Object.fromEntries(
-      Object.entries(partObject.headers).filter(h =>
-        h[0].startsWith("content-")
-      )
-    );
-    return {
+    const rv = {
       contentType: "message/rfc822",
       partName: "",
       size: mimeTreePart.size,
       decryptionStatus: mimeTreePart.decryptionStatus,
-      headers: rootHeaders,
-      parts: mimeTreePart.decryptionStatus != "fail" ? [partObject] : [],
     };
+
+    if (decodeHeaders) {
+      rv.headers = Object.fromEntries(
+        Object.entries(partObject.headers).filter(
+          h => !h[0].startsWith("content-")
+        )
+      );
+      rv.headers["content-type"] = ["message/rfc822"];
+      partObject.headers = Object.fromEntries(
+        Object.entries(partObject.headers).filter(h =>
+          h[0].startsWith("content-")
+        )
+      );
+    } else {
+      rv.rawHeaders = Object.fromEntries(
+        Object.entries(partObject.rawHeaders).filter(
+          h => !h[0].startsWith("content-")
+        )
+      );
+      partObject.rawHeaders = Object.fromEntries(
+        Object.entries(partObject.rawHeaders).filter(h =>
+          h[0].startsWith("content-")
+        )
+      );
+    }
+
+    rv.parts = mimeTreePart.decryptionStatus != "fail" ? [partObject] : [];
+    return rv;
   }
   return partObject;
 }
@@ -197,18 +242,26 @@ function convertMessagePart(mimeTreePart, isRoot = true) {
  *
  * @param {nsIMsgDBHdr} msgHdr - the msgHdr of the attachment's message
  * @param {MimeTreePart} mimeTreePart
- *
  * @returns {MessageAttachment}
- *
  * @see mail/extensions/openpgp/content/modules/MimeTree.sys.mjs
  * @see mail/components/extensions/schemas/messages.json
  */
 async function convertAttachment(msgHdr, mimeTreePart, extension) {
+  const contentDisposition = mimeTreePart.headers.has("content-disposition")
+    ? mimeTreePart.headers
+        .get("content-disposition")[0]
+        .split(";")[0]
+        .trim()
+        .toLowerCase()
+    : "attachment";
+
   const rv = {
+    contentDisposition,
     contentType: mimeTreePart.headers.contentType.type || "text/plain",
+    headers: convertHeaders(mimeTreePart),
     name: mimeTreePart.name || "",
-    size: mimeTreePart.size,
     partName: mimeTreePart.partNum,
+    size: mimeTreePart.size,
   };
 
   // If it is an attached message, create a dummy msgHdr for it.
@@ -216,7 +269,7 @@ async function convertAttachment(msgHdr, mimeTreePart, extension) {
     // A message/rfc822 MimeTreePart has its headers in the first child.
     const headers = convertHeaders(mimeTreePart.subParts[0]);
 
-    const attachedMsgHdr = new CachedMsgHeader();
+    const attachedMsgHdr = new CachedMsgHeader(messageTracker);
     const attachedMsgUrl = getMsgPartUrl(msgHdr, mimeTreePart.partNum);
     attachedMsgHdr.setStringProperty("dummyMsgUrl", attachedMsgUrl);
     attachedMsgHdr.recipients = headers.to;
@@ -377,6 +430,58 @@ this.messages = class extends ExtensionAPIPersistent {
         },
       };
     },
+
+    onTagCreated({ fire }) {
+      const listener = async (event, key, { tag, color, ordinal }) => {
+        if (fire.wakeup) {
+          await fire.wakeup();
+        }
+        fire.async({ key, tag, color, ordinal });
+      };
+      tagTracker.on("tag-created", listener);
+      return {
+        unregister: () => {
+          tagTracker.off("tag-created", listener);
+        },
+        convert(newFire) {
+          fire = newFire;
+        },
+      };
+    },
+    onTagDeleted({ fire }) {
+      const listener = async (event, key) => {
+        if (fire.wakeup) {
+          await fire.wakeup();
+        }
+        fire.async(key);
+      };
+      tagTracker.on("tag-deleted", listener);
+      return {
+        unregister: () => {
+          tagTracker.off("tag-deleted", listener);
+        },
+        convert(newFire) {
+          fire = newFire;
+        },
+      };
+    },
+    onTagUpdated({ fire }) {
+      const listener = async (event, key, changedValues, oldValues) => {
+        if (fire.wakeup) {
+          await fire.wakeup();
+        }
+        fire.async(key, changedValues, oldValues);
+      };
+      tagTracker.on("tag-updated", listener);
+      return {
+        unregister: () => {
+          tagTracker.off("tag-updated", listener);
+        },
+        convert(newFire) {
+          fire = newFire;
+        },
+      };
+    },
   };
 
   getAPI(context) {
@@ -490,7 +595,7 @@ this.messages = class extends ExtensionAPIPersistent {
                         if (status == Cr.NS_OK) {
                           resolve();
                         } else {
-                          reject(status);
+                          reject(new Error(`Aborted with status: ${status}`));
                         }
                       },
                     },
@@ -523,7 +628,7 @@ this.messages = class extends ExtensionAPIPersistent {
                     if (status == Cr.NS_OK) {
                       resolve();
                     } else {
-                      reject(status);
+                      reject(new Error(`Aborted with status: ${status}`));
                     }
                   },
                 },
@@ -608,15 +713,23 @@ this.messages = class extends ExtensionAPIPersistent {
           return messageHeader;
         },
         async getFull(messageId, options) {
-          // Default for decrypt is true (backward compatibility).
+          // Default for decrypt and decode is true (backward compatibility).
           const decrypt = options?.decrypt ?? true;
+
+          const decodeHeaders = options?.decodeHeaders ?? true;
+          const decodeContent = options?.decodeContent ?? true;
+          const parserOptions = {
+            strFormat: decodeContent ? "unicode" : "binarystring",
+            bodyFormat: decodeContent ? "decode" : "nodecode",
+            stripContinuations: decodeHeaders,
+          };
 
           const msgHdr = messageManager.get(messageId);
           if (!msgHdr) {
             throw new ExtensionError(`Message not found: ${messageId}.`);
           }
 
-          const msgHdrProcessor = new MsgHdrProcessor(msgHdr);
+          const msgHdrProcessor = new MsgHdrProcessor(msgHdr, parserOptions);
           let mimeTree;
           try {
             if (decrypt) {
@@ -633,12 +746,53 @@ this.messages = class extends ExtensionAPIPersistent {
             // Do not include fake body parts.
             mimeTree.subParts = [];
           }
-          return convertMessagePart(mimeTree);
+          return convertMessagePart(
+            mimeTree,
+            true,
+            decodeHeaders,
+            decodeContent
+          );
         },
-        async getRaw(messageId, options) {
+        async getRaw(source, options) {
           // Default for decrypt is false (backward compatibility).
           const decrypt = options?.decrypt ?? false;
+          // Default for data_format in MV3 is File.
+          let data_format = options?.data_format;
+          if (!["File", "BinaryString"].includes(data_format)) {
+            data_format =
+              extension.manifestVersion < 3 ? "BinaryString" : "File";
+          }
 
+          const createFileFromBinaryString = (raw, filename) => {
+            // Convert binary string to Uint8Array and return a File.
+            const bytes = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) {
+              bytes[i] = raw.charCodeAt(i) & 0xff;
+            }
+            return new File([bytes], filename, {
+              type: "message/rfc822",
+            });
+          };
+
+          // Check if the source is a MessagePart.
+          if (
+            !Number.isInteger(source) &&
+            source?.contentType == "message/rfc822"
+          ) {
+            const raw = messagePartToRaw(source);
+            // TODO: Pipe raw through decryptor if requested.
+            if (decrypt) {
+              console.warn(
+                "Decrypting a generated message is not yet supported"
+              );
+            }
+            if (data_format == "BinaryString") {
+              return raw;
+            }
+            return createFileFromBinaryString(raw, "generated.eml");
+          }
+
+          const messageId = source;
           const msgHdr = messageManager.get(messageId);
           if (!msgHdr) {
             throw new ExtensionError(`Message not found: ${messageId}.`);
@@ -664,22 +818,10 @@ this.messages = class extends ExtensionAPIPersistent {
             }
           }
 
-          let data_format = options?.data_format;
-          if (!["File", "BinaryString"].includes(data_format)) {
-            data_format =
-              extension.manifestVersion < 3 ? "BinaryString" : "File";
-          }
           if (data_format == "BinaryString") {
             return raw;
           }
-          // Convert binary string to Uint8Array and return a File.
-          const bytes = new Uint8Array(raw.length);
-          for (let i = 0; i < raw.length; i++) {
-            bytes[i] = raw.charCodeAt(i) & 0xff;
-          }
-          return new File([bytes], `message-${messageId}.eml`, {
-            type: "message/rfc822",
-          });
+          return createFileFromBinaryString(raw, `message-${messageId}.eml`);
         },
         async listInlineTextParts(messageId) {
           const msgHdr = messageManager.get(messageId);
@@ -862,9 +1004,8 @@ this.messages = class extends ExtensionAPIPersistent {
           for (const partName of partNames) {
             let attachmentPart;
             try {
-              attachmentPart = await msgHdrProcessor.getAttachmentPart(
-                partName
-              );
+              attachmentPart =
+                await msgHdrProcessor.getAttachmentPart(partName);
             } catch (ex) {
               switch (ex.cause) {
                 case "MessageDecryptionError":
@@ -1032,7 +1173,7 @@ this.messages = class extends ExtensionAPIPersistent {
                         if (status == Cr.NS_OK) {
                           resolve();
                         } else {
-                          reject(status);
+                          reject(new Error(`Aborted with status: ${status}`));
                         }
                       },
                     },
@@ -1063,111 +1204,187 @@ this.messages = class extends ExtensionAPIPersistent {
             );
           }
 
-          if (!["none", "pop3"].includes(destinationFolder.server.type)) {
+          const serverType = destinationFolder.server.type;
+          if (!["none", "pop3", "imap"].includes(serverType)) {
             throw new ExtensionError(
-              `messages.import() is not supported for ${destinationFolder.server.type} accounts`
+              `messages.import() is not supported for ${serverType} accounts`
             );
           }
+
+          let tempFile, messageId;
           try {
-            const tempFile = await getRealFileForFile(file);
-            const msgHeader = await new Promise((resolve, reject) => {
-              let newKey = null;
-              const msgHdrs = new Map();
+            tempFile = await getRealFileForFile(file);
+            const headers = MimeParser.extractHeaders(await file.text());
+            messageId = headers.has("Message-ID")
+              ? headers.get("Message-ID").replace(/^<|>$/g, "")
+              : "";
+          } catch (ex) {
+            throw new ExtensionError(
+              `Error importing message: Could not read file.`
+            );
+          }
 
-              const folderListener = {
-                onMessageAdded(parentItem, msgHdr) {
-                  if (destinationFolder.URI != msgHdr.folder.URI) {
-                    return;
-                  }
-                  const key = msgHdr.messageKey;
-                  msgHdrs.set(key, msgHdr);
-                  if (msgHdrs.has(newKey)) {
-                    finish(msgHdrs.get(newKey));
-                  }
-                },
-                onFolderAdded() {},
-              };
+          if (
+            MailUtils.findMsgIdInFolder(messageId, destinationFolder, false)
+          ) {
+            throw new ExtensionError(
+              `Error importing message: Destination folder already contains a message with id <${messageId}>`
+            );
+          }
 
-              // Note: Currently this API is not supported for IMAP. Once this gets added (Bug 1787104),
-              // please note that the MailServices.mfn.addListener will fire only when the IMAP message
-              // is visibly shown in the UI, while MailServices.mailSession.AddFolderListener fires as
-              // soon as it has been added to the database .
-              MailServices.mailSession.AddFolderListener(
-                folderListener,
-                Ci.nsIFolderListener.added
-              );
+          let newKey = null;
 
-              const finish = msgHdr => {
-                MailServices.mailSession.RemoveFolderListener(folderListener);
-                resolve(msgHdr);
-              };
+          let tags = "";
+          if (properties?.tags) {
+            const knownTags = MailServices.tags
+              .getAllTags()
+              .map(tag => tag.key);
+            tags = properties.tags
+              .filter(tag => knownTags.includes(tag))
+              .join(" ");
+          }
 
-              let tags = "";
-              let flags = 0;
-              if (properties) {
-                if (properties.tags) {
-                  const knownTags = MailServices.tags
-                    .getAllTags()
-                    .map(tag => tag.key);
-                  tags = properties.tags
-                    .filter(tag => knownTags.includes(tag))
-                    .join(" ");
-                }
-                flags |= properties.new ? Ci.nsMsgMessageFlags.New : 0;
-                flags |= properties.read ? Ci.nsMsgMessageFlags.Read : 0;
-                flags |= properties.flagged ? Ci.nsMsgMessageFlags.Marked : 0;
-              }
-              MailServices.copy.copyFileMessage(
-                tempFile,
-                destinationFolder,
-                /* msgToReplace */ null,
-                /* isDraftOrTemplate */ false,
-                /* aMsgFlags */ flags,
-                /* aMsgKeywords */ tags,
-                /** @implements {nsIMsgCopyServiceListener} */
-                {
-                  onStartCopy() {},
-                  onProgress() {},
-                  setMessageKey(aKey) {
-                    /* Note: Not fired for offline IMAP. Add missing
-                     * if (aCopyState) {
-                     *  ((nsImapMailCopyState*)aCopyState)->m_listener->SetMessageKey(fakeKey);
-                     * }
-                     * before firing the OnStopRunningUrl listener in
-                     * nsImapService::OfflineAppendFromFile
-                     */
-                    newKey = aKey;
-                    if (msgHdrs.has(newKey)) {
-                      finish(msgHdrs.get(newKey));
-                    }
-                  },
-                  getMessageId() {
-                    return null;
-                  },
-                  onStopCopy(status) {
-                    if (status == Cr.NS_OK) {
-                      if (newKey && msgHdrs.has(newKey)) {
-                        finish(msgHdrs.get(newKey));
-                      }
-                    } else {
-                      reject(status);
-                    }
-                  },
-                },
-                /* msgWindow */ null
-              );
-            });
+          const wantNew = properties?.new ?? false;
+          const wantRead = properties?.read ?? false;
+          const wantFlagged = properties?.flagged ?? false;
+          let flags = 0;
+          flags |= wantNew ? Ci.nsMsgMessageFlags.New : 0;
+          flags |= wantRead ? Ci.nsMsgMessageFlags.Read : 0;
+          flags |= wantFlagged ? Ci.nsMsgMessageFlags.Marked : 0;
 
-            // Do not wait till the temp file is removed on app shutdown. However, skip deletion if
-            // the provided DOM File was already linked to a real file.
-            if (!file.mozFullPath) {
-              await IOUtils.remove(tempFile.path);
+          const copyFileMessageOperation = Promise.withResolvers();
+          const importOperation = Promise.withResolvers();
+
+          const handleAddedMessage = msgHdr => {
+            if (
+              msgHdr.folder.URI != destinationFolder.URI ||
+              (newKey && msgHdr.messageKey != newKey) ||
+              (!newKey && msgHdr.messageId != messageId)
+            ) {
+              return;
             }
-            return context.extension.messageManager.convert(msgHeader);
+
+            // FIXME: Update msgHdr, if it does not match the requested
+            //        flags and tags. The protocol implementation of
+            //        copyFileMessage() should handle this correctly.
+            if (!!(msgHdr.flags & Ci.nsMsgMessageFlags.New) != wantNew) {
+              if (wantNew) {
+                // FIXME: Missing new state is unfixable here.
+                console.error("Failed to set new flag for imported message");
+              } else {
+                // Wrongly set new state can be fixed by toggling the read flag.
+                msgHdr.markRead(true);
+              }
+            }
+            if (msgHdr.isRead != wantRead) {
+              msgHdr.markRead(wantRead);
+            }
+            if (msgHdr.isFlagged != wantFlagged) {
+              msgHdr.markFlagged(wantFlagged);
+            }
+
+            const currentTags = msgHdr.getStringProperty("keywords").split(" ");
+            const missingTags = tags
+              .split(" ")
+              .filter(tag => !currentTags.includes(tag));
+            if (missingTags.length) {
+              msgHdr.folder.addKeywordsToMessages(
+                [msgHdr],
+                missingTags.join(" ")
+              );
+            }
+            importOperation.resolve(
+              new CachedMsgHeader(messageTracker, msgHdr)
+            );
+          };
+
+          const folderListener = {
+            // Implements nsIMsgFolderListener.
+            msgAdded(msgHdr) {
+              handleAddedMessage(msgHdr);
+            },
+            // Implements nsIFolderListener.
+            onMessageAdded(parentItem, msgHdr) {
+              handleAddedMessage(msgHdr);
+            },
+            onFolderAdded() {},
+          };
+
+          const offlineFolderListenerType = Services.io.offline;
+          if (offlineFolderListenerType) {
+            // IMAP: Fires too early if online, message is added to the database,
+            // but not yet to the folder.
+            MailServices.mailSession.AddFolderListener(
+              folderListener,
+              Ci.nsIFolderListener.added
+            );
+          } else {
+            // IMAP: Fires after the message is truely added to the server, but
+            // does not fire if offline.
+            MailServices.mfn.addListener(
+              folderListener,
+              MailServices.mfn.msgAdded
+            );
+          }
+
+          MailServices.copy.copyFileMessage(
+            tempFile,
+            destinationFolder,
+            /* msgToReplace */ null,
+            /* isDraftOrTemplate */ false,
+            /* aMsgFlags */ flags,
+            /* aMsgKeywords */ tags,
+            /** @implements {nsIMsgCopyServiceListener} */
+            {
+              onStartCopy() {},
+              onProgress() {},
+              setMessageKey(aKey) {
+                newKey = aKey;
+              },
+              getMessageId() {
+                return null;
+              },
+              onStopCopy(status) {
+                if (status == Cr.NS_OK) {
+                  destinationFolder.updateFolder(null);
+                  copyFileMessageOperation.resolve();
+                } else {
+                  copyFileMessageOperation.reject(
+                    new Error(`Aborted with status: ${status}`)
+                  );
+                }
+              },
+            },
+            /* msgWindow */ null
+          );
+
+          let cachedMsgHeader, errorMessage;
+          try {
+            await copyFileMessageOperation.promise;
+            cachedMsgHeader = await importOperation.promise;
           } catch (ex) {
             console.error(ex);
-            throw new ExtensionError(`Error importing message: ${ex.message}`);
+            errorMessage = ex.message;
           }
+
+          if (offlineFolderListenerType) {
+            MailServices.mailSession.RemoveFolderListener(folderListener);
+          } else {
+            MailServices.mfn.removeListener(folderListener);
+          }
+
+          // Do not wait till the temp file is removed on app shutdown. However, skip deletion if
+          // the provided DOM File was already linked to a real file.
+          if (!file.mozFullPath) {
+            await IOUtils.remove(tempFile.path);
+          }
+
+          if (errorMessage) {
+            throw new ExtensionError(
+              `Error importing message: ${errorMessage}`
+            );
+          }
+          return context.extension.messageManager.convert(cachedMsgHeader);
         },
         async archive(messageIds) {
           try {
@@ -1197,7 +1414,10 @@ this.messages = class extends ExtensionAPIPersistent {
           return this.tags.list();
         },
         async createTag(key, tag, color) {
-          return this.tags.create(key, tag, color);
+          // browser.messages.tags.create() returns the associated key, but the
+          // deprecated method browser.messages.createTag() is not updated and
+          // should not return anything.
+          await this.tags.create(key, tag, color);
         },
         async updateTag(key, updateProperties) {
           return this.tags.update(key, updateProperties);
@@ -1210,25 +1430,31 @@ this.messages = class extends ExtensionAPIPersistent {
           async list() {
             return MailServices.tags
               .getAllTags()
-              .map(({ key, tag, color, ordinal }) => {
-                return {
-                  key,
-                  tag,
-                  color,
-                  ordinal,
-                };
-              });
+              .map(({ key, tag, color, ordinal }) => ({
+                key,
+                tag,
+                color: color.toUpperCase(),
+                ordinal,
+              }));
           },
           async create(key, tag, color) {
             const tags = MailServices.tags.getAllTags();
-            key = key.toLowerCase();
-            if (tags.find(t => t.key == key)) {
-              throw new ExtensionError(`Specified key already exists: ${key}`);
-            }
             if (tags.find(t => t.tag == tag)) {
               throw new ExtensionError(`Specified tag already exists: ${tag}`);
             }
-            MailServices.tags.addTagForKey(key, tag, color.toUpperCase(), "");
+            if (key != null) {
+              key = key.toLowerCase();
+              if (tags.find(t => t.key == key)) {
+                throw new ExtensionError(
+                  `Specified key already exists: ${key}`
+                );
+              }
+              MailServices.tags.addTagForKey(key, tag, color, "");
+            } else {
+              // Auto-generate a key.
+              MailServices.tags.addTag(tag, color, "");
+            }
+            return MailServices.tags.getKeyForTag(tag);
           },
           async update(key, updateProperties) {
             const tags = MailServices.tags.getAllTags();
@@ -1242,6 +1468,9 @@ this.messages = class extends ExtensionAPIPersistent {
               if (newColor != tag.color.toUpperCase()) {
                 MailServices.tags.setColorForKey(key, newColor);
               }
+            }
+            if (updateProperties.ordinal != null) {
+              MailServices.tags.setOrdinalForKey(key, updateProperties.ordinal);
             }
             if (updateProperties.tag && tag.tag != updateProperties.tag) {
               // Don't let the user edit a tag to the name of another existing tag.
@@ -1261,6 +1490,26 @@ this.messages = class extends ExtensionAPIPersistent {
             }
             MailServices.tags.deleteKey(key);
           },
+
+          // The module name is messages as defined in ext-mail.json.
+          onCreated: new EventManager({
+            context,
+            module: "messages",
+            event: "onTagCreated",
+            extensionApi: this,
+          }).api(),
+          onUpdated: new EventManager({
+            context,
+            module: "messages",
+            event: "onTagUpdated",
+            extensionApi: this,
+          }).api(),
+          onDeleted: new EventManager({
+            context,
+            module: "messages",
+            event: "onTagDeleted",
+            extensionApi: this,
+          }).api(),
         },
       },
     };

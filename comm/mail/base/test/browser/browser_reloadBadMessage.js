@@ -107,11 +107,5 @@ add_task(async function () {
 
   // Clear the selection so the I/O service doesn't complain when we remove
   // the account.
-  const unloadedPromise = BrowserTestUtils.browserLoaded(
-    messagePaneBrowser,
-    false,
-    "about:blank"
-  );
   about3Pane.threadTree.selectedIndex = -1;
-  await unloadedPromise;
 });

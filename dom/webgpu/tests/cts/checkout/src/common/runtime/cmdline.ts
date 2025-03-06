@@ -1,4 +1,4 @@
-/* eslint no-console: "off" */
+/* eslint-disable no-console, n/no-restricted-import */
 
 import * as fs from 'fs';
 
@@ -124,6 +124,7 @@ if (globalTestConfig.compatibility || globalTestConfig.forceFallbackAdapter) {
   // MAINTENANCE_TODO: remove the cast once compatibilityMode is officially added
   setDefaultRequestAdapterOptions({
     compatibilityMode: globalTestConfig.compatibility,
+    featureLevel: globalTestConfig.compatibility ? 'compatibility' : 'core',
     forceFallbackAdapter: globalTestConfig.forceFallbackAdapter,
   } as GPURequestAdapterOptions);
 }

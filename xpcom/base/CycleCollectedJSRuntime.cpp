@@ -79,7 +79,7 @@
 #include "mozilla/ProfilerMarkers.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_javascript.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/XpcomMetrics.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/AutoEntryScript.h"
 #include "mozilla/dom/DOMJSClass.h"
@@ -667,6 +667,18 @@ static bool InitializeShadowRealm(JSContext* aCx,
   return dom::RegisterShadowRealmBindings(aCx, aGlobal);
 }
 
+static bool InstanceClassIsError(const JSClass* clasp) {
+  if (clasp->isDOMClass()) {
+    const DOMJSClass* domClass = DOMJSClass::FromJSClass(clasp);
+    if (domClass->mInterfaceChain[0] == prototypes::id::DOMException ||
+        domClass->mInterfaceChain[0] == prototypes::id::Exception) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 CycleCollectedJSRuntime::CycleCollectedJSRuntime(JSContext* aCx)
     : mContext(nullptr),
       mGCThingCycleCollectorGlobal(sGCThingCycleCollectorGlobal),
@@ -711,7 +723,8 @@ CycleCollectedJSRuntime::CycleCollectedJSRuntime(JSContext* aCx)
   js::AutoEnterOOMUnsafeRegion::setAnnotateOOMAllocationSizeCallback(
       CrashReporter::AnnotateOOMAllocationSize);
 
-  static js::DOMCallbacks DOMcallbacks = {InstanceClassHasProtoAtDepth};
+  static js::DOMCallbacks DOMcallbacks = {InstanceClassHasProtoAtDepth,
+                                          InstanceClassIsError};
   SetDOMCallbacks(aCx, &DOMcallbacks);
   js::SetScriptEnvironmentPreparer(aCx, &mEnvironmentPreparer);
 
@@ -993,7 +1006,7 @@ void CycleCollectedJSRuntime::TraceBlackJS(JSTracer* aTracer, void* aData) {
 
 /* static */
 bool CycleCollectedJSRuntime::TraceGrayJS(JSTracer* aTracer,
-                                          js::SliceBudget& budget,
+                                          JS::SliceBudget& budget,
                                           void* aData) {
   CycleCollectedJSRuntime* self = static_cast<CycleCollectedJSRuntime*>(aData);
 
@@ -1366,7 +1379,7 @@ static inline bool ShouldCheckSingleZoneHolders() {
 #ifdef NS_BUILD_REFCNT_LOGGING
 void CycleCollectedJSRuntime::TraceAllNativeGrayRoots(JSTracer* aTracer) {
   MOZ_RELEASE_ASSERT(mHolderIter.isNothing());
-  js::SliceBudget budget = js::SliceBudget::unlimited();
+  JS::SliceBudget budget = JS::SliceBudget::unlimited();
   MOZ_ALWAYS_TRUE(
       TraceNativeGrayRoots(aTracer, JSHolderMap::AllHolders, budget));
 }
@@ -1374,7 +1387,7 @@ void CycleCollectedJSRuntime::TraceAllNativeGrayRoots(JSTracer* aTracer) {
 
 bool CycleCollectedJSRuntime::TraceNativeGrayRoots(
     JSTracer* aTracer, JSHolderMap::WhichHolders aWhich,
-    js::SliceBudget& aBudget) {
+    JS::SliceBudget& aBudget) {
   if (!mHolderIter) {
     // NB: This is here just to preserve the existing XPConnect order. I doubt
     // it would hurt to do this after the JS holders.
@@ -1396,10 +1409,27 @@ bool CycleCollectedJSRuntime::TraceNativeGrayRoots(
   return finished;
 }
 
+class GetHolderAddressFunctor : public JS::TracingContext::Functor {
+ public:
+  GetHolderAddressFunctor() = default;
+
+  virtual void operator()(JS::TracingContext* aTrc, const char* aName,
+                          char* aBuf, size_t aBufSize) override {
+    SprintfBuf(aBuf, aBufSize, "%s, holder 0x%p", aName, mHolder);
+  }
+
+  void SetHolder(void* aHolder) { mHolder = aHolder; }
+
+ private:
+  void* mHolder = nullptr;
+};
+
 bool CycleCollectedJSRuntime::TraceJSHolders(JSTracer* aTracer,
                                              JSHolderMap::Iter& aIter,
-                                             js::SliceBudget& aBudget) {
+                                             JS::SliceBudget& aBudget) {
   bool checkSingleZoneHolders = ShouldCheckSingleZoneHolders();
+  GetHolderAddressFunctor functor;
+  JS::AutoTracingDetails tracingDetails(aTracer, functor);
 
   while (!aIter.Done() && !aBudget.isOverBudget()) {
     void* holder = aIter->mHolder;
@@ -1413,7 +1443,9 @@ bool CycleCollectedJSRuntime::TraceJSHolders(JSTracer* aTracer,
     Unused << checkSingleZoneHolders;
 #endif
 
+    functor.SetHolder(holder);
     tracer->Trace(holder, JsGcTracer(), aTracer);
+    functor.SetHolder(nullptr);
 
     aIter.Next();
     aBudget.step();
@@ -1692,7 +1724,7 @@ IncrementalFinalizeRunnable::Run() {
   }
 
   MOZ_ASSERT(mRuntime->mFinalizeRunnable == this);
-  TimeStamp start = TimeStamp::Now();
+  auto timerId = glean::cycle_collector::deferred_finalize_async.Start();
   ReleaseNow(true);
 
   if (mDeferredFinalizeFunctions.Length()) {
@@ -1704,8 +1736,8 @@ IncrementalFinalizeRunnable::Run() {
     MOZ_ASSERT(!mRuntime);
   }
 
-  uint32_t duration = (uint32_t)((TimeStamp::Now() - start).ToMilliseconds());
-  Telemetry::Accumulate(Telemetry::DEFERRED_FINALIZE_ASYNC, duration);
+  glean::cycle_collector::deferred_finalize_async.StopAndAccumulate(
+      std::move(timerId));
 
   return NS_OK;
 }

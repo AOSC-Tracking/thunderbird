@@ -448,6 +448,23 @@ crash:
     send_in_pings:
       - crash
 
+  utility_actors_name:
+    type: string_list
+    description: >
+      List of IPC actor names running on a utility process instance (if the crashing process was a utility process).
+    notification_emails:
+      - crash-reporting-wg@mozilla.org
+      - stability@mozilla.org
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1923873
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1923873
+    data_sensitivity:
+      - technical
+    expires: never
+    send_in_pings:
+      - crash
+
   shutdown_progress:
     type: string
     description: >
@@ -856,6 +873,7 @@ crash_submission:
   success:
     type: counter
     description: >
+      Number of successfull crash report submissions
     notification_emails:
       - crash-reporting-wg@mozilla.org
       - stability@mozilla.org
@@ -869,6 +887,7 @@ crash_submission:
   failure:
     type: counter
     description: >
+      Number of failed crash report submissions
     notification_emails:
       - crash-reporting-wg@mozilla.org
       - stability@mozilla.org
@@ -882,6 +901,7 @@ crash_submission:
   pending:
     type: counter
     description: >
+      Number of pending crash report submissions
     notification_emails:
       - crash-reporting-wg@mozilla.org
       - stability@mozilla.org
@@ -895,6 +915,7 @@ crash_submission:
   collector_errors:
     type: labeled_counter
     description: >
+      Amount and error name reported when performing crash submission.
     notification_emails:
       - crash-reporting-wg@mozilla.org
       - stability@mozilla.org
@@ -902,6 +923,20 @@ crash_submission:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1873956
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1873956
+    data_sensitivity:
+      - technical
+    expires: never
+  channel_status:
+    type: labeled_counter
+    description: >
+      Collecting XHR channel status on error code when statusCode == 0.
+    notification_emails:
+      - crash-reporting-wg@mozilla.org
+      - stability@mozilla.org
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1905633
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1905633
     data_sensitivity:
       - technical
     expires: never

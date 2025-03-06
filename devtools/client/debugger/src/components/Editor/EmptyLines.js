@@ -10,7 +10,6 @@ import {
   getSelectedBreakableLines,
 } from "../../selectors/index";
 import { fromEditorLine } from "../../utils/editor/index";
-import { isWasm } from "../../utils/wasm";
 
 class EmptyLines extends Component {
   static get propTypes() {
@@ -41,6 +40,9 @@ class EmptyLines extends Component {
 
   shouldComponentUpdate(nextProps) {
     const { breakableLines, selectedSource } = this.props;
+    if (!selectedSource) {
+      return false;
+    }
     return (
       // Breakable lines are something that evolves over time,
       // but we either have them loaded or not. So only compare the size
@@ -52,14 +54,15 @@ class EmptyLines extends Component {
 
   disableEmptyLines() {
     const { breakableLines, selectedSource, editor } = this.props;
+    if (!selectedSource) {
+      return;
+    }
 
     const { codeMirror } = editor;
-    const isSourceWasm = isWasm(selectedSource.id);
-
     codeMirror.operation(() => {
       const lineCount = codeMirror.lineCount();
       for (let i = 0; i < lineCount; i++) {
-        const line = fromEditorLine(selectedSource.id, i, isSourceWasm);
+        const line = fromEditorLine(selectedSource, i);
 
         if (breakableLines.has(line)) {
           codeMirror.removeLineClass(i, "wrap", "empty-line");
@@ -78,7 +81,7 @@ class EmptyLines extends Component {
 const mapStateToProps = state => {
   const selectedSource = getSelectedSource(state);
   if (!selectedSource) {
-    throw new Error("no selectedSource");
+    return {};
   }
   const breakableLines = getSelectedBreakableLines(state);
 

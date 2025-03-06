@@ -111,7 +111,7 @@ function getInput(entryName, addIfNeeded = false) {
         abDocument.getElementById("vcard-email").children.length < 1
       ) {
         const addButton = abDocument.getElementById("vcard-add-email");
-        addButton.scrollIntoView({ block: "nearest" });
+        addButton.scrollIntoView({ block: "nearest", behavior: "instant" });
         EventUtils.synthesizeMouseAtCenter(addButton, {}, abWindow);
       }
       return abDocument.querySelector(
@@ -128,7 +128,7 @@ function getInput(entryName, addIfNeeded = false) {
         abDocument.getElementById("vcard-email").children.length < 2
       ) {
         const addButton = abDocument.getElementById("vcard-add-email");
-        addButton.scrollIntoView({ block: "nearest" });
+        addButton.scrollIntoView({ block: "nearest", behavior: "instant" });
         EventUtils.synthesizeMouseAtCenter(addButton, {}, abWindow);
       }
       return abDocument.querySelector(
@@ -478,7 +478,7 @@ function setInputValues(changes) {
 async function activateTypeSelect(typeField, optionValue) {
   const abWindow = getAddressBookWindow();
   // Ensure that the select field is inside the viewport.
-  typeField.scrollIntoView({ block: "nearest" });
+  typeField.scrollIntoView({ block: "nearest", behavior: "instant" });
   const shownPromise = BrowserTestUtils.waitForSelectPopupShown(window);
   EventUtils.synthesizeMouseAtCenter(typeField, {}, abWindow);
   const selectPopup = await shownPromise;
@@ -530,7 +530,10 @@ async function setVCardInputValues(changes) {
               changeEntry &&
               changeEntry.pref == "1")
           ) {
-            field.checkboxEl.scrollIntoView({ block: "nearest" });
+            field.checkboxEl.scrollIntoView({
+              block: "nearest",
+              behavior: "instant",
+            });
             EventUtils.synthesizeMouseAtCenter(field.checkboxEl, {}, abWindow);
           }
           break;
@@ -568,7 +571,7 @@ async function setVCardInputValues(changes) {
         case "adr":
           typeField = field.vCardType.selectEl;
 
-          for (const [index, input] of [
+          for (const [idx, input] of [
             field.streetEl,
             field.localityEl,
             field.regionEl,
@@ -579,9 +582,9 @@ async function setVCardInputValues(changes) {
             if (
               changeEntry &&
               Array.isArray(changeEntry.value) &&
-              changeEntry.value[index]
+              changeEntry.value[idx]
             ) {
-              EventUtils.sendString(changeEntry.value[index]);
+              EventUtils.sendString(changeEntry.value[idx]);
             } else {
               EventUtils.synthesizeKey("VK_BACK_SPACE", {}, abWindow);
             }
@@ -598,14 +601,14 @@ async function setVCardInputValues(changes) {
           valueField = field.titleEl;
           break;
         case "org":
-          for (const [index, input] of [field.orgEl, field.unitEl].entries()) {
+          for (const [idx, input] of [field.orgEl, field.unitEl].entries()) {
             input.select();
             if (
               changeEntry &&
               Array.isArray(changeEntry.value) &&
-              changeEntry.value[index]
+              changeEntry.value[idx]
             ) {
-              EventUtils.sendString(changeEntry.value[index]);
+              EventUtils.sendString(changeEntry.value[idx]);
             } else {
               EventUtils.synthesizeKey("VK_BACK_SPACE", {}, abWindow);
             }
@@ -1135,68 +1138,6 @@ add_task(async function test_basic_edit() {
   await closeAddressBookWindow();
   await promiseDirectoryRemoved(book.URI);
 });
-
-add_task(async function test_special_fields() {
-  Services.prefs.setStringPref("mail.addr_book.show_phonetic_fields", "true");
-
-  let abWindow = await openAddressBookWindow();
-  let abDocument = abWindow.document;
-  let createContactButton = abDocument.getElementById("booksPaneCreateContact");
-
-  await openDirectory(personalBook);
-  EventUtils.synthesizeMouseAtCenter(createContactButton, {}, abWindow);
-  await inEditingMode();
-
-  // The order of the FirstName and LastName fields can be reversed by L10n.
-  // This means they can be broken by L10n. Check that they're alright in the
-  // default configuration. We need to find a more robust way of doing this,
-  // but it is what it is for now.
-
-  const firstName = abDocument.getElementById("FirstName");
-  const lastName = abDocument.getElementById("LastName");
-  Assert.equal(
-    firstName.compareDocumentPosition(lastName),
-    Node.DOCUMENT_POSITION_FOLLOWING,
-    "LastName follows FirstName"
-  );
-
-  // The phonetic name fields should be visible, because the preference is set.
-  // They can also be broken by L10n.
-
-  let phoneticFirstName = abDocument.getElementById("PhoneticFirstName");
-  let phoneticLastName = abDocument.getElementById("PhoneticLastName");
-  Assert.ok(BrowserTestUtils.isVisible(phoneticFirstName));
-  Assert.ok(BrowserTestUtils.isVisible(phoneticLastName));
-  Assert.equal(
-    phoneticFirstName.compareDocumentPosition(phoneticLastName),
-    Node.DOCUMENT_POSITION_FOLLOWING,
-    "PhoneticLastName follows PhoneticFirstName"
-  );
-
-  await closeAddressBookWindow();
-
-  Services.prefs.setStringPref("mail.addr_book.show_phonetic_fields", "false");
-
-  abWindow = await openAddressBookWindow();
-  abDocument = abWindow.document;
-  createContactButton = abDocument.getElementById("booksPaneCreateContact");
-
-  await openDirectory(personalBook);
-  EventUtils.synthesizeMouseAtCenter(createContactButton, {}, abWindow);
-  await inEditingMode();
-
-  // The phonetic name fields should be visible, because the preference is set.
-  // They can also be broken by L10n.
-
-  phoneticFirstName = abDocument.getElementById("PhoneticFirstName");
-  phoneticLastName = abDocument.getElementById("PhoneticLastName");
-  Assert.ok(BrowserTestUtils.isHidden(phoneticFirstName));
-  Assert.ok(BrowserTestUtils.isHidden(phoneticLastName));
-
-  await closeAddressBookWindow();
-
-  Services.prefs.clearUserPref("mail.addr_book.show_phonetic_fields");
-}).skip(); // Phonetic fields not implemented.
 
 /**
  * Test that the display name field is populated when it should be, and not
@@ -2750,7 +2691,7 @@ add_task(async function test_vCard_minimal() {
   });
 
   const addOrgButton = abDocument.getElementById("vcard-add-org");
-  addOrgButton.scrollIntoView({ block: "nearest" });
+  addOrgButton.scrollIntoView({ block: "nearest", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(addOrgButton, {}, abWindow);
 
   Assert.ok(
@@ -3053,7 +2994,7 @@ add_task(async function test_special_date_field() {
   const addSpecialDate = abDocument.getElementById(
     "vcard-add-bday-anniversary"
   );
-  addSpecialDate.scrollIntoView({ block: "nearest" });
+  addSpecialDate.scrollIntoView({ block: "nearest", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(addSpecialDate, {}, abWindow);
 
   Assert.ok(
@@ -3082,7 +3023,7 @@ add_task(async function test_special_date_field() {
   firstYear.value = 2004;
 
   const shownPromise = BrowserTestUtils.waitForSelectPopupShown(window);
-  firstMonth.scrollIntoView({ block: "nearest" });
+  firstMonth.scrollIntoView({ block: "nearest", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(firstMonth, {}, abWindow);
   const selectPopup = await shownPromise;
 
@@ -3359,7 +3300,7 @@ add_task(async function test_remove_button() {
       .getElementById(fieldsetId)
       .querySelector(".remove-property-button");
 
-    removeButton.scrollIntoView({ block: "nearest" });
+    removeButton.scrollIntoView({ block: "nearest", behavior: "instant" });
     const removeEvent = BrowserTestUtils.waitForEvent(
       vCardEdit,
       "vcard-remove-property"

@@ -74,6 +74,16 @@ async function prepareCalendarUnifinder() {
   // the calendar view.
   unifinderTree.addEventListener("select", unifinderSelect, true);
 
+  unifinderTree.addEventListener("sort-changed", function (event) {
+    for (const existing of this.querySelectorAll("treecol[sortDirection]")) {
+      existing.removeAttribute("sortDirection");
+    }
+
+    const { column, direction } = event.detail;
+    const columnHeader = document.getElementById(column);
+    columnHeader.setAttribute("sortDirection", direction);
+  });
+
   const searchBox = document.getElementById("unifinder-search-field");
   searchBox.addEventListener("command", updateUnifinderFilterText);
 }
@@ -112,7 +122,7 @@ function getUnifinderView() {
 /**
  * Handler function for double clicking the unifinder.
  *
- * @param event         The DOM doubleclick event.
+ * @param {Event} event - The DOM doubleclick event.
  */
 function unifinderDoubleClick(event) {
   const calendarEvent = getUnifinderView().getItemAtCoordinates(event.clientX, event.clientY);
@@ -132,9 +142,9 @@ function unifinderDoubleClick(event) {
  * Handle selection events in the unifinder, ensuring that they are synced to
  * the calendar view.
  *
- * @param event         The DOM selection event.
+ * @param {Event} _event - The DOM selection event.
  */
-async function unifinderSelect() {
+async function unifinderSelect(_event) {
   const treeView = getUnifinderView();
   const currentSelection = treeView.selection;
   if (!currentSelection || currentSelection.getRangeCount() == 0) {
@@ -208,7 +218,7 @@ function unifinderItemSelect(event) {
 /**
  * Handler function for keypress in the unifinder.
  *
- * @param aEvent        The DOM Key event.
+ * @param {Event} aEvent - The DOM Key event.
  */
 function unifinderKeyPress(aEvent) {
   switch (aEvent.key) {

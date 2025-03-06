@@ -11,6 +11,7 @@ use crate::custom_properties::{
     CustomPropertiesBuilder, DeferFontRelativeCustomPropertyResolution,
 };
 use crate::dom::TElement;
+#[cfg(feature = "gecko")]
 use crate::font_metrics::FontMetricsOrientation;
 use crate::logical_geometry::WritingMode;
 use crate::properties::{
@@ -26,13 +27,13 @@ use crate::style_adjuster::StyleAdjuster;
 use crate::stylesheets::container_rule::ContainerSizeQuery;
 use crate::stylesheets::{layer_rule::LayerOrder, Origin};
 use crate::stylist::Stylist;
+#[cfg(feature = "gecko")]
 use crate::values::specified::length::FontBaseSize;
 use crate::values::{computed, specified};
 use fxhash::FxHashMap;
 use servo_arc::Arc;
 use smallvec::SmallVec;
 use std::borrow::Cow;
-use std::mem;
 
 /// Whether we're resolving a style with the purposes of reparenting for ::first-line.
 #[derive(Copy, Clone)]
@@ -305,6 +306,7 @@ where
         CascadeMode::Visited { unvisited_context } => {
             context.builder.custom_properties = unvisited_context.builder.custom_properties.clone();
             context.builder.writing_mode = unvisited_context.builder.writing_mode;
+            context.builder.color_scheme = unvisited_context.builder.color_scheme;
             // We never insert visited styles into the cache so we don't need to try looking it up.
             // It also wouldn't be super-profitable, only a handful :visited properties are
             // non-inherited.
@@ -418,12 +420,15 @@ fn tweak_when_ignoring_colors(
     }
 
     // Always honor colors if forced-color-adjust is set to none.
-    let forced = context
-        .builder
-        .get_inherited_text()
-        .clone_forced_color_adjust();
-    if forced == computed::ForcedColorAdjust::None {
-        return;
+    #[cfg(feature = "gecko")]
+    {
+        let forced = context
+            .builder
+            .get_inherited_text()
+            .clone_forced_color_adjust();
+        if forced == computed::ForcedColorAdjust::None {
+            return;
+        }
     }
 
     // Don't override background-color on ::-moz-color-swatch. It is set as an
@@ -574,7 +579,7 @@ struct Declarations<'a> {
     /// Whether we have any prioritary property. This is just a minor optimization.
     has_prioritary_properties: bool,
     /// A list of all the applicable longhand declarations.
-    longhand_declarations: SmallVec<[Declaration<'a>; 32]>,
+    longhand_declarations: SmallVec<[Declaration<'a>; 64]>,
     /// The prioritary property position data.
     prioritary_positions: [PrioritaryDeclarationPosition; property_counts::PRIORITARY],
 }
@@ -758,11 +763,14 @@ impl<'b> Cascade<'b> {
 
         let has_writing_mode = apply!(WritingMode) | apply!(Direction) | apply!(TextOrientation);
         if has_writing_mode {
-            self.compute_writing_mode(context);
+            context.builder.writing_mode = WritingMode::new(context.builder.get_inherited_box())
         }
 
         if apply!(Zoom) {
-            self.compute_zoom(context);
+            context.builder.effective_zoom = context
+                .builder
+                .inherited_effective_zoom()
+                .compute_effective(context.builder.specified_zoom());
             // NOTE(emilio): This is a bit of a hack, but matches the shipped WebKit and Blink
             // behavior for now. Ideally, in the future, we have a pass over all
             // implicitly-or-explicitly-inherited properties that can contain lengths and
@@ -802,12 +810,16 @@ impl<'b> Cascade<'b> {
         apply!(FontWeight);
         apply!(FontStretch);
         apply!(FontStyle);
+        #[cfg(feature = "gecko")]
         apply!(FontSizeAdjust);
 
-        apply!(ColorScheme);
+        #[cfg(feature = "gecko")]
         apply!(ForcedColorAdjust);
-
-        // Compute the line height.
+        // color-scheme needs to be after forced-color-adjust, since it's one of the "skipped in
+        // forced-colors-mode" properties.
+        if apply!(ColorScheme) {
+            context.builder.color_scheme = context.builder.get_inherited_ui().color_scheme_bits();
+        }
         apply!(LineHeight);
     }
 
@@ -938,17 +950,6 @@ impl<'b> Cascade<'b> {
         (CASCADE_PROPERTY[longhand_id as usize])(&declaration, context);
     }
 
-    fn compute_zoom(&self, context: &mut computed::Context) {
-        context.builder.effective_zoom = context
-            .builder
-            .inherited_effective_zoom()
-            .compute_effective(context.builder.specified_zoom());
-    }
-
-    fn compute_writing_mode(&self, context: &mut computed::Context) {
-        context.builder.writing_mode = WritingMode::new(context.builder.get_inherited_box())
-    }
-
     fn compute_visited_style_if_needed<E>(
         &self,
         context: &mut computed::Context,
@@ -1020,6 +1021,12 @@ impl<'b> Cascade<'b> {
 
         if self.author_specified.contains(LonghandId::FontFamily) {
             builder.add_flags(ComputedValueFlags::HAS_AUTHOR_SPECIFIED_FONT_FAMILY);
+        }
+
+        if self.author_specified.contains_any(LonghandIdSet::margin_properties()) &&
+           self.author_specified.contains(LonghandId::FontSize)
+        {
+            builder.add_flags(ComputedValueFlags::HAS_AUTHOR_SPECIFIED_MARGIN_AND_FONT_SIZE);
         }
 
         if self.author_specified.contains(LonghandId::Color) {
@@ -1247,7 +1254,7 @@ impl<'b> Cascade<'b> {
         );
         debug_assert!(
             !text_scale.text_zoom_enabled(),
-            "We only ever disable text zoom (in svg:text), never enable it"
+            "We only ever disable text zoom never enable it"
         );
         let device = builder.device;
         builder.mutate_font().unzoom_fonts(device);
@@ -1257,9 +1264,8 @@ impl<'b> Cascade<'b> {
         debug_assert!(self.seen.contains(LonghandId::Zoom));
         // NOTE(emilio): Intentionally not using the effective zoom here, since all the inherited
         // zooms are already applied.
-        let zoom = builder.get_box().clone_zoom();
         let old_size = builder.get_font().clone_font_size();
-        let new_size = old_size.zoom(zoom);
+        let new_size = old_size.zoom(builder.resolved_specified_zoom());
         if old_size == new_size {
             return;
         }
@@ -1310,7 +1316,7 @@ impl<'b> Cascade<'b> {
                 return s;
             }
             if b < a {
-                mem::swap(&mut a, &mut b);
+                std::mem::swap(&mut a, &mut b);
                 invert_scale_factor = true;
             }
             let mut e = b - a;

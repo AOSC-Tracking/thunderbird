@@ -37,14 +37,6 @@
 
 // -
 
-#if defined(__MINGW32__)  // 64 defines both 32 and 64
-// We need to fake some things, while we wait on updates to mingw's dcomp.h
-// header. Just enough that we can successfully fail to work there.
-#  define MOZ_MINGW_DCOMP_H_INCOMPLETE
-struct IDCompositionColorMatrixEffect : public IDCompositionFilterEffect {};
-struct IDCompositionTableTransferEffect : public IDCompositionFilterEffect {};
-#endif  // defined(__MINGW32__)
-
 namespace mozilla {
 namespace wr {
 
@@ -54,6 +46,179 @@ extern LazyLogModule gRenderThreadLog;
 #define LOG_H(msg, ...)                   \
   MOZ_LOG(gDcompSurface, LogLevel::Debug, \
           ("DCSurfaceHandle=%p, " msg, this, ##__VA_ARGS__))
+
+static UINT GetVendorId(ID3D11VideoDevice* const aVideoDevice) {
+  RefPtr<IDXGIDevice> dxgiDevice;
+  RefPtr<IDXGIAdapter> adapter;
+  aVideoDevice->QueryInterface((IDXGIDevice**)getter_AddRefs(dxgiDevice));
+  dxgiDevice->GetAdapter(getter_AddRefs(adapter));
+
+  DXGI_ADAPTER_DESC adapterDesc;
+  adapter->GetDesc(&adapterDesc);
+
+  return adapterDesc.VendorId;
+}
+
+// Undocumented NVIDIA VSR data
+struct NvidiaVSRGetData_v1 {
+  UINT vsrGPUisVSRCapable : 1;   // 01/32, 1: GPU is VSR capable
+  UINT vsrOtherFieldsValid : 1;  // 02/32, 1: Other status fields are valid
+  // remaining fields are valid if vsrOtherFieldsValid is set - requires
+  // previous execution of VPBlt with SetStreamExtension for VSR enabled.
+  UINT vsrEnabled : 1;           // 03/32, 1: VSR is enabled
+  UINT vsrIsInUseForThisVP : 1;  // 04/32, 1: VSR is in use by this Video
+                                 // Processor
+  UINT vsrLevel : 3;             // 05-07/32, 0-4 current level
+  UINT vsrReserved : 21;         // 32-07
+};
+
+static Result<NvidiaVSRGetData_v1, HRESULT> GetNvidiaVpSuperResolutionInfo(
+    ID3D11VideoContext* aVideoContext, ID3D11VideoProcessor* aVideoProcessor) {
+  MOZ_ASSERT(aVideoContext);
+  MOZ_ASSERT(aVideoProcessor);
+
+  // Undocumented NVIDIA driver constants
+  constexpr GUID nvGUID = {0xD43CE1B3,
+                           0x1F4B,
+                           0x48AC,
+                           {0xBA, 0xEE, 0xC3, 0xC2, 0x53, 0x75, 0xE6, 0xF7}};
+
+  NvidiaVSRGetData_v1 data{};
+  HRESULT hr = aVideoContext->VideoProcessorGetStreamExtension(
+      aVideoProcessor, 0, &nvGUID, sizeof(data), &data);
+
+  if (FAILED(hr)) {
+    return Err(hr);
+  }
+  return data;
+}
+
+static void AddProfileMarkerForNvidiaVpSuperResolutionInfo(
+    ID3D11VideoContext* aVideoContext, ID3D11VideoProcessor* aVideoProcessor) {
+  MOZ_ASSERT(profiler_thread_is_being_profiled_for_markers());
+
+  auto res = GetNvidiaVpSuperResolutionInfo(aVideoContext, aVideoProcessor);
+  if (res.isErr()) {
+    return;
+  }
+
+  auto data = res.unwrap();
+
+  nsPrintfCString str(
+      "SuperResolution VP Capable %u OtherFieldsValid %u Enabled %u InUse %u "
+      "Level %u",
+      data.vsrGPUisVSRCapable, data.vsrOtherFieldsValid, data.vsrEnabled,
+      data.vsrIsInUseForThisVP, data.vsrLevel);
+  PROFILER_MARKER_TEXT("DCSurfaceVideo", GRAPHICS, {}, str);
+}
+
+static HRESULT SetNvidiaVpSuperResolution(ID3D11VideoContext* aVideoContext,
+                                          ID3D11VideoProcessor* aVideoProcessor,
+                                          bool aEnable) {
+  LOG("SetNvidiaVpSuperResolution() aEnable=%d", aEnable);
+
+  // Undocumented NVIDIA driver constants
+  constexpr GUID nvGUID = {0xD43CE1B3,
+                           0x1F4B,
+                           0x48AC,
+                           {0xBA, 0xEE, 0xC3, 0xC2, 0x53, 0x75, 0xE6, 0xF7}};
+
+  constexpr UINT nvExtensionVersion = 0x1;
+  constexpr UINT nvExtensionMethodSuperResolution = 0x2;
+  struct {
+    UINT version;
+    UINT method;
+    UINT enable;
+  } streamExtensionInfo = {nvExtensionVersion, nvExtensionMethodSuperResolution,
+                           aEnable ? 1u : 0};
+
+  HRESULT hr;
+  hr = aVideoContext->VideoProcessorSetStreamExtension(
+      aVideoProcessor, 0, &nvGUID, sizeof(streamExtensionInfo),
+      &streamExtensionInfo);
+  return hr;
+}
+
+static HRESULT SetVpSuperResolution(UINT aGpuVendorId,
+                                    ID3D11VideoContext* aVideoContext,
+                                    ID3D11VideoProcessor* aVideoProcessor,
+                                    bool aEnable) {
+  MOZ_ASSERT(aVideoContext);
+  MOZ_ASSERT(aVideoProcessor);
+
+  if (aGpuVendorId == 0x10DE) {
+    return SetNvidiaVpSuperResolution(aVideoContext, aVideoProcessor, aEnable);
+  }
+  return E_NOTIMPL;
+}
+
+static bool GetNvidiaRTXVideoTrueHDRSupported(
+    ID3D11VideoContext* aVideoContext, ID3D11VideoProcessor* aVideoProcessor) {
+  const GUID kNvidiaTrueHDRInterfaceGUID = {
+      0xfdd62bb4,
+      0x620b,
+      0x4fd7,
+      {0x9a, 0xb3, 0x1e, 0x59, 0xd0, 0xd5, 0x44, 0xb3}};
+  UINT available = 0;
+  HRESULT hr = aVideoContext->VideoProcessorGetStreamExtension(
+      aVideoProcessor, 0, &kNvidiaTrueHDRInterfaceGUID, sizeof(available),
+      &available);
+  if (FAILED(hr)) {
+    return false;
+  }
+
+  bool driverSupportsTrueHdr = (available == 1);
+  return driverSupportsTrueHdr;
+}
+
+static HRESULT SetNvidiaRTXVideoTrueHDR(ID3D11VideoContext* aVideoContext,
+                                        ID3D11VideoProcessor* aVideoProcessor,
+                                        bool aEnable) {
+  constexpr GUID kNvidiaTrueHDRInterfaceGUID = {
+      0xfdd62bb4,
+      0x620b,
+      0x4fd7,
+      {0x9a, 0xb3, 0x1e, 0x59, 0xd0, 0xd5, 0x44, 0xb3}};
+  constexpr UINT kStreamExtensionMethodTrueHDR = 0x3;
+  const UINT TrueHDRVersion4 = 4;
+  struct {
+    UINT version;
+    UINT method;
+    UINT enable : 1;
+    UINT reserved : 31;
+  } streamExtensionInfo = {TrueHDRVersion4, kStreamExtensionMethodTrueHDR,
+                           aEnable ? 1u : 0u, 0u};
+  HRESULT hr = aVideoContext->VideoProcessorSetStreamExtension(
+      aVideoProcessor, 0, &kNvidiaTrueHDRInterfaceGUID,
+      sizeof(streamExtensionInfo), &streamExtensionInfo);
+  return hr;
+}
+
+static bool GetVpAutoHDRSupported(UINT aGpuVendorId,
+                                  ID3D11VideoContext* aVideoContext,
+                                  ID3D11VideoProcessor* aVideoProcessor) {
+  MOZ_ASSERT(aVideoContext);
+  MOZ_ASSERT(aVideoProcessor);
+
+  if (aGpuVendorId == 0x10DE) {
+    return GetNvidiaRTXVideoTrueHDRSupported(aVideoContext, aVideoProcessor);
+  }
+  return false;
+}
+
+static HRESULT SetVpAutoHDR(UINT aGpuVendorId,
+                            ID3D11VideoContext* aVideoContext,
+                            ID3D11VideoProcessor* aVideoProcessor,
+                            bool aEnable) {
+  MOZ_ASSERT(aVideoContext);
+  MOZ_ASSERT(aVideoProcessor);
+
+  if (aGpuVendorId == 0x10DE) {
+    return SetNvidiaRTXVideoTrueHDR(aVideoContext, aVideoProcessor, aEnable);
+  }
+  MOZ_ASSERT_UNREACHABLE("Unexpected to be called");
+  return E_NOTIMPL;
+}
 
 StaticAutoPtr<GpuOverlayInfo> DCLayerTree::sGpuOverlayInfo;
 
@@ -293,6 +458,24 @@ bool DCLayerTree::InitializeVideoOverlaySupport() {
 
   info->mSupportsOverlays = info->mSupportsHardwareOverlays;
 
+  // Check VpSuperResolution and VpAutoHDR support.
+  const auto size = gfx::IntSize(100, 100);
+  if (EnsureVideoProcessor(size, size)) {
+    const UINT vendorId = GetVendorId(mVideoDevice);
+    if (vendorId == 0x10DE) {
+      auto res = GetNvidiaVpSuperResolutionInfo(mVideoContext, mVideoProcessor);
+      if (res.isOk() && res.unwrap().vsrGPUisVSRCapable) {
+        info->mSupportsVpSuperResolution = true;
+      }
+    }
+
+    const bool driverSupportVpAutoHDR =
+        GetVpAutoHDRSupported(vendorId, mVideoContext, mVideoProcessor);
+    if (driverSupportVpAutoHDR) {
+      info->mSupportsVpAutoHDR = true;
+    }
+  }
+
   // Note: "UniquePtr::release" here is saying "release your ownership stake
   // on your pointer, so that our StaticAutoPtr can take over ownership".
   // (StaticAutoPtr doesn't have a move constructor that could directly steal
@@ -340,6 +523,20 @@ void DCLayerTree::MaybeCommit() {
 }
 
 void DCLayerTree::WaitForCommitCompletion() {
+  // To ensure that swapchain layers have presented to the screen
+  // for capture, call present twice. This is less than ideal, but
+  // I'm not sure if there is a better way to ensure this syncs
+  // correctly that works on both Win10/11. Even though this can
+  // be slower than necessary, it's only used by the reftest
+  // screenshotting code, so isn't particularly perf sensitive.
+  for (auto it = mDCSurfaces.begin(); it != mDCSurfaces.end(); it++) {
+    auto* surface = it->second->AsDCSwapChain();
+    if (surface) {
+      surface->Present();
+      surface->Present();
+    }
+  }
+
   mCompositionDevice->WaitForCommitCompletion();
 }
 
@@ -483,16 +680,35 @@ void DCLayerTree::CompositorEndFrame() {
     return;
   }
 
+  for (auto it = mDCSurfaces.begin(); it != mDCSurfaces.end(); it++) {
+    auto* surfaceVideo = it->second->AsDCSurfaceVideo();
+    if (surfaceVideo) {
+      surfaceVideo->DisableVideoOverlay();
+    }
+  }
+
   if (mUsedOverlayTypesInFrame & DCompOverlayTypes::SOFTWARE_DECODED_VIDEO) {
     gfxCriticalNoteOnce << "Sw video swapchain present is slow";
-    RenderThread::Get()->NotifyWebRenderError(
-        wr::WebRenderError::VIDEO_SW_OVERLAY);
+
+    nsPrintfCString marker("Sw video swapchain present is slow");
+    PROFILER_MARKER_TEXT("DisableOverlay", GRAPHICS, {}, marker);
   }
   if (mUsedOverlayTypesInFrame & DCompOverlayTypes::HARDWARE_DECODED_VIDEO) {
     gfxCriticalNoteOnce << "Hw video swapchain present is slow";
-    RenderThread::Get()->NotifyWebRenderError(
-        wr::WebRenderError::VIDEO_HW_OVERLAY);
+
+    nsPrintfCString marker("Hw video swapchain present is slow");
+    PROFILER_MARKER_TEXT("DisableOverlay", GRAPHICS, {}, marker);
   }
+}
+
+void DCLayerTree::BindSwapChain(wr::NativeSurfaceId aId) {
+  auto surface = GetSurface(aId);
+  surface->AsDCSwapChain()->Bind();
+}
+
+void DCLayerTree::PresentSwapChain(wr::NativeSurfaceId aId) {
+  auto surface = GetSurface(aId);
+  surface->AsDCSwapChain()->Present();
 }
 
 void DCLayerTree::Bind(wr::NativeTileId aId, wr::DeviceIntPoint* aOffset,
@@ -576,6 +792,31 @@ void DCLayerTree::CreateSurface(wr::NativeSurfaceId aId,
   }
 
   mDCSurfaces[aId] = std::move(surface);
+}
+
+void DCLayerTree::CreateSwapChainSurface(wr::NativeSurfaceId aId,
+                                         wr::DeviceIntSize aSize,
+                                         bool aIsOpaque) {
+  auto it = mDCSurfaces.find(aId);
+  MOZ_RELEASE_ASSERT(it == mDCSurfaces.end());
+
+  auto surface = MakeUnique<DCSwapChain>(aSize, aIsOpaque, this);
+  if (!surface->Initialize()) {
+    gfxCriticalNote << "Failed to initialize DCSwapChain: "
+                    << wr::AsUint64(aId);
+    return;
+  }
+
+  mDCSurfaces[aId] = std::move(surface);
+}
+
+void DCLayerTree::ResizeSwapChainSurface(wr::NativeSurfaceId aId,
+                                         wr::DeviceIntSize aSize) {
+  auto it = mDCSurfaces.find(aId);
+  MOZ_RELEASE_ASSERT(it != mDCSurfaces.end());
+  auto surface = it->second.get();
+
+  surface->AsDCSwapChain()->Resize(aSize);
 }
 
 void DCLayerTree::CreateExternalSurface(wr::NativeSurfaceId aId,
@@ -674,6 +915,8 @@ DCSurface* DCExternalSurfaceWrapper::EnsureSurfaceForExternalImage(
   // Apply color management.
 
   [&]() {
+    if (!StaticPrefs::gfx_webrender_dcomp_color_manage_with_filters()) return;
+
     const auto cmsMode = GfxColorManagementMode();
     if (cmsMode == CMSMode::Off) return;
 
@@ -1021,6 +1264,9 @@ layers::OverlayInfo DCLayerTree::GetOverlayInfo() {
       FlagsToOverlaySupportType(sGpuOverlayInfo->mRgb10a2OverlaySupportFlags,
                                 /* aSoftwareOverlaySupported */ false);
 
+  info.mSupportsVpSuperResolution = sGpuOverlayInfo->mSupportsVpSuperResolution;
+  info.mSupportsVpAutoHDR = sGpuOverlayInfo->mSupportsVpAutoHDR;
+
   return info;
 }
 
@@ -1138,6 +1384,134 @@ DCTile* DCSurface::GetTile(int32_t aX, int32_t aY) const {
   return tile_it->second.get();
 }
 
+DCSwapChain::~DCSwapChain() {
+  if (mEGLSurface) {
+    const auto gl = mDCLayerTree->GetGLContext();
+
+    const auto& gle = gl::GLContextEGL::Cast(gl);
+    const auto& egl = gle->mEgl;
+    egl->fDestroySurface(mEGLSurface);
+    mEGLSurface = EGL_NO_SURFACE;
+  }
+}
+
+bool DCSwapChain::Initialize() {
+  DCSurface::Initialize();
+
+  const auto gl = mDCLayerTree->GetGLContext();
+  const auto& gle = gl::GLContextEGL::Cast(gl);
+  const auto& egl = gle->mEgl;
+
+  HRESULT hr;
+  auto device = mDCLayerTree->GetDevice();
+
+  RefPtr<IDXGIDevice> dxgiDevice;
+  device->QueryInterface((IDXGIDevice**)getter_AddRefs(dxgiDevice));
+
+  RefPtr<IDXGIFactory2> dxgiFactory;
+  {
+    RefPtr<IDXGIAdapter> adapter;
+    dxgiDevice->GetAdapter(getter_AddRefs(adapter));
+    adapter->GetParent(
+        IID_PPV_ARGS((IDXGIFactory2**)getter_AddRefs(dxgiFactory)));
+  }
+
+  DXGI_SWAP_CHAIN_DESC1 desc{};
+  desc.Width = mSize.width;
+  desc.Height = mSize.height;
+  desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+  desc.SampleDesc.Count = 1;
+  desc.SampleDesc.Quality = 0;
+  desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+  desc.BufferCount = 2;
+  // DXGI_SCALING_NONE caused swap chain creation failure.
+  desc.Scaling = DXGI_SCALING_STRETCH;
+  desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+  desc.AlphaMode =
+      mIsOpaque ? DXGI_ALPHA_MODE_IGNORE : DXGI_ALPHA_MODE_PREMULTIPLIED;
+  desc.Flags = 0;
+
+  hr = dxgiFactory->CreateSwapChainForComposition(device, &desc, nullptr,
+                                                  getter_AddRefs(mSwapChain));
+  MOZ_RELEASE_ASSERT(SUCCEEDED(hr));
+  mVisual->SetContent(mSwapChain);
+
+  ID3D11Texture2D* backBuffer;
+  hr = mSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
+  MOZ_RELEASE_ASSERT(SUCCEEDED(hr));
+
+  const EGLint pbuffer_attribs[]{LOCAL_EGL_WIDTH, mSize.width, LOCAL_EGL_HEIGHT,
+                                 mSize.height, LOCAL_EGL_NONE};
+  const auto buffer = reinterpret_cast<EGLClientBuffer>(backBuffer);
+  EGLConfig eglConfig = mDCLayerTree->GetEGLConfig();
+
+  mEGLSurface = egl->fCreatePbufferFromClientBuffer(
+      LOCAL_EGL_D3D_TEXTURE_ANGLE, buffer, eglConfig, pbuffer_attribs);
+  MOZ_RELEASE_ASSERT(mEGLSurface);
+  backBuffer->Release();
+
+  return true;
+}
+
+void DCSwapChain::Bind() {
+  const auto gl = mDCLayerTree->GetGLContext();
+  const auto& gle = gl::GLContextEGL::Cast(gl);
+
+  gle->SetEGLSurfaceOverride(mEGLSurface);
+  bool ok = gl->MakeCurrent();
+
+  MOZ_RELEASE_ASSERT(ok);
+}
+
+void DCSwapChain::Resize(wr::DeviceIntSize aSize) {
+  const auto gl = mDCLayerTree->GetGLContext();
+
+  const auto& gle = gl::GLContextEGL::Cast(gl);
+  const auto& egl = gle->mEgl;
+
+  if (mEGLSurface) {
+    egl->fDestroySurface(mEGLSurface);
+    mEGLSurface = EGL_NO_SURFACE;
+  }
+
+  ID3D11Texture2D* backBuffer;
+  DXGI_SWAP_CHAIN_DESC desc;
+  HRESULT hr;
+
+  hr = mSwapChain->GetDesc(&desc);
+  MOZ_RELEASE_ASSERT(SUCCEEDED(hr));
+
+  hr = mSwapChain->ResizeBuffers(desc.BufferCount, aSize.width, aSize.height,
+                                 DXGI_FORMAT_B8G8R8A8_UNORM, 0);
+  MOZ_RELEASE_ASSERT(SUCCEEDED(hr));
+
+  hr = mSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
+  MOZ_RELEASE_ASSERT(SUCCEEDED(hr));
+
+  const EGLint pbuffer_attribs[]{LOCAL_EGL_WIDTH, aSize.width, LOCAL_EGL_HEIGHT,
+                                 aSize.height, LOCAL_EGL_NONE};
+  const auto buffer = reinterpret_cast<EGLClientBuffer>(backBuffer);
+  EGLConfig eglConfig = mDCLayerTree->GetEGLConfig();
+
+  mEGLSurface = egl->fCreatePbufferFromClientBuffer(
+      LOCAL_EGL_D3D_TEXTURE_ANGLE, buffer, eglConfig, pbuffer_attribs);
+  MOZ_RELEASE_ASSERT(mEGLSurface);
+
+  backBuffer->Release();
+
+  mSize = aSize;
+}
+
+void DCSwapChain::Present() {
+  const auto gl = mDCLayerTree->GetGLContext();
+  const auto& gle = gl::GLContextEGL::Cast(gl);
+
+  HRESULT hr = mSwapChain->Present(0, 0);
+  MOZ_RELEASE_ASSERT(SUCCEEDED(hr));
+
+  gle->SetEGLSurfaceOverride(EGL_NO_SURFACE);
+}
+
 DCSurfaceVideo::DCSurfaceVideo(bool aIsOpaque, DCLayerTree* aDCLayerTree)
     : DCSurface(wr::DeviceIntSize{}, wr::DeviceIntPoint{}, false, aIsOpaque,
                 aDCLayerTree),
@@ -1159,9 +1533,13 @@ bool IsYUVSwapChainFormat(DXGI_FORMAT aFormat) {
 }
 
 void DCSurfaceVideo::AttachExternalImage(wr::ExternalImageId aExternalImage) {
-  RenderTextureHost* texture =
-      RenderThread::Get()->GetRenderTexture(aExternalImage);
+  auto [texture, usageInfo] =
+      RenderThread::Get()->GetRenderTextureAndUsageInfo(aExternalImage);
   MOZ_RELEASE_ASSERT(texture);
+
+  if (usageInfo) {
+    mRenderTextureHostUsageInfo = usageInfo;
+  }
 
   if (mPrevTexture == texture) {
     return;
@@ -1177,164 +1555,6 @@ void DCSurfaceVideo::AttachExternalImage(wr::ExternalImageId aExternalImage) {
   }
 
   mRenderTextureHost = texture;
-}
-
-static UINT GetVendorId(ID3D11VideoDevice* const aVideoDevice) {
-  RefPtr<IDXGIDevice> dxgiDevice;
-  RefPtr<IDXGIAdapter> adapter;
-  aVideoDevice->QueryInterface((IDXGIDevice**)getter_AddRefs(dxgiDevice));
-  dxgiDevice->GetAdapter(getter_AddRefs(adapter));
-
-  DXGI_ADAPTER_DESC adapterDesc;
-  adapter->GetDesc(&adapterDesc);
-
-  return adapterDesc.VendorId;
-}
-
-struct NvidiaVSRGetData_v1 {
-  UINT vsrGPUisVSRCapable : 1;   // 01/32, 1: GPU is VSR capable
-  UINT vsrOtherFieldsValid : 1;  // 02/32, 1: Other status fields are valid
-  // remaining fields are valid if vsrOtherFieldsValid is set - requires
-  // previous execution of VPBlt with SetStreamExtension for VSR enabled.
-  UINT vsrEnabled : 1;           // 03/32, 1: VSR is enabled
-  UINT vsrIsInUseForThisVP : 1;  // 04/32, 1: VSR is in use by this Video
-                                 // Processor
-  UINT vsrLevel : 3;             // 05-07/32, 0-4 current level
-  UINT vsrReserved : 21;         // 32-07
-};
-
-static void AddProfileMarkerForNvidiaVpSuperResolutionInfo(
-    ID3D11VideoContext* aVideoContext, ID3D11VideoProcessor* aVideoProcessor) {
-  MOZ_ASSERT(profiler_thread_is_being_profiled_for_markers());
-
-  // Undocumented NVIDIA driver constants
-  constexpr GUID nvGUID = {0xD43CE1B3,
-                           0x1F4B,
-                           0x48AC,
-                           {0xBA, 0xEE, 0xC3, 0xC2, 0x53, 0x75, 0xE6, 0xF7}};
-
-  NvidiaVSRGetData_v1 data{};
-  HRESULT hr = aVideoContext->VideoProcessorGetStreamExtension(
-      aVideoProcessor, 0, &nvGUID, sizeof(data), &data);
-
-  if (FAILED(hr)) {
-    return;
-  }
-
-  nsPrintfCString str(
-      "SuperResolution VP Capable %u OtherFieldsValid %u Enabled %u InUse %u "
-      "Level %u",
-      data.vsrGPUisVSRCapable, data.vsrOtherFieldsValid, data.vsrEnabled,
-      data.vsrIsInUseForThisVP, data.vsrLevel);
-  PROFILER_MARKER_TEXT("DCSurfaceVideo", GRAPHICS, {}, str);
-}
-
-static HRESULT SetNvidiaVpSuperResolution(ID3D11VideoContext* aVideoContext,
-                                          ID3D11VideoProcessor* aVideoProcessor,
-                                          bool aEnable) {
-  LOG("SetNvidiaVpSuperResolution() aEnable=%d", aEnable);
-
-  // Undocumented NVIDIA driver constants
-  constexpr GUID nvGUID = {0xD43CE1B3,
-                           0x1F4B,
-                           0x48AC,
-                           {0xBA, 0xEE, 0xC3, 0xC2, 0x53, 0x75, 0xE6, 0xF7}};
-
-  constexpr UINT nvExtensionVersion = 0x1;
-  constexpr UINT nvExtensionMethodSuperResolution = 0x2;
-  struct {
-    UINT version;
-    UINT method;
-    UINT enable;
-  } streamExtensionInfo = {nvExtensionVersion, nvExtensionMethodSuperResolution,
-                           aEnable ? 1u : 0};
-
-  HRESULT hr;
-  hr = aVideoContext->VideoProcessorSetStreamExtension(
-      aVideoProcessor, 0, &nvGUID, sizeof(streamExtensionInfo),
-      &streamExtensionInfo);
-  return hr;
-}
-
-static HRESULT SetVpSuperResolution(UINT aGpuVendorId,
-                                    ID3D11VideoContext* aVideoContext,
-                                    ID3D11VideoProcessor* aVideoProcessor,
-                                    bool aEnable) {
-  MOZ_ASSERT(aVideoContext);
-  MOZ_ASSERT(aVideoProcessor);
-
-  if (aGpuVendorId == 0x10DE) {
-    return SetNvidiaVpSuperResolution(aVideoContext, aVideoProcessor, aEnable);
-  }
-  return E_NOTIMPL;
-}
-
-static bool GetNvidiaRTXVideoTrueHDRSupported(
-    ID3D11VideoContext* aVideoContext, ID3D11VideoProcessor* aVideoProcessor) {
-  const GUID kNvidiaTrueHDRInterfaceGUID = {
-      0xfdd62bb4,
-      0x620b,
-      0x4fd7,
-      {0x9a, 0xb3, 0x1e, 0x59, 0xd0, 0xd5, 0x44, 0xb3}};
-  UINT available = 0;
-  HRESULT hr = aVideoContext->VideoProcessorGetStreamExtension(
-      aVideoProcessor, 0, &kNvidiaTrueHDRInterfaceGUID, sizeof(available),
-      &available);
-  if (FAILED(hr)) {
-    return false;
-  }
-
-  bool driverSupportsTrueHdr = (available == 1);
-  return driverSupportsTrueHdr;
-}
-
-static HRESULT SetNvidiaRTXVideoTrueHDR(ID3D11VideoContext* aVideoContext,
-                                        ID3D11VideoProcessor* aVideoProcessor,
-                                        bool aEnable) {
-  constexpr GUID kNvidiaTrueHDRInterfaceGUID = {
-      0xfdd62bb4,
-      0x620b,
-      0x4fd7,
-      {0x9a, 0xb3, 0x1e, 0x59, 0xd0, 0xd5, 0x44, 0xb3}};
-  constexpr UINT kStreamExtensionMethodTrueHDR = 0x3;
-  const UINT TrueHDRVersion4 = 4;
-  struct {
-    UINT version;
-    UINT method;
-    UINT enable : 1;
-    UINT reserved : 31;
-  } streamExtensionInfo = {TrueHDRVersion4, kStreamExtensionMethodTrueHDR,
-                           aEnable ? 1u : 0u, 0u};
-  HRESULT hr = aVideoContext->VideoProcessorSetStreamExtension(
-      aVideoProcessor, 0, &kNvidiaTrueHDRInterfaceGUID,
-      sizeof(streamExtensionInfo), &streamExtensionInfo);
-  return hr;
-}
-
-static bool GetVpAutoHDRSupported(UINT aGpuVendorId,
-                                  ID3D11VideoContext* aVideoContext,
-                                  ID3D11VideoProcessor* aVideoProcessor) {
-  MOZ_ASSERT(aVideoContext);
-  MOZ_ASSERT(aVideoProcessor);
-
-  if (aGpuVendorId == 0x10DE) {
-    return GetNvidiaRTXVideoTrueHDRSupported(aVideoContext, aVideoProcessor);
-  }
-  return false;
-}
-
-static HRESULT SetVpAutoHDR(UINT aGpuVendorId,
-                            ID3D11VideoContext* aVideoContext,
-                            ID3D11VideoProcessor* aVideoProcessor,
-                            bool aEnable) {
-  MOZ_ASSERT(aVideoContext);
-  MOZ_ASSERT(aVideoProcessor);
-
-  if (aGpuVendorId == 0x10DE) {
-    return SetNvidiaRTXVideoTrueHDR(aVideoContext, aVideoProcessor, aEnable);
-  }
-  MOZ_ASSERT_UNREACHABLE("Unexpected to be called");
-  return E_NOTIMPL;
 }
 
 bool DCSurfaceVideo::CalculateSwapChainSize(gfx::Matrix& aTransform) {
@@ -1580,15 +1800,26 @@ void DCSurfaceVideo::PresentVideo() {
     return;
   }
 
+  DisableVideoOverlay();
+
   if (overlayType == DCompOverlayTypes::SOFTWARE_DECODED_VIDEO) {
     gfxCriticalNoteOnce << "Sw video swapchain present is slow";
-    RenderThread::Get()->NotifyWebRenderError(
-        wr::WebRenderError::VIDEO_SW_OVERLAY);
+
+    nsPrintfCString marker("Sw video swapchain present is slow");
+    PROFILER_MARKER_TEXT("DisableOverlay", GRAPHICS, {}, marker);
   } else {
     gfxCriticalNoteOnce << "Hw video swapchain present is slow";
-    RenderThread::Get()->NotifyWebRenderError(
-        wr::WebRenderError::VIDEO_HW_OVERLAY);
+
+    nsPrintfCString marker("Hw video swapchain present is slow");
+    PROFILER_MARKER_TEXT("DisableOverlay", GRAPHICS, {}, marker);
   }
+}
+
+void DCSurfaceVideo::DisableVideoOverlay() {
+  if (!mRenderTextureHostUsageInfo) {
+    return;
+  }
+  mRenderTextureHostUsageInfo->DisableVideoOverlay();
 }
 
 DXGI_FORMAT DCSurfaceVideo::GetSwapChainFormat(bool aUseVpAutoHDR) {
@@ -1861,6 +2092,9 @@ bool DCSurfaceVideo::CallVideoProcessorBlt() {
       }
       mVpSuperResolutionFailed = true;
     }
+  } else if (gfx::gfxVars::WebRenderOverlayVpSuperResolution() &&
+             !useSuperResolution) {
+    SetVpSuperResolution(vendorId, videoContext, videoProcessor, false);
   }
 
   if (profiler_thread_is_being_profiled_for_markers() && vendorId == 0x10DE) {
@@ -2230,8 +2464,6 @@ ColorManagementChain ColorManagementChain::From(
     const color::ColorProfileConversionDesc& conv) {
   auto ret = ColorManagementChain{};
 
-#if !defined(MOZ_MINGW_DCOMP_H_INCOMPLETE)
-
   const auto Append = [&](const RefPtr<IDCompositionFilterEffect>& afterLast) {
     if (ret.last) {
       afterLast->SetInput(0, ret.last, 0);
@@ -2267,8 +2499,6 @@ ColorManagementChain ColorManagementChain::From(
   ret.dstLinearFromSrcLinear =
       MaybeAppendColorMatrix(color::mat4(conv.dstLinearFromSrcLinear));
   ret.dstTfFromDstLinear = MaybeAppendTableTransfer(conv.dstTfFromDstLinear);
-
-#endif  // !defined(MOZ_MINGW_DCOMP_H_INCOMPLETE)
 
   return ret;
 }

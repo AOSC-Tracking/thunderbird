@@ -81,8 +81,8 @@ SVGUseElement::SVGUseElement(
     already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo)
     : SVGUseElementBase(std::move(aNodeInfo)), mReferencedElementTracker(this) {
   SetEnabledCallbacks(kCharacterDataChanged | kAttributeChanged |
-                      kContentAppended | kContentInserted | kContentRemoved |
-                      kNodeWillBeDestroyed);
+                      kContentAppended | kContentInserted |
+                      kContentWillBeRemoved | kNodeWillBeDestroyed);
 }
 
 SVGUseElement::~SVGUseElement() {
@@ -239,8 +239,8 @@ void SVGUseElement::ContentInserted(nsIContent* aChild) {
   }
 }
 
-void SVGUseElement::ContentRemoved(nsIContent* aChild,
-                                   nsIContent* aPreviousSibling) {
+void SVGUseElement::ContentWillBeRemoved(nsIContent* aChild,
+                                         const BatchRemovalState*) {
   if (nsContentUtils::IsInSameAnonymousTree(mReferencedElementTracker.get(),
                                             aChild)) {
     TriggerReclone();
@@ -257,14 +257,13 @@ static bool NodeCouldBeRendered(const nsINode& aNode) {
   if (const auto* symbol = SVGSymbolElement::FromNode(aNode)) {
     return symbol->CouldBeRendered();
   }
-  if (const auto* svgGraphics = SVGGraphicsElement::FromNode(aNode)) {
-    if (!svgGraphics->PassesConditionalProcessingTests()) {
-      return false;
-    }
-  }
   if (auto* svgSwitch =
           SVGSwitchElement::FromNodeOrNull(aNode.GetParentNode())) {
     if (&aNode != svgSwitch->GetActiveChild()) {
+      return false;
+    }
+  } else if (const auto* svgGraphics = SVGGraphicsElement::FromNode(aNode)) {
+    if (!svgGraphics->PassesConditionalProcessingTests()) {
       return false;
     }
   }
@@ -564,7 +563,7 @@ void SVGUseElement::LookupHref() {
 
   Element* treeToWatch = mOriginal ? mOriginal.get() : this;
   if (nsContentUtils::IsLocalRefURL(href)) {
-    mReferencedElementTracker.ResetWithLocalRef(*treeToWatch, href);
+    mReferencedElementTracker.ResetToLocalFragmentID(*treeToWatch, href);
     return;
   }
 
@@ -585,8 +584,8 @@ void SVGUseElement::LookupHref() {
 
   nsIReferrerInfo* referrer =
       OwnerDoc()->ReferrerInfoForInternalCSSAndSVGResources();
-  mReferencedElementTracker.ResetToURIFragmentID(treeToWatch, targetURI,
-                                                 referrer);
+  mReferencedElementTracker.ResetToURIWithFragmentID(treeToWatch, targetURI,
+                                                     referrer);
 }
 
 void SVGUseElement::TriggerReclone() {
@@ -606,41 +605,12 @@ void SVGUseElement::UnlinkSource() {
 // SVGElement methods
 
 /* virtual */
-gfxMatrix SVGUseElement::PrependLocalTransformsTo(
-    const gfxMatrix& aMatrix, SVGTransformTypes aWhich) const {
-  // 'transform' attribute:
-  gfxMatrix userToParent;
-
-  if (aWhich == eUserSpaceToParent || aWhich == eAllTransforms) {
-    userToParent = GetUserToParentTransform(mAnimateMotionTransform.get(),
-                                            mTransforms.get());
-    if (aWhich == eUserSpaceToParent) {
-      return userToParent * aMatrix;
-    }
-  }
-
-  // our 'x' and 'y' attributes:
+gfxMatrix SVGUseElement::ChildToUserSpaceTransform() const {
   float x, y;
   if (!SVGGeometryProperty::ResolveAll<SVGT::X, SVGT::Y>(this, &x, &y)) {
     const_cast<SVGUseElement*>(this)->GetAnimatedLengthValues(&x, &y, nullptr);
   }
-
-  gfxMatrix childToUser = gfxMatrix::Translation(x, y);
-
-  if (aWhich == eAllTransforms) {
-    return childToUser * userToParent * aMatrix;
-  }
-
-  MOZ_ASSERT(aWhich == eChildToUserSpace, "Unknown TransformTypes");
-
-  // The following may look broken because pre-multiplying our eChildToUserSpace
-  // transform with another matrix without including our eUserSpaceToParent
-  // transform between the two wouldn't make sense.  We don't expect that to
-  // ever happen though.  We get here either when the identity matrix has been
-  // passed because our caller just wants our eChildToUserSpace transform, or
-  // when our eUserSpaceToParent transform has already been multiplied into the
-  // matrix that our caller passes (such as when we're called from PaintSVG).
-  return childToUser * aMatrix;
+  return gfxMatrix::Translation(x, y);
 }
 
 /* virtual */
@@ -657,12 +627,12 @@ bool SVGUseElement::HasValidDimensions() const {
 
 SVGElement::LengthAttributesInfo SVGUseElement::GetLengthInfo() {
   return LengthAttributesInfo(mLengthAttributes, sLengthInfo,
-                              ArrayLength(sLengthInfo));
+                              std::size(sLengthInfo));
 }
 
 SVGElement::StringAttributesInfo SVGUseElement::GetStringInfo() {
   return StringAttributesInfo(mStringAttributes, sStringInfo,
-                              ArrayLength(sStringInfo));
+                              std::size(sStringInfo));
 }
 
 SVGUseFrame* SVGUseElement::GetFrame() const {

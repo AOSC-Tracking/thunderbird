@@ -21,8 +21,8 @@ var {
   create_folder,
   create_message,
   get_about_message,
+  open_message_from_file,
   select_click_row,
-  wait_for_popup_to_open,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
@@ -328,8 +328,8 @@ add_setup(async function () {
 /**
  * Ensure that the specified element is visible/hidden
  *
- * @param id the id of the element to check
- * @param visible true if the element should be visible, false otherwise
+ * @param {string} id - The id of the element to check.
+ * @param {boolean} visible - true if the element should be visible.
  */
 function assert_shown(id, visible) {
   Assert.notEqual(
@@ -342,8 +342,8 @@ function assert_shown(id, visible) {
 /**
  * Ensure that the specified element is enabled/disabled
  *
- * @param id the id of the element to check
- * @param enabled true if the element should be enabled, false otherwise
+ * @param {string} id the id of the element to check
+ * @param {boolean} enabled true if the element should be enabled.
  */
 function assert_enabled(id, enabled) {
   Assert.notEqual(
@@ -356,7 +356,7 @@ function assert_enabled(id, enabled) {
 /**
  * Check that the menu states in the "save" toolbar button are correct.
  *
- * @param expected a dictionary containing the expected states
+ * @param {object} expected - A dictionary containing the expected states.
  */
 async function check_toolbar_menu_states_single(expected) {
   assert_shown("attachmentSaveAllSingle", true);
@@ -370,8 +370,9 @@ async function check_toolbar_menu_states_single(expected) {
       "#attachmentSaveAllSingle .toolbarbutton-menubutton-dropmarker"
     );
     EventUtils.synthesizeMouseAtCenter(dm, { clickCount: 1 }, aboutMessage);
-    await wait_for_popup_to_open(
-      aboutMessage.document.getElementById("attachmentSaveAllSingleMenu")
+    await BrowserTestUtils.waitForPopupEvent(
+      aboutMessage.document.getElementById("attachmentSaveAllSingleMenu"),
+      "shown"
     );
 
     try {
@@ -391,7 +392,7 @@ async function check_toolbar_menu_states_single(expected) {
 /**
  * Check that the menu states in the "save all" toolbar button are correct.
  *
- * @param expected a dictionary containing the expected states
+ * @param {object} expected - A dictionary containing the expected states.
  */
 async function check_toolbar_menu_states_multiple(expected) {
   assert_shown("attachmentSaveAllSingle", false);
@@ -405,8 +406,9 @@ async function check_toolbar_menu_states_multiple(expected) {
       "#attachmentSaveAllMultiple .toolbarbutton-menubutton-dropmarker"
     );
     EventUtils.synthesizeMouseAtCenter(dm, { clickCount: 1 }, aboutMessage);
-    await wait_for_popup_to_open(
-      aboutMessage.document.getElementById("attachmentSaveAllMultipleMenu")
+    await BrowserTestUtils.waitForPopupEvent(
+      aboutMessage.document.getElementById("attachmentSaveAllMultipleMenu"),
+      "shown"
     );
 
     try {
@@ -426,7 +428,8 @@ async function check_toolbar_menu_states_multiple(expected) {
 /**
  * Check that the menu states in the single item context menu are correct
  *
- * @param expected a dictionary containing the expected states
+ * @param {integer} index - Index of the attachment in the attachmentList.
+ * @param {object} expected - A dictionary containing the expected states.
  */
 async function check_menu_states_single(index, expected) {
   const attachmentList = aboutMessage.document.getElementById("attachmentList");
@@ -469,7 +472,7 @@ async function check_menu_states_single(index, expected) {
 /**
  * Check that the menu states in the all items context menu are correct
  *
- * @param expected a dictionary containing the expected states
+ * @param {object} expected - A dictionary containing the expected states.
  */
 async function check_menu_states_all(expected) {
   // Using a rightClick here is unsafe, because we need to hit the empty area
@@ -508,7 +511,6 @@ async function help_test_attachment_menus(index) {
   await select_click_row(index);
   const expectedStates = messages[index].menuStates;
 
-  const aboutMessage = get_about_message();
   aboutMessage.toggleAttachmentList(true);
 
   for (const attachment of aboutMessage.currentAttachments) {
@@ -535,6 +537,27 @@ for (let i = 0; i < messages.length; i++) {
     return help_test_attachment_menus(i);
   });
 }
+
+/**
+ * Tests that the detach and delete attachment menu items are disabled for .eml
+ * files.
+ */
+add_task(async function test_attachment_menus_eml_file() {
+  const file = new FileUtils.File(
+    getTestFilePath("data/multiple_attachments.eml")
+  );
+  const msgc = await open_message_from_file(file);
+  aboutMessage = get_about_message(msgc);
+
+  aboutMessage.toggleAttachmentList(true);
+  const menuStates = { open: true, save: true, detach: false, delete_: false };
+  await check_toolbar_menu_states_multiple(menuStates);
+  await check_menu_states_all(menuStates);
+  await check_menu_states_single(0, menuStates);
+  await check_menu_states_single(1, menuStates);
+
+  await BrowserTestUtils.closeWindow(msgc);
+});
 
 add_task(() => {
   Assert.report(

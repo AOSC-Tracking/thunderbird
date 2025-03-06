@@ -90,6 +90,9 @@ Preferences.addAll([
   { id: "browser.tabs.hoverPreview.enabled", type: "bool" },
   { id: "browser.tabs.hoverPreview.showThumbnails", type: "bool" },
 
+  { id: "sidebar.verticalTabs", type: "bool" },
+  { id: "sidebar.revamp", type: "bool" },
+
   // CFR
   {
     id: "browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons",
@@ -289,9 +292,16 @@ var gMainPane = {
         }
 
         // approximately a "requestIdleInterval"
-        window.setTimeout(() => {
-          window.requestIdleCallback(pollForDefaultBrowser);
-        }, backoffTimes[this._backoffIndex + 1 < backoffTimes.length ? this._backoffIndex++ : backoffTimes.length - 1]);
+        window.setTimeout(
+          () => {
+            window.requestIdleCallback(pollForDefaultBrowser);
+          },
+          backoffTimes[
+            this._backoffIndex + 1 < backoffTimes.length
+              ? this._backoffIndex++
+              : backoffTimes.length - 1
+          ]
+        );
       };
 
       window.setTimeout(() => {
@@ -337,11 +347,7 @@ var gMainPane = {
         "command",
         function (event) {
           if (!event.target.checked) {
-            Services.telemetry.recordEvent(
-              "pictureinpicture.settings",
-              "disable",
-              "settings"
-            );
+            Glean.pictureinpictureSettings.disableSettings.record();
           }
         }
       );
@@ -381,7 +387,7 @@ var gMainPane = {
         let quitKey = ShortcutUtils.prettifyShortcut(quitKeyElement);
         document.l10n.setAttributes(
           document.getElementById("warnOnQuitKey"),
-          "confirm-on-quit-with-key",
+          "ask-on-quit-with-key",
           { quitKey }
         );
       } else {
@@ -431,28 +437,16 @@ var gMainPane = {
         "command",
         gMainPane.onWindowsLaunchOnLoginChange
       );
-      // We do a check here for startWithLastProfile as we could
-      // have disabled the pref for the user before they're ever
-      // exposed to the experiment on a new profile.
-      // If we're using MSIX, we don't show the checkbox as MSIX
-      // can't write to the registry.
       if (
-        Cc["@mozilla.org/toolkit/profile-service;1"].getService(
-          Ci.nsIToolkitProfileService
-        ).startWithLastProfile
+        Services.prefs.getBoolPref(
+          "browser.startup.windowsLaunchOnLogin.enabled",
+          false
+        )
       ) {
+        document.getElementById("windowsLaunchOnLoginBox").hidden = false;
         NimbusFeatures.windowsLaunchOnLogin.recordExposureEvent({
           once: true,
         });
-
-        if (
-          Services.prefs.getBoolPref(
-            "browser.startup.windowsLaunchOnLogin.enabled",
-            false
-          )
-        ) {
-          document.getElementById("windowsLaunchOnLoginBox").hidden = false;
-        }
       }
     }
     gMainPane.updateBrowserStartupUI =
@@ -535,7 +529,6 @@ var gMainPane = {
       Services.prefs.getBoolPref("browser.backup.preferences.ui.enabled", false)
     ) {
       let backupGroup = document.getElementById("dataBackupGroup");
-      backupGroup.hidden = false;
       backupGroup.removeAttribute("data-hidden-from-search");
     }
 
@@ -692,16 +685,33 @@ var gMainPane = {
         let launchOnLoginCheckbox = document.getElementById(
           "windowsLaunchOnLogin"
         );
-        WindowsLaunchOnLogin.getLaunchOnLoginEnabled().then(enabled => {
-          launchOnLoginCheckbox.checked = enabled;
-        });
-        WindowsLaunchOnLogin.getLaunchOnLoginApproved().then(
-          approvedByWindows => {
-            launchOnLoginCheckbox.disabled = !approvedByWindows;
-            document.getElementById("windowsLaunchOnLoginDisabledBox").hidden =
-              approvedByWindows;
-          }
-        );
+
+        let startWithLastProfile = Cc[
+          "@mozilla.org/toolkit/profile-service;1"
+        ].getService(Ci.nsIToolkitProfileService).startWithLastProfile;
+
+        // Grey out the launch on login checkbox if startWithLastProfile is false
+        document.getElementById(
+          "windowsLaunchOnLoginDisabledProfileBox"
+        ).hidden = startWithLastProfile;
+        launchOnLoginCheckbox.disabled = !startWithLastProfile;
+
+        if (!startWithLastProfile) {
+          launchOnLoginCheckbox.checked = false;
+        } else {
+          WindowsLaunchOnLogin.getLaunchOnLoginEnabled().then(enabled => {
+            launchOnLoginCheckbox.checked = enabled;
+          });
+
+          WindowsLaunchOnLogin.getLaunchOnLoginApproved().then(
+            approvedByWindows => {
+              launchOnLoginCheckbox.disabled = !approvedByWindows;
+              document.getElementById(
+                "windowsLaunchOnLoginDisabledBox"
+              ).hidden = approvedByWindows;
+            }
+          );
+        }
 
         // On Windows, the Application Update setting is an installation-
         // specific preference, not a profile-specific one. Show a warning to
@@ -710,9 +720,8 @@ var gMainPane = {
           "updateSettingsContainer"
         );
         updateContainer.classList.add("updateSettingCrossUserWarningContainer");
-        document.getElementById(
-          "updateSettingCrossUserWarningDesc"
-        ).hidden = false;
+        document.getElementById("updateSettingCrossUserWarningDesc").hidden =
+          false;
       }
     }
 
@@ -921,9 +930,8 @@ var gMainPane = {
     if (!(await FxAccounts.canConnectAccount())) {
       return;
     }
-    let url = await FxAccounts.config.promiseConnectAccountURI(
-      "dev-edition-setup"
-    );
+    let url =
+      await FxAccounts.config.promiseConnectAccountURI("dev-edition-setup");
     let accountsTab = win.gBrowser.addWebTab(url);
     win.gBrowser.selectedTab = accountsTab;
   },
@@ -1063,9 +1071,8 @@ var gMainPane = {
           await TranslationsParent.getSupportedLanguages();
         const languageList =
           TranslationsParent.getLanguageList(supportedLanguages);
-        const downloadPhases = await TranslationsState.createDownloadPhases(
-          languageList
-        );
+        const downloadPhases =
+          await TranslationsState.createDownloadPhases(languageList);
 
         if (supportedLanguages.languagePairs.length === 0) {
           throw new Error(
@@ -1402,12 +1409,6 @@ var gMainPane = {
   },
 
   initPrimaryBrowserLanguageUI() {
-    // Enable telemetry.
-    Services.telemetry.setEventRecordingEnabled(
-      "intl.ui.browserLanguage",
-      true
-    );
-
     // This will register the "command" listener.
     let menulist = document.getElementById("primaryBrowserLocale");
     new SelectionChangedMenulist(menulist, event => {
@@ -1796,11 +1797,8 @@ var gMainPane = {
   },
 
   recordBrowserLanguagesTelemetry(method, value = null) {
-    Services.telemetry.recordEvent(
-      "intl.ui.browserLanguage",
-      method,
-      "main",
-      value
+    Glean.intlUiBrowserLanguage[method + "Main"].record(
+      value ? { value } : undefined
     );
   },
 
@@ -1876,6 +1874,18 @@ var gMainPane = {
     if (!selected) {
       // No locales were selected. Cancel the operation.
       return;
+    }
+
+    // Track how often locale fallback order is changed.
+    // Drop the first locale and filter to only include the overlapping set
+    const prevLocales = Services.locale.requestedLocales.filter(
+      lc => selected.indexOf(lc) > 0
+    );
+    const newLocales = selected.filter(
+      (lc, i) => i > 0 && prevLocales.includes(lc)
+    );
+    if (prevLocales.some((lc, i) => newLocales[i] != lc)) {
+      this.gBrowserLanguagesDialog.recordTelemetry("setFallback");
     }
 
     switch (gMainPane.getLanguageSwitchTransitionType(selected)) {
@@ -2341,12 +2351,10 @@ var gMainPane = {
     if (Services.appinfo.fissionAutostart) {
       document.getElementById("limitContentProcess").hidden = true;
       document.getElementById("contentProcessCount").hidden = true;
-      document.getElementById(
-        "contentProcessCountEnabledDescription"
-      ).hidden = true;
-      document.getElementById(
-        "contentProcessCountDisabledDescription"
-      ).hidden = true;
+      document.getElementById("contentProcessCountEnabledDescription").hidden =
+        true;
+      document.getElementById("contentProcessCountDisabledDescription").hidden =
+        true;
       return;
     }
     if (Services.appinfo.browserTabsRemoteAutostart) {
@@ -2365,21 +2373,17 @@ var gMainPane = {
 
       document.getElementById("limitContentProcess").disabled = false;
       document.getElementById("contentProcessCount").disabled = false;
-      document.getElementById(
-        "contentProcessCountEnabledDescription"
-      ).hidden = false;
-      document.getElementById(
-        "contentProcessCountDisabledDescription"
-      ).hidden = true;
+      document.getElementById("contentProcessCountEnabledDescription").hidden =
+        false;
+      document.getElementById("contentProcessCountDisabledDescription").hidden =
+        true;
     } else {
       document.getElementById("limitContentProcess").disabled = true;
       document.getElementById("contentProcessCount").disabled = true;
-      document.getElementById(
-        "contentProcessCountEnabledDescription"
-      ).hidden = true;
-      document.getElementById(
-        "contentProcessCountDisabledDescription"
-      ).hidden = false;
+      document.getElementById("contentProcessCountEnabledDescription").hidden =
+        true;
+      document.getElementById("contentProcessCountDisabledDescription").hidden =
+        false;
     }
   },
 
@@ -2844,6 +2848,9 @@ var gMainPane = {
 
     if (aHandlerApp instanceof Ci.nsIGIOMimeApp) {
       return aHandlerApp.command;
+    }
+    if (aHandlerApp instanceof Ci.nsIGIOHandlerApp) {
+      return aHandlerApp.id;
     }
 
     return false;
@@ -3383,8 +3390,16 @@ var gMainPane = {
       return this._getIconURLForWebApp(aHandlerApp.uriTemplate);
     }
 
+    if (aHandlerApp instanceof Ci.nsIGIOHandlerApp) {
+      return this._getIconURLForAppId(aHandlerApp.id);
+    }
+
     // We know nothing about other kinds of handler apps.
     return "";
+  },
+
+  _getIconURLForAppId(aAppId) {
+    return "moz-icon://" + aAppId + "?size=16";
   },
 
   _getIconURLForFile(aFile) {
@@ -3606,46 +3621,73 @@ var gMainPane = {
         ]);
       }
     }
-    if (firefoxLocalizedName) {
-      let folderDisplayName, leafName;
-      // Either/both of these can throw, so check for failures in both cases
-      // so we don't just break display of the download pref:
-      try {
-        folderDisplayName = file.displayName;
-      } catch (ex) {
-        /* ignored */
-      }
-      try {
-        leafName = file.leafName;
-      } catch (ex) {
-        /* ignored */
-      }
 
-      // If we found a localized name that's different from the leaf name,
-      // use that:
-      if (folderDisplayName && folderDisplayName != leafName) {
-        return { file, folderDisplayName };
-      }
+    if (file) {
+      let displayName = file.path;
 
-      // Otherwise, check if we've got a localized name ourselves.
-      if (firefoxLocalizedName) {
-        // You can't move the system download or desktop dir on macOS,
-        // so if those are in use just display them. On other platforms
-        // only do so if the folder matches the localized name.
-        if (
-          AppConstants.platform == "macosx" ||
-          leafName == firefoxLocalizedName
-        ) {
-          return { file, folderDisplayName: firefoxLocalizedName };
+      // Attempt to translate path to the path as exists on the host
+      // in case the provided path comes from the document portal
+      if (AppConstants.platform == "linux") {
+        try {
+          displayName = await file.hostPath();
+        } catch (error) {
+          /* ignored */
+        }
+
+        if (displayName) {
+          if (displayName == downloadsDir.path) {
+            firefoxLocalizedName = await document.l10n.formatValues([
+              { id: "downloads-folder-name" },
+            ]);
+          } else if (displayName == desktopDir.path) {
+            firefoxLocalizedName = await document.l10n.formatValues([
+              { id: "desktop-folder-name" },
+            ]);
+          }
         }
       }
-    }
-    // If we get here, attempts to use a "pretty" name failed. Just display
-    // the full path:
-    if (file) {
+
+      if (firefoxLocalizedName) {
+        let folderDisplayName, leafName;
+        // Either/both of these can throw, so check for failures in both cases
+        // so we don't just break display of the download pref:
+        try {
+          folderDisplayName = file.displayName;
+        } catch (ex) {
+          /* ignored */
+        }
+        try {
+          leafName = file.leafName;
+        } catch (ex) {
+          /* ignored */
+        }
+
+        // If we found a localized name that's different from the leaf name,
+        // use that:
+        if (folderDisplayName && folderDisplayName != leafName) {
+          return { file, folderDisplayName };
+        }
+
+        // Otherwise, check if we've got a localized name ourselves.
+        if (firefoxLocalizedName) {
+          // You can't move the system download or desktop dir on macOS,
+          // so if those are in use just display them. On other platforms
+          // only do so if the folder matches the localized name.
+          if (
+            AppConstants.platform == "macosx" ||
+            leafName == firefoxLocalizedName
+          ) {
+            return { file, folderDisplayName: firefoxLocalizedName };
+          }
+        }
+      }
+
+      // If we get here, attempts to use a "pretty" name failed. Just display
+      // the full path:
       // Force the left-to-right direction when displaying a custom path.
-      return { file, folderDisplayName: `\u2066${file.path}\u2069` };
+      return { file, folderDisplayName: `\u2066${displayName}\u2069` };
     }
+
     // Don't even have a file - fall back to desktop directory for the
     // use of the icon, and an empty label:
     file = desktopDir;

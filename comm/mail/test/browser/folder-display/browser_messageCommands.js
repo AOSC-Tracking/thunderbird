@@ -29,7 +29,6 @@ var {
   right_click_on_row,
   select_click_row,
   select_shift_click_row,
-  wait_for_popup_to_open,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
@@ -79,17 +78,25 @@ add_setup(async function () {
   await make_message_sets_in_folders([newsgroupFolder], [{ count: 3 }]);
 
   tagArray = MailServices.tags.getAllTags();
+
+  registerCleanupFunction(function () {
+    Services.prefs.setBoolPref("mailnews.mark_message_read.auto", gAutoRead);
+    unreadFolder.deleteSelf(null);
+    shiftDeleteFolder.deleteSelf(null);
+    threadDeleteFolder.deleteSelf(null);
+    newsgroupFolder.deleteSelf(null);
+  });
 });
 
 /**
  * Ensures that all messages have a particular read status
  *
- * @param messages an array of nsIMsgDBHdrs to check
- * @param read true if the messages should be marked read, false otherwise
+ * @param {nsIMsgDBHdr[]} messages - An array of nsIMsgDBHdrs to check.
+ * @param {boolean} read - true if the messages should be marked read.
  */
 function check_read_status(messages, read) {
-  function read_str(read) {
-    return read ? "read" : "unread";
+  function read_str(isRead) {
+    return isRead ? "read" : "unread";
   }
 
   for (let i = 0; i < messages.length; i++) {
@@ -106,9 +113,9 @@ function check_read_status(messages, read) {
 /**
  * Ensures that the mark read/unread menu items are enabled/disabled properly
  *
- * @param index the row in the thread pane of the message to query
- * @param canMarkRead true if the mark read item should be enabled
- * @param canMarkUnread true if the mark unread item should be enabled
+ * @param {integer} index - The row in the thread pane of the message to query.
+ * @param {boolean} canMarkRead - true if the mark read item should be enabled
+ * @param {boolean} canMarkUnread - true if the mark unread item should be enabled
  */
 async function check_read_menuitems(index, canMarkRead, canMarkUnread) {
   await right_click_on_row(index);
@@ -143,20 +150,23 @@ async function check_read_menuitems(index, canMarkRead, canMarkUnread) {
 }
 
 /**
- * Mark a message read or unread via the context menu
+ * Mark a message read or unread via the context menu.
  *
- * @param index the row in the thread pane of the message to mark read/unread
- * @param read true the message should be marked read, false otherwise
+ * @param {integer} index - The row in the thread pane of the message to mark
+ *   read/unread.
+ * @param {boolean} read - true the message should be marked read, false otherwise.
  */
 async function mark_read_via_menu(index, read) {
   const menuItem = read ? "mailContext-markRead" : "mailContext-markUnread";
   await right_click_on_row(index);
-  await wait_for_popup_to_open(getMailContext());
+  await BrowserTestUtils.waitForPopupEvent(getMailContext(), "shown");
   await click_menus_in_sequence(getMailContext(), [
     { id: "mailContext-mark" },
     { id: menuItem },
   ]);
-  await close_popup(window, getMailContext());
+  await BrowserTestUtils.waitForPopupEvent(getMailContext(), "hidden");
+  await TestUtils.waitForTick();
+  await TestUtils.waitForTick();
 }
 
 add_task(async function test_mark_one_read() {
@@ -239,6 +249,7 @@ add_task(async function test_toggle_read() {
 
   curMessage.markRead(false);
   EventUtils.synthesizeKey("m", {});
+  await TestUtils.waitForTick();
   check_read_status([curMessage], true);
 });
 
@@ -248,6 +259,7 @@ add_task(async function test_toggle_unread() {
 
   curMessage.markRead(true);
   EventUtils.synthesizeKey("m", {});
+  await TestUtils.waitForTick();
   check_read_status([curMessage], false);
 });
 
@@ -259,11 +271,13 @@ add_task(async function test_toggle_mixed() {
   curMessages[0].markRead(false);
   curMessages[1].markRead(true);
   EventUtils.synthesizeKey("m", {});
+  await TestUtils.waitForTick();
   check_read_status(curMessages, true);
 
   curMessages[0].markRead(true);
   curMessages[1].markRead(false);
   EventUtils.synthesizeKey("m", {});
+  await TestUtils.waitForTick();
   check_read_status(curMessages, false);
 });
 
@@ -301,24 +315,22 @@ add_task(async function test_mark_all_read() {
 
   // Make sure we can mark all read with >0 messages unread.
   await right_click_on_row(0);
-  await wait_for_popup_to_open(getMailContext());
+  await BrowserTestUtils.waitForPopupEvent(getMailContext(), "shown");
   await click_menus_in_sequence(getMailContext(), [
     { id: "mailContext-mark" },
     { id: "mailContext-markAllRead" },
   ]);
-  await close_popup(window, getMailContext());
+  await BrowserTestUtils.waitForPopupEvent(getMailContext(), "hidden");
+  await new Promise(resolve => requestAnimationFrame(resolve));
 
   Assert.ok(curMessage.isRead, "Message should have been marked read!");
 
   // Make sure we can't mark all read, now that all messages are already read.
   await right_click_on_row(0);
-  await wait_for_popup_to_open(getMailContext());
-  const hiddenPromise = BrowserTestUtils.waitForEvent(
-    getMailContext(),
-    "popuphidden"
-  );
+  await BrowserTestUtils.waitForPopupEvent(getMailContext(), "shown");
+
   await click_menus_in_sequence(getMailContext(), [{ id: "mailContext-mark" }]);
-  await hiddenPromise;
+  await BrowserTestUtils.waitForPopupEvent(getMailContext(), "hidden");
   await new Promise(resolve => requestAnimationFrame(resolve));
 
   const allReadDisabled = getMailContext().querySelector(
@@ -343,7 +355,7 @@ add_task(async function test_mark_thread_as_read() {
 
   // Make sure Mark Thread as Read is enabled with >0 messages in thread unread.
   await right_click_on_row(0);
-  await wait_for_popup_to_open(getMailContext());
+  await BrowserTestUtils.waitForPopupEvent(getMailContext(), "shown");
   await click_menus_in_sequence(getMailContext(), [{ id: "mailContext-mark" }]);
 
   let markThreadAsReadDisabled = document.getElementById(
@@ -356,7 +368,7 @@ add_task(async function test_mark_thread_as_read() {
 
   // Make sure messages are read when Mark Thread as Read is clicked.
   await right_click_on_row(0);
-  await wait_for_popup_to_open(getMailContext());
+  await BrowserTestUtils.waitForPopupEvent(getMailContext(), "shown");
   await click_menus_in_sequence(getMailContext(), [
     { id: "mailContext-mark" },
     { id: "mailContext-markThreadAsRead" },
@@ -368,7 +380,7 @@ add_task(async function test_mark_thread_as_read() {
 
   // Make sure Mark Thread as Read is now disabled with all messages read.
   await right_click_on_row(0);
-  await wait_for_popup_to_open(getMailContext());
+  await BrowserTestUtils.waitForPopupEvent(getMailContext(), "shown");
   await click_menus_in_sequence(getMailContext(), [{ id: "mailContext-mark" }]);
 
   markThreadAsReadDisabled = document.getElementById(
@@ -382,7 +394,7 @@ add_task(async function test_mark_thread_as_read() {
   // Make sure that adding an unread message enables Mark Thread as Read once more.
   curMessage.markRead(false);
   await right_click_on_row(0);
-  await wait_for_popup_to_open(getMailContext());
+  await BrowserTestUtils.waitForPopupEvent(getMailContext(), "shown");
   await click_menus_in_sequence(getMailContext(), [{ id: "mailContext-mark" }]);
 
   markThreadAsReadDisabled = document.getElementById(
@@ -625,15 +637,20 @@ add_task(async function test_delete_from_newsgroup_prompt() {
   Services.prefs.clearUserPref("news.warn_on_delete");
 });
 
+/**
+ * @param {nsIMsgDBHdr} message
+ * @param {nsIMsgTag} tag - Tag to check.
+ * @param {boolean} isSet - Whether the tag is expected to be set.
+ */
 function check_tag_in_message(message, tag, isSet) {
   const tagSet = message
     .getStringProperty("keywords")
     .split(" ")
     .includes(tag.key);
   if (isSet) {
-    Assert.ok(tagSet, "Tag '" + tag.name + "' expected on message!");
+    Assert.ok(tagSet, "Tag '" + tag.tag + "' expected on message!");
   } else {
-    Assert.ok(!tagSet, "Tag '" + tag.name + "' not expected on message!");
+    Assert.ok(!tagSet, "Tag '" + tag.tag + "' not expected on message!");
   }
 }
 
@@ -651,7 +668,7 @@ add_task(async function test_tag_keys() {
   EventUtils.synthesizeKey("0", {});
   check_tag_in_message(curMessage, tagArray[0], false);
   check_tag_in_message(curMessage, tagArray[1], false);
-}).skip(); // TODO: not working
+});
 
 add_task(async function test_tag_keys_disabled_in_content_tab() {
   await be_in_folder(unreadFolder);
@@ -669,8 +686,4 @@ add_task(async function test_tag_keys_disabled_in_content_tab() {
   check_tag_in_message(curMessage, tagArray[0], false);
 
   document.getElementById("tabmail").closeTab(tab);
-}).skip(); // TODO: not working
-
-registerCleanupFunction(function () {
-  Services.prefs.setBoolPref("mailnews.mark_message_read.auto", gAutoRead);
 });

@@ -59,11 +59,14 @@ add_task(async function () {
           id,
         }
       );
+
+      browser.test.sendMessage("ready");
     },
     manifest: { permissions: ["addressBooks"] },
   });
 
   await extension.startup();
+  await extension.awaitMessage("ready");
 
   const dummyUID = "9b9074ff-8fa4-4c58-9c3b-bc9ea2e17db1";
   let searchBook = MailServices.ab.getDirectoryFromUID(dummyUID);
@@ -73,8 +76,8 @@ add_task(async function () {
   searchBook = MailServices.ab.getDirectoryFromUID(UID);
   Assert.notEqual(searchBook, null, "Extension registered an async directory");
 
-  let foundCards = 0;
   await new Promise(resolve => {
+    let foundCards = 0;
     searchBook.search(null, "test", {
       onSearchFoundCard(card) {
         Assert.notEqual(card, null, "A card was found.");

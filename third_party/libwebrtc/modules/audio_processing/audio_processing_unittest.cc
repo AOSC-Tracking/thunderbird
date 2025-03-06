@@ -7,7 +7,7 @@
  *  in the file PATENTS.  All contributing project authors may
  *  be found in the AUTHORS file in the root of the source tree.
  */
-#include "modules/audio_processing/include/audio_processing.h"
+#include "api/audio/audio_processing.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -22,7 +22,9 @@
 
 #include "absl/flags/flag.h"
 #include "absl/strings/string_view.h"
+#include "api/audio/builtin_audio_processing_builder.h"
 #include "api/audio/echo_detector_creator.h"
+#include "api/environment/environment_factory.h"
 #include "api/make_ref_counted.h"
 #include "common_audio/include/audio_util.h"
 #include "common_audio/resampler/include/push_resampler.h"
@@ -31,7 +33,6 @@
 #include "modules/audio_processing/aec_dump/aec_dump_factory.h"
 #include "modules/audio_processing/audio_processing_impl.h"
 #include "modules/audio_processing/include/mock_audio_processing.h"
-#include "modules/audio_processing/test/audio_processing_builder_for_testing.h"
 #include "modules/audio_processing/test/protobuf_utils.h"
 #include "modules/audio_processing/test/test_utils.h"
 #include "rtc_base/arraysize.h"
@@ -475,7 +476,7 @@ ApmTest::ApmTest()
       far_file_(NULL),
       near_file_(NULL),
       out_file_(NULL) {
-  apm_ = AudioProcessingBuilderForTesting().Create();
+  apm_ = BuiltinAudioProcessingBuilder().Build(CreateEnvironment());
   AudioProcessing::Config apm_config = apm_->GetConfig();
   apm_config.gain_controller1.analog_gain_controller.enabled = false;
   apm_config.pipeline.maximum_internal_processing_rate = 48000;
@@ -591,8 +592,8 @@ bool ApmTest::ReadFrame(FILE* file, Int16FrameData* frame) {
 
 // If the end of the file has been reached, rewind it and attempt to read the
 // frame again.
-void ApmTest::ReadFrameWithRewind(FILE* file,
-                                  Int16FrameData* frame,
+void ApmTest::ReadFrameWithRewind(FILE* /* file */,
+                                  Int16FrameData* /* frame */,
                                   ChannelBuffer<float>* cb) {
   if (!ReadFrame(near_file_, &frame_, cb)) {
     rewind(near_file_);
@@ -1333,7 +1334,7 @@ TEST_F(ApmTest, NoProcessingWhenAllComponentsDisabledFloat) {
   auto src_channels = &src[0];
   auto dest_channels = &dest[0];
 
-  apm_ = AudioProcessingBuilderForTesting().Create();
+  apm_ = BuiltinAudioProcessingBuilder().Build(CreateEnvironment());
   EXPECT_NOERR(apm_->ProcessStream(&src_channels, StreamConfig(sample_rate, 1),
                                    StreamConfig(sample_rate, 1),
                                    &dest_channels));
@@ -1754,9 +1755,9 @@ TEST_F(ApmTest, Process) {
     if (test->num_input_channels() != test->num_output_channels())
       continue;
 
-    apm_ = AudioProcessingBuilderForTesting()
+    apm_ = BuiltinAudioProcessingBuilder()
                .SetEchoDetector(CreateEchoDetector())
-               .Create();
+               .Build(CreateEnvironment());
     AudioProcessing::Config apm_config = apm_->GetConfig();
     apm_config.gain_controller1.analog_gain_controller.enabled = false;
     apm_->ApplyConfig(apm_config);
@@ -1993,8 +1994,9 @@ class AudioProcessingTest
                             absl::string_view output_file_prefix) {
     AudioProcessing::Config apm_config;
     apm_config.gain_controller1.analog_gain_controller.enabled = false;
-    rtc::scoped_refptr<AudioProcessing> ap =
-        AudioProcessingBuilderForTesting().SetConfig(apm_config).Create();
+    scoped_refptr<AudioProcessing> ap = BuiltinAudioProcessingBuilder()
+                                            .SetConfig(apm_config)
+                                            .Build(CreateEnvironment());
 
     EnableAllAPComponents(ap.get());
 
@@ -2060,16 +2062,25 @@ class AudioProcessingTest
           StreamConfig(output_rate, num_output_channels), out_cb.channels()));
 
       // Dump forward output to file.
-      Interleave(out_cb.channels(), out_cb.num_frames(), out_cb.num_channels(),
-                 float_data.get());
+      RTC_DCHECK_EQ(out_cb.num_bands(), 1u);  // Assumes full frequency band.
+      DeinterleavedView<const float> deinterleaved_src(
+          out_cb.channels()[0], out_cb.num_frames(), out_cb.num_channels());
+      InterleavedView<float> interleaved_dst(
+          float_data.get(), out_cb.num_frames(), out_cb.num_channels());
+      Interleave(deinterleaved_src, interleaved_dst);
       size_t out_length = out_cb.num_channels() * out_cb.num_frames();
 
       ASSERT_EQ(out_length, fwrite(float_data.get(), sizeof(float_data[0]),
                                    out_length, out_file));
 
       // Dump reverse output to file.
-      Interleave(rev_out_cb.channels(), rev_out_cb.num_frames(),
-                 rev_out_cb.num_channels(), float_data.get());
+      RTC_DCHECK_EQ(rev_out_cb.num_bands(), 1u);
+      deinterleaved_src = DeinterleavedView<const float>(
+          rev_out_cb.channels()[0], rev_out_cb.num_frames(),
+          rev_out_cb.num_channels());
+      interleaved_dst = InterleavedView<float>(
+          float_data.get(), rev_out_cb.num_frames(), rev_out_cb.num_channels());
+      Interleave(deinterleaved_src, interleaved_dst);
       size_t rev_out_length =
           rev_out_cb.num_channels() * rev_out_cb.num_frames();
 
@@ -2150,10 +2161,12 @@ TEST_P(AudioProcessingTest, Formats) {
       ASSERT_TRUE(out_file != NULL);
       ASSERT_TRUE(ref_file != NULL);
 
-      const size_t ref_length =
-          AudioProcessing::GetFrameSize(ref_rate) * out_num;
-      const size_t out_length =
-          AudioProcessing::GetFrameSize(out_rate) * out_num;
+      const size_t ref_samples_per_channel =
+          AudioProcessing::GetFrameSize(ref_rate);
+      const size_t ref_length = ref_samples_per_channel * out_num;
+      const size_t out_samples_per_channel =
+          AudioProcessing::GetFrameSize(out_rate);
+      const size_t out_length = out_samples_per_channel * out_num;
       // Data from the reference file.
       std::unique_ptr<float[]> ref_data(new float[ref_length]);
       // Data from the output file.
@@ -2162,8 +2175,8 @@ TEST_P(AudioProcessingTest, Formats) {
       // don't match.
       std::unique_ptr<float[]> cmp_data(new float[ref_length]);
 
-      PushResampler<float> resampler;
-      resampler.InitializeIfNeeded(out_rate, ref_rate, out_num);
+      PushResampler<float> resampler(out_samples_per_channel,
+                                     ref_samples_per_channel, out_num);
 
       // Compute the resampling delay of the output relative to the reference,
       // to find the region over which we should search for the best SNR.
@@ -2196,9 +2209,12 @@ TEST_P(AudioProcessingTest, Formats) {
         if (out_rate != ref_rate) {
           // Resample the output back to its internal processing rate if
           // necessary.
+          InterleavedView<const float> src(out_ptr, out_samples_per_channel,
+                                           out_num);
+          InterleavedView<float> dst(cmp_data.get(), ref_samples_per_channel,
+                                     out_num);
           ASSERT_EQ(ref_length,
-                    static_cast<size_t>(resampler.Resample(
-                        out_ptr, out_length, cmp_data.get(), ref_length)));
+                    static_cast<size_t>(resampler.Resample(src, dst)));
           out_ptr = cmp_data.get();
         }
 
@@ -2405,8 +2421,8 @@ void RunApmRateAndChannelTest(
   apm_config.pipeline.multi_channel_render = true;
   apm_config.pipeline.multi_channel_capture = true;
   apm_config.echo_canceller.enabled = true;
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting().SetConfig(apm_config).Create();
+  scoped_refptr<AudioProcessing> apm =
+      BuiltinAudioProcessingBuilder(apm_config).Build(CreateEnvironment());
 
   StreamConfig render_input_stream_config;
   StreamConfig render_output_stream_config;
@@ -2515,10 +2531,10 @@ TEST(ApmConfiguration, EnablePostProcessing) {
       new ::testing::NiceMock<test::MockCustomProcessing>();
   auto mock_post_processor =
       std::unique_ptr<CustomProcessing>(mock_post_processor_ptr);
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting()
+  scoped_refptr<AudioProcessing> apm =
+      BuiltinAudioProcessingBuilder()
           .SetCapturePostProcessing(std::move(mock_post_processor))
-          .Create();
+          .Build(CreateEnvironment());
 
   Int16FrameData audio;
   audio.num_channels = 1;
@@ -2537,10 +2553,10 @@ TEST(ApmConfiguration, EnablePreProcessing) {
       new ::testing::NiceMock<test::MockCustomProcessing>();
   auto mock_pre_processor =
       std::unique_ptr<CustomProcessing>(mock_pre_processor_ptr);
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting()
+  scoped_refptr<AudioProcessing> apm =
+      BuiltinAudioProcessingBuilder()
           .SetRenderPreProcessing(std::move(mock_pre_processor))
-          .Create();
+          .Build(CreateEnvironment());
 
   Int16FrameData audio;
   audio.num_channels = 1;
@@ -2559,10 +2575,10 @@ TEST(ApmConfiguration, EnableCaptureAnalyzer) {
       new ::testing::NiceMock<test::MockCustomAudioAnalyzer>();
   auto mock_capture_analyzer =
       std::unique_ptr<CustomAudioAnalyzer>(mock_capture_analyzer_ptr);
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting()
+  scoped_refptr<AudioProcessing> apm =
+      BuiltinAudioProcessingBuilder()
           .SetCaptureAnalyzer(std::move(mock_capture_analyzer))
-          .Create();
+          .Build(CreateEnvironment());
 
   Int16FrameData audio;
   audio.num_channels = 1;
@@ -2580,10 +2596,10 @@ TEST(ApmConfiguration, PreProcessingReceivesRuntimeSettings) {
       new ::testing::NiceMock<test::MockCustomProcessing>();
   auto mock_pre_processor =
       std::unique_ptr<CustomProcessing>(mock_pre_processor_ptr);
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting()
+  scoped_refptr<AudioProcessing> apm =
+      BuiltinAudioProcessingBuilder()
           .SetRenderPreProcessing(std::move(mock_pre_processor))
-          .Create();
+          .Build(CreateEnvironment());
   apm->SetRuntimeSetting(
       AudioProcessing::RuntimeSetting::CreateCustomRenderSetting(0));
 
@@ -2603,7 +2619,7 @@ TEST(ApmConfiguration, PreProcessingReceivesRuntimeSettings) {
 
 class MyEchoControlFactory : public EchoControlFactory {
  public:
-  std::unique_ptr<EchoControl> Create(int sample_rate_hz) {
+  std::unique_ptr<EchoControl> Create(int /* sample_rate_hz */) {
     auto ec = new test::MockEchoControl();
     EXPECT_CALL(*ec, AnalyzeRender(::testing::_)).Times(1);
     EXPECT_CALL(*ec, AnalyzeCapture(::testing::_)).Times(2);
@@ -2613,8 +2629,8 @@ class MyEchoControlFactory : public EchoControlFactory {
   }
 
   std::unique_ptr<EchoControl> Create(int sample_rate_hz,
-                                      int num_render_channels,
-                                      int num_capture_channels) {
+                                      int /* num_render_channels */,
+                                      int /* num_capture_channels */) {
     return Create(sample_rate_hz);
   }
 };
@@ -2624,10 +2640,10 @@ TEST(ApmConfiguration, EchoControlInjection) {
   std::unique_ptr<EchoControlFactory> echo_control_factory(
       new MyEchoControlFactory());
 
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting()
+  scoped_refptr<AudioProcessing> apm =
+      BuiltinAudioProcessingBuilder()
           .SetEchoControlFactory(std::move(echo_control_factory))
-          .Create();
+          .Build(CreateEnvironment());
 
   Int16FrameData audio;
   audio.num_channels = 1;
@@ -2654,10 +2670,9 @@ TEST(ApmConfiguration, EchoDetectorInjection) {
               Initialize(/*capture_sample_rate_hz=*/16000, _,
                          /*render_sample_rate_hz=*/16000, _))
       .Times(1);
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting()
-          .SetEchoDetector(mock_echo_detector)
-          .Create();
+  scoped_refptr<AudioProcessing> apm = BuiltinAudioProcessingBuilder()
+                                           .SetEchoDetector(mock_echo_detector)
+                                           .Build(CreateEnvironment());
 
   // The echo detector is included in processing when enabled.
   EXPECT_CALL(*mock_echo_detector, AnalyzeRenderAudio(_))
@@ -2711,10 +2726,10 @@ TEST(ApmConfiguration, EchoDetectorInjection) {
 
 rtc::scoped_refptr<AudioProcessing> CreateApm(bool mobile_aec) {
   // Enable residual echo detection, for stats.
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting()
+  scoped_refptr<AudioProcessing> apm =
+      BuiltinAudioProcessingBuilder()
           .SetEchoDetector(CreateEchoDetector())
-          .Create();
+          .Build(CreateEnvironment());
   if (!apm) {
     return apm;
   }
@@ -2857,8 +2872,8 @@ TEST(ApmStatistics, DoNotReportVoiceDetectedStat) {
     ptr[i] = 10000 * ((i % 3) - 1);
   }
 
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting().Create();
+  scoped_refptr<AudioProcessing> apm =
+      BuiltinAudioProcessingBuilder().Build(CreateEnvironment());
   apm->Initialize(processing_config);
 
   // No metric should be reported.
@@ -2872,8 +2887,8 @@ TEST(ApmStatistics, DoNotReportVoiceDetectedStat) {
 }
 
 TEST(ApmStatistics, GetStatisticsReportsNoEchoDetectorStatsWhenDisabled) {
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting().Create();
+  scoped_refptr<AudioProcessing> apm =
+      BuiltinAudioProcessingBuilder().Build(CreateEnvironment());
   Int16FrameData frame;
   frame.num_channels = 1;
   SetFrameSampleRate(&frame, AudioProcessing::NativeRate::kSampleRate32kHz);
@@ -2891,10 +2906,10 @@ TEST(ApmStatistics, GetStatisticsReportsNoEchoDetectorStatsWhenDisabled) {
 
 TEST(ApmStatistics, GetStatisticsReportsEchoDetectorStatsWhenEnabled) {
   // Create APM with an echo detector injected.
-  rtc::scoped_refptr<AudioProcessing> apm =
-      AudioProcessingBuilderForTesting()
+  scoped_refptr<AudioProcessing> apm =
+      BuiltinAudioProcessingBuilder()
           .SetEchoDetector(CreateEchoDetector())
-          .Create();
+          .Build(CreateEnvironment());
   Int16FrameData frame;
   frame.num_channels = 1;
   SetFrameSampleRate(&frame, AudioProcessing::NativeRate::kSampleRate32kHz);
@@ -3268,8 +3283,8 @@ TEST_P(ApmFormatHandlingTest, IntApi) {
   }
 
   // Call APM.
-  rtc::scoped_refptr<AudioProcessing> ap =
-      AudioProcessingBuilderForTesting().Create();
+  scoped_refptr<AudioProcessing> ap =
+      BuiltinAudioProcessingBuilder().Build(CreateEnvironment());
   int error;
   if (stream_direction_ == kForward) {
     error = ap->ProcessStream(input_block.data(), test_params_.input_config,
@@ -3347,8 +3362,8 @@ TEST_P(ApmFormatHandlingTest, FloatApi) {
   }
 
   // Call APM.
-  rtc::scoped_refptr<AudioProcessing> ap =
-      AudioProcessingBuilderForTesting().Create();
+  scoped_refptr<AudioProcessing> ap =
+      BuiltinAudioProcessingBuilder().Build(CreateEnvironment());
   int error;
   if (stream_direction_ == kForward) {
     error =
@@ -3423,8 +3438,8 @@ TEST(ApmAnalyzeReverseStreamFormatTest, AnalyzeReverseStream) {
         input_config.num_channels());
 
     // Call APM.
-    rtc::scoped_refptr<AudioProcessing> ap =
-        AudioProcessingBuilderForTesting().Create();
+    scoped_refptr<AudioProcessing> ap =
+        BuiltinAudioProcessingBuilder().Build(CreateEnvironment());
     int error = ap->AnalyzeReverseStream(input_block.channels(), input_config);
 
     // Check output.

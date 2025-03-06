@@ -30,10 +30,10 @@
 #include "nsStringStream.h"
 #include "nsIFileURL.h"
 #include "nsIObserverService.h"
-#include "mozilla/Services.h"
-#include "mozilla/RefPtr.h"
 #include "mozilla/GRefPtr.h"
+#include "mozilla/RefPtr.h"
 #include "mozilla/SchedulerGroup.h"
+#include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_widget.h"
 #include "mozilla/TimeStamp.h"
 #include "GRefPtr.h"
@@ -66,8 +66,8 @@ static const char kHTMLMarkupPrefix[] =
 
 static const char kURIListMime[] = "text/uri-list";
 
-ClipboardTargets nsRetrievalContext::sClipboardTargets;
-ClipboardTargets nsRetrievalContext::sPrimaryTargets;
+MOZ_CONSTINIT ClipboardTargets nsRetrievalContext::sClipboardTargets;
+MOZ_CONSTINIT ClipboardTargets nsRetrievalContext::sPrimaryTargets;
 
 // Callback when someone asks us for the data
 static void clipboard_get_cb(GtkClipboard* aGtkClipboard,
@@ -150,13 +150,15 @@ GdkAtom GetSelectionAtom(int32_t aWhichClipboard) {
   return GDK_SELECTION_PRIMARY;
 }
 
-int GetGeckoClipboardType(GtkClipboard* aGtkClipboard) {
-  if (aGtkClipboard == gtk_clipboard_get(GDK_SELECTION_PRIMARY))
-    return nsClipboard::kSelectionClipboard;
-  else if (aGtkClipboard == gtk_clipboard_get(GDK_SELECTION_CLIPBOARD))
-    return nsClipboard::kGlobalClipboard;
-
-  return -1;  // THAT AIN'T NO CLIPBOARD I EVER HEARD OF
+Maybe<nsIClipboard::ClipboardType> GetGeckoClipboardType(
+    GtkClipboard* aGtkClipboard) {
+  if (aGtkClipboard == gtk_clipboard_get(GDK_SELECTION_PRIMARY)) {
+    return Some(nsClipboard::kSelectionClipboard);
+  }
+  if (aGtkClipboard == gtk_clipboard_get(GDK_SELECTION_CLIPBOARD)) {
+    return Some(nsClipboard::kGlobalClipboard);
+  }
+  return Nothing();  // THAT AIN'T NO CLIPBOARD I EVER HEARD OF
 }
 
 void nsRetrievalContext::ClearCachedTargetsClipboard(GtkClipboard* aClipboard,
@@ -258,7 +260,7 @@ nsClipboard::Observe(nsISupports* aSubject, const char* aTopic,
 
 NS_IMETHODIMP
 nsClipboard::SetNativeClipboardData(nsITransferable* aTransferable,
-                                    int32_t aWhichClipboard) {
+                                    ClipboardType aWhichClipboard) {
   MOZ_DIAGNOSTIC_ASSERT(aTransferable);
   MOZ_DIAGNOSTIC_ASSERT(
       nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
@@ -371,7 +373,7 @@ nsClipboard::SetNativeClipboardData(nsITransferable* aTransferable,
 }
 
 mozilla::Result<int32_t, nsresult>
-nsClipboard::GetNativeClipboardSequenceNumber(int32_t aWhichClipboard) {
+nsClipboard::GetNativeClipboardSequenceNumber(ClipboardType aWhichClipboard) {
   MOZ_DIAGNOSTIC_ASSERT(
       nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
   return aWhichClipboard == kSelectionClipboard ? mSelectionSequenceNumber
@@ -521,7 +523,7 @@ static bool TransferableSetHTML(nsITransferable* aTransferable,
 
   // Remove kHTMLMarkupPrefix again, it won't necessarily cause any
   // issues, but might confuse other users.
-  const size_t prefixLen = ArrayLength(kHTMLMarkupPrefix) - 1;
+  const size_t prefixLen = std::size(kHTMLMarkupPrefix) - 1;
   if (aData.Length() >= prefixLen && nsDependentCSubstring(aData.To(prefixLen))
                                          .EqualsLiteral(kHTMLMarkupPrefix)) {
     aData = aData.From(prefixLen);
@@ -549,7 +551,7 @@ static bool TransferableSetHTML(nsITransferable* aTransferable,
 
 NS_IMETHODIMP
 nsClipboard::GetNativeClipboardData(nsITransferable* aTransferable,
-                                    int32_t aWhichClipboard) {
+                                    ClipboardType aWhichClipboard) {
   MOZ_DIAGNOSTIC_ASSERT(aTransferable);
   MOZ_DIAGNOSTIC_ASSERT(
       nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
@@ -864,7 +866,7 @@ static void AsyncGetDataFlavor(nsITransferable* aTransferable,
 }
 
 void nsClipboard::AsyncGetNativeClipboardData(nsITransferable* aTransferable,
-                                              int32_t aWhichClipboard,
+                                              ClipboardType aWhichClipboard,
                                               GetDataCallback&& aCallback) {
   MOZ_DIAGNOSTIC_ASSERT(aTransferable);
   MOZ_DIAGNOSTIC_ASSERT(
@@ -925,7 +927,7 @@ void nsClipboard::AsyncGetNativeClipboardData(nsITransferable* aTransferable,
                      std::move(aCallback));
 }
 
-nsresult nsClipboard::EmptyNativeClipboardData(int32_t aWhichClipboard) {
+nsresult nsClipboard::EmptyNativeClipboardData(ClipboardType aWhichClipboard) {
   MOZ_DIAGNOSTIC_ASSERT(
       nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
 
@@ -985,7 +987,7 @@ static bool FlavorMatchesTarget(const nsACString& aFlavor, GdkAtom aTarget) {
 
 mozilla::Result<bool, nsresult>
 nsClipboard::HasNativeClipboardDataMatchingFlavors(
-    const nsTArray<nsCString>& aFlavorList, int32_t aWhichClipboard) {
+    const nsTArray<nsCString>& aFlavorList, ClipboardType aWhichClipboard) {
   MOZ_DIAGNOSTIC_ASSERT(
       nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
 
@@ -1058,7 +1060,7 @@ struct TragetCallbackHandler {
 };
 
 void nsClipboard::AsyncHasNativeClipboardDataMatchingFlavors(
-    const nsTArray<nsCString>& aFlavorList, int32_t aWhichClipboard,
+    const nsTArray<nsCString>& aFlavorList, ClipboardType aWhichClipboard,
     nsBaseClipboard::HasMatchingFlavorsCallback&& aCallback) {
   MOZ_DIAGNOSTIC_ASSERT(
       nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
@@ -1213,7 +1215,7 @@ void nsClipboard::SelectionGetEvent(GtkClipboard* aClipboard,
                                                  kJPGImageMime, kGIFImageMime};
     nsCOMPtr<nsISupports> imageItem;
     nsCOMPtr<imgIContainer> image;
-    for (uint32_t i = 0; i < ArrayLength(imageMimeTypes); i++) {
+    for (uint32_t i = 0; i < std::size(imageMimeTypes); i++) {
       rv = trans->GetTransferData(imageMimeTypes[i], getter_AddRefs(imageItem));
       if (NS_FAILED(rv)) {
         MOZ_CLIPBOARD_LOG("    %s is missing at GetTransferData()\n",
@@ -1357,27 +1359,27 @@ void nsClipboard::ClearCachedTargets(int32_t aWhichClipboard) {
 }
 
 void nsClipboard::SelectionClearEvent(GtkClipboard* aGtkClipboard) {
-  int32_t whichClipboard = GetGeckoClipboardType(aGtkClipboard);
-  if (whichClipboard < 0) {
+  Maybe<ClipboardType> whichClipboard = GetGeckoClipboardType(aGtkClipboard);
+  if (whichClipboard.isNothing()) {
     return;
   }
   MOZ_CLIPBOARD_LOG(
       "nsClipboard::SelectionClearEvent (%s)\n",
-      whichClipboard == kSelectionClipboard ? "primary" : "clipboard");
-  ClearCachedTargets(whichClipboard);
-  ClearTransferable(whichClipboard);
-  ClearClipboardCache(whichClipboard);
+      *whichClipboard == kSelectionClipboard ? "primary" : "clipboard");
+  ClearCachedTargets(*whichClipboard);
+  ClearTransferable(*whichClipboard);
+  ClearClipboardCache(*whichClipboard);
 }
 
 void nsClipboard::OwnerChangedEvent(GtkClipboard* aGtkClipboard,
                                     GdkEventOwnerChange* aEvent) {
-  int32_t whichClipboard = GetGeckoClipboardType(aGtkClipboard);
-  if (whichClipboard < 0) {
+  Maybe<ClipboardType> whichClipboard = GetGeckoClipboardType(aGtkClipboard);
+  if (whichClipboard.isNothing()) {
     return;
   }
   MOZ_CLIPBOARD_LOG(
       "nsClipboard::OwnerChangedEvent (%s)\n",
-      whichClipboard == kSelectionClipboard ? "primary" : "clipboard");
+      *whichClipboard == kSelectionClipboard ? "primary" : "clipboard");
   GtkWidget* gtkWidget = [aEvent]() -> GtkWidget* {
     if (!aEvent->owner) {
       return nullptr;
@@ -1390,14 +1392,14 @@ void nsClipboard::OwnerChangedEvent(GtkClipboard* aGtkClipboard,
   // owner-changed event must be triggered by ourself via calling
   // gtk_clipboard_set_with_data, the sequence number should already be handled.
   if (!gtkWidget) {
-    if (whichClipboard == kSelectionClipboard) {
+    if (*whichClipboard == kSelectionClipboard) {
       mSelectionSequenceNumber++;
     } else {
       mGlobalSequenceNumber++;
     }
   }
 
-  ClearCachedTargets(whichClipboard);
+  ClearCachedTargets(*whichClipboard);
 }
 
 void clipboard_get_cb(GtkClipboard* aGtkClipboard,

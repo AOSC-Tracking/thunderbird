@@ -10,6 +10,7 @@ ChromeUtils.defineESModuleGetters(
     PromiseWorker: "resource://gre/modules/workers/PromiseWorker.mjs",
     Pipeline: "chrome://global/content/ml/ONNXPipeline.mjs",
     PipelineOptions: "chrome://global/content/ml/EngineProcess.sys.mjs",
+    modelToResponse: "chrome://global/content/ml/Utils.sys.mjs",
   },
   { global: "current" }
 );
@@ -25,7 +26,8 @@ class MLEngineWorker {
     this.#connectToPromiseWorker();
   }
 
-  /**  Implements the `match` function from the Cache API for Transformers.js custom cache.
+  /**
+   * Implements the `match` function from the Cache API for Transformers.js custom cache.
    *
    * See https://developer.mozilla.org/en-US/docs/Web/API/Cache
    *
@@ -37,23 +39,31 @@ class MLEngineWorker {
    * @returns {Promise<Response|null>} A promise that resolves with a Response object containing the model file or null if not found.
    */
   async match(key) {
+    // if the key starts with NO_LOCAL, we return null immediately to tell transformers.js
+    // we don't server local files, and it will do a second call with the full URL
+    if (key.startsWith("NO_LOCAL")) {
+      return null;
+    }
     let res = await this.getModelFile(key);
     if (res.fail) {
       return null;
     }
-    let headers = res.ok[1];
-    let modelFile = res.ok[2];
+
     // Transformers.js expects a response object, so we wrap the array buffer
-    const response = new Response(modelFile, {
-      status: 200,
-      headers,
-    });
-    return response;
+    return lazy.modelToResponse(res.ok[2], res.ok[1]);
   }
 
   async getModelFile(...args) {
     let result = await self.callMainThread("getModelFile", args);
     return result;
+  }
+
+  async getInferenceProcessInfo(...args) {
+    let res = await self.callMainThread("getInferenceProcessInfo", args);
+    if (res.fail) {
+      return new Map();
+    }
+    return res.ok;
   }
 
   /**
@@ -80,14 +90,24 @@ class MLEngineWorker {
    * Run the worker.
    *
    * @param {string} request
+   * @param {string} requestId - The identifier used to internally track this request.
+   * @param {object} engineRunOptions - Additional run options for the engine.
+   * @param {boolean} engineRunOptions.enableInferenceProgress - Whether to enable inference progress.
    */
-  async run(request) {
+  async run(request, requestId, engineRunOptions = {}) {
     if (request === "throw") {
       throw new Error(
         'Received the message "throw", so intentionally throwing an error.'
       );
     }
-    return await this.#pipeline.run(request);
+
+    return await this.#pipeline.run(
+      request,
+      requestId,
+      engineRunOptions.enableInferenceProgress
+        ? data => self.callMainThread("onInferenceProgress", [data])
+        : null
+    );
   }
 
   /**
@@ -109,7 +129,7 @@ class MLEngineWorker {
     self.callMainThread = worker.callMainThread.bind(worker);
     self.addEventListener("message", msg => worker.handleMessage(msg));
     self.addEventListener("unhandledrejection", function (error) {
-      throw error.reason;
+      throw error.reason?.fail ?? error.reason;
     });
   }
 }

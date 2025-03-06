@@ -16,6 +16,7 @@
 #include "mozilla/dom/SessionHistoryEntry.h"
 #include "mozilla/dom/SessionStoreRestoreData.h"
 #include "mozilla/dom/SessionStoreUtils.h"
+#include "mozilla/dom/UniqueContentParentKeepAlive.h"
 #include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/MozPromise.h"
@@ -95,8 +96,9 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // Only set for toplevel content BrowsingContexts, and may be from a different
   // BrowsingContextGroup.
   uint64_t GetCrossGroupOpenerId() const { return mCrossGroupOpenerId; }
+  already_AddRefed<CanonicalBrowsingContext> GetCrossGroupOpener() const;
   void SetCrossGroupOpenerId(uint64_t aOpenerId);
-  void SetCrossGroupOpener(CanonicalBrowsingContext& aCrossGroupOpener,
+  void SetCrossGroupOpener(CanonicalBrowsingContext* aCrossGroupOpener,
                            ErrorResult& aRv);
 
   void GetWindowGlobals(nsTArray<RefPtr<WindowGlobalParent>>& aWindows);
@@ -185,9 +187,9 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   void RemoveFromSessionHistory(const nsID& aChangeID);
 
-  Maybe<int32_t> HistoryGo(int32_t aOffset, uint64_t aHistoryEpoch,
-                           bool aRequireUserInteraction, bool aUserActivation,
-                           Maybe<ContentParentId> aContentId);
+  MOZ_CAN_RUN_SCRIPT Maybe<int32_t> HistoryGo(
+      int32_t aOffset, uint64_t aHistoryEpoch, bool aRequireUserInteraction,
+      bool aUserActivation, Maybe<ContentParentId> aContentId);
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
@@ -227,12 +229,16 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void LoadURI(nsIURI* aURI, const LoadURIOptions& aOptions,
                ErrorResult& aError);
 
+  MOZ_CAN_RUN_SCRIPT
   void GoBack(const Optional<int32_t>& aCancelContentJSEpoch,
               bool aRequireUserInteraction, bool aUserActivation);
+  MOZ_CAN_RUN_SCRIPT
   void GoForward(const Optional<int32_t>& aCancelContentJSEpoch,
                  bool aRequireUserInteraction, bool aUserActivation);
+  MOZ_CAN_RUN_SCRIPT
   void GoToIndex(int32_t aIndex, const Optional<int32_t>& aCancelContentJSEpoch,
                  bool aUserActivation);
+  MOZ_CAN_RUN_SCRIPT
   void Reload(uint32_t aReloadFlags);
   void Stop(uint32_t aStopFlags);
 
@@ -249,6 +255,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // A NOT_REMOTE_TYPE aRemoteType argument will perform a process switch into
   // the parent process, and the method will resolve with a null BrowserParent.
   using RemotenessPromise = MozPromise<RefPtr<BrowserParent>, nsresult, false>;
+  MOZ_CAN_RUN_SCRIPT
   RefPtr<RemotenessPromise> ChangeRemoteness(
       const NavigationIsolationOptions& aOptions, uint64_t aPendingSwitchId);
 
@@ -355,12 +362,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
     mPriorityActive = aIsActive;
   }
 
-  void SetIsActive(bool aIsActive, ErrorResult& aRv) {
-    MOZ_ASSERT(ManuallyManagesActiveness(),
-               "Shouldn't be setting active status of this browsing context if "
-               "not manually managed");
-    SetIsActiveInternal(aIsActive, aRv);
-  }
+  void SetIsActive(bool aIsActive, ErrorResult& aRv);
 
   void SetIsActiveInternal(bool aIsActive, ErrorResult& aRv) {
     SetExplicitActive(aIsActive ? ExplicitActiveStatus::Active
@@ -386,6 +388,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void AddPageAwakeRequest();
   void RemovePageAwakeRequest();
 
+  MOZ_CAN_RUN_SCRIPT
   void CloneDocumentTreeInto(CanonicalBrowsingContext* aSource,
                              const nsACString& aRemoteType,
                              embedding::PrintData&& aPrintData);
@@ -409,6 +412,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   already_AddRefed<nsISHEntry> GetMostRecentLoadingSessionHistoryEntry();
 
   already_AddRefed<BounceTrackingState> GetBounceTrackingState();
+
+  bool CanOpenModalPicker();
 
  protected:
   // Called when the browsing context is being discarded.
@@ -449,17 +454,21 @@ class CanonicalBrowsingContext final : public BrowsingContext {
     friend class CanonicalBrowsingContext;
 
     ~PendingRemotenessChange();
+    MOZ_CAN_RUN_SCRIPT
     void ProcessLaunched();
+    MOZ_CAN_RUN_SCRIPT
     void ProcessReady();
+    MOZ_CAN_RUN_SCRIPT
     void MaybeFinish();
     void Clear();
 
+    MOZ_CAN_RUN_SCRIPT
     nsresult FinishTopContent();
     nsresult FinishSubframe();
 
     RefPtr<CanonicalBrowsingContext> mTarget;
     RefPtr<RemotenessPromise::Private> mPromise;
-    RefPtr<ContentParent> mContentParent;
+    UniqueContentParentKeepAlive mContentParentKeepAlive;
     RefPtr<BrowsingContextGroup> mSpecificGroup;
 
     bool mProcessReady = false;

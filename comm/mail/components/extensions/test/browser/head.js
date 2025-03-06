@@ -127,7 +127,8 @@ const makeIconSet = (url, url2x) =>
 
 /**
  * Enforce a certain state in the unified toolbar.
- * @param {Object} state - A dictionary with arrays of buttons assigned to a space
+ *
+ * @param {object} state - A dictionary with arrays of buttons assigned to a space
  */
 async function enforceState(state) {
   const stateChangeObserved = TestUtils.topicObserved(
@@ -290,8 +291,8 @@ function getPanelForNode(node) {
 /**
  * Wait until the browser is fully loaded.
  *
- * @param {xul:browser} browser - A xul:browser.
- * @param {string|function} [wantLoad = null] - If a function, takes a URL and
+ * @param {Browser} browser - A xul:browser.
+ * @param {string|function():boolean} [wantLoad = null] - If a function, takes a URL and
  *   returns true if that's the load we're interested in. If a string, gives the
  *   URL of the load we're interested in. If not present, the first load resolves
  *   the promise.
@@ -448,13 +449,13 @@ async function promiseMessageLoaded(browser, msgHdr) {
  *
  * @param {object} expected - A dictionary of expected headers.
  *    Omit headers that should have no value.
- * @param {string[]} [fields.to]
- * @param {string[]} [fields.cc]
- * @param {string[]} [fields.bcc]
- * @param {string[]} [fields.replyTo]
- * @param {string[]} [fields.followupTo]
- * @param {string[]} [fields.newsgroups]
- * @param {string} [fields.subject]
+ * @param {string[]} [expected.to]
+ * @param {string[]} [expected.cc]
+ * @param {string[]} [expected.bcc]
+ * @param {string[]} [expected.replyTo]
+ * @param {string[]} [expected.followupTo]
+ * @param {string[]} [expected.newsgroups]
+ * @param {string} [expected.subject]
  */
 async function checkComposeHeaders(expected) {
   const composeWindows = [...Services.wm.getEnumerator("msgcompose")];
@@ -670,9 +671,11 @@ async function checkComposeHeaders(expected) {
 /**
  * Click on an item in a browser until the expected event is observed.
  *
- * @param {String} selector - A CSS selector to identify the element which should
- *   be clicked on, inside the provided browser.
- * @param {Object} [event] - The mouse event to be used to open the menu popup.
+ * @param {string} selector - A CSS selector to identify the element which should
+ *   be clicked on, inside the provided browser, or a stringified arrow function,
+ *   which will be executed in the content process, returning the to-be-clicked
+ *   element. The stringified arrow function must start with "() => ".
+ * @param {object} [event] - The mouse event to be used to open the menu popup.
  *   It is an object which may contain the properties:
  *     `shiftKey`, `ctrlKey`, `altKey`, `metaKey`, `accessKey`, `clickCount`,
  *     `button`, `type`.
@@ -701,7 +704,30 @@ async function synthesizeMouseAtCenterAndRetry(selector, event, browser) {
       browser.ownerGlobal.setTimeout(r, 500)
     ).then(() => false);
 
-    await BrowserTestUtils.synthesizeMouseAtCenter(selector, event, browser);
+    event.centered = true;
+    const browsingContext = BrowserTestUtils.getBrowsingContextFrom(browser);
+
+    // Replicating BrowserTestUtils.synthesizeMouseAtCenter(). However, this
+    // implementation allows the caller to specify the function as a string,
+    // instead of using target.toString() on the specified function.
+    let target = null;
+    let targetFn = null;
+    if (typeof selector == "function") {
+      targetFn = selector.toString();
+    } else if (selector.startsWith("() => ")) {
+      targetFn = selector;
+    } else {
+      target = selector;
+    }
+
+    BrowserTestUtils.sendQuery(browsingContext, "Test:SynthesizeMouse", {
+      target,
+      targetFn,
+      x: 0,
+      y: 0,
+      event,
+    });
+
     success = await Promise.race([clickPromise, failPromise]);
   }
   Assert.ok(success, `Should have received ${type} event.`);
@@ -711,7 +737,7 @@ async function synthesizeMouseAtCenterAndRetry(selector, event, browser) {
  * Click on an element inside an action popup.
  *
  * @param {Extension} extension - The extension the action popup belongs to.
- * @param {String} selector - A CSS selector to identify the element which should
+ * @param {string} selector - A CSS selector to identify the element which should
  *   be clicked on, inside the action popup.
  * @param {Winow} [win] - The window which has the action popup. Defaults to the
  *   current window.
@@ -728,7 +754,7 @@ async function clickElementInActionPopup(extension, selector, win = window) {
 /**
  * Open the standard browser context menu popup inside the current tab.
  *
- * @param {String} selector - A CSS selector to identify the element which should
+ * @param {string} selector - A CSS selector to identify the element which should
  *   be clicked on, inside the current tab.
  * @param {Window} [win] - The window which has the tab. Defaults to the current
  *   window.
@@ -748,7 +774,7 @@ async function openBrowserContextMenuInTab(selector, win = window) {
  * Open the standard browser context menu popup inside an action popup.
  *
  * @param {Extension} extension - The extension the action popup belongs to.
- * @param {String} selector - A CSS selector to identify the element which should
+ * @param {string} selector - A CSS selector to identify the element which should
  *   be clicked on, inside the action popup.
  * @param {Winow} [win] - The window which has the action popup. Defaults to the
  *   current window.
@@ -774,7 +800,7 @@ async function openBrowserContextMenuInActionPopup(
  *
  * @param {Browser} browser
  * @param {Element} menu - The <menu> that should appear.
- * @param {String} selector - A CSS selector to identify the element which should
+ * @param {string} selector - A CSS selector to identify the element which should
  *   be clicked on, inside the browser.
  * @returns {Promise} A promise that resolves once the menu was opened. Rejects
  *   if unsucessfull for more then 3 tries.
@@ -800,7 +826,7 @@ async function openMenuPopupInBrowser(browser, menu, selector) {
  *
  * @param {Element} menu - The <menu> that should appear.
  * @param {Element} element - The element to be clicked on.
- * @param {Object} [event] - The mouse event to be used to open the menu popup.
+ * @param {object} [event] - The mouse event to be used to open the menu popup.
  *   It is an object which may contain the properties:
  *     `shiftKey`, `ctrlKey`, `altKey`, `metaKey`, `accessKey`, `clickCount`,
  *     `button`, `type`.
@@ -879,6 +905,7 @@ async function getUtilsJS() {
 }
 
 async function checkContent(browser, expected) {
+  // eslint-disable-next-line no-shadow
   await SpecialPowers.spawn(browser, [expected], async expected => {
     let body = content.document.body;
     Assert.ok(body, "body");
@@ -1069,6 +1096,7 @@ async function run_popup_test(configData) {
 
   switch (configData.testType) {
     case "open-with-mouse-click":
+      // eslint-disable-next-line no-shadow
       backend_script = async function (extension, configData) {
         const win = configData.window;
 
@@ -1361,6 +1389,7 @@ async function run_popup_test(configData) {
 
     case "open-with-menu-command":
       extensionDetails.manifest.permissions = ["menus"];
+      // eslint-disable-next-line no-shadow
       backend_script = async function (extension, configData) {
         const win = configData.window;
         const buttonId = `${configData.actionType}_mochi_test-${configData.moduleName}-toolbarbutton`;
@@ -1560,14 +1589,14 @@ async function run_action_button_order_test(configs, window, actionType) {
     return `${name}_mochi_test-${apiName}-toolbarbutton`;
   }
 
-  function test_buttons(configs, window, toolbars) {
+  function test_buttons(confs, win, toolbars) {
     for (const toolbarId of toolbars) {
-      const expected = configs.filter(e => e.toolbar == toolbarId);
+      const expected = confs.filter(e => e.toolbar == toolbarId);
       const selector =
         toolbarId === "unified-toolbar"
           ? `#unifiedToolbarContent [extension$="@mochi.test"]`
           : `#${toolbarId} toolbarbutton[id$="${get_id("")}"]`;
-      const buttons = window.document.querySelectorAll(selector);
+      const buttons = win.document.querySelectorAll(selector);
       Assert.equal(
         expected.length,
         buttons.length,

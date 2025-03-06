@@ -63,14 +63,6 @@ add_setup(async function () {
   imapAccount.incomingServer.prettyName = "IMAP Account";
   imapAccount.incomingServer.port = 143;
   imapAccount.incomingServer.authMethod = Ci.nsMsgAuthMethod.OAuth2;
-  Services.prefs.getStringPref(
-    "mail.server." + imapAccount.incomingServer.key + ".oauth2.issuer",
-    "mochi.test"
-  );
-  Services.prefs.getStringPref(
-    "mail.server." + imapAccount.incomingServer.key + ".oauth2.scope",
-    "test_scope"
-  );
   imapRootFolder = imapAccount.incomingServer.rootFolder;
   imapInbox = imapRootFolder.getFolderWithFlags(Ci.nsMsgFolderFlags.Inbox);
   allInboxes.push(imapInbox);
@@ -85,19 +77,11 @@ add_setup(async function () {
   pop3Account.incomingServer.prettyName = "POP3 Account";
   pop3Account.incomingServer.port = 110;
   pop3Account.incomingServer.authMethod = Ci.nsMsgAuthMethod.OAuth2;
-  Services.prefs.getStringPref(
-    "mail.server." + pop3Account.incomingServer.key + ".oauth2.issuer",
-    "mochi.test"
-  );
-  Services.prefs.getStringPref(
-    "mail.server." + pop3Account.incomingServer.key + ".oauth2.scope",
-    "test_scope"
-  );
   pop3RootFolder = pop3Account.incomingServer.rootFolder;
   pop3Inbox = pop3RootFolder.getFolderWithFlags(Ci.nsMsgFolderFlags.Inbox);
   allInboxes.push(pop3Inbox);
 
-  oAuth2Server = await OAuth2TestUtils.startServer(this);
+  oAuth2Server = await OAuth2TestUtils.startServer();
 
   const alertsService = new MockObjectRegisterer(
     "@mozilla.org/alerts-service;1",
@@ -176,7 +160,11 @@ function checkSavedPassword() {
   );
   Assert.equal(logins[0].origin, "oauth://test.test", "login origin");
   Assert.equal(logins[0].formActionOrigin, null, "login formActionOrigin");
-  Assert.equal(logins[0].httpRealm, "test_scope", "login httpRealm");
+  Assert.equal(
+    logins[0].httpRealm,
+    "test_mail test_addressbook test_calendar",
+    "login httpRealm"
+  );
   Assert.equal(logins[0].username, "user", "login username");
   Assert.equal(logins[0].password, "refresh_token", "login password");
   Assert.equal(logins[0].usernameField, "", "login usernameField");
@@ -191,10 +179,20 @@ add_task(async function testNoTokens() {
     info(`getting messages for ${inbox.server.type} inbox with no tokens`);
     await addMessagesToServer(inbox.server.type);
 
+    Services.fog.testResetFOG();
+
     const oAuthPromise = handleOAuthDialog();
     await fetchMessages(inbox);
     await oAuthPromise;
     await waitForMessages(inbox);
+
+    OAuth2TestUtils.checkTelemetry([
+      {
+        issuer: "test.test",
+        reason: "no refresh token",
+        result: "succeeded",
+      },
+    ]);
 
     // TODO: check this does NOT hit the oauth server
     await addMessagesToServer(inbox.server.type);
@@ -220,7 +218,7 @@ add_task(async function testNoAccessToken() {
   loginInfo.init(
     "oauth://test.test",
     null,
-    "test_scope",
+    "test_mail test_addressbook test_calendar",
     "user",
     "refresh_token",
     "",
@@ -257,7 +255,7 @@ add_task(async function testExpiredAccessToken() {
   loginInfo.init(
     "oauth://test.test",
     null,
-    "test_scope",
+    "test_mail test_addressbook test_calendar",
     "user",
     "refresh_token",
     "",
@@ -307,7 +305,7 @@ add_task(async function testBadAccessToken() {
   loginInfo.init(
     "oauth://test.test",
     null,
-    "test_scope",
+    "test_mail test_addressbook test_calendar",
     "user",
     "refresh_token",
     "",
@@ -372,7 +370,7 @@ add_task(async function testBadRefreshToken() {
     loginInfo.init(
       "oauth://test.test",
       null,
-      "test_scope",
+      "test_mail test_addressbook test_calendar",
       "user",
       "old_refresh_token",
       "",
@@ -385,10 +383,20 @@ add_task(async function testBadRefreshToken() {
     );
     await addMessagesToServer(inbox.server.type);
 
+    Services.fog.testResetFOG();
+
     const oAuthPromise = handleOAuthDialog();
     await fetchMessages(inbox);
     await oAuthPromise;
     await waitForMessages(inbox);
+
+    OAuth2TestUtils.checkTelemetry([
+      {
+        issuer: "test.test",
+        reason: "invalid grant",
+        result: "succeeded",
+      },
+    ]);
 
     checkSavedPassword(inbox);
     await promiseServerIdle(inbox.server);

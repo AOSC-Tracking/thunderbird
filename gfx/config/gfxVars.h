@@ -56,6 +56,7 @@ class gfxVarReceiver;
   _(WebRenderBatchingLookback, int32_t, 10)                        \
   _(WebRenderBlobTileSize, int32_t, 256)                           \
   _(WebRenderBatchedUploadThreshold, int32_t, 512 * 512)           \
+  _(WebRenderSlowCpuFrameThreshold, float, 10.0)                   \
   _(UseSoftwareWebRender, bool, false)                             \
   _(AllowSoftwareWebRenderD3D11, bool, false)                      \
   _(PrimaryScreenDepth, int32_t, 0)                                \
@@ -81,6 +82,7 @@ class gfxVarReceiver;
   _(UseEGL, bool, false)                                           \
   _(DrmRenderDevice, nsCString, nsCString())                       \
   _(UseDMABuf, bool, false)                                        \
+  _(UseDMABufWebGL, bool, true)                                    \
   _(DMABufModifiersXRGB, ArrayOfuint64_t, nsTArray<uint64_t>())    \
   _(DMABufModifiersARGB, ArrayOfuint64_t, nsTArray<uint64_t>())    \
   _(CodecSupportInfo, nsCString, nsCString())                      \

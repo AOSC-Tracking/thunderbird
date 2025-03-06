@@ -16,6 +16,7 @@ import logging
 import mozpack.path as mozpath
 from packaging.version import Version
 from taskgraph.transforms.base import TransformSequence
+from taskgraph.transforms.run import rewrite_when_to_optimization
 from taskgraph.util.copy import deepcopy
 from taskgraph.util.python_path import import_sibling_modules
 from taskgraph.util.schema import Schema, validate_schema
@@ -109,26 +110,7 @@ job_description_schema = Schema(
 
 transforms = TransformSequence()
 transforms.add_validate(job_description_schema)
-
-
-@transforms.add
-def rewrite_when_to_optimization(config, jobs):
-    for job in jobs:
-        when = job.pop("when", {})
-        if not when:
-            yield job
-            continue
-
-        files_changed = when.get("files-changed")
-
-        # implicitly add task config directory.
-        files_changed.append(f"{config.path}/**")
-
-        # "only when files changed" implies "skip if files have not changed"
-        job["optimization"] = {"skip-unless-changed": files_changed}
-
-        assert "when" not in job
-        yield job
+transforms.add(rewrite_when_to_optimization)
 
 
 @transforms.add
@@ -158,47 +140,6 @@ def set_label(config, jobs):
             job["label"] = "{}-{}".format(config.kind, job["name"])
         if job.get("name"):
             del job["name"]
-        yield job
-
-
-@transforms.add
-def add_resource_monitor(config, jobs):
-    for job in jobs:
-        if job.get("attributes", {}).get("resource-monitor"):
-            worker_implementation, worker_os = worker_type_implementation(
-                config.graph_config, config.params, job["worker-type"]
-            )
-            # Normalise worker os so that linux-bitbar and similar use linux tools.
-            worker_os = worker_os.split("-")[0]
-            # We don't currently support an Arm worker, due to gopsutil's indirect
-            # dependencies (go-ole)
-            if "aarch64" in job["worker-type"]:
-                yield job
-                continue
-            elif "win7" in job["worker-type"]:
-                arch = "32"
-            else:
-                arch = "64"
-            job.setdefault("fetches", {})
-            job["fetches"].setdefault("toolchain", [])
-            job["fetches"]["toolchain"].append(f"{worker_os}{arch}-resource-monitor")
-
-            if worker_implementation == "docker-worker":
-                artifact_source = "/builds/worker/monitoring/resource-monitor.json"
-            else:
-                artifact_source = "monitoring/resource-monitor.json"
-            job["worker"].setdefault("artifacts", [])
-            job["worker"]["artifacts"].append(
-                {
-                    "name": "public/monitoring/resource-monitor.json",
-                    "type": "file",
-                    "path": artifact_source,
-                }
-            )
-            # Set env for output file
-            job["worker"].setdefault("env", {})
-            job["worker"]["env"]["RESOURCE_MONITOR_OUTPUT"] = artifact_source
-
         yield job
 
 
@@ -395,9 +336,9 @@ def use_fetches(config, jobs):
                         verify_hash = artifact.get("verify-hash", False)
 
                     fetch = {
-                        "artifact": f"{prefix}/{path}"
-                        if not path.startswith("/")
-                        else path[1:],
+                        "artifact": (
+                            f"{prefix}/{path}" if not path.startswith("/") else path[1:]
+                        ),
                         "task": f"<{kind}>",
                         "extract": extract,
                     }

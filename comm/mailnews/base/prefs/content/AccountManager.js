@@ -52,7 +52,7 @@ ChromeUtils.defineESModuleGetters(this, {
 var { cleanUpHostName, isLegalHostNameOrIP } = ChromeUtils.importESModule(
   "resource:///modules/hostnameUtils.sys.mjs"
 );
-var { ChatIcons } = ChromeUtils.importESModule(
+const { ChatIcons } = ChromeUtils.importESModule(
   "resource:///modules/chatIcons.sys.mjs"
 );
 
@@ -101,6 +101,14 @@ var currentPageId;
 
 var pendingAccount;
 var pendingPageId;
+
+/**
+ * Track if the tab has already been loaded and we're only refreshing it after a
+ * new account selection.
+ *
+ * @type {boolean}
+ */
+var hasLoaded = false;
 
 /**
  * This array contains filesystem folders that are deemed inappropriate
@@ -182,6 +190,19 @@ function onLoad() {
 
   const contentFrame = document.getElementById("contentFrame");
   contentFrame.addEventListener("load", () => {
+    document
+      .getElementById("accountTreeCreateAccount")
+      .addEventListener("click", event => {
+        document.getElementById("accountAddPopup").openPopup(event.target, {
+          position: "after_start",
+          triggerEvent: event,
+        });
+      });
+    document
+      .getElementById("accounttree")
+      .addEventListener("contextmenu", event => {
+        event.preventDefault();
+      });
     const inputElements = contentFrame.contentDocument.querySelectorAll(
       "checkbox, input, menulist, textarea, radiogroup, richlistbox"
     );
@@ -199,14 +220,25 @@ function onLoad() {
         });
       }
     }
+    // Always add the contentFrame window to the UIFontSize because most of the
+    // sub pages remove themselves on onload. This doesn't happen consistently
+    // and the RSS feed seems to be loading twice.
+    // Accept this temporarily and let the API handle the early return. The
+    // account settings will need to be rebuilt from scratch anyway.
     UIFontSize.registerWindow(contentFrame.contentWindow);
+    // TODO: Add the density registration once the account settings style is
+    // updated to support density variations.
   });
 
-  UIDensity.registerWindow(window);
-  UIFontSize.registerWindow(window);
+  if (!hasLoaded) {
+    UIDensity.registerWindow(window);
+    UIFontSize.registerWindow(window);
+    hasLoaded = true;
+  }
 }
 
 function onUnload() {
+  hasLoaded = false;
   gAccountTree.unload();
 }
 
@@ -406,10 +438,10 @@ function checkDirectoryIsAllowed(aLocalPath) {
    *     - Linux  = Linux
    * @param {string} aDirToCheck.safeSubdirs - An array of directory names that
    *   are allowed to be used under the tested directory.
-   * @param {nsIFile} aLocalPath - An nsIFile of the directory to check,
+   * @param {nsIFile} localPath - An nsIFile of the directory to check,
    *   intended for message storage.
    */
-  function checkLocalDirectoryIsSafe(aDirToCheck, aLocalPath) {
+  function checkLocalDirectoryIsSafe(aDirToCheck, localPath) {
     if (aDirToCheck.OS) {
       if (!aDirToCheck.OS.split(",").includes(Services.appinfo.OS)) {
         return true;
@@ -422,10 +454,10 @@ function checkDirectoryIsAllowed(aLocalPath) {
         testDir = Services.dirsvc.get(aDirToCheck.dirsvc, Ci.nsIFile);
       } catch (e) {
         console.error(
-          "The special folder " +
-            aDirToCheck.dirsvc +
-            " cannot be retrieved on this platform: " +
-            e
+          "The special folder",
+          aDirToCheck.dirsvc,
+          "cannot be retrieved on this platform:",
+          e
         );
       }
 
@@ -445,11 +477,11 @@ function checkDirectoryIsAllowed(aLocalPath) {
 
     testDir.normalize();
 
-    if (testDir.equals(aLocalPath) || aLocalPath.contains(testDir)) {
+    if (testDir.equals(localPath) || localPath.contains(testDir)) {
       return false;
     }
 
-    if (testDir.contains(aLocalPath)) {
+    if (testDir.contains(localPath)) {
       if (!("safeSubdirs" in aDirToCheck)) {
         return false;
       }
@@ -460,7 +492,7 @@ function checkDirectoryIsAllowed(aLocalPath) {
       for (const subDir of aDirToCheck.safeSubdirs) {
         const checkDir = testDir.clone();
         checkDir.append(subDir);
-        if (checkDir.contains(aLocalPath)) {
+        if (checkDir.contains(localPath)) {
           isInSubdir = true;
           break;
         }
@@ -880,7 +912,7 @@ function onSetDefault(event) {
 }
 
 function onRemoveAccount(event) {
-  if (event.target.getAttribute("disabled") == "true" || !currentAccount) {
+  if (event.target.getAttribute("disabled") == "true") {
     return;
   }
 
@@ -1084,64 +1116,6 @@ function saveAccount(accountValues, account) {
   }
 
   return true;
-}
-
-/**
- * Set enabled/disabled state for the actions in the Account Actions menu.
- * Called only by Thunderbird.
- */
-function initAccountActionsButtons(menupopup) {
-  if (!Services.prefs.getBoolPref("mail.chat.enabled")) {
-    document.getElementById("accountActionsAddIMAccount").hidden = true;
-  }
-
-  updateItems(
-    document.getElementById("accounttree"),
-    getCurrentAccount(),
-    document.getElementById("accountActionsAddMailAccount"),
-    document.getElementById("accountActionsDropdownSetDefault"),
-    document.getElementById("accountActionsDropdownRemove")
-  );
-
-  updateBlockedItems(menupopup.children, true);
-}
-
-/**
- * Determine enabled/disabled state for the passed in elements
- * representing account actions.
- */
-function updateItems(
-  tree,
-  account,
-  addAccountItem,
-  setDefaultItem,
-  removeItem
-) {
-  // Start with items disabled and then find out what can be enabled.
-  let canSetDefault = false;
-  let canDelete = false;
-
-  if (account && tree.selectedIndex >= 0) {
-    // Only try to check properties if there was anything selected in the tree
-    // and it belongs to an account.
-    // Otherwise we have either selected a SMTP server, or there is some
-    // problem. Either way, we don't want the user to act on it.
-    const server = account.incomingServer;
-
-    if (
-      account != MailServices.accounts.defaultAccount &&
-      server.canBeDefaultServer &&
-      account.identities.length > 0
-    ) {
-      canSetDefault = true;
-    }
-
-    canDelete = server.protocolInfo.canDelete;
-  }
-
-  setEnabled(addAccountItem, true);
-  setEnabled(setDefaultItem, canSetDefault);
-  setEnabled(removeItem, canDelete);
 }
 
 /**
@@ -1567,7 +1541,7 @@ function getFormElementValue(formElement) {
     }
     return null;
   } catch (ex) {
-    console.error("getFormElementValue failed, ex=" + ex + "\n");
+    console.error("getFormElementValue failed", ex);
   }
   return null;
 }
@@ -1701,6 +1675,10 @@ var gAccountTree = {
   ]),
 
   async load() {
+    if (hasLoaded) {
+      return;
+    }
+
     await FolderTreeProperties.ready;
 
     this._build();
@@ -1898,8 +1876,10 @@ var gAccountTree = {
                 "/locale/am-" +
                 svc.name +
                 ".properties";
-              const bundle = Services.strings.createBundle(bundleName);
-              const title = bundle.GetStringFromName("prefPanel-" + svc.name);
+              const panelBundle = Services.strings.createBundle(bundleName);
+              const title = panelBundle.GetStringFromName(
+                "prefPanel-" + svc.name
+              );
               panelsToKeep.push({
                 string: title,
                 src: "am-" + svc.name + ".xhtml",
@@ -1909,9 +1889,7 @@ var gAccountTree = {
             // Fetching of this extension panel failed so do not show it,
             // just log error.
             const extName = data || "(unknown)";
-            console.error(
-              "Error accessing panel from extension '" + extName + "': " + e
-            );
+            console.error(`Error accessing panel from extension ${extName}`, e);
           }
         }
         amChrome = server.accountManagerChrome;
@@ -1919,7 +1897,7 @@ var gAccountTree = {
         // Show only a placeholder in the account list saying this account
         // is broken, with no child panels.
         const accountID = accountName || accountKey;
-        console.error("Error accessing account " + accountID + ": " + e);
+        console.error(`Error accessing account ${accountID}`, e);
         accountName = "Invalid account " + accountID;
         panelsToKeep.length = 0;
         validAccount = false;

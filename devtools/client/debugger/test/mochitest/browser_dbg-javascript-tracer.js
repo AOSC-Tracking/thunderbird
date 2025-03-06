@@ -12,6 +12,9 @@ add_task(async function () {
 
   const dbg = await initDebugger("doc-scripts.html");
 
+  // This test covers the Web Console, whereas it is no longer the default output
+  await toggleJsTracerMenuItem(dbg, "#jstracer-menu-item-console");
+
   // Add an iframe before starting the tracer to later check for key event on it
   const preExistingIframeBrowsingContext = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
@@ -26,14 +29,7 @@ add_task(async function () {
   );
 
   info("Enable the tracing");
-  await clickElement(dbg, "trace");
-
-  const topLevelThreadActorID =
-    dbg.toolbox.commands.targetCommand.targetFront.threadFront.actorID;
-  info("Wait for tracing to be enabled");
-  await waitForState(dbg, () => {
-    return dbg.selectors.getIsThreadCurrentlyTracing(topLevelThreadActorID);
-  });
+  await toggleJsTracer(dbg.toolbox);
 
   ok(
     dbg.toolbox.splitConsole,
@@ -65,7 +61,7 @@ add_task(async function () {
     gBrowser.selectedBrowser
   );
 
-  await hasConsoleMessage(dbg, "DOM | click");
+  await hasConsoleMessage(dbg, "DOM | node.click");
   await hasConsoleMessage(dbg, "λ simple");
 
   const iframeBrowsingContext = await SpecialPowers.spawn(
@@ -82,7 +78,7 @@ add_task(async function () {
   );
 
   await BrowserTestUtils.synthesizeKey("x", {}, iframeBrowsingContext);
-  await hasConsoleMessage(dbg, "DOM | keypress");
+  await hasConsoleMessage(dbg, "DOM | node.keypress");
   await hasConsoleMessage(dbg, "λ onkeypress");
 
   await SpecialPowers.spawn(
@@ -97,7 +93,7 @@ add_task(async function () {
     {},
     preExistingIframeBrowsingContext
   );
-  await hasConsoleMessage(dbg, "DOM | keydown");
+  await hasConsoleMessage(dbg, "DOM | node.keydown");
   await hasConsoleMessage(dbg, "λ onkeydown");
 
   // Test Blackboxing
@@ -133,12 +129,7 @@ add_task(async function () {
 
   // Test Disabling tracing
   info("Disable the tracing");
-  await clickElement(dbg, "trace");
-  info("Wait for tracing to be disabled");
-  await waitForState(dbg, () => {
-    return !dbg.selectors.getIsThreadCurrentlyTracing(topLevelThreadActorID);
-  });
-  await hasConsoleMessage(dbg, "Stopped tracing");
+  await toggleJsTracer(dbg.toolbox);
 
   invokeInTab("inline_script2");
 
@@ -156,14 +147,7 @@ add_task(async function () {
   await navigate(dbg, "doc-sourcemaps2.html", "main.js", "main.min.js");
 
   info("Re-enable the tracing after navigation");
-  await clickElement(dbg, "trace");
-
-  const newTopLevelThread =
-    dbg.toolbox.commands.targetCommand.targetFront.threadFront.actorID;
-  info("Wait for tracing to be re-enabled");
-  await waitForState(dbg, () => {
-    return dbg.selectors.getIsThreadCurrentlyTracing(newTopLevelThread);
-  });
+  await toggleJsTracer(dbg.toolbox);
 
   invokeInTab("logMessage");
 
@@ -189,26 +173,27 @@ add_task(async function () {
 
 add_task(async function testPersitentLogMethod() {
   let dbg = await initDebugger("doc-scripts.html");
+
   is(
-    dbg.selectors.getJavascriptTracingLogMethod(),
+    dbg.commands.tracerCommand.getTracingOptions().logMethod,
     "console",
     "By default traces are logged to the console"
   );
 
   info("Change the log method to stdout");
-  dbg.actions.setJavascriptTracingLogMethod("stdout");
+  await toggleJsTracerMenuItem(dbg, "#jstracer-menu-item-stdout");
 
   await dbg.toolbox.closeToolbox();
 
   dbg = await initDebugger("doc-scripts.html");
   is(
-    dbg.selectors.getJavascriptTracingLogMethod(),
+    dbg.commands.tracerCommand.getTracingOptions().logMethod,
     "stdout",
     "The new setting has been persisted"
   );
 
   info("Reset back to the default value");
-  dbg.actions.setJavascriptTracingLogMethod("console");
+  await toggleJsTracerMenuItem(dbg, "#jstracer-menu-item-console");
 });
 
 add_task(async function testPageKeyShortcut() {
@@ -229,12 +214,8 @@ add_task(async function testPageKeyShortcut() {
 
   const dbg = await initDebuggerWithAbsoluteURL("data:text/html,key-shortcut");
 
-  const topLevelThreadActorID =
-    dbg.toolbox.commands.targetCommand.targetFront.threadFront.actorID;
-  ok(
-    !dbg.selectors.getIsThreadCurrentlyTracing(topLevelThreadActorID),
-    "Tracing is disabled on debugger opening"
-  );
+  const button = dbg.toolbox.doc.getElementById("command-button-jstracer");
+  ok(!button.classList.contains("checked"), "The trace button is off on start");
 
   info(
     "Focus the page in order to assert that the page keeps the focus when enabling the tracer"
@@ -261,9 +242,7 @@ add_task(async function testPageKeyShortcut() {
   });
 
   info("Wait for tracing to be enabled");
-  await waitForState(dbg, () => {
-    return dbg.selectors.getIsThreadCurrentlyTracing(topLevelThreadActorID);
-  });
+  await waitFor(() => button.classList.contains("checked"));
 
   is(
     Services.focus.focusedElement,
@@ -281,9 +260,7 @@ add_task(async function testPageKeyShortcut() {
   });
 
   info("Wait for tracing to be disabled");
-  await waitForState(dbg, () => {
-    return !dbg.selectors.getIsThreadCurrentlyTracing(topLevelThreadActorID);
-  });
+  await waitFor(() => !button.classList.contains("checked"));
 });
 
 add_task(async function testPageKeyShortcutWithoutDebugger() {

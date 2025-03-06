@@ -1,5 +1,5 @@
 use super::ModuleState;
-use crate::arena::Handle;
+use crate::{arena::Handle, front::atomic_upgrade};
 use codespan_reporting::diagnostic::Diagnostic;
 use codespan_reporting::files::SimpleFile;
 use codespan_reporting::term;
@@ -47,7 +47,13 @@ pub enum Error {
     UnsupportedBinaryOperator(spirv::Word),
     #[error("Naga supports OpTypeRuntimeArray in the StorageBuffer storage class only")]
     UnsupportedRuntimeArrayStorageClass,
-    #[error("unsupported matrix stride {stride} for a {columns}x{rows} matrix with scalar width={width}")]
+    #[error(
+        "unsupported matrix stride {} for a {}x{} matrix with scalar width={}",
+        stride,
+        columns,
+        rows,
+        width
+    )]
     UnsupportedMatrixStride {
         stride: u32,
         columns: u8,
@@ -134,6 +140,9 @@ pub enum Error {
     NonBindingArrayOfImageOrSamplers,
     #[error("naga only supports specialization constant IDs up to 65535 but was given {0}")]
     SpecIdTooHigh(u32),
+
+    #[error("atomic upgrade error: {0}")]
+    AtomicUpgradeError(atomic_upgrade::Error),
 }
 
 impl Error {
@@ -154,5 +163,11 @@ impl Error {
         let mut writer = NoColor::new(Vec::new());
         self.emit_to_writer(&mut writer, source);
         String::from_utf8(writer.into_inner()).unwrap()
+    }
+}
+
+impl From<atomic_upgrade::Error> for Error {
+    fn from(source: atomic_upgrade::Error) -> Self {
+        Error::AtomicUpgradeError(source)
     }
 }

@@ -2,13 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import "chrome://messenger/content/preferences/qr-code-wizard.mjs"; // eslint-disable-line import/no-unassigned-import
+import { defineLazyCustomElement } from "chrome://messenger/content/CustomElementUtils.mjs";
 
 const { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
 const { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
+);
+
+defineLazyCustomElement(
+  "qr-code-wizard",
+  "chrome://messenger/content/preferences/qr-code-wizard.mjs"
 );
 
 const lazy = {};
@@ -44,11 +49,10 @@ export const qrExportPane = {
         const oAuthUsage = lazy.QRExport.getAccountOAuthUsage(account);
         checkbox.dataset.hasOauth = oAuthUsage.incoming || oAuthUsage.outgoing;
         checkbox.dataset.oauthOnly = oAuthUsage.incoming && oAuthUsage.outgoing;
-        item.querySelector(
-          "li"
-        ).title = `${incomingServer.type.toUpperCase()}: ${
-          incomingServer.username
-        } - ${incomingServer.hostName}:${incomingServer.port}`;
+        item.querySelector("li").title =
+          `${incomingServer.type.toUpperCase()}: ${
+            incomingServer.username
+          } - ${incomingServer.hostName}:${incomingServer.port}`;
         return item;
       })
     );

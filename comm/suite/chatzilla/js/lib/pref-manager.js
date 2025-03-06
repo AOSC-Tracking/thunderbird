@@ -30,13 +30,7 @@ function PrefManager (branchName, defaultBundle)
         prefManager.onPrefChanged(prefName);
     };
 
-    const PREF_CTRID = "@mozilla.org/preferences-service;1";
-    const nsIPrefService = Components.interfaces.nsIPrefService;
-    const nsIPrefBranch = Components.interfaces.nsIPrefBranch;
-
-    this.prefService =
-        Components.classes[PREF_CTRID].getService(nsIPrefService);
-    this.prefBranch = this.prefService.getBranch(branchName);
+    this.prefBranch = Services.prefs.getBranch(branchName);
     this.prefSaveTime = 0;
     this.prefSaveTimer = 0;
     this.branchName = branchName;
@@ -48,7 +42,7 @@ function PrefManager (branchName, defaultBundle)
     this.observers = new Array();
 
     this.nsIPrefBranch =
-        this.prefBranch.QueryInterface(nsIPrefBranch);
+        this.prefBranch.QueryInterface(Ci.nsIPrefBranch);
     this.nsIPrefBranch.addObserver("", this.observer, false);
 
     this.defaultBundle = defaultBundle;
@@ -74,18 +68,6 @@ function pm_destroy()
     }
 }
 
-PrefManager.prototype.getBranch =
-function pm_getbranch(suffix)
-{
-    return this.prefService.getBranch(this.prefBranch.root + suffix);
-}
-
-PrefManager.prototype.getBranchManager =
-function pm_getbranchmgr(suffix)
-{
-    return new PrefManager(this.prefBranch.root + suffix);
-}
-
 PrefManager.prototype.addObserver =
 function pm_addobserver(observer)
 {
@@ -98,13 +80,10 @@ function pm_addobserver(observer)
 PrefManager.prototype.removeObserver =
 function pm_removeobserver(observer)
 {
-    for (var i = 0; i < this.observers.length; i++)
+    let idx = this.observers.indexOf(observer);
+    if (idx >= 0)
     {
-        if (this.observers[i] == observer)
-        {
-            arrayRemoveAt(this.observers, i);
-            break;
-        }
+        this.observers.splice(idx, 1);
     }
 }
 
@@ -137,7 +116,7 @@ function pm_forcesave()
     this.prefSaveTime = 0;
     this.prefSaveTimer = 0;
     try {
-        this.prefService.savePrefFile(null);
+        Services.prefs.savePrefFile(null);
     } catch(ex) {
         dd("Exception saving preferences: " + formatException(ex));
     }
@@ -176,38 +155,6 @@ function pm_listprefs (prefix)
     }
 
     return list;
-}
-
-PrefManager.prototype.readPrefs =
-function pm_readprefs ()
-{
-    const nsIPrefBranch = Components.interfaces.nsIPrefBranch;
-
-    var list = this.prefBranch.getChildList("", {});
-    for (var i = 0; i < list.length; ++i)
-    {
-        if (!(list[i] in this))
-        {
-            var type = this.prefBranch.getPrefType (list[i]);
-            var defaultValue;
-
-            switch (type)
-            {
-                case nsIPrefBranch.PREF_INT:
-                    defaultValue = 0;
-                    break;
-
-                case nsIPrefBranch.PREF_BOOL:
-                    defaultValue = false;
-                    break;
-
-                default:
-                    defaultValue = "";
-            }
-
-            this.addPref(list[i], defaultValue);
-        }
-    }
 }
 
 PrefManager.prototype.isKnownPref =

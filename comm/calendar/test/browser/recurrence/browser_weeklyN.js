@@ -30,11 +30,11 @@ add_task(async function testWeeklyNRecurrence() {
     // Select weekly recurrence
     await menulistSelect(recurrenceDocument.getElementById("period-list"), "1");
 
-    const monLabel = cal.l10n.getDateFmtString("day.2.Mmm");
-    const tueLabel = cal.l10n.getDateFmtString("day.3.Mmm");
-    const wedLabel = cal.l10n.getDateFmtString("day.4.Mmm");
-    const friLabel = cal.l10n.getDateFmtString("day.6.Mmm");
-    const satLabel = cal.l10n.getDateFmtString("day.7.Mmm");
+    const monLabel = cal.dtz.formatter.shortWeekdayNames[1];
+    const tueLabel = cal.dtz.formatter.shortWeekdayNames[2];
+    const wedLabel = cal.dtz.formatter.shortWeekdayNames[3];
+    const friLabel = cal.dtz.formatter.shortWeekdayNames[5];
+    const satLabel = cal.dtz.formatter.shortWeekdayNames[6];
 
     const dayPicker = recurrenceDocument.getElementById("daypicker-weekday");
 
@@ -76,7 +76,7 @@ add_task(async function testWeeklyNRecurrence() {
     recurrenceDocument.getElementById("repeat-ntimes-count").value = "4";
 
     const button = recurrenceDocument.querySelector("dialog").getButton("accept");
-    button.scrollIntoView();
+    button.scrollIntoView({ block: "start", behavior: "instant" });
     // Close dialog
     EventUtils.synthesizeMouseAtCenter(button, {}, recurrenceWindow);
   }
@@ -192,9 +192,9 @@ add_task(async function testRecurrenceAcrossWeekStart() {
     // Recur every two weeks
     recurrenceDocument.getElementById("weekly-weeks").value = "2";
 
-    const satLabel = cal.l10n.getDateFmtString("day.7.Mmm");
-    const sunLabel = cal.l10n.getDateFmtString("day.1.Mmm");
-    const monLabel = cal.l10n.getDateFmtString("day.2.Mmm");
+    const satLabel = cal.dtz.formatter.shortWeekdayNames[6];
+    const sunLabel = cal.dtz.formatter.shortWeekdayNames[0];
+    const monLabel = cal.dtz.formatter.shortWeekdayNames[1];
 
     const dayPicker = recurrenceDocument.getElementById("daypicker-weekday");
 
@@ -225,7 +225,7 @@ add_task(async function testRecurrenceAcrossWeekStart() {
     recurrenceDocument.getElementById("repeat-ntimes-count").value = "6";
 
     const button = recurrenceDocument.querySelector("dialog").getButton("accept");
-    button.scrollIntoView();
+    button.scrollIntoView({ block: "start", behavior: "instant" });
     // Close dialog
     EventUtils.synthesizeMouseAtCenter(button, {}, recurrenceWindow);
   }

@@ -17,6 +17,7 @@ import {
   isSourceBlackBoxed,
 } from "../../selectors/index";
 import actions from "../../actions/index";
+import { markerTypes } from "../../constants";
 import { connect } from "devtools/client/shared/vendor/react-redux";
 import { makeBreakpointId } from "../../utils/breakpoint/index";
 import { fromEditorLine } from "../../utils/editor/index";
@@ -37,16 +38,15 @@ path.setAttributeNS(
 svg.appendChild(path);
 breakpointButton.appendChild(svg);
 
-const COLUMN_BREAKPOINT_MARKER = "column-breakpoint-marker";
-
 class ColumnBreakpoints extends Component {
   static get propTypes() {
     return {
-      columnBreakpoints: PropTypes.array.isRequired,
+      columnBreakpoints: PropTypes.array,
       editor: PropTypes.object.isRequired,
       selectedSource: PropTypes.object,
       addBreakpoint: PropTypes.func,
       removeBreakpoint: PropTypes.func,
+      setSkipPausing: PropTypes.func,
       toggleDisabledBreakpoint: PropTypes.func,
       showEditorCreateBreakpointContextMenu: PropTypes.func,
       showEditorEditBreakpointContextMenu: PropTypes.func,
@@ -66,15 +66,15 @@ class ColumnBreakpoints extends Component {
     }
 
     if (!columnBreakpoints.length) {
-      editor.removePositionContentMarker(COLUMN_BREAKPOINT_MARKER);
+      editor.removePositionContentMarker(markerTypes.COLUMN_BREAKPOINT_MARKER);
       return;
     }
 
     editor.setPositionContentMarker({
-      id: COLUMN_BREAKPOINT_MARKER,
+      id: markerTypes.COLUMN_BREAKPOINT_MARKER,
       positions: columnBreakpoints.map(bp => bp.location),
       createPositionElementNode: (line, column) => {
-        const lineNumber = fromEditorLine(selectedSource.id, line);
+        const lineNumber = fromEditorLine(selectedSource, line);
         const columnBreakpoint = columnBreakpoints.find(
           bp => bp.location.line === lineNumber && bp.location.column === column
         );
@@ -95,14 +95,30 @@ class ColumnBreakpoints extends Component {
         );
         return breakpointNode;
       },
+      getMarkerEqualityValue: (line, column) => {
+        const lineNumber = fromEditorLine(selectedSource, line);
+        const columnBreakpoint = columnBreakpoints.find(
+          bp => bp.location.line === lineNumber && bp.location.column === column
+        );
+        return {
+          id: columnBreakpoint?.breakpoint?.id,
+          condition: columnBreakpoint?.breakpoint?.options.condition,
+          log: columnBreakpoint?.breakpoint?.options.logValue,
+          disabled: columnBreakpoint?.breakpoint?.disabled,
+        };
+      },
     });
   }
 
   onClick = (event, columnBreakpoint) => {
     event.stopPropagation();
     event.preventDefault();
-    const { toggleDisabledBreakpoint, removeBreakpoint, addBreakpoint } =
-      this.props;
+    const {
+      toggleDisabledBreakpoint,
+      removeBreakpoint,
+      addBreakpoint,
+      setSkipPausing,
+    } = this.props;
 
     // disable column breakpoint on shift-click.
     if (event.shiftKey) {
@@ -113,6 +129,7 @@ class ColumnBreakpoints extends Component {
     if (columnBreakpoint.breakpoint) {
       removeBreakpoint(columnBreakpoint.breakpoint);
     } else {
+      setSkipPausing(false);
       addBreakpoint(columnBreakpoint.location);
     }
   };
@@ -144,6 +161,7 @@ class ColumnBreakpoints extends Component {
       toggleDisabledBreakpoint,
       removeBreakpoint,
       addBreakpoint,
+      setSkipPausing,
     } = this.props;
 
     if (features.codemirrorNext) {
@@ -167,6 +185,7 @@ class ColumnBreakpoints extends Component {
           toggleDisabledBreakpoint,
           removeBreakpoint,
           addBreakpoint,
+          setSkipPausing,
         })
       );
     });
@@ -196,4 +215,5 @@ export default connect(mapStateToProps, {
   toggleDisabledBreakpoint: actions.toggleDisabledBreakpoint,
   removeBreakpoint: actions.removeBreakpoint,
   addBreakpoint: actions.addBreakpoint,
+  setSkipPausing: actions.setSkipPausing,
 })(ColumnBreakpoints);

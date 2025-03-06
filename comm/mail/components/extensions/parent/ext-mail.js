@@ -2,36 +2,29 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { AppConstants } = ChromeUtils.importESModule(
-  "resource://gre/modules/AppConstants.sys.mjs"
-);
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
-var { ExtensionError } = ExtensionUtils;
-var { defineLazyGetter, makeWidgetId } = ExtensionCommon;
-
 var { ExtensionSupport } = ChromeUtils.importESModule(
   "resource:///modules/ExtensionSupport.sys.mjs"
+);
+var { AccountManager, FolderManager } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionAccounts.sys.mjs"
+);
+var { MessageListTracker, MessageTracker, MessageManager, TagTracker } =
+  ChromeUtils.importESModule("resource:///modules/ExtensionMessages.sys.mjs");
+var { SpaceTracker } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionSpaces.sys.mjs"
 );
 
 ChromeUtils.defineESModuleGetters(this, {
   ExtensionContent: "resource://gre/modules/ExtensionContent.sys.mjs",
 });
 
-var { AccountManager, FolderManager } = ChromeUtils.importESModule(
-  "resource:///modules/ExtensionAccounts.sys.mjs"
-);
-
-var { MessageListTracker, MessageTracker, MessageManager } =
-  ChromeUtils.importESModule("resource:///modules/ExtensionMessages.sys.mjs");
-
 XPCOMUtils.defineLazyGlobalGetters(this, [
   "IOUtils",
   "PathUtils",
   "FileReader",
 ]);
+
+var { ExtensionError } = ExtensionUtils;
 
 const MAIN_WINDOW_URI = "chrome://messenger/content/messenger.xhtml";
 const POPUP_WINDOW_URI = "chrome://messenger/content/extensionPopup.xhtml";
@@ -402,228 +395,6 @@ class WindowTracker extends WindowTrackerBase {
 }
 
 /**
- * Convenience class to keep track of and manage spaces.
- */
-class SpaceTracker {
-  /**
-   * @typedef SpaceData
-   * @property {string} name - name of the space as used by the extension
-   * @property {integer} spaceId - id of the space as used by the tabs API
-   * @property {string} spaceButtonId - id of the button of this space in the
-   *   spaces toolbar
-   * @property {string} defaultUrl - the url for the default space tab
-   * @property {ButtonProperties} buttonProperties
-   *   @see mail/components/extensions/schemas/spaces.json
-   * @property {ExtensionData} extension - the extension the space belongs to
-   */
-
-  constructor() {
-    this._nextId = 1;
-    this._spaceData = new Map();
-    this._spaceIds = new Map();
-
-    // Keep this in sync with the default spaces in gSpacesToolbar.
-    const builtInSpaces = [
-      {
-        name: "mail",
-        spaceButtonId: "mailButton",
-        tabInSpace: tabInfo =>
-          ["folder", "mail3PaneTab", "mailMessageTab"].includes(
-            tabInfo.mode.name
-          )
-            ? 1
-            : 0,
-      },
-      {
-        name: "addressbook",
-        spaceButtonId: "addressBookButton",
-        tabInSpace: tabInfo => (tabInfo.mode.name == "addressBookTab" ? 1 : 0),
-      },
-      {
-        name: "calendar",
-        spaceButtonId: "calendarButton",
-        tabInSpace: tabInfo => (tabInfo.mode.name == "calendar" ? 1 : 0),
-      },
-      {
-        name: "tasks",
-        spaceButtonId: "tasksButton",
-        tabInSpace: tabInfo => (tabInfo.mode.name == "tasks" ? 1 : 0),
-      },
-      {
-        name: "chat",
-        spaceButtonId: "chatButton",
-        tabInSpace: tabInfo => (tabInfo.mode.name == "chat" ? 1 : 0),
-      },
-      {
-        name: "settings",
-        spaceButtonId: "settingsButton",
-        tabInSpace: tabInfo => {
-          switch (tabInfo.mode.name) {
-            case "preferencesTab":
-              // A primary tab that the open method creates.
-              return 1;
-            case "contentTab": {
-              const url = tabInfo.urlbar?.value;
-              if (url == "about:accountsettings" || url == "about:addons") {
-                // A secondary tab, that is related to this space.
-                return 2;
-              }
-            }
-          }
-          return 0;
-        },
-      },
-    ];
-    for (const builtInSpace of builtInSpaces) {
-      this._add(builtInSpace);
-    }
-  }
-
-  findSpaceForTab(tabInfo) {
-    for (const spaceData of this._spaceData.values()) {
-      if (spaceData.tabInSpace(tabInfo)) {
-        return spaceData;
-      }
-    }
-    return undefined;
-  }
-
-  _add(spaceData) {
-    const spaceId = this._nextId++;
-    const { spaceButtonId } = spaceData;
-    this._spaceData.set(spaceButtonId, { ...spaceData, spaceId });
-    this._spaceIds.set(spaceId, spaceButtonId);
-    return { ...spaceData, spaceId };
-  }
-
-  /**
-   * Generate an id of the form <add-on-id>-spacesButton-<spaceId>.
-   *
-   * @param {string} name - name of the space as used by the extension
-   * @param {ExtensionData} extension
-   * @returns {string} id of the html element of the spaces toolbar button of
-   *   this space
-   */
-  _getSpaceButtonId(name, extension) {
-    return `${makeWidgetId(extension.id)}-spacesButton-${name}`;
-  }
-
-  /**
-   * Get the SpaceData for the space with the given name for the given extension.
-   *
-   * @param {string} name - name of the space as used by the extension
-   * @param {ExtensionData} extension
-   * @returns {SpaceData}
-   */
-  fromSpaceName(name, extension) {
-    const spaceButtonId = this._getSpaceButtonId(name, extension);
-    return this.fromSpaceButtonId(spaceButtonId);
-  }
-
-  /**
-   * Get the SpaceData for the space with the given spaceId.
-   *
-   * @param {integer} spaceId - id of the space as used by the tabs API
-   * @returns {SpaceData}
-   */
-  fromSpaceId(spaceId) {
-    const spaceButtonId = this._spaceIds.get(spaceId);
-    return this.fromSpaceButtonId(spaceButtonId);
-  }
-
-  /**
-   * Get the SpaceData for the space with the given spaceButtonId.
-   *
-   * @param {string} spaceButtonId - id of the html element of a spaces toolbar
-   *   button
-   * @returns {SpaceData}
-   */
-  fromSpaceButtonId(spaceButtonId) {
-    if (!spaceButtonId || !this._spaceData.has(spaceButtonId)) {
-      return null;
-    }
-    return this._spaceData.get(spaceButtonId);
-  }
-
-  /**
-   * Create a new space and return its SpaceData.
-   *
-   * @param {string} name - name of the space as used by the extension
-   * @param {string} defaultUrl - the url for the default space tab
-   * @param {ButtonProperties} buttonProperties
-   *   @see mail/components/extensions/schemas/spaces.json
-   * @param {ExtensionData} extension - the extension the space belongs to
-   * @returns {SpaceData}
-   */
-  async create(name, defaultUrl, buttonProperties, extension) {
-    const spaceButtonId = this._getSpaceButtonId(name, extension);
-    if (this._spaceData.has(spaceButtonId)) {
-      return false;
-    }
-    return this._add({
-      name,
-      spaceButtonId,
-      tabInSpace: tabInfo => (tabInfo.spaceButtonId == spaceButtonId ? 1 : 0),
-      defaultUrl,
-      buttonProperties,
-      extension,
-    });
-  }
-
-  /**
-   * Return a WebExtension Space object, representing the given spaceData.
-   *
-   * @param {SpaceData} spaceData
-   * @returns {Space} - @see mail/components/extensions/schemas/spaces.json
-   */
-  convert(spaceData, extension) {
-    const space = {
-      id: spaceData.spaceId,
-      name: spaceData.name,
-      isBuiltIn: !spaceData.extension,
-      isSelfOwned: spaceData.extension?.id == extension.id,
-    };
-    if (spaceData.extension && extension.hasPermission("management")) {
-      space.extensionId = spaceData.extension.id;
-    }
-    return space;
-  }
-
-  /**
-   * Remove a space and its SpaceData from the tracker.
-   *
-   * @param {SpaceData} spaceData
-   */
-  remove(spaceData) {
-    if (!this._spaceData.has(spaceData.spaceButtonId)) {
-      return;
-    }
-    this._spaceData.delete(spaceData.spaceButtonId);
-  }
-
-  /**
-   * Update spaceData for a space in the tracker.
-   *
-   * @param {SpaceData} spaceData
-   */
-  update(spaceData) {
-    if (!this._spaceData.has(spaceData.spaceButtonId)) {
-      return;
-    }
-    this._spaceData.set(spaceData.spaceButtonId, spaceData);
-  }
-
-  /**
-   * Return the SpaceData of all spaces known to the tracker.
-   *
-   * @returns {SpaceData[]}
-   */
-  getAll() {
-    return this._spaceData.values();
-  }
-}
-
-/**
  * Tracks the opening and closing of tabs and maps them between their numeric WebExtension ID and
  * the native tab info objects.
  */
@@ -748,7 +519,8 @@ class TabTracker extends TabTrackerBase {
    * Function to call when a tab was close, deletes tab information for the tab.
    *
    * @param {Event} event - The event triggering the detroyal
-   * @param {{ nativeTabInfo:NativeTabInfo}} - The object containing tab info
+   * @param {object} object nativeTabInfo - The object containing tab info.
+   * @param {NativeTabInfo} object.nativeTabInfo
    */
   _handleTabDestroyed(event, { nativeTabInfo }) {
     const id = this._tabs.get(nativeTabInfo);
@@ -1754,12 +1526,10 @@ class TabManager extends TabManagerBase {
   /**
    * Determines access using extension context.
    *
-   * @param {NativeTab} nativeTab
-   *        The tab to check access on.
-   * @returns {boolean}
-   *        True if the extension has permissions for this tab.
+   * @param {NativeTab} _nativeTab - The tab to check access on.
+   * @returns {boolean} True if the extension has permissions for this tab.
    */
-  canAccessTab() {
+  canAccessTab(_nativeTab) {
     return true;
   }
 
@@ -1893,10 +1663,12 @@ async function getNormalWindowReady(context, windowId) {
 }
 
 const tabTracker = new TabTracker();
+const tagTracker = new TagTracker();
 const spaceTracker = new SpaceTracker();
 const windowTracker = new WindowTracker();
 Object.assign(global, {
   tabTracker,
+  tagTracker,
   spaceTracker,
   windowTracker,
 });
@@ -1911,12 +1683,12 @@ Object.assign(global, {
 extensions.on("startup", (type, extension) => {
   // eslint-disable-line mozilla/balanced-listeners
   if (extension.hasPermission("accountsRead")) {
-    defineLazyGetter(
+    ExtensionCommon.defineLazyGetter(
       extension,
       "folderManager",
       () => new FolderManager(extension)
     );
-    defineLazyGetter(
+    ExtensionCommon.defineLazyGetter(
       extension,
       "accountManager",
       () => new AccountManager(extension)
@@ -1924,7 +1696,7 @@ extensions.on("startup", (type, extension) => {
   }
 
   if (extension.hasPermission("addressBooks")) {
-    defineLazyGetter(extension, "addressBookManager", () => {
+    ExtensionCommon.defineLazyGetter(extension, "addressBookManager", () => {
       if (!("addressBookCache" in this)) {
         extensions.loadModule("addressBook");
       }
@@ -1944,14 +1716,18 @@ extensions.on("startup", (type, extension) => {
     });
   }
   if (extension.hasPermission("messagesRead")) {
-    defineLazyGetter(
+    ExtensionCommon.defineLazyGetter(
       extension,
       "messageManager",
       () => new MessageManager(extension, messageTracker, messageListTracker)
     );
   }
-  defineLazyGetter(extension, "tabManager", () => new TabManager(extension));
-  defineLazyGetter(
+  ExtensionCommon.defineLazyGetter(
+    extension,
+    "tabManager",
+    () => new TabManager(extension)
+  );
+  ExtensionCommon.defineLazyGetter(
     extension,
     "windowManager",
     () => new WindowManager(extension)

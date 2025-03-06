@@ -6,6 +6,16 @@ support-files = [
 
 ["browser_clipboard_content_analysis.js"]
 
+["browser_clipboard_paste_changingclipboardexternal_content_analysis.js"]
+support-files = [
+  "clipboard_paste_changingclipboardexternal.html",
+]
+
+["browser_clipboard_paste_changingclipboardinternal_content_analysis.js"]
+support-files = [
+  "clipboard_paste_changingclipboardinternal.html",
+]
+
 ["browser_clipboard_paste_file_content_analysis.js"]
 support-files = [
   "clipboard_paste_file.html",
@@ -50,6 +60,16 @@ support-files = [
   "!/dom/events/test/browser_dragdrop_inner.html",
   "!/dom/events/test/browser_dragdrop_outer.html",
 ]
+
+["browser_content_analysis_dnd_shadow.js"]
+support-files = [
+  "!/dom/events/test/browser_dragdrop_impl.js",
+  "!/dom/events/test/browser_dragdrop_shadow_inner.html",
+  "!/dom/events/test/browser_dragdrop_shadow_outer.html",
+]
+skip-if = ["true"] # bug 1932955
+
+["browser_content_analysis_policies.js"]
 
 ["browser_print_changing_page_content_analysis.js"]
 support-files = [

@@ -15,7 +15,6 @@
 #include "mozilla/a11y/Role.h"
 #include "States.h"
 #include "TextAttrs.h"
-#include "TextLeafRange.h"
 #include "TextRange.h"
 #include "TreeWalker.h"
 
@@ -561,8 +560,7 @@ nsresult HyperTextAccessible::SetSelectionRange(int32_t aStartPos,
   // Make sure it is visible
   domSel->ScrollIntoView(nsISelectionController::SELECTION_FOCUS_REGION,
                          ScrollAxis(), ScrollAxis(),
-                         dom::Selection::SCROLL_FOR_CARET_MOVE |
-                             dom::Selection::SCROLL_OVERFLOW_HIDDEN);
+                         ScrollFlags::ScrollOverflowHidden);
 
   // When selection is done, move the focus to the selection if accessible is
   // not focusable. That happens when selection is set within hypertext
@@ -643,16 +641,15 @@ int32_t HyperTextAccessible::CaretLineNumber() {
   RefPtr<nsFrameSelection> frameSelection = FrameSelection();
   if (!frameSelection) return -1;
 
-  dom::Selection* domSel = frameSelection->GetSelection(SelectionType::eNormal);
-  if (!domSel) return -1;
+  dom::Selection& domSel = frameSelection->NormalSelection();
 
-  nsINode* caretNode = domSel->GetFocusNode();
+  nsINode* caretNode = domSel.GetFocusNode();
   if (!caretNode || !caretNode->IsContent()) return -1;
 
   nsIContent* caretContent = caretNode->AsContent();
   if (!nsCoreUtils::IsAncestorOf(GetNode(), caretContent)) return -1;
 
-  uint32_t caretOffset = domSel->FocusOffset();
+  uint32_t caretOffset = domSel.FocusOffset();
   CaretAssociationHint hint = frameSelection->GetHint();
   nsIFrame* caretFrame = SelectionMovementUtils::GetFrameForNodeOffset(
       caretContent, caretOffset, hint);
@@ -754,35 +751,6 @@ LayoutDeviceIntRect HyperTextAccessible::GetCaretRect(nsIWidget** aWidget) {
 
   *aWidget = frame->GetNearestWidget();
   return caretRect;
-}
-
-bool HyperTextAccessible::IsCaretAtEndOfLine() const {
-  RefPtr<nsFrameSelection> frameSelection = FrameSelection();
-  if (!frameSelection ||
-      frameSelection->GetHint() != CaretAssociationHint::Before) {
-    return false;
-  }
-  // CaretAssociationHint::Before can mean that the caret is at the end of
-  // a line. However, it can also mean that the caret is before the start
-  // of a node in the middle of a line. This happens when moving the cursor
-  // forward to a new node.
-  int32_t caret = CaretOffset();
-  if (caret == -1) {
-    return false;
-  }
-  TextLeafPoint point =
-      const_cast<HyperTextAccessible*>(this)->ToTextLeafPoint(caret);
-  if (!point) {
-    return false;
-  }
-  if (point.mOffset != 0) {
-    // This isn't the start of a node, so we must be at the end of a line.
-    return true;
-  }
-  // The caret is before the start of a node. The caret is at the end of a
-  // line if the node is at the start of a line but not at the start of a
-  // paragraph.
-  return point.FindPrevLineStartSameLocalAcc(true) && !point.IsParagraphStart();
 }
 
 void HyperTextAccessible::GetSelectionDOMRanges(SelectionType aSelectionType,
@@ -1027,7 +995,13 @@ void HyperTextAccessible::DeleteText(int32_t aStartPos, int32_t aEndPos) {
 void HyperTextAccessible::PasteText(int32_t aPosition) {
   RefPtr<EditorBase> editorBase = GetEditor();
   if (editorBase) {
-    SetSelectionRange(aPosition, aPosition);
+    // If the caller wants to paste at the caret, we don't need to set the
+    // selection. If there is text already selected, this also allows the caller
+    // to replace it, just as would happen when pasting using the keyboard or
+    // GUI.
+    if (aPosition != nsIAccessibleText::TEXT_OFFSET_CARET) {
+      SetSelectionRange(aPosition, aPosition);
+    }
     editorBase->PasteAsAction(nsIClipboard::kGlobalClipboard,
                               EditorBase::DispatchPasteEvent::Yes);
   }

@@ -99,26 +99,31 @@ add_task(async function () {
 
   do_test_pending();
 
+  const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+    .createInstance(Ci.nsIMsgCompUtils)
+    .msgGenerateMessageId(identity, null);
+
   smtpServer.sendMailMessage(
     testFile,
-    kTo,
+    MailServices.headerParser.parseEncodedHeaderW(kTo),
+    [],
     identity,
     kSender,
     null,
     null,
     false,
-    "",
-    RequestObserver
+    messageId,
+    Listener
   );
 
   server.performTest();
 });
 
-var RequestObserver = {
-  onStartRequest() {},
-  onStopRequest(request, rc) {
+var Listener = {
+  onSendStart() {},
+  onSendStop(serverUri, status) {
     // Check for ok status.
-    Assert.equal(rc, 0);
+    Assert.equal(status, 0);
     // Now check the new password has been saved.
     const logins = Services.logins.findLogins(
       "smtp://localhost",

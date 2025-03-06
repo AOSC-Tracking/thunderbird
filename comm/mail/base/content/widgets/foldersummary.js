@@ -81,9 +81,9 @@
      * @param {nsIMsgFolder} folder - The folder to examine.
      * @param {nsIUrlListener} urlListener - Listener to notify if we run urls
      *   to fetch msgs.
-     * @param Object outAsync - Object with value property set to true if there
+     * @param {object} outAsync - Object with value property set to true if there
      *   are async fetches pending (a message preview will be available later).
-     * @returns true if the folder knows about messages that should be shown.
+     * @returns {boolean} true if the folder knows about messages that should be shown.
      */
     parseFolder(folder, urlListener, outAsync) {
       // Skip servers, Trash, Junk folders and newsgroups.
@@ -98,7 +98,7 @@
         return false;
       }
 
-      const folderArray = [];
+      const folders = [];
       let msgDatabase;
       try {
         msgDatabase = folder.msgDatabase;
@@ -115,15 +115,16 @@
         for (const uri of folderUris) {
           const realFolder = this.MailUtils.getOrCreateFolder(uri);
           if (!realFolder.isServer) {
-            folderArray.push(realFolder);
+            folders.push(realFolder);
           }
         }
       } else {
-        folderArray.push(folder);
+        folders.push(folder);
       }
 
       let haveMsgsToShow = false;
-      for (const folder of folderArray) {
+      // eslint-disable-next-line no-shadow
+      for (const folder of folders) {
         // now get the database
         try {
           msgDatabase = folder.msgDatabase;

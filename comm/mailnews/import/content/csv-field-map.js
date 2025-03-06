@@ -74,9 +74,8 @@ class CsvFieldMap extends HTMLElement {
         select.add(option);
       } else {
         select.disabled = true;
-        select
-          .closest("tr")
-          .querySelector("input[type=checkbox]").checked = false;
+        select.closest("tr").querySelector("input[type=checkbox]").checked =
+          false;
       }
       i++;
     }
@@ -92,7 +91,7 @@ class CsvFieldMap extends HTMLElement {
    */
   _enableSelect(select) {
     const selects = [...this._elTbody.querySelectorAll("select")];
-    const selectedFieldIndexes = selects.map(select => select.value);
+    const selectedFieldIndexes = selects.map(fieldSelect => fieldSelect.value);
     const availableFieldIndexes = this._allFieldIndexes.filter(
       index => !selectedFieldIndexes.includes(index)
     );

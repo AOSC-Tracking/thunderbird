@@ -7,12 +7,13 @@
 #include "nsString.h"
 #include "nsMsgUtils.h"
 #include "nsTArray.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/CommMailMetrics.h"
 #include "mozilla/Logging.h"
 #include <algorithm>
 
 extern mozilla::LazyLogModule gMboxLog;
 using mozilla::LogLevel;
+using mozilla::MutexAutoLock;
 
 /**
  * MboxParser is a helper class to manage parsing messages out of an mbox
@@ -36,7 +37,7 @@ using mozilla::LogLevel;
  *   and aim to return messages as accurately as possible, even if malformed.
  * - Avoid copying and memory reallocation as much as possible.
  * - Cope with pathological cases without buffering up huge quantities of data.
- *   eg "From " followed by gigabytes of non-EOL characters.
+ *   e.g. "From " followed by gigabytes of non-EOL characters.
  *   Output buffer size is kept down to roughly what you pass in with a
  *   single call to Feed().
  *
@@ -150,7 +151,8 @@ class MboxParser {
    * The number of bytes actually read is returned.
    */
   size_t Drain(char* buf, size_t count) {
-    size_t n = std::min(count, Available());
+    size_t available = Available();
+    size_t n = std::min(count, available);
     auto start = mOutBuffer.cbegin() + mCursor;
     std::copy(start, start + n, buf);
 
@@ -160,7 +162,7 @@ class MboxParser {
     // If only a small proportion (<25%) has been left unconsumed, move it to
     // the beginning of the buffer. Ideally, the caller would drain all
     // available data in one go, but that's not always possible.
-    if (Available() < (mOutBuffer.Length() / 4)) {
+    if (available < (mOutBuffer.Length() / 4)) {
       mOutBuffer.RemoveElementsAt(0, mCursor);
       mCursor = 0;
     }
@@ -738,7 +740,8 @@ MboxMsgInputStream::MboxMsgInputStream(nsIInputStream* mboxStream,
       mLimitOutputBytes(maxAllowedSize),
       mOutputBytes(0),
       mOverflow(false),
-      mParser(new MboxParser()) {
+      mParser(new MboxParser()),
+      mLock("MboxMsgInputStream.mLock") {
   // Ensure the first chunk is read and parsed.
   // This should include the "From " line, so EnvAddr()/EnvDate()
   // can be used right away.
@@ -748,16 +751,19 @@ MboxMsgInputStream::MboxMsgInputStream(nsIInputStream* mboxStream,
 MboxMsgInputStream::~MboxMsgInputStream() { Close(); }
 
 NS_IMETHODIMP MboxMsgInputStream::Close() {
+  MutexAutoLock lock(mLock);
   mRawStream->Close();
   mStatus = NS_BASE_STREAM_CLOSED;
   return NS_OK;
 }
 
 bool MboxMsgInputStream::IsNullMessage() {
+  MutexAutoLock lock(mLock);
   return mParser->IsFinished() && (mMsgOffset == mTotalUsed);
 }
 
 nsresult MboxMsgInputStream::Continue(bool& more) {
+  MutexAutoLock lock(mLock);
   more = false;
 
   // Can't continue if the stream was closed.
@@ -785,14 +791,26 @@ nsresult MboxMsgInputStream::Continue(bool& more) {
   return NS_OK;
 }
 
-nsCString MboxMsgInputStream::EnvAddr() { return mParser->EnvAddr(); }
+nsCString MboxMsgInputStream::EnvAddr() {
+  MutexAutoLock lock(mLock);
+  return mParser->EnvAddr();
+}
 
-PRTime MboxMsgInputStream::EnvDate() { return mParser->EnvDate(); }
+PRTime MboxMsgInputStream::EnvDate() {
+  MutexAutoLock lock(mLock);
+  return mParser->EnvDate();
+}
+
+uint64_t MboxMsgInputStream::MsgOffset() {
+  MutexAutoLock lock(mLock);
+  return mMsgOffset;
+}
 
 // Throw NS_BASE_STREAM_CLOSED if closed.
 // Return 0 if EOF but not closed.
 // Else return available bytes.
 NS_IMETHODIMP MboxMsgInputStream::Available(uint64_t* result) {
+  MutexAutoLock lock(mLock);
   *result = 0;
   if (NS_FAILED(mStatus)) {
     return mStatus;
@@ -802,17 +820,20 @@ NS_IMETHODIMP MboxMsgInputStream::Available(uint64_t* result) {
   return mStatus;
 }
 
-NS_IMETHODIMP MboxMsgInputStream::StreamStatus() { return mStatus; }
+NS_IMETHODIMP MboxMsgInputStream::StreamStatus() {
+  MutexAutoLock lock(mLock);
+  return mStatus;
+}
 
 // Returns a count, or 0 if EOF or closed.
 // Never throws NS_BASE_STREAM_CLOSED
 NS_IMETHODIMP MboxMsgInputStream::Read(char* buf, uint32_t count,
                                        uint32_t* result) {
+  MutexAutoLock lock(mLock);
   *result = 0;
   if (mOverflow) {
-    mozilla::Telemetry::ScalarAdd(
-        mozilla::Telemetry::ScalarID::TB_MAILS_MBOX_READ_ERRORS,
-        u"unexpected_size"_ns, 1);
+    // Calling trivial glean function while holding the lock should be ok.
+    mozilla::glean::mail::mbox_read_errors.Get("unexpected_size"_ns).Add(1);
     return NS_MSG_ERROR_UNEXPECTED_SIZE;
   }
   if (mStatus == NS_BASE_STREAM_CLOSED) {
@@ -879,6 +900,9 @@ NS_IMETHODIMP MboxMsgInputStream::Read(char* buf, uint32_t count,
 // the front of the buffer to maximise the free space for reading.
 // Luckily such parser stalls tend to involve small quantities of
 // data (e.g. a "From " line falling between read boundaries).
+//
+// PumpData() doesn't perform any locking. It's up to the caller to ensure
+// we're in a thread safe state.
 nsresult MboxMsgInputStream::PumpData() {
   // Feed data to the parser until there's data available to output (or until
   // message is completed).
@@ -914,9 +938,8 @@ nsresult MboxMsgInputStream::PumpData() {
   }
 
   if (mParser->IsMalformed()) {
-    mozilla::Telemetry::ScalarAdd(
-        mozilla::Telemetry::ScalarID::TB_MAILS_MBOX_READ_ERRORS,
-        u"missing_from"_ns, 1);
+    // Calling trivial glean function while holding the lock should be ok.
+    mozilla::glean::mail::mbox_read_errors.Get("missing_from"_ns).Add(1);
     return NS_MSG_ERROR_MBOX_MALFORMED;
   }
 
@@ -929,6 +952,7 @@ NS_IMETHODIMP MboxMsgInputStream::ReadSegments(nsWriteSegmentFun writer,
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
+// We're using a blocking input stream.
 NS_IMETHODIMP MboxMsgInputStream::IsNonBlocking(bool* nonBlocking) {
   *nonBlocking = false;
   return NS_OK;

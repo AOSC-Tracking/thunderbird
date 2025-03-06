@@ -115,6 +115,7 @@ export class ImapChannel extends MailChannel {
 
   /**
    * Get readonly URI.
+   *
    * @see nsIChannel
    */
   get URI() {
@@ -233,12 +234,12 @@ export class ImapChannel extends MailChannel {
    * @param {nsIMsgDBHdr} offlineHdr     - If streaming a message from
    *                                       msgStore, this is its header.
    */
-  _readFromCacheStream(stream, offlineHdr) {
+  _readFromCacheStream(cacheStream, offlineHdr) {
     const pump = Cc["@mozilla.org/network/input-stream-pump;1"].createInstance(
       Ci.nsIInputStreamPump
     );
     this._contentType = "";
-    pump.init(stream, 0, 0, true);
+    pump.init(cacheStream, 0, 0, true);
     pump.asyncRead({
       onStartRequest: () => {
         this._listener.onStartRequest(this);

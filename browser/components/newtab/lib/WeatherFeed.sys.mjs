@@ -91,6 +91,9 @@ export class WeatherFeed {
           query: weatherQuery || "",
           providers: MERINO_PROVIDER,
           timeoutMs: 7000,
+          otherParams: {
+            request_type: "weather",
+          },
         });
       } catch (error) {
         // We don't need to do anything with this right now.
@@ -101,7 +104,7 @@ export class WeatherFeed {
     this.suggestions = suggestions ?? [];
   }
 
-  async fetch(isStartup) {
+  async fetch() {
     // Keep a handle on the `MerinoClient` instance that exists at the start of
     // this fetch. If fetching stops or this `Weather` instance is uninitialized
     // during the fetch, `#merino` will be nulled, and the fetch should stop. We
@@ -133,7 +136,7 @@ export class WeatherFeed {
       }
     }
 
-    this.update(isStartup);
+    this.update();
   }
 
   async loadWeather(isStartup = false) {
@@ -153,11 +156,11 @@ export class WeatherFeed {
     } else if (!this.lastUpdated) {
       this.suggestions = weather.suggestions;
       this.lastUpdated = weather.lastUpdated;
-      this.update(isStartup);
+      this.update();
     }
   }
 
-  update(isStartup) {
+  update() {
     this.store.dispatch(
       ac.BroadcastToContent({
         type: at.WEATHER_UPDATE,
@@ -165,9 +168,6 @@ export class WeatherFeed {
           suggestions: this.suggestions,
           lastUpdated: this.lastUpdated,
           locationData: this.locationData,
-        },
-        meta: {
-          isStartup,
         },
       })
     );

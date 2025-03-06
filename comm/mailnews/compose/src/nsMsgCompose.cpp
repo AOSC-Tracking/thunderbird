@@ -59,7 +59,7 @@
 #include "mozilla/mailnews/MimeHeaderParser.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ErrorResult.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/CommMailComponentsComposeMetrics.h"
 #include "mozilla/dom/HTMLAnchorElement.h"
 #include "mozilla/dom/HTMLImageElement.h"
 #include "mozilla/dom/Selection.h"
@@ -770,7 +770,8 @@ nsMsgCompose::ConvertAndLoadComposeWindow(nsString& aPrefix, nsString& aBuf,
   if (selCon)
     selCon->ScrollSelectionIntoView(
         nsISelectionController::SELECTION_NORMAL,
-        nsISelectionController::SELECTION_ANCHOR_REGION, true);
+        nsISelectionController::SELECTION_ANCHOR_REGION,
+        nsISelectionController::SCROLL_SYNCHRONOUS);
 
   htmlEditor->EnableUndo(true);
   SetBodyModified(false);
@@ -857,11 +858,71 @@ nsMsgCompose::Initialize(nsIMsgComposeParams* aParams,
 
 #ifndef MOZ_SUITE
   if (m_composeHTML) {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::TB_COMPOSE_FORMAT_HTML, 1);
+    mozilla::glean::compose::compose_format.Get("HTML"_ns).Add(1);
   } else {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::TB_COMPOSE_FORMAT_PLAIN_TEXT, 1);
+    mozilla::glean::compose::compose_format.Get("PlainText"_ns).Add(1);
   }
-  Telemetry::Accumulate(Telemetry::TB_COMPOSE_TYPE, type);
+
+  nsAutoCString gleanCompType;
+  switch (type) {
+    case nsIMsgCompType::New:
+      gleanCompType = "New"_ns;
+      break;
+    case nsIMsgCompType::Reply:
+      gleanCompType = "Reply"_ns;
+      break;
+    case nsIMsgCompType::ReplyAll:
+      gleanCompType = "ReplyAll"_ns;
+      break;
+    case nsIMsgCompType::ForwardAsAttachment:
+      gleanCompType = "ForwardAsAttachment"_ns;
+      break;
+    case nsIMsgCompType::ForwardInline:
+      gleanCompType = "ForwardInline"_ns;
+      break;
+    case nsIMsgCompType::NewsPost:
+      gleanCompType = "NewsPost"_ns;
+      break;
+    case nsIMsgCompType::ReplyToSender:
+      gleanCompType = "ReplyToSender"_ns;
+      break;
+    case nsIMsgCompType::ReplyToGroup:
+      gleanCompType = "ReplyToGroup"_ns;
+      break;
+    case nsIMsgCompType::ReplyToSenderAndGroup:
+      gleanCompType = "ReplyToSenderAndGroup"_ns;
+      break;
+    case nsIMsgCompType::Draft:
+      gleanCompType = "Draft"_ns;
+      break;
+    case nsIMsgCompType::Template:
+      gleanCompType = "Template"_ns;
+      break;
+    case nsIMsgCompType::MailToUrl:
+      gleanCompType = "MailToUrl"_ns;
+      break;
+    case nsIMsgCompType::ReplyWithTemplate:
+      gleanCompType = "ReplyWithTemplate"_ns;
+      break;
+    case nsIMsgCompType::ReplyToList:
+      gleanCompType = "ReplyToList"_ns;
+      break;
+    case nsIMsgCompType::Redirect:
+      gleanCompType = "Redirect"_ns;
+      break;
+    case nsIMsgCompType::EditAsNew:
+      gleanCompType = "EditAsNew"_ns;
+      break;
+    case nsIMsgCompType::EditTemplate:
+      gleanCompType = "EditTemplate"_ns;
+      break;
+    default:
+      NS_WARNING("Unexpected compose type");
+      break;
+  }
+  if (!gleanCompType.IsEmpty()) {
+    mozilla::glean::compose::compose_type.Get(gleanCompType).Add(1);
+  }
 #endif
 
   if (composeFields) {
@@ -1126,7 +1187,7 @@ NS_IMETHODIMP nsMsgCompose::SendMsg(MSG_DeliverMode deliverMode,
   if (progress) {
     mProgress = progress;
 
-    if (deliverMode != nsIMsgCompDeliverMode::AutoSaveAsDraft) {
+    if (m_window && deliverMode != nsIMsgCompDeliverMode::AutoSaveAsDraft) {
       nsAutoString msgSubject;
       m_compFields->GetSubject(msgSubject);
 
@@ -1859,7 +1920,12 @@ nsresult nsMsgCompose::CreateMessage(const nsACString& originalMsgURI,
       }
     }
     isFirstPass = false;
-    uri = nextUri + 1;
+    if (nextUri) {
+      // `nextUri` can be a null pointer if `strstr` did not find `://` in the
+      // URI earlier. Only increment it if that is not the case, to avoid
+      // undefined behaviors.
+      uri = nextUri + 1;
+    }
   } while (nextUri);
   PR_Free(uriList);
   return rv;
@@ -2638,7 +2704,8 @@ nsresult QuotingOutputStreamListener::InsertToCompose(nsIEditor* aEditor,
     // flushed and PresShell/PresContext/Frames may be dead. See bug 418470.
     selCon->ScrollSelectionIntoView(
         nsISelectionController::SELECTION_NORMAL,
-        nsISelectionController::SELECTION_ANCHOR_REGION, true);
+        nsISelectionController::SELECTION_ANCHOR_REGION,
+        nsISelectionController::SCROLL_SYNCHRONOUS);
 
   return NS_OK;
 }

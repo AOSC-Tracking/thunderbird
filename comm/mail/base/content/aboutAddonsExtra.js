@@ -72,9 +72,11 @@ XPCOMUtils.defineLazyPreferenceGetter(
 
   // Add logic to detect add-ons using the unsupported legacy API.
   const getMozillaAddonMessageInfo = window.getAddonMessageInfo;
-  window.getAddonMessageInfo = async function (addon) {
+  window.getAddonMessageInfo = async function (
+    addon,
+    { isCardExpanded, isInDisabledSection }
+  ) {
     const { name } = addon;
-    const { STATE_SOFTBLOCKED } = Ci.nsIBlocklistService;
 
     const data = new ExtensionData(addon.getResourceURI());
     await data.loadManifest();
@@ -83,7 +85,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
       (data.manifest.legacy ||
         (!addon.isCompatible &&
           (AddonManager.checkCompatibility ||
-            addon.blocklistState !== STATE_SOFTBLOCKED)))
+            addon.blocklistState !== Ci.nsIBlocklistService.STATE_SOFTBLOCKED)))
     ) {
       return {
         linkId: "add-on-search-alternative-button-label",
@@ -95,7 +97,10 @@ XPCOMUtils.defineLazyPreferenceGetter(
         type: "warning",
       };
     }
-    return getMozillaAddonMessageInfo(addon);
+    return getMozillaAddonMessageInfo(addon, {
+      isCardExpanded,
+      isInDisabledSection,
+    });
   };
   document.querySelectorAll("addon-card").forEach(card => card.updateMessage());
 

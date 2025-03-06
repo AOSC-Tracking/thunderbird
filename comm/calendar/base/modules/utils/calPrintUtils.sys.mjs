@@ -14,11 +14,11 @@
 
 // NOTE: This module should not be loaded directly, it is available when
 // including calUtils.sys.mjs under the cal.print namespace.
-
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   cal: "resource:///modules/calendar/calUtils.sys.mjs",
 });
+ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
 
 export var print = {
   ensureInitialized() {
@@ -73,9 +73,10 @@ export var print = {
  *   - .category-color-box gets a 2px solid border in category color
  *   - .calendar-color-box gets background color of the calendar
  *
- * @param document          The DOM Document to set things on
- * @param item              The item to serialize
- * @param dayContainer      The DOM Node to insert the container in
+ * @param {HTMLDocument} document - The DOM Document to set things on.
+ * @param {calIItemBase} item - The item to serialize.
+ * @param {calIDateTime} boxDate - Date.
+ * @param {Node} dayContainer - The DOM Node to insert the container in-
  */
 function addItemToDaybox(document, item, boxDate, dayContainer) {
   // Clone our template
@@ -118,8 +119,8 @@ function addItemToDaybox(document, item, boxDate, dayContainer) {
  *   - .task-checkbox gets the "checked" attribute set, if completed
  *   - .task-title gets the item title.
  *
- * @param document          The DOM Document to set things on
- * @param item              The item to serialize
+ * @param {HTMLDocument} document - The DOM Document to set things on
+ * @param {calIItemBase} item - The item to serialize.
  */
 function addItemToDayboxNodate(document, item) {
   const taskContainer = document.getElementById("task-container");
@@ -132,7 +133,7 @@ function addItemToDayboxNodate(document, item) {
   if (taskListBox.hasAttribute("hidden")) {
     const tasksTitle = document.getElementById("tasks-title");
     taskListBox.removeAttribute("hidden");
-    tasksTitle.textContent = lazy.cal.l10n.getCalString("tasksWithNoDueDate");
+    tasksTitle.textContent = lazy.l10n.formatValueSync("tasks-with-no-due-date");
   }
 
   // Fill in details of the task
@@ -155,8 +156,9 @@ function addItemToDayboxNodate(document, item) {
 /**
  * Get time interval string for the given item. Returns an empty string for all-day items.
  *
- * @param aItem     The item providing the interval
- * @returns The string describing the interval
+ * @param {calIItemBase} aItem - The item providing the interval.
+ * @param {calIDateTime} aBoxDate - Date.
+ * @returns {string} The string describing the interval
  */
 function getItemIntervalString(aItem, aBoxDate) {
   // omit time label for all-day items
@@ -259,7 +261,7 @@ const listView = {
 
       const setupTextRow = function (classKey, propValue, prefixKey) {
         if (propValue) {
-          const prefix = lazy.cal.l10n.getCalString(prefixKey);
+          const prefix = lazy.l10n.formatValueSync(prefixKey);
           itemNode.querySelector("." + classKey + "key").textContent = prefix;
           itemNode.querySelector("." + classKey).textContent = propValue;
         } else {
@@ -278,7 +280,7 @@ const listView = {
       const itemEndDate = item[lazy.cal.dtz.endDateProp(item)];
       if (itemStartDate || itemEndDate) {
         // This is a task with a start or due date, format accordingly
-        const prefixWhen = lazy.cal.l10n.getCalString("htmlPrefixWhen");
+        const prefixWhen = lazy.l10n.formatValueSync("html-prefix-when");
         itemNode.querySelector(".intervalkey").textContent = prefixWhen;
 
         const startNode = itemNode.querySelector(".dtstart");
@@ -298,12 +300,12 @@ const listView = {
       }
 
       const itemTitle = item.isCompleted
-        ? lazy.cal.l10n.getCalString("htmlTaskCompleted", [item.title])
+        ? lazy.l10n.formatValueSync("html-task-completed", { task: item.title })
         : item.title;
-      setupTextRow("summary", itemTitle, "htmlPrefixTitle");
+      setupTextRow("summary", itemTitle, "html-prefix-title");
 
-      setupTextRow("location", item.getProperty("LOCATION"), "htmlPrefixLocation");
-      setupTextRow("description", item.getProperty("DESCRIPTION"), "htmlPrefixDescription");
+      setupTextRow("location", item.getProperty("LOCATION"), "html-prefix-location");
+      setupTextRow("description", item.getProperty("DESCRIPTION"), "html-prefix-description");
 
       container.appendChild(itemNode);
     }
@@ -341,15 +343,15 @@ const monthGridView = {
     } while (current.compare(endDate) < 0);
 
     // Extend the date range to include adjacent days that will be printed.
-    startDate = lazy.cal.weekInfoService.getStartOfWeek(startDate);
+    const displayStartDate = lazy.cal.weekInfoService.getStartOfWeek(startDate);
     // Get the end of the week containing the last day of the month, not the
     // week containing the first day of the next month.
     endDate.day--;
-    endDate = lazy.cal.weekInfoService.getEndOfWeek(endDate);
-    endDate.day++; // Add a day to include items from the last day.
+    const displayEndDate = lazy.cal.weekInfoService.getEndOfWeek(endDate);
+    displayEndDate.day++; // Add a day to include items from the last day.
 
     // Get and display the items.
-    const items = await getItems(startDate, endDate, filter, notDueTasks);
+    const items = await getItems(displayStartDate, displayEndDate, filter, notDueTasks);
     const defaultTimezone = lazy.cal.dtz.defaultTimezone;
     for (const item of items) {
       let itemStartDate =
@@ -379,12 +381,14 @@ const monthGridView = {
     // Set the page title.
     const months = container.querySelectorAll("table");
     if (months.length == 1) {
-      document.title = months[0].querySelector(".month-title").textContent;
+      document.title = lazy.cal.dtz.formatter.formatMonthLong(startDate.year, startDate.month);
     } else {
-      document.title =
-        months[0].querySelector(".month-title").textContent +
-        " – " +
-        months[months.length - 1].querySelector(".month-title").textContent;
+      document.title = lazy.cal.dtz.formatter.formatMonthInterval(
+        startDate.year,
+        startDate.month,
+        endDate.year,
+        endDate.month
+      );
     }
   },
 
@@ -398,18 +402,18 @@ const monthGridView = {
     const monthTemplate = document.getElementById("month-template");
     const month = monthTemplate.content.firstElementChild.cloneNode(true);
 
-    // Set up the month title
-    const monthName = lazy.cal.l10n.formatMonth(startOfMonth.month + 1, "calendar", "monthInYear");
-    const monthTitle = lazy.cal.l10n.getCalString("monthInYear", [monthName, startOfMonth.year]);
-    month.rows[0].cells[0].firstElementChild.textContent = monthTitle;
+    // Set up the month title.
+    month.rows[0].cells[0].firstElementChild.textContent = lazy.cal.dtz.formatter.formatMonthLong(
+      startOfMonth.year,
+      startOfMonth.month
+    );
 
     // Set up the weekday titles
     const weekStart = Services.prefs.getIntPref("calendar.week.start", 0);
     for (let i = 0; i < 7; i++) {
-      const dayNumber = ((i + weekStart) % 7) + 1;
-      month.rows[1].cells[i].firstElementChild.textContent = lazy.cal.l10n.getDateFmtString(
-        `day.${dayNumber}.Mmm`
-      );
+      const dayNumber = (i + weekStart) % 7;
+      month.rows[1].cells[i].firstElementChild.textContent =
+        lazy.cal.dtz.formatter.shortWeekdayNames[dayNumber];
     }
 
     // Set up each week
@@ -418,11 +422,11 @@ const monthGridView = {
     const mainMonth = startOfMonth.month;
 
     for (
-      let weekStart = startOfMonthView;
-      weekStart.compare(endOfMonthView) < 0;
-      weekStart.day += 7
+      let startOfWeek = startOfMonthView;
+      startOfWeek.compare(endOfMonthView) < 0;
+      startOfWeek.day += 7
     ) {
-      month.tBodies[0].appendChild(this.drawWeek(document, weekStart, mainMonth));
+      month.tBodies[0].appendChild(this.drawWeek(document, startOfWeek, mainMonth));
     }
 
     return month;
@@ -531,12 +535,14 @@ const weekPlannerView = {
     // Set the page title.
     const weeks = container.querySelectorAll("table");
     if (weeks.length == 1) {
-      document.title = lazy.cal.l10n.getCalString("singleLongCalendarWeek", [weeks[0].number]);
+      document.title = lazy.l10n.formatValueSync("single-long-calendar-week", {
+        index: weeks[0].number,
+      });
     } else {
-      document.title = lazy.cal.l10n.getCalString("severalLongCalendarWeeks", [
-        weeks[0].number,
-        weeks[weeks.length - 1].number,
-      ]);
+      document.title = lazy.l10n.formatValueSync("several-long-calendar-weeks", {
+        startIndex: weeks[0].number,
+        endIndex: weeks[weeks.length - 1].number,
+      });
     }
   },
 
@@ -563,9 +569,9 @@ const weekPlannerView = {
 
     // Set up the week number title
     week.number = lazy.cal.weekInfoService.getWeekTitle(monday);
-    week.querySelector(".week-title").textContent = lazy.cal.l10n.getCalString("WeekTitle", [
-      week.number,
-    ]);
+    week.querySelector(".week-title").textContent = lazy.l10n.formatValueSync("week-title", {
+      title: week.number,
+    });
 
     // Set up the day boxes
     const currentDate = monday.clone();
@@ -591,7 +597,7 @@ const weekPlannerView = {
 Services.obs.addObserver(
   {
     async observe(subDialogWindow) {
-      if (!subDialogWindow.location.href.startsWith("chrome://global/content/print.html?")) {
+      if (!subDialogWindow.location.href.startsWith("chrome://global/content/print.html")) {
         return;
       }
 

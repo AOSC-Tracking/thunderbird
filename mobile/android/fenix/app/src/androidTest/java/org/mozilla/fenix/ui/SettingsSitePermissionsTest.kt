@@ -24,7 +24,6 @@ import org.mozilla.fenix.ui.robots.browserScreen
 import org.mozilla.fenix.ui.robots.clickPageObject
 import org.mozilla.fenix.ui.robots.homeScreen
 import org.mozilla.fenix.ui.robots.navigationToolbar
-import java.lang.AssertionError
 
 /**
  *  Tests for verifying
@@ -41,22 +40,24 @@ class SettingsSitePermissionsTest : TestSetup() {
     @get:Rule
     val activityTestRule = AndroidComposeTestRule(
         HomeActivityTestRule(
-            isJumpBackInCFREnabled = false,
             isPWAsPromptEnabled = false,
-            isTCPCFREnabled = false,
             isDeleteSitePermissionsEnabled = true,
         ),
     ) { it.activity }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/246974
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/246974
     @Test
     fun sitePermissionsItemsTest() {
         homeScreen {
         }.openThreeDotMenu {
         }.openSettings {
-        }.openSettingsSubMenuSitePermissions {
-            verifySitePermissionsToolbarTitle()
+        }.openSettingsSubMenuSiteSettings {
+            verifySiteSettingsToolbarTitle()
             verifyToolbarGoBackButton()
+            verifyContentHeading()
+            verifyAlwaysRequestDesktopSiteOption()
+            verifyAlwaysRequestDesktopSiteToggleIsEnabled(enabled = false)
+            verifyPermissionsHeading()
             verifySitePermissionOption("Autoplay", "Block audio only")
             verifySitePermissionOption("Camera", "Blocked by Android")
             verifySitePermissionOption("Location", "Blocked by Android")
@@ -69,7 +70,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/247680
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/247680
     // Verifies that you can go to System settings and change app's permissions from inside the app
     @SmokeTest
     @Test
@@ -78,7 +79,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         homeScreen {
         }.openThreeDotMenu {
         }.openSettings {
-        }.openSettingsSubMenuSitePermissions {
+        }.openSettingsSubMenuSiteSettings {
         }.openCamera {
             verifyBlockedByAndroidSection()
         }.goBack {
@@ -109,7 +110,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2095125
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2095125
     @SmokeTest
     @Test
     fun verifyAutoplayBlockAudioOnlySettingOnNotMutedVideoTest() {
@@ -119,7 +120,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         homeScreen {
         }.openThreeDotMenu {
         }.openSettings {
-        }.openSettingsSubMenuSitePermissions {
+        }.openSettingsSubMenuSiteSettings {
         }.openAutoPlay {
             verifySitePermissionsAutoPlaySubMenuItems()
             exitMenu()
@@ -148,7 +149,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2286807
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2286807
     @SmokeTest
     @Test
     fun verifyAutoplayBlockAudioOnlySettingOnMutedVideoTest() {
@@ -175,7 +176,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2095124
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2095124
     @Test
     fun verifyAutoplayAllowAudioVideoSettingOnNotMutedVideoTestTest() {
         val genericPage = getGenericAsset(mockWebServer, 1)
@@ -184,7 +185,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         homeScreen {
         }.openThreeDotMenu {
         }.openSettings {
-        }.openSettingsSubMenuSitePermissions {
+        }.openSettingsSubMenuSiteSettings {
         }.openAutoPlay {
             selectAutoplayOption("Allow audio and video")
             exitMenu()
@@ -211,7 +212,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2286806
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2286806
     @Test
     fun verifyAutoplayAllowAudioVideoSettingOnMutedVideoTest() {
         val mutedVideoTestPage = getMutedVideoPageAsset(mockWebServer)
@@ -219,7 +220,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         homeScreen {
         }.openThreeDotMenu {
         }.openSettings {
-        }.openSettingsSubMenuSitePermissions {
+        }.openSettingsSubMenuSiteSettings {
         }.openAutoPlay {
             selectAutoplayOption("Allow audio and video")
             exitMenu()
@@ -238,7 +239,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2095126
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2095126
     @Test
     fun verifyAutoplayBlockAudioAndVideoSettingOnNotMutedVideoTest() {
         val videoTestPage = getVideoPageAsset(mockWebServer)
@@ -246,7 +247,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         homeScreen {
         }.openThreeDotMenu {
         }.openSettings {
-        }.openSettingsSubMenuSitePermissions {
+        }.openSettingsSubMenuSiteSettings {
         }.openAutoPlay {
             selectAutoplayOption("Block audio and video")
             exitMenu()
@@ -269,7 +270,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/2286808
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2286808
     @Test
     fun verifyAutoplayBlockAudioAndVideoSettingOnMutedVideoTest() {
         val mutedVideoTestPage = getMutedVideoPageAsset(mockWebServer)
@@ -277,7 +278,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         homeScreen {
         }.openThreeDotMenu {
         }.openSettings {
-        }.openSettingsSubMenuSitePermissions {
+        }.openSettingsSubMenuSiteSettings {
         }.openAutoPlay {
             selectAutoplayOption("Block audio and video")
             exitMenu()
@@ -299,7 +300,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/247362
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/247362
     @Test
     fun verifyCameraPermissionSettingsTest() {
         navigationToolbar {
@@ -313,7 +314,7 @@ class SettingsSitePermissionsTest : TestSetup() {
             navigationToolbar {
             }.openThreeDotMenu {
             }.openSettings {
-            }.openSettingsSubMenuSitePermissions {
+            }.openSettingsSubMenuSiteSettings {
             }.openCamera {
                 verifySitePermissionsCommonSubMenuItems()
                 selectPermissionSettingOption("Blocked")
@@ -325,7 +326,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/247364
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/247364
     @Test
     fun verifyMicrophonePermissionSettingsTest() {
         navigationToolbar {
@@ -339,7 +340,7 @@ class SettingsSitePermissionsTest : TestSetup() {
             navigationToolbar {
             }.openThreeDotMenu {
             }.openSettings {
-            }.openSettingsSubMenuSitePermissions {
+            }.openSettingsSubMenuSiteSettings {
             }.openMicrophone {
                 verifySitePermissionsCommonSubMenuItems()
                 selectPermissionSettingOption("Blocked")
@@ -351,7 +352,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/247363
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/247363
     @Test
     fun verifyLocationPermissionSettingsTest() {
         navigationToolbar {
@@ -364,7 +365,7 @@ class SettingsSitePermissionsTest : TestSetup() {
             navigationToolbar {
             }.openThreeDotMenu {
             }.openSettings {
-            }.openSettingsSubMenuSitePermissions {
+            }.openSettingsSubMenuSiteSettings {
             }.openLocation {
                 verifySitePermissionsCommonSubMenuItems()
                 selectPermissionSettingOption("Blocked")
@@ -376,7 +377,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/247365
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/247365
     @Test
     fun verifyNotificationsPermissionSettingsTest() {
         navigationToolbar {
@@ -389,7 +390,7 @@ class SettingsSitePermissionsTest : TestSetup() {
             navigationToolbar {
             }.openThreeDotMenu {
             }.openSettings {
-            }.openSettingsSubMenuSitePermissions {
+            }.openSettingsSubMenuSiteSettings {
             }.openNotification {
                 verifyNotificationSubMenuItems()
                 selectPermissionSettingOption("Blocked")
@@ -401,7 +402,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/1923415
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/1923415
     @Test
     fun verifyPersistentStoragePermissionSettingsTest() {
         navigationToolbar {
@@ -414,7 +415,7 @@ class SettingsSitePermissionsTest : TestSetup() {
             navigationToolbar {
             }.openThreeDotMenu {
             }.openSettings {
-            }.openSettingsSubMenuSitePermissions {
+            }.openSettingsSubMenuSiteSettings {
             }.openPersistentStorage {
                 verifySitePermissionsPersistentStorageSubMenuItems()
                 selectPermissionSettingOption("Blocked")
@@ -426,7 +427,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/1923417
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/1923417
     @Test
     fun verifyDRMControlledContentPermissionSettingsTest() {
         navigationToolbar {
@@ -437,7 +438,7 @@ class SettingsSitePermissionsTest : TestSetup() {
             browserScreen {
             }.openThreeDotMenu {
             }.openSettings {
-            }.openSettingsSubMenuSitePermissions {
+            }.openSettingsSubMenuSiteSettings {
             }.openDRMControlledContent {
                 verifyDRMControlledContentSubMenuItems()
                 selectDRMControlledContentPermissionSettingOption("Blocked")
@@ -449,7 +450,7 @@ class SettingsSitePermissionsTest : TestSetup() {
                 verifyPageContent("DRM-controlled content not allowed")
             }.openThreeDotMenu {
             }.openSettings {
-            }.openSettingsSubMenuSitePermissions {
+            }.openSettingsSubMenuSiteSettings {
             }.openDRMControlledContent {
                 selectDRMControlledContentPermissionSettingOption("Allowed")
                 exitMenu()
@@ -464,7 +465,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/246976
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/246976
     @SmokeTest
     @Test
     fun clearAllSitePermissionsExceptionsTest() {
@@ -475,7 +476,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }.clickPagePermissionButton(true) {
         }.openThreeDotMenu {
         }.openSettings {
-        }.openSettingsSubMenuSitePermissions {
+        }.openSettingsSubMenuSiteSettings {
         }.openExceptions {
             verifyExceptionCreated(permissionsTestPageHost, true)
             clickClearPermissionsOnAllSites()
@@ -487,7 +488,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/247007
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/247007
     @Test
     fun addAndClearOneWebPagePermission() {
         navigationToolbar {
@@ -497,7 +498,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }.clickPagePermissionButton(true) {
         }.openThreeDotMenu {
         }.openSettings {
-        }.openSettingsSubMenuSitePermissions {
+        }.openSettingsSubMenuSiteSettings {
         }.openExceptions {
             verifyExceptionCreated(permissionsTestPageHost, true)
             openSiteExceptionsDetails(permissionsTestPageHost)
@@ -510,7 +511,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }
     }
 
-    // TestRail link: https://testrail.stage.mozaws.net/index.php?/cases/view/326477
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/326477
     @Test
     fun clearIndividuallyAWebPagePermission() {
         navigationToolbar {
@@ -520,7 +521,7 @@ class SettingsSitePermissionsTest : TestSetup() {
         }.clickPagePermissionButton(true) {
         }.openThreeDotMenu {
         }.openSettings {
-        }.openSettingsSubMenuSitePermissions {
+        }.openSettingsSubMenuSiteSettings {
         }.openExceptions {
             verifyExceptionCreated(permissionsTestPageHost, true)
             openSiteExceptionsDetails(permissionsTestPageHost)

@@ -20,12 +20,14 @@
 #include "mozilla/Casting.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/EnumTypeTraits.h"
+#include "mozilla/IsEnumCase.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Range.h"
 #include "mozilla/RefCounted.h"
 #include "mozilla/Result.h"
 #include "mozilla/ResultVariant.h"
 #include "mozilla/Span.h"
+#include "mozilla/TiedFields.h"
 #include "mozilla/TypedEnumBits.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/BuildConstants.h"
@@ -39,8 +41,7 @@
 #include "nsTArray.h"
 #include "nsString.h"
 #include "mozilla/dom/WebGLRenderingContextBinding.h"
-#include "mozilla/ipc/SharedMemoryBasic.h"
-#include "TiedFields.h"
+#include "mozilla/ipc/SharedMemory.h"
 
 // Manual reflection of WebIDL typedefs that are different from their
 // OpenGL counterparts.
@@ -134,19 +135,6 @@ class VRefCounted : public RefCounted<VRefCounted> {
 
 // -
 
-template <class T>
-bool IsEnumCase(T);
-
-template <class E>
-inline constexpr std::optional<E> AsEnumCase(
-    const std::underlying_type_t<E> raw) {
-  const auto ret = static_cast<E>(raw);
-  if (!IsEnumCase(ret)) return {};
-  return ret;
-}
-
-// -
-
 /*
  * Implementing WebGL (or OpenGL ES 2.0) on top of desktop OpenGL requires
  * emulating the vertex attrib 0 array when it's not enabled. Indeed,
@@ -228,6 +216,7 @@ enum class WebGLExtensionID : uint8_t {
   EXT_blend_minmax,
   EXT_color_buffer_float,
   EXT_color_buffer_half_float,
+  EXT_depth_clamp,
   EXT_disjoint_timer_query,
   EXT_float_blend,
   EXT_frag_depth,
@@ -266,7 +255,7 @@ enum class WebGLExtensionID : uint8_t {
 };
 
 class UniqueBuffer final {
-  // Like UniquePtr<>, but for void* and malloc/calloc/free.
+  // Like unique_ptr<>, but for void* and malloc/calloc/free.
   void* mBuffer = nullptr;
 
  public:
@@ -389,10 +378,10 @@ struct WebGLContextOptions final {
 
   dom::WebGLPowerPreference powerPreference =
       dom::WebGLPowerPreference::Default;
-  std::optional<dom::PredefinedColorSpace> colorSpace;
+  bool forceSoftwareRendering = false;
   bool shouldResistFingerprinting = true;
-
   bool enableDebugRendererInfo = false;
+  PaddingField<bool, 7> _padding;
 
   auto MutTiedFields() {
     // clang-format off
@@ -408,10 +397,10 @@ struct WebGLContextOptions final {
       xrCompatible,
 
       powerPreference,
-      colorSpace,
+      forceSoftwareRendering,
       shouldResistFingerprinting,
-
-      enableDebugRendererInfo);
+      enableDebugRendererInfo,
+      _padding);
     // clang-format on
   }
 
@@ -489,16 +478,7 @@ struct avec2 {
 #undef _
 
   avec2 Clamp(const avec2& min, const avec2& max) const {
-    return {mozilla::Clamp(x, min.x, max.x), mozilla::Clamp(y, min.y, max.y)};
-  }
-
-  // mozilla::Clamp doesn't work on floats, so be clear that this is a min+max
-  // helper.
-  avec2 ClampMinMax(const avec2& min, const avec2& max) const {
-    const auto ClampScalar = [](const T v, const T min, const T max) {
-      return std::max(min, std::min(v, max));
-    };
-    return {ClampScalar(x, min.x, max.x), ClampScalar(y, min.y, max.y)};
+    return {std::clamp(x, min.x, max.x), std::clamp(y, min.y, max.y)};
   }
 
   template <typename U>
@@ -658,7 +638,7 @@ struct InitContextDesc final {
   uint32_t principalKey = 0;
   uvec2 size = {};
   WebGLContextOptions options;
-  std::array<uint8_t, 3> _padding2;
+  std::array<uint8_t, 5> _padding2;
 
   auto MutTiedFields() {
     return std::tie(isWebgl2, resistFingerprinting, _padding, principalKey,
@@ -709,24 +689,35 @@ struct Limits final {
 };
 
 // -
+namespace details {
+template <class T, size_t Padding>
+struct PaddedBase {
+ protected:
+  T val = {};
+
+ private:
+  uint8_t padding[Padding] = {};
+};
+
+template <class T>
+struct PaddedBase<T, 0> {
+ protected:
+  T val = {};
+};
+}  // namespace details
 
 template <class T, size_t PaddedSize>
-struct Padded {
- private:
-  T val = {};
-  uint8_t padding[PaddedSize - sizeof(T)] = {};
+struct Padded : details::PaddedBase<T, PaddedSize - sizeof(T)> {
+  operator T&() { return this->val; }
+  operator const T&() const { return this->val; }
 
- public:
-  operator T&() { return val; }
-  operator const T&() const { return val; }
+  auto& operator=(const T& rhs) { return this->val = rhs; }
+  auto& operator=(T&& rhs) { return this->val = std::move(rhs); }
 
-  auto& operator=(const T& rhs) { return val = rhs; }
-  auto& operator=(T&& rhs) { return val = std::move(rhs); }
-
-  auto& operator*() { return val; }
-  auto& operator*() const { return val; }
-  auto operator->() { return &val; }
-  auto operator->() const { return &val; }
+  auto& operator*() { return this->val; }
+  auto& operator*() const { return this->val; }
+  auto operator->() { return &this->val; }
+  auto operator->() const { return &this->val; }
 };
 
 // -
@@ -764,7 +755,7 @@ struct InitContextResult final {
   WebGLContextOptions options;
   gl::GLVendor vendor;
   OptionalRenderableFormatBits optionalRenderableFormatBits;
-  uint8_t _padding = {};
+  std::array<uint8_t, 3> _padding = {};
   Limits limits;
   EnumMask<layers::SurfaceDescriptor::Type> uploadableSdTypes;
 

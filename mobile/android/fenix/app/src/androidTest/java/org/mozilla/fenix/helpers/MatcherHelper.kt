@@ -107,7 +107,7 @@ object MatcherHelper {
         }
     }
 
-    fun assertUIObjectIsGone(vararg appItems: UiObject) {
+    fun assertUIObjectIsGone(vararg appItems: UiObject, waitingTime: Long = TestAssetHelper.waitingTime) {
         for (appItem in appItems) {
             Log.i(TAG, "assertUIObjectIsGone: Trying to verify that ${appItem.selector} is gone")
             assertTrue("${appItem.selector} is not gone", appItem.waitUntilGone(waitingTime))
@@ -151,6 +151,20 @@ object MatcherHelper {
             Log.i(TAG, "assertItemIsEnabledAndVisible: Trying to verify that ${appItem.selector} is visible and enabled")
             assertTrue(appItem.waitForExists(waitingTime) && appItem.isEnabled)
             Log.i(TAG, "assertItemIsEnabledAndVisible: Verified ${appItem.selector} is visible and enabled")
+        }
+    }
+
+    fun assertItemIsChecked(vararg appItems: UiObject, isChecked: Boolean = true) {
+        for (appItem in appItems) {
+            if (isChecked) {
+                Log.i(TAG, "assertItemIsChecked: Trying to verify that ${appItem.selector} is checked")
+                assertTrue(appItem.isChecked)
+                Log.i(TAG, "assertItemIsChecked: Verified ${appItem.selector} is checked")
+            } else {
+                Log.i(TAG, "assertItemIsChecked: Trying to verify that ${appItem.selector} is not checked")
+                assertFalse(appItem.isChecked)
+                Log.i(TAG, "assertItemIsChecked: Verified ${appItem.selector} is not checked")
+            }
         }
     }
 }

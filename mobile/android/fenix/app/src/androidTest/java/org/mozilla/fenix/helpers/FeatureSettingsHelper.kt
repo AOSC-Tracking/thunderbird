@@ -24,10 +24,10 @@ interface FeatureSettingsHelper {
     var isPocketEnabled: Boolean
 
     /**
-     * Whether the "Jump back in" CFR should be shown or not.
-     * It should appear on the first visit to homescreen given that there is a tab opened.
+     * Whether the "Navigation bar" CFR should be shown or not.
+     * It should appear on the first visit to homescreen given that there is a navigation bar.
      */
-    var isJumpBackInCFREnabled: Boolean
+    var isNavigationBarCFREnabled: Boolean
 
     /**
      * Whether the onboarding dialog for choosing wallpapers should be shown or not.
@@ -58,11 +58,6 @@ interface FeatureSettingsHelper {
     var isDeleteSitePermissionsEnabled: Boolean
 
     /**
-     * Enable or disable showing the TCP CFR when accessing a webpage for the first time.
-     */
-    var isTCPCFREnabled: Boolean
-
-    /**
      * The current "Enhanced Tracking Protection" policy.
      * @see ETPPolicy
      */
@@ -82,6 +77,52 @@ interface FeatureSettingsHelper {
      * Enable or disable all location permission requests.
      */
     var isLocationPermissionEnabled: SitePermissionsRules.Action
+
+    /**
+     * Enable or disable the new navigation toolbar.
+     */
+    var isNavigationToolbarEnabled: Boolean
+
+    /**
+     * Enable or disable the new main menu.
+     */
+    var isMenuRedesignEnabled: Boolean
+
+    /**
+     * Enable or disable the new main menu CFR.
+     */
+    var isMenuRedesignCFREnabled: Boolean
+
+    /**
+     * Enable or disable the new bookmarks UI.
+     */
+    var isNewBookmarksEnabled: Boolean
+
+    /**
+     * Enable or disable the new microsurvey feature.
+     */
+    var isMicrosurveyEnabled: Boolean
+
+    /**
+     * Enable or disable the "Set as default browser" dialog.
+     */
+    var isSetAsDefaultBrowserPromptEnabled: Boolean
+
+    /**
+     * Enable or disable bottom toolbar position.
+     */
+    var shouldUseBottomToolbar: Boolean
+
+    /**
+     * Enable or disable the translations prompt after a page that can be translated is loaded.
+     */
+    fun enableOrDisablePageLoadTranslationsPrompt(enableTranslationsPrompt: Boolean) {
+        if (enableTranslationsPrompt) {
+            FxNimbusHelper.enablePageLoadTranslationsPrompt()
+        } else {
+            FxNimbusHelper.disablePageLoadTranslationsPrompt()
+        }
+    }
 
     fun applyFlagUpdates()
 

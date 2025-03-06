@@ -32,13 +32,13 @@
 #include "p2p/base/test_turn_server.h"
 #include "p2p/client/basic_port_allocator.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/crypto_random.h"
 #include "rtc_base/dscp.h"
 #include "rtc_base/fake_clock.h"
 #include "rtc_base/fake_mdns_responder.h"
 #include "rtc_base/fake_network.h"
 #include "rtc_base/firewall_socket_server.h"
 #include "rtc_base/gunit.h"
-#include "rtc_base/helpers.h"
 #include "rtc_base/internal/default_socket_server.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/mdns_responder_interface.h"
@@ -100,12 +100,6 @@ static const SocketAddress kAlternateAddrs[2] = {
 static const SocketAddress kIPv6AlternateAddrs[2] = {
     SocketAddress("2401:4030:1:2c00:be30:abcd:efab:cdef", 0),
     SocketAddress("2601:0:1000:1b03:2e41:38ff:fea6:f2a4", 0)};
-// Addresses for HTTP proxy servers.
-static const SocketAddress kHttpsProxyAddrs[2] = {
-    SocketAddress("11.11.11.1", 443), SocketAddress("22.22.22.1", 443)};
-// Addresses for SOCKS proxy servers.
-static const SocketAddress kSocksProxyAddrs[2] = {
-    SocketAddress("11.11.11.1", 1080), SocketAddress("22.22.22.1", 1080)};
 // Internal addresses for NAT boxes.
 static const SocketAddress kNatAddrs[2] = {SocketAddress("192.168.1.1", 0),
                                            SocketAddress("192.168.2.1", 0)};
@@ -140,13 +134,10 @@ const cricket::IceParameters kIceParams[4] = {
     {kIceUfrag[2], kIcePwd[2], false},
     {kIceUfrag[3], kIcePwd[3], false}};
 
-const uint64_t kLowTiebreaker = 11111;
-const uint64_t kHighTiebreaker = 22222;
-
 cricket::IceConfig CreateIceConfig(
     int receiving_timeout,
     cricket::ContinualGatheringPolicy continual_gathering_policy,
-    absl::optional<int> backup_ping_interval = absl::nullopt) {
+    std::optional<int> backup_ping_interval = std::nullopt) {
   cricket::IceConfig config;
   config.receiving_timeout = receiving_timeout;
   config.continual_gathering_policy = continual_gathering_policy;
@@ -317,7 +308,6 @@ class P2PTransportChannelTestBase : public ::testing::Test,
     BLOCK_UDP,                    // Firewall, UDP in/out blocked
     BLOCK_UDP_AND_INCOMING_TCP,   // Firewall, UDP in/out and TCP in blocked
     BLOCK_ALL_BUT_OUTGOING_HTTP,  // Firewall, only TCP out on 80/443
-    PROXY_HTTPS,                  // All traffic through HTTPS proxy
     NUM_CONFIGS
   };
 
@@ -384,8 +374,6 @@ class P2PTransportChannelTestBase : public ::testing::Test,
 
     void SetIceRole(IceRole role) { role_ = role; }
     IceRole ice_role() { return role_; }
-    void SetIceTiebreaker(uint64_t tiebreaker) { tiebreaker_ = tiebreaker; }
-    uint64_t GetIceTiebreaker() { return tiebreaker_; }
     void OnRoleConflict(bool role_conflict) { role_conflict_ = role_conflict; }
     bool role_conflict() { return role_conflict_; }
     void SetAllocationStepDelay(uint32_t delay) {
@@ -494,7 +482,6 @@ class P2PTransportChannelTestBase : public ::testing::Test,
       channel->SetRemoteIceParameters(remote_ice);
     }
     channel->SetIceRole(GetEndpoint(endpoint)->ice_role());
-    channel->SetIceTiebreaker(GetEndpoint(endpoint)->GetIceTiebreaker());
     return channel;
   }
 
@@ -554,8 +541,8 @@ class P2PTransportChannelTestBase : public ::testing::Test,
                   const SocketAddress& addr,
                   absl::string_view ifname,
                   rtc::AdapterType adapter_type,
-                  absl::optional<rtc::AdapterType> underlying_vpn_adapter_type =
-                      absl::nullopt) {
+                  std::optional<rtc::AdapterType> underlying_vpn_adapter_type =
+                      std::nullopt) {
     GetEndpoint(endpoint)->network_manager_.AddInterface(
         addr, ifname, adapter_type, underlying_vpn_adapter_type);
   }
@@ -563,21 +550,11 @@ class P2PTransportChannelTestBase : public ::testing::Test,
     GetEndpoint(endpoint)->network_manager_.RemoveInterface(addr);
     fw()->AddRule(false, rtc::FP_ANY, rtc::FD_ANY, addr);
   }
-  void SetProxy(int endpoint, rtc::ProxyType type) {
-    rtc::ProxyInfo info;
-    info.type = type;
-    info.address = (type == rtc::PROXY_HTTPS) ? kHttpsProxyAddrs[endpoint]
-                                              : kSocksProxyAddrs[endpoint];
-    GetAllocator(endpoint)->set_proxy("unittest/1.0", info);
-  }
   void SetAllocatorFlags(int endpoint, int flags) {
     GetAllocator(endpoint)->set_flags(flags);
   }
   void SetIceRole(int endpoint, IceRole role) {
     GetEndpoint(endpoint)->SetIceRole(role);
-  }
-  void SetIceTiebreaker(int endpoint, uint64_t tiebreaker) {
-    GetEndpoint(endpoint)->SetIceTiebreaker(tiebreaker);
   }
   bool GetRoleConflict(int endpoint) {
     return GetEndpoint(endpoint)->role_conflict();
@@ -792,31 +769,6 @@ class P2PTransportChannelTestBase : public ::testing::Test,
     EXPECT_EQ(1u, RemoteCandidate(ep1_ch1())->generation());
   }
 
-  void TestSignalRoleConflict() {
-    rtc::ScopedFakeClock clock;
-    // Default EP1 is in controlling state.
-    SetIceTiebreaker(0, kLowTiebreaker);
-
-    SetIceRole(1, ICEROLE_CONTROLLING);
-    SetIceTiebreaker(1, kHighTiebreaker);
-
-    // Creating channels with both channels role set to CONTROLLING.
-    CreateChannels();
-    // Since both the channels initiated with controlling state and channel2
-    // has higher tiebreaker value, channel1 should receive SignalRoleConflict.
-    EXPECT_TRUE_SIMULATED_WAIT(GetRoleConflict(0), kShortTimeout, clock);
-    EXPECT_FALSE(GetRoleConflict(1));
-
-    EXPECT_TRUE_SIMULATED_WAIT(CheckConnected(ep1_ch1(), ep2_ch1()),
-                               kShortTimeout, clock);
-
-    EXPECT_TRUE(ep1_ch1()->selected_connection() &&
-                ep2_ch1()->selected_connection());
-
-    TestSendRecv(&clock);
-    DestroyChannels();
-  }
-
   void TestPacketInfoIsSet(rtc::PacketInfo info) {
     EXPECT_NE(info.packet_type, rtc::PacketType::kUnknown);
     EXPECT_NE(info.protocol, rtc::PacketInfoProtocolType::kUnknown);
@@ -841,7 +793,7 @@ class P2PTransportChannelTestBase : public ::testing::Test,
     }
   }
 
-  void OnNetworkRouteChanged(absl::optional<rtc::NetworkRoute> network_route) {
+  void OnNetworkRouteChanged(std::optional<rtc::NetworkRoute> network_route) {
     // If the `network_route` is unset, don't count. This is used in the case
     // when the network on remote side is down, the signal will be fired with an
     // unset network route and it shouldn't trigger a connection switch.
@@ -1165,7 +1117,6 @@ class P2PTransportChannelTest : public P2PTransportChannelTestBase {
       case BLOCK_UDP:
       case BLOCK_UDP_AND_INCOMING_TCP:
       case BLOCK_ALL_BUT_OUTGOING_HTTP:
-      case PROXY_HTTPS:
         AddAddress(endpoint, kPublicAddrs[endpoint]);
         // Block all UDP
         fw()->AddRule(false, rtc::FP_UDP, rtc::FD_ANY, kPublicAddrs[endpoint]);
@@ -1181,13 +1132,6 @@ class P2PTransportChannelTest : public P2PTransportChannelTestBase {
                         SocketAddress(rtc::IPAddress(INADDR_ANY), 443));
           fw()->AddRule(false, rtc::FP_TCP, rtc::FD_ANY,
                         kPublicAddrs[endpoint]);
-        } else if (config == PROXY_HTTPS) {
-          // Block all TCP to/from the endpoint except to the proxy server
-          fw()->AddRule(true, rtc::FP_TCP, kPublicAddrs[endpoint],
-                        kHttpsProxyAddrs[endpoint]);
-          fw()->AddRule(false, rtc::FP_TCP, rtc::FD_ANY,
-                        kPublicAddrs[endpoint]);
-          SetProxy(endpoint, rtc::PROXY_HTTPS);
         }
         break;
       default:
@@ -1227,33 +1171,30 @@ class P2PTransportChannelMatrixTest : public P2PTransportChannelTest,
 // Test matrix. Originator behavior defined by rows, receiever by columns.
 
 // TODO(?): Fix NULLs caused by lack of TCP support in NATSocket.
-// TODO(?): Fix NULLs caused by no HTTP proxy support.
 // TODO(?): Rearrange rows/columns from best to worst.
 const P2PTransportChannelMatrixTest::Result*
     P2PTransportChannelMatrixTest::kMatrix[NUM_CONFIGS][NUM_CONFIGS] = {
-        //      OPEN  CONE  ADDR  PORT  SYMM  2CON  SCON  !UDP  !TCP  HTTP  PRXH
+        // OPEN  CONE  ADDR  PORT  SYMM  2CON  SCON  !UDP  !TCP  HTTP
         /*OP*/
-        {LULU, LUSU, LUSU, LUSU, LUPU, LUSU, LUPU, LTPT, LTPT, LSRS, NULL},
+        {LULU, LUSU, LUSU, LUSU, LUPU, LUSU, LUPU, LTPT, LTPT, LSRS},
         /*CO*/
-        {SULU, SUSU, SUSU, SUSU, SUPU, SUSU, SUPU, NULL, NULL, LSRS, NULL},
+        {SULU, SUSU, SUSU, SUSU, SUPU, SUSU, SUPU, NULL, NULL, LSRS},
         /*AD*/
-        {SULU, SUSU, SUSU, SUSU, SUPU, SUSU, SUPU, NULL, NULL, LSRS, NULL},
+        {SULU, SUSU, SUSU, SUSU, SUPU, SUSU, SUPU, NULL, NULL, LSRS},
         /*PO*/
-        {SULU, SUSU, SUSU, SUSU, RUPU, SUSU, RUPU, NULL, NULL, LSRS, NULL},
+        {SULU, SUSU, SUSU, SUSU, RUPU, SUSU, RUPU, NULL, NULL, LSRS},
         /*SY*/
-        {PULU, PUSU, PUSU, PURU, PURU, PUSU, PURU, NULL, NULL, LSRS, NULL},
+        {PULU, PUSU, PUSU, PURU, PURU, PUSU, PURU, NULL, NULL, LSRS},
         /*2C*/
-        {SULU, SUSU, SUSU, SUSU, SUPU, SUSU, SUPU, NULL, NULL, LSRS, NULL},
+        {SULU, SUSU, SUSU, SUSU, SUPU, SUSU, SUPU, NULL, NULL, LSRS},
         /*SC*/
-        {PULU, PUSU, PUSU, PURU, PURU, PUSU, PURU, NULL, NULL, LSRS, NULL},
+        {PULU, PUSU, PUSU, PURU, PURU, PUSU, PURU, NULL, NULL, LSRS},
         /*!U*/
-        {LTPT, NULL, NULL, NULL, NULL, NULL, NULL, LTPT, LTPT, LSRS, NULL},
+        {LTPT, NULL, NULL, NULL, NULL, NULL, NULL, LTPT, LTPT, LSRS},
         /*!T*/
-        {PTLT, NULL, NULL, NULL, NULL, NULL, NULL, PTLT, LTRT, LSRS, NULL},
+        {PTLT, NULL, NULL, NULL, NULL, NULL, NULL, PTLT, LTRT, LSRS},
         /*HT*/
-        {LSRS, LSRS, LSRS, LSRS, LSRS, LSRS, LSRS, LSRS, LSRS, LSRS, NULL},
-        /*PR*/
-        {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL},
+        {LSRS, LSRS, LSRS, LSRS, LSRS, LSRS, LSRS, LSRS, LSRS, LSRS},
 };
 
 // The actual tests that exercise all the various configurations.
@@ -1281,7 +1222,6 @@ const P2PTransportChannelMatrixTest::Result*
   P2P_TEST(x, BLOCK_UDP)                   \
   P2P_TEST(x, BLOCK_UDP_AND_INCOMING_TCP)  \
   P2P_TEST(x, BLOCK_ALL_BUT_OUTGOING_HTTP) \
-  P2P_TEST(x, PROXY_HTTPS)
 
 P2P_TEST_SET(OPEN)
 P2P_TEST_SET(NAT_FULL_CONE)
@@ -1293,7 +1233,6 @@ P2P_TEST_SET(NAT_SYMMETRIC_THEN_CONE)
 P2P_TEST_SET(BLOCK_UDP)
 P2P_TEST_SET(BLOCK_UDP_AND_INCOMING_TCP)
 P2P_TEST_SET(BLOCK_ALL_BUT_OUTGOING_HTTP)
-P2P_TEST_SET(PROXY_HTTPS)
 
 INSTANTIATE_TEST_SUITE_P(
     All,
@@ -1866,13 +1805,36 @@ TEST_F(P2PTransportChannelTest, TestTcpConnectionTcptypeSet) {
 }
 
 TEST_F(P2PTransportChannelTest, TestIceRoleConflict) {
+  rtc::ScopedFakeClock clock;
   AddAddress(0, kPublicAddrs[0]);
   AddAddress(1, kPublicAddrs[1]);
-  TestSignalRoleConflict();
+
+  // Creating channels with both channels role set to CONTROLLING.
+  SetIceRole(0, ICEROLE_CONTROLLING);
+  SetIceRole(1, ICEROLE_CONTROLLING);
+
+  CreateChannels();
+  bool first_endpoint_has_lower_tiebreaker =
+      GetEndpoint(0)->allocator_->ice_tiebreaker() <
+      GetEndpoint(1)->allocator_->ice_tiebreaker();
+  // Since both the channels initiated with controlling state, the channel with
+  // the lower tiebreaker should receive SignalRoleConflict.
+  EXPECT_TRUE_SIMULATED_WAIT(
+      GetRoleConflict(first_endpoint_has_lower_tiebreaker ? 0 : 1),
+      kShortTimeout, clock);
+  EXPECT_FALSE(GetRoleConflict(first_endpoint_has_lower_tiebreaker ? 1 : 0));
+
+  EXPECT_TRUE_SIMULATED_WAIT(CheckConnected(ep1_ch1(), ep2_ch1()),
+                             kShortTimeout, clock);
+
+  EXPECT_TRUE(ep1_ch1()->selected_connection() &&
+              ep2_ch1()->selected_connection());
+
+  TestSendRecv(&clock);
+  DestroyChannels();
 }
 
-// Tests that the ice configs (protocol, tiebreaker and role) can be passed
-// down to ports.
+// Tests that the ice configs (protocol and role) can be passed down to ports.
 TEST_F(P2PTransportChannelTest, TestIceConfigWillPassDownToPort) {
   rtc::ScopedFakeClock clock;
   AddAddress(0, kPublicAddrs[0]);
@@ -1881,9 +1843,7 @@ TEST_F(P2PTransportChannelTest, TestIceConfigWillPassDownToPort) {
   // Give the first connection the higher tiebreaker so its role won't
   // change unless we tell it to.
   SetIceRole(0, ICEROLE_CONTROLLING);
-  SetIceTiebreaker(0, kHighTiebreaker);
   SetIceRole(1, ICEROLE_CONTROLLING);
-  SetIceTiebreaker(1, kLowTiebreaker);
 
   CreateChannels();
 
@@ -1892,18 +1852,13 @@ TEST_F(P2PTransportChannelTest, TestIceConfigWillPassDownToPort) {
   const std::vector<PortInterface*> ports_before = ep1_ch1()->ports();
   for (size_t i = 0; i < ports_before.size(); ++i) {
     EXPECT_EQ(ICEROLE_CONTROLLING, ports_before[i]->GetIceRole());
-    EXPECT_EQ(kHighTiebreaker, ports_before[i]->IceTiebreaker());
   }
 
   ep1_ch1()->SetIceRole(ICEROLE_CONTROLLED);
-  ep1_ch1()->SetIceTiebreaker(kLowTiebreaker);
 
   const std::vector<PortInterface*> ports_after = ep1_ch1()->ports();
   for (size_t i = 0; i < ports_after.size(); ++i) {
     EXPECT_EQ(ICEROLE_CONTROLLED, ports_before[i]->GetIceRole());
-    // SetIceTiebreaker after ports have been created will fail. So expect the
-    // original value.
-    EXPECT_EQ(kHighTiebreaker, ports_before[i]->IceTiebreaker());
   }
 
   EXPECT_TRUE_SIMULATED_WAIT(CheckConnected(ep1_ch1(), ep2_ch1()),
@@ -2289,9 +2244,7 @@ TEST_F(P2PTransportChannelTest,
   // With conflicting ICE roles, endpoint 1 has the higher tie breaker and will
   // send a binding error response.
   SetIceRole(0, ICEROLE_CONTROLLING);
-  SetIceTiebreaker(0, kHighTiebreaker);
   SetIceRole(1, ICEROLE_CONTROLLING);
-  SetIceTiebreaker(1, kLowTiebreaker);
   // We want the remote TURN candidate to show up as prflx. To do this we need
   // to configure the server to accept packets from an address we haven't
   // explicitly installed permission for.
@@ -3439,7 +3392,7 @@ class P2PTransportChannelPingTest : public ::testing::Test,
     conn->SignalNominated(conn);
   }
 
-  void OnNetworkRouteChanged(absl::optional<rtc::NetworkRoute> network_route) {
+  void OnNetworkRouteChanged(std::optional<rtc::NetworkRoute> network_route) {
     last_network_route_ = network_route;
     if (last_network_route_) {
       last_sent_packet_id_ = last_network_route_->last_sent_packet_id;
@@ -3452,7 +3405,7 @@ class P2PTransportChannelPingTest : public ::testing::Test,
       absl::string_view remote_ufrag,
       int priority,
       uint32_t nomination,
-      const absl::optional<std::string>& piggyback_ping_id) {
+      const std::optional<std::string>& piggyback_ping_id) {
     IceMessage msg(STUN_BINDING_REQUEST);
     msg.AddAttribute(std::make_unique<StunByteStringAttribute>(
         STUN_ATTR_USERNAME,
@@ -3481,7 +3434,7 @@ class P2PTransportChannelPingTest : public ::testing::Test,
                                int priority,
                                uint32_t nomination = 0) {
     ReceivePingOnConnection(conn, remote_ufrag, priority, nomination,
-                            absl::nullopt);
+                            std::nullopt);
   }
 
   void OnReadyToSend(rtc::PacketTransportInternal* transport) {
@@ -3556,9 +3509,9 @@ class P2PTransportChannelPingTest : public ::testing::Test,
   int selected_candidate_pair_switches_ = 0;
   int last_sent_packet_id_ = -1;
   bool channel_ready_to_send_ = false;
-  absl::optional<CandidatePairChangeEvent> last_candidate_change_event_;
+  std::optional<CandidatePairChangeEvent> last_candidate_change_event_;
   IceTransportState channel_state_ = IceTransportState::STATE_INIT;
-  absl::optional<rtc::NetworkRoute> last_network_route_;
+  std::optional<rtc::NetworkRoute> last_network_route_;
 };
 
 TEST_F(P2PTransportChannelPingTest, TestTriggeredChecks) {

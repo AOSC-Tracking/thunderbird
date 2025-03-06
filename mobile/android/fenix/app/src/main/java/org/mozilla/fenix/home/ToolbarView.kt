@@ -4,22 +4,27 @@
 
 package org.mozilla.fenix.home
 
-import android.content.Context
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
+import androidx.annotation.VisibleForTesting
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
 import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
+import androidx.navigation.fragment.findNavController
+import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.support.ktx.android.content.res.resolveAttribute
+import mozilla.components.support.utils.ext.isLandscape
+import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.R
 import org.mozilla.fenix.browser.tabstrip.isTabStripEnabled
-import org.mozilla.fenix.components.toolbar.IncompleteRedesignToolbarFeature
 import org.mozilla.fenix.components.toolbar.ToolbarPosition
+import org.mozilla.fenix.components.toolbar.navbar.shouldAddNavigationBar
 import org.mozilla.fenix.databinding.FragmentHomeBinding
+import org.mozilla.fenix.ext.increaseTapAreaVertically
+import org.mozilla.fenix.ext.isLargeWindow
 import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.home.toolbar.ToolbarInteractor
 import org.mozilla.fenix.utils.ToolbarPopupWindow
@@ -30,17 +35,30 @@ import java.lang.ref.WeakReference
  */
 class ToolbarView(
     private val binding: FragmentHomeBinding,
-    private val context: Context,
     private val interactor: ToolbarInteractor,
+    private val homeFragment: HomeFragment,
+    private val homeActivity: HomeActivity,
 ) {
+
+    private var context = homeFragment.requireContext()
+
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal var tabCounterView: TabCounterView? = null
+
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal var homeMenuView: HomeMenuView? = null
+
     init {
-        updateLayout(binding.root)
+        initLayoutParameters()
+        updateMargins()
     }
 
     /**
      * Setups the home screen toolbar.
+     *
+     * @param browserState [BrowserState] is used to update button visibility.
      */
-    fun build() {
+    fun build(browserState: BrowserState) {
         binding.toolbar.compoundDrawablePadding =
             context.resources.getDimensionPixelSize(R.dimen.search_bar_search_engine_icon_padding)
 
@@ -51,19 +69,82 @@ class ToolbarView(
         binding.toolbarWrapper.setOnLongClickListener {
             ToolbarPopupWindow.show(
                 WeakReference(it),
+                WeakReference(binding.dynamicSnackbarContainer),
                 handlePasteAndGo = interactor::onPasteAndGo,
                 handlePaste = interactor::onPaste,
                 copyVisible = false,
             )
             true
         }
+
+        binding.toolbarWrapper.increaseTapAreaVertically(TOOLBAR_WRAPPER_INCREASE_HEIGHT_DPS)
+
+        updateButtonVisibility(browserState, context.shouldAddNavigationBar())
     }
 
-    private fun updateLayout(view: View) {
-        val redesignEnabled = IncompleteRedesignToolbarFeature(context.settings()).isEnabled
-        binding.menuButton.isVisible = !redesignEnabled
-        binding.tabButton.isVisible = !redesignEnabled
+    /**
+     * Updates the visibility of the tab counter and menu buttons.
+     *
+     * @param browserState [BrowserState] is used to update tab counter's state.
+     * @param shouldAddNavigationBar [Boolean] is used to update menu button's and tab counter's state.
+     */
+    fun updateButtonVisibility(browserState: BrowserState, shouldAddNavigationBar: Boolean) {
+        val showMenu = !shouldAddNavigationBar
+        val showTabCounter = !(shouldAddNavigationBar || context.isTabStripEnabled())
+        binding.menuButton.isVisible = showMenu
+        binding.tabButton.isVisible = showTabCounter
 
+        tabCounterView = if (showTabCounter) {
+            buildTabCounter().also {
+                it.update(browserState)
+            }
+        } else {
+            null
+        }
+
+        homeMenuView = if (showMenu) {
+            buildHomeMenu()
+        } else {
+            null
+        }
+    }
+
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal fun buildHomeMenu() = HomeMenuView(
+        context = context,
+        lifecycleOwner = homeFragment.viewLifecycleOwner,
+        homeActivity = homeActivity,
+        navController = homeFragment.findNavController(),
+        homeFragment = homeFragment,
+        menuButton = WeakReference(binding.menuButton),
+    ).also { it.build() }
+
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal fun buildTabCounter() = TabCounterView(
+        context = context,
+        browsingModeManager = homeActivity.browsingModeManager,
+        navController = homeFragment.findNavController(),
+        tabCounter = binding.tabButton,
+        showLongPressMenu = !(context.settings().navigationToolbarEnabled && context.isLargeWindow()),
+    )
+
+    /**
+     * Dismisses the home menu.
+     */
+    fun dismissMenu() {
+        homeMenuView?.dismissMenu()
+    }
+
+    /**
+     * Updates the tab counter view based on the current browser state.
+     *
+     * @param browserState [BrowserState] is passed down to tab counter view to calculate the view state.
+     */
+    fun updateTabCounter(browserState: BrowserState) {
+        tabCounterView?.update(browserState)
+    }
+
+    private fun initLayoutParameters() {
         when (context.settings().toolbarPosition) {
             ToolbarPosition.TOP -> {
                 binding.toolbarLayout.layoutParams = CoordinatorLayout.LayoutParams(
@@ -110,8 +191,8 @@ class ToolbarView(
                 }
 
                 binding.bottomBar.background = AppCompatResources.getDrawable(
-                    view.context,
-                    view.context.theme.resolveAttribute(R.attr.bottomBarBackgroundTop),
+                    context,
+                    context.theme.resolveAttribute(R.attr.bottomBarBackgroundTop),
                 )
 
                 binding.homeAppBar.updateLayoutParams<ViewGroup.MarginLayoutParams> {
@@ -127,5 +208,25 @@ class ToolbarView(
 
             ToolbarPosition.BOTTOM -> {}
         }
+    }
+
+    private fun updateMargins() {
+        if (context.settings().navigationToolbarEnabled) {
+            val marginStart = context.resources.getDimensionPixelSize(R.dimen.toolbar_horizontal_margin)
+            val marginEnd = if (context.isLandscape() || context.isLargeWindow()) {
+                context.resources.getDimensionPixelSize(R.dimen.home_item_horizontal_short_margin)
+            } else {
+                context.resources.getDimensionPixelSize(R.dimen.home_item_horizontal_margin)
+            }
+
+            (binding.toolbarWrapper.layoutParams as ConstraintLayout.LayoutParams).apply {
+                this.marginStart = marginStart
+                this.marginEnd = marginEnd
+            }
+        }
+    }
+
+    companion object {
+        const val TOOLBAR_WRAPPER_INCREASE_HEIGHT_DPS = 4
     }
 }

@@ -9,16 +9,18 @@
 #include "DNSLogging.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/ThreadSafety.h"
 #include "TRRService.h"
 
 //----------------------------------------------------------------------------
 // this macro filters out any flags that are not used when constructing the
 // host key.  the significant flags are those that would affect the resulting
 // host record (i.e., the flags that are passed down to PR_GetAddrInfoByName).
-#define RES_KEY_FLAGS(_f)                                              \
-  ((_f) &                                                              \
-   (nsHostResolver::RES_CANON_NAME | nsHostResolver::RES_DISABLE_TRR | \
-    nsIDNSService::RESOLVE_TRR_MODE_MASK | nsHostResolver::RES_IP_HINT))
+#define RES_KEY_FLAGS(_f)                   \
+  ((_f) &                                   \
+   (nsIDNSService::RESOLVE_CANONICAL_NAME | \
+    nsIDNSService::RESOLVE_DISABLE_TRR |    \
+    nsIDNSService::RESOLVE_TRR_MODE_MASK | nsIDNSService::RESOLVE_IP_HINT))
 
 #define IS_ADDR_TYPE(_type) ((_type) == nsIDNSService::RESOLVE_TYPE_DEFAULT)
 #define IS_OTHER_TYPE(_type) ((_type) != nsIDNSService::RESOLVE_TYPE_DEFAULT)
@@ -448,7 +450,10 @@ bool TypeHostRecord::HasUsableResultInternal(
     return true;
   }
 
+  MOZ_PUSH_IGNORE_THREAD_SAFETY
+  // To avoid locking in a const method
   return !mResults.is<Nothing>();
+  MOZ_POP_THREAD_SAFETY
 }
 
 bool TypeHostRecord::RefreshForNegativeResponse() const { return false; }
@@ -524,6 +529,13 @@ TypeHostRecord::GetRecords(nsTArray<RefPtr<nsISVCBRecord>>& aRecords) {
 NS_IMETHODIMP
 TypeHostRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
                                      nsISVCBRecord** aRecord) {
+  return GetServiceModeRecordWithCname(aNoHttp2, aNoHttp3, ""_ns, aRecord);
+}
+
+NS_IMETHODIMP
+TypeHostRecord::GetServiceModeRecordWithCname(bool aNoHttp2, bool aNoHttp3,
+                                              const nsACString& aCname,
+                                              nsISVCBRecord** aRecord) {
   MutexAutoLock lock(mResultsLock);
   if (!mResults.is<TypeRecordHTTPSSVC>()) {
     return NS_ERROR_NOT_AVAILABLE;
@@ -531,7 +543,7 @@ TypeHostRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
 
   auto& results = mResults.as<TypeRecordHTTPSSVC>();
   nsCOMPtr<nsISVCBRecord> result = GetServiceModeRecordInternal(
-      aNoHttp2, aNoHttp3, results, mAllRecordsExcluded);
+      aNoHttp2, aNoHttp3, results, mAllRecordsExcluded, true, aCname);
   if (!result) {
     return NS_ERROR_NOT_AVAILABLE;
   }
@@ -541,9 +553,31 @@ TypeHostRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
 }
 
 NS_IMETHODIMP
+TypeHostRecord::IsTRR(bool* aResult) {
+  *aResult = (mResolverType == DNSResolverType::TRR);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TypeHostRecord::GetAllRecords(bool aNoHttp2, bool aNoHttp3,
+                              const nsACString& aCname,
+                              nsTArray<RefPtr<nsISVCBRecord>>& aResult) {
+  MutexAutoLock lock(mResultsLock);
+  if (!mResults.is<TypeRecordHTTPSSVC>()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  auto& records = mResults.as<TypeRecordHTTPSSVC>();
+  bool notused;
+  GetAllRecordsInternal(aNoHttp2, aNoHttp3, aCname, records, false, &notused,
+                        &notused, aResult);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 TypeHostRecord::GetAllRecordsWithEchConfig(
-    bool aNoHttp2, bool aNoHttp3, bool* aAllRecordsHaveEchConfig,
-    bool* aAllRecordsInH3ExcludedList,
+    bool aNoHttp2, bool aNoHttp3, const nsACString& aCname,
+    bool* aAllRecordsHaveEchConfig, bool* aAllRecordsInH3ExcludedList,
     nsTArray<RefPtr<nsISVCBRecord>>& aResult) {
   MutexAutoLock lock(mResultsLock);
   if (!mResults.is<TypeRecordHTTPSSVC>()) {
@@ -551,9 +585,9 @@ TypeHostRecord::GetAllRecordsWithEchConfig(
   }
 
   auto& records = mResults.as<TypeRecordHTTPSSVC>();
-  GetAllRecordsWithEchConfigInternal(aNoHttp2, aNoHttp3, records,
-                                     aAllRecordsHaveEchConfig,
-                                     aAllRecordsInH3ExcludedList, aResult);
+  GetAllRecordsInternal(aNoHttp2, aNoHttp3, aCname, records, true,
+                        aAllRecordsHaveEchConfig, aAllRecordsInH3ExcludedList,
+                        aResult);
   return NS_OK;
 }
 

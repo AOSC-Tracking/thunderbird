@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* global ReadableStream */
-
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
 
 /**
@@ -294,8 +292,8 @@ export class CalReadableStreamFactory {
    * Creates a ReadableStream from another stream where each chunk of the source
    * stream is passed to a MapStreamFunction before enqueuing in the final stream.
    *
-   * @param {ReadableStream}
-   * @param {MapStreamFunction}
+   * @param {ReadableStream} stream
+   * @param {MapStreamFunction} func
    *
    * @returns {ReadableStream}
    */

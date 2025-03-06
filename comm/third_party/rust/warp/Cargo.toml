@@ -12,14 +12,10 @@
 [package]
 edition = "2018"
 name = "warp"
-version = "0.3.6"
+version = "0.3.7"
 authors = ["Sean McArthur <sean@seanmonstar.com>"]
-build = false
-autolib = false
-autobins = false
-autoexamples = false
-autotests = false
-autobenches = false
+autoexamples = true
+autotests = true
 description = "serve the web at warp speeds"
 documentation = "https://docs.rs/warp"
 readme = "README.md"
@@ -44,208 +40,43 @@ incremental = false
 codegen-units = 1
 incremental = false
 
-[lib]
-name = "warp"
-path = "src/lib.rs"
-
-[[example]]
-name = "autoreload"
-path = "examples/autoreload.rs"
-
-[[example]]
-name = "body"
-path = "examples/body.rs"
-
 [[example]]
 name = "compression"
-path = "examples/compression.rs"
 required-features = ["compression"]
 
 [[example]]
-name = "custom_methods"
-path = "examples/custom_methods.rs"
-
-[[example]]
-name = "dir"
-path = "examples/dir.rs"
-
-[[example]]
-name = "dyn_reply"
-path = "examples/dyn_reply.rs"
-
-[[example]]
-name = "file"
-path = "examples/file.rs"
-
-[[example]]
-name = "futures"
-path = "examples/futures.rs"
-
-[[example]]
-name = "handlebars_template"
-path = "examples/handlebars_template.rs"
-
-[[example]]
-name = "headers"
-path = "examples/headers.rs"
-
-[[example]]
-name = "hello"
-path = "examples/hello.rs"
-
-[[example]]
-name = "multipart"
-path = "examples/multipart.rs"
-required-features = ["multipart"]
-
-[[example]]
-name = "query_string"
-path = "examples/query_string.rs"
-
-[[example]]
-name = "rejections"
-path = "examples/rejections.rs"
-
-[[example]]
-name = "returning"
-path = "examples/returning.rs"
-
-[[example]]
-name = "routing"
-path = "examples/routing.rs"
-
-[[example]]
-name = "sse"
-path = "examples/sse.rs"
-
-[[example]]
-name = "sse_chat"
-path = "examples/sse_chat.rs"
-
-[[example]]
-name = "stream"
-path = "examples/stream.rs"
-
-[[example]]
-name = "tls"
-path = "examples/tls.rs"
-
-[[example]]
-name = "todos"
-path = "examples/todos.rs"
-
-[[example]]
-name = "tracing"
-path = "examples/tracing.rs"
-
-[[example]]
 name = "unix_socket"
-path = "examples/unix_socket.rs"
 
 [[example]]
 name = "websockets"
-path = "examples/websockets.rs"
 required-features = ["websocket"]
 
 [[example]]
 name = "websockets_chat"
-path = "examples/websockets_chat.rs"
 required-features = ["websocket"]
 
 [[example]]
-name = "wrapping"
-path = "examples/wrapping.rs"
+name = "query_string"
 
-[[test]]
-name = "addr"
-path = "tests/addr.rs"
-
-[[test]]
-name = "body"
-path = "tests/body.rs"
-
-[[test]]
-name = "cookie"
-path = "tests/cookie.rs"
-
-[[test]]
-name = "cors"
-path = "tests/cors.rs"
-
-[[test]]
-name = "ext"
-path = "tests/ext.rs"
-
-[[test]]
-name = "filter"
-path = "tests/filter.rs"
-
-[[test]]
-name = "fs"
-path = "tests/fs.rs"
-
-[[test]]
-name = "header"
-path = "tests/header.rs"
-
-[[test]]
-name = "host"
-path = "tests/host.rs"
-
-[[test]]
-name = "method"
-path = "tests/method.rs"
-
-[[test]]
+[[example]]
 name = "multipart"
-path = "tests/multipart.rs"
 required-features = ["multipart"]
 
 [[test]]
-name = "path"
-path = "tests/path.rs"
-
-[[test]]
-name = "query"
-path = "tests/query.rs"
-
-[[test]]
-name = "redirect"
-path = "tests/redirect.rs"
-
-[[test]]
-name = "reply_with"
-path = "tests/reply_with.rs"
-
-[[test]]
-name = "tracing"
-path = "tests/tracing.rs"
+name = "multipart"
+required-features = ["multipart"]
 
 [[test]]
 name = "ws"
-path = "tests/ws.rs"
 required-features = ["websocket"]
 
-[dependencies]
-bytes = "1.0"
-headers = "0.3"
-http = "0.2"
-log = "0.4"
-mime = "0.3"
-mime_guess = "2.0.0"
-percent-encoding = "2.1"
-pin-project = "1.0"
-scoped-tls = "1.0"
-serde = "1.0"
-serde_json = "1.0"
-serde_urlencoded = "0.7"
-tokio-stream = "0.1.1"
-tower-service = "0.3"
-
 [dependencies.async-compression]
-version = "0.3.7"
+version = "0.4.5"
 features = ["tokio"]
 optional = true
+
+[dependencies.bytes]
+version = "1.0"
 
 [dependencies.futures-channel]
 version = "0.3.17"
@@ -255,6 +86,12 @@ features = ["sink"]
 version = "0.3"
 features = ["sink"]
 default-features = false
+
+[dependencies.headers]
+version = "0.3.5"
+
+[dependencies.http]
+version = "0.2"
 
 [dependencies.hyper]
 version = "0.14"
@@ -267,13 +104,40 @@ features = [
     "client",
 ]
 
+[dependencies.log]
+version = "0.4"
+
+[dependencies.mime]
+version = "0.3"
+
+[dependencies.mime_guess]
+version = "2.0.0"
+
 [dependencies.multer]
 version = "2.1.0"
 optional = true
 
-[dependencies.rustls-pemfile]
+[dependencies.percent-encoding]
+version = "2.1"
+
+[dependencies.pin-project]
 version = "1.0"
+
+[dependencies.rustls-pemfile]
+version = "2.0"
 optional = true
+
+[dependencies.scoped-tls]
+version = "1.0"
+
+[dependencies.serde]
+version = "1.0"
+
+[dependencies.serde_json]
+version = "1.0"
+
+[dependencies.serde_urlencoded]
+version = "0.7.1"
 
 [dependencies.tokio]
 version = "1.0"
@@ -284,16 +148,19 @@ features = [
 ]
 
 [dependencies.tokio-rustls]
-version = "0.24"
+version = "0.25"
 optional = true
 
 [dependencies.tokio-tungstenite]
-version = "0.20"
+version = "0.21"
 optional = true
 
 [dependencies.tokio-util]
-version = "0.7"
+version = "0.7.1"
 features = ["io"]
+
+[dependencies.tower-service]
+version = "0.3"
 
 [dependencies.tracing]
 version = "0.1.21"
@@ -303,12 +170,17 @@ features = [
 ]
 default-features = false
 
-[dev-dependencies]
-handlebars = "4.0"
-listenfd = "1.0"
-pretty_env_logger = "0.5"
-serde_derive = "1.0"
-tracing-log = "0.1"
+[dev-dependencies.handlebars]
+version = "5.0"
+
+[dev-dependencies.listenfd]
+version = "1.0"
+
+[dev-dependencies.pretty_env_logger]
+version = "0.5"
+
+[dev-dependencies.serde_derive]
+version = "1.0"
 
 [dev-dependencies.tokio]
 version = "1.0"
@@ -320,6 +192,9 @@ features = [
 [dev-dependencies.tokio-stream]
 version = "0.1.1"
 features = ["net"]
+
+[dev-dependencies.tracing-log]
+version = "0.2"
 
 [dev-dependencies.tracing-subscriber]
 version = "0.3"

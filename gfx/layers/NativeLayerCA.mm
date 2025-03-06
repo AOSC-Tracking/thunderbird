@@ -937,6 +937,22 @@ void NativeLayerCA::AttachExternalImage(wr::RenderTextureHost* aExternalImage) {
   });
 }
 
+GpuFence* NativeLayerCA::GetGpuFence() {
+  if (!mTextureHost) {
+    return nullptr;
+  }
+
+  wr::RenderMacIOSurfaceTextureHost* texture =
+      mTextureHost->AsRenderMacIOSurfaceTextureHost();
+  if (!texture) {
+    MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+    gfxCriticalNoteOnce << "ExternalImage is not RenderMacIOSurfaceTextureHost";
+    return nullptr;
+  }
+
+  return texture->GetGpuFence();
+}
+
 bool NativeLayerCA::IsVideo(const MutexAutoLock& aProofOfLock) {
   // If we have a texture host, we've checked to see if it's providing video.
   // And if we don't have a texture host, it isn't video, so we just check
@@ -967,11 +983,8 @@ bool NativeLayerCA::ShouldSpecializeVideo(const MutexAutoLock& aProofOfLock) {
     return true;
   }
 
-  CFTypeRefPtr<IOSurfaceRef> surface = macIOSurface->GetIOSurfaceRef();
-  OSType pixelFormat = IOSurfaceGetPixelFormat(surface.get());
-  if (pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange ||
-      pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange) {
-    // HDR videos require specialized video layers.
+  if (macIOSurface->GetColorDepth() == gfx::ColorDepth::COLOR_10) {
+    // 10-bit videos require specialized video layers.
     return true;
   }
 
@@ -980,12 +993,6 @@ bool NativeLayerCA::ShouldSpecializeVideo(const MutexAutoLock& aProofOfLock) {
 
   if (!StaticPrefs::gfx_core_animation_specialize_video()) {
     // Pref must be set.
-    return false;
-  }
-
-  if (pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange &&
-      pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) {
-    // The video is not in one of the formats that qualifies for detachment.
     return false;
   }
 

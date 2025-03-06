@@ -122,10 +122,10 @@
   --select-focus-text-color: var(--selected-item-text-color);
   --select-focus-background-color: var(--selected-item-color);
   /* Wrapper for toolkit variables */
-  --button-primary-bgcolor: var(--button-primary-background-color);
-  --button-primary-hover-bgcolor: var(--button-primary-hover-background-color);
-  --button-primary-active-bgcolor: var(--button-primary-active-background-color);
-  --button-primary-color: var(--button-primary-text-color);
+  --color-accent-primary: var(--button-primary-background-color);
+  --color-accent-primary-hover: var(--button-primary-hover-background-color);
+  --color-accent-primary-active: var(--button-primary-active-background-color);
+  --button-text-color-primary: var(--button-primary-text-color);
 
   --tabline-color: var(--selected-item-color);
 
@@ -174,7 +174,7 @@
 
 @media (prefers-contrast) {
   :root:not([lwtheme]) {
-    --button-color: ButtonText;
+    --button-text-color: ButtonText;
     --button-background-color: ButtonFace;
     --button-border-color: ButtonText;
     --button-hover-text-color: SelectedItemText;
@@ -215,6 +215,10 @@
     --arrowpanel-dimmed-further: color-mix(in srgb, currentColor 20%, transparent);
     --arrowpanel-dimmed-even-further: color-mix(in srgb, currentColor 27%, transparent);
     --error-text-color: #c50042;
+    --link-color: LinkText;
+    --link-color-hover: LinkText;
+    --link-color-active: ActiveText;
+    --link-color-visited: var(--link-color);
   }
 }
 

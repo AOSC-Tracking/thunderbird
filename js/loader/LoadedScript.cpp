@@ -105,6 +105,8 @@ size_t LoadedScript::SizeOfIncludingThis(
   }
 
   bytes += mScriptBytecode.sizeOfExcludingThis(aMallocSizeOf);
+
+  // NOTE: Stencil is reported by SpiderMonkey.
   return bytes;
 }
 
@@ -280,14 +282,16 @@ void ModuleScript::UnlinkModuleRecord() {
   // Remove the module record's pointer to this object if present and decrement
   // our reference count. The reference is added by SetModuleRecord() below.
   //
-  // This takes care not to trigger gray unmarking because this takes a lot of
-  // time when we're tearing down the entire page. This is safe because we are
-  // only writing undefined into the module private, so it won't create any
-  // black-gray edges.
   if (mModuleRecord) {
+    // Take care not to trigger gray unmarking because this takes a lot of time
+    // when we're tearing down the entire page. This is safe because we are only
+    // writing undefined into the module private, so it won't create any
+    // black-gray edges.
     JSObject* module = mModuleRecord.unbarrieredGet();
-    MOZ_ASSERT(JS::GetModulePrivate(module).toPrivate() == this);
-    JS::ClearModulePrivate(module);
+    if (JS::IsCyclicModule(module)) {
+      MOZ_ASSERT(JS::GetModulePrivate(module).toPrivate() == this);
+      JS::ClearModulePrivate(module);
+    }
     mModuleRecord = nullptr;
   }
 }
@@ -304,12 +308,14 @@ void ModuleScript::SetModuleRecord(JS::Handle<JSObject*> aModuleRecord) {
 
   mModuleRecord = aModuleRecord;
 
-  // Make module's host defined field point to this object. The JS engine will
-  // increment our reference count by calling HostAddRefTopLevelScript(). This
-  // is decremented when the field is cleared in UnlinkModuleRecord() above or
-  // when the module record dies.
-  MOZ_ASSERT(JS::GetModulePrivate(mModuleRecord).isUndefined());
-  JS::SetModulePrivate(mModuleRecord, JS::PrivateValue(this));
+  if (JS::IsCyclicModule(mModuleRecord)) {
+    // Make module's host defined field point to this object. The JS engine will
+    // increment our reference count by calling HostAddRefTopLevelScript(). This
+    // is decremented when the field is cleared in UnlinkModuleRecord() above or
+    // when the module record dies.
+    MOZ_ASSERT(JS::GetModulePrivate(mModuleRecord).isUndefined());
+    JS::SetModulePrivate(mModuleRecord, JS::PrivateValue(this));
+  }
 
   mozilla::HoldJSObjects(this);
 }

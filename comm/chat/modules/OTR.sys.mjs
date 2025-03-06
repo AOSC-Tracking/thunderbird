@@ -271,20 +271,20 @@ export var OTR = {
     return worker
       .post("generateKey", [OTRLib.path, OTRLib.otrl_version, address])
       .then(function () {
-        const err = OTRLib.otrl_privkey_generate_finish(
+        const rv = OTRLib.otrl_privkey_generate_finish(
           OTR.userstate,
           newkey,
           OTR.privateKeyPath
         );
-        if (err) {
-          throw new Error("otrl_privkey_generate_calculate (" + err + ")");
+        if (rv) {
+          throw new Error("otrl_privkey_generate_calculate (" + rv + ")");
         }
       })
-      .catch(function (err) {
+      .catch(function (e) {
         if (!newkey.isNull()) {
           OTRLib.otrl_privkey_generate_cancelled(OTR.userstate, newkey);
         }
-        throw err;
+        throw e;
       });
   },
 
@@ -877,11 +877,13 @@ export var OTR = {
    * We have completed an authentication, using the D-H keys we already
    * knew.
    *
-   * @param is_reply    indicates whether we initiated the AKE.
+   * @param {void} opdata
+   * @param {Context} context
+   * @param {boolean} isReply - Indicates whether we initiated the AKE.
    */
-  still_secure_cb(opdata, context, is_reply) {
+  still_secure_cb(opdata, context, isReply) {
     // Indicate the private conversation was refreshed.
-    if (!is_reply) {
+    if (!isReply) {
       context = new Context(context);
       this.notifyObservers(context, "otr:msg-state");
       this.sendAlert(
@@ -1501,7 +1503,6 @@ export var OTR = {
    * magic OTR bytes and such for displaying.
    *
    * @param {imIMessage} incomingMessage - Message with an outgoing tag.
-   * @returns
    */
   pluckMsg(incomingMessage) {
     for (let i = 0; i < this._buffer.length; i++) {

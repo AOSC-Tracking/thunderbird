@@ -83,8 +83,17 @@ add_setup(async function () {
     `)
   );
 
-  const account = MailServices.accounts.createLocalMailAccount();
-  account.addIdentity(MailServices.accounts.createIdentity());
+  // We'll try composing, so need an account.
+  const account = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
+  identity.email = "mochitest@localhost";
+  account.addIdentity(identity);
+  account.incomingServer = MailServices.accounts.createIncomingServer(
+    "user",
+    "test",
+    "pop3"
+  );
+  MailServices.accounts.defaultAccount = account;
 
   const calendar = CalendarTestUtils.createCalendar();
 
@@ -309,7 +318,9 @@ add_task(async function testDisplay() {
     items[0].children[1].querySelector("a").textContent,
     "www.thunderbird.net"
   );
-  items[0].children[1].querySelector("a").scrollIntoView();
+  items[0].children[1]
+    .querySelector("a")
+    .scrollIntoView({ block: "start", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(
     items[0].children[1].querySelector("a"),
     {},
@@ -889,7 +900,9 @@ add_task(async function testGoogleEscaping() {
     items[0].children[1].querySelector("a").textContent,
     "host/url:url;url,url/url"
   );
-  items[0].children[1].querySelector("a").scrollIntoView();
+  items[0].children[1]
+    .querySelector("a")
+    .scrollIntoView({ block: "start", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(
     items[0].children[1].querySelector("a"),
     {},

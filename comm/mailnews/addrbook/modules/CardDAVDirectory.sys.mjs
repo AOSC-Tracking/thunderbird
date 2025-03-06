@@ -10,7 +10,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
   CardDAVUtils: "resource:///modules/CardDAVUtils.sys.mjs",
   NotificationCallbacks: "resource:///modules/CardDAVUtils.sys.mjs",
   OAuth2Module: "resource:///modules/OAuth2Module.sys.mjs",
-  OAuth2Providers: "resource:///modules/OAuth2Providers.sys.mjs",
   VCardProperties: "resource:///modules/VCardUtils.sys.mjs",
   VCardUtils: "resource:///modules/VCardUtils.sys.mjs",
   clearInterval: "resource://gre/modules/Timer.sys.mjs",
@@ -200,11 +199,17 @@ export class CardDAVDirectory extends SQLiteDirectory {
     const uri = serverURI.resolve(path);
 
     if (!("_oAuth" in this)) {
-      if (lazy.OAuth2Providers.getHostnameDetails(serverURI.host)) {
-        this._oAuth = new lazy.OAuth2Module();
-        this._oAuth.initFromABDirectory(this, serverURI.host);
+      const oAuth = new lazy.OAuth2Module();
+      if (
+        oAuth.initFromHostname(
+          serverURI.host,
+          this.getStringValue("carddav.username", "") || this.UID,
+          "carddav"
+        )
+      ) {
+        this._oAuth = oAuth;
       } else {
-        this._oAuth = null;
+        this._oAuth = null; // Prevents this block from running again.
       }
     }
     details.oAuth = this._oAuth;
@@ -388,7 +393,7 @@ export class CardDAVDirectory extends SQLiteDirectory {
    *     conflict status code.
    */
   async _sendCardToServer(card) {
-    const href = this._getCardHref(card);
+    const cardHref = this._getCardHref(card);
     const requestDetails = {
       method: "PUT",
       contentType: "text/vcard",
@@ -408,8 +413,8 @@ export class CardDAVDirectory extends SQLiteDirectory {
 
     let response;
     try {
-      log.debug(`Sending ${href} to server.`);
-      response = await this._makeRequest(href, requestDetails);
+      log.debug(`Sending ${cardHref} to server.`);
+      response = await this._makeRequest(cardHref, requestDetails);
     } catch (ex) {
       Services.obs.notifyObservers(this, "addrbook-directory-sync-failed");
       this._uidsToSync.add(card.UID);
@@ -428,7 +433,7 @@ export class CardDAVDirectory extends SQLiteDirectory {
     // telling us where it went (c'mon, really?). Fortunately a multiget
     // request at the original location works.
 
-    response = await this._multigetRequest([href]);
+    response = await this._multigetRequest([cardHref]);
 
     for (const { href, properties } of this._readResponse(response.dom)) {
       if (!properties) {
@@ -436,11 +441,11 @@ export class CardDAVDirectory extends SQLiteDirectory {
       }
 
       const etag = properties.querySelector("getetag")?.textContent;
-      const vCard = normalizeLineEndings(
+      const responseCard = normalizeLineEndings(
         properties.querySelector("address-data")?.textContent
       );
 
-      const abCard = lazy.VCardUtils.vCardToAbCard(vCard);
+      const abCard = lazy.VCardUtils.vCardToAbCard(responseCard);
       abCard.setProperty("_etag", etag);
       abCard.setProperty("_href", href);
 
@@ -547,7 +552,10 @@ export class CardDAVDirectory extends SQLiteDirectory {
     // A map of all existing hrefs and etags. If the etag for an href matches
     // what we already have, we won't fetch it.
     const currentHrefs = new Map(
-      Array.from(this.cards.values(), c => [c.get("_href"), c.get("_etag")])
+      Array.from(
+        this.cards.values().filter(c => c.get("_href")),
+        c => [c.get("_href"), c.get("_etag")]
+      )
     );
 
     const hrefsToFetch = [];
@@ -826,7 +834,7 @@ export class CardDAVDirectory extends SQLiteDirectory {
 
     if (response.status == 400) {
       log.warn(
-        `Server responded with: ${response.status} ${response.statusText}`
+        `Server ${this._serverURL} responded with: ${response.status} ${response.statusText}`
       );
       await this.fetchAllFromServer();
       return;

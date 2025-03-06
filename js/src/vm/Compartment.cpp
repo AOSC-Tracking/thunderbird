@@ -36,6 +36,7 @@
 #include "gc/WeakMap-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/Realm-inl.h"
+#include "vm/StringType-inl.h"
 
 using namespace js;
 
@@ -104,6 +105,20 @@ JSString* js::CopyStringPure(JSContext* cx, JSString* str) {
   size_t len = str->length();
   JSString* copy;
   if (str->isLinear()) {
+    // If the string has a refcounted StringBuffer, we can share it.
+    if (str->hasStringBuffer()) {
+      RefPtr<mozilla::StringBuffer> buffer(str->asLinear().stringBuffer());
+      if (str->hasLatin1Chars()) {
+        Rooted<JSString::OwnedChars<Latin1Char>> owned(cx, std::move(buffer),
+                                                       len);
+        return JSLinearString::newValidLength<CanGC, Latin1Char>(
+            cx, &owned, gc::Heap::Default);
+      }
+      Rooted<JSString::OwnedChars<char16_t>> owned(cx, std::move(buffer), len);
+      return JSLinearString::newValidLength<CanGC, char16_t>(cx, &owned,
+                                                             gc::Heap::Default);
+    }
+
     /* Only use AutoStableStringChars if the NoGC allocation fails. */
     if (str->hasLatin1Chars()) {
       JS::AutoCheckCannotGC nogc;
@@ -266,11 +281,11 @@ bool Compartment::getNonWrapperObjectForCurrentCompartment(
   // We're a bit worried about infinite recursion here, so we do a check -
   // see bug 809295.
   auto preWrap = cx->runtime()->wrapObjectCallbacks->preWrap;
-  AutoCheckRecursionLimit recursion(cx);
-  if (!recursion.checkSystem(cx)) {
-    return false;
-  }
   if (preWrap) {
+    AutoCheckRecursionLimit recursion(cx);
+    if (!recursion.checkSystem(cx)) {
+      return false;
+    }
     preWrap(cx, cx->global(), origObj, obj, objectPassedToWrap, obj);
     if (!obj) {
       return false;

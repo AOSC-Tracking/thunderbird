@@ -55,6 +55,7 @@ Preferences.addAll([
   { id: "mail.pane_config.dynamic", type: "int" },
   { id: "mailnews.start_page.enabled", type: "bool" },
   { id: "mailnews.start_page.url", type: "string" },
+  { id: "mail.accounthub.enabled", type: "bool" },
   { id: "mail.biff.show_tray_icon", type: "bool" },
   { id: "mail.biff.play_sound", type: "bool" },
   { id: "mail.biff.play_sound.type", type: "int" },
@@ -84,6 +85,9 @@ Preferences.addAll([
   { id: "mailnews.labels.color.5", type: "string" },
   { id: "mail.addressDisplayFormat", type: "int" },
   { id: "mail.showCondensedAddresses", type: "bool" },
+  { id: "mail.threadpane.table.horizontal_scroll", type: "bool" },
+  { id: "mail.dark-reader.enabled", type: "bool" },
+  { id: "mail.dark-reader.show-toggle", type: "bool" },
   { id: "mailnews.mark_message_read.auto", type: "bool" },
   { id: "mailnews.mark_message_read.delay", type: "bool" },
   { id: "mailnews.mark_message_read.delay.interval", type: "int" },
@@ -130,6 +134,11 @@ if (AppConstants.MOZ_UPDATER) {
   if (AppConstants.MOZ_MAINTENANCE_SERVICE) {
     Preferences.add({ id: "app.update.service.enabled", type: "bool" });
   }
+}
+
+// Nightly experimental prefs.
+if (AppConstants.NIGHTLY_BUILD) {
+  Preferences.add({ id: "mail.thread.conversation.enabled", type: "bool" });
 }
 
 var gGeneralPane = {
@@ -700,7 +709,8 @@ var gGeneralPane = {
   /**
    * Look up OpenSearch Description URL.
    *
-   * @param url - the url to use as basis for discovery
+   * @param {string} url - The url to use as basis for discovery.
+   * @returns {string} the OpenSearch Description URL.
    */
   async lookupOpenSearch(url) {
     const response = await fetch(url);
@@ -749,11 +759,11 @@ var gGeneralPane = {
       url = await this.lookupOpenSearch(url);
       engine = await Services.search.addOpenSearchEngine(url, null);
     } catch (reason) {
-      const [title, text] = await document.l10n.formatValues([
+      const [failTitle, failText] = await document.l10n.formatValues([
         { id: "adding-opensearch-provider-failed-title" },
         { id: "adding-opensearch-provider-failed-text", args: { url } },
       ]);
-      Services.prompt.alert(window, title, text);
+      Services.prompt.alert(window, failTitle, failText);
       return;
     }
     // Wait a bit, so the engine iconURI has time to be fetched.
@@ -1015,12 +1025,25 @@ var gGeneralPane = {
     );
     const appLocale = Services.locale.appLocalesAsBCP47[0];
     const rsLocale = osprefs.regionalPrefsLocales[0];
+    const appLocaleRadio = document.getElementById("appLocale");
+    const rsLocaleRadio = document.getElementById("rsLocale");
+
+    if (
+      !Cu.isInAutomation &&
+      appLocale.split("-")[0] == rsLocale.split("-")[0]
+    ) {
+      // If the app locale and regional settings locale are the same language,
+      // regardless of region, intl.regional_prefs.use_os_locales is ignored
+      // and the regional settings locale is always used, making these radio
+      // buttons useless. Hide them.
+      appLocaleRadio.closest("fieldset").hidden = true;
+      return;
+    }
+
     const names = Services.intl.getLocaleDisplayNames(undefined, [
       appLocale,
       rsLocale,
     ]);
-    const appLocaleRadio = document.getElementById("appLocale");
-    const rsLocaleRadio = document.getElementById("rsLocale");
     const appLocaleLabel = this._prefsBundle.getFormattedString(
       "appLocale.label",
       [names[0]]
@@ -1875,8 +1898,8 @@ var gGeneralPane = {
    * Get the details for the type represented by the given handler info
    * object.
    *
-   * @param aHandlerInfo {nsIHandlerInfo} the type to get the extensions for.
-   * @returns {string} the extensions for the type
+   * @param {nsIHandlerInfo} aHandlerInfo - The type to get the extensions for.
+   * @returns {string} the extensions for the type.
    */
   _typeDetails(aHandlerInfo) {
     let exts = [];
@@ -1912,8 +1935,8 @@ var gGeneralPane = {
   /**
    * Whether or not the given handler app is valid.
    *
-   * @param aHandlerApp {nsIHandlerApp} the handler app in question
-   * @returns {boolean} whether or not it's valid
+   * @param {nsIHandlerInfo} aHandlerApp - The handler app in question.
+   * @returns {boolean} whether or not it's valid.
    */
   isValidHandlerApp(aHandlerApp) {
     if (!aHandlerApp) {
@@ -1935,6 +1958,9 @@ var gGeneralPane = {
     return false;
   },
 
+  /**
+   * @param {?nsIFile} aExecutable
+   */
   _isValidHandlerExecutable(aExecutable) {
     const isExecutable =
       aExecutable && aExecutable.exists() && aExecutable.isExecutable();
@@ -2279,8 +2305,7 @@ class HandlerRow {
 
     // Add a separator to distinguish these items from the helper app items
     // that follow them.
-    let menuItem = document.createXULElement("menuseparator");
-    menuPopup.appendChild(menuItem);
+    menuPopup.appendChild(document.createXULElement("menuseparator"));
 
     // Create a menu item for the OS default application, if any.
     let defaultMenuItem;
@@ -2314,8 +2339,8 @@ class HandlerRow {
         continue;
       }
 
-      const menuItem = document.createXULElement("menuitem");
-      menuItem.setAttribute("action", Ci.nsIHandlerInfo.useHelperApp);
+      const appMenuItem = document.createXULElement("menuitem");
+      appMenuItem.setAttribute("action", Ci.nsIHandlerInfo.useHelperApp);
       let label;
       if (possibleApp instanceof Ci.nsILocalHandlerApp) {
         label = getDisplayNameForFile(possibleApp.executable);
@@ -2323,19 +2348,19 @@ class HandlerRow {
         label = possibleApp.name;
       }
       label = gGeneralPane._prefsBundle.getFormattedString("useApp", [label]);
-      menuItem.setAttribute("label", label);
-      menuItem.setAttribute("tooltiptext", label);
-      menuItem.setAttribute(
+      appMenuItem.setAttribute("label", label);
+      appMenuItem.setAttribute("tooltiptext", label);
+      appMenuItem.setAttribute(
         "image",
         gGeneralPane._getIconURLForHandlerApp(possibleApp)
       );
 
       // Attach the handler app object to the menu item so we can use it
       // to make changes to the datastore when the user selects the item.
-      menuItem.handlerApp = possibleApp;
+      appMenuItem.handlerApp = possibleApp;
 
-      menuPopup.appendChild(menuItem);
-      possibleAppMenuItems.push(menuItem);
+      menuPopup.appendChild(appMenuItem);
+      possibleAppMenuItems.push(appMenuItem);
     }
 
     // Create a menu item for selecting a local application.
@@ -2373,15 +2398,14 @@ class HandlerRow {
       menuPopup.appendChild(menuItem);
     }
 
-    menuItem = document.createXULElement("menuseparator");
-    menuPopup.appendChild(menuItem);
-    menuItem = document.createXULElement("menuitem");
-    menuItem.addEventListener("command", this.confirmDelete.bind(this));
-    menuItem.setAttribute(
+    menuPopup.appendChild(document.createXULElement("menuseparator"));
+    const delMenuItem = document.createXULElement("menuitem");
+    delMenuItem.addEventListener("command", this.confirmDelete.bind(this));
+    delMenuItem.setAttribute(
       "label",
       gGeneralPane._prefsBundle.getString("delete")
     );
-    menuPopup.appendChild(menuItem);
+    menuPopup.appendChild(delMenuItem);
 
     // Select the item corresponding to the preferred action.  If the always
     // ask flag is set, it overrides the preferred action.  Otherwise we pick
@@ -2488,7 +2512,7 @@ class HandlerRow {
 
       gSubDialog.open(
         "chrome://global/content/appPicker.xhtml",
-        { features: "resizable=no", closingCallback: onAppSelected },
+        { closingCallback: onAppSelected },
         params
       );
     } else {

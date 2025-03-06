@@ -25,6 +25,7 @@
       defaultTabTitle="&defaultTabTitle.label;"
       windowtype="mail:3pane"
       macanimationtype="document"
+      windowsmica="true"
       screenX="10" screenY="10"
       scrolling="false"
       persist="screenX screenY width height sizemode"
@@ -53,6 +54,7 @@
   <link rel="stylesheet" href="chrome://messenger/skin/panelUI.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/contextMenu.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/input-fields.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/inAppNotificationManager.css" />
   <link
     rel="stylesheet"
     href="chrome://messenger/skin/openpgp/inlineNotification.css"
@@ -100,6 +102,7 @@
   <link rel="localization" href="messenger/openpgp/openpgp.ftl" />
   <link rel="localization" href="messenger/openpgp/openpgp-frontend.ftl" />
   <link rel="localization" href="messenger/openpgp/msgReadStatus.ftl"/>
+  <link rel="localization" href="calendar/calendar.ftl" />
   <link rel="localization" href="calendar/calendar-today-pane.ftl" />
   <link rel="localization" href="calendar/calendar-widgets.ftl" />
   <link rel="localization" href="calendar/calendar-context-menus.ftl" />
@@ -108,6 +111,7 @@
   <link rel="localization" href="messenger/chat.ftl" />
   <link rel="localization" href="messenger/messageheader/headerFields.ftl" />
   <link rel="localization" href="messenger/mailWidgets.ftl" />
+  <link rel="localization" href="messenger/inAppNotifications.ftl" />
   <link rel="localization" href="messenger/unifiedToolbar.ftl" />
   <link rel="localization" href="messenger/unifiedToolbarItems.ftl" />
 #ifdef NIGHTLY_BUILD
@@ -239,6 +243,8 @@
 
   <!-- NEEDED FOR MIGRATION CHECK AT INSTALL -->
   <script defer="defer" src="chrome://calendar/content/calendar-migration.js"></script>
+
+  <!-- Customizable shortcuts -->
   <script defer="defer" src="chrome://messenger/content/shortcutsOverlay.js"></script>
 
   <script defer="defer" src="chrome://messenger/content/accountcreation/accountHub.js"></script>
@@ -468,6 +474,15 @@
 </popupset>
 #endif
 
+<!--
+  Include in app notifications first to make them as easy as possible to get to
+  when navigating via keyboard. This is important if they miss the instructions
+  for the key command to be able to find what was announced.
+-->
+#include ../../components/inappnotifications/content/inAppNotificationTemplates.inc.xhtml
+
+<div class="in-app-notification-root" role="status"></div>
+
 #include ../../../calendar/base/content/calendar-context-menus-and-tooltips.inc.xhtml
 #include ../../components/unifiedtoolbar/content/unifiedToolbarTemplates.inc.xhtml
 
@@ -485,9 +500,7 @@
     <toolbar id="toolbar-menubar"
              class="chromeclass-menubar themeable-full"
              type="menubar"
-#ifdef XP_MACOSX
              autohide="true"
-#endif
 #ifndef XP_MACOSX
              data-l10n-id="toolbar-context-menu-menu-bar"
              data-l10n-attrs="toolbarname"
@@ -516,7 +529,7 @@
         <arrowscrollbox id="tabmail-arrowscrollbox"
                         orient="horizontal"
                         flex="1"
-                        clicktoscroll="true"
+                        clicktoscroll=""
                         style="min-width: 1px;">
           <tab is="tabmail-tab" selected="true"
                class="tabmail-tab" crop="end"/>
@@ -684,5 +697,6 @@
 
 #include tabDialogs.inc.xhtml
 #include ../../components/accountcreation/templates/accountHubTemplate.inc.xhtml
+#include ../../components/customizableshortcuts/content/shortcutsContainerTemplate.inc.xhtml
 </html:body>
 </html>

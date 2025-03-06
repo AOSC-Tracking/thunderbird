@@ -135,9 +135,12 @@ pref("mailnews.headers.showSender", false);
 // be greater than one hour so daylight savings time changes don't affect us.
 // We will still always regenerate .msf files if the file size changes.
 pref("mail.db_timestamp_leeway", 4000);
-// How long should we leave idle db's open, in milliseconds.
+// MsgDBCacheManager will close databases that have been idle for idle_limit
+// milliseconds and are smaller than keep_open_size bytes.
 pref("mail.db.idle_limit", 300000);
-// How many db's should we leave open? LRU db's will be closed first
+pref("mail.db.keep_open_size", 1048576);
+// How many db's should we leave open? MsgDBCacheManager will close the
+// smallest and least-recently-used first.
 pref("mail.db.max_open", 30);
 
 // Should we allow folders over 4GB in size?
@@ -257,26 +260,17 @@ pref("carddav.sync.loglevel", "Warn");
 // Note, changing the fields searched might require changing labels:
 // SearchNameOrEmail.label in messenger.dtd,
 // searchNameAndEmail.emptytext in abMainWindow.dtd, etc.
-//
-// mail.addr_book.quicksearchquery.format will be used if mail.addr_book.show_phonetic_fields is "false"
 pref("mail.addr_book.quicksearchquery.format", "(or(DisplayName,c,@V)(FirstName,c,@V)(LastName,c,@V)(NickName,c,@V)(PrimaryEmail,c,@V)(SecondEmail,c,@V)(and(IsMailList,=,TRUE)(Notes,c,@V))(Company,c,@V)(Department,c,@V)(JobTitle,c,@V)(WebPage1,c,@V)(WebPage2,c,@V))");
-// mail.addr_book.quicksearchquery.format.phonetic will be used if mail.addr_book.show_phonetic_fields is "true"
-pref("mail.addr_book.quicksearchquery.format.phonetic", "(or(DisplayName,c,@V)(FirstName,c,@V)(LastName,c,@V)(NickName,c,@V)(PrimaryEmail,c,@V)(SecondEmail,c,@V)(and(IsMailList,=,TRUE)(Notes,c,@V))(Company,c,@V)(Department,c,@V)(JobTitle,c,@V)(WebPage1,c,@V)(WebPage2,c,@V)(PhoneticFirstName,c,@V)(PhoneticLastName,c,@V))");
 
 // mail.addr_book.autocompletequery.format is the model query used for:
 // * TB: Recipient Autocomplete (composition, mailing list properties dialogue)
 // * SM: Recipient Autocomplete (composition, mailing list properties dialogue)
-//
-// mail.addr_book.autocompletequery.format will be used if mail.addr_book.show_phonetic_fields is "false"
 pref("mail.addr_book.autocompletequery.format", "(or(DisplayName,c,@V)(FirstName,c,@V)(LastName,c,@V)(NickName,c,@V)(PrimaryEmail,c,@V)(SecondEmail,c,@V)(and(IsMailList,=,TRUE)(Notes,c,@V)))");
-// mail.addr_book.autocompletequery.format.phonetic will be used if mail.addr_book.show_phonetic_fields is "true"
-pref("mail.addr_book.autocompletequery.format.phonetic", "(or(DisplayName,c,@V)(FirstName,c,@V)(LastName,c,@V)(NickName,c,@V)(PrimaryEmail,c,@V)(SecondEmail,c,@V)(and(IsMailList,=,TRUE)(Notes,c,@V))(PhoneticFirstName,c,@V)(PhoneticLastName,c,@V))");
 
 // values for "mail.addr_book.lastnamefirst" are:
 //0=displayname, 1=lastname first, 2=firstname first
 pref("mail.addr_book.lastnamefirst", 0);
 pref("mail.addr_book.displayName.autoGeneration", true);
-pref("mail.addr_book.show_phonetic_fields", "chrome://messenger/locale/messenger.properties");
 pref("mail.html_compose",                   true);
 // you can specify multiple, option headers
 // this will show up in the address picker in the compose window
@@ -363,6 +357,10 @@ pref("mail.purge_threshhold_mb", 500);
 pref("mail.prompt_purge_threshhold", true);
 pref("mail.purge.ask", true);
 
+// If true, a failure to read a message from offline storage will
+// discard it, to allow subsequent automatic reloading (self-healing).
+pref("mail.discard_offline_msg_on_failure", true);
+
 pref("mailnews.offline_sync_mail", false);
 pref("mailnews.offline_sync_news", false);
 pref("mailnews.offline_sync_send_unsent", true);
@@ -381,8 +379,6 @@ pref("mailnews.localizedRe", "chrome://messenger-region/locale/region.properties
 pref("mailnews.search_date_format", "chrome://messenger/locale/messenger.properties");
 pref("mailnews.search_date_separator", "chrome://messenger/locale/messenger.properties");
 pref("mailnews.search_date_leading_zeros", "chrome://messenger/locale/messenger.properties");
-// used to decide whether to migrate global quoting prefs
-pref("mailnews.quotingPrefs.version", 0);
 
 // the first time, we'll warn the user about the blind send, and they can disable the warning if they want.
 pref("mapi.blind-send.enabled", true);
@@ -443,10 +439,6 @@ pref("ldap_2.servers.default.attrmap.Custom3", "mozillaCustom3,custom3");
 pref("ldap_2.servers.default.attrmap.Custom4", "mozillaCustom4,custom4");
 pref("ldap_2.servers.default.attrmap.Notes", "description,notes");
 pref("ldap_2.servers.default.attrmap.LastModifiedDate", "modifytimestamp");
-
-pref("ldap_2.user_id", 0);
-// Update kCurrentListVersion in include/dirprefs.h if you change this
-pref("ldap_2.version", 3);
 
 pref("mailnews.ldap.loglevel", "Warn");
 
@@ -762,11 +754,6 @@ pref("mailnews.display.disallow_mime_handlers", 0);
 //       This mode will limit the features available (e.g. uncommon
 //       attachment types and inline images) and is for paranoid users.
 
-// RSS rendering options, see prior 4 prefs above.
-pref("rss.display.prefer_plaintext", false);
-pref("rss.display.html_as", 0);
-pref("rss.display.disallow_mime_handlers", 0);
-
 // Feed message display (summary or web page), on select.
 // 0 - global override, load web page
 // 1 - global override, load summary
@@ -780,11 +767,6 @@ pref("rss.show.summary", 1);
 // 2 - toggle load summary and content-base url in message pane
 // 3 - load content-base url in browser
 pref("rss.show.content-base", 0);
-
-// Feed message additional web page display.
-// 0 - no action
-// 1 - load web page in default browser, on select
-pref("rss.message.loadWebPageOnSelect", 0);
 
 // Feed auto updates / "Pause Updates"
 // true  = If updating a feed results in an error code, disable the feed until next manual check or application restart.
@@ -921,32 +903,6 @@ pref("mailnews.show_send_progress", true);
 pref("mail.server.default.retainBy", 1);
 
 pref("mailnews.ui.junk.manualMarkAsJunkMarksRead", true);
-
-// for manual upgrades of certain UI features.
-// 1 -> 2 is for the folder pane tree landing, to hide the
-// unread and total columns, see messenger.js
-pref("mail.ui.folderpane.version", 1);
-
-// for manual upgrades of certain UI features.
-// 1 -> 2 is for the ab results pane tree landing
-// to hide the non default columns in the addressbook dialog
-// see abCommon.js and addressbook.js
-pref("mailnews.ui.addressbook_results.version", 1);
-// for manual upgrades of certain UI features.
-// 1 -> 2 is for the ab results pane tree landing
-// to hide the non default columns in the addressbook sidebar panel
-// see abCommon.js and addressbook-panel.js
-pref("mailnews.ui.addressbook_panel_results.version", 1);
-// for manual upgrades of certain UI features.
-// 1 -> 2 is for the ab results pane tree landing
-// to hide the non default columns in the select addresses dialog
-// see abCommon.js and abSelectAddressesDialog.js
-pref("mailnews.ui.select_addresses_results.version", 1);
-// for manual upgrades of certain UI features.
-// 1 -> 2 is for the ab results pane
-// to hide the non default columns in the advanced directory search dialog
-// see abCommon.js and abSearchDialog.js
-pref("mailnews.ui.advanced_directory_search_results.version", 1);
 
 // default description and color prefs for tags
 // (we keep the .labels. names for backwards compatibility)
@@ -1174,6 +1130,11 @@ pref("mail.export.loglevel", "Warn");
 pref("mail.imap.use_disk_cache2", true);
 
 #ifdef MOZ_THUNDERBIRD_RUST
-// Enable support for Microsoft Exchange via Exchange Web Services.
+  // Enable support for Microsoft Exchange via Exchange Web Services.
+#ifdef NIGHTLY_BUILD
+pref("experimental.mail.ews.enabled", true);
+#else
 pref("experimental.mail.ews.enabled", false);
+#endif
+
 #endif
