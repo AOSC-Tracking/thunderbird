@@ -3,6 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
+
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
@@ -131,11 +133,13 @@ export const NotificationUpdater = {
   },
 
   /**
-   * If we can check the server for updates.
+   * If the user has interacted with the data submission policy. We wait for
+   * this to reduce noise on first run. Once that's happened we're ready to
+   * update from the network and potentially show notifications.
    *
    * @type {boolean}
    */
-  get canUpdate() {
+  get readyToUpdate() {
     const dataSubmissionPolicyAcceptedVersion = Services.prefs.getIntPref(
       "datareporting.policy.dataSubmissionPolicyAcceptedVersion",
       0
@@ -144,9 +148,18 @@ export const NotificationUpdater = {
       "datareporting.policy.currentPolicyVersion",
       1
     );
+    return dataSubmissionPolicyAcceptedVersion >= currentPolicyVersion;
+  },
+
+  /**
+   * If we can check the server for updates.
+   *
+   * @type {boolean}
+   */
+  get canUpdate() {
     return (
       !Services.io.offline &&
-      dataSubmissionPolicyAcceptedVersion >= currentPolicyVersion &&
+      this.readyToUpdate &&
       Services.prefs.getBoolPref("mail.inappnotifications.enabled", false)
     );
   },
@@ -165,6 +178,9 @@ export const NotificationUpdater = {
       return { loadFromCache: true, hasCache: true };
     }
 
+    // Check if the url matches the pref.
+    this._checkUrl();
+
     const expirationTime = await this.getRemainingCacheTime(this._getUrl());
 
     // Don't update if we have an expirationTime unless it's the defaultInterval
@@ -173,6 +189,7 @@ export const NotificationUpdater = {
       return { loadFromCache: true, hasCache: true };
     }
     const didFetch = await this._fetch();
+
     return { loadFromCache: !didFetch, hasCache: false };
   },
 
@@ -186,10 +203,18 @@ export const NotificationUpdater = {
    * @returns {string} Notification server url.
    */
   _getUrl() {
-    const url = Services.prefs.getStringPref("mail.inappnotifications.url");
-
     return Services.urlFormatter.formatURL(
-      url.replace("%IAN_SCHEMA_VERSION%", this._SCHEMA_VERSION)
+      this.url.replace("%IAN_SCHEMA_VERSION%", this._SCHEMA_VERSION)
+    );
+  },
+
+  /**
+   * Check if the current url is the default url and call the correct glean
+   * probe.
+   */
+  async _checkUrl() {
+    Glean.inappnotifications.preferences["mail.inappnotifications.url"].set(
+      !Services.prefs.prefHasUserValue("mail.inappnotifications.url")
     );
   },
 
@@ -302,3 +327,11 @@ export const NotificationUpdater = {
     }, time);
   },
 };
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  NotificationUpdater,
+  "url",
+  "mail.inappnotifications.url",
+  "",
+  () => NotificationUpdater._checkUrl()
+);

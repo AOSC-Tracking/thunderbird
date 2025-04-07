@@ -358,7 +358,7 @@ nsresult nsMapiHook::HandleAttachments(nsIMsgCompFields* aCompFields,
       pTempDir->AppendRelativePath(u"moz_mapi"_ns);
       pTempDir->Exists(&bExist);
       if (!bExist) {
-        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 777);
+        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 0777);
         if (NS_FAILED(rv)) return rv;
       }
 
@@ -388,7 +388,7 @@ nsresult nsMapiHook::HandleAttachments(nsIMsgCompFields* aCompFields,
       nsCOMPtr<nsIMsgAttachment> attachment =
           do_CreateInstance("@mozilla.org/messengercompose/attachment;1", &rv);
       NS_ENSURE_SUCCESS(rv, rv);
-      attachment->SetName(leafName);
+      attachment->SetName(NS_ConvertUTF16toUTF8(leafName));
 
       nsCOMPtr<nsIFile> pTempFile;
       rv = pTempDir->Clone(getter_AddRefs(pTempFile));
@@ -474,7 +474,7 @@ nsresult nsMapiHook::HandleAttachmentsW(nsIMsgCompFields* aCompFields,
       pTempDir->AppendRelativePath(u"moz_mapi"_ns);
       pTempDir->Exists(&bExist);
       if (!bExist) {
-        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 777);
+        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 0777);
         if (NS_FAILED(rv)) return rv;
       }
 
@@ -498,7 +498,7 @@ nsresult nsMapiHook::HandleAttachmentsW(nsIMsgCompFields* aCompFields,
       nsCOMPtr<nsIMsgAttachment> attachment =
           do_CreateInstance("@mozilla.org/messengercompose/attachment;1", &rv);
       NS_ENSURE_SUCCESS(rv, rv);
-      attachment->SetName(leafName);
+      attachment->SetName(NS_ConvertUTF16toUTF8(leafName));
 
       nsCOMPtr<nsIFile> pTempFile;
       rv = pTempDir->Clone(getter_AddRefs(pTempFile));
@@ -785,7 +785,7 @@ nsresult nsMapiHook::PopulateCompFieldsForSendDocs(
       pTempDir->AppendRelativePath(u"moz_mapi"_ns);
       pTempDir->Exists(&bExist);
       if (!bExist) {
-        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 777);
+        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 0777);
         if (NS_FAILED(rv)) return rv;
       }
 

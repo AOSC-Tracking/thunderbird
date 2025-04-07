@@ -21,6 +21,7 @@ var {
   messagePartToRaw,
   parseEncodedAddrHeader,
   CachedMsgHeader,
+  FolderPropertyChangeListener,
   MAILBOX_HEADERS,
   MessageQuery,
   MsgHdrProcessor,
@@ -161,7 +162,7 @@ function convertMessagePart(
   };
 
   if (decodeContent) {
-    // Supress content of attachments or other binary parts.
+    // Suppress content of attachments or other binary parts.
     const mediatype = mimeTreePart.headers.contentType.mediatype || "text";
     if (
       mimeTreePart.body &&
@@ -307,7 +308,11 @@ this.messages = class extends ExtensionAPIPersistent {
       const listener = async (event, folder, newMessages) => {
         const { extension } = this;
         // The msgHdr could be gone after the wakeup, convert it early.
-        const page = await messageListTracker.startList(newMessages, extension);
+        const page = await messageListTracker.startList(
+          newMessages,
+          extension,
+          { includeDeletedMessages: true }
+        );
         if (fire.wakeup) {
           await fire.wakeup();
         }
@@ -331,7 +336,7 @@ this.messages = class extends ExtensionAPIPersistent {
       };
     },
     onUpdated({ fire }) {
-      const listener = async (event, message, properties) => {
+      const listener = async (event, message, newProperties, oldProperties) => {
         const { extension } = this;
         // The msgHdr could be gone after the wakeup, convert it early.
         const convertedMessage = extension.messageManager.convert(message);
@@ -341,7 +346,7 @@ this.messages = class extends ExtensionAPIPersistent {
         if (fire.wakeup) {
           await fire.wakeup();
         }
-        fire.async(convertedMessage, properties);
+        fire.async(convertedMessage, newProperties, oldProperties);
       };
       messageTracker.on("message-updated", listener);
       return {
@@ -359,11 +364,13 @@ this.messages = class extends ExtensionAPIPersistent {
         // The msgHdr could be gone after the wakeup, convert them early.
         const srcPage = await messageListTracker.startList(
           srcMessages,
-          extension
+          extension,
+          { includeDeletedMessages: true }
         );
         const dstPage = await messageListTracker.startList(
           dstMessages,
-          extension
+          extension,
+          { includeDeletedMessages: true }
         );
         if (fire.wakeup) {
           await fire.wakeup();
@@ -386,11 +393,13 @@ this.messages = class extends ExtensionAPIPersistent {
         // The msgHdr could be gone after the wakeup, convert them early.
         const srcPage = await messageListTracker.startList(
           srcMessages,
-          extension
+          extension,
+          { includeDeletedMessages: true }
         );
         const dstPage = await messageListTracker.startList(
           dstMessages,
-          extension
+          extension,
+          { includeDeletedMessages: true }
         );
         if (fire.wakeup) {
           await fire.wakeup();
@@ -413,7 +422,8 @@ this.messages = class extends ExtensionAPIPersistent {
         // The msgHdr could be gone after the wakeup, convert them early.
         const deletedPage = await messageListTracker.startList(
           deletedMessages,
-          extension
+          extension,
+          { includeDeletedMessages: true }
         );
         if (fire.wakeup) {
           await fire.wakeup();
@@ -528,7 +538,12 @@ this.messages = class extends ExtensionAPIPersistent {
       return emlFile;
     }
 
-    async function moveOrCopyMessages(messageIds, destination, isMove) {
+    async function moveOrCopyMessages(
+      messageIds,
+      destination,
+      isUserAction,
+      isMove
+    ) {
       const functionName = isMove ? "messages.move()" : "messages.copy()";
 
       if (
@@ -599,7 +614,9 @@ this.messages = class extends ExtensionAPIPersistent {
                         }
                       },
                     },
-                    /* msgWindow */ null
+                    (isUserAction &&
+                      windowTracker.topNormalWindow?.msgWindow) ||
+                      null
                   );
                 })
               );
@@ -632,13 +649,21 @@ this.messages = class extends ExtensionAPIPersistent {
                     }
                   },
                 },
-                /* msgWindow */ null,
-                /* allowUndo */ true
+                (isUserAction && windowTracker.topNormalWindow?.msgWindow) ||
+                  null,
+                isUserAction // allowUndo
               );
             })
           );
         }
         await Promise.all(promises);
+        if (isUserAction) {
+          Services.prefs.setStringPref(
+            "mail.last_msg_movecopy_target_uri",
+            destinationFolder.URI
+          );
+          Services.prefs.setBoolPref("mail.last_msg_movecopy_was_move", isMove);
+        }
       } catch (ex) {
         console.error(ex);
         throw new ExtensionError(
@@ -1100,46 +1125,84 @@ this.messages = class extends ExtensionAPIPersistent {
             if (newProperties.flagged !== null) {
               msgHdr.folder.markMessagesFlagged(msgs, newProperties.flagged);
             }
+
+            if (Array.isArray(newProperties.tags)) {
+              const newKeywords = newProperties.tags.filter(
+                MailServices.tags.isValidKey
+              );
+              const currentKeywords = msgHdr
+                .getStringProperty("keywords")
+                .split(" ")
+                .filter(MailServices.tags.isValidKey);
+              const missingKeywords = newKeywords
+                .filter(k => !currentKeywords.includes(k))
+                .join(" ");
+              const obsoleteKeywords = currentKeywords
+                .filter(k => !newKeywords.includes(k))
+                .join(" ");
+              if (obsoleteKeywords) {
+                const tagsRemoved = new FolderPropertyChangeListener(
+                  msgHdr,
+                  "Keywords"
+                );
+                msgHdr.folder.removeKeywordsFromMessages(
+                  msgs,
+                  obsoleteKeywords
+                );
+                await tagsRemoved.seen();
+              }
+              if (missingKeywords) {
+                const tagsAdded = new FolderPropertyChangeListener(
+                  msgHdr,
+                  "Keywords"
+                );
+                msgHdr.folder.addKeywordsToMessages(msgs, missingKeywords);
+                await tagsAdded.seen();
+              }
+            }
+
+            // Changing the junk score can cause a reload of the message and it
+            // should be done after all other changes to minimize UI hiccups.
             if (newProperties.junk !== null) {
-              const score = newProperties.junk
+              const newJunkScore = newProperties.junk
                 ? Ci.nsIJunkMailPlugin.IS_SPAM_SCORE
                 : Ci.nsIJunkMailPlugin.IS_HAM_SCORE;
-              msgHdr.folder.setJunkScoreForMessages(msgs, score);
-              // nsIFolderListener::OnFolderEvent is notified about changes through
-              // setJunkScoreForMessages(), but does not provide the actual message.
-              // nsIMsgFolderListener::msgsJunkStatusChanged is notified only by
-              // nsMsgDBView::ApplyCommandToIndices(). Since it only works on
-              // selected messages, we cannot use it here.
-              // Notify msgsJunkStatusChanged() manually.
-              MailServices.mfn.notifyMsgsJunkStatusChanged(msgs);
-            }
-            if (Array.isArray(newProperties.tags)) {
-              const currentTags = msgHdr
-                .getStringProperty("keywords")
-                .split(" ");
-
-              for (const { key: tagKey } of MailServices.tags.getAllTags()) {
-                if (newProperties.tags.includes(tagKey)) {
-                  if (!currentTags.includes(tagKey)) {
-                    msgHdr.folder.addKeywordsToMessages(msgs, tagKey);
-                  }
-                } else if (currentTags.includes(tagKey)) {
-                  msgHdr.folder.removeKeywordsFromMessages(msgs, tagKey);
-                }
-              }
+              // FIXME: This sets the junkorigin to "filter", even though we should
+              // set it to "user". Note: The IMAP implementation also sets the keyword
+              // Junk/NoJunk.
+              msgHdr.folder.setJunkScoreForMessages(msgs, newJunkScore);
             }
           } catch (ex) {
             console.error(ex);
             throw new ExtensionError(`Error updating message: ${ex.message}`);
           }
         },
-        async move(messageIds, destination) {
-          return moveOrCopyMessages(messageIds, destination, true);
+        async move(messageIds, destination, options) {
+          const isUserAction = options?.isUserAction ?? false;
+          return moveOrCopyMessages(
+            messageIds,
+            destination,
+            isUserAction,
+            true
+          );
         },
-        async copy(messageIds, destination) {
-          return moveOrCopyMessages(messageIds, destination, false);
+        async copy(messageIds, destination, options) {
+          const isUserAction = options?.isUserAction ?? false;
+          return moveOrCopyMessages(
+            messageIds,
+            destination,
+            isUserAction,
+            false
+          );
         },
-        async delete(messageIds, skipTrash) {
+        async delete(messageIds, deletePermanentlyOrOptions) {
+          const options =
+            typeof deletePermanentlyOrOptions == "boolean"
+              ? { deletePermanently: deletePermanentlyOrOptions }
+              : deletePermanentlyOrOptions;
+          const deletePermanently = options?.deletePermanently ?? false;
+          const isUserAction = options?.isUserAction ?? false;
+
           try {
             const promises = [];
             const folderMap = collectMessagesInFolders(messageIds);
@@ -1158,9 +1221,11 @@ this.messages = class extends ExtensionAPIPersistent {
                 new Promise((resolve, reject) => {
                   sourceFolder.deleteMessages(
                     [...msgHeaderSet],
-                    /* msgWindow */ null,
-                    /* deleteStorage */ skipTrash,
-                    /* isMove */ false,
+                    (isUserAction &&
+                      windowTracker.topNormalWindow?.msgWindow) ||
+                      null,
+                    deletePermanently, // deleteStorage
+                    false, // isMove
                     /** @implements {nsIMsgCopyServiceListener} */
                     {
                       onStartCopy() {},
@@ -1177,7 +1242,7 @@ this.messages = class extends ExtensionAPIPersistent {
                         }
                       },
                     },
-                    /* allowUndo */ true
+                    isUserAction // allowUndo
                   );
                 })
               );

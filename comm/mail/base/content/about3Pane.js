@@ -47,6 +47,7 @@ ChromeUtils.defineESModuleGetters(this, {
   MailE10SUtils: "resource:///modules/MailE10SUtils.sys.mjs",
   MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
+  repairMbox: "resource:///modules/MboxRepair.sys.mjs",
   SmartMailboxUtils: "resource:///modules/SmartMailboxUtils.sys.mjs",
   TagUtils: "resource:///modules/TagUtils.sys.mjs",
   UIDensity: "resource:///modules/UIDensity.sys.mjs",
@@ -147,6 +148,8 @@ window.addEventListener("DOMContentLoaded", async event => {
   await customElements.whenDefined("folder-tree-row");
   await customElements.whenDefined("thread-row");
   await customElements.whenDefined("thread-card");
+  await customElements.whenDefined("tree-view");
+  await customElements.whenDefined("tree-listbox");
 
   UIDensity.registerWindow(window);
   UIFontSize.registerWindow(window);
@@ -2725,7 +2728,7 @@ var folderPane = {
         gFolder.hasNewMessages &&
         Services.prefs.getBoolPref("mailnews.scroll_to_new_message");
       if (threadPane.scrollToNewMessage) {
-        threadPane.forgetSelection(uri);
+        threadPane.forgetSavedSelection(uri);
       }
 
       gViewWrapper.open(gFolder);
@@ -3418,6 +3421,20 @@ var folderPane = {
       await IOUtils.remove(folder.filePath.path, { recursive: true }).catch(
         console.error
       );
+    } else if (
+      Services.prefs.getCharPref(
+        `mail.server.${folder.server.key}.storeContractID`
+      ) == "@mozilla.org/msgstore/berkeleystore;1"
+    ) {
+      // For local mbox, fix classic MacOS line endings.
+      try {
+        folder.acquireSemaphore(folder);
+        await repairMbox(folder.filePath.path);
+      } catch (e) {
+        console.warn(`Repair mbox FAILED; ${e.message}`);
+      } finally {
+        folder.releaseSemaphore(folder);
+      }
     }
 
     // The following notification causes all DBViewWrappers that include
@@ -4601,6 +4618,13 @@ var threadPane = {
    * Handle threadPane select events.
    */
   _onSelect() {
+    if (
+      !dbViewWrapperListener.allMessagesLoaded &&
+      !this._selectionIsBeingRestored
+    ) {
+      // The user selected something, stop restoring a saved selection.
+      this.forgetSavedSelection();
+    }
     if (paneLayout.messagePaneVisible.isCollapsed) {
       updateZoomCommands();
       return;
@@ -4719,14 +4743,11 @@ var threadPane = {
       // text/x-moz-message for some reason.
       event.dataTransfer.mozSetDataAt("text/plain", uri, index);
       event.dataTransfer.mozSetDataAt("text/x-moz-message", uri, index);
-      event.dataTransfer.mozSetDataAt(
-        "text/x-moz-url",
-        msgService.getUrlForUri(uri).spec,
-        index
-      );
+      const msgUrlSpec = msgService.getUrlForUri(uri).spec;
+      event.dataTransfer.mozSetDataAt("text/x-moz-url", msgUrlSpec, index);
       event.dataTransfer.mozSetDataAt(
         "application/x-moz-file-promise-url",
-        msgService.getUrlForUri(uri).spec,
+        msgUrlSpec,
         index
       );
       event.dataTransfer.mozSetDataAt(
@@ -5089,10 +5110,11 @@ var threadPane = {
    * Forget any saved selection of the given folder. This is useful if you're
    * going to set the selection after switching to the folder.
    *
-   * @param {string} folderURI
+   * @param {string} [selectionKey] - A folder's URI if given, or whatever is
+   *   currently being displayed.
    */
-  forgetSelection(folderURI) {
-    this._savedSelections.delete(folderURI);
+  forgetSavedSelection(selectionKey = this._getSavedSelectionKey()) {
+    this._savedSelections.delete(selectionKey);
   },
 
   /**
@@ -5144,7 +5166,9 @@ var threadPane = {
       gDBView.rowCount != selection.rowCount ||
       indices.size != indicesBefore.length ||
       indicesBefore.some(i => !indices.has(i));
+    this._selectionIsBeingRestored = true;
     threadTree.onSelectionChanged(false, !notify || !selectionDidChange);
+    this._selectionIsBeingRestored = false;
 
     if (currentIndex == nsMsgViewIndex_None) {
       threadTree.currentIndex = -1;
@@ -6075,7 +6099,7 @@ function selectMessage(msgHdr) {
   // Change to correct folder if needed. We might not be in a folder, or the
   // message might not be found in the current folder.
   if (index === undefined || index === nsMsgViewIndex_None) {
-    threadPane.forgetSelection(msgHdr.folder.URI);
+    threadPane.forgetSavedSelection(msgHdr.folder.URI);
     displayFolder(msgHdr.folder.URI);
     index = threadTree.view.findIndexOfMsgHdr(msgHdr, true);
     threadTree.scrollToIndex(index, true);
@@ -6119,7 +6143,15 @@ var folderListener = {
       window.threadPaneHeader.updateMessageCount(gDBView.numMsgsInView);
     }
   },
-  onFolderPropertyChanged() {},
+  onFolderPropertyChanged(folder, property, oldValue, newValue) {
+    switch (property) {
+      case "Name":
+        if (folder.isServer) {
+          folderPane.changeServerName(folder, newValue);
+        }
+        break;
+    }
+  },
   onFolderIntPropertyChanged(folder, property, oldValue, newValue) {
     switch (property) {
       case "BiffState":
@@ -6165,15 +6197,6 @@ var folderListener = {
         break;
       case "NewMessages":
         folderPane.changeNewMessages(folder, newValue);
-        break;
-    }
-  },
-  onFolderUnicharPropertyChanged(folder, property, oldValue, newValue) {
-    switch (property) {
-      case "Name":
-        if (folder.isServer) {
-          folderPane.changeServerName(folder, newValue);
-        }
         break;
     }
   },
@@ -6323,7 +6346,7 @@ commandController.registerCallback(
 commandController.registerCallback(
   "cmd_selectThread",
   () => gViewWrapper.dbView.doCommand(Ci.nsMsgViewCommandType.selectThread),
-  () => !!gViewWrapper?.dbView
+  () => gViewWrapper?.dbView && !gViewWrapper.showGroupedBySort
 );
 commandController.registerCallback(
   "cmd_selectFlagged",
@@ -6743,7 +6766,11 @@ commandController.registerCallback(
       gViewWrapper.isVirtual && gViewWrapper.isSingleFolder
         ? gViewWrapper._underlyingFolders[0]
         : gFolder;
-    if (!folder.msgDatabase.isIgnored(gDBView.keyForFirstSelectedMessage)) {
+    if (
+      !folder.msgDatabase.isIgnored(
+        gDBView.hdrForFirstSelectedMessage?.messageKey
+      )
+    ) {
       threadPane.showIgnoredMessageNotification(
         gDBView.getSelectedMsgHdrs(),
         false
@@ -6754,7 +6781,11 @@ commandController.registerCallback(
     // properly and resists attempts to fix this.
     threadTree.reset();
   },
-  () => gDBView?.numSelected >= 1 && gFolder && !gViewWrapper.isMultiFolder
+  () =>
+    gDBView?.numSelected >= 1 &&
+    gFolder &&
+    !gViewWrapper.isMultiFolder &&
+    !gViewWrapper.showGroupedBySort
 );
 commandController.registerCallback(
   "cmd_killSubthread",
@@ -6771,7 +6802,11 @@ commandController.registerCallback(
     // properly and resists attempts to fix this.
     threadTree.reset();
   },
-  () => gDBView?.numSelected >= 1 && gFolder && !gViewWrapper.isMultiFolder
+  () =>
+    gDBView?.numSelected >= 1 &&
+    gFolder &&
+    !gViewWrapper.isMultiFolder &&
+    !gViewWrapper?.showGroupedBySort
 );
 
 /* Forward find commands to about:message if message view is open, otherwise

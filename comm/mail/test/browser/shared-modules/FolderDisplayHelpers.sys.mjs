@@ -520,15 +520,6 @@ export function assert_selected_tab(aTab) {
 }
 
 /**
- * Assert that the currently selected tab is _not_ the given one.
- *
- * @param {TabInfo} aTab - The tab that should currently not be selected.
- */
-export function assert_not_selected_tab(aTab) {
-  Assert.notEqual(mc.document.getElementById("tabmail").currentTabInfo, aTab);
-}
-
-/**
  * Assert that the given tab has the given mode name. Valid mode names include
  * "message" and "folder".
  *
@@ -1683,14 +1674,6 @@ export function toggle_message_pane() {
 }
 
 /**
- * Make the folder pane visible in order to run tests.
- * This is necessary as the FolderPane is collapsed if no account is available.
- */
-export function show_folder_pane() {
-  mc.document.getElementById("folderPaneBox").collapsed = false;
-}
-
-/**
  * Helper function for use by assert_selected / assert_selected_and_displayed /
  *  assert_displayed.
  *
@@ -2234,20 +2217,6 @@ export function focus_message_pane() {
 }
 
 /**
- * Focus the multimessage pane.
- */
-export function focus_multimessage_pane() {
-  const multiMessageBrowser = get_about_3pane().document.getElementById(
-    "multiMessageBrowser"
-  );
-  Assert.ok(
-    BrowserTestUtils.isVisible(multiMessageBrowser),
-    "multi message browser is visible"
-  );
-  multiMessageBrowser.focus();
-}
-
-/**
  * Returns a string indicating whatever's currently focused. This will return
  * either one of the strings in RECOGNIZED_WINDOWS/RECOGNIZED_ELEMENTS or null.
  */
@@ -2322,13 +2291,6 @@ export function assert_message_pane_focused() {
   //   aboutMessageWin.document.activeElement.id,
   //   "messageBrowser"
   // );
-}
-
-/**
- * Assert that the multimessage pane is focused.
- */
-export function assert_multimessage_pane_focused() {
-  _assert_thing_focused("multimessage");
 }
 
 /**
@@ -2587,32 +2549,6 @@ export async function set_mail_view(aMailViewIndex, aData) {
 }
 
 /**
- * Assert that the current mail view is as given. See the documentation for
- * |set_mail_view| for information about aData.
- */
-export function assert_mail_view(aMailViewIndex, aData) {
-  const actualMailViewIndex = mc.gFolderDisplay.view.mailViewIndex;
-  if (actualMailViewIndex != aMailViewIndex) {
-    throw new Error(
-      "The mail view index should be " +
-        aMailViewIndex +
-        ", but is actually " +
-        actualMailViewIndex
-    );
-  }
-
-  const actualMailViewData = mc.gFolderDisplay.view.mailViewData;
-  if (actualMailViewData != aData) {
-    throw new Error(
-      "The mail view data should be " +
-        aData +
-        ", but is actually " +
-        actualMailViewData
-    );
-  }
-}
-
-/**
  * Expand all threads in the current view.
  */
 export async function expand_all_threads() {
@@ -2743,23 +2679,6 @@ export function assert_pane_layout(aLayout) {
  */
 export function set_pane_layout(aLayout) {
   Services.prefs.setIntPref("mail.pane_config.dynamic", aLayout);
-}
-
-/*
- * Check window sizes of the main Tb window whether they are at the default values.
- * Some tests change the window size so need to be sure what size they start with.
- */
-export function assert_default_window_size() {
-  Assert.equal(
-    mc.outerWidth,
-    gDefaultWindowWidth,
-    "Main window didn't meet the expected width"
-  );
-  Assert.equal(
-    mc.outerHeight,
-    gDefaultWindowHeight,
-    "Main window didn't meet the expected height"
-  );
 }
 
 /**

@@ -60,8 +60,8 @@ nsresult NS_MsgGetPriorityValueString(const nsMsgPriorityValue p,
 nsresult NS_MsgGetUntranslatedPriorityName(const nsMsgPriorityValue p,
                                            nsACString& outName);
 
-nsresult NS_MsgHashIfNecessary(nsAutoString& name);
-nsresult NS_MsgHashIfNecessary(nsAutoCString& name);
+[[nodiscard]] nsString NS_MsgHashIfNecessary(const nsACString& unsafeName);
+[[nodiscard]] nsString NS_MsgHashIfNecessary(const nsAString& unsafeName);
 
 nsresult FormatFileSize(int64_t size, bool useKB, nsAString& formattedSize);
 
@@ -74,8 +74,7 @@ nsresult FormatFileSize(int64_t size, bool useKB, nsAString& formattedSize);
  * @param[optional] aIsNewsFolder is this a news folder?
  */
 nsresult NS_MsgCreatePathStringFromFolderURI(const char* aFolderURI,
-                                             nsCString& aPathString,
-                                             const nsCString& aScheme,
+                                             nsString& aPathString,
                                              bool aIsNewsFolder = false);
 
 /**
@@ -94,7 +93,7 @@ char* NS_MsgSACopy(char** destination, const char* source);
 
 char* NS_MsgSACat(char** destination, const char* source);
 
-nsresult NS_MsgEscapeEncodeURLPath(const nsAString& aStr, nsCString& aResult);
+nsresult NS_MsgEscapeEncodeURLPath(const nsACString& aStr, nsCString& aResult);
 
 nsresult NS_MsgDecodeUnescapeURLPath(const nsACString& aPath,
                                      nsAString& aResult);
@@ -170,6 +169,7 @@ void Seconds2PRTime(uint32_t seconds, PRTime* prTime);
 
 // Appends the correct summary file extension onto the supplied fileLocation
 // and returns it in summaryLocation.
+// e.g. "foo/bar/folder" => "foo/bar/folder.msf"
 nsresult GetSummaryFileLocation(nsIFile* fileLocation,
                                 nsIFile** summaryLocation);
 
@@ -251,7 +251,7 @@ int32_t MsgFindCharInSet(const nsString& aString, const char16_t* aChars,
 nsresult MsgPromptLoginFailed(nsIMsgWindow* aMsgWindow,
                               const nsACString& aHostname,
                               const nsACString& aUsername,
-                              const nsAString& aAccountname, int32_t* aResult);
+                              const nsACString& aAccountname, int32_t* aResult);
 
 /**
  * Calculate a PRTime value used to determine if a date is XX
@@ -423,5 +423,14 @@ already_AddRefed<nsIStreamListener> SyncStreamListenerCreate();
 
 nsresult IsOnSameServer(nsIMsgFolder* folder1, nsIMsgFolder* folder2,
                         bool* sameServer);
+
+/**
+ * Creates a temporary directory to use for folder compaction.
+ * The directory will be created as a sibling of srcFile, with the intention
+ * that they are both on the same filesystem, which is required for atomic file
+ * renames (or at least as atomic as we can be guaranteed).
+ * If the directory already exists, it'll be returned.
+ */
+nsresult GetOrCreateCompactionDir(nsIFile* srcFile, nsIFile** tempDir);
 
 #endif

@@ -344,17 +344,13 @@ pref("mailnews.nntp.loglevel", "Warn");
 
 pref("mailnews.pop3.loglevel", "Warn");
 
-// If true, ImapService.sys.mjs is used. Otherwise, nsImapService.cpp is used.
-pref("mailnews.imap.jsmodule", false);
-pref("mailnews.imap.loglevel", "Warn");
-
 pref("mail.operate_on_msgs_in_collapsed_threads", false);
 pref("mail.warn_on_collapsed_thread_operation", true);
 pref("mail.warn_on_shift_delete", true);
 pref("news.warn_on_delete", true);
 pref("mail.warn_on_delete_from_trash", true);
-pref("mail.purge_threshhold_mb", 500);
-pref("mail.prompt_purge_threshhold", true);
+pref("mail.purge_threshold_mb", 500);
+pref("mail.prompt_purge_threshold", true);
 pref("mail.purge.ask", true);
 
 // If true, a failure to read a message from offline storage will
@@ -853,6 +849,12 @@ pref("mail.biff.play_sound.type", 0);
 // otherwise, this needs to be a file url
 pref("mail.biff.play_sound.url", "");
 pref("mail.biff.show_alert", true);
+
+#ifdef XP_UNIX
+#ifndef XP_MACOSX
+pref("mail.biff.show_tray_icon_always", true);
+#endif
+#endif
 #ifdef XP_WIN
 pref("mail.biff.show_badge", true);
 pref("mail.biff.show_tray_icon", true);

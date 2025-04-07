@@ -907,12 +907,13 @@ nsresult nsImapProtocol::SetupWithUrl(nsIURI* aURL, nsISupports* aConsumer) {
     imapServer->GetFetchByChunks(&m_fetchByChunks);
     imapServer->GetSendID(&m_sendID);
 
-    nsAutoString trashFolderPath;
+    nsAutoCString trashFolderPath;
     if (NS_SUCCEEDED(imapServer->GetTrashFolderName(trashFolderPath))) {
       if (m_allowUTF8Accept)
-        CopyUTF16toUTF8(trashFolderPath, m_trashFolderPath);
+        m_trashFolderPath = trashFolderPath;
       else
-        CopyUTF16toMUTF7(trashFolderPath, m_trashFolderPath);
+        CopyUTF16toMUTF7(NS_ConvertUTF8toUTF16(trashFolderPath),
+                         m_trashFolderPath);
     }
 
     nsCOMPtr<nsIPrefBranch> prefBranch(
@@ -2825,7 +2826,7 @@ void nsImapProtocol::ProcessSelectedStateURL() {
               m_imapAction == nsIImapUrl::nsImapMsgPreview) {
             if (m_imapAction == nsIImapUrl::nsImapMsgPreview) {
               // Autosync does its own progress. Don't show progress here
-              // unless preview. This voids lots of "1 of 1", "1 of 3" etc.
+              // unless preview. This avoids lots of "1 of 1", "1 of 3", etc.
               // interspersed with autosync progress.
               SetProgressString(IMAP_MESSAGES_STRING_INDEX);
 
@@ -3180,9 +3181,7 @@ void nsImapProtocol::ProcessSelectedStateURL() {
         } break;
         case nsIImapUrl::nsImapSetMsgFlags: {
           // This changes the flags to the value in msgFlags. Any flags that
-          // are currently set and not in msgFlags are reset. Currently, the
-          // \deleted flag is not set by this imap action (see assertion).
-          MOZ_ASSERT(!(msgFlags & kImapMsgDeletedFlag));
+          // are currently set and not in msgFlags are reset.
           nsCString messageIdString;
           m_runningUrl->GetListOfMessageIds(messageIdString);
 

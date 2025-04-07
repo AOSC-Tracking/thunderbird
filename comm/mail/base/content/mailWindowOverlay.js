@@ -151,6 +151,13 @@ function file_init() {
   document.commandDispatcher.updateCommands("create-menu-file");
 }
 
+const deleteMenuItemCommandHandler = event =>
+  goDoCommand(
+    event.shiftKey && event.target.dataset.imapDeleted == "false"
+      ? "cmd_shiftDelete"
+      : "cmd_delete"
+  );
+
 /**
  * Update the menu items visibility in the Edit submenu.
  */
@@ -179,20 +186,27 @@ function InitEditMessagesMenu() {
   const numSelected = dbView?.numSelected;
 
   const deleteMenuItem = document.getElementById("menu_delete");
+  deleteMenuItem.setAttribute("command", "cmd_delete");
   if (deleteController?.wrappedJSObject && folderTreeActive) {
     const value = folderIsNewsgroup
       ? "menu-edit-unsubscribe-newsgroup"
       : "menu-edit-delete-folder";
     document.l10n.setAttributes(deleteMenuItem, value);
   } else if (deleteController?.wrappedJSObject && numSelected) {
-    const message = dbView?.hdrForFirstSelectedMessage;
-    let value;
-    if (message && message.flags & Ci.nsMsgMessageFlags.IMAPDeleted) {
-      value = "menu-edit-undelete-messages";
-    } else {
-      value = "menu-edit-delete-messages";
-    }
-    document.l10n.setAttributes(deleteMenuItem, value, { count: numSelected });
+    const areIMAPDeleted = dbView
+      ?.getSelectedMsgHdrs()
+      .every(msg => msg.flags & Ci.nsMsgMessageFlags.IMAPDeleted);
+    document.l10n.setAttributes(
+      deleteMenuItem,
+      areIMAPDeleted
+        ? "menu-edit-undelete-messages"
+        : "menu-edit-delete-messages",
+      { count: numSelected }
+    );
+    deleteMenuItem.dataset.imapDeleted = !!areIMAPDeleted;
+    deleteMenuItem.removeAttribute("command");
+    deleteMenuItem.addEventListener("command", deleteMenuItemCommandHandler);
+    deleteMenuItem.disabled = false;
   } else {
     document.l10n.setAttributes(deleteMenuItem, "text-action-delete");
   }
@@ -1944,7 +1958,9 @@ function addAttachmentToPopup(
   // Create the "save" menu item
   menuitem = document.createXULElement("menuitem");
   menuitem.attachment = attachment;
-  menuitem.addEventListener("command", () => attachment.save(messenger));
+  menuitem.addEventListener("command", () =>
+    attachment.save(aboutMessage.browsingContext)
+  );
   menuitem.setAttribute("label", getString("saveLabel"));
   menuitem.setAttribute("accesskey", getString("saveLabelAccesskey"));
   menuitem.setAttribute("disabled", deleted);

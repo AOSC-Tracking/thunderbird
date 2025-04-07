@@ -17,6 +17,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   EnigmailSingletons: "chrome://openpgp/content/modules/singletons.sys.mjs",
   EnigmailURIs: "chrome://openpgp/content/modules/uris.sys.mjs",
   RNP: "chrome://openpgp/content/modules/RNP.sys.mjs",
+  DecryptVerifyResult: "chrome://openpgp/content/modules/RNP.sys.mjs",
 });
 ChromeUtils.defineLazyGetter(lazy, "log", () => {
   return console.createInstance({
@@ -112,7 +113,6 @@ function MimeVerify(protocol) {
  * @implements {nsIStreamListener}
  */
 MimeVerify.prototype = {
-  dataCount: 0,
   foundMsg: false,
   startMsgStr: "",
   window: null,
@@ -120,7 +120,7 @@ MimeVerify.prototype = {
   statusDisplayed: false,
   inStream: null,
   sigFile: null,
-  sigData: "",
+  mimeSignatureData: "",
   mimePartNumber: "",
 
   QueryInterface: ChromeUtils.generateQI(["nsIStreamListener"]),
@@ -156,8 +156,8 @@ MimeVerify.prototype = {
     this.msgUriSpec = EnigmailVerify.lastMsgUri;
     this.mimePartNumber = this.mimeSvc.mimePart;
     this.uri = this.mimeSvc.messageURI;
+    this.outputRaw = this.uri && /[&?]outputformat=raw/.test(this.uri.spec);
 
-    this.dataCount = 0;
     this.foundMsg = false;
     this.backgroundJob = false;
     this.startMsgStr = "";
@@ -188,14 +188,18 @@ MimeVerify.prototype = {
     if (count > 0) {
       this.inStream.init(stream);
       const data = this.inStream.read(count);
-      this.onTextData(data);
+      if (this.outputRaw) {
+        // Don't go through signature extraction/processing, collect
+        // all data. We reuse variable signedData.
+        this.signedData += data;
+      } else {
+        this.onTextData(data);
+      }
     }
   },
 
   /** @param {string} data */
   onTextData(data) {
-    this.dataCount += data.length;
-
     this.keepData += data;
     if (this.readMode === 0) {
       // header data
@@ -273,9 +277,9 @@ MimeVerify.prototype = {
           this.keepData.search(/^-----END PGP /m),
           this.keepData.length - 30
         );
-        this.sigData = this.keepData.substring(s, e + 30);
+        this.mimeSignatureData = this.keepData.substring(s, e + 30);
       } else {
-        this.sigData = "";
+        this.mimeSignatureData = "";
       }
 
       this.keepData = "";
@@ -454,6 +458,13 @@ MimeVerify.prototype = {
       return;
     }
 
+    if (this.outputRaw) {
+      // Return all collected data, without signature processing.
+      this.returnData(this.signedData);
+      this.exitCode = 0;
+      return;
+    }
+
     if (this.readMode < 4) {
       // we got incomplete data; simply return what we got
       this.returnData(
@@ -514,8 +525,16 @@ MimeVerify.prototype = {
 
     if (this.protocol === "application/pgp-signature") {
       lazy.EnigmailCore.init();
+      if (!this.mimeSignatureData) {
+        this.exitCode = -1;
+        this.returnStatus = new lazy.DecryptVerifyResult();
+        this.returnStatus.statusFlags = EnigmailConstants.BAD_SIGNATURE;
+        this.returnStatus.errorMsg = "Signature data missing";
+        this.displayStatus(mimeSvc.mailChannel?.openpgpSink);
+        return;
+      }
 
-      const options = { mimeSignatureData: this.sigData };
+      const options = { mimeSignatureData: this.mimeSignatureData };
       if (mimeSvc.mailChannel) {
         const { headerNames, headerValues } = mimeSvc.mailChannel;
         let gotFromAddr, gotMsgDate;
@@ -542,10 +561,6 @@ MimeVerify.prototype = {
         this.signedData = this.signedData
           .replace(/\r\n/g, "\n")
           .replace(/\n/g, "\r\n");
-      }
-
-      if (!options.mimeSignatureData) {
-        throw new Error("inline verify not yet implemented");
       }
 
       this.returnStatus = lazy.EnigmailFuncs.sync(

@@ -10,6 +10,11 @@
 
 @namespace url("http://www.w3.org/1999/xhtml");
 
+/* Override overflow: hidden in some messages. */
+:root {
+  overflow: auto !important;
+}
+
 mailattachcount {
   display: none;
 }
@@ -34,7 +39,7 @@ mailattachcount {
 }
 
 /* stylelint-disable-next-line media-query-no-invalid */
-@media (prefers-color-scheme: dark) and (-moz-bool-pref: "mail.dark-reader.enabled") {
+@media (prefers-color-scheme: dark) and -moz-pref("mail.dark-reader.enabled") {
   .moz-header-part1 {
     background-color: var(--color-gray-70);
   }
@@ -97,7 +102,7 @@ mailattachcount {
 }
 
 /* stylelint-disable-next-line media-query-no-invalid */
-@media (prefers-color-scheme: dark) and (-moz-bool-pref: "mail.dark-reader.enabled") {
+@media (prefers-color-scheme: dark) and -moz-pref("mail.dark-reader.enabled") {
   html {
     background-color: var(--color-gray-90);
     color: var(--color-white);

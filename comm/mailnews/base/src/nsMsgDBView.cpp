@@ -26,6 +26,7 @@
 #include "nsISpamSettings.h"
 #include "nsIMsgAccountManager.h"
 #include "nsTreeColumns.h"
+#include "nsMsgDBFolder.h"
 #include "nsMsgMessageFlags.h"
 #include "nsIMsgFolderNotificationService.h"
 #include "nsServiceManagerUtils.h"
@@ -410,7 +411,7 @@ nsresult nsMsgDBView::FetchAuthor(nsIMsgDBHdr* aHdr, nsAString& aSenderString) {
 
 nsresult nsMsgDBView::FetchAccount(nsIMsgDBHdr* aHdr, nsAString& aAccount) {
   nsCString accountKey;
-  nsresult rv = aHdr->GetAccountKey(getter_Copies(accountKey));
+  nsresult rv = aHdr->GetAccountKey(accountKey);
 
   // Cache the account manager?
   nsCOMPtr<nsIMsgAccountManager> accountManager(
@@ -430,10 +431,13 @@ nsresult nsMsgDBView::FetchAccount(nsIMsgDBHdr* aHdr, nsAString& aAccount) {
     if (folder) folder->GetServer(getter_AddRefs(server));
   }
 
-  if (server)
-    server->GetPrettyName(aAccount);
-  else
+  if (server) {
+    nsAutoCString name;
+    server->GetPrettyName(name);
+    aAccount.Assign(NS_ConvertUTF8toUTF16(name));
+  } else {
     CopyASCIItoUTF16(accountKey, aAccount);
+  }
 
   return NS_OK;
 }
@@ -1968,7 +1972,9 @@ nsMsgDBView::CellTextForColumn(int32_t aRow, const nsAString& aColumnName,
         nsCOMPtr<nsIMsgFolder> folder;
         nsresult rv = GetFolderForViewIndex(aRow, getter_AddRefs(folder));
         NS_ENSURE_SUCCESS(rv, rv);
-        folder->GetPrettyPath(aValue);
+        nsAutoCString prettyPath;
+        folder->GetPrettyPath(prettyPath);
+        aValue.Assign(NS_ConvertUTF8toUTF16(prettyPath));
       }
       break;
     }
@@ -2050,11 +2056,7 @@ nsMsgDBView::ToggleOpenState(int32_t index) {
 }
 
 NS_IMETHODIMP
-nsMsgDBView::CycleHeader(nsTreeColumn* aCol) {
-  // Let HandleColumnClick() in threadPane.js handle it
-  // since it will set / clear the sort indicators.
-  return NS_OK;
-}
+nsMsgDBView::CycleHeader(nsTreeColumn* aCol) { return NS_OK; }
 
 NS_IMETHODIMP
 nsMsgDBView::CycleCell(int32_t row, nsTreeColumn* col) {
@@ -3120,6 +3122,12 @@ nsresult nsMsgDBView::SetMsgHdrJunkStatus(nsIJunkMailPlugin* aJunkPlugin,
   db->SetStringProperty(msgKey, "junkscore", msgJunkScore);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
+      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
+  if (notifier) {
+    notifier->NotifyMsgPropertyChanged(aMsgHdr, "junkscore", junkScoreStr,
+                                       msgJunkScore);
+  }
   return rv;
 }
 
@@ -3974,11 +3982,12 @@ nsresult nsMsgDBView::GetLocationCollationKey(nsIMsgDBHdr* msgHdr,
   rv = folder->GetMsgDatabase(getter_AddRefs(dbToUse));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsString locationString;
+  nsCString locationString;
   rv = folder->GetPrettyName(locationString);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return dbToUse->CreateCollationKey(locationString, result);
+  return dbToUse->CreateCollationKey(NS_ConvertUTF8toUTF16(locationString),
+                                     result);
 }
 
 nsresult nsMsgDBView::SaveSortInfo(nsMsgViewSortTypeValue sortType,
@@ -6444,25 +6453,33 @@ nsMsgDBView::GetNumSelected(uint32_t* aNumSelected) {
 
   // We call this a lot from the front end JS, so make it fast.
   nsresult rv = mTreeSelection->GetCount((int32_t*)aNumSelected);
-  if (!*aNumSelected || !includeCollapsedMsgs ||
-      !(m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay))
+  if (!*aNumSelected || !(m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay)) {
     return rv;
-
-  int32_t numSelectedIncludingCollapsed = *aNumSelected;
-  nsMsgViewIndexArray selection;
-  GetIndicesForSelection(selection);
-  int32_t numIndices = selection.Length();
-  // Iterate over the selection, counting up the messages in collapsed
-  // threads.
-  for (int32_t i = 0; i < numIndices; i++) {
-    if (m_flags[selection[i]] & nsMsgMessageFlags::Elided) {
-      int32_t collapsedCount;
-      ExpansionDelta(selection[i], &collapsedCount);
-      numSelectedIncludingCollapsed += collapsedCount;
-    }
   }
 
-  *aNumSelected = numSelectedIncludingCollapsed;
+  int32_t numSelectedGroupedOrThreaded = static_cast<int32_t>(*aNumSelected);
+  nsMsgViewIndexArray selection;
+  GetIndicesForSelection(selection);
+  int32_t numIndices = static_cast<int32_t>(selection.Length());
+  NS_ASSERTION(numSelectedGroupedOrThreaded == numIndices,
+               "Selection count and number of selected indices should match.");
+
+  // Iterate over the selection, excluding grouped header dummy rows, and
+  // counting up the messages in collapsed threads if enabled.
+  for (int32_t i = 0; i < numIndices; i++) {
+    uint32_t flags = m_flags[selection[i]];
+    if (flags & MSG_VIEW_FLAG_DUMMY) {
+      --numSelectedGroupedOrThreaded;
+    }
+    if (includeCollapsedMsgs && flags & nsMsgMessageFlags::Elided) {
+      int32_t collapsedCount;
+      ExpansionDelta(selection[i], &collapsedCount);
+      numSelectedGroupedOrThreaded += collapsedCount;
+    }
+  }
+  NS_ASSERTION(numSelectedGroupedOrThreaded >= 0,
+               "numSelected must not be negative");
+  *aNumSelected = numSelectedGroupedOrThreaded;
   return rv;
 }
 
@@ -6566,23 +6583,18 @@ nsMsgDBView::GetMsgToSelectAfterDelete(nsMsgViewIndex* msgToSelectAfterDelete) {
 NS_IMETHODIMP
 nsMsgDBView::GetHdrForFirstSelectedMessage(nsIMsgDBHdr** hdr) {
   NS_ENSURE_ARG_POINTER(hdr);
+  nsMsgViewIndex index;
+  nsresult rv = GetViewIndexForFirstSelectedMsg(&index);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  nsresult rv;
-  nsMsgKey key;
-  rv = GetKeyForFirstSelectedMessage(&key);
-  // Don't assert, it is legal for nothing to be selected.
-  if (NS_FAILED(rv)) return rv;
-
-  if (key == nsMsgKey_None) {
+  // Do not return a message header if an expanded grouped header is selected.
+  uint32_t flags = m_flags[index];
+  if (flags & MSG_VIEW_FLAG_DUMMY && !(flags & nsMsgMessageFlags::Elided)) {
     *hdr = nullptr;
     return NS_OK;
   }
 
-  if (!m_db) return NS_MSG_MESSAGE_NOT_FOUND;
-
-  rv = m_db->GetMsgHdrForKey(key, hdr);
-  NS_ENSURE_SUCCESS(rv, rv);
-  return NS_OK;
+  return GetMsgHdrForViewIndex(index, hdr);
 }
 
 // If nothing selected, return an NS_ERROR.
@@ -6700,38 +6712,6 @@ nsMsgDBView::GetViewIndexForFirstSelectedMsg(nsMsgViewIndex* aViewIndex) {
     return NS_ERROR_UNEXPECTED;
 
   *aViewIndex = startRange;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgDBView::GetKeyForFirstSelectedMessage(nsMsgKey* key) {
-  NS_ENSURE_ARG_POINTER(key);
-  if (!mTreeSelection) {
-    *key = nsMsgKey_None;
-    return NS_OK;
-  }
-
-  int32_t selectionCount;
-  mTreeSelection->GetRangeCount(&selectionCount);
-  if (selectionCount == 0) {
-    *key = nsMsgKey_None;
-    return NS_OK;
-  }
-
-  int32_t startRange;
-  int32_t endRange;
-  nsresult rv = mTreeSelection->GetRangeAt(0, &startRange, &endRange);
-  // Don't assert, it is legal for nothing to be selected.
-  if (NS_FAILED(rv)) return rv;
-
-  // Check that the first index is valid, it may not be if nothing is selected.
-  if (startRange < 0 || uint32_t(startRange) >= GetSize())
-    return NS_ERROR_UNEXPECTED;
-
-  if (m_flags[startRange] & MSG_VIEW_FLAG_DUMMY)
-    return NS_MSG_INVALID_DBVIEW_INDEX;
-
-  *key = m_keys[startRange];
   return NS_OK;
 }
 
@@ -6976,6 +6956,7 @@ void nsMsgDBView::SetMRUTimeForFolder(nsIMsgFolder* folder) {
   nsAutoCString nowStr;
   nowStr.AppendInt(seconds);
   folder->SetStringProperty(MRU_TIME_PROPERTY, nowStr);
+  folder->NotifyFolderEvent(kMRUTimeChanged);
 }
 
 nsMsgDBView::nsMsgViewHdrEnumerator::nsMsgViewHdrEnumerator(nsMsgDBView* view) {

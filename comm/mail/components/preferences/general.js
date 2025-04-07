@@ -93,9 +93,9 @@ Preferences.addAll([
   { id: "mailnews.mark_message_read.delay.interval", type: "int" },
   { id: "mail.openMessageBehavior", type: "int" },
   { id: "mail.close_message_window.on_delete", type: "bool" },
-  { id: "mail.prompt_purge_threshhold", type: "bool" },
+  { id: "mail.prompt_purge_threshold", type: "bool" },
   { id: "mail.purge.ask", type: "bool" },
-  { id: "mail.purge_threshhold_mb", type: "int" },
+  { id: "mail.purge_threshold_mb", type: "int" },
   { id: "browser.cache.disk.capacity", type: "int" },
   { id: "browser.cache.disk.smart_size.enabled", inverted: true, type: "bool" },
   { id: "privacy.clearOnShutdown.cache", type: "bool" },
@@ -1620,8 +1620,8 @@ var gGeneralPane = {
 
   updateCompactOptions() {
     const disabled =
-      !Preferences.get("mail.prompt_purge_threshhold").value ||
-      Preferences.get("mail.purge_threshhold_mb").locked;
+      !Preferences.get("mail.prompt_purge_threshold").value ||
+      Preferences.get("mail.purge_threshold_mb").locked;
 
     document.getElementById("offlineCompactFolderMin").disabled = disabled;
     document.getElementById("offlineCompactFolderAutomatically").disabled =
@@ -2170,16 +2170,6 @@ function getDisplayNameForFile(aFile) {
   }
 
   return aFile.leafName;
-}
-
-function getLocalHandlerApp(aFile) {
-  var localHandlerApp = Cc[
-    "@mozilla.org/uriloader/local-handler-app;1"
-  ].createInstance(Ci.nsILocalHandlerApp);
-  localHandlerApp.name = getDisplayNameForFile(aFile);
-  localHandlerApp.executable = aFile;
-
-  return localHandlerApp;
 }
 
 // eslint-disable-next-line no-undef
@@ -2984,7 +2974,7 @@ Preferences.get("mailnews.mark_message_read.delay").on(
   "change",
   gGeneralPane.updateMarkAsReadTextbox
 );
-Preferences.get("mail.prompt_purge_threshhold").on(
+Preferences.get("mail.prompt_purge_threshold").on(
   "change",
   gGeneralPane.updateCompactOptions
 );

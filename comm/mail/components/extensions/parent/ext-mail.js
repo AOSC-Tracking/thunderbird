@@ -33,8 +33,6 @@ const COMPOSE_WINDOW_URI =
 const MESSAGE_WINDOW_URI = "chrome://messenger/content/messageWindow.xhtml";
 const MESSAGE_PROTOCOLS = ["imap", "mailbox", "news", "nntp", "snews"];
 
-const NOTIFICATION_COLLAPSE_TIME = 200;
-
 (function () {
   // Monkey-patch all processes to add the "messenger" alias in all contexts.
   Services.ppmm.loadProcessScript(
@@ -1612,6 +1610,7 @@ async function waitForMailTabReady(tabInfo) {
         });
       }
     });
+    await chromeBrowser.contentWindow.hasDOMContentLoaded.promise;
   }
 }
 

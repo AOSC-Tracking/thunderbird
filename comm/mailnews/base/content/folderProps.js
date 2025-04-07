@@ -301,8 +301,8 @@ function folderPropsOnLoad() {
     // whereas imap and news urls are sent around.
     locationTextbox.value =
       serverType == "imap" || serverType == "nntp"
-        ? gMsgFolder.folderURL
-        : decodeURI(gMsgFolder.folderURL);
+        ? gMsgFolder.URI
+        : decodeURI(gMsgFolder.URI);
 
     if (gMsgFolder.canRename) {
       document.getElementById("name").removeAttribute("readonly");
@@ -459,6 +459,13 @@ function onUseDefaultRetentionSettings() {
     useDefault || keepMsg != Ci.nsIMsgRetentionSettings.nsMsgRetainByNumHeaders;
 }
 
-function RebuildSummaryInformation() {
-  window.arguments[0].rebuildSummaryCallback(gMsgFolder);
+/**
+ * Repair Folder.
+ *
+ * @param {Event} event - The click on the Repair Folder button.
+ */
+async function RebuildSummaryInformation(event) {
+  event.target.disabled = true;
+  await window.arguments[0].rebuildSummaryCallback(gMsgFolder);
+  event.target.disabled = false;
 }

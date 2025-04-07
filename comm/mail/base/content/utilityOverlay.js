@@ -13,10 +13,6 @@ var { openLinkExternally, openUILink } = ChromeUtils.importESModule(
 
 var gShowBiDi = false;
 
-function getBrowserURL() {
-  return AppConstants.BROWSER_CHROME_URL;
-}
-
 // update menu items that rely on focus
 function goUpdateGlobalEditMenuItems() {
   goUpdateCommand("cmd_undo");
@@ -48,12 +44,6 @@ function goUpdateUndoEditMenuItems() {
 // update menu items that depend on clipboard contents
 function goUpdatePasteMenuItems() {
   goUpdateCommand("cmd_paste");
-}
-
-// update Find As You Type menu items, they rely on focus
-function goUpdateFindTypeMenuItems() {
-  goUpdateCommand("cmd_findTypeText");
-  goUpdateCommand("cmd_findTypeLinks");
 }
 
 /**
@@ -282,19 +272,6 @@ function openDictionaryList(where) {
 }
 
 /**
- * Open the privacy policy in a new content tab, if possible in an available
- * mail:3pane window, otherwise by opening a new mail:3pane.
- *
- * @param {"tab"|"window"} where - 'tab' to open in a new tab (default)
- *   or 'window' to open in a new window.
- */
-function openPrivacyPolicy(where) {
-  const kTelemetryInfoUrl = "toolkit.telemetry.infoURL";
-  const url = Services.prefs.getCharPref(kTelemetryInfoUrl);
-  openContentTab(url, where);
-}
-
-/**
  * Used by the developer tools (in the toolbox process) and a few toolkit pages
  * for opening URLs.
  *
@@ -344,15 +321,6 @@ function openWebLinkIn(url, where, params = {}) {
   }
 
   openLinkIn(url, where, params);
-}
-
-// Thunderbird itself is not using this function. It is however called for the
-// "contribute" button for add-ons in the add-on manager. We ignore all additional
-// parameters including "where" and always open the link externally. We don't
-// want to open donation pages in a tab due to their complexity, and we don't
-// want to handle them inside Thunderbird.
-function openUILinkIn(url) {
-  openLinkExternally(url);
 }
 
 /**

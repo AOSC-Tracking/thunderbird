@@ -128,8 +128,9 @@ FolderCompactor::~FolderCompactor() {
     mBackupDBFile->Remove(false);
     mBackupDBFile = nullptr;
   }
-  // Should have already released folder in OnCompactionComplete(), but
-  // it's safe to release even if we don't hold the lock.
+  // Should have already released folder in OnFinalSummary(), but
+  // ReleaseSemaphore() is OK with being called even if we don't hold the
+  // lock.
   mFolder->ReleaseSemaphore(this);
 }
 
@@ -209,13 +210,15 @@ nsresult FolderCompactor::BeginCompacting(
 
   // Kick it off by telling the store to start compacting the mbox file.
   // The msgStore will hold us in existence until our
-  // OnCompactionComplete() handler returns.
+  // handler returns.
   //
   // After AsyncCompact() is called, we'll receive callbacks to:
-  // OnCompactionBegin()     - At the start of the compaction.
-  // OnRetentionQuery()   - For each message, we give a thumbs up or down.
-  // OnMessageRetained()         - After each kept message has been written.
-  // OnCompactionComplete()  - At the end of the compaction.
+  // OnCompactionBegin()    - At the start of the compaction.
+  // OnRetentionQuery()     - For each message, we give a thumbs up or down.
+  // OnMessageRetained()    - After each kept message has been written.
+  // OnCompactionComplete() - The new mbox is ready to go, so we should
+  //                          install the new db.
+  // OnFinalSummary()       - At the end of the compaction.
   nsCOMPtr<nsIMsgPluggableStore> msgStore;
   rv = mFolder->GetMsgStore(getter_AddRefs(msgStore));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -492,17 +495,70 @@ NS_IMETHODIMP FolderCompactor::OnMessageRetained(nsACString const& oldToken,
   return NS_OK;
 }
 
-// nsIStoreCompactListener callback, called after compaction is complete.
-// Success or failure indicated by status param.
-// After this callback is called, the FolderCompactor will likely be
-// destroyed.
-// At this point the mbox file has been compacted, unless the status is
-// a failure. In which case it has been rolled back.
-NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status,
-                                                    int64_t oldSize,
-                                                    int64_t newSize) {
+// nsIStoreCompactListener callback, called after the low-level compaction
+// is complete, but before it has been committed.
+//
+// In practice, for mbox: the newly compacted mbox is ready to go
+// (in "foo/.compact-temp/folder.compacted"), the old mbox has been moved out
+// of the way (to "foo/.compact-temp/folder.original"). The new mbox will be
+// installed (via a file rename) as soon as this function returns
+// successfully.
+// If this function returns a failure code, an attempt will be made to
+// restore the old mbox file.
+//
+// If we crash or lose power before returning from this function, we'll be
+// out of sync. But at least the condition can be detected and could be
+// recovered.
+//
+// If the AsyncCompact() operation failed, then status passed in here will
+// hold a failure code, we shouldn't install our DB changes, and the
+// lower-level (mbox) compaction will be reverted no matter what error code
+// we return from this function.
+NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status) {
   MOZ_LOG(gCompactLog, LogLevel::Info,
-          ("OnCompactionComplete(status=0x%" PRIx32 " oldSize=%" PRId64
+          ("OnCompactionComplete(status=0x%" PRIx32 ")", (uint32_t)status));
+
+  nsresult rv = status;
+  if (NS_SUCCEEDED(rv)) {
+    // Commit all the changes.
+    rv = mDB->Commit(nsMsgDBCommitType::kCompressCommit);
+    if (NS_SUCCEEDED(rv)) {
+      mBackupDBFile->Remove(false);
+      mBackupDBFile = nullptr;
+    }
+  }
+
+  if (NS_FAILED(rv)) {
+    // Kill db and replace with backup.
+    mDB->ForceClosed();
+    nsAutoString dbFilename;
+    nsresult rv2 = mDBFile->GetLeafName(dbFilename);
+    if (NS_SUCCEEDED(rv2)) {
+      rv2 = mBackupDBFile->MoveTo(nullptr, dbFilename);
+    }
+    if (NS_SUCCEEDED(rv2)) {
+      // All done with backup db.
+      mBackupDBFile = nullptr;
+    } else {
+      NS_ERROR("Failed to restore db after compaction failure.");
+      // Everything is going pear-shaped at this point.
+      // The mbox file will be rolled back, but there's not
+      // much in the way of recovery options for the DB.
+      // TODO: Maybe should just delete DB and require a reparse?
+    }
+  }
+  return rv;
+}
+
+// nsIStoreCompactListener callback, the last thing called.
+// Informs us about the final results of the compaction.
+// After this callback returns, the FolderCompactor will likely be
+// destroyed.
+// Any error code returned from here is ignored.
+NS_IMETHODIMP FolderCompactor::OnFinalSummary(nsresult status, int64_t oldSize,
+                                              int64_t newSize) {
+  MOZ_LOG(gCompactLog, LogLevel::Info,
+          ("OnFinalSummary(status=0x%" PRIx32 " oldSize=%" PRId64
            " newSize=%" PRId64 ")",
            (uint32_t)status, oldSize, newSize));
 
@@ -518,47 +574,14 @@ NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status,
       mFolder->URI());
 
   if (NS_SUCCEEDED(status)) {
-    // Commit all the changes.
-    nsresult rv = mDB->Commit(nsMsgDBCommitType::kCompressCommit);
-    if (NS_SUCCEEDED(rv)) {
-      // Don't need the DB backup any longer.
-      mBackupDBFile->Remove(false);
-      mBackupDBFile = nullptr;
-
-      // Update expungedbytes count in db.
-      nsCOMPtr<nsIDBFolderInfo> dbFolderInfo;
-      mDB->GetDBFolderInfo(getter_AddRefs(dbFolderInfo));
-      if (dbFolderInfo) {
-        dbFolderInfo->SetExpungedBytes(0);
-      }
-      mDB->SetSummaryValid(true);
-      mozilla::glean::mail::compact_space_recovered.Accumulate(oldSize -
-                                                               newSize);
-    } else {
-      NS_ERROR("Failed to commit changes to DB!");
-      status = rv;  // Make sure our completion fn hears about the failure.
+    mozilla::glean::mail::compact_space_recovered.Accumulate(oldSize - newSize);
+    // Update expungedbytes count in db.
+    nsCOMPtr<nsIDBFolderInfo> dbFolderInfo;
+    mDB->GetDBFolderInfo(getter_AddRefs(dbFolderInfo));
+    if (dbFolderInfo) {
+      dbFolderInfo->SetExpungedBytes(0);
     }
-  } else {
-    // Roll back all the DB changes.
-    mDB->ForceClosed();
-
-    // Replace db file with the backup one.
-    nsAutoString dbFilename;
-    nsresult rv = mDBFile->GetLeafName(dbFilename);
-    if (NS_SUCCEEDED(rv)) {
-      rv = mBackupDBFile->MoveTo(nullptr, dbFilename);
-    }
-    if (NS_SUCCEEDED(rv)) {
-      // All done with backup db.
-      mBackupDBFile = nullptr;
-    }
-    if (NS_FAILED(rv)) {
-      NS_ERROR("Failed to restore db after compaction failure.");
-      // Everything is going pear-shaped at this point.
-      // The mbox file will have been rolled back, but there's not
-      // much in the way of recovery options for the DB.
-      // TODO: Maybe should just delete DB and require a reparse?
-    }
+    mDB->SetSummaryValid(true);
   }
 
   // Release our lock on the folder.
@@ -575,7 +598,7 @@ NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status,
   }
   mFolder->NotifyCompactCompleted();  // Sigh. Would be nice to ditch this.
 
-  return NS_OK;
+  return NS_OK;  // This is ignored.
 }
 
 NS_IMPL_ISUPPORTS(FolderCompactor::ShutdownObserver, nsIObserver)
@@ -640,19 +663,30 @@ class BatchCompactor {
 
  protected:
   virtual ~BatchCompactor();
+  void StartNext();
   void OnProgress(int percent);
   void OnDone(nsresult status, int64_t bytesRecovered);
 
-  bool CanCompactNow(nsIMsgFolder* folder);
-  static void RetryCompactTimerCallback(nsITimer* aTimer, void* aClosure);
-  void StopTimer();
+  static void RetryTimerCallback(nsITimer* timer, void* closure);
 
-  // The folders we're compacting.
-  nsTArray<RefPtr<nsIMsgFolder>> mFolders;
-  // Folders that were skipped and must be retried.
-  nsTArray<RefPtr<nsIMsgFolder>> mRetryFolders;
-  // Which folder in mFolders is up next.
-  size_t mNext;
+  // Delay between attempts.
+  static constexpr uint32_t kRetryDelayMs = 3000;
+  // Maximum number of attempts.
+  static constexpr int kMaxAttempts = 5;
+  // The folders queued for compaction.
+  nsTArray<RefPtr<nsIMsgFolder>> mQueue;
+  // Folders which need to be retried (after a delay).
+  nsTArray<RefPtr<nsIMsgFolder>> mRetry;
+  // Number of times we've delayed and retried.
+  int mAttempt{0};
+  // Timer used for retries.
+  nsCOMPtr<nsITimer> mRetryTimer;
+  // Folders which were successfully compacted.
+  nsTArray<RefPtr<nsIMsgFolder>> mComplete;
+  // Folders which failed to compact.
+  nsTArray<RefPtr<nsIMsgFolder>> mFailed;
+  // Error codes for failed folders.
+  nsTArray<nsresult> mFailedCodes;
   // OnStopRunningUrl() is called when it's all done.
   nsCOMPtr<nsIUrlListener> mFinalListener;
   // We show alert boxes and status/progress updates.
@@ -660,44 +694,31 @@ class BatchCompactor {
   // Keep a refcount upon ourself until we're done.
   RefPtr<BatchCompactor> mKungFuDeathGrip;
   // Running total of bytes saved.
-  int64_t mTotalBytesRecovered;
-  // Timer used for retrying after skipping a folder.
-  nsCOMPtr<nsITimer> mTimer;
+  int64_t mTotalBytesRecovered{0};
 };
-
-void BatchCompactor::RetryCompactTimerCallback(nsITimer* aTimer,
-                                               void* aClosure) {
-  MOZ_RELEASE_ASSERT(NS_IsMainThread());
-  BatchCompactor* bc = static_cast<BatchCompactor*>(aClosure);
-  bc->StopTimer();
-  bc->OnDone(NS_OK, 0);
-}
 
 BatchCompactor::BatchCompactor(nsTArray<RefPtr<nsIMsgFolder>> const& folders,
                                nsIUrlListener* finalListener,
                                nsIMsgWindow* window)
-    : mFolders(folders.Clone()),
-      mNext(0),
+    : mRetryTimer(NS_NewTimer()),
+      mComplete(folders.Length()),
       mFinalListener(finalListener),
-      mWindow(window),
-      mTotalBytesRecovered(0) {}
+      mWindow(window) {
+  mQueue = folders.Clone();
+  mQueue.Reverse();
+}
 
-BatchCompactor::~BatchCompactor() { StopTimer(); }
-
-void BatchCompactor::StopTimer() {
-  if (mTimer) {
-    mTimer->Cancel();
-    mTimer = nullptr;
-  }
+BatchCompactor::~BatchCompactor() {
+  mRetryTimer->Cancel();  // Just in case.
 }
 
 nsresult BatchCompactor::Begin() {
   mKungFuDeathGrip = this;
-  // Kick off the first folder (by pretending to complete one :-).
+  // Kick off the first folder.
   // It might invoke listener, so defer until after we've returned.
   RefPtr<BatchCompactor> self = this;
   NS_DispatchToMainThread(NS_NewRunnableFunction(
-      "BatchCompactor kickoff", [self] { self->OnDone(NS_OK, 0); }));
+      "BatchCompactor kickoff", [self] { self->StartNext(); }));
   return NS_OK;
 }
 
@@ -711,18 +732,24 @@ void BatchCompactor::OnProgress(int percent) {
   }
 }
 
+// static
+void BatchCompactor::RetryTimerCallback(nsITimer* timer, void* closure) {
+  MOZ_RELEASE_ASSERT(NS_IsMainThread());
+  BatchCompactor* self = static_cast<BatchCompactor*>(closure);
+  self->StartNext();
+}
+
 // IMAP folders can have pseudo and offline operations that don't
 // interact well with compaction. If we see any of those pending,
 // we cannot compact now, but need to retry later.
-bool BatchCompactor::CanCompactNow(nsIMsgFolder* folder) {
+static bool CanCompactNow(nsIMsgFolder* folder) {
   nsCOMPtr<nsIMsgImapMailFolder> imapFolder = do_QueryInterface(folder);
   if (imapFolder) {
     bool hasPseudo;
     if (NS_SUCCEEDED(imapFolder->HasPseudoActivity(&hasPseudo))) {
-      MOZ_LOG(
-          gCompactLog, LogLevel::Info,
-          ("BatchCompactor::CanCompactNow, HasPseudoStuff='%d'", hasPseudo));
       if (hasPseudo) {
+        MOZ_LOG(gCompactLog, LogLevel::Debug,
+                ("BatchCompactor::CanCompactNow(): HasPseudoStuff"));
         return false;
       }
     }
@@ -736,10 +763,9 @@ bool BatchCompactor::CanCompactNow(nsIMsgFolder* folder) {
       bool hasOffline;
       rv = opsDb->HasOfflineActivity(&hasOffline);
       if (NS_SUCCEEDED(rv)) {
-        MOZ_LOG(gCompactLog, LogLevel::Info,
-                ("BatchCompactor::CanCompactNow, HasOfflineActivity='%d'",
-                 hasOffline));
         if (hasOffline) {
+          MOZ_LOG(gCompactLog, LogLevel::Debug,
+                  ("BatchCompactor::CanCompactNow(): HasOfflineActivity"));
           // No, we don't want to compact now.
           return false;
         }
@@ -747,8 +773,8 @@ bool BatchCompactor::CanCompactNow(nsIMsgFolder* folder) {
         // We can compact folders that don't support offline ops.
         // However, we skip folders that fail to give us the status.
         MOZ_LOG(
-            gCompactLog, LogLevel::Info,
-            ("BatchCompactor::CanCompactNow, failure querying offline ops"));
+            gCompactLog, LogLevel::Debug,
+            ("BatchCompactor::CanCompactNow(): Failure querying offline ops"));
         return false;
       }
     }
@@ -756,74 +782,110 @@ bool BatchCompactor::CanCompactNow(nsIMsgFolder* folder) {
   return true;
 }
 
-void BatchCompactor::OnDone(nsresult status, int64_t bytesRecovered) {
-  MOZ_ASSERT(!mTimer);
+void BatchCompactor::StartNext() {
+  MOZ_ASSERT(mRetryTimer);
 
-  if (NS_SUCCEEDED(status)) {
-    mTotalBytesRecovered += bytesRecovered;
-
-    if (mNext == mFolders.Length()) {
-      // is there anything left to retry?
-      if (mRetryFolders.Length()) {
-        MOZ_LOG(gCompactLog, LogLevel::Info,
-                ("BatchCompactor::OnDone, retrying %u skipped folders",
-                 (unsigned)mRetryFolders.Length()));
-        mFolders.Clear();
-        mFolders = mRetryFolders.Clone();
-        mRetryFolders.Clear();
-        mNext = 0;
+  while (true) {
+    if (mQueue.IsEmpty()) {
+      if (mRetry.IsEmpty()) {
+        // That's it - we're all done!
+        break;
       }
-    }
 
-    if (mNext < mFolders.Length()) {
-      // Kick off the next folder.
-      nsIMsgFolder* folder = mFolders[mNext];
-      ++mNext;
-      MOZ_LOG(gCompactLog, LogLevel::Info,
-              ("BatchCompactor::OnDone, looking at next folder='%s'",
-               folder->URI().get()));
-
-      if (!CanCompactNow(folder)) {
-        mRetryFolders.AppendElement(folder);
-
-        const uint32_t kRetryDelay = 3000;
-        nsresult rv = NS_NewTimerWithFuncCallback(
-            getter_AddRefs(mTimer), RetryCompactTimerCallback, (void*)this,
-            kRetryDelay, nsITimer::TYPE_ONE_SHOT,
-            "BatchCompactor::RetryCompactTimerCallback", nullptr);
-        if (NS_FAILED(rv)) {
-          NS_WARNING("Could not start RetryCompactTimerCallback timer");
+      ++mAttempt;
+      if (mAttempt >= kMaxAttempts) {
+        // Out of retries - fail the outstanding folders.
+        MOZ_LOG(gCompactLog, LogLevel::Error,
+                ("BatchCompactor: too many attempts. Bailing out."));
+        for (nsIMsgFolder* f : mRetry) {
+          mFailed.AppendElement(f);
+          mFailedCodes.AppendElement(NS_ERROR_UNEXPECTED);
         }
+        mRetry.Clear();
+        continue;
+      }
+
+      // Re-queue the folders in the retry list and schedule another attempt,
+      // after a suitable pause.
+      mQueue = mRetry.Clone();
+      mRetry.Clear();
+      MOZ_LOG(
+          gCompactLog, LogLevel::Info,
+          ("BatchCompactor: Attempt %d. Retrying %d folders in %" PRIu32 "ms",
+           mAttempt, (int)mQueue.Length(), kRetryDelayMs));
+      nsresult rv = mRetryTimer->InitWithNamedFuncCallback(
+          RetryTimerCallback, (void*)this, kRetryDelayMs,
+          nsITimer::TYPE_ONE_SHOT, "BatchCompactor RetryTimer");
+      if (NS_SUCCEEDED(rv)) {
+        // Time to wait.
         return;
       }
 
-      RefPtr<FolderCompactor> compactor = new FolderCompactor(folder);
-      status = compactor->BeginCompacting(
-          std::bind(&BatchCompactor::OnProgress, this, std::placeholders::_1),
-          std::bind(&BatchCompactor::OnDone, this, std::placeholders::_1,
-                    std::placeholders::_2));
-      // If it worked we're done for now.
-      // If it failed, fall through.
-      if (NS_SUCCEEDED(status)) {
-        if (mWindow) {
-          GUIShowCompactingMsg(mWindow, folder);
-        }
-        return;
+      // Retry timer failed.
+      // Nothing we can do to recover, so just fail everything outstanding.
+      for (nsIMsgFolder* f : mQueue) {
+        mFailed.AppendElement(f);
+        mFailedCodes.AppendElement(NS_ERROR_UNEXPECTED);
       }
+      mQueue.Clear();
+      break;  // All Done.
     }
-  }
 
-  // If we get here, we're either all done or something has failed.
+    // If we get this far, there's something in the queue to try.
+    if (!CanCompactNow(mQueue.LastElement())) {
+      MOZ_LOG(gCompactLog, LogLevel::Error,
+              ("BatchCompactor - Can't compact '%s' now. Queued for retry.",
+               mQueue.LastElement()->URI().get()));
+      // Move it to the retry queue, to try again later.
+      mRetry.AppendElement(mQueue.PopLastElement());
+      continue;
+    }
+
+    // GO!
+    RefPtr<FolderCompactor> compactor =
+        new FolderCompactor(mQueue.LastElement());
+    nsresult rv = compactor->BeginCompacting(
+        std::bind(&BatchCompactor::OnProgress, this, std::placeholders::_1),
+        std::bind(&BatchCompactor::OnDone, this, std::placeholders::_1,
+                  std::placeholders::_2));
+    // If it worked we're done for now.
+    if (NS_FAILED(rv)) {
+      // Move it to the Failed list and go back for another one.
+      mFailed.AppendElement(mQueue.PopLastElement());
+      mFailedCodes.AppendElement(rv);
+      continue;
+    }
+
+    // We've sucessfully set a compaction running!
+    if (mWindow) {
+      GUIShowCompactingMsg(mWindow, mQueue.LastElement());
+    }
+    return;
+  }  // End of loop.
+
+  // When we get here, we're all done.
+  MOZ_ASSERT(mQueue.IsEmpty());
+  MOZ_ASSERT(mRetry.IsEmpty());
+  MOZ_ASSERT(mFailed.Length() == mFailedCodes.Length());
+
   if (mWindow) {
     GUIShowDoneMsg(mWindow, mTotalBytesRecovered);
   }
 
-  if (NS_FAILED(status) && mNext > 0) {
-    // If it failed, display an alert.
-    nsIMsgFolder* folder = mFolders[mNext - 1];
+  // There _may_ be failures.
+
+  for (uint32_t i = 0; i < mFailed.Length(); ++i) {
     MOZ_LOG(gCompactLog, LogLevel::Error,
             ("Failed to compact folder='%s', status=0x%" PRIx32 "",
-             folder->URI().get(), (uint32_t)status));
+             mFailed[i]->URI().get(), (uint32_t)mFailedCodes[i]));
+  }
+
+  nsresult status = NS_OK;
+  if (!mFailed.IsEmpty()) {
+    // Show an error for the first failing folder.
+    nsIMsgFolder* folder = mFailed[0];
+    status = mFailedCodes[0];
+
     if (!FolderCompactor::ShutdownObserver::IsShuttingDown()) {
       // NOTE: NS_MSG_ codes are not actually nsresult, so can't use switch
       // statement here (see Bug 1927029).
@@ -859,11 +921,27 @@ void BatchCompactor::OnDone(nsresult status, int64_t bytesRecovered) {
   if (mFinalListener) {
     mFinalListener->OnStopRunningUrl(nullptr, status);
   }
-  MOZ_LOG(gCompactLog, LogLevel::Info,
-          ("AsyncCompactFolders() finished. TotalBytesRecovered=%" PRId64 "",
-           mTotalBytesRecovered));
+
+  MOZ_LOG(
+      gCompactLog, LogLevel::Info,
+      ("BatchCompactor complete: %d folders compacted, %d failed, "
+       "TotalBytesRecovered=%" PRId64 "",
+       (int)mComplete.Length(), (int)mFailed.Length(), mTotalBytesRecovered));
+
   // All done. BatchCompactor can be deleted now.
   mKungFuDeathGrip = nullptr;
+}
+
+// Called when a folder compaction has completed (or failed).
+void BatchCompactor::OnDone(nsresult status, int64_t bytesRecovered) {
+  if (NS_SUCCEEDED(status)) {
+    mTotalBytesRecovered += bytesRecovered;
+    mComplete.AppendElement(mQueue.PopLastElement());
+  } else {
+    mFailed.AppendElement(mQueue.PopLastElement());
+    mFailedCodes.AppendElement(status);
+  }
+  StartNext();
 }
 
 static void GUIShowCompactingMsg(nsIMsgWindow* window, nsIMsgFolder* folder) {
@@ -885,7 +963,7 @@ static void GUIShowCompactingMsg(nsIMsgWindow* window, nsIMsgFolder* folder) {
   rv = folder->GetStringWithFolderNameFromBundle("compactingFolder",
                                                  compactingMsg);
   // Prepend account name.
-  nsAutoString accountName;
+  nsAutoCString accountName;
   {
     nsCOMPtr<nsIMsgIncomingServer> server;
     rv = folder->GetServer(getter_AddRefs(server));
@@ -895,7 +973,8 @@ static void GUIShowCompactingMsg(nsIMsgWindow* window, nsIMsgFolder* folder) {
   }
 
   nsAutoString statusMessage;
-  AutoTArray<nsString, 2> params = {accountName, compactingMsg};
+  AutoTArray<nsString, 2> params = {NS_ConvertUTF8toUTF16(accountName),
+                                    compactingMsg};
   rv = bundle->FormatStringFromName("statusMessage", params, statusMessage);
   NS_ENSURE_SUCCESS_VOID(rv);
 

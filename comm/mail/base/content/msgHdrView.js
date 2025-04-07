@@ -1449,7 +1449,6 @@ function UpdateExpandedMessageHeaders() {
 }
 
 function ClearCurrentHeaders() {
-  gSecureMsgProbe = {};
   // eslint-disable-next-line no-global-assign
   currentHeaderData = {};
   // eslint-disable-next-line no-global-assign
@@ -2385,7 +2384,7 @@ function HandleMultipleAttachments(attachments, action) {
       // the folder path of each file for the save dialog of the next one.
       const saveAttachments = async infos => {
         for (const info of infos) {
-          await info.save(top.messenger);
+          await info.save(top.browsingContext);
         }
       };
       saveAttachments(attachments);
@@ -3105,6 +3104,19 @@ const gMessageHeader = {
       return;
     }
 
+    // This block sends menu information to WebExtensions.
+    const messageId = element.id;
+    const subject = {
+      menu: popup,
+      tab: popup.ownerGlobal,
+      onHeaderPaneLink: true,
+      linkText: messageId,
+      linkUrl: `mid:${messageId.substring(1, messageId.length - 1)}`,
+      pageUrl: getMessagePaneBrowser().contentDocument?.URL,
+    };
+    subject.wrappedJSObject = subject;
+    Services.obs.notifyObservers(subject, "on-build-contextmenu");
+
     popup.openPopupAtScreen(event.screenX, event.screenY, true);
   },
 
@@ -3402,17 +3414,6 @@ function AdjustHeaderView(headermode) {
 }
 
 /**
- * Should the reply command/button be enabled?
- *
- * @returns {boolean} whether the reply command/button should be enabled.
- */
-function IsReplyEnabled() {
-  // If we're in an rss item, we never want to Reply, because there's
-  // usually no-one useful to reply to.
-  return !FeedUtils.isFeedMessage(gMessage);
-}
-
-/**
  * Should the reply-all command/button be enabled?
  *
  * @returns {boolean} whether the reply-all command/button should be enabled.
@@ -3622,22 +3623,6 @@ function MsgRedirectMessage(event) {
   commandController._composeMsgByType(Ci.nsIMsgCompType.Redirect, event);
 }
 
-function MsgEditMessageAsNew(aEvent) {
-  commandController._composeMsgByType(Ci.nsIMsgCompType.EditAsNew, aEvent);
-}
-
-function MsgEditDraftMessage(aEvent) {
-  commandController._composeMsgByType(Ci.nsIMsgCompType.Draft, aEvent);
-}
-
-function MsgNewMessageFromTemplate(aEvent) {
-  commandController._composeMsgByType(Ci.nsIMsgCompType.Template, aEvent);
-}
-
-function MsgEditTemplateMessage(aEvent) {
-  commandController._composeMsgByType(Ci.nsIMsgCompType.EditTemplate, aEvent);
-}
-
 function MsgComposeDraftMessage() {
   top.ComposeMessage(
     Ci.nsIMsgCompType.Draft,
@@ -3646,6 +3631,16 @@ function MsgComposeDraftMessage() {
     [gMessageURI]
   );
 }
+
+const trashButtonClickHandler = event => {
+  if (event.button == 0) {
+    goDoCommand(
+      event.shiftKey && event.target.dataset.imapDeleted == "false"
+        ? "cmd_shiftDelete"
+        : "cmd_delete"
+    );
+  }
+};
 
 /**
  * Update the "archive", "junk" and "delete" buttons in the message header area.
@@ -3671,16 +3666,14 @@ function updateHeaderToolbarButtons() {
   }
   junkButton.disabled = hideJunk;
   trashButton.disabled = false;
-}
 
-/**
- * Checks if the selected messages can be marked as read or unread
- *
- * @param {boolean} markingRead - true if trying to mark messages as read.
- * @returns {boolean} true if the chosen operation can be performed
- */
-function CanMarkMsgAsRead(markingRead) {
-  return gMessage && SelectedMessagesAreRead() != markingRead;
+  trashButton.addEventListener("click", trashButtonClickHandler);
+  const isIMAPDeleted = gMessage?.flags & Ci.nsMsgMessageFlags.IMAPDeleted;
+  document.l10n.setAttributes(
+    trashButton,
+    isIMAPDeleted ? "message-header-undelete" : "message-header-delete"
+  );
+  trashButton.dataset.imapDeleted = !!isIMAPDeleted;
 }
 
 /**
@@ -4414,31 +4407,88 @@ function IgnoreMDNResponse() {
   gMessageNotificationBar.mdnGenerator.userDeclined();
 }
 
-// An object to help collecting reading statistics of secure emails.
-var gSecureMsgProbe = {};
+// A Map() to help collecting statistics of emails.
+var gMsgProbe = new Map();
 
 /**
- * Update gSecureMsgProbe and report to telemetry if necessary.
+ * Process and clear the collected telemetry data.
+ */
+function flushPendingTelemetryData() {
+  // Clear any pending action.
+  window.clearTimeout(gMsgProbe.get("timeoutId"));
+
+  const security = gMsgProbe.get("security");
+
+  // Only process telemetry for encrypted and/or signed messages.
+  if (security) {
+    let skipped = true;
+
+    // Skip telemetry data for messages which are not new.
+    if (gMsgProbe.has("isNewRead")) {
+      const is_signed = gMsgProbe.has("is_signed");
+      const is_encrypted = gMsgProbe.has("is_encrypted");
+      Glean.mail.mailsReadSecure.record({ security, is_signed, is_encrypted });
+      skipped = false;
+    }
+
+    // Let tests and other consumers know when the data has been processed or
+    // skipped.
+    window.dispatchEvent(
+      new CustomEvent("MsgSecurityTelemetryProcessed", {
+        bubbles: true,
+        detail: {
+          skipped,
+        },
+      })
+    );
+  }
+
+  // Reset collected data.
+  gMsgProbe.clear();
+}
+
+/**
+ * Update gMsgProbe and schedule submission of collected telemetry if necessary.
  */
 function reportMsgRead({ isNewRead = false, key = null }) {
+  // Usually telemetry data is processed after a short delay to ensure all data
+  // has been captured and the full telemetry information is available (security,
+  // is_signed and is_encrypted). Forcfully process any pending telemetry data,
+  // if a different message is loaded.
+  let pendingMsgURI = gMsgProbe.get("messageURI");
+  if (pendingMsgURI && pendingMsgURI != gMessageURI) {
+    flushPendingTelemetryData();
+    pendingMsgURI = undefined;
+  }
+
+  // Update probe data.
+  if (!pendingMsgURI) {
+    gMsgProbe.set("messageURI", gMessageURI);
+  }
   if (isNewRead) {
-    gSecureMsgProbe.isNewRead = true;
+    gMsgProbe.set("isNewRead", true);
   }
   if (key) {
-    gSecureMsgProbe.key = key;
-  }
-  if (gSecureMsgProbe.key && gSecureMsgProbe.isNewRead) {
     // The key is one of:
     // - 'signed-smime'
     // - 'signed-openpgp'
     // - 'encrypted-smime'
     // - 'encrypted-openpgp'
-    const is_signed = gSecureMsgProbe.key.startsWith("signed-");
-    const is_encrypted = gSecureMsgProbe.key.startsWith("encrypted-");
-    const security = gSecureMsgProbe.key.endsWith("-openpgp")
-      ? "OpenPGP"
-      : "S/MIME";
-    Glean.mail.mailsReadSecure.record({ security, is_signed, is_encrypted });
+    if (key.startsWith("signed-")) {
+      gMsgProbe.set("is_signed", true);
+    }
+    if (key.startsWith("encrypted-")) {
+      gMsgProbe.set("is_encrypted", true);
+    }
+    gMsgProbe.set("security", key.endsWith("-openpgp") ? "OpenPGP" : "S/MIME");
+
+    // This seems to be an encrypted and/or signed message. Schedule to process
+    // the collected telemetry data.
+    window.clearTimeout(gMsgProbe.get("timeoutId"));
+    gMsgProbe.set(
+      "timeoutId",
+      window.setTimeout(flushPendingTelemetryData, 500)
+    );
   }
 }
 

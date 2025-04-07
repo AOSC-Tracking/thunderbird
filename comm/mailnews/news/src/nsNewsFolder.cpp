@@ -122,14 +122,11 @@ nsMsgNewsFolder::AddNewsgroup(const nsACString& name, const nsACString& setStr,
   // URI should use UTF-8
   // (see RFC2396 Uniform Resource Identifiers (URI): Generic Syntax)
 
-  // we are handling newsgroup names in UTF-8
-  NS_ConvertUTF8toUTF16 nameUtf16(name);
-
   nsAutoCString escapedName;
-  rv = NS_MsgEscapeEncodeURLPath(nameUtf16, escapedName);
+  rv = NS_MsgEscapeEncodeURLPath(name, escapedName);
   if (NS_FAILED(rv)) return rv;
 
-  rv = nntpServer->AddNewsgroup(nameUtf16);
+  rv = nntpServer->AddNewsgroup(name);
   if (NS_FAILED(rv)) return rv;
 
   uri.Append(escapedName);
@@ -153,7 +150,7 @@ nsMsgNewsFolder::AddNewsgroup(const nsACString& name, const nsACString& setStr,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // this what shows up in the UI
-  rv = folder->SetName(nameUtf16);
+  rv = folder->SetName(name);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = folder->SetFlag(nsMsgFolderFlags::Newsgroup);
@@ -319,36 +316,6 @@ nsMsgNewsFolder::GetCanCompact(bool* aResult) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::GetFolderURL(nsACString& aUrl) {
-  nsCString hostName;
-  nsresult rv = GetHostname(hostName);
-  nsString groupName;
-  rv = GetName(groupName);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIMsgIncomingServer> server;
-  rv = GetServer(getter_AddRefs(server));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  int32_t socketType;
-  rv = server->GetSocketType(&socketType);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  int32_t port;
-  rv = server->GetPort(&port);
-  NS_ENSURE_SUCCESS(rv, rv);
-  const char* newsScheme =
-      (socketType == nsMsgSocketType::SSL) ? SNEWS_SCHEME : NEWS_SCHEME;
-  nsCString escapedName;
-  rv = NS_MsgEscapeEncodeURLPath(groupName, escapedName);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCString tmpStr;
-  tmpStr.Adopt(PR_smprintf("%s//%s:%ld/%s", newsScheme, hostName.get(), port,
-                           escapedName.get()));
-  aUrl.Assign(tmpStr);
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgNewsFolder::SetNewsrcHasChanged(bool newsrcHasChanged) {
   nsresult rv;
 
@@ -358,15 +325,14 @@ NS_IMETHODIMP nsMsgNewsFolder::SetNewsrcHasChanged(bool newsrcHasChanged) {
   return nntpServer->SetNewsrcHasChanged(newsrcHasChanged);
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::CreateSubfolder(const nsAString& newsgroupName,
+NS_IMETHODIMP nsMsgNewsFolder::CreateSubfolder(const nsACString& newsgroupName,
                                                nsIMsgWindow* msgWindow) {
   nsresult rv = NS_OK;
   if (newsgroupName.IsEmpty()) return NS_MSG_ERROR_INVALID_FOLDER_NAME;
 
   nsCOMPtr<nsIMsgFolder> child;
   // Now let's create the actual new folder
-  rv = AddNewsgroup(NS_ConvertUTF16toUTF8(newsgroupName), EmptyCString(),
-                    getter_AddRefs(child));
+  rv = AddNewsgroup(newsgroupName, EmptyCString(), getter_AddRefs(child));
 
   if (NS_SUCCEEDED(rv))
     SetNewsrcHasChanged(true);  // subscribe UI does this - but maybe we got
@@ -400,11 +366,7 @@ NS_IMETHODIMP nsMsgNewsFolder::DeleteStorage() {
   rv = GetNntpServer(getter_AddRefs(nntpServer));
   if (NS_FAILED(rv)) return rv;
 
-  nsAutoString name;
-  rv = GetUnicodeName(name);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = nntpServer->RemoveNewsgroup(name);
+  rv = nntpServer->RemoveNewsgroup(mName);
   NS_ENSURE_SUCCESS(rv, rv);
 
   (void)RefreshSizeOnDisk();
@@ -412,12 +374,13 @@ NS_IMETHODIMP nsMsgNewsFolder::DeleteStorage() {
   return SetNewsrcHasChanged(true);
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::Rename(const nsAString& newName,
+NS_IMETHODIMP nsMsgNewsFolder::Rename(const nsACString& newName,
                                       nsIMsgWindow* msgWindow) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::GetAbbreviatedName(nsAString& aAbbreviatedName) {
+NS_IMETHODIMP nsMsgNewsFolder::GetAbbreviatedName(
+    nsACString& aAbbreviatedName) {
   nsresult rv;
 
   rv = nsMsgDBFolder::GetPrettyName(aAbbreviatedName);
@@ -455,9 +418,9 @@ NS_IMETHODIMP nsMsgNewsFolder::GetAbbreviatedName(nsAString& aAbbreviatedName) {
 // 'a' is the first letter of the part of the word before the
 // dash and 'b' is the first letter of the part of the word after
 // the dash
-nsresult nsMsgNewsFolder::AbbreviatePrettyName(nsAString& prettyName,
+nsresult nsMsgNewsFolder::AbbreviatePrettyName(nsACString& prettyName,
                                                int32_t fullwords) {
-  nsAutoString name(prettyName);
+  nsAutoCString name(prettyName);
   int32_t totalwords = 0;  // total no. of words
 
   // get the total no. of words
@@ -478,7 +441,7 @@ nsresult nsMsgNewsFolder::AbbreviatePrettyName(nsAString& prettyName,
   if (abbrevnum < 1) return NS_OK;  // nothing to abbreviate
 
   // build the ellipsis
-  nsAutoString out;
+  nsAutoCString out;
   out += name[0];
 
   int32_t length = name.Length();
@@ -1061,7 +1024,7 @@ nsMsgNewsFolder::GetAuthenticationCredentials(nsIMsgWindow* aMsgWindow,
       nsString promptTitle, promptText;
       bundle->GetStringFromName("enterUserPassTitle", promptTitle);
 
-      nsString serverName;
+      nsAutoCString serverName;
       nsCOMPtr<nsIMsgIncomingServer> server;
       rv = GetServer(getter_AddRefs(server));
       NS_ENSURE_SUCCESS(rv, rv);
@@ -1076,10 +1039,11 @@ nsMsgNewsFolder::GetAuthenticationCredentials(nsIMsgWindow* aMsgWindow,
       nntpServer->GetSingleSignon(&singleSignon);
 
       if (singleSignon) {
-        AutoTArray<nsString, 1> params = {serverName};
+        AutoTArray<nsString, 1> params = {NS_ConvertUTF8toUTF16(serverName)};
         bundle->FormatStringFromName("enterUserPassServer", params, promptText);
       } else {
-        AutoTArray<nsString, 2> params = {mName, serverName};
+        AutoTArray<nsString, 2> params = {NS_ConvertUTF8toUTF16(mName),
+                                          NS_ConvertUTF8toUTF16(serverName)};
         bundle->FormatStringFromName("enterUserPassGroup", params, promptText);
       }
 
@@ -1174,7 +1138,7 @@ NS_IMETHODIMP nsMsgNewsFolder::ReorderGroup(nsIMsgFolder* aNewsgroupToMove,
 
   for (uint32_t i = 0; i < mSubFolders.Length(); i++) {
     mSubFolders[i]->SetSortOrder(kNewsSortOffset + i);
-    nsAutoString name;
+    nsAutoCString name;
     mSubFolders[i]->GetName(name);
     NotifyFolderRemoved(mSubFolders[i]);
     NotifyFolderAdded(mSubFolders[i]);
@@ -1210,10 +1174,9 @@ NS_IMETHODIMP nsMsgNewsFolder::GetCharset(nsACString& charset) {
 NS_IMETHODIMP
 nsMsgNewsFolder::GetNewsrcLine(nsACString& newsrcLine) {
   nsresult rv;
-  nsString newsgroupNameUtf16;
-  rv = GetName(newsgroupNameUtf16);
+  nsAutoCString newsgroupName;
+  rv = GetName(newsgroupName);
   if (NS_FAILED(rv)) return rv;
-  NS_ConvertUTF16toUTF8 newsgroupName(newsgroupNameUtf16);
 
   newsrcLine = newsgroupName;
   newsrcLine.Append(':');
@@ -1260,13 +1223,10 @@ nsMsgNewsFolder::OnReadChanged(nsIDBChangeListener* aInstigator) {
 }
 
 NS_IMETHODIMP
-nsMsgNewsFolder::GetUnicodeName(nsAString& aName) { return GetName(aName); }
-
-NS_IMETHODIMP
 nsMsgNewsFolder::GetRawName(nsACString& aRawName) {
   nsresult rv;
   if (mRawName.IsEmpty()) {
-    nsString name;
+    nsAutoCString name;
     rv = GetName(name);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1278,9 +1238,11 @@ nsMsgNewsFolder::GetRawName(nsACString& aRawName) {
     nsAutoCString dataCharset;
     rv = nntpServer->GetCharset(dataCharset);
     NS_ENSURE_SUCCESS(rv, rv);
-    rv = nsMsgI18NConvertFromUnicode(dataCharset, name, mRawName);
+    rv = nsMsgI18NConvertFromUnicode(dataCharset, NS_ConvertUTF8toUTF16(name),
+                                     mRawName);
 
-    if (NS_FAILED(rv)) LossyCopyUTF16toASCII(name, mRawName);
+    if (NS_FAILED(rv))
+      LossyCopyUTF16toASCII(NS_ConvertUTF8toUTF16(name), mRawName);
   }
   aRawName = mRawName;
   return NS_OK;
@@ -1561,13 +1523,13 @@ nsMsgNewsFolder::GetFilterList(nsIMsgWindow* aMsgWindow,
     // NOTE:
     // we don't we need to call NS_MsgHashIfNecessary()
     // it's already been hashed, if necessary
-    nsCString filterFileName;
-    rv = filterFile->GetNativeLeafName(filterFileName);
+    nsAutoString filterFileName;
+    rv = filterFile->GetLeafName(filterFileName);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    filterFileName.AppendLiteral(".dat");
+    filterFileName.AppendLiteral(u".dat");
 
-    rv = filterFile->SetNativeLeafName(filterFileName);
+    rv = filterFile->SetLeafName(filterFileName);
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIMsgFilterService> filterService =

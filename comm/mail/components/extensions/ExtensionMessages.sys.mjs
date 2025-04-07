@@ -8,6 +8,7 @@ import { EventEmitter } from "resource://gre/modules/EventEmitter.sys.mjs";
 import { ExtensionUtils } from "resource://gre/modules/ExtensionUtils.sys.mjs";
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { clearTimeout, setTimeout } from "resource://gre/modules/Timer.sys.mjs";
+import { NOTIFICATION_COLLAPSE_TIME } from "resource:///modules/ExtensionUtilities.sys.mjs";
 
 import {
   getFolder,
@@ -25,6 +26,7 @@ var { ExtensionError } = ExtensionUtils;
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  DeferredTask: "resource://gre/modules/DeferredTask.sys.mjs",
   MimeParser: "resource:///modules/mimeParser.sys.mjs",
   VirtualFolderHelper: "resource:///modules/VirtualFolderWrapper.sys.mjs",
   jsmime: "resource:///modules/jsmime.sys.mjs",
@@ -286,58 +288,55 @@ function getParentMsgInfo(msgHdr) {
  * Custom MimeTreeEmitter class with custom determination of attachment names.
  */
 class WebExtMimeTreeEmitter extends MimeTreeEmitter {
+  /**
+   * Extract the attachment name of this part, if it is an attachment.
+   *
+   * Note: The content of parts which are _not_ considered to be attachments will
+   * be included in the return value of messages.getFull().
+   *
+   * @param {MimeTreePart} mimeTreePart
+   * @returns {?string} Name of the attachment, or null.
+   */
   getAttachmentName(mimeTreePart) {
-    const getName = header => {
-      if (!header) {
-        return "";
-      }
-      const filename = lazy.MimeParser.getParameter(header, "filename");
-      if (filename) {
-        return filename;
-      }
-      if (mimeTreePart.fullContentType) {
-        const name = lazy.MimeParser.getParameter(
-          mimeTreePart.fullContentType,
-          "name"
-        );
-        if (name) {
-          return name;
-        }
-      }
-      return "";
-    };
-
-    const contentDisposition = mimeTreePart.headers.has("content-disposition")
-      ? mimeTreePart.headers.get("content-disposition")[0]
-      : undefined;
-
-    // Forwarded messages are sometimes not marked as attachments, but we always
-    // consider them as such.
-    if (
-      contentDisposition ||
-      mimeTreePart.headers.contentType.type == "message/rfc822"
-    ) {
-      if (mimeTreePart.headers.contentType.type == "message/rfc822") {
-        return getName(contentDisposition) || "ForwardedMessage.eml";
-      }
-
-      // We also consider related (inline) attachments as attachments.
-      if (mimeTreePart.headers._rawHeaders.has("content-id")) {
-        return (
-          getName(contentDisposition) ||
-          mimeTreePart.headers.contentType.get("name") ||
-          ""
-        );
-      }
-
-      if (
-        /^attachment/i.test(contentDisposition) ||
-        mimeTreePart.headers.contentType.type == "text/x-moz-deleted"
-      ) {
-        return getName(contentDisposition);
-      }
+    const { mediatype, type } = mimeTreePart.headers.contentType;
+    // Early exit on multipart parts.
+    if (mediatype == "multipart") {
+      return null;
     }
-    return null;
+
+    let name;
+    const contentDisposition = mimeTreePart.headers.get("content-disposition");
+    if (contentDisposition) {
+      name = lazy.MimeParser.getParameter(contentDisposition[0], "filename");
+    }
+    if (!name) {
+      name = mimeTreePart.headers.contentType.get("name") || "";
+    }
+
+    // Handle forwarded messages.
+    if (type == "message/rfc822") {
+      return name || "ForwardedMessage.eml";
+    }
+
+    // Handle deleted attachments.
+    if (type == "text/x-moz-deleted") {
+      return name;
+    }
+
+    // Handle related attachments.
+    if (mimeTreePart.headers._rawHeaders.has("content-id")) {
+      return name;
+    }
+
+    // Skip text parts which are not clearly marked as attachments.
+    if (
+      mediatype == "text" &&
+      (!contentDisposition || !/^attachment/i.test(contentDisposition[0]))
+    ) {
+      return null;
+    }
+
+    return name;
   }
 }
 
@@ -819,19 +818,28 @@ export function getMessagesInFolder(folder) {
   }
 
   if (folder.getFlag(Ci.nsMsgFolderFlags.Virtual)) {
-    // We first try to read the cached results.
-    try {
-      return [...folder.parent.msgDatabase.getCachedHits(folder.URI)];
-    } catch (e) {}
-
-    // Manually search the folder.
     const messages = [];
+    const searchFolders = [];
     const wrappedVirtualFolder =
       lazy.VirtualFolderHelper.wrapVirtualFolder(folder);
 
-    const searchFolders = getWildcardVirtualFolders(wrappedVirtualFolder);
-    for (const searchFolder of wrappedVirtualFolder.searchFolders) {
-      searchFolders.push(searchFolder);
+    // Check explicitly listed searchFolders and all folders selected by wildcard,
+    // if any.
+    for (const searchFolder of [
+      ...getWildcardVirtualFolders(wrappedVirtualFolder),
+      ...wrappedVirtualFolder.searchFolders,
+    ]) {
+      // Use cached hits or schedule the folder to be searched manually.
+      // Note: The cached hits are stored in the db of each search folder using
+      // the URI of the virtual folder as identifier.
+      const cachedHits = searchFolder.msgDatabase.getCachedHits(folder.URI);
+      if (!cachedHits) {
+        searchFolders.push(searchFolder);
+        continue;
+      }
+      for (const msg of cachedHits) {
+        messages.push(msg);
+      }
     }
 
     for (const searchFolder of searchFolders) {
@@ -842,6 +850,7 @@ export function getMessagesInFolder(folder) {
         messages.push(msg);
       }
     }
+
     return messages;
   }
 
@@ -1032,25 +1041,65 @@ export class MessageTracker extends EventEmitter {
     this._headerPromises = new Map();
     this._msgHdrCache = new TemporaryCacheMap();
 
+    // Members to track new messages.
+    this._knownNewMessages = new Set();
+    this._pendingNewMessages = new ExtensionUtils.DefaultMap(() => []);
+    this._deferredNewMessagesNotifications = new ExtensionUtils.DefaultMap(
+      folder =>
+        new lazy.DeferredTask(
+          () => this.emitPendingNewMessages(folder),
+          NOTIFICATION_COLLAPSE_TIME
+        )
+    );
+
     // nsIObserver
     Services.obs.addObserver(this, "quit-application-granted");
     Services.obs.addObserver(this, "attachment-delete-msgkey-changed");
     // nsIFolderListener
     MailServices.mailSession.AddFolderListener(
       this,
-      Ci.nsIFolderListener.propertyFlagChanged |
-        Ci.nsIFolderListener.intPropertyChanged |
-        Ci.nsIFolderListener.removed
+      Ci.nsIFolderListener.propertyFlagChanged | Ci.nsIFolderListener.removed
     );
     // nsIMsgFolderListener
     MailServices.mfn.addListener(
       this,
-      MailServices.mfn.msgsJunkStatusChanged |
+      MailServices.mfn.msgPropertyChanged |
         MailServices.mfn.msgAdded |
         MailServices.mfn.msgsDeleted |
         MailServices.mfn.msgsMoveCopyCompleted |
         MailServices.mfn.msgKeyChanged
     );
+  }
+
+  /**
+   * Add a message to the stack of messages to be reported as "new".
+   *
+   * @param {nsIMsgDBHdr} msgHdr
+   */
+  addPendingNewMessage(msgHdr) {
+    if (this._knownNewMessages.has(msgHdr.messageId)) {
+      return;
+    }
+    this._knownNewMessages.add(msgHdr.messageId);
+
+    const folder = msgHdr.folder;
+    this._pendingNewMessages.get(folder).push(msgHdr);
+    this._deferredNewMessagesNotifications.get(folder).disarm();
+    this._deferredNewMessagesNotifications.get(folder).arm();
+  }
+
+  /**
+   * Emit a "messages-received" event for the current stack of "new" messages in
+   * the requested folder.
+   *
+   * @param {nsIMsgFolder} folder
+   */
+  emitPendingNewMessages(folder) {
+    const pendingNewMessages = this._pendingNewMessages.get(folder);
+    if (pendingNewMessages.length > 0) {
+      this.emit("messages-received", folder, pendingNewMessages);
+      this._pendingNewMessages.delete(folder);
+    }
   }
 
   cleanup() {
@@ -1274,91 +1323,46 @@ export class MessageTracker extends EventEmitter {
     return null;
   }
 
-  /**
-   * Finds all folders with new messages in the specified changedFolder and
-   * emits a "messages-received" event for them.
-   *
-   * @param {nsIMsgFolder} changedFolder
-   * @see MailNotificationManager._getFirstRealFolderWithNewMail()
-   */
-  findNewMessages(changedFolder) {
-    const folders = changedFolder.descendants;
-    folders.unshift(changedFolder);
-    for (const folder of folders) {
-      const numNewMessages = folder.getNumNewMessages(false);
-      if (!numNewMessages) {
-        continue;
-      }
-      const msgDb = folder.msgDatabase;
-      const newMsgKeys = msgDb.getNewList().slice(-numNewMessages);
-      if (newMsgKeys.length == 0) {
-        continue;
-      }
-      this.emit(
-        "messages-received",
-        folder,
-        newMsgKeys.map(key => msgDb.getMsgHdrForKey(key))
-      );
-    }
-  }
-
   // Implements nsIFolderListener.
 
   /**
    * Implements nsIFolderListener.onFolderPropertyFlagChanged().
    *
-   * @param {nsIMsgDBHdr} item
+   * @param {nsIMsgDBHdr} msgHdr
    * @param {string} property
    * @param {integer} oldFlag
    * @param {integer} newFlag
    */
-  onFolderPropertyFlagChanged(item, property, oldFlag, newFlag) {
-    const changes = {};
+  onFolderPropertyFlagChanged(msgHdr, property, oldFlag, newFlag) {
+    const newProperties = {};
     switch (property) {
       case "Status":
         if ((oldFlag ^ newFlag) & Ci.nsMsgMessageFlags.Read) {
-          changes.read = item.isRead;
+          newProperties.read = msgHdr.isRead;
         }
         if ((oldFlag ^ newFlag) & Ci.nsMsgMessageFlags.New) {
-          changes.new = !!(newFlag & Ci.nsMsgMessageFlags.New);
+          newProperties.new = !!(newFlag & Ci.nsMsgMessageFlags.New);
+          // Remove message from the list of known new messages.
+          if (!newProperties.new) {
+            this._knownNewMessages.delete(msgHdr.messageId);
+          }
         }
         break;
       case "Flagged":
-        changes.flagged = item.isFlagged;
-        break;
-      case "Keywords":
-        {
-          let tags = item.getStringProperty("keywords");
-          tags = tags ? tags.split(" ") : [];
-          changes.tags = tags.filter(MailServices.tags.isValidKey);
-        }
+        newProperties.flagged = msgHdr.isFlagged;
         break;
     }
-    if (Object.keys(changes).length) {
-      this.emit("message-updated", item, changes);
-    }
-  }
-
-  /**
-   * Implements nsIFolderListener.onFolderIntPropertyChanged().
-   *
-   * @param {nsIMsgFolder} folder
-   * @param {string} property
-   * @param {integer} oldValue
-   * @param {integer} newValue
-   */
-  onFolderIntPropertyChanged(folder, property, oldValue, newValue) {
-    switch (property) {
-      case "BiffState":
-        if (newValue == Ci.nsIMsgFolder.nsMsgBiffState_NewMail) {
-          // The folder argument is a root folder.
-          this.findNewMessages(folder);
-        }
-        break;
-      case "NewMailReceived":
-        // The folder argument is a real folder.
-        this.findNewMessages(folder);
-        break;
+    if (Object.keys(newProperties).length) {
+      // Reconstruct old values of changed boolean properties.
+      const oldProperties = Object.fromEntries(
+        Object.entries(newProperties).map(([name, value]) => [name, !value])
+      );
+      this.emit(
+        "message-updated",
+        new CachedMsgHeader(this, msgHdr),
+        newProperties,
+        oldProperties
+      );
     }
   }
 
@@ -1369,36 +1373,65 @@ export class MessageTracker extends EventEmitter {
    * @param {nsIMsgDBHdr} msgHdr
    */
   onMessageRemoved(folder, msgHdr) {
-    // An IMAP move operation may not get this information in time, cache it.
-    const hash = `folderURI: ${folder.URI}, messageKey: ${msgHdr.messageKey}`;
     // Do not add the cached header of the deleted message unnecessarily to the
     // message tracker. It will be added once it is actually used.
     const cachedHdr = new CachedMsgHeader(this, msgHdr, {
       addToMessageTracker: false,
     });
-    // Since this message is removed, it will have certain flags set which will
-    // prevent it from being returned to the caller. For the purpose of this cache,
-    // this needs to be ignored.
-    cachedHdr.flags &= ~(
-      Ci.nsMsgMessageFlags.IMAPDeleted | Ci.nsMsgMessageFlags.Expunged
-    );
+    // An IMAP move operation may not get this information in time, cache it.
+    const hash = `folderURI: ${folder.URI}, messageKey: ${cachedHdr.messageKey}`;
     this._msgHdrCache.set(hash, cachedHdr);
   }
 
   // Implements nsIMsgFolderListener.
 
   /**
-   * Implements nsIMsgFolderListener.msgsJunkStatusChanged().
+   * Implements nsIMsgFolderListener.msgPropertyChanged().
    *
-   * @param {nsIMsgDBHdr[]} messages
+   * @param {nsIMsgDBHdr} msgHdr
+   * @param {string} property
+   * @param {string} oldValue
+   * @param {string} newValue
    */
-  msgsJunkStatusChanged(messages) {
-    for (const msgHdr of messages) {
-      const junkScore =
-        parseInt(msgHdr.getStringProperty("junkscore"), 10) || 0;
-      this.emit("message-updated", new CachedMsgHeader(this, msgHdr), {
-        junk: junkScore >= lazy.gJunkThreshold,
-      });
+  msgPropertyChanged(msgHdr, property, oldValue, newValue) {
+    const newProperties = {};
+    const oldProperties = {};
+
+    switch (property) {
+      case "keywords":
+        {
+          const newKeywords = newValue
+            ? newValue.split(" ").filter(MailServices.tags.isValidKey)
+            : [];
+          const oldKeywords = oldValue
+            ? oldValue.split(" ").filter(MailServices.tags.isValidKey)
+            : [];
+          if (newKeywords != oldKeywords) {
+            newProperties.tags = newKeywords;
+            oldProperties.tags = oldKeywords;
+          }
+        }
+        break;
+
+      case "junkscore":
+        {
+          const newJunk = (parseInt(newValue, 10) || 0) >= lazy.gJunkThreshold;
+          const oldJunk = (parseInt(oldValue, 10) || 0) >= lazy.gJunkThreshold;
+          if (newJunk != oldJunk) {
+            newProperties.junk = newJunk;
+            oldProperties.junk = oldJunk;
+          }
+        }
+        break;
+    }
+
+    if (Object.keys(newProperties).length) {
+      this.emit(
+        "message-updated",
+        new CachedMsgHeader(this, msgHdr),
+        newProperties,
+        oldProperties
+      );
     }
   }
 
@@ -1425,11 +1458,22 @@ export class MessageTracker extends EventEmitter {
    * @param {nsIMsgDBHdr} msgHdr
    */
   msgAdded(msgHdr) {
+    // Do not add the cached header of the new message unnecessarily to the
+    // message tracker. It will be added once it is actually used.
+    const cachedHdr = new CachedMsgHeader(this, msgHdr, {
+      addToMessageTracker: false,
+    });
     // An IMAP copy/move operation may be waiting for a newly added header.
-    const hash = `folderURI: ${msgHdr.folder.URI}, headerMessageId: ${msgHdr.messageId}`;
+    const hash = `folderURI: ${cachedHdr.folder.URI}, headerMessageId: ${cachedHdr.messageId}`;
+
     if (this._headerPromises.has(hash)) {
-      this._headerPromises.get(hash).resolve(new CachedMsgHeader(this, msgHdr));
+      this._headerPromises.get(hash).resolve(cachedHdr);
       this._headerPromises.delete(hash);
+    }
+
+    // If this is a new message, add it to the next messages-received event.
+    if (cachedHdr.flags & Ci.nsMsgMessageFlags.New) {
+      this.addPendingNewMessage(cachedHdr);
     }
   }
 
@@ -1625,22 +1669,30 @@ class MessagePage {
 }
 
 /**
+ * @typedef {object} MessageListOptions - Options for the MessageList class.
+ *
+ * @property {integer} [messagesPerPage]
+ * @property {boolean} [includeDeletedMessages]
+ */
+
+/**
  * Convenience class to keep track of the status of message lists.
  */
 export class MessageList {
   /**
    * @param {ExtensionData} extension
    * @param {MessageTracker} messageTracker
-   * @param {integer} [messagesPerPage]
+   * @param {MessageListOptions} [options]
    */
-  constructor(extension, messageTracker, messagesPerPage) {
+  constructor(extension, messageTracker, options) {
     this.messageListId = Services.uuid.generateUUID().number.substring(1, 37);
     this.extension = extension;
     this.isDone = false;
     this.pages = [];
     this._messageTracker = messageTracker;
     this.folderCache = new Map();
-    this.messagesPerPage = messagesPerPage ?? lazy.gMessagesPerPage;
+    this.messagesPerPage = options?.messagesPerPage ?? lazy.gMessagesPerPage;
+    this.includeDeletedMessages = options?.includeDeletedMessages ?? false;
     this.log = new Set();
 
     this.pages.push(new MessagePage());
@@ -1684,6 +1736,15 @@ export class MessageList {
 
   async addMessage(msgHdr) {
     if (this.isDone || !this.currentPage) {
+      return;
+    }
+
+    // Skip messages, which are actually deleted, if reporting is not enforced.
+    if (
+      !this.includeDeletedMessages &&
+      msgHdr.flags &
+        (Ci.nsMsgMessageFlags.IMAPDeleted | Ci.nsMsgMessageFlags.Expunged)
+    ) {
       return;
     }
 
@@ -1765,12 +1826,13 @@ export class MessageListTracker {
    *
    * @param {nsIMsgDBHdr[]} messages - Array or enumerator of messages.
    * @param {ExtensionData} extension
+   * @param {MessageListOptions} options
    *
    * @returns {Promise<MessageList>}
    * @see /mail/components/extensions/schemas/messages.json
    */
-  async startList(messages, extension) {
-    const messageList = this.createList(extension);
+  async startList(messages, extension, options) {
+    const messageList = this.createList(extension, options);
     // Do not await _addMessages() here, to let the function return the Promise
     // for the first page as soon as possible and not after all messages have
     // been added.
@@ -1816,15 +1878,15 @@ export class MessageListTracker {
    * Creates and returns a new messageList object.
    *
    * @param {ExtensionData} extension
-   * @param {integer} [messagesPerPage]
+   * @param {MessageListOptions} [options]
    *
    * @returns {MessageList}
    */
-  createList(extension, messagesPerPage) {
+  createList(extension, options) {
     const messageList = new MessageList(
       extension,
       this._messageTracker,
-      messagesPerPage
+      options
     );
     let lists = this._contextLists.get(extension);
     if (!lists) {
@@ -1909,14 +1971,6 @@ export class MessageManager {
       msgHdr instanceof CachedMsgHeader
         ? msgHdr
         : new CachedMsgHeader(this._messageTracker, msgHdr);
-
-    // Skip messages, which are actually deleted.
-    if (
-      cachedHdr.flags &
-      (Ci.nsMsgMessageFlags.IMAPDeleted | Ci.nsMsgMessageFlags.Expunged)
-    ) {
-      return null;
-    }
 
     const junkScore =
       parseInt(cachedHdr.getStringProperty("junkscore"), 10) || 0;
@@ -2010,10 +2064,9 @@ export class MessageQuery {
     this.queryInfo = queryInfo;
     this.messageListTracker = messageListTracker;
 
-    this.messageList = this.messageListTracker.createList(
-      this.extension,
-      queryInfo.messagesPerPage
-    );
+    this.messageList = this.messageListTracker.createList(this.extension, {
+      messagesPerPage: queryInfo.messagesPerPage,
+    });
 
     this.checkSearchCriteriaFn =
       checkSearchCriteriaFn || this.checkSearchCriteria;
@@ -2681,6 +2734,37 @@ export class TagTracker extends EventEmitter {
         { [property]: newValue },
         { [property]: oldValue }
       );
+    }
+  }
+}
+
+export class FolderPropertyChangeListener {
+  constructor(msgHdr, property) {
+    this.mshHdr = msgHdr;
+    this.property = property;
+    this.task = Promise.withResolvers();
+    MailServices.mailSession.AddFolderListener(
+      this,
+      Ci.nsIFolderListener.propertyFlagChanged
+    );
+  }
+
+  seen() {
+    return this.task.promise;
+  }
+
+  /**
+   * Implements nsIFolderListener.onFolderPropertyFlagChanged().
+   *
+   * @param {nsIMsgDBHdr} msgHdr
+   * @param {string} property
+   * @param {integer} _oldFlag
+   * @param {integer} _newFlag
+   */
+  onFolderPropertyFlagChanged(msgHdr, property, _oldFlag, _newFlag) {
+    if (msgHdr == this.mshHdr && property == this.property) {
+      MailServices.mailSession.RemoveFolderListener(this);
+      this.task.resolve();
     }
   }
 }

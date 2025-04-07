@@ -21,22 +21,11 @@ var _testLoggerContexts = [];
 var _testLoggerContextId = 0;
 var _testLoggerActiveContext;
 
-var _logHelperInterestedListeners = false;
-
 /**
  * Let test code extend the list of allowed XPCOM errors.
  */
 var logHelperAllowedErrors = ["NS_ERROR_FAILURE"];
 var logHelperAllowedWarnings = [/Quirks Mode/];
-
-/**
- * Let other test helping code decide whether to register for potentially
- *  expensive notifications based on whether anyone can even hear those
- *  results.
- */
-function logHelperHasInterestedListeners() {
-  return _logHelperInterestedListeners;
-}
 
 /**
  * Tunnel nsIScriptErrors that show up on the error console to ConsoleInstance.
@@ -142,21 +131,6 @@ function _init_log_helper() {
   //  in more situations where we might otherwise silently be cool with bad
   //  things happening.
   _errorConsoleTunnel.initialize();
-
-  if (_logHelperInterestedListeners) {
-    if (!_do_not_wrap_xpcshell) {
-      _wrap_xpcshell_functions();
-    }
-
-    // Send a message telling the listeners about the test file being run.
-    _xpcshellLogger.info({
-      _jsonMe: true,
-      _isContext: true,
-      _specialContext: "lifecycle",
-      _id: "start",
-      testFile: _TEST_FILE,
-    });
-  }
 }
 _init_log_helper();
 
@@ -244,20 +218,6 @@ function mark_sub_test_end() {
     return;
   }
   mark_test_end(_testLoggerContexts.length - 1);
-}
-
-/**
- * Express that all tests were run to completion.  This helps the listener
- *  distinguish between successful termination and abort-style termination where
- *  the process just keeled over and on one told us.
- *
- * This also tells us to clean up.
- */
-function mark_all_tests_run() {
-  // make sure all tests get closed out
-  mark_test_end();
-
-  _xpcshellLogger.info("All finished");
 }
 
 function _explode_flags(aFlagWord, aFlagDefs) {
@@ -502,10 +462,6 @@ function _normalize_for_json(aObj, aDepthAllowed, aJsonMeNotNeeded) {
     simple_obj._jsonMe = true;
   }
   return simple_obj;
-}
-
-function register_json_normalizer(aType, aHandler) {
-  _registered_json_normalizers.push([aType, aHandler]);
 }
 
 /*

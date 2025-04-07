@@ -146,31 +146,6 @@ var gDangerousLocalStorageDirs = [
   { dir: "/sys", OS: "Linux" },
 ];
 
-// This sets an attribute in a xul element so that we can later
-// know what value to substitute in a prefstring.  Different
-// preference types set different attributes.  We get the value
-// in the same way as the function getAccountValue() determines it.
-function updateElementWithKeys(account, element, type) {
-  switch (type) {
-    case "identity":
-      element.identitykey = account.defaultIdentity.key;
-      break;
-    case "pop3":
-    case "imap":
-    case "nntp":
-    case "server":
-      element.serverkey = account.incomingServer.key;
-      break;
-    case "smtp":
-      if (MailServices.outgoingServer.defaultServer) {
-        element.serverkey = MailServices.outgoingServer.defaultServer.key;
-      }
-      break;
-    default:
-    //      dump("unknown element type! "+type+"\n");
-  }
-}
-
 // called when the whole document loads
 // perform initialization here
 function onLoad() {
@@ -1033,11 +1008,8 @@ function saveAccount(accountValues, account) {
           case "int":
             methodName += "Int";
             break;
-          case "wstring":
-            methodName += "Unichar";
-            break;
           case "string":
-            methodName += "Char";
+            methodName += "String";
             break;
           case "bool":
             // in some cases
@@ -1409,11 +1381,8 @@ function getAccountValue(
           case "int":
             methodName += "Int";
             break;
-          case "wstring":
-            methodName += "Unichar";
-            break;
           case "string":
-            methodName += "Char";
+            methodName += "String";
             break;
           case "bool":
             methodName += "Bool";

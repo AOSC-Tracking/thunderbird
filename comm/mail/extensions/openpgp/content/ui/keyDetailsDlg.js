@@ -644,59 +644,18 @@ function enableRefresh() {
 
 // ------------------ onCommand Functions  -----------------
 
-/*
-function manageUids() {
-  let keyObj = EnigmailKeyRing.getKeyById(gKeyId);
-
-  var inputObj = {
-    keyId: keyObj.keyId,
-    ownKey: keyObj.secretAvailable,
-  };
-
-  var resultObj = {
-    refresh: false,
-  };
-  window.openDialog(
-    "chrome://openpgp/content/ui/enigmailManageUidDlg.xhtml",
-    "",
-    "dialog,modal,centerscreen,resizable=yes",
-    inputObj,
-    resultObj
-  );
-  if (resultObj.refresh) {
-    enableRefresh();
-    reloadData(false);
-  }
-}
-*/
-
-function genRevocationCert() {
-  throw new Error("Not implemented");
-
-  /*
-  var defaultFileName = userId.replace(/[<>]/g, "");
-  defaultFileName += " (0x" + keyId + ") rev.asc";
-  var outFile = EnigFilePicker("XXXsaveRevokeCertAs",
-    "", true, "*.asc",
-    defaultFileName, ["XXXasciiArmorFile", "*.asc"];
-  if (!outFile) return -1;
-
-  return 0;
-  */
-}
-
 /**
  * @param {object[]} signatures - list of signature objects
- *   signatures.userId {string} - User ID.
- *   signatures.uidLabel {string} - UID label.
- *   signatures.created {string} - Creation date as printable string.
- *   signatures.fpr {string} - Fingerprint.
- *   signatures.sigList {Object[]} - Objects
- *   signatures.sigList.userId
- *   signatures.sigList.created
- *   signatures.sigList.signerKeyId
- *   signatures.sigList.sigType
- *   signatures.sigList.sigKnown
+ * @param {string} signatures[].userId  - User ID.
+ * @param {string} signatures.uidLabel - UID label.
+ * @param {string} signatures.created - Creation date as printable string.
+ * @param {string} signatures.fpr - Fingerprint.
+ * @param {object[]} signatures.sigList - Objects.
+ * @param {string} signatures[].sigList[].userId
+ * @param {string} signatures[].sigList[].created
+ * @param {string} signatures[].sigList[].signerKeyId
+ * @param {string} signatures[].sigList[].sigType
+ * @param {boolean} signatures[].sigList[].sigKnown
  */
 function SigListView(signatures) {
   this.keyObj = [];

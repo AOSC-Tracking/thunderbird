@@ -217,7 +217,7 @@ mail:
       - mail.minimizeToTray
       - mail.operate_on_msgs_in_collapsed_threads
       - mail.phishing.detection.enabled
-      - mail.prompt_purge_threshhold
+      - mail.prompt_purge_threshold
       - mail.purge.ask
       - mail.receipt.request_return_receipt_on
       - mail.shell.checkDefaultClient
@@ -519,18 +519,6 @@ mail:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1926810
     data_reviews:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1926810#c14
-    notification_emails:
-      - telemetry-client-dev@thunderbird.net
-    expires: never
-
-  mbox_write_errors:
-    type: labeled_counter
-    description: >
-      Counts mbox write oddities which might indicate problems.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1924402
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1924402#c8
     notification_emails:
       - telemetry-client-dev@thunderbird.net
     expires: never

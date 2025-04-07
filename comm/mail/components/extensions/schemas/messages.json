@@ -354,6 +354,10 @@
           {
             "name": "changedProperties",
             "$ref": "messages.MessageProperties"
+          },
+          {
+            "name": "oldProperties",
+            "$ref": "messages.MessageProperties"
           }
         ]
       },
@@ -404,7 +408,7 @@
       {
         "name": "onNewMailReceived",
         "type": "function",
-        "description": "Fired when a new message is received, and has been through junk classification and message filters.",
+        "description": "Fired when a new message is received, and has been handled by message filters and junk classification. Filters running after junk classification may move the message again.",
         "permissions": ["accountsRead"],
         "parameters": [
           {
@@ -1019,6 +1023,18 @@
               }
             ],
             "description": "The folder to move the messages to."
+          },
+          {
+            "name": "options",
+            "type": "object",
+            "optional": true,
+            "properties": {
+              "isUserAction": {
+                "type": "boolean",
+                "optional": true,
+                "description": "Whether this move operation should be treated as a user action, for example allowing undo."
+              }
+            }
           }
         ]
       },
@@ -1042,6 +1058,18 @@
             "name": "folderId",
             "$ref": "folders.MailFolderId",
             "description": "The folder to move the messages to."
+          },
+          {
+            "name": "options",
+            "type": "object",
+            "optional": true,
+            "properties": {
+              "isUserAction": {
+                "type": "boolean",
+                "optional": true,
+                "description": "Whether this move operation should be treated as a user action, for example allowing undo."
+              }
+            }
           }
         ]
       },
@@ -1073,6 +1101,18 @@
               }
             ],
             "description": "The folder to copy the messages to."
+          },
+          {
+            "name": "options",
+            "type": "object",
+            "optional": true,
+            "properties": {
+              "isUserAction": {
+                "type": "boolean",
+                "optional": true,
+                "description": "Whether this copy operation should be treated as a user action, for example allowing undo."
+              }
+            }
           }
         ]
       },
@@ -1096,13 +1136,25 @@
             "name": "folderId",
             "$ref": "folders.MailFolderId",
             "description": "The folder to copy the messages to."
+          },
+          {
+            "name": "options",
+            "type": "object",
+            "optional": true,
+            "properties": {
+              "isUserAction": {
+                "type": "boolean",
+                "optional": true,
+                "description": "Whether this copy operation should be treated as a user action, for example allowing undo."
+              }
+            }
           }
         ]
       },
       {
         "name": "delete",
         "type": "function",
-        "description": "Deletes messages permanently, or moves them to the trash folder (honoring the account's deletion behavior settings). Deleting external messages will throw an <em>ExtensionError</em>. The <var>skipTrash</var> parameter allows immediate permanent deletion, bypassing the trash folder.",
+        "description": "Deletes messages permanently, or moves them to the trash folder (honoring the account's deletion behavior settings). Deleting external messages will throw an <em>ExtensionError</em>. The <var>deletePermanently</var> parameter allows immediate permanent deletion, bypassing the trash folder.",
         "async": true,
         "permissions": ["messagesDelete"],
         "parameters": [
@@ -1115,10 +1167,30 @@
             }
           },
           {
-            "name": "skipTrash",
-            "type": "boolean",
-            "description": "If true, the message will be deleted permanently, regardless of the account's deletion behavior settings.",
-            "optional": true
+            "name": "options",
+            "optional": true,
+            "choices": [
+              {
+                "type": "boolean",
+                "deprecated": "Specify the options object instead of a plain boolean to delete messages permanently.",
+                "description": "Whether the message will be deleted permanently, regardless of the account's deletion behavior settings."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "deletePermanently": {
+                    "type": "boolean",
+                    "optional": true,
+                    "description": "Whether the message will be deleted permanently, regardless of the account's deletion behavior settings. Use this with care!"
+                  },
+                  "isUserAction": {
+                    "type": "boolean",
+                    "optional": true,
+                    "description": "Whether this copy operation should be treated as a user action, for example allowing undo. Note: Deleting messages permanently cannot be undone!"
+                  }
+                }
+              }
+            ]
           }
         ]
       },

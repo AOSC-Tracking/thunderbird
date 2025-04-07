@@ -62,9 +62,9 @@ add_setup(async function () {
   tabmail.currentAbout3Pane.restoreState({ messagePaneVisible: false });
 
   registerCleanupFunction(() => {
-    threadPane.forgetSelection(testFolder1.URI);
-    threadPane.forgetSelection(testFolder2.URI);
-    threadPane.forgetSelection(virtualFolder.URI);
+    threadPane.forgetSavedSelection(testFolder1.URI);
+    threadPane.forgetSavedSelection(testFolder2.URI);
+    threadPane.forgetSavedSelection(virtualFolder.URI);
     MailServices.accounts.removeAccount(account, false);
     Services.prefs.clearUserPref("mailnews.scroll_to_new_message");
     Services.prefs.clearUserPref("ui.prefersReducedMotion");
@@ -77,10 +77,12 @@ add_setup(async function () {
  */
 add_task(async function testSelectionRestoredOnReopen() {
   async function switchFolder(folder, expectedSelection, newSelection) {
-    displayFolder(folder);
-    await TestUtils.waitForCondition(
-      () => dbViewWrapperListener._allMessagesLoaded
+    const allMessagesLoadedPromise = BrowserTestUtils.waitForEvent(
+      about3Pane,
+      "allMessagesLoaded"
     );
+    displayFolder(folder);
+    await allMessagesLoadedPromise;
     Assert.deepEqual(
       threadTree.selectedIndices,
       expectedSelection,
@@ -198,10 +200,12 @@ add_task(async function testSelectionRestoredOnReopen() {
  */
 add_task(async function testSelectionRestoredOnContextClose() {
   async function switchFolder(folder) {
-    displayFolder(folder);
-    await TestUtils.waitForCondition(
-      () => dbViewWrapperListener._allMessagesLoaded
+    const allMessagesLoadedPromise = BrowserTestUtils.waitForEvent(
+      about3Pane,
+      "allMessagesLoaded"
     );
+    displayFolder(folder);
+    await allMessagesLoadedPromise;
   }
 
   async function showContextAt(index) {

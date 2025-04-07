@@ -687,6 +687,7 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
       NS_ASSERTION(MsgIsHex(mozstatus2->value, 8),
                    "Expected 8 hex digits for X-Mozilla-Status2.");
       uint32_t flags2 = MsgUnhex(mozstatus2->value, 8);
+      flags2 &= ~nsMsgMessageFlags::RuntimeOnly;
       flags |= flags2 & 0xFFFF0000;
     }
   }
@@ -863,7 +864,7 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
         }
 
         if (account_key != nullptr)
-          m_newMsgHdr->SetAccountKey(account_key->value);
+          m_newMsgHdr->SetAccountKey(nsDependentCString(account_key->value));
         // use in-reply-to header as references, if there's no references header
         if (references != nullptr) {
           m_newMsgHdr->SetReferences(nsDependentCString(references->value));
@@ -986,9 +987,9 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
                   // to generate a new string without the trailing crud
                   nsAutoCString rawCharSet;
                   rawCharSet.Assign(charset, end - charset);
-                  m_newMsgHdr->SetCharset(rawCharSet.get());
+                  m_newMsgHdr->SetCharset(rawCharSet);
                 } else {
-                  m_newMsgHdr->SetCharset(charset);
+                  m_newMsgHdr->SetCharset(nsDependentCString(charset));
                 }
               }
             }
@@ -1045,11 +1046,11 @@ nsresult nsParseNewMailState::Init(nsIMsgFolder* serverFolder,
   nsCOMPtr<nsIMsgIncomingServer> server;
   rv = serverFolder->GetServer(getter_AddRefs(server));
   if (NS_SUCCEEDED(rv)) {
-    nsString serverName;
+    nsAutoCString serverName;
     server->GetPrettyName(serverName);
     MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
             ("(Local) Detected new local messages on account '%s'",
-             NS_ConvertUTF16toUTF8(serverName).get()));
+             serverName.get()));
     rv = server->GetFilterList(aMsgWindow, getter_AddRefs(m_filterList));
 
     if (m_filterList) rv = server->ConfigureTemporaryFilters(m_filterList);

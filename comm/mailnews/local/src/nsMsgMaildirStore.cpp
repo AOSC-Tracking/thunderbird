@@ -83,10 +83,11 @@ nsresult MaildirScanner::BeginScan(nsIFile* maildirPath,
   mScanListener = scanListener;
 
   nsCOMPtr<nsIFile> cur;
-  maildirPath->Clone(getter_AddRefs(cur));
+  nsresult rv = maildirPath->Clone(getter_AddRefs(cur));
+  NS_ENSURE_SUCCESS(rv, rv);
   cur->Append(u"cur"_ns);
 
-  nsresult rv = cur->GetDirectoryEntries(getter_AddRefs(mDirEnumerator));
+  rv = cur->GetDirectoryEntries(getter_AddRefs(mDirEnumerator));
   NS_ENSURE_SUCCESS(rv, rv);
 
   // We're up and running. Hold ourself in existence until scan is complete.
@@ -121,9 +122,10 @@ void MaildirScanner::NextFile() {
     }
 
     // Start streaming the next message.
-    nsAutoCString storeToken;
-    f->GetNativeLeafName(storeToken);
-    mStatus = mScanListener->OnStartMessage(storeToken, ""_ns, mtime);
+    nsAutoString storeToken;
+    f->GetLeafName(storeToken);
+    mStatus = mScanListener->OnStartMessage(NS_ConvertUTF16toUTF8(storeToken),
+                                            ""_ns, mtime);
 
     nsCOMPtr<nsIInputStream> stream;
     if (NS_SUCCEEDED(mStatus)) {
@@ -235,11 +237,13 @@ nsresult nsMsgMaildirStore::AddSubFolders(nsIMsgFolder* parent, nsIFile* path,
     currentFile->GetLeafName(leafName);
 
     nsCOMPtr<nsIMsgFolder> child;
-    rv = parent->AddSubfolder(leafName, getter_AddRefs(child));
+    rv = parent->AddSubfolder(NS_ConvertUTF16toUTF8(leafName),
+                              getter_AddRefs(child));
     if (child) {
-      nsString folderName;
+      nsAutoCString folderName;
       child->GetName(folderName);  // try to get it from cache/db
-      if (folderName.IsEmpty()) child->SetPrettyName(leafName);
+      if (folderName.IsEmpty())
+        child->SetPrettyName(NS_ConvertUTF16toUTF8(leafName));
       if (deep) {
         nsCOMPtr<nsIFile> path;
         rv = child->GetFilePath(getter_AddRefs(path));
@@ -295,14 +299,14 @@ nsresult nsMsgMaildirStore::CreateMaildir(nsIFile* path) {
   rv = leaf->InitWithFile(path);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  leaf->AppendNative("tmp"_ns);
+  leaf->Append(u"tmp"_ns);
   rv = leaf->Create(nsIFile::DIRECTORY_TYPE, 0700);
   if (NS_FAILED(rv) && rv != NS_ERROR_FILE_ALREADY_EXISTS) {
     NS_WARNING("Could not create tmp directory for message folder");
     return rv;
   }
 
-  leaf->SetNativeLeafName("cur"_ns);
+  leaf->SetLeafName(u"cur"_ns);
   rv = leaf->Create(nsIFile::DIRECTORY_TYPE, 0700);
   if (NS_FAILED(rv) && rv != NS_ERROR_FILE_ALREADY_EXISTS) {
     NS_WARNING("Could not create cur directory for message folder");
@@ -313,7 +317,7 @@ nsresult nsMsgMaildirStore::CreateMaildir(nsIFile* path) {
 }
 
 NS_IMETHODIMP nsMsgMaildirStore::CreateFolder(nsIMsgFolder* aParent,
-                                              const nsAString& aFolderName,
+                                              const nsACString& aFolderName,
                                               nsIMsgFolder** aResult) {
   NS_ENSURE_ARG_POINTER(aParent);
   NS_ENSURE_ARG_POINTER(aResult);
@@ -330,10 +334,10 @@ NS_IMETHODIMP nsMsgMaildirStore::CreateFolder(nsIMsgFolder* aParent,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Make sure the new folder name is valid
-  nsAutoString safeFolderName(aFolderName);
-  NS_MsgHashIfNecessary(safeFolderName);
+  nsString safeFolderName16 = NS_MsgHashIfNecessary(aFolderName);
+  nsAutoCString safeFolderName = NS_ConvertUTF16toUTF8(safeFolderName16);
 
-  path->Append(safeFolderName);
+  path->Append(safeFolderName16);
   bool exists;
   path->Exists(&exists);
   if (exists)  // check this because localized names are different from disk
@@ -468,7 +472,7 @@ NS_IMETHODIMP nsMsgMaildirStore::DeleteFolder(nsIMsgFolder* aFolder) {
 }
 
 NS_IMETHODIMP nsMsgMaildirStore::RenameFolder(nsIMsgFolder* aFolder,
-                                              const nsAString& aNewName,
+                                              const nsACString& aNewName,
                                               nsIMsgFolder** aNewFolder) {
   NS_ENSURE_ARG_POINTER(aFolder);
   NS_ENSURE_ARG_POINTER(aNewFolder);
@@ -495,24 +499,24 @@ NS_IMETHODIMP nsMsgMaildirStore::RenameFolder(nsIMsgFolder* aFolder,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Validate new name
-  nsAutoString safeName(aNewName);
-  NS_MsgHashIfNecessary(safeName);
+  nsString safeFolderName16 = NS_MsgHashIfNecessary(aNewName);
+  nsAutoCString safeFolderName = NS_ConvertUTF16toUTF8(safeFolderName16);
 
   aFolder->ForceDBClosed();
 
   // rename folder
-  rv = oldPathFile->MoveTo(nullptr, safeName);
+  rv = oldPathFile->MoveTo(nullptr, safeFolderName16);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (numChildren > 0) {
     // rename "*.sbd" directory
-    nsAutoString sbdName = safeName;
+    nsAutoString sbdName(safeFolderName16);
     sbdName.AppendLiteral(FOLDER_SUFFIX);
     sbdPathFile->MoveTo(nullptr, sbdName);
   }
 
   // rename summary
-  nsAutoString summaryName(safeName);
+  nsAutoString summaryName(safeFolderName16);
   summaryName.AppendLiteral(SUMMARY_SUFFIX);
   oldSummaryFile->MoveTo(nullptr, summaryName);
 
@@ -520,24 +524,26 @@ NS_IMETHODIMP nsMsgMaildirStore::RenameFolder(nsIMsgFolder* aFolder,
   rv = aFolder->GetParent(getter_AddRefs(parentFolder));
   if (!parentFolder) return NS_ERROR_NULL_POINTER;
 
-  return parentFolder->AddSubfolder(safeName, aNewFolder);
+  return parentFolder->AddSubfolder(safeFolderName, aNewFolder);
 }
 
 NS_IMETHODIMP nsMsgMaildirStore::CopyFolder(
     nsIMsgFolder* aSrcFolder, nsIMsgFolder* aDstFolder, bool aIsMoveFolder,
     nsIMsgWindow* aMsgWindow, nsIMsgCopyServiceListener* aListener,
-    const nsAString& aNewName) {
+    const nsACString& aNewName) {
   NS_ENSURE_ARG_POINTER(aSrcFolder);
   NS_ENSURE_ARG_POINTER(aDstFolder);
 
-  nsAutoString folderName;
-  if (aNewName.IsEmpty())
+  nsAutoCString folderName;
+  if (aNewName.IsEmpty()) {
     aSrcFolder->GetName(folderName);
-  else
+  } else {
     folderName.Assign(aNewName);
+  }
 
-  nsAutoString safeFolderName(folderName);
-  NS_MsgHashIfNecessary(safeFolderName);
+  nsString safeFolderName16 = NS_MsgHashIfNecessary(folderName);
+  nsAutoCString safeFolderName = NS_ConvertUTF16toUTF8(safeFolderName16);
+
   aSrcFolder->ForceDBClosed();
 
   nsCOMPtr<nsIFile> oldPath;
@@ -558,16 +564,17 @@ NS_IMETHODIMP nsMsgMaildirStore::CopyFolder(
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIFile> origPath;
-  oldPath->Clone(getter_AddRefs(origPath));
+  rv = oldPath->Clone(getter_AddRefs(origPath));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = oldPath->CopyTo(newPath, safeFolderName);
+  rv = oldPath->CopyTo(newPath, safeFolderName16);
   NS_ENSURE_SUCCESS(rv, rv);  // will fail if a file by that name exists
 
   // Copy to dir can fail if file does not exist. If copy fails, we test
   // if the file exists or not, if it does not that's ok, we continue
   // without copying it. If it fails and file exist and is not zero sized
   // there is real problem.
-  nsAutoString dbName(safeFolderName);
+  nsAutoString dbName(safeFolderName16);
   dbName.AppendLiteral(SUMMARY_SUFFIX);
   rv = summaryFile->CopyTo(newPath, dbName);
   if (!NS_SUCCEEDED(rv)) {
@@ -711,16 +718,16 @@ nsMsgMaildirStore::GetNewMsgOutputStream(nsIMsgFolder* aFolder,
   // Generate the 'tmp' file name based on timestamp.
   // (We'll use the Message-ID as the basis for the final filename,
   // but we don't have headers at this point).
-  nsAutoCString newName;
+  nsAutoString newName;
   newName.AppendInt(static_cast<int64_t>(PR_Now()));
-  newFile->AppendNative(newName);
+  newFile->Append(newName);
 
   // CreateUnique, in case we get more than one message per millisecond :-)
   rv = newFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
   NS_ENSURE_SUCCESS(rv, rv);
-  newFile->GetNativeLeafName(newName);
+  newFile->GetLeafName(newName);
   // save the file name in the message header - otherwise no way to retrieve it
-  (*aNewMsgHdr)->SetStoreToken(newName);
+  (*aNewMsgHdr)->SetStoreToken(NS_ConvertUTF16toUTF8(newName));
 
   return MsgNewBufferedFileOutputStream(aResult, newFile,
                                         PR_WRONLY | PR_CREATE_FILE, 00600);
@@ -747,7 +754,7 @@ nsMsgMaildirStore::DiscardNewMessage(nsIOutputStream* aOutputStream,
 
   // path to the message download folder
   path->Append(u"tmp"_ns);
-  path->AppendNative(fileName);
+  path->Append(NS_ConvertUTF8toUTF16(fileName));
 
   return path->Remove(false);
 }
@@ -778,7 +785,8 @@ nsMsgMaildirStore::FinishNewMessage(nsIOutputStream* aOutputStream,
 
   // path to the new destination
   nsCOMPtr<nsIFile> curPath;
-  folderPath->Clone(getter_AddRefs(curPath));
+  rv = folderPath->Clone(getter_AddRefs(curPath));
+  NS_ENSURE_SUCCESS(rv, rv);
   curPath->Append(u"cur"_ns);
 
   // let's check if the folder exists
@@ -792,9 +800,10 @@ nsMsgMaildirStore::FinishNewMessage(nsIOutputStream* aOutputStream,
 
   // path to the downloaded message
   nsCOMPtr<nsIFile> fromPath;
-  folderPath->Clone(getter_AddRefs(fromPath));
+  rv = folderPath->Clone(getter_AddRefs(fromPath));
+  NS_ENSURE_SUCCESS(rv, rv);
   fromPath->Append(u"tmp"_ns);
-  fromPath->AppendNative(tmpName);
+  fromPath->Append(NS_ConvertUTF8toUTF16(tmpName));
 
   // Check that the message is still in tmp.
   // XXX TODO: revisit this. I think it's needed because the
@@ -807,8 +816,9 @@ nsMsgMaildirStore::FinishNewMessage(nsIOutputStream* aOutputStream,
   if (!exists) {
     // Perhaps the message has already moved. See bug 1028372 to fix this.
     nsCOMPtr<nsIFile> existingPath;
-    curPath->Clone(getter_AddRefs(existingPath));
-    existingPath->AppendNative(tmpName);
+    rv = curPath->Clone(getter_AddRefs(existingPath));
+    NS_ENSURE_SUCCESS(rv, rv);
+    existingPath->Append(NS_ConvertUTF8toUTF16(tmpName));
     existingPath->Exists(&exists);
     if (exists)  // then there is nothing to do
       return NS_OK;
@@ -838,10 +848,11 @@ nsMsgMaildirStore::FinishNewMessage(nsIOutputStream* aOutputStream,
   }
 
   nsCOMPtr<nsIFile> toPath;
-  curPath->Clone(getter_AddRefs(toPath));
+  rv = curPath->Clone(getter_AddRefs(toPath));
+  NS_ENSURE_SUCCESS(rv, rv);
   nsCString toName(baseName);
   toName.Append(".eml");
-  toPath->AppendNative(toName);
+  toPath->Append(NS_ConvertUTF8toUTF16(toName));
 
   // Using CreateUnique in case we have duplicate Message-Ids
   rv = toPath->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
@@ -854,17 +865,18 @@ nsMsgMaildirStore::FinishNewMessage(nsIOutputStream* aOutputStream,
     toName.SetLength(0);
     toName.AppendInt(static_cast<int64_t>(PR_Now()));
     toName.Append(".eml");
-    toPath->SetNativeLeafName(toName);
+    toPath->SetLeafName(NS_ConvertUTF8toUTF16(toName));
     rv = toPath->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // Move into place (using whatever name CreateUnique() settled upon).
-  toPath->GetNativeLeafName(toName);
-  rv = fromPath->MoveToNative(curPath, toName);
+  nsAutoString leafName;
+  toPath->GetLeafName(leafName);
+  rv = fromPath->MoveTo(curPath, leafName);
   NS_ENSURE_SUCCESS(rv, rv);
   // Update the db to reflect the final filename.
-  aNewHdr->SetStoreToken(toName);
+  aNewHdr->SetStoreToken(NS_ConvertUTF16toUTF8(leafName));
   return NS_OK;
 }
 
@@ -890,12 +902,14 @@ nsMsgMaildirStore::MoveNewlyDownloadedMessage(nsIMsgDBHdr* aHdr,
     NS_ERROR("FinishNewMessage - no storeToken in msg hdr!!");
     return NS_ERROR_FAILURE;
   }
+  nsAutoString fileName16 = NS_ConvertUTF8toUTF16(fileName);
 
   // path to the downloaded message
   nsCOMPtr<nsIFile> fromPath;
-  folderPath->Clone(getter_AddRefs(fromPath));
+  rv = folderPath->Clone(getter_AddRefs(fromPath));
+  NS_ENSURE_SUCCESS(rv, rv);
   fromPath->Append(u"cur"_ns);
-  fromPath->AppendNative(fileName);
+  fromPath->Append(fileName16);
 
   // let's check if the tmp file exists
   bool exists;
@@ -907,8 +921,10 @@ nsMsgMaildirStore::MoveNewlyDownloadedMessage(nsIMsgDBHdr* aHdr,
 
   // move to the "cur" subfolder
   nsCOMPtr<nsIFile> toPath;
-  aDestFolder->GetFilePath(getter_AddRefs(folderPath));
-  folderPath->Clone(getter_AddRefs(toPath));
+  rv = aDestFolder->GetFilePath(getter_AddRefs(folderPath));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = folderPath->Clone(getter_AddRefs(toPath));
+  NS_ENSURE_SUCCESS(rv, rv);
   toPath->Append(u"cur"_ns);
 
   // let's check if the folder exists
@@ -936,18 +952,19 @@ nsMsgMaildirStore::MoveNewlyDownloadedMessage(nsIMsgDBHdr* aHdr,
   }
 
   nsCOMPtr<nsIFile> existingPath;
-  toPath->Clone(getter_AddRefs(existingPath));
-  existingPath->AppendNative(fileName);
+  rv = toPath->Clone(getter_AddRefs(existingPath));
+  NS_ENSURE_SUCCESS(rv, rv);
+  existingPath->Append(fileName16);
   existingPath->Exists(&exists);
 
   if (exists) {
     rv = existingPath->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
     NS_ENSURE_SUCCESS(rv, rv);
-    existingPath->GetNativeLeafName(fileName);
-    newHdr->SetStoreToken(fileName);
+    existingPath->GetLeafName(fileName16);
+    newHdr->SetStoreToken(NS_ConvertUTF16toUTF8(fileName16));
   }
 
-  rv = fromPath->MoveToNative(toPath, fileName);
+  rv = fromPath->MoveTo(toPath, fileName16);
   *aResult = NS_SUCCEEDED(rv);
   if (NS_FAILED(rv))
     aDestFolder->ThrowAlertMsg("filterFolderWriteFailed", nullptr);
@@ -1034,7 +1051,7 @@ nsMsgMaildirStore::GetMsgInputStream(nsIMsgFolder* aMsgFolder,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  path->AppendNative(aMsgToken);
+  path->Append(NS_ConvertUTF8toUTF16(aMsgToken));
   return NS_NewLocalFileInputStream(aResult, path);
 }
 
@@ -1058,7 +1075,7 @@ NS_IMETHODIMP nsMsgMaildirStore::DeleteMessages(
     }
 
     path->Append(u"cur"_ns);
-    path->AppendNative(fileName);
+    path->Append(NS_ConvertUTF8toUTF16(fileName));
 
     // Let's check if the message exists.
     bool exists;
@@ -1155,26 +1172,28 @@ nsMsgMaildirStore::CopyMessages(bool aIsMove,
               ("GetMsgInputStream - empty storeToken!!"));
       return NS_ERROR_FAILURE;
     }
+    nsAutoString fileName16 = NS_ConvertUTF8toUTF16(fileName);
 
     nsCOMPtr<nsIFile> srcFile;
     rv = srcFolderPath->Clone(getter_AddRefs(srcFile));
     NS_ENSURE_SUCCESS(rv, rv);
-    srcFile->AppendNative(fileName);
+    srcFile->Append(fileName16);
 
     nsCOMPtr<nsIFile> destFile;
-    destFolderPath->Clone(getter_AddRefs(destFile));
-    destFile->AppendNative(fileName);
+    rv = destFolderPath->Clone(getter_AddRefs(destFile));
+    NS_ENSURE_SUCCESS(rv, rv);
+    destFile->Append(fileName16);
     bool exists;
     destFile->Exists(&exists);
     if (exists) {
       rv = destFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
       NS_ENSURE_SUCCESS(rv, rv);
-      destFile->GetNativeLeafName(fileName);
+      destFile->GetLeafName(fileName16);
     }
     if (aIsMove)
-      rv = srcFile->MoveToNative(destFolderPath, fileName);
+      rv = srcFile->MoveTo(destFolderPath, fileName16);
     else
-      rv = srcFile->CopyToNative(destFolderPath, fileName);
+      rv = srcFile->CopyTo(destFolderPath, fileName16);
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIMsgDBHdr> destHdr;
@@ -1182,7 +1201,7 @@ nsMsgMaildirStore::CopyMessages(bool aIsMove,
       rv = destDB->CopyHdrFromExistingHdr(nsMsgKey_None, srcHdr, true,
                                           getter_AddRefs(destHdr));
       NS_ENSURE_SUCCESS(rv, rv);
-      destHdr->SetStoreToken(fileName);
+      destHdr->SetStoreToken(NS_ConvertUTF16toUTF8(fileName16));
       aDstHdrs.AppendElement(destHdr);
       nsMsgKey dstKey;
       destHdr->GetMessageKey(&dstKey);
@@ -1246,7 +1265,6 @@ NS_IMETHODIMP nsMsgMaildirStore::ChangeFlags(
     // Work out the flags we want to write.
     uint32_t flags = 0;
     (void)msgHdr->GetFlags(&flags);
-    flags &= ~(nsMsgMessageFlags::RuntimeOnly | nsMsgMessageFlags::Offline);
     if (aSet) {
       flags |= aFlags;
     } else {
@@ -1257,7 +1275,7 @@ NS_IMETHODIMP nsMsgMaildirStore::ChangeFlags(
     nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(outputStream, &rv));
     NS_ENSURE_SUCCESS(rv, rv);
     rv = RewriteMsgFlags(seekable, flags);
-    if (NS_FAILED(rv)) NS_WARNING("updateFolderFlag failed");
+    if (NS_FAILED(rv)) NS_WARNING("ChangeFlags() failed");
   }
   return NS_OK;
 }
@@ -1279,9 +1297,10 @@ nsresult nsMsgMaildirStore::GetOutputStream(
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIFile> maildirFile;
-  folderPath->Clone(getter_AddRefs(maildirFile));
+  rv = folderPath->Clone(getter_AddRefs(maildirFile));
+  NS_ENSURE_SUCCESS(rv, rv);
   maildirFile->Append(u"cur"_ns);
-  maildirFile->AppendNative(fileName);
+  maildirFile->Append(NS_ConvertUTF8toUTF16(fileName));
 
   return MsgGetFileStream(maildirFile, getter_AddRefs(aOutputStream));
 }

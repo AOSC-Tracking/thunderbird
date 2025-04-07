@@ -133,11 +133,9 @@
                      class="toolbarbutton-1 message-header-view-button hdrJunkButton"
                      oncommand="goDoCommand('cmd_markAsJunk');"/>
       <toolbarbutton id="hdrTrashButton"
-                     label="&hdrTrashButton1.label;"
-                     tooltiptext="&hdrTrashButton1.tooltip;"
+                     data-l10n-id="message-header-delete"
                      observes="cmd_delete"
-                     class="toolbarbutton-1 message-header-view-button hdrTrashButton"
-                     oncommand="goDoCommand(event.shiftKey ? 'cmd_shiftDelete' : 'cmd_delete');"/>
+                     class="toolbarbutton-1 message-header-view-button hdrTrashButton"/>
       <toolbarbutton id="otherActionsButton"
                      type="menu"
                      wantdropmarker="true"
@@ -425,8 +423,7 @@
       <label for="disableDarkReader" class="toggle-label">
         <input id="disableDarkReader"
                type="checkbox"
-               class="toggle-checkbox toggle-checkbox-sm dark-reader-toggle"
-               data-l10n-id="dark-message-mode-disable-toggle" />
+               class="toggle-checkbox toggle-checkbox-sm dark-reader-toggle" />
       </label>
     </html:div>
   </html:div>

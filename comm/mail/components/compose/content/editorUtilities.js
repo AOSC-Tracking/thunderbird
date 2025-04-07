@@ -254,10 +254,6 @@ function IsHTMLEditor() {
   return false;
 }
 
-function PageIsEmptyAndUntouched() {
-  return IsDocumentEmpty() && !IsDocumentModified() && !IsHTMLSourceChanged();
-}
-
 function IsInHTMLSourceMode() {
   return gEditorDisplayMode == kDisplayModeSource;
 }
@@ -272,25 +268,6 @@ function IsDocumentEditable() {
     return GetCurrentEditor().isDocumentEditable;
   } catch (e) {}
   return false;
-}
-
-function IsDocumentEmpty() {
-  try {
-    return GetCurrentEditor().documentIsEmpty;
-  } catch (e) {}
-  return false;
-}
-
-function IsDocumentModified() {
-  try {
-    return GetCurrentEditor().documentModified;
-  } catch (e) {}
-  return false;
-}
-
-function IsHTMLSourceChanged() {
-  // gSourceTextEditor will not be defined if we're just a text editor.
-  return gSourceTextEditor ? gSourceTextEditor.documentModified : false;
 }
 
 function newCommandParams() {
@@ -320,26 +297,6 @@ function SetDocumentTitle(title) {
     if ("UpdateWindowTitle" in window) {
       window.UpdateWindowTitle();
     }
-  } catch (e) {}
-}
-
-function EditorGetTextProperty(
-  property,
-  attribute,
-  value,
-  firstHas,
-  anyHas,
-  allHas
-) {
-  try {
-    return GetCurrentEditor().getInlinePropertyWithAttrValue(
-      property,
-      attribute,
-      value,
-      firstHas,
-      anyHas,
-      allHas
-    );
   } catch (e) {}
 }
 
@@ -674,23 +631,6 @@ function StripUsernamePasswordFromURI(uri) {
       }
     } catch (e) {}
   }
-  return urlspec;
-}
-
-function InsertUsernameIntoUrl(urlspec, username) {
-  if (!urlspec || !username) {
-    return urlspec;
-  }
-
-  try {
-    const URI = Services.io.newURI(
-      urlspec,
-      GetCurrentEditor().documentCharacterSet
-    );
-    URI.username = username;
-    return URI.spec;
-  } catch (e) {}
-
   return urlspec;
 }
 

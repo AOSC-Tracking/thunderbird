@@ -7,6 +7,7 @@ const {
     gAccountSetupLogger,
     SuccessiveAbortable,
     UserCancelledException,
+    AddonInstaller,
   },
 } = ChromeUtils.importESModule(
   "resource:///modules/accountcreation/AccountCreationUtils.sys.mjs"
@@ -20,13 +21,13 @@ ChromeUtils.defineESModuleGetters(lazy, {
   CreateInBackend:
     "resource:///modules/accountcreation/CreateInBackend.sys.mjs",
   ConfigVerifier: "resource:///modules/accountcreation/ConfigVerifier.sys.mjs",
-  ExchangeAutoDiscover:
-    "resource:///modules/accountcreation/ExchangeAutoDiscover.sys.mjs",
   FindConfig: "resource:///modules/accountcreation/FindConfig.sys.mjs",
   GuessConfig: "resource:///modules/accountcreation/GuessConfig.sys.mjs",
   MailServices: "resource:///modules/MailServices.sys.mjs",
   OAuth2Module: "resource:///modules/OAuth2Module.sys.mjs",
   Sanitizer: "resource:///modules/accountcreation/Sanitizer.sys.mjs",
+  getAddonsList:
+    "resource:///modules/accountcreation/ExchangeAutoDiscover.sys.mjs",
 });
 
 ChromeUtils.defineLazyGetter(
@@ -270,6 +271,8 @@ class AccountHubEmail extends HTMLElement {
     this.#emailOutgoingConfigSubview.addEventListener("config-updated", this);
     this.#emailPasswordSubview.addEventListener("config-updated", this);
     this.#emailConfigFoundSubview.addEventListener("edit-configuration", this);
+    this.#emailConfigFoundSubview.addEventListener("config-updated", this);
+    this.#emailConfigFoundSubview.addEventListener("install-addon", this);
     this.#emailIncomingConfigSubview.addEventListener("advanced-config", this);
     this.#emailOutgoingConfigSubview.addEventListener("advanced-config", this);
 
@@ -322,7 +325,6 @@ class AccountHubEmail extends HTMLElement {
    * @param {string} subview - Subview for which the UI is being inititialized.
    */
   async #initUI(subview) {
-    this.#stopLoading();
     this.#hideSubviews();
     this.#clearNotifications();
     this.#currentState = subview;
@@ -420,9 +422,6 @@ class AccountHubEmail extends HTMLElement {
    * the spinner if it was visible.
    */
   #stopLoading() {
-    if (!this.classList.contains("busy")) {
-      return;
-    }
     this.#clearNotifications();
     this.#states[this.#currentState].subview.disabled = false;
     this.#emailFooter.disabled = false;
@@ -529,6 +528,25 @@ class AccountHubEmail extends HTMLElement {
           });
         }
         break;
+      case "install-addon":
+        try {
+          this.#startLoading("account-setup-installing-addon");
+          await this.#installAddon();
+          // Update the add-on state in the found config list.
+          this.#currentSubview.setAddon();
+          this.#emailFooter.toggleForwardDisabled(false);
+        } catch (error) {
+          this.#currentSubview.showNotification({
+            fluentTitleId: "account-hub-addon-error",
+            type: "error",
+          });
+        }
+        this.#stopLoading();
+        this.#currentSubview.showNotification({
+          fluentTitleId: "account-setup-success-addon",
+          type: "success",
+        });
+        break;
       default:
         break;
     }
@@ -590,7 +608,7 @@ class AccountHubEmail extends HTMLElement {
             await this.#initUI("incomingConfigSubview");
             this.#states[this.#currentState].previousStep = currentState;
             this.#currentSubview.showNotification({
-              fluentTitleId: "account-hub-find-settings-failed",
+              fluentTitleId: "account-hub-find-account-settings-failed",
               type: "warning",
             });
             this.#setCurrentConfigForSubview();
@@ -604,8 +622,9 @@ class AccountHubEmail extends HTMLElement {
             lazy.FindConfig.ewsifyConfig(this.#currentConfig);
           }
 
-          await this.#initUI(this.#states[this.#currentState].nextStep);
           this.#stopLoading();
+          await this.#initUI(this.#states[this.#currentState].nextStep);
+
           this.#states.incomingConfigSubview.previousStep =
             "emailConfigFoundSubview";
           this.#currentSubview.showNotification({
@@ -634,6 +653,46 @@ class AccountHubEmail extends HTMLElement {
         // TODO: Validate incoming config details.
         break;
       case "outgoingConfigSubview":
+      case "emailConfigFoundSubview":
+        if (this.#currentConfig.isOauthOnly()) {
+          //TODO share this with the code path for pw entry...
+          this.#startLoading("account-hub-oauth-pending");
+          gAccountSetupLogger.debug("Create button clicked.");
+          try {
+            await this.#validateAndFinish(this.#currentConfig.copy());
+          } finally {
+            this.#stopLoading();
+          }
+          await this.#initUI("emailSyncAccountsSubview");
+          this.#states[this.#currentState].previousStep = currentState;
+          try {
+            // TODO: Loading notification for fetching address books.
+            const syncAccounts = {};
+            //TODO fetch address books and calendars in parallel?
+            syncAccounts.addressBooks = await this.#getAddressBooks("");
+            // TODO: Loading notification for fetching calendars.
+            syncAccounts.calendars = await this.#getCalendars("", false);
+            this.#currentSubview.setState(syncAccounts);
+            this.#configVerifier.cleanup();
+
+            const accountsFound =
+              syncAccounts.addressBooks.length || syncAccounts.calendars.length;
+            this.#currentSubview.showNotification({
+              fluentTitleId: accountsFound
+                ? "account-hub-sync-accounts-found"
+                : "account-hub-sync-accounts-not-found",
+              type: accountsFound ? "success" : "info",
+            });
+            break;
+          } catch (error) {
+            this.#currentSubview.showNotification({
+              fluentTitleId: "account-hub-sync-accounts-not-found",
+              type: "error",
+              error,
+            });
+            break;
+          }
+        }
         // Move to the password stage where validateAndFinish is run.
         await this.#initUI(this.#states[this.#currentState].nextStep);
         // The password stage should now have the outgoing subview as the
@@ -646,19 +705,9 @@ class AccountHubEmail extends HTMLElement {
           type: "info",
         });
         break;
-      case "emailConfigFoundSubview":
-        await this.#initUI(this.#states[this.#currentState].nextStep);
-        // The password stage should now have the config found subview as the
-        // previous step.
-        this.#states[this.#currentState].previousStep = currentState;
-        this.#currentSubview.setState();
-        this.#currentSubview.showNotification({
-          fluentTitleId: "account-hub-password-info",
-          type: "info",
-        });
-        break;
       case "emailPasswordSubview":
-        // TODO: Add loading notification here.
+        this.#startLoading("account-hub-creating-account");
+
         // Get password and remember from the state and apply it to the config.
         this.#currentConfig = this.#fillAccountConfig(
           this.#currentConfig,
@@ -666,7 +715,15 @@ class AccountHubEmail extends HTMLElement {
         );
         this.#currentConfig.rememberPassword = stateData.rememberPassword;
         gAccountSetupLogger.debug("Create button clicked.");
-        await this.#validateAndFinish(this.#currentConfig.copy());
+
+        try {
+          await this.#validateAndFinish(this.#currentConfig.copy());
+        } catch (error) {
+          this.#stopLoading();
+          throw error;
+        }
+
+        this.#stopLoading();
         await this.#initUI(this.#states[this.#currentState].nextStep);
         try {
           // TODO: Loading notification for fetching address books.
@@ -681,20 +738,25 @@ class AccountHubEmail extends HTMLElement {
           );
           this.#currentSubview.setState(syncAccounts);
           this.#configVerifier.cleanup();
+          const accountsFound =
+            syncAccounts.addressBooks.length || syncAccounts.calendars.length;
+
+          this.#currentSubview.showNotification({
+            fluentTitleId: accountsFound
+              ? "account-hub-sync-accounts-found"
+              : "account-hub-sync-accounts-not-found",
+            type: accountsFound ? "success" : "info",
+          });
+          break;
         } catch (error) {
           this.#currentSubview.showNotification({
-            fluentTitleId: "account-hub-sync-failure",
+            fluentTitleId: "account-hub-sync-accounts-not-found",
             type: "error",
             error,
           });
           break;
         }
 
-        this.#currentSubview.showNotification({
-          fluentTitleId: "account-hub-sync-success",
-          type: "success",
-        });
-        break;
       case "emailSyncAccountsSubview":
         try {
           // Add the selected sync address books and calendars.
@@ -708,7 +770,7 @@ class AccountHubEmail extends HTMLElement {
           });
         } catch (error) {
           this.#currentSubview.showNotification({
-            fluentTitleId: "account-hub-unable-to-sync-accounts",
+            fluentTitleId: "account-hub-sync-accounts-failure",
             type: "error",
             error,
           });
@@ -769,7 +831,7 @@ class AccountHubEmail extends HTMLElement {
             // show an error.
             this.#initUI(this.#states[this.#currentState].previousStep);
             this.#currentSubview.showNotification({
-              fluentTitleId: "account-hub-find-settings-failed",
+              fluentTitleId: "account-hub-find-account-settings-failed",
               type: "error",
             });
           }
@@ -1224,7 +1286,7 @@ class AccountHubEmail extends HTMLElement {
   async #getExchangeAddons(config) {
     const { promise, resolve, reject } = Promise.withResolvers();
 
-    this.abortable = lazy.ExchangeAutoDiscover.getAddonsList(
+    this.abortable = lazy.getAddonsList(
       config,
       () => {
         resolve(config);
@@ -1238,6 +1300,16 @@ class AccountHubEmail extends HTMLElement {
     );
 
     return promise;
+  }
+
+  /**
+   * Installs the first available add-on in the config object for exchange.
+   */
+  async #installAddon() {
+    const addon = this.#currentConfig.addons[0];
+    const installer = (this.abortable = new AddonInstaller(addon));
+    await installer.install();
+    this.abortable = null;
   }
 
   /**

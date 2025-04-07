@@ -164,15 +164,6 @@ function make_view_wrapper() {
 }
 
 /**
- * Clone an open and valid view wrapper.
- */
-function clone_view_wrapper(aViewWrapper) {
-  const wrapper = aViewWrapper.clone(gMockViewWrapperListener);
-  VWTU_testHelper.active_view_wrappers.push(wrapper);
-  return wrapper;
-}
-
-/**
  * Open a folder for view display.  This is an async operation, relying on the
  *  onMessagesLoaded(true) notification to get he test going again.
  */
@@ -472,15 +463,6 @@ function view_expand_all(aViewWrapper) {
 function make_person_with_word_in_name(aWord) {
   const dude = gMessageGenerator.makeNameAndAddress();
   return [aWord, dude[1]];
-}
-
-/**
- * Create a name and address pair where the provided word is part of the mail
- *  address.
- */
-function make_person_with_word_in_address(aWord) {
-  const dude = gMessageGenerator.makeNameAndAddress();
-  return [dude[0], aWord + "@madeup.nul"];
 }
 
 class MockViewWrapperListener extends IDBViewWrapperListener {

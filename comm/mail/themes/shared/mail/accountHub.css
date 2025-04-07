@@ -38,6 +38,7 @@ dialog {
   --hub-loader-background: var(--color-neutral-base);
   --hub-loader-color: var(--color-primary-default);
   --hub-floating-button-line-height: 1.3em;
+  --hub-width: 500px;
 
   --hub-box-shadow: 0 2px 4px rgba(58, 57, 68, 0.3);
   --hub-input-height: 33px;
@@ -99,23 +100,32 @@ dialog {
   }
 }
 
-.account-hub-view:not([hidden]),
-.account-hub-form,
-.account-hub-grid {
+.account-hub-view:not([hidden]) {
   display: grid;
-  grid-template: "header" min-content
-    "body" minmax(auto, 1fr) "footer" min-content;
+  grid-template: "header" min-content "body" 1fr "footer" min-content;
   text-align: center;
   z-index: 1;
 }
 
+.account-hub-step {
+  grid-area: body;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: var(--hub-header-body-gap);
+}
+
 .account-hub-form {
-  padding-block-start: 45px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  justify-content: center;
 }
 
 .account-hub-view:not([hidden]) {
+  max-height: 90vh;
   padding-inline: 20px;
-  padding-block: 40px 20px;
+  padding-block-start: 40px;
   border-radius: inherit;
   border: 1px solid var(--hub-border-color);
   /* Background color to better hide loading of the webp (>=100ms) */
@@ -230,7 +240,7 @@ dialog {
   }
 }
 
-/* Typography */
+/* Header */
 
 header {
   font-weight: 300;
@@ -238,20 +248,12 @@ header {
   line-height: 1em;
   margin-block: 0;
 
-  .sub-view-title {
+  & .sub-view-title {
     font-size: 2rem;
     font-weight: 400;
-    margin-block-start: 35px;
-  }
-
-  .sub-view-subheader {
-    font-size: 1.3rem;
-    font-weight: 400;
-    margin-block-start: 15px;
+    margin-block: var(--hub-header-margin-block-start) 0;
   }
 }
-
-/* Header */
 
 .branding-header {
   display: flex;
@@ -319,14 +321,17 @@ header {
 /* Body */
 
 .hub-body {
-  grid-area: body;
   display: flex;
-  gap: 30px;
   flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  margin-inline: 30px;
+  align-items: stretch;
+  justify-content: flex-start;
+  place-self: center;
+  gap: var(--hub-body-elements-column-gap);
+  width: 100%;
+  max-width: var(--hub-width);
   max-height: 40vh;
+  text-align: start;
+  margin-inline: 0;
 
   &.flex-direction-row {
     flex-direction: row;
@@ -337,7 +342,6 @@ header {
   }
 
   &.manual-form-body {
-    max-width: 500px;
     gap: 20px;
 
     & .form-row {
@@ -345,8 +349,16 @@ header {
       grid-template-columns: 115px 1fr;
       gap: 10px;
 
+      .stacked & {
+        grid-template-columns: 1fr;
+      }
+
       &.responsive-row {
         grid-template-columns: auto 1fr;
+
+        .stacked & {
+          grid-template-columns: 1fr;
+        }
       }
 
       & .expanded {
@@ -355,12 +367,26 @@ header {
     }
   }
 
-  &.password-form-body {
-    gap: 25px;
+  &.password-form-body,
+  &.email-form-body {
+    max-width: 400px;
   }
 
   &.sync-accounts-form-body {
-    max-width: 500px;
+    & .sync-accounts-container {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+    }
+
+    .stacked & .sync-accounts-container {
+      grid-template-columns: 1fr;
+    }
+
+    .stacked & .sync-type-container {
+      height: auto;
+    }
   }
 }
 
@@ -603,7 +629,7 @@ header {
   hr {
     border: none;
     height: 1px;
-    margin-block: 20px;
+    margin-block-start: var(--hub-footer-margin-block);
     background: linear-gradient(to right, transparent, rgba(26, 32, 44, 0.2), transparent);
     color: transparent;
   }
@@ -628,6 +654,7 @@ header {
   gap: 3px 10px;
   justify-content: center;
   align-items: baseline;
+  margin-block: var(--hub-footer-margin-block);
 
   li > a {
     font-size: 1.1rem;
@@ -654,6 +681,7 @@ header {
   display: flex;
   flex-direction: column;
   align-items: center;
+  overflow-y: auto;
 
   & .account-hub-success-illustration {
     background-image: var(--success-illustration);

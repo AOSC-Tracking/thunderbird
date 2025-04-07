@@ -390,24 +390,21 @@ nsMsgComposeService::OpenComposeWindow(
         if (type == nsIMsgCompType::NewsPost) {
           nsAutoCString newsURI(originalMsgURI);
           nsAutoCString group;
-          nsAutoCString host;
 
+          // URI is "[s]news://host[:port]/group".
           int32_t slashpos = newsURI.RFindChar('/');
           if (slashpos > 0) {
-            // uri is "[s]news://host[:port]/group"
-            host = StringHead(newsURI, slashpos);
             group = Substring(newsURI, slashpos + 1);
 
-          } else
+          } else {
             group = originalMsgURI;
-
+          }
           nsAutoCString unescapedName;
           MsgUnescapeString(group,
                             nsINetUtil::ESCAPE_URL_FILE_BASENAME |
                                 nsINetUtil::ESCAPE_URL_FORCED,
                             unescapedName);
           pMsgCompFields->SetNewsgroups(NS_ConvertUTF8toUTF16(unescapedName));
-          pMsgCompFields->SetNewspostUrl(host.get());
         } else {
           pMsgComposeParams->SetOriginalMsgURI(originalMsgURI);
           pMsgComposeParams->SetOrigMsgHdr(origMsgHdr);
@@ -643,7 +640,7 @@ NS_IMETHODIMP nsMsgTemplateReplyHelper::OnStopRunningUrl(nsIURI* aUrl,
   compFields->SetRawHeader("Auto-Submitted", "auto-replied"_ns);
 
   nsCString charset;
-  rv = mTemplateHdr->GetCharset(getter_Copies(charset));
+  rv = mTemplateHdr->GetCharset(charset);
   NS_ENSURE_SUCCESS(rv, rv);
   rv = nsMsgI18NConvertToUnicode(charset, mTemplateBody, body);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),

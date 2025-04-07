@@ -44,6 +44,13 @@ module.exports = {
     // eslint-plugin-mozilla, we turn off processing of the html plugin for .xml
     // files.
     "html/xml-extensions": [".xhtml"],
+    jsdoc: {
+      tagNamePreference: {
+        attr: "attribute",
+        cssprop: "cssproperty",
+        tag: "tagname",
+      },
+    },
   },
   // Ignore eslint configurations in parent directories.
   root: true,
@@ -183,6 +190,20 @@ module.exports = {
       files: ["*.*"],
       excludedFiles: [".eslintrc.js"],
       extends: ["plugin:mozilla/valid-jsdoc"],
+      rules: {
+        "jsdoc/check-tag-names": [
+          "error",
+          {
+            definedTags: [
+              "attribute",
+              "cssproperty",
+              "part",
+              "slot",
+              "tagname",
+            ],
+          },
+        ],
+      },
     },
   ],
 };

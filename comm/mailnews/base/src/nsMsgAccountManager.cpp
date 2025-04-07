@@ -453,7 +453,7 @@ nsMsgAccountManager::CreateIncomingServer(const nsACString& username,
   if (*_retval) {
     nsCString defaultStore;
     m_prefs->GetCharPref("mail.serverDefaultStoreContractID", defaultStore);
-    (*_retval)->SetCharValue("storeContractID", defaultStore);
+    (*_retval)->SetStringValue("storeContractID", defaultStore);
 
     // From when we first create the account until we have created some folders,
     // we can change the store type.
@@ -995,12 +995,6 @@ nsresult nsMsgAccountManager::LoadAccounts() {
   // ignore it.
   if (m_shutdownInProgress || m_haveShutdown) return NS_ERROR_FAILURE;
 
-  // Make sure correct modules are loaded before creating any server.
-  nsCOMPtr<nsIObserver> moduleLoader;
-  moduleLoader =
-      do_GetService("@mozilla.org/messenger/imap-module-loader;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   nsCOMPtr<nsIMsgMailSession> mailSession =
       do_GetService("@mozilla.org/messenger/services/session;1", &rv);
 
@@ -1238,7 +1232,7 @@ nsresult nsMsgAccountManager::LoadAccounts() {
         // Get the pref directly, because the GetDeferredToAccount accessor
         // attempts to fix broken deferrals, but we know more about what the
         // deferred to account was.
-        server->GetCharValue("deferred_to_account", deferredToAccount);
+        server->GetStringValue("deferred_to_account", deferredToAccount);
         if (!deferredToAccount.IsEmpty()) {
           nsCString dupAccountKey;
           dupAccount->GetKey(dupAccountKey);
@@ -1295,7 +1289,7 @@ nsresult nsMsgAccountManager::LoadAccounts() {
                 nsCString accountKey;
                 replacement->GetKey(accountKey);
                 if (!accountKey.IsEmpty())
-                  server->SetCharValue("deferred_to_account", accountKey);
+                  server->SetStringValue("deferred_to_account", accountKey);
               }
             }
           }
@@ -2222,7 +2216,7 @@ nsMsgAccountManager::CreateLocalMailAccount(nsIMsgAccount** _retval) {
   nsString localFoldersName;
   rv = GetLocalFoldersPrettyName(localFoldersName);
   NS_ENSURE_SUCCESS(rv, rv);
-  server->SetPrettyName(localFoldersName);
+  server->SetPrettyName(NS_ConvertUTF16toUTF8(localFoldersName));
 
   nsCOMPtr<nsINoIncomingServer> noServer;
   noServer = do_QueryInterface(server, &rv);
@@ -2822,11 +2816,9 @@ NS_IMETHODIMP nsMsgAccountManager::LoadVirtualFolders() {
           rv = GetOrCreateFolder(parentUri, getter_AddRefs(parentFolder));
           NS_ENSURE_SUCCESS(rv, rv);
 
-          nsAutoString currentFolderNameStr;
           nsAutoCString currentFolderNameCStr;
           MsgUnescapeString(Substring(buffer, lastSlash + 1, buffer.Length()),
                             0, currentFolderNameCStr);
-          CopyUTF8toUTF16(currentFolderNameCStr, currentFolderNameStr);
           nsCOMPtr<nsIMsgFolder> childFolder;
           nsCOMPtr<nsIMsgDatabase> db;
           // force db to get created.
@@ -2842,7 +2834,7 @@ NS_IMETHODIMP nsMsgAccountManager::LoadVirtualFolders() {
           else
             break;
 
-          parentFolder->AddSubfolder(currentFolderNameStr,
+          parentFolder->AddSubfolder(currentFolderNameCStr,
                                      getter_AddRefs(childFolder));
           if (childFolder) parentFolder->NotifyFolderAdded(childFolder);
           // here we make sure if our parent is rooted - if not, we're
@@ -3448,12 +3440,6 @@ nsresult nsMsgAccountManager::RemoveFolderFromSmartFolder(
 NS_IMETHODIMP nsMsgAccountManager::OnFolderBoolPropertyChanged(
     nsIMsgFolder* folder, const nsACString& property, bool oldValue,
     bool newValue) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP nsMsgAccountManager::OnFolderUnicharPropertyChanged(
-    nsIMsgFolder* folder, const nsACString& property, const nsAString& oldValue,
-    const nsAString& newValue) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

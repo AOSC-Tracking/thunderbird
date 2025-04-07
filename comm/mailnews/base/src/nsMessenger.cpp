@@ -526,45 +526,6 @@ nsresult nsMessenger::SaveAttachment(nsIFile* aFile, const nsACString& aURL,
   return rv;
 }
 
-NS_IMETHODIMP
-nsMessenger::SaveAttachmentToFolder(const nsACString& contentType,
-                                    const nsACString& url,
-                                    const nsACString& displayName,
-                                    const nsACString& messageUri,
-                                    nsIFile* aDestFolder, nsIFile** aOutFile) {
-  NS_ENSURE_ARG_POINTER(aDestFolder);
-  nsresult rv;
-
-  nsCOMPtr<nsIFile> attachmentDestination;
-  rv = aDestFolder->Clone(getter_AddRefs(attachmentDestination));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsString unescapedFileName;
-  ConvertAndSanitizeFileName(displayName, unescapedFileName);
-  rv = attachmentDestination->Append(unescapedFileName);
-  NS_ENSURE_SUCCESS(rv, rv);
-#ifdef XP_MACOSX
-  rv = attachmentDestination->CreateUnique(nsIFile::NORMAL_FILE_TYPE,
-                                           ATTACHMENT_PERMISSION);
-  NS_ENSURE_SUCCESS(rv, rv);
-#endif
-
-  rv = SaveAttachment(attachmentDestination, url, messageUri, contentType,
-                      nullptr, nullptr);
-  attachmentDestination.forget(aOutFile);
-  return rv;
-}
-
-NS_IMETHODIMP
-nsMessenger::SaveAttachment(const nsACString& aContentType,
-                            const nsACString& aURL,
-                            const nsACString& aDisplayName,
-                            const nsACString& aMessageUri,
-                            bool aIsExternalAttachment) {
-  return SaveOneAttachment(aContentType, aURL, aDisplayName, aMessageUri,
-                           false);
-}
-
 nsresult nsMessenger::SaveOneAttachment(const nsACString& aContentType,
                                         const nsACString& aURL,
                                         const nsACString& aDisplayName,

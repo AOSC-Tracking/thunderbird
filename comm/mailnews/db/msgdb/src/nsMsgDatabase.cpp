@@ -150,8 +150,8 @@ NS_IMETHODIMP nsMsgDBService::OpenFolderDB(nsIMsgFolder* aFolder,
 
   nsMsgDatabase* cacheDB = FindInCache(summaryFilePath);
   if (cacheDB) {
-    // this db could have ended up in the folder cache w/o an m_folder pointer
-    // via OpenMailDBFromFile. If so, take this chance to fix the folder.
+    // This db could have ended up in the folder cache w/o an m_folder pointer
+    // via OpenDBFromFile. If so, take this chance to fix the folder.
     if (!cacheDB->m_folder) {
       cacheDB->m_folder = aFolder;
     }
@@ -259,28 +259,58 @@ nsMsgDatabase* nsMsgDBService::FindInCache(nsIFile* dbName) {
   return nullptr;
 }
 
-// This method is called when the caller is trying to create a db without
-// having a corresponding nsIMsgFolder object.  This happens in a few
-// situations, including imap folder discovery, compacting local folders,
-// and copying local folders.
-NS_IMETHODIMP nsMsgDBService::OpenMailDBFromFile(nsIFile* aFolderName,
-                                                 nsIMsgFolder* aFolder,
-                                                 bool aCreate,
-                                                 bool aLeaveInvalidDB,
-                                                 nsIMsgDatabase** pMessageDB) {
-  NS_ENSURE_ARG_POINTER(aFolderName);
+// This method is used to open or create a DB at a specific location.
+// Its main use is to support cases where you might want to open a db
+// at a non-default location (e.g. during folder compaction).
+//
+// NOTE (BenC 2025-02-11): There are pending listeners which would
+// usually be hooked up by this function, but that doesn't happen here.
+// I _think_ that's intentional, although it doesn't seem to be documented
+// anywhere. I'm guessing the idea is that this function is used to fiddle
+// with DB files without going through the usual channels, and triggering
+// the usual side effects (UI updates etc)...
+// More investigation is required.
+NS_IMETHODIMP nsMsgDBService::OpenDBFromFile(nsIFile* aDBPath,
+                                             nsIMsgFolder* aFolder,
+                                             bool aCreate, bool aLeaveInvalidDB,
+                                             nsIMsgDatabase** pMessageDB) {
+  nsresult rv;
+  MOZ_ASSERT(aDBPath);
 
-  nsCOMPtr<nsIFile> dbPath;
-  nsresult rv = GetSummaryFileLocation(aFolderName, getter_AddRefs(dbPath));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  *pMessageDB = FindInCache(dbPath);
+  *pMessageDB = FindInCache(aDBPath);
   if (*pMessageDB) {
     return NS_OK;
   }
 
-  RefPtr<nsMailDatabase> msgDB = new nsMailDatabase;
-  rv = msgDB->Open(this, dbPath, aCreate, aLeaveInvalidDB);
+  RefPtr<nsMsgDatabase> msgDB;
+  // Wasn't in cache, so got to create it. For that, we need the folder,
+  // so we know which type of database to create (sigh).
+  if (aFolder) {
+    nsCOMPtr<nsIMsgIncomingServer> incomingServer;
+    rv = aFolder->GetServer(getter_AddRefs(incomingServer));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCString localDatabaseType;
+    incomingServer->GetLocalDatabaseType(localDatabaseType);
+    nsAutoCString dbContractID("@mozilla.org/nsMsgDatabase/msgDB-");
+    dbContractID.Append(localDatabaseType.get());
+
+    nsCOMPtr<nsIMsgDatabase> db = do_CreateInstance(dbContractID.get(), &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    msgDB = static_cast<nsMsgDatabase*>(db.get());
+  } else {
+    // NOTE: we don't have a folder, so assume the DB is for use by a
+    // local folder. Ironically, this path is only ever used by IMAP folders
+    // (see nsImapMailFolder::RenameClient()). It seemed to work OK
+    // historically, so I guess it just didn't hit any IMAP-specific DB
+    // features?
+    // In any case, the IMAP folder code should be using OpenFolderDB()
+    // instead of this anyway, and we should fail if aFolder is null.
+    // See Bug 1947892.
+    msgDB = new nsMailDatabase();
+  }
+
+  rv = msgDB->Open(this, aDBPath, aCreate, aLeaveInvalidDB);
   if (rv == NS_ERROR_FILE_NOT_FOUND) {
     return rv;
   }
@@ -291,7 +321,8 @@ NS_IMETHODIMP nsMsgDBService::OpenMailDBFromFile(nsIFile* aFolderName,
     rv = NS_OK;
   }
 
-  if (NS_SUCCEEDED(rv)) {
+  if (NS_SUCCEEDED(rv) && aFolder) {
+    // Link the folder to the db.
     msgDB->m_folder = aFolder;
   }
 
@@ -940,10 +971,10 @@ class MsgDBReporter final : public nsIMemoryReporter {
       if (aAnonymize) {
         memoryPath.AppendLiteral("<anonymized>");
       } else {
-        nsAutoCString folderURL;
-        folder->GetFolderURL(folderURL);
-        folderURL.ReplaceChar('/', '\\');
-        memoryPath += folderURL;
+        nsAutoCString folderURI;
+        folder->GetURI(folderURI);
+        folderURI.ReplaceChar('/', '\\');
+        memoryPath += folderURI;
       }
     } else {
       memoryPath.AppendLiteral("UNKNOWN-FOLDER");
@@ -1601,6 +1632,7 @@ nsresult nsMsgDatabase::InitExistingDB() {
       if (NS_FAILED(mdberr) || !m_mdbAllMsgHeadersTable) {
         err = NS_ERROR_FAILURE;
       }
+      NS_ENSURE_SUCCESS(err, err);
     }
 
     struct mdbOid allThreadsTableOID{};
@@ -1615,6 +1647,7 @@ nsresult nsMsgDatabase::InitExistingDB() {
       if (NS_FAILED(mdberr) || !m_mdbAllThreadsTable) {
         err = NS_ERROR_FAILURE;
       }
+      NS_ENSURE_SUCCESS(err, err);
     }
   }
   if (NS_SUCCEEDED(err) && m_dbFolderInfo) {
@@ -4972,7 +5005,9 @@ nsMsgDatabase::GetCachedHits(const nsACString& aSearchFolderUri,
   nsCOMPtr<nsIMdbTable> table;
   (void)GetSearchResultsTable(aSearchFolderUri, false, getter_AddRefs(table));
   if (!table) {
-    return NS_ERROR_FAILURE;  // expected result for no cached hits
+    // No cached hits.
+    *aEnumerator = nullptr;
+    return NS_OK;
   }
 
   NS_ADDREF(*aEnumerator =

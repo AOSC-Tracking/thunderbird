@@ -23,7 +23,7 @@ class EwsFolder : public nsMsgDBFolder {
   virtual nsresult GetDatabase() override;
 
   NS_IMETHOD CreateStorageIfMissing(nsIUrlListener* urlListener) override;
-  NS_IMETHOD CreateSubfolder(const nsAString& folderName,
+  NS_IMETHOD CreateSubfolder(const nsACString& folderName,
                              nsIMsgWindow* msgWindow) override;
   NS_IMETHOD CopyFileMessage(nsIFile* aFile, nsIMsgDBHdr* msgToReplace,
                              bool isDraftOrTemplate, uint32_t newMsgFlags,
@@ -43,7 +43,6 @@ class EwsFolder : public nsMsgDBFolder {
   NS_IMETHOD GetDBFolderInfoAndDB(nsIDBFolderInfo** folderInfo,
                                   nsIMsgDatabase** _retval) override;
   NS_IMETHOD GetDeletable(bool* deletable) override;
-  NS_IMETHOD GetFolderURL(nsACString& aFolderURL) override;
   NS_IMETHOD GetIncomingServerType(nsACString& aIncomingServerType) override;
   NS_IMETHOD GetNewMessages(nsIMsgWindow* aWindow,
                             nsIUrlListener* aListener) override;
@@ -54,6 +53,10 @@ class EwsFolder : public nsMsgDBFolder {
   NS_IMETHOD RenameSubFolders(nsIMsgWindow* msgWindow,
                               nsIMsgFolder* oldFolder) override;
   NS_IMETHOD UpdateFolder(nsIMsgWindow* aWindow) override;
+  NS_IMETHOD Compact(nsIUrlListener* aListener,
+                     nsIMsgWindow* aMsgWindow) override;
+  NS_IMETHOD CompactAll(nsIUrlListener* aListener,
+                        nsIMsgWindow* aMsgWindow) override;
 
  private:
   bool mHasLoadedSubfolders;

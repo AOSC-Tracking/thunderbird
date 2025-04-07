@@ -72,7 +72,7 @@ NS_IMETHODIMP nsRssIncomingServer::GetFeedItemsPath(nsIFile** aLocation) {
 
 NS_IMETHODIMP nsRssIncomingServer::CreateDefaultMailboxes() {
   // For Feeds, all we have is Trash.
-  return CreateLocalFolder(u"Trash"_ns);
+  return CreateLocalFolder("Trash"_ns);
 }
 
 NS_IMETHODIMP nsRssIncomingServer::SetFlagsOnDefaultMailboxes() {
@@ -155,6 +155,12 @@ NS_IMETHODIMP nsRssIncomingServer::GetCanSearchMessages(
 }
 
 NS_IMETHODIMP nsRssIncomingServer::MsgAdded(nsIMsgDBHdr* aMsg) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP nsRssIncomingServer::MsgPropertyChanged(
+    nsIMsgDBHdr* aMsg, const char* aProperty, const nsACString& aOldValue,
+    const nsACString& aNewValue) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

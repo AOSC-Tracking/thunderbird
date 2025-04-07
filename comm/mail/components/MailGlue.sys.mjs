@@ -234,6 +234,17 @@ const JSWINDOWACTORS = {
     allFrames: true,
   },
 
+  MessageScroll: {
+    parent: {
+      esModuleURI: "resource:///actors/MessageScrollParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource:///actors/MessageScrollChild.sys.mjs",
+    },
+    allFrames: true,
+    messageManagerGroups: ["single-page"],
+  },
+
   Pdfjs: {
     parent: {
       esModuleURI: "resource://pdf.js/PdfjsParent.sys.mjs",
@@ -1266,7 +1277,7 @@ function reportPreferences() {
     "mail.delete_matches_sort_order",
     "mail.display_glyph",
     "mail.mailnews.scroll_to_new_message",
-    "mail.prompt_purge_threshhold",
+    "mail.prompt_purge_threshold",
     "mail.purge.ask",
     "mail.addressDisplayFormat",
     "mail.showCondensedAddresses",

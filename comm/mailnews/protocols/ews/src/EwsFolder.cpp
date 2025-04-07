@@ -9,6 +9,7 @@
 #include "EwsMessageCopyHandler.h"
 
 #include "ErrorList.h"
+#include "FolderCompactor.h"
 #include "MailNewsTypes.h"
 #include "nsIMsgCopyService.h"
 #include "nsIMsgDatabase.h"
@@ -33,7 +34,7 @@ class FolderCreateCallbacks : public IEwsFolderCreateCallbacks {
   NS_DECL_ISUPPORTS
   NS_DECL_IEWSFOLDERCREATECALLBACKS
 
-  FolderCreateCallbacks(EwsFolder* parentFolder, const nsAString& folderName)
+  FolderCreateCallbacks(EwsFolder* parentFolder, const nsACString& folderName)
       : mParentFolder(parentFolder), mFolderName(folderName) {}
 
  protected:
@@ -41,7 +42,7 @@ class FolderCreateCallbacks : public IEwsFolderCreateCallbacks {
 
  private:
   RefPtr<EwsFolder> mParentFolder;
-  const nsString mFolderName;
+  const nsCString mFolderName;
 };
 
 NS_IMPL_ISUPPORTS(FolderCreateCallbacks, IEwsFolderCreateCallbacks)
@@ -291,7 +292,7 @@ NS_IMETHODIMP EwsFolder::CreateStorageIfMissing(nsIUrlListener* urlListener) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP EwsFolder::CreateSubfolder(const nsAString& folderName,
+NS_IMETHODIMP EwsFolder::CreateSubfolder(const nsACString& folderName,
                                          nsIMsgWindow* msgWindow) {
   nsCString ewsId;
   nsresult rv = GetEwsId(ewsId);
@@ -304,10 +305,7 @@ NS_IMETHODIMP EwsFolder::CreateSubfolder(const nsAString& folderName,
   RefPtr<FolderCreateCallbacks> callbacks =
       new FolderCreateCallbacks(this, folderName);
 
-  nsCString convertedName;
-  CopyUTF16toUTF8(folderName, convertedName);
-
-  return client->CreateFolder(ewsId, convertedName, callbacks);
+  return client->CreateFolder(ewsId, folderName, callbacks);
 }
 
 NS_IMETHODIMP
@@ -326,11 +324,6 @@ EwsFolder::GetDBFolderInfoAndDB(nsIDBFolderInfo** folderInfo,
   NS_ADDREF(*database = mDatabase);
 
   return (*database)->GetDBFolderInfo(folderInfo);
-}
-
-NS_IMETHODIMP EwsFolder::GetFolderURL(nsACString& aFolderURL) {
-  NS_WARNING("GetFolderURL");
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP EwsFolder::GetIncomingServerType(nsACString& aServerType) {
@@ -596,6 +589,47 @@ NS_IMETHODIMP EwsFolder::GetDeletable(bool* deletable) {
 
   *deletable = !(isServer || (mFlags & nsMsgFolderFlags::SpecialUse));
   return NS_OK;
+}
+
+NS_IMETHODIMP EwsFolder::CompactAll(nsIUrlListener* aListener,
+                                    nsIMsgWindow* aMsgWindow) {
+  nsresult rv = NS_OK;
+  nsCOMPtr<nsIMsgFolder> rootFolder;
+  rv = GetRootFolder(getter_AddRefs(rootFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIMsgPluggableStore> msgStore;
+  rv = GetMsgStore(getter_AddRefs(msgStore));
+  NS_ENSURE_SUCCESS(rv, rv);
+  bool storeSupportsCompaction;
+  msgStore->GetSupportsCompaction(&storeSupportsCompaction);
+  nsTArray<RefPtr<nsIMsgFolder>> folderArray;
+  if (storeSupportsCompaction) {
+    nsTArray<RefPtr<nsIMsgFolder>> allDescendants;
+    rv = rootFolder->GetDescendants(allDescendants);
+    NS_ENSURE_SUCCESS(rv, rv);
+    int64_t expungedBytes = 0;
+    for (auto folder : allDescendants) {
+      // If folder doesn't currently have a DB, expungedBytes might be out of
+      // whack. Also the compact might do a folder reparse first, which could
+      // change the expungedBytes count (via Expunge flag in X-Mozilla-Status).
+      bool hasDB;
+      folder->GetDatabaseOpen(&hasDB);
+
+      expungedBytes = 0;
+      if (folder) rv = folder->GetExpungedBytes(&expungedBytes);
+
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      if (!hasDB || expungedBytes > 0) folderArray.AppendElement(folder);
+    }
+  }
+
+  return AsyncCompactFolders(folderArray, aListener, aMsgWindow);
+}
+
+NS_IMETHODIMP EwsFolder::Compact(nsIUrlListener* aListener,
+                                 nsIMsgWindow* aMsgWindow) {
+  return AsyncCompactFolders({this}, aListener, aMsgWindow);
 }
 
 nsresult EwsFolder::GetEwsId(nsACString& ewsId) {
