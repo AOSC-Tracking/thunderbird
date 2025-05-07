@@ -298,17 +298,23 @@ function initStatic() {
   setInterval(onWhoTimeout, client.AWAY_TIMEOUT);
 
   client.awayMsgs = [{ message: MSG_AWAY_DEFAULT }];
-  var awayFile = new nsLocalFile(client.prefs.profilePath);
-  awayFile.append("awayMsgs.txt");
+  let migrated = Services.prefs.getBoolPref(
+    "extensions.irc.away_migrated",
+    false
+  );
+  let awayFile = new nsLocalFile(client.prefs.profilePath);
+  awayFile.append("awayMsgs." + (migrated ? "json" : "txt"));
   if (awayFile.exists()) {
-    var awayLoader = new TextSerializer(awayFile);
+    let awayLoader = migrated
+      ? new JSONSerializer(awayFile)
+      : new TextSerializer(awayFile);
     if (awayLoader.open("<")) {
       // Load the first item from the file.
       var item = awayLoader.deserialize();
       if (isinstance(item, Array)) {
         // If the first item is an array, it is the entire thing.
         client.awayMsgs = item;
-      } else if (item != null) {
+      } else if (!migrated && item != null) {
         /* Not an array, so we have the old format of a single object
          * per entry.
          */
@@ -333,6 +339,9 @@ function initStatic() {
           client.display(msg, MT_WARN);
         }, 0);
         awayFile.moveTo(null, invalidFile.leafName);
+      } else if (!migrated) {
+        awayMsgsSave();
+        Services.prefs.setBoolPref("extensions.irc.away_migrated", true);
       }
     }
   }
@@ -394,6 +403,20 @@ function initStatic() {
   client.defaultCompletion = client.COMMAND_CHAR + "help ";
 
   client.deck = document.getElementById("output-deck");
+}
+
+function awayMsgsSave() {
+  try {
+    let awayFile = new nsLocalFile(client.prefs.profilePath);
+    awayFile.append("awayMsgs.json");
+    let awayLoader = new JSONSerializer(awayFile);
+    if (awayLoader.open(">")) {
+      awayLoader.serialize(client.awayMsgs);
+      awayLoader.close();
+    }
+  } catch (ex) {
+    display(getMsg(MSG_ERR_AWAY_SAVE, formatException(ex)), MT_ERROR);
+  }
 }
 
 function getVersionInfo() {
@@ -1508,146 +1531,6 @@ function doCommand(command) {
       controller.doCommand(command);
     }
   } catch (e) {}
-}
-
-var testURLs = [
-  "irc:",
-  "irc://",
-  "irc://foo",
-  "irc://foo/",
-  "irc://foo/,isserver",
-  "irc://foo/chatzilla",
-  "irc://foo/chatzilla/",
-  "irc://foo:6666",
-  "irc://foo:6666/",
-  "irc://irc.foo.org",
-  "irc://irc.foo.org/",
-  "irc://irc.foo.org/,needpass",
-  "irc://irc.foo.org/?msg=hello%20there",
-  "irc://irc.foo.org/?msg=hello%20there&ignorethis",
-  "irc://irc.foo.org/%23mozilla,needkey?msg=hello%20there&ignorethis",
-  "irc://libera.chat/",
-  "irc://libera.chat/,isserver",
-  "irc://[fe80::5d49:767b:4b68:1b17]",
-  "irc://[fe80::5d49:767b:4b68:1b17]/",
-  "irc://[fe80::5d49:767b:4b68:1b17]:6666",
-  "irc://[fe80::5d49:767b:4b68:1b17]:6666/",
-];
-
-var testFailURLs = [
-  "irc:///",
-  "irc:///help",
-  "irc:///help,needkey",
-  "irc://irc.foo.org/,isnick",
-  "invalids",
-];
-
-function doURLTest() {
-  var passed = 0,
-    total = testURLs.length + testFailURLs.length;
-  for (var i = 0; i < testURLs.length; i++) {
-    var o = parseIRCURL(testURLs[i]);
-    if (!o) {
-      display("Parse of '" + testURLs[i] + "' failed.", MT_ERROR);
-    } else {
-      passed++;
-    }
-  }
-  for (var i = 0; i < testFailURLs.length; i++) {
-    var o = parseIRCURL(testFailURLs[i]);
-    if (o) {
-      display(
-        "Parse of '" + testFailURLs[i] + "' unexpectedly succeeded.",
-        MT_ERROR
-      );
-    } else {
-      passed++;
-    }
-  }
-  display(
-    "Passed " +
-      passed +
-      " out of " +
-      total +
-      " tests (" +
-      (passed / total) * 100 +
-      "%).",
-    MT_INFO
-  );
-}
-
-var testIRCURLObjects = [
-  [{}, "irc://"],
-  [{ host: "undernet" }, "irc://undernet/"],
-  [{ host: "irc.undernet.org" }, "irc://irc.undernet.org/"],
-  [{ host: "irc.undernet.org", isserver: true }, "irc://irc.undernet.org/"],
-  [{ host: "undernet", isserver: true }, "irc://undernet/,isserver"],
-  [{ host: "irc.undernet.org", port: 6667 }, "irc://irc.undernet.org/"],
-  [{ host: "irc.undernet.org", port: 1 }, "irc://irc.undernet.org:1/"],
-  [
-    { host: "irc.undernet.org", port: 1, scheme: "ircs" },
-    "ircs://irc.undernet.org:1/",
-  ],
-  [
-    { host: "irc.undernet.org", port: 6697, scheme: "ircs" },
-    "ircs://irc.undernet.org/",
-  ],
-  [{ host: "undernet", needpass: true }, "irc://undernet/,needpass"],
-  [{ host: "undernet", pass: "cz" }, "irc://undernet/?pass=cz"],
-  [{ host: "undernet", charset: "utf-8" }, "irc://undernet/?charset=utf-8"],
-  [{ host: "undernet", target: "#foo" }, "irc://undernet/%23foo"],
-  [
-    { host: "undernet", target: "#foo", needkey: true },
-    "irc://undernet/%23foo,needkey",
-  ],
-  [
-    { host: "undernet", target: "John", isnick: true },
-    "irc://undernet/John,isnick",
-  ],
-  [
-    { host: "undernet", target: "#foo", key: "cz" },
-    "irc://undernet/%23foo?key=cz",
-  ],
-  [{ host: "undernet", charset: "utf-8" }, "irc://undernet/?charset=utf-8"],
-  [
-    { host: "undernet", target: "John", msg: "spam!" },
-    "irc://undernet/John?msg=spam%21",
-  ],
-  [
-    { host: "undernet", target: "foo", isnick: true, msg: "spam!", pass: "cz" },
-    "irc://undernet/foo,isnick?msg=spam%21&pass=cz",
-  ],
-];
-
-function doObjectURLtest() {
-  var passed = 0,
-    total = testIRCURLObjects.length;
-  for (var i = 0; i < total; i++) {
-    var obj = testIRCURLObjects[i][0];
-    var url = testIRCURLObjects[i][1];
-    var parsedURL = constructIRCURL(obj);
-    if (url != parsedURL) {
-      display(
-        "Parsed IRC Object incorrectly! Expected '" +
-          url +
-          "', got '" +
-          parsedURL,
-        MT_ERROR
-      );
-    } else {
-      passed++;
-    }
-  }
-  display(
-    "Passed " +
-      passed +
-      " out of " +
-      total +
-      " tests (" +
-      (passed / total) * 100 +
-      "%).",
-    MT_INFO
-  );
 }
 
 function gotoIRCURL(url, e) {

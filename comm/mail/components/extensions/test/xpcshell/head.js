@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 var { ExtensionTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/ExtensionXPCShellUtils.sys.mjs"
 );
@@ -17,7 +19,7 @@ var { MessageGenerator } = ChromeUtils.importESModule(
 var { nsMailServer } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/Maild.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.importESModule(
+var { PromiseTestUtils: MailPromiseTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
@@ -46,7 +48,7 @@ function formatVCard(strings, ...values) {
   return outLines.join("");
 }
 
-function createAccount(type = "none") {
+function createAccount(type = "none", options = {}) {
   let account;
 
   if (type == "local") {
@@ -61,10 +63,14 @@ function createAccount(type = "none") {
   }
 
   if (type == "imap") {
-    IMAPServer.open();
-    account.incomingServer.port = IMAPServer.port;
+    const server = new IMAPServer(options);
+    server.open();
+    account.incomingServer.port = server.port;
     account.incomingServer.username = "user";
     account.incomingServer.password = "password";
+    const inbox = account.incomingServer.rootFolder.getChildNamed("INBOX");
+    inbox.QueryInterface(Ci.nsIMsgImapMailFolder).hierarchyDelimiter = "/";
+    gIMAPServers.set(account.incomingServer.key, server);
   }
 
   if (type == "nntp") {
@@ -116,13 +122,13 @@ async function createSubfolder(parent, name) {
     return parent.getChildNamed(name);
   }
 
-  const promiseAdded = PromiseTestUtils.promiseFolderAdded(name);
+  const promiseAdded = MailPromiseTestUtils.promiseFolderAdded(name);
   parent.createSubfolder(name, null);
   await promiseAdded;
   return parent.getChildNamed(name);
 }
 
-function createMessages(folder, makeMessagesArg) {
+async function createMessages(folder, makeMessagesArg) {
   if (typeof makeMessagesArg == "number") {
     makeMessagesArg = { count: makeMessagesArg };
   }
@@ -132,7 +138,7 @@ function createMessages(folder, makeMessagesArg) {
 
   const messages =
     createMessages.messageGenerator.makeMessages(makeMessagesArg);
-  return addGeneratedMessages(folder, messages);
+  await addGeneratedMessages(folder, messages);
 }
 
 class FakeGeneratedMessage {
@@ -146,16 +152,16 @@ class FakeGeneratedMessage {
 
 async function createMessageFromFile(folder, path) {
   const message = await IOUtils.readUTF8(path);
-  return addGeneratedMessages(folder, [new FakeGeneratedMessage(message)]);
+  await addGeneratedMessages(folder, [new FakeGeneratedMessage(message)]);
 }
 
 async function createMessageFromString(folder, message) {
-  return addGeneratedMessages(folder, [new FakeGeneratedMessage(message)]);
+  await addGeneratedMessages(folder, [new FakeGeneratedMessage(message)]);
 }
 
 async function addGeneratedMessages(folder, messages) {
-  if (folder.server.type == "imap") {
-    return IMAPServer.addMessages(folder, messages);
+  if (folder.server.type == "imap" && gIMAPServers.has(folder.server.key)) {
+    return gIMAPServers.get(folder.server.key).addMessages(folder, messages);
   }
   if (folder.server.type == "nntp") {
     return NNTPServer.addMessages(folder, messages);
@@ -165,39 +171,53 @@ async function addGeneratedMessages(folder, messages) {
   folder.QueryInterface(Ci.nsIMsgLocalMailFolder);
   folder.addMessageBatch(messageStrings);
   folder.callFilterPlugins(null);
-  return Promise.resolve();
+
+  return new Promise(resolve =>
+    mailTestUtils.updateFolderAndNotify(folder, resolve)
+  );
 }
 
 async function getUtilsJS() {
   return IOUtils.readUTF8(do_get_file("data/utils.js").path);
 }
 
-var IMAPServer = {
-  open() {
-    const { ImapDaemon, ImapMessage, IMAP_RFC3501_handler } =
-      ChromeUtils.importESModule(
-        "resource://testing-common/mailnews/Imapd.sys.mjs"
-      );
-    IMAPServer.ImapMessage = ImapMessage;
+var gIMAPServers = new Map();
+class IMAPServer {
+  constructor(options = {}) {
+    this.extensions = options?.extensions ?? [];
+  }
 
-    this.daemon = new ImapDaemon();
-    this.server = new nsMailServer(
-      daemon => new IMAP_RFC3501_handler(daemon),
-      this.daemon
+  open() {
+    const ImapD = ChromeUtils.importESModule(
+      "resource://testing-common/mailnews/Imapd.sys.mjs"
     );
+    const { IMAP_RFC3501_handler, ImapDaemon, ImapMessage, mixinExtension } =
+      ImapD;
+
+    this.ImapMessage = ImapMessage;
+    this.daemon = new ImapDaemon();
+    this.server = new nsMailServer(daemon => {
+      const handler = new IMAP_RFC3501_handler(daemon);
+      for (const ext of this.extensions) {
+        mixinExtension(handler, ImapD[`IMAP_${ext}_extension`]);
+      }
+      return handler;
+    }, this.daemon);
+
     this.server.start();
 
     registerCleanupFunction(() => this.close());
-  },
+  }
   close() {
     this.server.stop();
-  },
+  }
   get port() {
     return this.server.port;
-  },
+  }
 
   addMessages(folder, messages) {
-    const fakeFolder = IMAPServer.daemon.getMailbox(folder.name);
+    folder.QueryInterface(Ci.nsIMsgImapMailFolder);
+    const fakeFolder = this.daemon.getMailbox(folder.name);
     messages.forEach(message => {
       if (typeof message != "string") {
         message = message.toMessageString();
@@ -205,7 +225,7 @@ var IMAPServer = {
       const msgURI = Services.io.newURI(
         "data:text/plain;base64," + btoa(message)
       );
-      const imapMsg = new IMAPServer.ImapMessage(
+      const imapMsg = new this.ImapMessage(
         msgURI.spec,
         fakeFolder.uidnext++,
         []
@@ -213,11 +233,11 @@ var IMAPServer = {
       fakeFolder.addMessage(imapMsg);
     });
 
-    return new Promise(resolve =>
-      mailTestUtils.updateFolderAndNotify(folder, resolve)
-    );
-  },
-};
+    const listener = new MailPromiseTestUtils.PromiseUrlListener();
+    folder.updateFolderWithListener(null, listener);
+    return listener.promise;
+  }
+}
 
 function subscribeNewsgroup(account, group) {
   account.incomingServer.QueryInterface(Ci.nsINntpIncomingServer);

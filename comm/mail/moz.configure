@@ -95,6 +95,38 @@ set_config(
 )
 # set_config("MOZ_GLEAN_EXTRA_PINGS_FILES", ["comm/mail/pings.yaml"])
 set_config("MOZ_GLEAN_EXTRA_TAGS_FILES", ["comm/mail/tags.yaml"])
+set_config(
+    "MOZ_GLEAN_INTERESTING_METRICS_FILES",
+    [
+        "comm/mail/metrics.yaml",
+        "comm/mail/components/addrbook/metrics.yaml",
+        "comm/mail/components/cloudfile/metrics.yaml",
+        "comm/mail/components/compose/metrics.yaml",
+        "comm/mail/components/inappnotifications/metrics.yaml",
+        "comm/calendar/metrics.yaml",
+        "modules/libpref/metrics.yaml",
+        "parser/htmlparser/metrics.yaml",
+        # NOTE: test_pkcs11_module.js will fail without this.
+        # The pkcs11 runs before serverknobs can be applied.
+        "security/manager/ssl/metrics.yaml",
+        "toolkit/content/metrics.yaml",
+        "toolkit/components/crashes/metrics.yaml",
+        "toolkit/components/pdfjs/metrics.yaml",
+        # Could be useful, but fails "Sorry, Glean found some glinter nits".
+        # "toolkit/components/startup/metrics.yaml",
+        "toolkit/mozapps/defaultagent/metrics.yaml",
+        "toolkit/mozapps/extensions/metrics.yaml",
+        "toolkit/mozapps/update/metrics.yaml",
+        # NOTE: BackgroundTask_shouldprocessupdates.sys.mjs will fail without this
+        # It doesn't consider itself to be in automation, and is also
+        # collecting metrics too early, in XRE_mainStartup.
+        "toolkit/mozapps/update/shared_metrics.yaml",
+        # Could be useful, but fails "Sorry, Glean found some glinter nits".
+        # "toolkit/profile/metrics.yaml",
+        "toolkit/xre/metrics.yaml",
+    ],
+)
+
 
 include("../build/moz.configure/gecko_source.configure")
 
@@ -137,26 +169,17 @@ def thunderbird_official_branding_directory(thunderbird_official_branding):
 #    reason=thunderbird_official_branding,
 #)
 
-# Thunderbird Rust code is now the default
-option("--disable-thunderbird-rust", help="Enable Rust support within Thunderbird")
-
-set_config("MOZ_THUNDERBIRD_RUST", True, when="--enable-thunderbird-rust")
-set_define("MOZ_THUNDERBIRD_RUST", True, when="--enable-thunderbird-rust")
-set_config("MOZ_OVERRIDE_GKRUST", True, when="--enable-thunderbird-rust")
-
-
-@depends("--enable-thunderbird-rust")
-def moz_override_cargo_config(enable_rust):
-    rust_override = "comm/rust/.cargo/config.toml.in"
-    if enable_rust:
-        log.info(f"Using {rust_override} for Rust code.")
-        return rust_override
-
-
+# Thunderbird Rust code is now the only way to compile
+set_config("MOZ_THUNDERBIRD_RUST", True)
+set_define("MOZ_THUNDERBIRD_RUST", True)
+set_config("MOZ_OVERRIDE_GKRUST", True)
 set_config(
     "MOZ_OVERRIDE_CARGO_CONFIG",
-    moz_override_cargo_config,
-    when="--enable-thunderbird-rust",
+    "comm/rust/.cargo/config.toml.in",
 )
+
+# Build with (but not necessarily use) the new database.
+set_config("MOZ_PANORAMA", True, when=milestone.is_nightly)
+set_define("MOZ_PANORAMA", True, when=milestone.is_nightly)
 
 include("../../toolkit/moz.configure")

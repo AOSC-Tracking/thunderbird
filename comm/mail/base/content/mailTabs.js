@@ -2,19 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from mail3PaneWindowCommands.js */
-/* import-globals-from mailWindowOverlay.js */
-/* import-globals-from messenger.js */
-
-/* globals contentProgress, statusFeedback */ // From mailWindow.js
-
-ChromeUtils.defineESModuleGetters(this, {
-  FolderUtils: "resource:///modules/FolderUtils.sys.mjs",
-  GlodaSyntheticView: "resource:///modules/gloda/GlodaSyntheticView.sys.mjs",
-  MailUtils: "resource:///modules/MailUtils.sys.mjs",
-  MsgHdrToMimeMessage: "resource:///modules/gloda/MimeMessage.sys.mjs",
-});
-
 /**
  * Tabs for displaying mail folders and messages.
  */
@@ -90,16 +77,16 @@ var mailTabType = {
           "mail3PaneTabTemplate",
           tab,
           win => {
+            // "DOMContentLoaded" event.
             win.tabOrWindow = tab;
             // Send the state to the page so it can restore immediately.
             win.openingState = args;
           },
-          async win => {
-            // onLoad has happened. async activities of scripts running of
-            // that may not have finished. Let's go back to the end of the
-            // event queue giving win.messageBrowser time to get defined.
-            await new Promise(resolve => win.setTimeout(resolve));
-            win.messageBrowser.contentWindow.tabOrWindow = tab;
+          win => {
+            // "load" event.
+            win.document.getElementById(
+              "messageBrowser"
+            ).contentWindow.tabOrWindow = tab;
             if (!args.background) {
               // Update telemetry once the tab has loaded and decided if the
               // panes are visible.

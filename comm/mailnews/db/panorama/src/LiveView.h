@@ -13,8 +13,7 @@
 #include "nsCOMPtr.h"
 #include "nsILiveView.h"
 
-namespace mozilla {
-namespace mailnews {
+namespace mozilla::mailnews {
 
 class LiveView : public nsILiveView, public MessageListener {
  public:
@@ -23,8 +22,8 @@ class LiveView : public nsILiveView, public MessageListener {
   NS_DECL_ISUPPORTS
   NS_DECL_NSILIVEVIEW
 
-  void OnMessageAdded(Folder* folder, Message* message) override;
-  void OnMessageRemoved(Folder* folder, Message* message) override;
+  void OnMessageAdded(Message* message) override;
+  void OnMessageRemoved(Message* message) override;
 
  private:
   virtual ~LiveView() {
@@ -62,7 +61,6 @@ class LiveView : public nsILiveView, public MessageListener {
   JSContext* mCx;
 };
 
-}  // namespace mailnews
-}  // namespace mozilla
+}  // namespace mozilla::mailnews
 
 #endif  // LiveView_h__

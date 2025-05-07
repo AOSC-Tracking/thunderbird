@@ -549,12 +549,6 @@ ac_configure=$ac_aux_dir/configure # This should be Cygnus configure.
 
 
 
-
-if test -f "${_topsrcdir}/$REAL_BRANDING_DIRECTORY/configure.sh"; then
-  . "${_topsrcdir}/$REAL_BRANDING_DIRECTORY/configure.sh"
-fi
-
-
 MOZ_MACBUNDLE_NAME=$MOZ_APP_DISPLAYNAME
 if test "$MOZ_MACBUNDLE_NAME_PREFIX"; then
   MOZ_MACBUNDLE_NAME="${MOZ_MACBUNDLE_NAME_PREFIX}${MOZ_MACBUNDLE_NAME}"
@@ -620,7 +614,6 @@ MOZ_EME_PROCESS_BUNDLEID=${MOZ_DISTRIBUTION_ID}.${MOZ_EME_PROCESS_BUNDLEID}
 # version_display.txt or version.txt in the application directory, or
 # browser/config/version_display.txt.
 
-
 cat >> confdefs.pytmp <<EOF
     (''' MOZ_APP_UA_VERSION ''', r''' "$MOZ_APP_VERSION" ''')
 EOF
@@ -628,18 +621,6 @@ cat >> confdefs.h <<EOF
 #define MOZ_APP_UA_VERSION "$MOZ_APP_VERSION"
 EOF
 
-
-
-
-if test -n "$MOZ_DEV_EDITION"; then
-    cat >> confdefs.pytmp <<\EOF
-    (''' MOZ_DEV_EDITION ''', ' 1 ')
-EOF
-cat >> confdefs.h <<\EOF
-#define MOZ_DEV_EDITION 1
-EOF
-
-fi
 
 
 top_srcdir=$srcdir
@@ -735,8 +716,6 @@ sed 's/$/,/' >> $CONFIG_STATUS <<EOF
     (''' MOZ_EME_PROCESS_NAME_BRANDED ''', r''' $MOZ_EME_PROCESS_NAME_BRANDED ''')
     (''' MOZ_EME_PROCESS_BUNDLENAME ''', r''' $MOZ_EME_PROCESS_BUNDLENAME ''')
     (''' MOZ_EME_PROCESS_BUNDLEID ''', r''' $MOZ_EME_PROCESS_BUNDLEID ''')
-    (''' MOZ_APP_DISPLAYNAME ''', r''' $MOZ_APP_DISPLAYNAME ''')
-    (''' MOZ_DEV_EDITION ''', r''' $MOZ_DEV_EDITION ''')
     (''' top_srcdir ''', r''' $top_srcdir ''')
 EOF
 

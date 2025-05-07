@@ -478,6 +478,8 @@
   skin/classic/messenger/illustrations/in-app-notification-donation-default-dark.svg (../shared/mail/illustrations/in-app-notification-donation-default-dark.svg)
   skin/classic/messenger/illustrations/accounthub-success-dark.svg                   (../shared/mail/illustrations/accounthub-success-dark.svg)
   skin/classic/messenger/illustrations/accounthub-success.svg                        (../shared/mail/illustrations/accounthub-success.svg)
+  skin/classic/messenger/illustrations/accounthub-success-dark-compact.svg           (../shared/mail/illustrations/accounthub-success-dark-compact.svg)
+  skin/classic/messenger/illustrations/accounthub-success-compact.svg                (../shared/mail/illustrations/accounthub-success-compact.svg)
   skin/classic/messenger/illustrations/pictograph-grouped.svg                        (../shared/mail/illustrations/pictograph-grouped.svg)
   skin/classic/messenger/illustrations/pictograph-threaded.svg                       (../shared/mail/illustrations/pictograph-threaded.svg)
   skin/classic/messenger/illustrations/pictograph-unthreaded.svg                     (../shared/mail/illustrations/pictograph-unthreaded.svg)
@@ -495,6 +497,7 @@
   skin/classic/messenger/icons/new/compact/add.svg            (../shared/mail/icons/new/compact/add.svg)
   skin/classic/messenger/icons/new/compact/add-circle.svg     (../shared/mail/icons/new/compact/add-circle.svg)
   skin/classic/messenger/icons/new/compact/address-book.svg   (../shared/mail/icons/new/compact/address-book.svg)
+  skin/classic/messenger/icons/new/compact/address-book-colored.svg (../shared/mail/icons/new/compact/address-book-colored.svg)
   skin/classic/messenger/icons/new/compact/app-menu.svg       (../shared/mail/icons/new/compact/app-menu.svg)
   skin/classic/messenger/icons/new/compact/app-menu-addon.svg (../shared/mail/icons/new/compact/app-menu-addon.svg)
   skin/classic/messenger/icons/new/compact/app-menu-badged.svg (../shared/mail/icons/new/compact/app-menu-badged.svg)
@@ -503,6 +506,7 @@
   skin/classic/messenger/icons/new/compact/calendar-invite.svg (../shared/mail/icons/new/compact/calendar-invite.svg)
   skin/classic/messenger/icons/new/compact/calendar-today.svg (../shared/mail/icons/new/compact/calendar-today.svg)
   skin/classic/messenger/icons/new/compact/calendar.svg       (../shared/mail/icons/new/compact/calendar.svg)
+  skin/classic/messenger/icons/new/compact/calendar-colored.svg  (../shared/mail/icons/new/compact/calendar-colored.svg)
   skin/classic/messenger/icons/new/compact/chat.svg           (../shared/mail/icons/new/compact/chat.svg)
   skin/classic/messenger/icons/new/compact/check.svg          (../shared/mail/icons/new/compact/check.svg)
   skin/classic/messenger/icons/new/compact/checkbox.svg       (../shared/mail/icons/new/compact/checkbox.svg)
@@ -771,13 +775,15 @@
   skin/classic/messenger/icons/xs/replies.svg                  (../shared/mail/icons/xs/replies.svg)
 
 # SM - 16x16px icons
+  skin/classic/messenger/icons/sm/circle-question.svg          (../shared/mail/icons/sm/circle-question.svg)
+  skin/classic/messenger/icons/sm/date-time.svg                (../shared/mail/icons/sm/date-time.svg)
   skin/classic/messenger/icons/sm/dot.svg                      (../shared/mail/icons/sm/dot.svg)
   skin/classic/messenger/icons/sm/folder-compact.svg           (../shared/mail/icons/sm/folder-compact.svg)
   skin/classic/messenger/icons/sm/mobile-export.svg            (../shared/mail/icons/sm/mobile-export.svg)
   skin/classic/messenger/icons/sm/mobile-import.svg            (../shared/mail/icons/sm/mobile-import.svg)
+  skin/classic/messenger/icons/sm/recurrence.svg               (../shared/mail/icons/sm/recurrence.svg)
   skin/classic/messenger/icons/sm/sparkle-star.svg             (../shared/mail/icons/sm/sparkle-star.svg)
   skin/classic/messenger/icons/sm/upload.svg                   (../shared/mail/icons/sm/upload.svg)
-  skin/classic/messenger/icons/sm/circle-question.svg          (../shared/mail/icons/sm/circle-question.svg)
 
 # LG - 24x24px icons
   skin/classic/messenger/icons/lg/upload.svg                   (../shared/mail/icons/lg/upload.svg)

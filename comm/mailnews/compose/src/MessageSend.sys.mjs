@@ -630,11 +630,13 @@ export class MessageSend {
       let errorMsg;
       if (
         [
-          lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_UNKNOWN_SERVER,
-          lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_REFUSED,
-          lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_INTERRUPTED,
-          lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_TIMEOUT,
-          lazy.MsgUtils.NS_ERROR_SMTP_PASSWORD_UNDEFINED,
+          Cr.NS_ERROR_UNKNOWN_HOST,
+          Cr.NS_ERROR_UNKNOWN_PROXY_HOST,
+          Cr.NS_ERROR_CONNECTION_REFUSED,
+          Cr.NS_ERROR_PROXY_CONNECTION_REFUSED,
+          Cr.NS_ERROR_NET_INTERRUPT,
+          Cr.NS_ERROR_NET_TIMEOUT,
+          Cr.NS_ERROR_NET_RESET,
           lazy.MsgUtils.NS_ERROR_SMTP_AUTH_FAILURE,
           lazy.MsgUtils.NS_ERROR_SMTP_AUTH_GSSAPI,
           lazy.MsgUtils.NS_ERROR_SMTP_AUTH_MECH_NOT_SUPPORTED,
@@ -745,27 +747,6 @@ export class MessageSend {
         errMsg,
         isNewsDelivery
       );
-    }
-    if (!Components.isSuccessCode(exitCode)) {
-      switch (exitCode) {
-        case Cr.NS_ERROR_UNKNOWN_HOST:
-        case Cr.NS_ERROR_UNKNOWN_PROXY_HOST:
-          exitCode = lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_UNKNOWN_SERVER;
-          break;
-        case Cr.NS_ERROR_CONNECTION_REFUSED:
-        case Cr.NS_ERROR_PROXY_CONNECTION_REFUSED:
-          exitCode = lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_REFUSED;
-          break;
-        case Cr.NS_ERROR_NET_INTERRUPT:
-          exitCode = lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_INTERRUPTED;
-          break;
-        case Cr.NS_ERROR_NET_TIMEOUT:
-        case Cr.NS_ERROR_NET_RESET:
-          exitCode = lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_TIMEOUT;
-          break;
-        default:
-          break;
-      }
     }
     return this._deliveryExitProcessing(
       serverURI,

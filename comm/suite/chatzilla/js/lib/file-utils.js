@@ -61,77 +61,54 @@ futils.getPicker = function futils_nosepicker(
   }
 
   if (initialPath) {
-    var localFile;
-
-    if (typeof initialPath == "string") {
-      localFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
-      localFile.initWithPath(initialPath);
-    } else {
-      if (!isinstance(initialPath, Ci.nsIFile)) {
-        throw "bad type for argument |initialPath|";
-      }
-
-      localFile = initialPath;
-    }
-
-    picker.displayDirectory = localFile;
+    picker.displayDirectory = returnFile(initialPath);
   }
 
-  var allIncluded = false;
-
-  if (typeof typeList == "string") {
-    typeList = typeList.split(" ");
+  let includeAll = true;
+  if (!typeList) {
+    typeList = [];
   }
 
-  if (isinstance(typeList, Array)) {
-    for (var i in typeList) {
-      switch (typeList[i]) {
-        case "$all":
-          allIncluded = true;
-          picker.appendFilters(Ci.nsIFilePicker.filterAll);
-          break;
+  for (let type of typeList) {
+    switch (type[0]) {
+      case "$all":
+        picker.appendFilters(Ci.nsIFilePicker.filterAll);
+        includeAll = false;
+        break;
 
-        case "$html":
-          picker.appendFilters(Ci.nsIFilePicker.filterHTML);
-          break;
+      case "$noAll":
+        includeAll = false;
+        break;
 
-        case "$text":
-          picker.appendFilters(Ci.nsIFilePicker.filterText);
-          break;
+      case "$html":
+        picker.appendFilters(Ci.nsIFilePicker.filterHTML);
+        break;
 
-        case "$images":
-          picker.appendFilters(Ci.nsIFilePicker.filterImages);
-          break;
+      case "$text":
+        picker.appendFilters(Ci.nsIFilePicker.filterText);
+        break;
 
-        case "$xml":
-          picker.appendFilters(Ci.nsIFilePicker.filterXML);
-          break;
+      case "$images":
+        picker.appendFilters(Ci.nsIFilePicker.filterImages);
+        break;
 
-        case "$xul":
-          picker.appendFilters(Ci.nsIFilePicker.filterXUL);
-          break;
+      case "$xml":
+        picker.appendFilters(Ci.nsIFilePicker.filterXML);
+        break;
 
-        case "$noAll":
-          // This prevents the automatic addition of "All Files"
-          // as a file type option by pretending it is already there.
-          allIncluded = true;
-          break;
+      case "$xul":
+        picker.appendFilters(Ci.nsIFilePicker.filterXUL);
+        break;
 
-        default:
-          if (
-            typeof typeList[i] == "object" &&
-            isinstance(typeList[i], Array)
-          ) {
-            picker.appendFilter(typeList[i][0], typeList[i][1]);
-          } else {
-            picker.appendFilter(typeList[i], typeList[i]);
-          }
-          break;
-      }
+      default:
+        /* type should always be a pair but check anyway. */
+        let extns = type.length > 1 ? type[1] : "*.*";
+        picker.appendFilter(type[0], extns);
+        break;
     }
   }
 
-  if (!allIncluded) {
+  if (includeAll) {
     picker.appendFilters(Ci.nsIFilePicker.filterAll);
   }
 
@@ -237,6 +214,16 @@ function nsLocalFile(path) {
   return localFile;
 }
 
+function returnFile(file) {
+  if (typeof file == "string") {
+    return new nsLocalFile(file);
+  }
+  if (isinstance(file, Ci.nsIFile)) {
+    return file;
+  }
+  throw "bad type for argument |file|.";
+}
+
 function LocalFile(file, mode) {
   let perms = 0o666 & ~futils.umask;
 
@@ -256,14 +243,7 @@ function LocalFile(file, mode) {
     }
   }
 
-  if (typeof file == "string") {
-    this.localFile = new nsLocalFile(file);
-  } else if (isinstance(file, Ci.nsIFile)) {
-    this.localFile = file;
-  } else {
-    throw "bad type for argument |file|.";
-  }
-
+  this.localFile = returnFile(file);
   this.path = this.localFile.path;
 
   if (mode & (MODE_WRONLY | MODE_RDWR)) {

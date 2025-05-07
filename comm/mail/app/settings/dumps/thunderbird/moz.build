@@ -10,8 +10,10 @@
 FINAL_TARGET_FILES.defaults.settings.thunderbird += [
     "anti-tracking-url-decoration.json",
     "bounce-tracking-protection-exceptions.json",
+    "devtools-compatibility-browsers.json",
     "fingerprinting-protection-overrides.json",
     "hijack-blocklists.json",
+    "moz-essential-domain-fallbacks.json",
     "password-recipes.json",
     "remote-permissions.json",
     "search-config-icons.json",

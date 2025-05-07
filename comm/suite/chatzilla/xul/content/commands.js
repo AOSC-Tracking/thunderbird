@@ -1355,8 +1355,8 @@ function cmdTestDisplay(e) {
     display(MSG_TEST_STYLES, "PRIVMSG", sampleUser, me);
     display(MSG_TEST_EMOTICON, "PRIVMSG", sampleUser, me);
     display(MSG_TEST_RHEET, "PRIVMSG", sampleUser, me);
-    display(unescape(MSG_TEST_CTLCHR), "PRIVMSG", sampleUser, me);
-    display(unescape(MSG_TEST_COLOR), "PRIVMSG", sampleUser, me);
+    display(decodeURIComponent(MSG_TEST_CTLCHR), "PRIVMSG", sampleUser, me);
+    display(decodeURIComponent(MSG_TEST_COLOR), "PRIVMSG", sampleUser, me);
     display(MSG_TEST_QUOTE, "PRIVMSG", sampleUser, me);
 
     if (e.channel) {
@@ -2806,17 +2806,7 @@ function cmdAway(e) {
       client.awayMsgs.splice(client.awayMsgCount);
     }
     // And now, to save the list!
-    try {
-      var awayFile = new nsLocalFile(client.prefs.profilePath);
-      awayFile.append("awayMsgs.txt");
-      var awayLoader = new TextSerializer(awayFile);
-      if (awayLoader.open(">")) {
-        awayLoader.serialize(client.awayMsgs);
-        awayLoader.close();
-      }
-    } catch (ex) {
-      display(getMsg(MSG_ERR_AWAY_SAVE, formatException(ex)), MT_ERROR);
-    }
+    awayMsgsSave();
 
     // Actually do away stuff, is this on a specific network?
     if (e.server) {
@@ -3450,7 +3440,7 @@ function cmdSave(e) {
     [MSG_SAVE_COMPLETEVIEW, "*.htm;*.html"],
     [MSG_SAVE_HTMLONLYVIEW, "*.htm;*.html"],
     [MSG_SAVE_PLAINTEXTVIEW, "*.txt"],
-    "$noAll",
+    ["$noAll", ""],
   ];
   // constants and variables for the wbp.saveDocument call
   var saveTypes = {
@@ -4222,15 +4212,16 @@ function cmdDCCAccept(e) {
 
     // Accept the request passed in...
     var filename = c.filename;
-    var ext = "*";
+    let typeList = [["$all", ""]];
     var m = filename.match(/...\.([a-z]+)$/i);
     if (m) {
-      ext = "*." + m[1];
+      let ext = "*." + m[1];
+      typeList.push([ext, ext]);
     }
 
     var pickerRv = pickSaveAs(
       getMsg(MSG_DCCFILE_SAVE_TO, filename),
-      ["$all", ext],
+      typeList,
       filename
     );
     if (!pickerRv.ok) {

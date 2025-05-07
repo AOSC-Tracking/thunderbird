@@ -10,7 +10,10 @@ EXPORTS += [
     "FolderDatabase.h",
     "LiveView.h",
     "LiveViewFilters.h",
+    "Message.h",
     "MessageDatabase.h",
+    "PerFolderDatabase.h",
+    "Thread.h",
 ]
 
 SOURCES += [
@@ -21,7 +24,10 @@ SOURCES += [
     "FolderComparator.cpp",
     "FolderDatabase.cpp",
     "LiveView.cpp",
+    "Message.cpp",
     "MessageDatabase.cpp",
+    "PerFolderDatabase.cpp",
+    "Thread.cpp",
 ]
 
 FINAL_LIBRARY = "mail"

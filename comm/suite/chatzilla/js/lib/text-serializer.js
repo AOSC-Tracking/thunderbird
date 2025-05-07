@@ -42,11 +42,7 @@
 
 function TextSerializer(file) {
   this._initialized = false;
-  if (typeof file == "string") {
-    this._file = new nsLocalFile(file);
-  } else {
-    this._file = file;
-  }
+  this._file = returnFile(file);
   this._open = false;
   this._buffer = "";
   this._lines = [];
@@ -90,82 +86,6 @@ TextSerializer.prototype.close = function ts_close() {
     this._open = false;
   }
   return true;
-};
-
-/* serialize(object)
- *
- * Serializes a single object into the file stream. All properties of the object
- * are stored in the stream, including properties that contain other objects.
- */
-TextSerializer.prototype.serialize = function ts_serialize(obj) {
-  if (!this._open) {
-    this.open(">");
-  }
-  if (!ASSERT(this._open, "Unable to open the file for writing!")) {
-    return;
-  }
-
-  var me = this;
-
-  function writeObjProps(o, indent) {
-    function writeProp(name, val) {
-      me._fileStream.write(
-        indent + '"' + ecmaEscape(name) + '" ' + val + me.lineEnd
-      );
-    }
-
-    for (var p in o) {
-      switch (typeof o[p]) {
-        case "string":
-          writeProp(p, '"' + ecmaEscape(o[p]) + '"');
-          break;
-
-        case "number":
-        case "boolean":
-        case "null": // (just in case)
-        case "undefined":
-          // These all serialise to what we want.
-          writeProp(p, o[p]);
-          break;
-
-        case "function":
-          if (isinstance(o[p], RegExp)) {
-            writeProp(p, ecmaEscape("" + o[p]));
-          }
-          // Can't serialize non-RegExp functions (yet).
-          break;
-
-        case "object":
-          if (o[p] == null) {
-            // typeof null == "object", just to catch us out.
-            writeProp(p, "null");
-          } else {
-            var className = "";
-            if (isinstance(o[p], Array)) {
-              className = "<Array> ";
-            }
-
-            me._fileStream.write(
-              indent + "START " + className + ecmaEscape(p) + me.lineEnd
-            );
-            writeObjProps(o[p], indent + "  ");
-            me._fileStream.write(indent + "END" + me.lineEnd);
-          }
-          break;
-
-        default:
-        // Can't handle anything else!
-      }
-    }
-  }
-
-  if (isinstance(obj, Array)) {
-    this._fileStream.write("START <Array>" + this.lineEnd);
-  } else {
-    this._fileStream.write("START" + this.lineEnd);
-  }
-  writeObjProps(obj, "  ");
-  this._fileStream.write("END" + this.lineEnd);
 };
 
 /* deserialize()

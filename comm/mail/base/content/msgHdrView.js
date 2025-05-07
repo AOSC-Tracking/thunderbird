@@ -452,6 +452,16 @@ async function OnLoadMsgHeaderPane() {
   );
 
   gHeaderCustomize.init();
+
+  // Prevent message header view toolbar buttons (except menu popups) and
+  // the star button from retaining focus after being clicked.
+  for (const button of document
+    .getElementById("header-view-toolbar")
+    .querySelectorAll(
+      `.message-header-view-button:not([type="menu"]),button`
+    )) {
+    button.addEventListener("mousedown", event => event.preventDefault());
+  }
 }
 
 function OnUnloadMsgHeaderPane() {
@@ -636,8 +646,19 @@ var messageProgressListener = {
       if (gViewAllHeaders) {
         // If we currently are in view all header mode, rebuild our header
         // view so we remove most of the header data.
-        hideHeaderView(gExpandedHeaderView);
-        RemoveNewHeaderViews(gExpandedHeaderView);
+        for (const name in gExpandedHeaderView) {
+          // Exclude the first row, which also contains the toolbar buttons, to
+          // prevent the customize panel from closing.
+          if (name == "from") {
+            continue;
+          }
+          const headerEntry = gExpandedHeaderView[name];
+          headerEntry.enclosingRow.hidden = true;
+          if (headerEntry.isNewHeader) {
+            // Remove non-predefined header node from the view.
+            headerEntry.enclosingRow.remove();
+          }
+        }
         gDummyHeaderIdIndex = 0;
         // eslint-disable-next-line no-global-assign
         gExpandedHeaderView = {};
@@ -705,6 +726,7 @@ var messageProgressListener = {
 
     gMessageNotificationBar.setDraftEditMessage();
     updateHeaderToolbarButtons();
+    headerToolbarNavigation.updateRovingTab();
 
     for (const listener of gMessageListeners) {
       listener.onEndHeaders();
@@ -1144,18 +1166,6 @@ function ClearHeaderView(aHeaderTable) {
 }
 
 /**
- * Make sure that any valid header entry in the table is collapsed.
- *
- * @param {object} aHeaderTable - Table of header entries.
- */
-function hideHeaderView(aHeaderTable) {
-  for (const name in aHeaderTable) {
-    const headerEntry = aHeaderTable[name];
-    headerEntry.enclosingRow.hidden = true;
-  }
-}
-
-/**
  * Make sure that any valid header entry in the table specified is visible.
  *
  * @param {object} aHeaderTable - Table of header entries.
@@ -1248,6 +1258,9 @@ function updateExpandedView() {
   UpdateReplyButtons();
   updateHeaderToolbarButtons();
   updateComposeButtons();
+  // Run this method only after all the header toolbar buttons have been updated
+  // so we deal with the actual state.
+  headerToolbarNavigation.updateRovingTab();
   displayAttachmentsForExpandedView();
 
   try {
@@ -1320,20 +1333,6 @@ class HeaderView {
     this.enclosingRow = newRowNode;
     this.valid = false;
     this.outputFunction = updateHeaderValue;
-  }
-}
-
-/**
- * Removes all non-predefined header nodes from the view.
- *
- * @param {object} aHeaderTable - Table of header entries.
- */
-function RemoveNewHeaderViews(aHeaderTable) {
-  for (const name in aHeaderTable) {
-    const headerEntry = aHeaderTable[name];
-    if (headerEntry.isNewHeader) {
-      headerEntry.enclosingRow.remove();
-    }
   }
 }
 
@@ -1652,30 +1651,33 @@ function onShowAttachmentItemContextMenu() {
   }
   contextMenu.attachments = selectedAttachments;
 
-  var allSelectedDetached = selectedAttachments.every(function (attachment) {
-    return attachment.isExternalAttachment;
-  });
-  var allSelectedDeleted = selectedAttachments.every(function (attachment) {
-    return !attachment.hasFile;
-  });
-  var canDetachSelected =
-    CanDetachAttachments() && !allSelectedDetached && !allSelectedDeleted;
-  const allSelectedHttp = selectedAttachments.every(function (attachment) {
-    return attachment.isLinkAttachment;
-  });
-  const allSelectedFile = selectedAttachments.every(function (attachment) {
-    return attachment.isFileAttachment;
-  });
-
-  openMenu.disabled = allSelectedDeleted;
-  saveMenu.disabled = allSelectedDeleted;
-  detachMenu.disabled = !canDetachSelected;
-  deleteMenu.disabled = !canDetachSelected;
-  copyUrlMenuSep.hidden = copyUrlMenu.hidden = !(
-    allSelectedHttp || allSelectedFile
+  const allExternalAttachment = selectedAttachments.every(
+    attachment => attachment.isExternalAttachment
   );
-  openFolderMenu.hidden = !allSelectedFile;
-  openFolderMenu.disabled = allSelectedDeleted;
+  const allDeleted = selectedAttachments.every(
+    attachment => !attachment.hasFile
+  );
+  const canDetachSelected =
+    CanDetachAttachments() && !allExternalAttachment && !allDeleted;
+  const allLinkAttachment = selectedAttachments.every(
+    attachment => attachment.isLinkAttachment
+  );
+  const allFileAttachment = selectedAttachments.every(
+    attachment => attachment.isFileAttachment
+  );
+  const allAllowedURL = selectedAttachments.every(
+    attachment => attachment.isAllowedURL
+  );
+
+  openMenu.disabled = allDeleted || !allAllowedURL;
+  saveMenu.disabled = allDeleted || !allAllowedURL;
+  detachMenu.disabled = !canDetachSelected || !allAllowedURL;
+  deleteMenu.disabled = !canDetachSelected || !allAllowedURL;
+  copyUrlMenuSep.hidden = copyUrlMenu.hidden = !(
+    allLinkAttachment || allFileAttachment
+  );
+  openFolderMenu.hidden = !allFileAttachment || !allAllowedURL;
+  openFolderMenu.disabled = allDeleted;
 
   Enigmail.hdrView.onShowAttachmentContextMenu();
 }
@@ -1724,18 +1726,22 @@ function onShowSaveAttachmentMenuMultiple() {
   const detachAllItem = document.getElementById("button-detachAllAttachments");
   const deleteAllItem = document.getElementById("button-deleteAllAttachments");
 
-  const allDetached = currentAttachments.every(function (attachment) {
-    return attachment.isExternalAttachment;
-  });
-  const allDeleted = currentAttachments.every(function (attachment) {
-    return !attachment.hasFile;
-  });
-  const canDetach = CanDetachAttachments() && !allDeleted && !allDetached;
+  const allExternalAttachment = currentAttachments.every(
+    attachment => attachment.isExternalAttachment
+  );
+  const allDeleted = currentAttachments.every(
+    attachment => !attachment.hasFile
+  );
+  const canDetach =
+    CanDetachAttachments() && !allDeleted && !allExternalAttachment;
+  const allAllowedURL = currentAttachments.every(
+    attachment => attachment.isAllowedURL
+  );
 
-  openAllItem.disabled = allDeleted;
-  saveAllItem.disabled = allDeleted;
-  detachAllItem.disabled = !canDetach;
-  deleteAllItem.disabled = !canDetach;
+  openAllItem.disabled = allDeleted || !allAllowedURL;
+  saveAllItem.disabled = allDeleted || !allAllowedURL;
+  detachAllItem.disabled = !canDetach || !allAllowedURL;
+  deleteAllItem.disabled = !canDetach || !allAllowedURL;
 }
 
 /**
@@ -1801,19 +1807,15 @@ var AttachmentListController = {
 
 var AttachmentMenuController = {
   canDetachFiles() {
-    const someNotDetached = currentAttachments.some(function (aAttachment) {
-      return !aAttachment.isExternalAttachment;
-    });
-
     return (
-      CanDetachAttachments() && someNotDetached && this.someFilesAvailable()
+      CanDetachAttachments() &&
+      currentAttachments.some(attachment => !attachment.isExternalAttachment) &&
+      this.someFilesAvailable()
     );
   },
 
   someFilesAvailable() {
-    return currentAttachments.some(function (aAttachment) {
-      return aAttachment.hasFile;
-    });
+    return currentAttachments.some(attachment => attachment.hasFile);
   },
 
   supportsCommand(aCommand) {
@@ -1822,9 +1824,16 @@ var AttachmentMenuController = {
 };
 
 function goUpdateAttachmentCommands() {
-  for (const action of ["open", "save", "detach", "delete"]) {
-    goUpdateCommand(`cmd_${action}AllAttachments`);
-  }
+  // E.g. main menu items.
+  window.top.goUpdateCommand(`cmd_openAllAttachments`);
+  window.top.goUpdateCommand(`cmd_saveAllAttachments`);
+  window.top.goUpdateCommand(`cmd_detachAllAttachments`);
+  window.top.goUpdateCommand(`cmd_deleteAllAttachments`);
+  // E.g. context menu.
+  goUpdateCommand(`cmd_openAllAttachments`);
+  goUpdateCommand(`cmd_saveAllAttachments`);
+  goUpdateCommand(`cmd_detachAllAttachments`);
+  goUpdateCommand(`cmd_deleteAllAttachments`);
 }
 
 async function displayAttachmentsForExpandedView() {
@@ -1913,30 +1922,28 @@ function displayAttachmentsForExpandedViewExternal() {
 
   // Attachment bar single.
   const firstAttachment = attachmentList.firstElementChild.attachment;
-  const isExternalAttachment = firstAttachment.isExternalAttachment;
-  let displayUrl = isExternalAttachment ? firstAttachment.displayUrl : "";
   const tooltiptext =
-    isExternalAttachment || firstAttachment.isDeleted
+    firstAttachment.isExternalAttachment || firstAttachment.isDeleted
       ? ""
       : attachmentName.getAttribute("tooltiptextopen");
   const externalAttachmentNotFound = bundleMessenger.getString(
     "externalAttachmentNotFound"
   );
 
-  attachmentName.textContent = displayUrl;
+  attachmentName.textContent = firstAttachment.displayUrl || "";
   attachmentName.tooltipText = tooltiptext;
   attachmentName.setAttribute(
     "tooltiptextexternalnotfound",
     externalAttachmentNotFound
   );
   attachmentName.addEventListener("mouseover", () =>
-    top.MsgStatusFeedback.setOverLink(displayUrl)
+    top.MsgStatusFeedback.setOverLink(firstAttachment.displayUrl)
   );
   attachmentName.addEventListener("mouseout", () =>
     top.MsgStatusFeedback.setOverLink("")
   );
   attachmentName.addEventListener("focus", () =>
-    top.MsgStatusFeedback.setOverLink(displayUrl)
+    top.MsgStatusFeedback.setOverLink(firstAttachment.displayUrl)
   );
   attachmentName.addEventListener("blur", () =>
     top.MsgStatusFeedback.setOverLink("")
@@ -1948,7 +1955,7 @@ function displayAttachmentsForExpandedViewExternal() {
     attachmentName.classList.add("notfound");
   }
 
-  if (isExternalAttachment) {
+  if (firstAttachment.isExternalAttachment) {
     attachmentName.classList.add("text-link");
 
     if (!firstAttachment.hasFile) {
@@ -1958,7 +1965,6 @@ function displayAttachmentsForExpandedViewExternal() {
   }
 
   // Expanded attachment list.
-  let index = 0;
   for (const attachmentitem of attachmentList.children) {
     const attachment = attachmentitem.attachment;
     if (attachment.isDeleted) {
@@ -1966,16 +1972,15 @@ function displayAttachmentsForExpandedViewExternal() {
     }
 
     if (attachment.isExternalAttachment) {
-      displayUrl = attachment.displayUrl;
       attachmentitem.setAttribute("tooltiptext", "");
       attachmentitem.addEventListener("mouseover", () =>
-        top.MsgStatusFeedback.setOverLink(displayUrl)
+        top.MsgStatusFeedback.setOverLink(attachment.displayUrl)
       );
       attachmentitem.addEventListener("mouseout", () =>
         top.MsgStatusFeedback.setOverLink("")
       );
       attachmentitem.addEventListener("focus", () =>
-        top.MsgStatusFeedback.setOverLink(displayUrl)
+        top.MsgStatusFeedback.setOverLink(attachment.displayUrl)
       );
       attachmentitem.addEventListener("blur", () =>
         top.MsgStatusFeedback.setOverLink("")
@@ -1988,19 +1993,11 @@ function displayAttachmentsForExpandedViewExternal() {
         .querySelector(".attachmentcell-extension")
         .classList.add("text-link");
 
-      if (attachment.isLinkAttachment) {
-        if (index == 0) {
-          attachment.size = currentAttachments[index].size;
-        }
-      }
-
       if (!attachment.hasFile) {
         attachmentitem.setAttribute("tooltiptext", externalAttachmentNotFound);
         attachmentitem.classList.add("notfound");
       }
     }
-
-    index++;
   }
 }
 
@@ -2017,14 +2014,18 @@ function updateSaveAllAttachmentsButton() {
     return;
   }
 
-  const allDeleted = currentAttachments.every(function (attachment) {
-    return !attachment.hasFile;
-  });
   const single = currentAttachments.length == 1;
+  const allDeleted = currentAttachments.every(
+    attachment => !attachment.hasFile
+  );
+  const allAllowedURL = currentAttachments.every(
+    attachment => attachment.isAllowedURL
+  );
 
   saveAllSingle.hidden = !single;
   saveAllMultiple.hidden = single;
-  saveAllSingle.disabled = saveAllMultiple.disabled = allDeleted;
+  saveAllSingle.disabled = saveAllMultiple.disabled =
+    allDeleted || !allAllowedURL;
 }
 
 /**
@@ -2139,7 +2140,10 @@ function getAttachmentsTotalSizeStr() {
     // Check if this attachment's part ID is a child of the last attachment
     // we counted. If so, skip it, since we already accounted for its size
     // from its parent.
-    if (!lastPartID || attachment.partID.indexOf(lastPartID) != 0) {
+    if (
+      !lastPartID ||
+      (attachment.partID && attachment.partID.indexOf(lastPartID) != 0)
+    ) {
       lastPartID = attachment.partID;
       if (attachment.size != -1) {
         totalSize += Number(attachment.size);
@@ -2860,8 +2864,6 @@ const gHeaderCustomize = {
       ? Ci.nsMimeHeaderDisplayTypes.AllHeaders
       : Ci.nsMimeHeaderDisplayTypes.NormalHeaders;
     Services.prefs.setIntPref("mail.show_headers", mode);
-    AdjustHeaderView(mode);
-    ReloadMessage();
   },
 
   /**
@@ -3537,10 +3539,6 @@ function UpdateReplyButtons() {
       replyToSenderButton.hidden = false;
     }
   }
-
-  // Run this method only after all the header toolbar buttons have been updated
-  // so we deal with the actual state.
-  headerToolbarNavigation.updateRovingTab();
 }
 
 /**
@@ -4501,13 +4499,13 @@ window.addEventListener("secureMsgLoaded", event => {
  */
 var headerToolbarNavigation = {
   /**
-   * Get all currently visible buttons of the message header toolbar.
+   * Get all currently clickable buttons of the message header toolbar.
    *
    * @returns {Array} An array of buttons.
    */
   get headerButtons() {
     return this.headerToolbar.querySelectorAll(
-      `toolbarbutton:not([hidden="true"],[is="toolbarbutton-menu-button"]),toolbaritem[id="hdrSmartReplyButton"]>toolbarbutton:not([hidden="true"])>dropmarker, button:not([hidden])`
+      `toolbarbutton:not([hidden="true"],[disabled="true"],[is="toolbarbutton-menu-button"]),toolbaritem[id="hdrSmartReplyButton"]>toolbarbutton:not([hidden="true"])>dropmarker, button:not([hidden])`
     );
   },
 
@@ -4519,7 +4517,7 @@ var headerToolbarNavigation = {
   },
 
   /**
-   * Update the `tabindex` attribute of the currently visible buttons.
+   * Update the `tabindex` attribute of the currently clickable buttons.
    */
   updateRovingTab() {
     for (const button of this.headerButtons) {

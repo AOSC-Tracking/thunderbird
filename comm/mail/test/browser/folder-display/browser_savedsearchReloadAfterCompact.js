@@ -9,6 +9,10 @@
 
 "use strict";
 
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
+);
+
 var {
   be_in_folder,
   create_folder,
@@ -53,38 +57,22 @@ add_task(async function test_setup_virtual_folder_and_compact() {
 
   await be_in_folder(folderVirtual);
   await select_click_row(0);
-  const urlListener = {
-    compactDone: false,
-
-    OnStartRunningUrl() {},
-    OnStopRunningUrl() {
-      this.compactDone = true;
-    },
-  };
   if (otherFolder.msgStore.supportsCompaction) {
-    otherFolder.compactAll(urlListener, null);
-
-    await TestUtils.waitForCondition(
-      () => urlListener.compactDone,
-      "Timeout waiting for compact to complete",
-      10000,
-      100
-    );
+    const listener = new PromiseTestUtils.PromiseUrlListener();
+    otherFolder.compactAll(listener, null);
+    await listener.promise;
   }
   // Let the event queue clear.
   await new Promise(resolve => setTimeout(resolve));
-  // Check view is still valid
-  get_about_3pane().gDBView.getMsgHdrAt(0);
 
-  Assert.report(
-    false,
-    undefined,
-    undefined,
-    "Test ran to completion successfully"
+  // Check view is still valid
+  Assert.ok(
+    get_about_3pane().gDBView.getMsgHdrAt(0),
+    "view hdr 0 should be ok"
   );
 });
 
-add_task(async function endTest() {
+registerCleanupFunction(async () => {
   // Fixing possible nsIMsgDBHdr.markHasAttachments onEndMsgDownload runs.
   //  Found in chaosmode.
   var thread = Services.tm.currentThread;

@@ -11,6 +11,7 @@
 #include "mozilla/Components.h"
 #include "mozilla/Logging.h"
 #include "mozilla/RefPtr.h"
+#include "nsServiceManagerUtils.h"
 #include "prtime.h"
 
 using JS::MutableHandle;
@@ -25,8 +26,7 @@ using JS::Value;
 using mozilla::LazyLogModule;
 using mozilla::LogLevel;
 
-namespace mozilla {
-namespace mailnews {
+namespace mozilla::mailnews {
 
 uint64_t LiveViewFilter::nextUID = 1;
 
@@ -35,6 +35,8 @@ LazyLogModule gLiveViewLog("panorama");
 NS_IMPL_ISUPPORTS(LiveView, nsILiveView)
 
 NS_IMETHODIMP LiveView::InitWithFolder(nsIFolder* aFolder) {
+  NS_ENSURE_ARG_POINTER(aFolder);
+
   if (mFolderFilter) {
     NS_WARNING("folder filter already set");
     return NS_ERROR_UNEXPECTED;
@@ -46,6 +48,12 @@ NS_IMETHODIMP LiveView::InitWithFolder(nsIFolder* aFolder) {
 
 NS_IMETHODIMP LiveView::InitWithFolders(
     const nsTArray<RefPtr<nsIFolder>>& aFolders) {
+  for (auto folder : aFolders) {
+    if (!folder) {
+      return NS_ERROR_ILLEGAL_VALUE;
+    }
+  }
+
   if (mFolderFilter) {
     NS_WARNING("folder filter already set");
     return NS_ERROR_UNEXPECTED;
@@ -217,10 +225,10 @@ JSObject* LiveView::CreateJSMessage(uint64_t id, uint64_t folderId,
  * Create an object of JS primitives representing a message.
  */
 JSObject* LiveView::CreateJSMessage(Message* aMessage, JSContext* aCx) {
-  return CreateJSMessage(aMessage->id, aMessage->folderId,
-                         aMessage->messageId.get(), aMessage->date,
-                         aMessage->sender.get(), aMessage->subject.get(),
-                         aMessage->flags, aMessage->tags.get(), aCx);
+  return CreateJSMessage(aMessage->mId, aMessage->mFolderId,
+                         aMessage->mMessageId.get(), aMessage->mDate,
+                         aMessage->mSender.get(), aMessage->mSubject.get(),
+                         aMessage->mFlags, aMessage->mTags.get(), aCx);
 }
 
 NS_IMETHODIMP LiveView::SelectMessages(uint64_t aLimit, uint64_t aOffset,
@@ -306,14 +314,16 @@ NS_IMETHODIMP LiveView::SelectMessages(uint64_t aLimit, uint64_t aOffset,
     JS_DefineElement(aCx, arr, count++, message, JSPROP_ENUMERATE);
   }
 
-  SetArrayLength(aCx, arr, count);
+  if (NS_WARN_IF(!SetArrayLength(aCx, arr, count))) {
+    return NS_ERROR_UNEXPECTED;
+  }
   aMessages.set(ObjectValue(*arr));
 
   mSelectStmt->Reset();
   return NS_OK;
 }
 
-void LiveView::OnMessageAdded(Folder* aFolder, Message* aMessage) {
+void LiveView::OnMessageAdded(Message* aMessage) {
   if (!mListener || !mCx || !Matches(*aMessage)) {
     return;
   }
@@ -324,7 +334,7 @@ void LiveView::OnMessageAdded(Folder* aFolder, Message* aMessage) {
   mListener->OnMessageAdded(handle);
 }
 
-void LiveView::OnMessageRemoved(Folder* aFolder, Message* aMessage) {
+void LiveView::OnMessageRemoved(Message* aMessage) {
   if (!mListener || !mCx || !Matches(*aMessage)) {
     return;
   }
@@ -342,7 +352,8 @@ NS_IMETHODIMP LiveView::SetListener(nsILiveViewListener* aListener,
   mCx = aCx;
 
   if (!hadListener && aListener) {
-    nsCOMPtr<nsIDatabaseCore> core = components::DatabaseCore::Service();
+    nsCOMPtr<nsIDatabaseCore> core =
+        do_GetService("@mozilla.org/msgDatabase/msgDBService;1");
     nsCOMPtr<nsIMessageDatabase> messages;
     core->GetMessages(getter_AddRefs(messages));
     messages->AddMessageListener(this);
@@ -354,12 +365,12 @@ NS_IMETHODIMP LiveView::ClearListener() {
   mListener = nullptr;
   mCx = nullptr;
 
-  nsCOMPtr<nsIDatabaseCore> core = components::DatabaseCore::Service();
+  nsCOMPtr<nsIDatabaseCore> core =
+      do_GetService("@mozilla.org/msgDatabase/msgDBService;1");
   nsCOMPtr<nsIMessageDatabase> messages;
   core->GetMessages(getter_AddRefs(messages));
   messages->RemoveMessageListener(this);
   return NS_OK;
 }
 
-}  // namespace mailnews
-}  // namespace mozilla
+}  // namespace mozilla::mailnews

@@ -5,6 +5,7 @@
 #include "FolderDatabase.h"
 
 #include "DatabaseCore.h"
+#include "DatabaseUtils.h"
 #include "Folder.h"
 #include "FolderCollector.h"
 #include "FolderComparator.h"
@@ -24,8 +25,7 @@ using mozilla::LogLevel;
 using mozilla::MarkerOptions;
 using mozilla::MarkerTiming;
 
-namespace mozilla {
-namespace mailnews {
+namespace mozilla::mailnews {
 
 extern LazyLogModule gPanoramaLog;  // Defined by DatabaseCore.
 
@@ -38,75 +38,26 @@ NS_IMPL_ISUPPORTS(FolderDatabase, nsIFolderDatabase)
  * are not emitted during initialization.
  */
 
-RefPtr<FolderDatabaseStartupPromise> FolderDatabase::Startup() {
+nsresult FolderDatabase::Startup() {
   MOZ_ASSERT(NS_IsMainThread(), "loadfolders must happen on the main thread");
 
   MOZ_LOG(gPanoramaLog, LogLevel::Info, ("FolderDatabase starting up"));
   PROFILER_MARKER_UNTYPED("FolderDatabase::LoadFolders", OTHER,
                           MarkerOptions(MarkerTiming::IntervalStart()));
 
-  RefPtr<FolderDatabaseStartupPromise> promise =
-      mPromiseHolder.Ensure(__func__);
+  InternalLoadFolders();
 
-  nsCOMPtr<nsIMsgAccountManager> accountManager =
-      components::AccountManager::Service();
+  PROFILER_MARKER_UNTYPED("FolderDatabase::LoadFolders", OTHER,
+                          MarkerOptions(MarkerTiming::IntervalEnd()));
+  MOZ_LOG(gPanoramaLog, LogLevel::Info, ("FolderDatabase startup complete"));
 
-  // Ensure the folder cache has been loaded for the first time.
-  // This needs to happen on the main thread.
-  nsCOMPtr<nsIMsgFolderCache> folderCache;
-  nsresult rv = accountManager->GetFolderCache(getter_AddRefs(folderCache));
-  if (NS_FAILED(rv)) {
-    mPromiseHolder.Reject(rv, __func__);
-  }
-
-  nsTHashMap<nsCString, nsCOMPtr<nsIFile>> serverRoots;
-  nsTArray<RefPtr<nsIMsgIncomingServer>> allServers;
-  rv = accountManager->GetAllServers(allServers);
-  if (NS_FAILED(rv)) {
-    mPromiseHolder.Reject(rv, __func__);
-  }
-
-  for (auto server : allServers) {
-    nsAutoCString serverKey;
-    server->GetKey(serverKey);
-    nsCOMPtr<nsIFile> rootFile;
-    server->GetLocalPath(getter_AddRefs(rootFile));
-    serverRoots.InsertOrUpdate(serverKey, rootFile);
-  }
-
-  NS_DispatchBackgroundTask(NS_NewRunnableFunction(
-      __func__, [&, serverRoots = std::move(serverRoots)]() {
-        InternalLoadFolders();
-
-        for (auto iter = serverRoots.ConstIter(); !iter.Done(); iter.Next()) {
-          // Ask each of the servers to find their folders on disk. For now
-          // we'll use a temporary class to do this, eventually we'll move
-          // the functionality to each message store.
-          nsCOMPtr<nsIFolder> root;
-          InsertRoot(iter.Key(), getter_AddRefs(root));
-          nsCOMPtr<nsIFile> file = iter.UserData();
-          FolderCollector collector;
-          collector.FindChildren(root, file);
-        }
-
-        PROFILER_MARKER_UNTYPED("FolderDatabase::LoadFolders", OTHER,
-                                MarkerOptions(MarkerTiming::IntervalEnd()));
-        MOZ_LOG(gPanoramaLog, LogLevel::Info,
-                ("FolderDatabase startup complete"));
-
-        mPromiseHolder.Resolve(true, __func__);
-      }));
-
-  return promise;
+  return NS_OK;
 }
 
 /**
  * Reads from the database into `Folder` objects, and creates the hierarchy.
  */
 nsresult FolderDatabase::InternalLoadFolders() {
-  MOZ_ASSERT(!NS_IsMainThread(),
-             "loading folders must happen off the main thread");
-
   mFoldersById.Clear();
 
   nsCOMPtr<mozIStorageStatement> stmt;
@@ -288,7 +239,7 @@ nsresult FolderDatabase::InternalInsertFolder(nsIFolder* aParent,
       getter_AddRefs(stmt));
 
   stmt->BindInt64ByName("parent"_ns, parent ? parent->mId : 0);
-  stmt->BindStringByName("name"_ns, NS_ConvertUTF8toUTF16(aName));
+  stmt->BindUTF8StringByName("name"_ns, aName);
   bool hasResult;
   nsresult rv = stmt->ExecuteStep(&hasResult);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -515,5 +466,77 @@ FolderDatabase::UpdateFlags(nsIFolder* aFolder, uint64_t aNewFlags) {
   return rv;
 }
 
-}  // namespace mailnews
-}  // namespace mozilla
+nsresult FolderDatabase::GetFolderProperty(uint64_t id, const nsACString& name,
+                                           nsACString& value) {
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = DatabaseCore::GetStatement(
+      "GetFolderProperty"_ns,
+      "SELECT value FROM folder_properties WHERE id = :id AND name = :name"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  stmt->BindInt64ByName("id"_ns, id);
+  stmt->BindUTF8StringByName("name"_ns, DatabaseUtils::Normalize(name));
+
+  bool hasResult;
+  if (NS_SUCCEEDED(stmt->ExecuteStep(&hasResult)) && hasResult) {
+    uint32_t len;
+    value = stmt->AsSharedUTF8String(0, &len);
+  }
+  stmt->Reset();
+
+  return rv;
+}
+
+nsresult FolderDatabase::GetFolderProperty(uint64_t id, const nsACString& name,
+                                           int64_t* value) {
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = DatabaseCore::GetStatement(
+      "GetFolderProperty"_ns,
+      "SELECT value FROM folder_properties WHERE id = :id AND name = :name"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  stmt->BindInt64ByName("id"_ns, id);
+  stmt->BindUTF8StringByName("name"_ns, DatabaseUtils::Normalize(name));
+
+  bool hasResult;
+  if (NS_SUCCEEDED(stmt->ExecuteStep(&hasResult)) && hasResult) {
+    *value = stmt->AsInt64(0);
+  }
+  stmt->Reset();
+
+  return rv;
+}
+
+nsresult FolderDatabase::SetFolderProperty(uint64_t id, const nsACString& name,
+                                           const nsACString& value) {
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = DatabaseCore::GetStatement(
+      "SetFolderProperty"_ns,
+      "REPLACE INTO folder_properties (id, name, value) VALUES (:id, :name, :value)"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  stmt->BindInt64ByName("id"_ns, id);
+  stmt->BindUTF8StringByName("name"_ns, DatabaseUtils::Normalize(name));
+  stmt->BindUTF8StringByName("value"_ns, value);
+  return stmt->Execute();
+}
+
+nsresult FolderDatabase::SetFolderProperty(uint64_t id, const nsACString& name,
+                                           int64_t value) {
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = DatabaseCore::GetStatement(
+      "SetFolderProperty"_ns,
+      "REPLACE INTO folder_properties (id, name, value) VALUES (:id, :name, :value)"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  stmt->BindInt64ByName("id"_ns, id);
+  stmt->BindUTF8StringByName("name"_ns, DatabaseUtils::Normalize(name));
+  stmt->BindInt64ByName("value"_ns, value);
+  return stmt->Execute();
+}
+
+}  // namespace mozilla::mailnews

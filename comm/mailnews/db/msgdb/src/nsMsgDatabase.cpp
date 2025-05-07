@@ -990,7 +990,8 @@ NS_IMPL_ISUPPORTS(MsgDBReporter, nsIMemoryReporter)
 }  // namespace mozilla::mailnews
 
 nsMsgDatabase::nsMsgDatabase()
-    : m_dbFolderInfo(nullptr),
+    : m_lastUseTime(0),
+      m_dbFolderInfo(nullptr),
       m_nextPseudoMsgKey(kFirstPseudoKey),
       m_mdbEnv(nullptr),
       m_mdbStore(nullptr),
@@ -1002,6 +1003,7 @@ nsMsgDatabase::nsMsgDatabase()
       m_hdrRowScopeToken(0),
       m_hdrTableKindToken(0),
       m_threadTableKindToken(0),
+      m_allThreadsTableKindToken(0),
       m_subjectColumnToken(0),
       m_senderColumnToken(0),
       m_messageIdColumnToken(0),
@@ -1685,91 +1687,85 @@ nsresult nsMsgDatabase::InitExistingDB() {
 
 // initialize the various tokens and tables in our db's env
 nsresult nsMsgDatabase::InitMDBInfo() {
-  nsresult err = NS_OK;
+  nsresult rv = NS_OK;
 
   if (!m_mdbTokensInitialized && GetStore()) {
     m_mdbTokensInitialized = true;
-    err =
+    rv =
         GetStore()->StringToToken(GetEnv(), kMsgHdrsScope, &m_hdrRowScopeToken);
-    if (NS_SUCCEEDED(err)) {
-      GetStore()->StringToToken(GetEnv(), kSubjectColumnName,
-                                &m_subjectColumnToken);
-      GetStore()->StringToToken(GetEnv(), kSenderColumnName,
-                                &m_senderColumnToken);
-      GetStore()->StringToToken(GetEnv(), kMessageIdColumnName,
-                                &m_messageIdColumnToken);
-      // if we just store references as a string, we won't get any savings from
-      // the fact there's a lot of duplication. So we may want to break them up
-      // into multiple columns, r1, r2, etc.
-      GetStore()->StringToToken(GetEnv(), kReferencesColumnName,
-                                &m_referencesColumnToken);
-      // similarly, recipients could be tokenized properties
-      GetStore()->StringToToken(GetEnv(), kRecipientsColumnName,
-                                &m_recipientsColumnToken);
-      GetStore()->StringToToken(GetEnv(), kDateColumnName, &m_dateColumnToken);
-      GetStore()->StringToToken(GetEnv(), kMessageSizeColumnName,
-                                &m_messageSizeColumnToken);
-      GetStore()->StringToToken(GetEnv(), kFlagsColumnName,
-                                &m_flagsColumnToken);
-      GetStore()->StringToToken(GetEnv(), kPriorityColumnName,
-                                &m_priorityColumnToken);
-      GetStore()->StringToToken(GetEnv(), kLabelColumnName,
-                                &m_labelColumnToken);
-      GetStore()->StringToToken(GetEnv(), kNumLinesColumnName,
-                                &m_numLinesColumnToken);
-      GetStore()->StringToToken(GetEnv(), kCCListColumnName,
-                                &m_ccListColumnToken);
-      GetStore()->StringToToken(GetEnv(), kBCCListColumnName,
-                                &m_bccListColumnToken);
-      GetStore()->StringToToken(GetEnv(), kMessageThreadIdColumnName,
-                                &m_messageThreadIdColumnToken);
-      GetStore()->StringToToken(GetEnv(), kThreadIdColumnName,
-                                &m_threadIdColumnToken);
-      GetStore()->StringToToken(GetEnv(), kThreadFlagsColumnName,
-                                &m_threadFlagsColumnToken);
-      GetStore()->StringToToken(GetEnv(), kThreadNewestMsgDateColumnName,
-                                &m_threadNewestMsgDateColumnToken);
-      GetStore()->StringToToken(GetEnv(), kThreadChildrenColumnName,
-                                &m_threadChildrenColumnToken);
-      GetStore()->StringToToken(GetEnv(), kThreadUnreadChildrenColumnName,
-                                &m_threadUnreadChildrenColumnToken);
-      GetStore()->StringToToken(GetEnv(), kThreadSubjectColumnName,
-                                &m_threadSubjectColumnToken);
-      GetStore()->StringToToken(GetEnv(), kMessageCharSetColumnName,
-                                &m_messageCharSetColumnToken);
-      err = GetStore()->StringToToken(GetEnv(), kMsgHdrsTableKind,
-                                      &m_hdrTableKindToken);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-      if (NS_SUCCEEDED(err)) {
-        err = GetStore()->StringToToken(GetEnv(), kThreadTableKind,
-                                        &m_threadTableKindToken);
-      }
+    GetStore()->StringToToken(GetEnv(), kSubjectColumnName,
+                              &m_subjectColumnToken);
+    GetStore()->StringToToken(GetEnv(), kSenderColumnName,
+                              &m_senderColumnToken);
+    GetStore()->StringToToken(GetEnv(), kMessageIdColumnName,
+                              &m_messageIdColumnToken);
+    // if we just store references as a string, we won't get any savings from
+    // the fact there's a lot of duplication. So we may want to break them up
+    // into multiple columns, r1, r2, etc.
+    GetStore()->StringToToken(GetEnv(), kReferencesColumnName,
+                              &m_referencesColumnToken);
+    // similarly, recipients could be tokenized properties
+    GetStore()->StringToToken(GetEnv(), kRecipientsColumnName,
+                              &m_recipientsColumnToken);
+    GetStore()->StringToToken(GetEnv(), kDateColumnName, &m_dateColumnToken);
+    GetStore()->StringToToken(GetEnv(), kMessageSizeColumnName,
+                              &m_messageSizeColumnToken);
+    GetStore()->StringToToken(GetEnv(), kFlagsColumnName, &m_flagsColumnToken);
+    GetStore()->StringToToken(GetEnv(), kPriorityColumnName,
+                              &m_priorityColumnToken);
+    GetStore()->StringToToken(GetEnv(), kLabelColumnName, &m_labelColumnToken);
+    GetStore()->StringToToken(GetEnv(), kNumLinesColumnName,
+                              &m_numLinesColumnToken);
+    GetStore()->StringToToken(GetEnv(), kCCListColumnName,
+                              &m_ccListColumnToken);
+    GetStore()->StringToToken(GetEnv(), kBCCListColumnName,
+                              &m_bccListColumnToken);
+    GetStore()->StringToToken(GetEnv(), kMessageThreadIdColumnName,
+                              &m_messageThreadIdColumnToken);
+    GetStore()->StringToToken(GetEnv(), kThreadIdColumnName,
+                              &m_threadIdColumnToken);
+    GetStore()->StringToToken(GetEnv(), kThreadFlagsColumnName,
+                              &m_threadFlagsColumnToken);
+    GetStore()->StringToToken(GetEnv(), kThreadNewestMsgDateColumnName,
+                              &m_threadNewestMsgDateColumnToken);
+    GetStore()->StringToToken(GetEnv(), kThreadChildrenColumnName,
+                              &m_threadChildrenColumnToken);
+    GetStore()->StringToToken(GetEnv(), kThreadUnreadChildrenColumnName,
+                              &m_threadUnreadChildrenColumnToken);
+    GetStore()->StringToToken(GetEnv(), kThreadSubjectColumnName,
+                              &m_threadSubjectColumnToken);
+    GetStore()->StringToToken(GetEnv(), kMessageCharSetColumnName,
+                              &m_messageCharSetColumnToken);
+    GetStore()->StringToToken(GetEnv(), kMsgHdrsTableKind,
+                              &m_hdrTableKindToken);
 
-      err = GetStore()->StringToToken(GetEnv(), kAllThreadsTableKind,
-                                      &m_allThreadsTableKindToken);
-      err = GetStore()->StringToToken(GetEnv(), kThreadHdrsScope,
-                                      &m_threadRowScopeToken);
-      err = GetStore()->StringToToken(GetEnv(), kThreadParentColumnName,
-                                      &m_threadParentColumnToken);
-      err = GetStore()->StringToToken(GetEnv(), kThreadRootColumnName,
-                                      &m_threadRootKeyColumnToken);
-      err = GetStore()->StringToToken(GetEnv(), kOfflineMsgOffsetColumnName,
-                                      &m_offlineMsgOffsetColumnToken);
-      err = GetStore()->StringToToken(GetEnv(), kOfflineMsgSizeColumnName,
-                                      &m_offlineMessageSizeColumnToken);
-      err = GetStore()->StringToToken(GetEnv(), kUidOnServerColumnName,
-                                      &m_uidOnServerColumnToken);
+    GetStore()->StringToToken(GetEnv(), kThreadTableKind,
+                              &m_threadTableKindToken);
 
-      if (NS_SUCCEEDED(err)) {
-        // The table of all message hdrs will have table id 1.
-        gAllMsgHdrsTableOID.mOid_Scope = m_hdrRowScopeToken;
-        gAllMsgHdrsTableOID.mOid_Id = kAllMsgHdrsTableKey;
-        gAllThreadsTableOID.mOid_Scope = m_threadRowScopeToken;
-        gAllThreadsTableOID.mOid_Id = kAllThreadsTableKey;
-      }
-    }
+    GetStore()->StringToToken(GetEnv(), kAllThreadsTableKind,
+                              &m_allThreadsTableKindToken);
+    GetStore()->StringToToken(GetEnv(), kThreadHdrsScope,
+                              &m_threadRowScopeToken);
+    GetStore()->StringToToken(GetEnv(), kThreadParentColumnName,
+                              &m_threadParentColumnToken);
+    GetStore()->StringToToken(GetEnv(), kThreadRootColumnName,
+                              &m_threadRootKeyColumnToken);
+    GetStore()->StringToToken(GetEnv(), kOfflineMsgOffsetColumnName,
+                              &m_offlineMsgOffsetColumnToken);
+    GetStore()->StringToToken(GetEnv(), kOfflineMsgSizeColumnName,
+                              &m_offlineMessageSizeColumnToken);
+    GetStore()->StringToToken(GetEnv(), kUidOnServerColumnName,
+                              &m_uidOnServerColumnToken);
+
+    // The table of all message hdrs will have table id 1.
+    gAllMsgHdrsTableOID.mOid_Scope = m_hdrRowScopeToken;
+    gAllMsgHdrsTableOID.mOid_Id = kAllMsgHdrsTableKey;
+    gAllThreadsTableOID.mOid_Scope = m_threadRowScopeToken;
+    gAllThreadsTableOID.mOid_Id = kAllThreadsTableKey;
   }
-  return err;
+  return rv;
 }
 
 // Returns if the db contains this key
@@ -2858,6 +2854,110 @@ nsresult nsMsgDatabase::EnumerateMessagesWithFlag(nsIMsgEnumerator** result,
   return NS_OK;
 }
 
+// NOTE: We just want to take the data and load it.
+// We shouldn't be making any policy decisions here
+// (such as leaving "replyTo" blank if same as "from").
+// That stuff should be decided in the calling code, not in here.
+NS_IMETHODIMP nsMsgDatabase::AddMsgHdr(RawHdr* msg, bool notify,
+                                       nsIMsgDBHdr** newHdr) {
+  nsCOMPtr<nsIMsgDBHdr> hdr;
+  nsresult rv = CreateNewHdr(msg->key, getter_AddRefs(hdr));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Populate the still-detached hdr.
+  if (msg->date) {
+    rv = hdr->SetDate(msg->date);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (!msg->messageId.IsEmpty()) {
+    rv = hdr->SetMessageId(msg->messageId);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (!msg->ccList.IsEmpty()) {
+    rv = hdr->SetCcList(msg->ccList);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (!msg->bccList.IsEmpty()) {
+    rv = hdr->SetBccList(msg->bccList);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (!msg->sender.IsEmpty()) {
+    rv = hdr->SetAuthor(msg->sender);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (!msg->subject.IsEmpty()) {
+    rv = hdr->SetSubject(msg->subject);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (!msg->recipients.IsEmpty()) {
+    rv = hdr->SetRecipients(msg->recipients);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (!msg->references.IsEmpty()) {
+    rv = hdr->SetReferences(msg->references);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (!msg->replyTo.IsEmpty()) {
+    rv = hdr->SetStringProperty("replyTo", msg->replyTo);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  rv = hdr->SetFlags(msg->flags);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (msg->priority != nsMsgPriority::notSet) {
+    rv = hdr->SetPriority(msg->priority);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  if (msg->dateReceived != 0) {
+    uint32_t secs;
+    PRTime2Seconds(msg->dateReceived, &secs);
+    rv = hdr->SetUint32Property("dateReceived", secs);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  if (!msg->keywords.IsEmpty()) {
+    rv = hdr->SetStringProperty("keywords", msg->keywords);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // TODO: Not sure if msgHdr should really have this as primary data - it
+  // could potentially be derived via folder membership.
+  if (!msg->accountKey.IsEmpty()) {
+    hdr->SetAccountKey(msg->accountKey);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // TODO: msgHdr probably shouldn't have this...
+  if (!msg->charset.IsEmpty()) {
+    rv = hdr->SetCharset(msg->charset);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // Google-specific headers
+#if 0
+  rv = hdr->SetStringProperty("X-GM-MSGID", msg->xGmMsgId);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = hdr->SetStringProperty("X-GM-THRID", msg->xGmThrId);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = hdr->SetStringProperty("X-GM-LABELS", msg->xGmLabels);
+  NS_ENSURE_SUCCESS(rv, rv);
+#endif
+  // Need this for custom headers.
+  for (auto& extra : msg->extras) {
+    rv = hdr->SetStringProperty(extra.k.get(), extra.v);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // Finished setting up fields.
+  // Now attach the row to the table.
+  rv = AddNewHdrToDB(hdr, notify);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  hdr.forget(newHdr);
+  return NS_OK;
+}
+
 NS_IMETHODIMP nsMsgDatabase::CreateNewHdr(nsMsgKey key, nsIMsgDBHdr** pnewHdr) {
   nsresult err = NS_OK;
   nsIMdbRow* hdrRow = nullptr;
@@ -3573,7 +3673,8 @@ NS_IMETHODIMP nsMsgDatabase::SetSummaryValid(bool valid /* = true */) {
   // it may
   //  not have been added to the cache. Add it now if missing.
   if (valid) {
-    nsCOMPtr<nsIMsgDBService> serv(mozilla::components::DB::Service());
+    nsCOMPtr<nsIMsgDBService> serv =
+        do_GetService("@mozilla.org/msgDatabase/msgDBService;1");
     static_cast<nsMsgDBService*>(serv.get())->EnsureCached(this);
   }
   // setting the version to 0 ought to make it pretty invalid.

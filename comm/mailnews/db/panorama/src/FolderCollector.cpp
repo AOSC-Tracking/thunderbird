@@ -5,14 +5,15 @@
 #include "FolderCollector.h"
 
 #include "mozilla/Components.h"
+#include "mozilla/RefPtr.h"
 #include "nsIDatabaseCore.h"
 #include "nsIDirectoryEnumerator.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIMsgFolderCacheElement.h"
 #include "nsMsgLocalStoreUtils.h"
+#include "nsServiceManagerUtils.h"
 
-namespace mozilla {
-namespace mailnews {
+namespace mozilla::mailnews {
 
 /**
  * This is a stub mailbox finder for mbox-based accounts. It should live in
@@ -28,7 +29,8 @@ FolderCollector::~FolderCollector() {
 
 void FolderCollector::EnsureDatabase() {
   if (!mDatabase) {
-    nsCOMPtr<nsIDatabaseCore> core = components::DatabaseCore::Service();
+    nsCOMPtr<nsIDatabaseCore> core =
+        do_GetService("@mozilla.org/msgDatabase/msgDBService;1");
     core->GetFolders(getter_AddRefs(mDatabase));
   }
 }
@@ -50,8 +52,6 @@ void FolderCollector::EnsureFolderCache() {
  *   entries for mailboxes.
  */
 void FolderCollector::FindChildren(nsIFolder* aParent, nsIFile* aFile) {
-  MOZ_ASSERT(!NS_IsMainThread());
-
   nsTHashMap<nsCString, RefPtr<nsIFile>> childFiles;
   // For folders where the name isn't the file name.
   nsTHashMap<nsCString, RefPtr<nsIFile>> aliasFiles;
@@ -192,5 +192,4 @@ void FolderCollector::FindChildren(nsIFolder* aParent, nsIFile* aFile) {
   }
 }
 
-}  // namespace mailnews
-}  // namespace mozilla
+}  // namespace mozilla::mailnews

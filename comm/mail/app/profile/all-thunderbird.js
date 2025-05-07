@@ -126,6 +126,29 @@ pref("app.update.service.enabled", true);
 
 pref("app.update.langpack.enabled", true);
 
+#if defined(MOZ_UPDATE_AGENT)
+  pref("app.update.background.loglevel", "error");
+  pref("app.update.background.timeoutSec", 600);
+  // By default, check for updates when the app is not running every 7 hours.
+  pref("app.update.background.interval", 25200);
+  // By default, snapshot Firefox Messaging System targeting for use by the
+  // background update task every 60 minutes.
+  pref("app.update.background.messaging.targeting.snapshot.intervalSec", 3600);
+  // For historical reasons, the background update process requires the Mozilla
+  // Maintenance Service to be available and enabled via the service registry
+  // key.  When this value is `true`, allow the background update process to
+  // update unelevated installations (that are writeable, etc).
+  //
+  // N.b. This feature impacts the `applications: firefox_desktop` Nimbus
+  // application ID (and not the `firefox_desktop_background_task` application
+  // ID).  However, the pref will be automatically mirrored to the background
+  // update task profile. This means that experiments and enrollment impact the
+  // Firefox Desktop browsing profile that _schedules_ the background update
+  // task, and then the background update task collects telemetry in accordance
+  // with the mirrored pref.
+  pref("app.update.background.allowUpdatesForUnelevatedInstallations", false);
+#endif
+
 // Release notes URL
 pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?locale=%LOCALE%&version=%VERSION%&channel=%CHANNEL%&os=%OS%&buildid=%APPBUILDID%");
 
@@ -489,6 +512,9 @@ pref("security.prompt_for_master_password_on_startup", true);
 pref("general.config.obscure_value", 0); // for MCD .cfg files
 
 pref("browser.display.auto_quality_min_font_size", 0);
+
+// Override the toolkit settings for Mac and Linux to enable HC in content.
+pref("browser.display.document_color_use", 0);
 
 pref("view_source.syntax_highlight", false);
 
@@ -1438,7 +1464,11 @@ pref("mail.dark-reader.enabled", true);
 pref("mail.dark-reader.show-toggle", true);
 
 // Enable the new account setup (starting from the second account)
+#ifdef NIGHTLY_BUILD
+pref("mail.accounthub.enabled", true);
+#else
 pref("mail.accounthub.enabled", false);
+#endif
 
 // Export to mobile logging level.
 pref("mail.qrexport.loglevel", "Warn");

@@ -6,8 +6,7 @@
 
 #include "FolderDatabase.h"
 
-namespace mozilla {
-namespace mailnews {
+namespace mozilla::mailnews {
 
 NS_IMPL_ISUPPORTS(Folder, nsIFolder)
 
@@ -23,13 +22,6 @@ Folder::GetName(nsACString& aName) {
   return NS_OK;
 }
 
-nsCString Folder::GetName() {
-  nsAutoCString name;
-  DebugOnly<nsresult> rv = GetName(name);
-  MOZ_ASSERT(NS_SUCCEEDED(rv));
-  return name;
-}
-
 NS_IMETHODIMP
 Folder::GetPath(nsACString& aPath) {
   aPath.Truncate();
@@ -38,13 +30,6 @@ Folder::GetPath(nsACString& aPath) {
   }
   aPath.Append(mName);
   return NS_OK;
-}
-
-nsCString Folder::GetPath() {
-  nsAutoCString path;
-  DebugOnly<nsresult> rv = GetPath(path);
-  MOZ_ASSERT(NS_SUCCEEDED(rv));
-  return path;
 }
 
 NS_IMETHODIMP
@@ -157,5 +142,4 @@ Folder::ToJSON(nsACString& aJSON) {
   return NS_OK;
 }
 
-}  // namespace mailnews
-}  // namespace mozilla
+}  // namespace mozilla::mailnews

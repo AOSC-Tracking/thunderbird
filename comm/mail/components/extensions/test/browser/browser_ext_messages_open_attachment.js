@@ -2,12 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { create_folder } = ChromeUtils.importESModule(
-  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
-);
+"use strict";
 
 add_setup(async () => {
-  const folder = await create_folder("AttachmentA");
+  const localAccount = createAccount("local");
+  const folder = await createSubfolder(
+    localAccount.incomingServer.rootFolder,
+    "AttachmentA"
+  );
 
   await createMessageFromFile(
     folder,

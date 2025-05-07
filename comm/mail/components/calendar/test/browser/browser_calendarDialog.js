@@ -58,3 +58,82 @@ add_task(async function test_dialogOpenAndClose() {
   );
   Assert.ok(!dialog.open, "Dialog is closed");
 });
+
+add_task(async function test_dialogSubviewNavigation() {
+  dialog.show();
+  const subviewManager = dialog.querySelector(
+    "calendar-dialog-subview-manager"
+  );
+  const backButton = dialog.querySelector(".back-button");
+  const mainSubview = dialog.querySelector("#calendarDialogMainSubview");
+  const otherSubview = dialog.querySelector("#calendarDialogOtherSubview");
+
+  Assert.ok(
+    BrowserTestUtils.isHidden(backButton),
+    "Back button should be hidden initially"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(mainSubview),
+    "Main subview should be visible initially"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(otherSubview),
+    "Other subview should be hidden initially"
+  );
+
+  subviewManager.showSubview(otherSubview.id);
+
+  Assert.ok(
+    BrowserTestUtils.isVisible(backButton),
+    "Back button should be visible on other subview"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(mainSubview),
+    "Main subview should be hidden"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(otherSubview),
+    "Other subview should be visible now"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(backButton, {}, browser.contentWindow);
+
+  Assert.ok(
+    BrowserTestUtils.isHidden(backButton),
+    "Back button should be hidden again"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(mainSubview),
+    "Main subview should be visible again"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(otherSubview),
+    "Other subview should be hidden again"
+  );
+});
+
+add_task(async function test_dialogTitle() {
+  dialog.show();
+
+  Assert.equal(
+    dialog.querySelector(".calendar-dialog-title").textContent,
+    "",
+    "The dialog title has no text before data is set"
+  );
+
+  dialog.updateDialogData({ title: "foobar" });
+
+  Assert.equal(
+    dialog.querySelector(".calendar-dialog-title").textContent,
+    "foobar",
+    "The dialog title has correct title after setting data"
+  );
+
+  dialog.updateDialogData({});
+
+  Assert.equal(
+    dialog.querySelector(".calendar-dialog-title").textContent,
+    "",
+    "The dialog title text is cleared"
+  );
+});

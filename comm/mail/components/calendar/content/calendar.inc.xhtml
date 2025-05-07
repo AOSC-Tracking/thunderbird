@@ -2,12 +2,28 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
 
+#include calendarDialogRowTemplate.inc.xhtml
+#include calendarDialogDateRowTemplate.inc.xhtml
+
 <template id="calendarDialogTemplate">
   <div class="titlebar">
+    <button
+      class="button icon-button icon-only button-flat back-button"
+      data-l10n-id="calendar-dialog-back-button"
+    ></button>
+    <h2 class="calendar-dialog-title"></h2>
     <button class="button icon-button icon-only button-flat close-button"
             data-l10n-id="calendar-dialog-close-button">
     </button>
   </div>
-  <div class="content"></div>
+  <div class="content">
+    <calendar-dialog-subview-manager
+      default-subview="calendarDialogMainSubview"
+    >
+      <div id="calendarDialogMainSubview" hidden="hidden">
+        <calendar-dialog-date-row></calendar-dialog-date-row>
+      </div>
+    </calendar-dialog-subview-manager>
+  </div>
   <div class="footer"></div>
 </template>

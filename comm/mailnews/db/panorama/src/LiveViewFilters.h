@@ -6,15 +6,16 @@
 #define LiveViewFilters_h__
 
 #include "Folder.h"
+#include "Message.h"
 #include "MessageDatabase.h"
+#include "mozilla/RefPtr.h"
 #include "mozIStorageStatement.h"
 #include "nsCOMPtr.h"
 #include "nsMsgMessageFlags.h"
 #include "nsString.h"
 #include "nsTString.h"
 
-namespace mozilla {
-namespace mailnews {
+namespace mozilla::mailnews {
 
 class LiveViewFilter {
  public:
@@ -39,7 +40,7 @@ class SingleFolderFilter final : public LiveViewFilter {
     mSQLClause.AppendInt(mFolderId);
   }
 
-  bool Matches(Message& aMessage) { return aMessage.folderId == mFolderId; }
+  bool Matches(Message& aMessage) { return aMessage.mFolderId == mFolderId; }
 
  protected:
   uint64_t mFolderId;
@@ -59,7 +60,7 @@ class MultiFolderFilter final : public LiveViewFilter {
     mSQLClause.Append(")");
   }
 
-  bool Matches(Message& aMessage) { return mIds.Contains(aMessage.folderId); }
+  bool Matches(Message& aMessage) { return mIds.Contains(aMessage.mFolderId); }
 
  protected:
   nsTArray<uint64_t> mIds;
@@ -79,7 +80,7 @@ class TaggedMessagesFilter final : public LiveViewFilter {
     mSQLClause.Append(")");
   }
   void PrepareStatement(mozIStorageStatement* aStmt) override {
-    aStmt->BindStringByName(mParamName, NS_ConvertUTF8toUTF16(mTag));
+    aStmt->BindUTF8StringByName(mParamName, mTag);
   }
 
  protected:
@@ -88,7 +89,6 @@ class TaggedMessagesFilter final : public LiveViewFilter {
   bool mWanted;
 };
 
-}  // namespace mailnews
-}  // namespace mozilla
+}  // namespace mozilla::mailnews
 
 #endif  // LiveViewFilters_h__

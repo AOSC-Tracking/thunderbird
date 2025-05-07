@@ -24,12 +24,6 @@ const LiveView = Components.Constructor(
 
 add_setup(async function () {
   await installDB("messages.sqlite");
-
-  registerCleanupFunction(function () {
-    // Make sure the LiveView destructor runs, to finalize the SQL statements,
-    // even if the test fails.
-    Cu.forceGC();
-  });
 });
 
 /**
@@ -85,7 +79,7 @@ const tree = {
  * @param {integer[]} idsInOrder - The expected message IDs.
  */
 function subtestFillFromTop(sortColumn, sortDirection, idsInOrder) {
-  Services.prefs.setIntPref("mail.bufferRows", 4);
+  Services.prefs.setIntPref("mail.panorama.bufferRows", 4);
 
   const liveView = new LiveView();
   const adapter = new LiveViewDataAdapter(liveView);
@@ -128,7 +122,7 @@ function subtestFillFromTop(sortColumn, sortDirection, idsInOrder) {
  * @param {integer[]} idsInOrder - The expected message IDs.
  */
 function subtestFillFromBottom(sortColumn, sortDirection, idsInOrder) {
-  Services.prefs.setIntPref("mail.bufferRows", 4);
+  Services.prefs.setIntPref("mail.panorama.bufferRows", 4);
 
   const liveView = new LiveView();
   const adapter = new LiveViewDataAdapter(liveView);
@@ -175,7 +169,7 @@ function subtestAddRemove1(
   idsInOrder,
   messagesToAdd
 ) {
-  Services.prefs.setIntPref("mail.bufferRows", 2);
+  Services.prefs.setIntPref("mail.panorama.bufferRows", 2);
 
   const liveView = new LiveView();
   const adapter = new LiveViewDataAdapter(liveView);
@@ -273,7 +267,7 @@ function subtestAddRemove2(
   idsInOrder,
   messagesToAdd
 ) {
-  Services.prefs.setIntPref("mail.bufferRows", 2);
+  Services.prefs.setIntPref("mail.panorama.bufferRows", 2);
 
   const liveView = new LiveView();
   const adapter = new LiveViewDataAdapter(liveView);
@@ -342,7 +336,7 @@ function subtestAddRemove3(
   idsInOrder,
   messagesToAdd
 ) {
-  Services.prefs.setIntPref("mail.bufferRows", 1);
+  Services.prefs.setIntPref("mail.panorama.bufferRows", 1);
 
   const liveView = new LiveView();
   const adapter = new LiveViewDataAdapter(liveView);

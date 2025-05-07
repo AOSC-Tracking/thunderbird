@@ -98,47 +98,7 @@ class MessageDeletionCallbacks : public IEwsMessageDeleteCallbacks {
 NS_IMPL_ISUPPORTS(MessageDeletionCallbacks, IEwsMessageDeleteCallbacks)
 
 NS_IMETHODIMP MessageDeletionCallbacks::OnRemoteDeleteSuccessful() {
-  nsresult rv;
-
-  nsTArray<RefPtr<nsIMsgDBHdr>> offlineMessages;
-  nsTArray<nsMsgKey> msgKeys;
-
-  // Collect keys for messages which need deletion from our message listing. We
-  // also collect a list of messages for which we have a full local copy which
-  // needs deletion.
-  for (const auto& header : mHeaders) {
-    nsMsgKey msgKey;
-    rv = header->GetMessageKey(&msgKey);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    msgKeys.AppendElement(msgKey);
-
-    bool hasOffline;
-    rv = mFolder->HasMsgOffline(msgKey, &hasOffline);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    if (hasOffline) {
-      offlineMessages.AppendElement(header);
-    }
-  }
-
-  // Delete any locally-stored message from the store.
-  if (offlineMessages.Length()) {
-    nsCOMPtr<nsIMsgPluggableStore> store;
-    rv = mFolder->GetMsgStore(getter_AddRefs(store));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = store->DeleteMessages(offlineMessages);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-
-  // Delete the message headers from the database. If a key in the array is
-  // unknown to the database, it's simply ignored.
-  nsCOMPtr<nsIMsgDatabase> db;
-  rv = mFolder->GetMsgDatabase(getter_AddRefs(db));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return db->DeleteMessages(msgKeys, nullptr);
+  return mFolder->LocalDeleteMessages(mHeaders);
 }
 
 NS_IMETHODIMP MessageDeletionCallbacks::OnError(IEwsClient::Error err,
@@ -166,7 +126,7 @@ class MessageOperationCallbacks : public IEwsMessageCallbacks {
 
 NS_IMPL_ISUPPORTS(MessageOperationCallbacks, IEwsMessageCallbacks)
 
-NS_IMETHODIMP MessageOperationCallbacks::CommitHeader(nsIMsgDBHdr* hdr) {
+NS_IMETHODIMP MessageOperationCallbacks::SaveNewHeader(nsIMsgDBHdr* hdr) {
   RefPtr<nsIMsgDatabase> db;
   nsresult rv = mFolder->GetMsgDatabase(getter_AddRefs(db));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -174,8 +134,66 @@ NS_IMETHODIMP MessageOperationCallbacks::CommitHeader(nsIMsgDBHdr* hdr) {
   return db->AddNewHdrToDB(hdr, true);
 }
 
+NS_IMETHODIMP MessageOperationCallbacks::CommitChanges() {
+  RefPtr<nsIMsgDatabase> db;
+  nsresult rv = mFolder->GetMsgDatabase(getter_AddRefs(db));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return db->Commit(nsMsgDBCommitType::kLargeCommit);
+}
+
 NS_IMETHODIMP MessageOperationCallbacks::CreateNewHeaderForItem(
     const nsACString& ewsId, nsIMsgDBHdr** _retval) {
+  // Check if a header already exists for this EWS ID. `GetHeaderForItem`
+  // returns `NS_ERROR_NOT_AVAILABLE` when no header exists, so we only want to
+  // move forward with creating one in this case.
+  RefPtr<nsIMsgDBHdr> existingHeader;
+  nsresult rv = GetHeaderForItem(ewsId, getter_AddRefs(existingHeader));
+
+  // If we could retrieve a header for this item, error immediately.
+  if (NS_SUCCEEDED(rv)) {
+    return NS_ERROR_ILLEGAL_VALUE;
+  }
+
+  // We already know that `rv` is a failure at this point, so we just need to
+  // check it's not the one failure we want.
+  if (rv != NS_ERROR_NOT_AVAILABLE) {
+    return rv;
+  }
+
+  RefPtr<nsIMsgDatabase> db;
+  MOZ_TRY(mFolder->GetMsgDatabase(getter_AddRefs(db)));
+
+  RefPtr<nsIMsgDBHdr> newHeader;
+  MOZ_TRY(db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(newHeader)));
+
+  MOZ_TRY(newHeader->SetStringProperty(ID_PROPERTY, ewsId));
+
+  newHeader.forget(_retval);
+  return NS_OK;
+}
+
+NS_IMETHODIMP MessageOperationCallbacks::GetHeaderForItem(
+    const nsACString& ewsId, nsIMsgDBHdr** _retval) {
+  RefPtr<nsIMsgDatabase> db;
+  MOZ_TRY(mFolder->GetMsgDatabase(getter_AddRefs(db)));
+
+  RefPtr<nsIMsgDBHdr> existingHeader;
+  MOZ_TRY(db->GetMsgHdrForEwsItemID(ewsId, getter_AddRefs(existingHeader)));
+
+  // Make sure we managed to get a header from the database.
+  if (!existingHeader) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  existingHeader.forget(_retval);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP MessageOperationCallbacks::DeleteHeaderFromDB(
+    const nsACString& ewsId) {
+  // Delete the message headers from the database.
   RefPtr<nsIMsgDatabase> db;
   nsresult rv = mFolder->GetMsgDatabase(getter_AddRefs(db));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -184,21 +202,52 @@ NS_IMETHODIMP MessageOperationCallbacks::CreateNewHeaderForItem(
   rv = db->GetMsgHdrForEwsItemID(ewsId, getter_AddRefs(existingHeader));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (existingHeader.get() != nullptr) {
-    // If the header already exists, don't create a new one.
-    *_retval = nullptr;
+  if (!existingHeader) {
+    // If we don't have a header for this message ID, it means we have already
+    // deleted it locally. This can happen in legitimate situations, e.g. when
+    // syncing the message list after deleting a message from Thunderbird (in
+    // which case, the server's sync response will include a `Delete` change for
+    // the message we've just deleted).
     return NS_OK;
   }
 
-  RefPtr<nsIMsgDBHdr> newHeader;
-  rv = db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(newHeader));
+  return mFolder->LocalDeleteMessages({existingHeader});
+}
+
+NS_IMETHODIMP MessageOperationCallbacks::MaybeDeleteMessageFromStore(
+    nsIMsgDBHdr* hdr) {
+  NS_ENSURE_ARG_POINTER(hdr);
+
+  uint32_t flags;
+  MOZ_TRY(hdr->GetFlags(&flags));
+
+  if (!(flags & nsMsgMessageFlags::Offline)) {
+    // Bail early if there's nothing to remove.
+    return NS_OK;
+  }
+
+  // Delete the message content from the local store.
+  nsCOMPtr<nsIMsgPluggableStore> store;
+  MOZ_TRY(mFolder->GetMsgStore(getter_AddRefs(store)));
+  MOZ_TRY(store->DeleteMessages({hdr}));
+
+  // Update the flags on the database entry to reflect its content is *not*
+  // stored offline anymore. We don't commit right now, but the expectation is
+  // that the consumer will call `CommitChanges()` once it's done processing the
+  // current change.
+  uint32_t unused;
+  return hdr->AndFlags(~nsMsgMessageFlags::Offline, &unused);
+}
+
+NS_IMETHODIMP MessageOperationCallbacks::UpdateReadStatus(
+    const nsACString& ewsId, bool is_read) {
+  // Get the header for the message with ewsId and update its read flag in the
+  // database.
+  RefPtr<nsIMsgDBHdr> existingHeader;
+  nsresult rv = GetHeaderForItem(ewsId, getter_AddRefs(existingHeader));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = newHeader->SetStringProperty(ID_PROPERTY, ewsId);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  newHeader.forget(_retval);
-  return NS_OK;
+  return existingHeader->MarkRead(is_read);
 }
 
 NS_IMETHODIMP MessageOperationCallbacks::UpdateSyncState(
@@ -589,6 +638,51 @@ NS_IMETHODIMP EwsFolder::GetDeletable(bool* deletable) {
 
   *deletable = !(isServer || (mFlags & nsMsgFolderFlags::SpecialUse));
   return NS_OK;
+}
+
+nsresult EwsFolder::LocalDeleteMessages(
+    const nsTArray<RefPtr<nsIMsgDBHdr>>& messages) {
+  nsresult rv;
+
+  nsTArray<RefPtr<nsIMsgDBHdr>> offlineMessages;
+  nsTArray<nsMsgKey> msgKeys;
+
+  // Collect keys for messages which need deletion from our message listing.
+  // We also collect a list of messages for which we have a full local copy
+  // which needs deletion.
+  for (const auto& message : messages) {
+    nsMsgKey msgKey;
+    rv = message->GetMessageKey(&msgKey);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    msgKeys.AppendElement(msgKey);
+
+    bool hasOffline;
+    rv = HasMsgOffline(msgKey, &hasOffline);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (hasOffline) {
+      offlineMessages.AppendElement(message);
+    }
+  }
+
+  // Delete any locally-stored message from the store.
+  if (offlineMessages.Length()) {
+    nsCOMPtr<nsIMsgPluggableStore> store;
+    rv = GetMsgStore(getter_AddRefs(store));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = store->DeleteMessages(offlineMessages);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // Delete the message headers from the database. If a key in the array is
+  // unknown to the database, it's simply ignored.
+  nsCOMPtr<nsIMsgDatabase> db;
+  rv = GetMsgDatabase(getter_AddRefs(db));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return db->DeleteMessages(msgKeys, nullptr);
 }
 
 NS_IMETHODIMP EwsFolder::CompactAll(nsIUrlListener* aListener,

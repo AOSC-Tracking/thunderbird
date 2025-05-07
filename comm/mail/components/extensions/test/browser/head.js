@@ -2,11 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 var { MailConsts } = ChromeUtils.importESModule(
   "resource:///modules/MailConsts.sys.mjs"
 );
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
+);
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
 var { MailUtils } = ChromeUtils.importESModule(
   "resource:///modules/MailUtils.sys.mjs"
@@ -18,10 +23,10 @@ var { getCachedAllowedSpaces, setCachedAllowedSpaces } =
   ChromeUtils.importESModule(
     "resource:///modules/ExtensionToolbarButtons.sys.mjs"
   );
-const { storeState, getState } = ChromeUtils.importESModule(
+var { storeState, getState } = ChromeUtils.importESModule(
   "resource:///modules/CustomizationState.mjs"
 );
-const { getDefaultItemIdsForSpace, getAvailableItemIdsForSpace } =
+var { getDefaultItemIdsForSpace, getAvailableItemIdsForSpace } =
   ChromeUtils.importESModule("resource:///modules/CustomizableItems.sys.mjs");
 
 var { ExtensionCommon } = ChromeUtils.importESModule(
@@ -32,21 +37,8 @@ var { makeWidgetId } = ExtensionCommon;
 // Persistent Listener test functionality
 var { assertPersistentListeners } = ExtensionTestUtils.testAssertions;
 
-// There are shutdown issues for which multiple rejections are left uncaught.
-// This bug should be fixed, but for the moment this directory is forcefully
-// allowed.
-//
-// NOTE: Allowing an entire directory should be kept to a minimum. Normally you
-//       should use "expectUncaughtRejection" to flag individual failures.
-const { PromiseTestUtils } = ChromeUtils.importESModule(
-  "resource://testing-common/PromiseTestUtils.sys.mjs"
-);
-PromiseTestUtils.allowMatchingRejectionsGlobally(
-  /Message manager disconnected/
-);
-PromiseTestUtils.allowMatchingRejectionsGlobally(/No matching message handler/);
-PromiseTestUtils.allowMatchingRejectionsGlobally(
-  /Receiving end does not exist/
+var { PromiseTestUtils: MailPromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 // Adjust timeout to take care of code coverage runs and fission runs to be a
@@ -168,7 +160,68 @@ async function check3PaneState(folderPaneOpen = null, messagePaneOpen = null) {
   }
 }
 
-function createAccount(type = "none") {
+var gIMAPServers = new Map();
+class IMAPServer {
+  constructor(options = {}) {
+    this.extensions = options?.extensions ?? [];
+  }
+
+  open() {
+    const ImapD = ChromeUtils.importESModule(
+      "resource://testing-common/mailnews/Imapd.sys.mjs"
+    );
+    const { IMAP_RFC3501_handler, ImapDaemon, ImapMessage, mixinExtension } =
+      ImapD;
+    const { nsMailServer } = ChromeUtils.importESModule(
+      "resource://testing-common/mailnews/Maild.sys.mjs"
+    );
+
+    this.ImapMessage = ImapMessage;
+    this.daemon = new ImapDaemon();
+    this.server = new nsMailServer(daemon => {
+      const handler = new IMAP_RFC3501_handler(daemon);
+      for (const ext of this.extensions) {
+        mixinExtension(handler, ImapD[`IMAP_${ext}_extension`]);
+      }
+      return handler;
+    }, this.daemon);
+
+    this.server.start();
+
+    registerCleanupFunction(() => this.close());
+  }
+  close() {
+    this.server.stop();
+  }
+  get port() {
+    return this.server.port;
+  }
+
+  addMessages(folder, messages) {
+    folder.QueryInterface(Ci.nsIMsgImapMailFolder);
+    const fakeFolder = this.daemon.getMailbox(folder.prettyPath);
+    messages.forEach(message => {
+      if (typeof message != "string") {
+        message = message.toMessageString();
+      }
+      const msgURI = Services.io.newURI(
+        "data:text/plain;base64," + btoa(message)
+      );
+      const imapMsg = new this.ImapMessage(
+        msgURI.spec,
+        fakeFolder.uidnext++,
+        []
+      );
+      fakeFolder.addMessage(imapMsg);
+    });
+
+    const listener = new MailPromiseTestUtils.PromiseUrlListener();
+    folder.updateFolderWithListener(null, listener);
+    return listener.promise;
+  }
+}
+
+function createAccount(type = "none", options = {}) {
   let account;
 
   if (type == "local") {
@@ -180,6 +233,17 @@ function createAccount(type = "none") {
       "localhost",
       type
     );
+  }
+
+  if (type == "imap") {
+    const server = new IMAPServer(options);
+    server.open();
+    account.incomingServer.port = server.port;
+    account.incomingServer.username = "user";
+    account.incomingServer.password = "password";
+    const inbox = account.incomingServer.rootFolder.getChildNamed("INBOX");
+    inbox.QueryInterface(Ci.nsIMsgImapMailFolder).hierarchyDelimiter = "/";
+    gIMAPServers.set(account.incomingServer.key, server);
   }
 
   info(`Created account ${account.toString()}`);
@@ -224,11 +288,13 @@ function addIdentity(account, email = "mochitest@localhost") {
 }
 
 async function createSubfolder(parent, name) {
+  const promiseAdded = MailPromiseTestUtils.promiseFolderAdded(name);
   parent.createSubfolder(name, null);
+  await promiseAdded;
   return parent.getChildNamed(name);
 }
 
-function createMessages(folder, makeMessagesArg) {
+async function createMessages(folder, makeMessagesArg) {
   if (typeof makeMessagesArg == "number") {
     makeMessagesArg = { count: makeMessagesArg };
   }
@@ -238,9 +304,18 @@ function createMessages(folder, makeMessagesArg) {
 
   const messages =
     createMessages.messageGenerator.makeMessages(makeMessagesArg);
+
+  if (folder.server.type == "imap" && gIMAPServers.has(folder.server.key)) {
+    return gIMAPServers.get(folder.server.key).addMessages(folder, messages);
+  }
+
   const messageStrings = messages.map(message => message.toMessageString());
   folder.QueryInterface(Ci.nsIMsgLocalMailFolder);
   folder.addMessageBatch(messageStrings);
+
+  return new Promise(resolve =>
+    mailTestUtils.updateFolderAndNotify(folder, resolve)
+  );
 }
 
 async function createMessageFromFile(folder, path) {
@@ -251,9 +326,17 @@ async function createMessageFromFile(folder, path) {
   const fromAddress = message.match(/From: .* <(.*@.*)>/)[0];
   message = `From ${fromAddress}\r\n${message}`;
 
+  if (folder.server.type == "imap" && gIMAPServers.has(folder.server.key)) {
+    return gIMAPServers.get(folder.server.key).addMessages(folder, [message]);
+  }
+
   folder.QueryInterface(Ci.nsIMsgLocalMailFolder);
   folder.addMessageBatch([message]);
   folder.callFilterPlugins(null);
+
+  return new Promise(resolve =>
+    mailTestUtils.updateFolderAndNotify(folder, resolve)
+  );
 }
 
 async function promiseAnimationFrame(win = window) {
@@ -317,11 +400,7 @@ function awaitBrowserLoaded(browser, wantLoad) {
   );
 }
 
-var awaitExtensionPanel = async function (
-  extension,
-  win = window,
-  awaitLoad = true
-) {
+async function awaitExtensionPanel(extension, win = window, awaitLoad = true) {
   const { originalTarget: browser } = await BrowserTestUtils.waitForEvent(
     win.document,
     "WebExtPopupLoaded",
@@ -334,7 +413,7 @@ var awaitExtensionPanel = async function (
   }
   await BrowserTestUtils.waitForPopupEvent(getPanelForNode(browser), "shown");
   return browser;
-};
+}
 
 function getBrowserActionPopup(extension, win = window) {
   return win.top.document.getElementById("webextension-remote-preload-panel");

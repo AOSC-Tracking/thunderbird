@@ -65,6 +65,18 @@ if (AppConstants.MOZ_UPDATER) {
   ChromeUtils.defineESModuleGetters(lazy, {
     UpdateListener: "resource://gre/modules/UpdateListener.sys.mjs",
   });
+  XPCOMUtils.defineLazyServiceGetters(lazy, {
+    UpdateServiceStub: [
+      "@mozilla.org/updates/update-service-stub;1",
+      "nsIApplicationUpdateServiceStub",
+    ],
+  });
+}
+
+if (AppConstants.MOZ_UPDATE_AGENT) {
+  ChromeUtils.defineESModuleGetters(lazy, {
+    BackgroundUpdate: "resource://gre/modules/BackgroundUpdate.sys.mjs",
+  });
 }
 
 const listeners = {
@@ -418,6 +430,30 @@ MailGlue.prototype = {
           "extensions.lastAppVersion",
           "0"
         );
+
+        // Replace the database service with the Panorama database.
+        // This should only happen if MOZ_PANORAMA is true in the build config
+        // (but we can't check that here). Otherwise, if the preference is set
+        // to true, you're gonna have a bad time.
+        if (Services.prefs.getBoolPref("mail.panorama.enabled", false)) {
+          const componentRegistrar = Components.manager.QueryInterface(
+            Ci.nsIComponentRegistrar
+          );
+
+          componentRegistrar.registerFactory(
+            Services.uuid.generateUUID(),
+            "",
+            "@mozilla.org/msgDatabase/msgDBService;1",
+            {
+              createInstance(iid) {
+                return Cc["@mozilla.org/mailnews/database-core;1"].getService(
+                  iid
+                );
+              },
+            }
+          );
+        }
+
         break;
       case "command-line-startup": {
         // Check if this process is the developer toolbox process, and if it
@@ -879,6 +915,21 @@ MailGlue.prototype = {
           });
         },
       },
+
+      {
+        name: "BackgroundUpdate",
+        condition: AppConstants.MOZ_UPDATE_AGENT,
+        task: async () => {
+          // Never in automation!
+          if (
+            AppConstants.MOZ_UPDATER &&
+            !lazy.UpdateServiceStub.updateDisabledForTesting
+          ) {
+            await lazy.BackgroundUpdate.maybeScheduleBackgroundUpdateTask();
+          }
+        },
+      },
+
       // Do NOT add anything after idle tasks finished.
     ];
 

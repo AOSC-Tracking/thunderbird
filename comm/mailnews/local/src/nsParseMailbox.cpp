@@ -36,10 +36,224 @@
 #include "nsIMsgFilterCustomAction.h"
 #include <ctype.h>
 #include "nsIMsgPluggableStore.h"
+#include "nsReadableUtils.h"
+#include "nsURLHelper.h"  // For net_ParseContentType().
+#include "mozilla/Span.h"
+#include "HeaderReader.h"
 
 using namespace mozilla;
 
 extern LazyLogModule FILTERLOGMODULE;
+
+// Attempt to extract a timestamp from a "Recieved:" header value, e.g:
+// "from bar.com by foo.com ; Thu, 21 May 1998 05:33:29 -0700".
+// Returns 0 if no timestamp could be extracted.
+static PRTime TimestampFromReceived(nsACString const& received) {
+  int32_t sep = received.RFindChar(';');
+  if (sep == kNotFound) {
+    return 0;
+  }
+  auto dateStr = Substring(received, sep + 1);
+  PRTime time;
+  if (PR_ParseTimeString(PromiseFlatCString(dateStr).get(), false, &time) !=
+      PR_SUCCESS) {
+    return 0;
+  }
+  return time;
+}
+
+static nsCString RemoveAngleBrackets(nsACString const& s) {
+  size_t len = s.Length();
+  if (len >= 2 && s[0] == '<' && s[len - 1] == '>') {
+    return nsCString(Substring(s, 1, len - 2));
+  }
+  return nsCString(s);
+}
+
+// NOTE:
+// Does not attempt to use fallback timestamps.
+//  - RawHdr.date is from the "Date": header, else 0.
+//  - RawHdr.dateReceived is from the first "Received:" header, else 0.
+// Any fallback policy (e.g. to mbox timestamp or PR_Now()) is left up to
+// the caller.
+//
+// Does not strip "Re:" off subject.
+//
+// Does not generate missing Message-Id (nsParseMailMessageState uses an
+// md5sum of the header block).
+//
+// Does not strip surrounding '<' and '>' from Message-Id.
+//
+RawHdr ParseMsgHeaders(mozilla::Span<const char> raw) {
+  // NOTE: old code aggregates multiple To: and Cc: header occurrences.
+  // Turns them into comma-separated lists.
+  // See nsParseMailMessageState::FinalizeHeaders().
+
+  RawHdr out;
+  HeaderReader rdr;
+
+  // RFC5322 says 0 or 1 occurrences for each of "To:" and "Cc:", but we'll
+  // aggregate multiple.
+  AutoTArray<nsCString, 1> toValues;  // Collect "To:" values.
+  AutoTArray<nsCString, 1> ccValues;  // Collect "Cc:" values.
+  nsAutoCString newsgroups;           // "Newsgroups:" value.
+  nsAutoCString mozstatus;
+  nsAutoCString mozstatus2;
+  nsAutoCString status;  // "Status:" value
+  rdr.Parse(raw, [&](HeaderReader::Hdr const& hdr) -> bool {
+    auto const& n = hdr.Name(raw);
+    // Alphabetical, because why not?
+    if (n.LowerCaseEqualsLiteral("bcc")) {
+      out.bccList = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("cc")) {
+      // Collect multiple "Cc:" values.
+      ccValues.AppendElement(hdr.Value(raw));
+    } else if (n.LowerCaseEqualsLiteral("content-type")) {
+      nsAutoCString contentType;
+      nsAutoCString charset;
+      bool hasCharset;
+      net_ParseContentType(hdr.Value(raw), contentType, charset, &hasCharset);
+      if (hasCharset) {
+        out.charset = charset;
+      }
+      if (contentType.LowerCaseEqualsLiteral("multpart/mixed")) {
+        out.flags |= nsMsgMessageFlags::Attachment;
+      }
+    } else if (n.LowerCaseEqualsLiteral("date")) {
+      nsCString dateStr = hdr.Value(raw);
+      PRTime time;
+      if (PR_ParseTimeString(dateStr.get(), false, &time) == PR_SUCCESS) {
+        out.date = time;
+      }
+    } else if (n.LowerCaseEqualsLiteral("disposition-notification-to")) {
+      // TODO: should store value? (nsParseMailMessageState doesn't)
+      // flags |= nsMsgMessageFlags::MDNReportNeeded;
+    } else if (n.LowerCaseEqualsLiteral("delivery-date")) {
+      // NOTE: nsParseMailMessageState collects this and uses it as a fallback
+      // if it can't get a receipt timestamp from "Received":.
+      // But it seems pretty obscure, so leaving it out.
+      // (It seems to be a X.400 -> RFC 822 mapping).
+    } else if (n.LowerCaseEqualsLiteral("from")) {
+      // "From:" takes precedence over "Sender:".
+      out.sender = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("in-reply-to")) {
+      // "In-Reply-To:" used as a fallback for missing "References:".
+      if (out.references.IsEmpty()) {
+        out.references = hdr.Value(raw);
+      }
+    } else if (n.LowerCaseEqualsLiteral("message-id")) {
+      out.messageId = RemoveAngleBrackets(hdr.Value(raw));
+    } else if (n.LowerCaseEqualsLiteral("newsgroups")) {
+      // We _might_ need this for recipients (see below).
+      newsgroups = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("original-recipient")) {
+      // NOTE: unused in nsParseMailMessageState.
+    } else if (n.LowerCaseEqualsLiteral("priority")) {
+      // Treat "Priority:" and "X-Priority:" the same way.
+      NS_MsgGetPriorityFromString(hdr.Value(raw).get(), out.priority);
+    } else if (n.LowerCaseEqualsLiteral("references")) {
+      // "In-Reply-To:" used as a fallback for missing "References:".
+      out.references = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("return-path")) {
+      // NOTE: unused in nsParseMailMessageState.
+    } else if (n.LowerCaseEqualsLiteral("return-receipt-to")) {
+      // NOTE: nsParseMailMessageState treats "Return-Receipt-To:" as
+      // "Disposition-Notification-To:".
+      // flags |= nsMsgMessageFlags::MDNReportNeeded;
+    } else if (n.LowerCaseEqualsLiteral("received")) {
+      // Record the timestamp from the first (closest) "Received:" header.
+      // (See RFC 5321).
+      if (out.dateReceived == 0) {
+        out.dateReceived = TimestampFromReceived(hdr.Value(raw));
+      }
+    } else if (n.LowerCaseEqualsLiteral("reply-to")) {
+      out.replyTo = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("sender")) {
+      // "From:" takes precedence over "Sender:".
+      if (out.sender.IsEmpty()) {
+        out.sender = hdr.Value(raw);
+      }
+    } else if (n.LowerCaseEqualsLiteral("status")) {
+      status = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("subject")) {
+      out.subject = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("to")) {
+      toValues.AppendElement(hdr.Value(raw));
+    } else if (n.LowerCaseEqualsLiteral("x-account-key")) {
+      out.accountKey = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("x-mozilla-keys")) {
+      out.keywords = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("x-mozilla-status")) {
+      mozstatus = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("x-mozilla-status2")) {
+      mozstatus2 = hdr.Value(raw);
+    } else if (n.LowerCaseEqualsLiteral("x-priority")) {
+      // Treat "Priority:" and "X-Priority:" the same way.
+      NS_MsgGetPriorityFromString(hdr.Value(raw).get(), out.priority);
+    } else {
+      // TODO: check custom keys.
+    }
+    return true;  // Keep going.
+  });
+
+  // Merge multiple "Cc:" values.
+  out.ccList = StringJoin(","_ns, ccValues);
+
+  // Fill in recipients, with fallbacks.
+  if (!toValues.IsEmpty()) {
+    out.recipients = StringJoin(","_ns, toValues);
+  } else if (!out.ccList.IsEmpty()) {
+    out.recipients = out.ccList;
+  } else if (!newsgroups.IsEmpty()) {
+    // In the case where the recipient is a newsgroup, truncate the string
+    // at the first comma.  This is used only for presenting the thread
+    // list, and newsgroup lines tend to be long and non-shared.
+    auto splitter = newsgroups.Split(',');
+    auto first = splitter.begin();
+    if (first != splitter.end()) {
+      out.recipients = *first;
+    }
+  }
+
+  // Figure out flags from assorted headers.
+  out.flags = 0;
+  if (mozstatus.Length() == 4 && MsgIsHex(mozstatus.get(), 4)) {
+    uint32_t xflags = MsgUnhex(mozstatus.get(), 4);
+    // Mask out a few "phantom" flags, which shouldn't be persisted.
+    xflags &= ~nsMsgMessageFlags::RuntimeOnly;
+    out.flags |= xflags;
+  } else if (!status.IsEmpty()) {
+    // Parse a little bit of the Berkeley Mail "Status:" header.
+    // NOTE: Can't find any proper documentation on "Status:".
+    // Maybe it's time to ditch it?
+    if (status.FindCharInSet("RrO"_ns) != kNotFound) {
+      out.flags |= nsMsgMessageFlags::Read;
+    }
+    if (status.FindCharInSet("NnUu"_ns) != kNotFound) {
+      out.flags &= ~nsMsgMessageFlags::Read;
+    }
+    // Ignore 'd'/'D' (deleted)
+  }
+  if (mozstatus.Length() == 8 && MsgIsHex(mozstatus.get(), 8)) {
+    uint32_t xflags = MsgUnhex(mozstatus.get(), 8);
+    // Mask out a few "phantom" flags, which shouldn't be persisted.
+    xflags &= ~nsMsgMessageFlags::RuntimeOnly;
+    // Only upper 16 bits used for "X-Mozilla-Status2:".
+    xflags |= xflags & 0xFFFF0000;
+    out.flags |= xflags;
+  }
+
+  // TODO: nsParseMailMessageState leaves replyTo unset if "Reply-To:" is
+  // same as "Sender:" or "From:". Not sure we should implement that or not.
+
+  // TODO: disposition-notification-to handling. Some flags cancel out.
+  // nsParseMailMessageState doesn't seem to store
+  // "Disposition-Notification-To" value, but we support sending receipt
+  // notifications, right? So how is it implemented? Investigation needed.
+
+  // TODO: custom header storage
+  return out;
+}
 
 NS_IMETHODIMP
 nsParseMailMessageState::OnHdrPropertyChanged(
@@ -279,6 +493,7 @@ NS_IMETHODIMP nsParseMailMessageState::FinishHeader() {
   return NS_OK;
 }
 
+// This method is only used by IMAP, for filtering.
 NS_IMETHODIMP nsParseMailMessageState::GetAllHeaders(char** pHeaders,
                                                      int32_t* pHeadersSize) {
   if (!pHeaders || !pHeadersSize) return NS_ERROR_NULL_POINTER;
@@ -697,21 +912,16 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
   {
     // We'll need the message id first to recover data from the backup database
     nsAutoCString rawMsgId;
-    /* Take off <> around message ID. */
     if (id) {
-      if (id->length > 0 && id->value[0] == '<') {
-        id->length--;
-        id->value++;
+      // Take off <> around message ID.
+      if (MOZ_LIKELY(id->length > 0 && id->value[0] == '<')) {
+        --id->length;
+        ++id->value;
       }
-
-      NS_WARNING_ASSERTION(id->length > 0,
-                           "id->length failure in FinalizeHeaders().");
-
-      if (id->length > 0 && id->value[id->length - 1] == '>')
-        /* generate a new null-terminated string without the final > */
-        rawMsgId.Assign(id->value, id->length - 1);
-      else
-        rawMsgId.Assign(id->value);
+      if (MOZ_LIKELY(id->length > 0 && id->value[id->length - 1] == '>')) {
+        --id->length;
+      }
+      rawMsgId.Assign(id->value, id->length);
     }
 
     /*
@@ -800,15 +1010,13 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
 
       rv = InternSubject(subject);
       if (NS_SUCCEEDED(rv)) {
-        nsAutoCString md5IdBuffer("md5:");
-        HeaderData md5Id;
-        if (!id) {
-          // what to do about this? we used to do a hash of all the headers...
-          nsAutoCString hash;
+        if (rawMsgId.IsEmpty()) {
+          // Generate an MD5 hash of all the headers.
           const char* md5_b64 = "dummy.message.id";
           nsresult rv;
           nsCOMPtr<nsICryptoHash> hasher =
               do_CreateInstance("@mozilla.org/security/hash;1", &rv);
+          nsAutoCString hash;
           if (NS_SUCCEEDED(rv)) {
             if (NS_SUCCEEDED(hasher->Init(nsICryptoHash::MD5)) &&
                 NS_SUCCEEDED(hasher->Update((const uint8_t*)m_headers.begin(),
@@ -817,19 +1025,10 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
               md5_b64 = hash.get();
             }
           }
-          md5IdBuffer.Append(md5_b64);
-          md5Id.value = md5IdBuffer.get();
-          md5Id.length = md5IdBuffer.Length();
-          MOZ_ASSERT(strlen(md5Id.value) == md5Id.length,
-                     "Problem with length of md5Id.");
-          id = &md5Id;
+          rawMsgId.Assign("md5:");
+          rawMsgId.Append(md5_b64);
         }
-
-        if (!rawMsgId.IsEmpty()) {
-          m_newMsgHdr->SetMessageId(rawMsgId);
-        } else {
-          m_newMsgHdr->SetMessageId(nsDependentCString(id->value));
-        }
+        m_newMsgHdr->SetMessageId(rawMsgId);
 
         m_mailDB->UpdatePendingAttributes(m_newMsgHdr);
 

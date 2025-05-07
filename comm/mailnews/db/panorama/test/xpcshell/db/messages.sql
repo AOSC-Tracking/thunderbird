@@ -7,10 +7,17 @@ CREATE TABLE folders (
 ) STRICT;
 
 INSERT INTO folders (id, parent, name) VALUES
-  (1, 0, 'server'),
+  (1, 0, 'server1'),
   (2, 1, 'folderA'),
   (3, 1, 'folderB'),
   (4, 1, 'folderC');
+
+CREATE TABLE folder_properties(
+  id INTEGER REFERENCES folders(id),
+  name TEXT,
+  value ANY,
+  PRIMARY KEY(id, name)
+) STRICT;
 
 CREATE TABLE messages(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,3 +43,10 @@ INSERT INTO messages (id, folderId, date, sender, subject, flags, tags) VALUES
   (8, 4, UNIXEPOCH('2023-08-06T06:02:00Z') * 1000000, '"Edgar Stokes" <edgar@stokes.invalid>', 'Balanced static project', 0, '$label1'),
   (9, 4, UNIXEPOCH('2023-08-14') * 1000000, '"Neal Jast" <neal@jast.invalid>', 'Virtual solution-oriented knowledge user', 0, ''),
   (10, 4, UNIXEPOCH('2023-09-14') * 1000000, '"Christian Murray" <christian@murray.invalid>', 'Distributed mobile access', 5, '');
+
+CREATE TABLE message_properties(
+  id INTEGER REFERENCES messages(id),
+  name TEXT,
+  value ANY,
+  PRIMARY KEY(id, name)
+) STRICT;

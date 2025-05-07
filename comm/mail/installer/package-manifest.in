@@ -66,6 +66,10 @@
 @RESPATH@/updater.ini
 #endif
 
+#if defined(MOZ_UPDATE_AGENT)
+@RESPATH@/locale.ini
+#endif
+
 #ifdef LLVM_SYMBOLIZER
 @BINPATH@/@LLVM_SYMBOLIZER@
 #endif
@@ -346,6 +350,7 @@
 
 ; Modules
 @RESPATH@/modules/*
+@RESPATH@/moz-src/*
 @RESPATH@/actors/*
 
 ; ANGLE GLES-on-D3D rendering library
@@ -486,3 +491,7 @@
 
 ; Shutdown Terminator
 @RESPATH@/components/terminator.manifest
+
+; Shipped so that Glean tests are enabled on CI even if we have disabled
+; them during regular usage.
+@RESPATH@/interesting_serverknobs.json

@@ -7,11 +7,11 @@
 
 #include "FolderComparator.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/RefPtr.h"
 #include "nsIFolder.h"
 #include "nsTString.h"
 
-namespace mozilla {
-namespace mailnews {
+namespace mozilla::mailnews {
 
 class Folder : public nsIFolder {
  public:
@@ -22,9 +22,8 @@ class Folder : public nsIFolder {
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIFOLDER
 
-  // C++ shortcuts.
-  nsCString GetName();
-  nsCString GetPath();
+  using nsIFolder::GetName;
+  using nsIFolder::GetPath;
 
  protected:
   virtual ~Folder() {};
@@ -44,7 +43,6 @@ class Folder : public nsIFolder {
   void _GetDescendants(nsTArray<RefPtr<nsIFolder>>& aDescendants);
 };
 
-}  // namespace mailnews
-}  // namespace mozilla
+}  // namespace mozilla::mailnews
 
 #endif  // Folder_h__

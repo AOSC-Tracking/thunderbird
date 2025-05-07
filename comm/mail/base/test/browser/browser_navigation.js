@@ -424,6 +424,15 @@ add_task(async function testPreviousUnreadMessageInAbout3Pane() {
     [folderCMessages[500], folderCMessages[501], folderCMessages[504]],
     false
   );
+  folderD.markMessagesRead(
+    [
+      folderDMessages[0],
+      folderDMessages[3],
+      folderDMessages[7],
+      folderDMessages[8],
+    ],
+    false
+  );
 
   about3Pane.displayFolder(folderC.URI);
   threadTree.scrollToIndex(504, true);
@@ -453,6 +462,44 @@ add_task(async function testPreviousUnreadMessageInAbout3Pane() {
   threadTree.removeEventListener("select", reportBadSelectEvent);
   messagePaneBrowser.removeEventListener("load", reportBadLoad, true);
 
+  about3Pane.displayFolder(folderD.URI);
+  goDoCommand("cmd_collapseAllThreads");
+  threadTree.scrollToIndex(3, true);
+  // Ensure the scrolling from the previous line happens.
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  threadTree.selectedIndex = 3;
+  assertSelectedMessage(folderDMessages[9]);
+  await assertDisplayedThread(folderDMessages[9]);
+
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderDMessages[8]);
+  await assertDisplayedMessage(aboutMessage, folderDMessages[8]);
+
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderDMessages[7]);
+  await assertDisplayedMessage(aboutMessage, folderDMessages[7]);
+
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderDMessages[3]);
+  await assertDisplayedMessage(aboutMessage, folderDMessages[3]);
+
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderDMessages[0]);
+  await assertDisplayedMessage(aboutMessage, folderDMessages[0]);
+
+  threadTree.addEventListener("select", reportBadSelectEvent);
+  messagePaneBrowser.addEventListener("load", reportBadLoad, true);
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderDMessages[0]);
+  await assertDisplayedMessage(aboutMessage, folderDMessages[0]);
+
+  // Wait to prove bad things didn't happen.
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 500));
+  threadTree.removeEventListener("select", reportBadSelectEvent);
+  messagePaneBrowser.removeEventListener("load", reportBadLoad, true);
+
+  folderD.markAllMessagesRead(null);
   threadTree.selectedIndex = -1;
   await assertNoDisplayedMessage(aboutMessage);
 });
@@ -495,6 +542,44 @@ add_task(async function testPreviousUnreadMessageInAWindow() {
     folderCMessages[504],
     subtestPreviousUnreadMessage
   );
+});
+
+/**
+ * Tests that no unnecessary scrolling happens in an unthreaded view
+ * (Bug 1941139).
+ */
+add_task(async function testPreviousUnreadMessageScrolling() {
+  const aboutMessage = messageBrowser.contentWindow;
+
+  folderC.markMessagesRead([folderCMessages[404]], false);
+  about3Pane.displayFolder(folderC.URI);
+  about3Pane.sortController.sortUnthreaded();
+
+  threadTree.scrollToIndex(400, true);
+  // Ensure the scrolling from the previous line happens.
+  await new Promise(resolve => requestAnimationFrame(resolve));
+
+  threadTree.selectedIndex = 405;
+  assertSelectedMessage(folderCMessages[405]);
+  await assertDisplayedMessage(aboutMessage, folderCMessages[405]);
+
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderCMessages[404]);
+  await assertDisplayedMessage(aboutMessage, folderCMessages[404]);
+
+  // Wait to prove bad things didn't happen.
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 500));
+  Assert.equal(
+    threadTree.getFirstVisibleIndex(),
+    400,
+    "No scrolling should have happened."
+  );
+
+  threadTree.selectedIndex = -1;
+  await assertNoDisplayedMessage(aboutMessage);
+  about3Pane.sortController.sortUnthreaded();
+  folderC.markMessagesRead([folderCMessages[404]], true);
 });
 
 /**

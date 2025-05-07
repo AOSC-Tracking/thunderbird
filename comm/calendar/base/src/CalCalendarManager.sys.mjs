@@ -456,9 +456,11 @@ CalCalendarManager.prototype = {
     flushPrefs();
   },
 
+  /**
+   * @param {calICalendar} calendar - Calendar to remove.
+   * @param {integer} [mode=0] - Flag combination. See {calICalendarManager}.
+   */
   removeCalendar(calendar, mode = 0) {
-    const cICM = Ci.calICalendarManager;
-
     const removeModes = new Set(
       calendar.getProperty("capabilities.removeModes") || ["unsubscribe"]
     );
@@ -467,9 +469,13 @@ CalCalendarManager.prototype = {
       return;
     }
 
-    if (mode & cICM.REMOVE_NO_UNREGISTER && this.mCache && calendar.id in this.mCache) {
+    if (
+      mode & Ci.calICalendarManager.REMOVE_NO_UNREGISTER &&
+      this.mCache &&
+      calendar.id in this.mCache
+    ) {
       throw new Components.Exception("Can't remove a registered calendar");
-    } else if (!(mode & cICM.REMOVE_NO_UNREGISTER)) {
+    } else if (!(mode & Ci.calICalendarManager.REMOVE_NO_UNREGISTER)) {
       this.unregisterCalendar(calendar);
     }
 
@@ -478,7 +484,7 @@ CalCalendarManager.prototype = {
     this.notifyObservers("onCalendarDeleting", [calendar]);
 
     // For deleting, we also call the deleteCalendar method from the provider.
-    if (removeModes.has("delete") && (mode & cICM.REMOVE_NO_DELETE) == 0) {
+    if (removeModes.has("delete") && (mode & Ci.calICalendarManager.REMOVE_NO_DELETE) == 0) {
       const wrappedCalendar = calendar.QueryInterface(Ci.calICalendarProvider);
       wrappedCalendar.deleteCalendar(calendar, null);
     }
@@ -837,11 +843,10 @@ calMgrCalendarObserver.prototype = {
     // When possible, change the error number into its name, to
     // make it slightly more readable.
     let errCode = "0x" + aErrNo.toString(16);
-    const calIErrors = Ci.calIErrors;
     // Check if it is worth enumerating all the error codes.
-    if (aErrNo & calIErrors.ERROR_BASE) {
-      for (const err in calIErrors) {
-        if (calIErrors[err] == aErrNo) {
+    if (aErrNo & Ci.calIErrors.ERROR_BASE) {
+      for (const err in Ci.calIErrors) {
+        if (Ci.calIErrors[err] == aErrNo) {
           errCode = err;
         }
       }
@@ -849,13 +854,13 @@ calMgrCalendarObserver.prototype = {
 
     let message;
     switch (aErrNo) {
-      case calIErrors.CAL_UTF8_DECODING_FAILED:
+      case Ci.calIErrors.CAL_UTF8_DECODING_FAILED:
         message = lazy.l10n.formatValueSync("utf8-decode-error");
         break;
-      case calIErrors.ICS_MALFORMEDDATA:
+      case Ci.calIErrors.ICS_MALFORMEDDATA:
         message = lazy.l10n.formatValueSync("ics-malformed-error");
         break;
-      case calIErrors.MODIFICATION_FAILED:
+      case Ci.calIErrors.MODIFICATION_FAILED:
         errMsg = lazy.l10n.formatValueSync("error-writing2", { name: aCalendar.name });
         message = lazy.l10n.formatValueSync("error-writing-details");
         if (aMessage) {
@@ -879,7 +884,7 @@ calMgrCalendarObserver.prototype = {
 
     // Log warnings in error console.
     // Report serious errors in both error console and in prompt window.
-    if (aErrNo == calIErrors.MODIFICATION_FAILED) {
+    if (aErrNo == Ci.calIErrors.MODIFICATION_FAILED) {
       console.error(summary);
       this.announceParamBlock(paramBlock);
     } else {

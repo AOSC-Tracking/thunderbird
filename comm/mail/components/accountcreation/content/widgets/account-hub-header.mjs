@@ -6,16 +6,29 @@ const { AccountCreationUtils } = ChromeUtils.importESModule(
   "resource:///modules/accountcreation/AccountCreationUtils.sys.mjs"
 );
 
+const { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
+);
+
 const { gAccountSetupLogger } = AccountCreationUtils;
 /**
  * Account Hub Header Template
  * Template ID: #accountHubHeaderTemplate (from accountHubHeaderTemplate.inc.xhtml)
+ *
+ * @fires request-close - Event when close button is clicked to close dialog.
  */
 class AccountHubHeader extends HTMLElement {
   /**
    * @type {?HTMLFormElement}
    */
   #notificationForm;
+
+  /**
+   * The close button for the modal.
+   *
+   * @type {?HTMLElement}
+   */
+  #closeButton;
 
   connectedCallback() {
     if (this.shadowRoot) {
@@ -44,6 +57,11 @@ class AccountHubHeader extends HTMLElement {
     this.#notificationForm = this.shadowRoot.querySelector(
       "#emailFormNotification"
     );
+
+    this.#closeButton = this.shadowRoot.querySelector("#closeButton");
+    this.#closeButton.hidden = !MailServices.accounts.accounts.length;
+    this.#closeButton.addEventListener("click", () => this.#closeAccountHub());
+
     this.clearNotifications();
   }
 
@@ -57,7 +75,7 @@ class AccountHubHeader extends HTMLElement {
    *   to localize for the title.
    * @param {string} options.fluentDescriptionId - A string representing a
    *   fluent id to localize for the description.
-   * @param {string} options.title - A raw string to displayin the description.
+   * @param {string} options.title - A raw string to display in the description.
    * @param {string} options.type - The type of notification (error, success, info,
    *   warning).
    */
@@ -113,6 +131,10 @@ class AccountHubHeader extends HTMLElement {
         descriptionElement.querySelector(".localized-description"),
         fluentDescriptionId || error.cause.fluentDescriptionId
       );
+
+      // If we have a specific fluent ID for the description, return early
+      // so we don't have two descriptions.
+      return;
     }
 
     if (description || (type === "error" && error?.message)) {
@@ -147,6 +169,10 @@ class AccountHubHeader extends HTMLElement {
         titleElement.querySelector(".localized-title"),
         localizedTitle
       );
+
+      // If we have a localized title, return early so we don't have two
+      // titles.
+      return;
     }
 
     if (title) {
@@ -187,6 +213,18 @@ class AccountHubHeader extends HTMLElement {
 
   showBrandingHeader() {
     this.shadowRoot.querySelector("#brandingHeader").hidden = false;
+  }
+
+  #closeAccountHub() {
+    const closeEvent = new CustomEvent("request-close", {
+      bubbles: true,
+      composed: true,
+    });
+    this.dispatchEvent(closeEvent);
+  }
+
+  disconnectedCallback() {
+    this.#closeButton.removeEventListener("click", this.#closeAccountHub());
   }
 }
 

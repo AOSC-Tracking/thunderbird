@@ -5,26 +5,33 @@
 #include "DatabaseCore.h"
 
 #include "FolderDatabase.h"
+#include "Message.h"
 #include "MessageDatabase.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Services.h"
 #include "mozIStorageService.h"
+#include "msgCore.h"
 #include "nsAppDirectoryServiceDefs.h"
+#include "nsIClassInfoImpl.h"
 #include "nsIFile.h"
 #include "nsIObserverService.h"
+#include "nsMsgFolderFlags.h"
+#include "PerFolderDatabase.h"
 #include "xpcpublic.h"
 
 using mozilla::LazyLogModule;
 using mozilla::LogLevel;
 using mozilla::dom::Promise;
 
-namespace mozilla {
-namespace mailnews {
+namespace mozilla::mailnews {
 
 LazyLogModule gPanoramaLog("panorama");
 
-NS_IMPL_ISUPPORTS(DatabaseCore, nsIDatabaseCore, nsIObserver)
+NS_IMPL_CLASSINFO(DatabaseCore, nullptr, nsIClassInfo::SINGLETON,
+                  DATABASE_CORE_CID)
+NS_IMPL_ISUPPORTS_CI(DatabaseCore, nsIDatabaseCore, nsIMsgDBService,
+                     nsIObserver)
 
 MOZ_RUNINIT nsCOMPtr<mozIStorageConnection> DatabaseCore::sConnection;
 MOZ_RUNINIT nsTHashMap<nsCString, nsCOMPtr<mozIStorageStatement>>
@@ -38,38 +45,23 @@ DatabaseCore::DatabaseCore() {
 }
 
 NS_IMETHODIMP
-DatabaseCore::Startup(JSContext* aCx, Promise** aPromise) {
+DatabaseCore::Startup() {
   MOZ_LOG(gPanoramaLog, LogLevel::Info, ("DatabaseCore starting up"));
 
-  ErrorResult result;
-  RefPtr<Promise> promise =
-      Promise::Create(xpc::CurrentNativeGlobal(aCx), result);
-
   nsresult rv = EnsureConnection();
-  if (NS_FAILED(rv)) {
-    promise->MaybeReject(rv);
-  }
+  NS_ENSURE_SUCCESS(rv, rv);
 
   mFolderDatabase = new FolderDatabase();
-  mMessageDatabase = new MessageDatabase();
+  rv = mFolderDatabase->Startup();
+  NS_ENSURE_SUCCESS(rv, rv);
 
+  mMessageDatabase = new MessageDatabase();
   mMessageDatabase->Startup();
   // Add a message listener purely for logging purposes while this code is
   // under heavy development. TODO: Remove this.
   mMessageDatabase->AddMessageListener(this);
 
-  RefPtr<FolderDatabaseStartupPromise> foldersPromise =
-      mFolderDatabase->Startup();
-  foldersPromise->Then(
-      mozilla::GetCurrentSerialEventTarget(), __func__,
-      [promise]() {
-        MOZ_LOG(gPanoramaLog, LogLevel::Info,
-                ("DatabaseCore startup complete"));
-        promise->MaybeResolveWithUndefined();
-      },
-      [promise]() { promise->MaybeReject(NS_ERROR_DOM_ABORT_ERR); });
-
-  promise.forget(aPromise);
+  MOZ_LOG(gPanoramaLog, LogLevel::Info, ("DatabaseCore startup complete"));
   return NS_OK;
 }
 
@@ -142,7 +134,7 @@ nsresult DatabaseCore::EnsureConnection() {
   if (!exists) {
     MOZ_LOG(gPanoramaLog, LogLevel::Warning,
             ("database file does not exist, creating"));
-    sConnection->ExecuteSimpleSQL(
+    rv = sConnection->ExecuteSimpleSQL(
         "CREATE TABLE folders ( \
           id INTEGER PRIMARY KEY, \
           parent INTEGER REFERENCES folders(id), \
@@ -151,8 +143,17 @@ nsresult DatabaseCore::EnsureConnection() {
           flags INTEGER DEFAULT 0, \
           UNIQUE(parent, name) \
         );"_ns);
-    sConnection->ExecuteSimpleSQL(
-        "CREATE TABLE messages( \
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = sConnection->ExecuteSimpleSQL(
+        "CREATE TABLE folder_properties ( \
+          id INTEGER REFERENCES folders(id), \
+          name TEXT, \
+          value ANY, \
+          PRIMARY KEY(id, name) \
+        );"_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = sConnection->ExecuteSimpleSQL(
+        "CREATE TABLE messages ( \
           id INTEGER PRIMARY KEY, \
           folderId INTEGER REFERENCES folders(id), \
           messageId TEXT, \
@@ -162,8 +163,18 @@ nsresult DatabaseCore::EnsureConnection() {
           flags INTEGER, \
           tags TEXT \
         );"_ns);
-    sConnection->ExecuteSimpleSQL(
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = sConnection->ExecuteSimpleSQL(
+        "CREATE TABLE message_properties ( \
+          id INTEGER REFERENCES messages(id), \
+          name TEXT, \
+          value ANY, \
+          PRIMARY KEY(id, name) \
+        );"_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = sConnection->ExecuteSimpleSQL(
         "CREATE INDEX messages_date ON messages(date);"_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
 
   RefPtr<TagsMatchFunction> tagsInclude = new TagsMatchFunction(true);
@@ -179,8 +190,8 @@ nsresult DatabaseCore::EnsureConnection() {
 /**
  * Create and cache an SQL statement.
  */
-nsresult DatabaseCore::GetStatement(const nsCString& aName,
-                                    const nsCString& aSQL,
+nsresult DatabaseCore::GetStatement(const nsACString& aName,
+                                    const nsACString& aSQL,
                                     mozIStorageStatement** aStmt) {
   NS_ENSURE_ARG_POINTER(aStmt);
 
@@ -228,21 +239,131 @@ DatabaseCore::GetConnection(mozIStorageConnection** aConnection) {
   return NS_OK;
 }
 
-void DatabaseCore::OnMessageAdded(Folder* folder, Message* m) {
+void DatabaseCore::OnMessageAdded(Message* m) {
   MOZ_LOG(gPanoramaLog, LogLevel::Debug,
-          ("DatabaseCore::OnMessageAdded: %" PRIu64 " %" PRIu64 " %" PRId64
+          ("DatabaseCore::OnMessageAdded: %" PRId32 " %" PRIu64 " %" PRId64
            " '%s' '%s' %" PRIu64 " '%s'\n",
-           m->id, m->folderId, m->date, m->sender.get(), m->subject.get(),
-           m->flags, m->tags.get()));
+           m->mId, m->mFolderId, m->mDate, m->mSender.get(), m->mSubject.get(),
+           m->mFlags, m->mTags.get()));
 }
 
-void DatabaseCore::OnMessageRemoved(Folder* folder, Message* m) {
+void DatabaseCore::OnMessageRemoved(Message* m) {
   MOZ_LOG(gPanoramaLog, LogLevel::Debug,
-          ("DatabaseCore::OnMessageRemoved: %" PRIu64 " %" PRIu64 " %" PRId64
+          ("DatabaseCore::OnMessageRemoved: %" PRId32 " %" PRIu64 " %" PRId64
            " '%s' '%s' %" PRIu64 " '%s'\n",
-           m->id, m->folderId, m->date, m->sender.get(), m->subject.get(),
-           m->flags, m->tags.get()));
+           m->mId, m->mFolderId, m->mDate, m->mSender.get(), m->mSubject.get(),
+           m->mFlags, m->mTags.get()));
 }
 
-}  // namespace mailnews
-}  // namespace mozilla
+NS_IMETHODIMP DatabaseCore::OpenFolderDB(nsIMsgFolder* aFolder,
+                                         bool aLeaveInvalidDB,
+                                         nsIMsgDatabase** _retval) {
+  nsCOMPtr<nsIFolder> folder;
+  nsresult rv = GetFolderForMsgFolder(aFolder, getter_AddRefs(folder));
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!folder) {
+    return NS_MSG_ERROR_FOLDER_SUMMARY_MISSING;
+  }
+
+  uint64_t folderId = folder->GetId();
+  WeakPtr<PerFolderDatabase> existingDatabase = mOpenDatabases.Get(folderId);
+  if (existingDatabase) {
+    NS_IF_ADDREF(*_retval = existingDatabase);
+    return NS_OK;
+  }
+
+  RefPtr<PerFolderDatabase> db =
+      new PerFolderDatabase(mFolderDatabase, mMessageDatabase, folderId,
+                            folder->GetFlags() & nsMsgFolderFlags::Newsgroup);
+  NS_IF_ADDREF(*_retval = db);
+
+  mOpenDatabases.InsertOrUpdate(folderId, db);
+
+  return NS_OK;
+}
+NS_IMETHODIMP DatabaseCore::CreateNewDB(nsIMsgFolder* aFolder,
+                                        nsIMsgDatabase** _retval) {
+  nsAutoCString name;
+  aFolder->GetName(name);
+  nsCOMPtr<nsIMsgFolder> msgParent;
+  aFolder->GetParent(getter_AddRefs(msgParent));
+  nsCOMPtr<nsIFolder> parent;
+  GetFolderForMsgFolder(msgParent, getter_AddRefs(parent));
+
+  nsCOMPtr<nsIFolder> unused;
+  mFolderDatabase->InsertFolder(parent, name, getter_AddRefs(unused));
+
+  return OpenFolderDB(aFolder, false, _retval);
+}
+NS_IMETHODIMP DatabaseCore::OpenDBFromFile(nsIFile* aFile,
+                                           nsIMsgFolder* aFolder, bool aCreate,
+                                           bool aLeaveInvalidDB,
+                                           nsIMsgDatabase** _retval) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+NS_IMETHODIMP DatabaseCore::RegisterPendingListener(
+    nsIMsgFolder* folder, nsIDBChangeListener* listener) {
+  // TODO: Decide if we really need this still.
+  return NS_OK;
+}
+NS_IMETHODIMP DatabaseCore::UnregisterPendingListener(
+    nsIDBChangeListener* listener) {
+  return NS_OK;
+}
+NS_IMETHODIMP DatabaseCore::CachedDBForFolder(nsIMsgFolder* aFolder,
+                                              nsIMsgDatabase** _retval) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+NS_IMETHODIMP DatabaseCore::CachedDBForFilePath(nsIFile* filePath,
+                                                nsIMsgDatabase** _retval) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+NS_IMETHODIMP DatabaseCore::ForceFolderDBClosed(nsIMsgFolder* aFolder) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+NS_IMETHODIMP DatabaseCore::GetOpenDBs(
+    nsTArray<RefPtr<nsIMsgDatabase>>& aOpenDBs) {
+  aOpenDBs.Clear();
+  return NS_OK;
+}
+
+nsresult DatabaseCore::GetFolderForMsgFolder(nsIMsgFolder* aMsgFolder,
+                                             nsIFolder** aFolder) {
+  NS_ENSURE_ARG(aMsgFolder);
+  NS_ENSURE_ARG_POINTER(aFolder);
+
+  nsresult rv;
+
+  bool isServer;
+  aMsgFolder->GetIsServer(&isServer);
+  if (isServer) {
+    nsCOMPtr<nsIMsgIncomingServer> incomingServer;
+    rv = aMsgFolder->GetServer(getter_AddRefs(incomingServer));
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsAutoCString serverKey;
+    rv = incomingServer->GetKey(serverKey);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = mFolderDatabase->GetFolderByPath(serverKey, aFolder);
+    NS_ENSURE_SUCCESS(rv, rv);
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIMsgFolder> msgParent;
+  rv = aMsgFolder->GetParent(getter_AddRefs(msgParent));
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIFolder> parent;
+  rv = GetFolderForMsgFolder(msgParent, getter_AddRefs(parent));
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!parent) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsAutoCString msgName;
+  rv = aMsgFolder->GetName(msgName);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return parent->GetChildNamed(msgName, aFolder);
+}
+
+}  // namespace mozilla::mailnews
