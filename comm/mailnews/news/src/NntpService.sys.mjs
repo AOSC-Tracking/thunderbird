@@ -4,6 +4,11 @@
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  NewsDownloader: "resource:///modules/NewsDownloader.sys.mjs",
+});
+
 /**
  * @implements {nsINntpService}
  */
@@ -184,19 +189,30 @@ export class NntpService {
         ];
         client.send(content.join("\r\n"));
         client.send("\r\n.\r\n");
+      };
 
-        newsFolder.removeMessage(messageKey);
-        newsFolder.cancelComplete();
+      client.onDone = status => {
+        if (Components.isSuccessCode(status)) {
+          newsFolder.removeMessage(messageKey);
+          newsFolder.cancelComplete();
+        }
       };
     });
   }
 
   downloadNewsgroupsForOffline(msgWindow, urlListener) {
-    const { NewsDownloader } = ChromeUtils.importESModule(
-      "resource:///modules/NewsDownloader.sys.mjs"
-    );
-    const downloader = new NewsDownloader(msgWindow, urlListener);
-    downloader.start();
+    const downloader = new lazy.NewsDownloader(msgWindow, urlListener);
+    downloader.downloadAllOfflineNewsgroups();
+  }
+
+  downloadFolderForOffline(folder, msgWindow) {
+    const downloader = new lazy.NewsDownloader(msgWindow);
+    downloader.downloadFolder(folder);
+  }
+
+  downloadMessagesForOffline(folder, keys, msgWindow) {
+    const downloader = new lazy.NewsDownloader(msgWindow);
+    downloader.downloadMessages(folder, keys);
   }
 
   /**

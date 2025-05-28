@@ -18,6 +18,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   migrateToolbarForSpace: "resource:///modules/ToolbarMigration.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
+  SearchIntegration: "resource:///modules/SearchIntegration.sys.mjs",
 });
 
 export var MailMigrator = {
@@ -28,7 +29,7 @@ export var MailMigrator = {
   _migrateUI() {
     // The code for this was ported from
     // mozilla/browser/components/nsBrowserGlue.js
-    const UI_VERSION = 47;
+    const UI_VERSION = 50;
     const UI_VERSION_PREF = "mail.ui-rdf.version";
     let currentUIVersion = Services.prefs.getIntPref(UI_VERSION_PREF, 0);
 
@@ -235,6 +236,34 @@ export var MailMigrator = {
           Services.prefs.setBoolPref("mail.prompt_purge_threshold", old);
           Services.prefs.clearUserPref("mail.prompt_purge_threshhold");
         } catch (ex) {}
+      }
+
+      if (currentUIVersion < 48) {
+        // Reflect the actual state of the search integration in the platform
+        // independent pref.
+        Services.prefs.setBoolPref(
+          "searchintegration.enable",
+          lazy.SearchIntegration?.prefEnabled ?? false
+        );
+      }
+
+      if (currentUIVersion < 49) {
+        // Migrate xulStore UI settings to actual prefs if we have them.
+        const docURL = "chrome://messenger/content/messenger.xhtml";
+        if (Services.xulStore.hasValue(docURL, "threadPane", "view")) {
+          const view = Services.xulStore.getValue(docURL, "threadPane", "view");
+          Services.prefs.setIntPref(
+            "mail.threadpane.listview",
+            view == "table" ? 1 : 0
+          );
+          Services.xulStore.removeValue(docURL, "threadPane", "view");
+        }
+      }
+
+      if (currentUIVersion < 50) {
+        // Previous UI let users set this. Non-default value interacts badly
+        // with current dark mode.
+        Services.prefs.clearUserPref("browser.display.document_color_use");
       }
 
       // Migration tasks that may take a long time are not run immediately, but

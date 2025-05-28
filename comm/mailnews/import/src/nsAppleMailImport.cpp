@@ -14,6 +14,7 @@
 #include "nsIFile.h"
 #include "nsLocalFile.h"
 #include "nsIStringBundle.h"
+#include "nsIMsgDatabase.h"
 #include "nsIMsgFolder.h"
 #include "nsIMsgHdr.h"
 #include "nsIMsgPluggableStore.h"
@@ -462,7 +463,7 @@ nsAppleMailImportMail::ImportMailbox(nsIImportMailboxDescriptor* aMailbox,
     rv = messagesFolder->GetDirectoryEntries(
         getter_AddRefs(directoryEnumerator));
     if (NS_FAILED(rv)) {
-      ReportStatus(u"ApplemailImportMailboxConvertError", mailboxName,
+      ReportStatus(u"ApplemailImportMailboxConverterror", mailboxName,
                    errorLog);
       SetLogs(successLog, errorLog, aSuccessLog, aErrorLog);
       return NS_ERROR_FAILURE;
@@ -478,11 +479,20 @@ nsAppleMailImportMail::ImportMailbox(nsIImportMailboxDescriptor* aMailbox,
       return NS_ERROR_FAILURE;
     }
 
+    nsCOMPtr<nsIMsgDatabase> db;
+    rv = aDstFolder->GetMsgDatabase(getter_AddRefs(db));
+    if (NS_FAILED(rv)) {
+      ReportStatus(u"ApplemailImportMailboxConverterror", mailboxName,
+                   errorLog);
+      SetLogs(successLog, errorLog, aSuccessLog, aErrorLog);
+      return NS_ERROR_FAILURE;
+    }
+
     bool hasMore = false;
-    nsCOMPtr<nsIOutputStream> outStream;
 
     while (NS_SUCCEEDED(directoryEnumerator->HasMoreElements(&hasMore)) &&
            hasMore) {
+      nsCOMPtr<nsIOutputStream> outStream;
       // get the next file entry
       nsCOMPtr<nsIFile> currentEntry;
       directoryEnumerator->GetNextFile(getter_AddRefs(currentEntry));
@@ -498,7 +508,9 @@ nsAppleMailImportMail::ImportMailbox(nsIImportMailboxDescriptor* aMailbox,
       if (!StringEndsWith(leafName, u".emlx"_ns)) continue;
 
       nsCOMPtr<nsIMsgDBHdr> msgHdr;
-      rv = msgStore->GetNewMsgOutputStream(aDstFolder, getter_AddRefs(msgHdr),
+      rv = db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(msgHdr));
+      if (NS_FAILED(rv)) break;
+      rv = msgStore->GetNewMsgOutputStream(aDstFolder,
                                            getter_AddRefs(outStream));
       if (NS_FAILED(rv)) break;
 
@@ -506,11 +518,11 @@ nsAppleMailImportMail::ImportMailbox(nsIImportMailboxDescriptor* aMailbox,
       if (NS_SUCCEEDED(nsEmlxHelperUtils::AddEmlxMessageToStream(currentEntry,
                                                                  outStream))) {
         mProgress++;
-        msgStore->FinishNewMessage(outStream, msgHdr);
-        outStream = nullptr;
+        nsAutoCString storeToken;
+        msgStore->FinishNewMessage(aDstFolder, outStream, storeToken);
+        msgHdr->SetStoreToken(storeToken);
       } else {
-        msgStore->DiscardNewMessage(outStream, msgHdr);
-        outStream = nullptr;
+        msgStore->DiscardNewMessage(aDstFolder, outStream);
         break;
       }
     }

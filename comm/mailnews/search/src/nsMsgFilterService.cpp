@@ -196,12 +196,6 @@ NS_IMETHODIMP nsMsgFilterService::OpenFilterList(
   return rv;
 }
 
-NS_IMETHODIMP nsMsgFilterService::CloseFilterList(
-    nsIMsgFilterList* filterList) {
-  // NS_ASSERTION(false,"CloseFilterList doesn't do anything yet");
-  return NS_OK;
-}
-
 /* save without deleting */
 NS_IMETHODIMP nsMsgFilterService::SaveFilterList(nsIMsgFilterList* filterList,
                                                  nsIFile* filterFile) {
@@ -230,11 +224,6 @@ NS_IMETHODIMP nsMsgFilterService::SaveFilterList(nsIMsgFilterList* filterList,
     }
   }
   return rv;
-}
-
-NS_IMETHODIMP nsMsgFilterService::CancelFilterList(
-    nsIMsgFilterList* filterList) {
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 nsresult nsMsgFilterService::BackUpFilterFile(nsIFile* aFilterFile,
@@ -1029,10 +1018,7 @@ nsMsgFilterService::ApplyFiltersToFolders(
 
   RefPtr<nsMsgFilterAfterTheFact> filterExecutor =
       new nsMsgFilterAfterTheFact(aMsgWindow, aFilterList, aFolders, aCallback);
-  if (filterExecutor)
-    return filterExecutor->AdvanceToNextFolder();
-  else
-    return NS_ERROR_OUT_OF_MEMORY;
+  return filterExecutor->AdvanceToNextFolder();
 }
 
 NS_IMETHODIMP nsMsgFilterService::AddCustomAction(
@@ -1286,10 +1272,7 @@ NS_IMETHODIMP nsMsgFilterService::ApplyFilters(
   RefPtr<nsMsgApplyFiltersToMessages> filterExecutor =
       new nsMsgApplyFiltersToMessages(aMsgWindow, filterList, {aFolder},
                                       aMsgHdrList, aFilterType, aCallback);
-
-  if (filterExecutor) return filterExecutor->AdvanceToNextFolder();
-
-  return NS_ERROR_OUT_OF_MEMORY;
+  return filterExecutor->AdvanceToNextFolder();
 }
 
 /* void OnStartCopy (); */

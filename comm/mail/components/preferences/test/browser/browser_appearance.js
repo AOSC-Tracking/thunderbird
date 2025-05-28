@@ -12,7 +12,8 @@ var { click_menus_in_sequence } = ChromeUtils.importESModule(
   "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
-let prefsWindow,
+let threadTree,
+  prefsWindow,
   prefsDocument,
   tabmail,
   folderSource,
@@ -33,11 +34,15 @@ add_setup(async () => {
   // Access the folder once to let the code store the current default settings.
   tabmail = document.getElementById("tabmail");
   tabmail.currentAbout3Pane.displayFolder(folderSource);
+  threadTree = tabmail.currentAbout3Pane.threadTree;
 
   ({ prefsWindow, prefsDocument } = await openNewPrefsTab("paneAppearance"));
 
   registerCleanupFunction(() => {
     MailServices.accounts.removeAccount(account, false);
+    Services.prefs.clearUserPref("mail.threadpane.listview");
+    Services.prefs.clearUserPref("mail.threadpane.cardsview.rowcount");
+    Services.prefs.clearUserPref("mail.threadpane.table.horizontal_scroll");
     Services.prefs.clearUserPref("mailnews.default_view_flags");
     Services.prefs.clearUserPref("mailnews.default_sort_type");
     Services.prefs.clearUserPref("mailnews.default_sort_order");
@@ -50,11 +55,138 @@ add_setup(async () => {
  * @param {integer} index - The index of the menupoup children to select.
  */
 async function changeMenuItem(menu, index) {
+  menu.scrollIntoView({ block: "start", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(menu, {}, prefsWindow);
   await BrowserTestUtils.waitForPopupEvent(menu.menupopup, "shown");
   menu.menupopup.activateItem(menu.menupopup.children[index]);
   await BrowserTestUtils.waitForPopupEvent(menu.menupopup, "hidden");
 }
+
+add_task(async function test_cards_table_switch() {
+  info("Check that the default options are correct");
+
+  Assert.equal(
+    prefsDocument.getElementById("appearanceViewStyle").selectedItem.value,
+    Services.prefs.getIntPref("mail.threadpane.listview"),
+    "The thread appearance style should match the default pref"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(
+      prefsDocument.getElementById("cardsViewOptions")
+    ),
+    "Cards view options are visible"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(prefsDocument.getElementById("tableViewOptions")),
+    "Table view options are hidden"
+  );
+
+  info("Test changing from 3 to 2 rows");
+
+  Assert.equal(
+    prefsDocument.getElementById("appearanceCardRows").selectedItem.value,
+    Services.prefs.getIntPref("mail.threadpane.cardsview.rowcount"),
+    "The cards row style should match the default pref"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(
+    prefsDocument.getElementById("cardStyle2Rows"),
+    {},
+    prefsWindow
+  );
+
+  await BrowserTestUtils.waitForMutationCondition(
+    threadTree,
+    {
+      attributes: true,
+      attributeFilter: ["class"],
+    },
+    () => threadTree.classList.contains("cards-row-compact")
+  );
+
+  info("Test switching to table view");
+
+  const switchedToTable = BrowserTestUtils.waitForAttribute(
+    "rows",
+    threadTree,
+    "thread-row"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(
+    prefsDocument.getElementById("appearanceStyleTable"),
+    {},
+    prefsWindow
+  );
+
+  await switchedToTable;
+
+  Assert.ok(
+    BrowserTestUtils.isHidden(prefsDocument.getElementById("cardsViewOptions")),
+    "Cards view options are hidden"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(
+      prefsDocument.getElementById("tableViewOptions")
+    ),
+    "Table view options are visible"
+  );
+
+  info("Test horizontal scroll option");
+
+  const tableHorizontalScroll = prefsDocument.getElementById(
+    "tableHorizontalScroll"
+  );
+  Assert.equal(
+    tableHorizontalScroll.checked,
+    Services.prefs.getBoolPref("mail.threadpane.table.horizontal_scroll"),
+    "The table horizontal scroll should match the default pref"
+  );
+
+  tableHorizontalScroll.scrollIntoView({ block: "start", behavior: "instant" });
+  EventUtils.synthesizeMouseAtCenter(tableHorizontalScroll, {}, prefsWindow);
+
+  await TestUtils.waitForCondition(
+    () => threadTree.table.isHorizontalScroll,
+    "The table view should have horizontal scroll"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(tableHorizontalScroll, {}, prefsWindow);
+
+  await TestUtils.waitForCondition(
+    () => !threadTree.table.isHorizontalScroll,
+    "The table view shouldn't have horizontal scroll"
+  );
+
+  info("Test switching back to cards view");
+
+  const switchedToCards = BrowserTestUtils.waitForAttribute(
+    "rows",
+    threadTree,
+    "thread-card"
+  );
+
+  const appearanceStyleCards = prefsDocument.getElementById(
+    "appearanceStyleCards"
+  );
+  appearanceStyleCards.scrollIntoView({
+    block: "end",
+    behavior: "instant",
+  });
+  EventUtils.synthesizeMouseAtCenter(appearanceStyleCards, {}, prefsWindow);
+
+  await switchedToCards;
+
+  Assert.ok(
+    BrowserTestUtils.isVisible(
+      prefsDocument.getElementById("cardsViewOptions")
+    ),
+    "Cards view options are visible"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(prefsDocument.getElementById("tableViewOptions")),
+    "Table view options are hidden"
+  );
+});
 
 add_task(async function test_default_preferences_flags() {
   info("Check that the menulist selected values match the preferences values.");
@@ -79,15 +211,15 @@ add_task(async function test_default_preferences_flags() {
 add_task(async function test_edit_flags_all_folders() {
   info("Ensure that changing the menulist updates the preferences correctly.");
 
-  EventUtils.synthesizeMouseAtCenter(
-    prefsDocument.getElementById("defaultFlagGrouped"),
-    {},
-    prefsWindow
+  const defaultFlagUnthreaded = prefsDocument.getElementById(
+    "defaultFlagUnthreaded"
   );
+  defaultFlagUnthreaded.scrollIntoView({ block: "start", behavior: "instant" });
+  EventUtils.synthesizeMouseAtCenter(defaultFlagUnthreaded, {}, prefsWindow);
 
   Assert.equal(
     Services.prefs.getIntPref("mailnews.default_view_flags"),
-    40,
+    0,
     "The view flags pref should have been updated"
   );
 
@@ -99,8 +231,15 @@ add_task(async function test_edit_flags_all_folders() {
     "The sort type pref should have been updated"
   );
 
+  const defaultSortOrderAscending = prefsDocument.getElementById(
+    "defaultSortOrderAscending"
+  );
+  defaultSortOrderAscending.scrollIntoView({
+    block: "start",
+    behavior: "instant",
+  });
   EventUtils.synthesizeMouseAtCenter(
-    prefsDocument.getElementById("defaultSortOrderAscending"),
+    defaultSortOrderAscending,
     {},
     prefsWindow
   );
@@ -131,24 +270,29 @@ add_task(async function test_edit_flags_all_folders() {
   );
   folderSource.msgDatabase = null;
 
+  Assert.equal(
+    threadTree.table.body.getAttribute("role"),
+    "treegrid",
+    "The currently selected folder should be presented as Tree Grid View"
+  );
+
   info("Apply the new flags to all existing folders");
 
   const applyPromise = TestUtils.topicObserved("global-view-flags-changed");
 
   const dialogPromise = BrowserTestUtils.promiseAlertDialog("accept");
-  EventUtils.synthesizeMouseAtCenter(
-    prefsDocument.getElementById("applyAll"),
-    {},
-    prefsWindow
-  );
+  const applyAll = prefsDocument.getElementById("applyAll");
+  applyAll.scrollIntoView({ block: "start", behavior: "instant" });
+  EventUtils.synthesizeMouseAtCenter(applyAll, {}, prefsWindow);
   await dialogPromise;
   await applyPromise;
 
   for (const folder of [folderSource, folderParent, folderChild1]) {
     const dbInfo = folder.msgDatabase.dBFolderInfo;
-    Assert.ok(
-      !(dbInfo.viewFlags & Ci.nsMsgViewFlagsType.kGroupBySort),
-      `viewFlags should be grouped by sort for ${folder.name}`
+    Assert.equal(
+      dbInfo.viewFlags,
+      Ci.nsMsgViewFlagsType.kNone,
+      `viewFlags should be unthreaded for ${folder.name}`
     );
     Assert.equal(
       dbInfo.sortType,
@@ -162,20 +306,33 @@ add_task(async function test_edit_flags_all_folders() {
     );
     folder.msgDatabase = null;
   }
+
+  Assert.equal(
+    threadTree.table.body.getAttribute("role"),
+    "listbox",
+    "The currently selected folder should be presented as Listbox"
+  );
 });
 
 add_task(async function test_edit_flags_single_folders() {
   info("Change flags and only apply them to a single folder");
 
-  EventUtils.synthesizeMouseAtCenter(
-    prefsDocument.getElementById("defaultFlagThreaded"),
-    {},
-    prefsWindow
+  const defaultFlagThreaded = prefsDocument.getElementById(
+    "defaultFlagThreaded"
   );
+  defaultFlagThreaded.scrollIntoView({ block: "start", behavior: "instant" });
+  EventUtils.synthesizeMouseAtCenter(defaultFlagThreaded, {}, prefsWindow);
   await changeMenuItem(prefsDocument.getElementById("defaultSortType"), 0);
 
+  const defaultSortOrderDescending = prefsDocument.getElementById(
+    "defaultSortOrderDescending"
+  );
+  defaultSortOrderDescending.scrollIntoView({
+    block: "start",
+    behavior: "instant",
+  });
   EventUtils.synthesizeMouseAtCenter(
-    prefsDocument.getElementById("defaultSortOrderDescending"),
+    defaultSortOrderDescending,
     {},
     prefsWindow
   );
@@ -185,6 +342,7 @@ add_task(async function test_edit_flags_single_folders() {
 
   let applyPromise = TestUtils.topicObserved("global-view-flags-changed");
 
+  chooseButton.scrollIntoView({ block: "start", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(chooseButton, {}, prefsWindow);
   await BrowserTestUtils.waitForPopupEvent(choosePopup, "shown");
   let dialogPromise = BrowserTestUtils.promiseAlertDialog("accept");
@@ -218,20 +376,27 @@ add_task(async function test_edit_flags_single_folders() {
 
   info("Change flags and apply them to a folder and its children");
 
-  EventUtils.synthesizeMouseAtCenter(
-    prefsDocument.getElementById("defaultFlagGrouped"),
-    {},
-    prefsWindow
-  );
+  const defaultFlagGrouped = prefsDocument.getElementById("defaultFlagGrouped");
+  defaultFlagGrouped.scrollIntoView({ block: "start", behavior: "instant" });
+  EventUtils.synthesizeMouseAtCenter(defaultFlagGrouped, {}, prefsWindow);
   await changeMenuItem(prefsDocument.getElementById("defaultSortType"), 1);
+
+  const defaultSortOrderAscending = prefsDocument.getElementById(
+    "defaultSortOrderAscending"
+  );
+  defaultSortOrderAscending.scrollIntoView({
+    block: "start",
+    behavior: "instant",
+  });
   EventUtils.synthesizeMouseAtCenter(
-    prefsDocument.getElementById("defaultSortOrderAscending"),
+    defaultSortOrderAscending,
     {},
     prefsWindow
   );
 
   applyPromise = TestUtils.topicObserved("global-view-flags-changed");
 
+  chooseButton.scrollIntoView({ block: "start", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(chooseButton, {}, prefsWindow);
   await BrowserTestUtils.waitForPopupEvent(choosePopup, "shown");
   dialogPromise = BrowserTestUtils.promiseAlertDialog("accept");
@@ -248,7 +413,7 @@ add_task(async function test_edit_flags_single_folders() {
   for (const folder of [folderParent, folderChild1, folderChild2]) {
     const dbFolderInfo = folder.msgDatabase.dBFolderInfo;
     Assert.ok(
-      !(dbFolderInfo.viewFlags & Ci.nsMsgViewFlagsType.kGroupBySort),
+      dbFolderInfo.viewFlags & Ci.nsMsgViewFlagsType.kGroupBySort,
       `viewFlags should be grouped by sort for ${folder.name}`
     );
     Assert.equal(

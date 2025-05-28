@@ -161,19 +161,6 @@ pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?loc
   pref("app.update.noWindowAutoRestart.delayMs", 300000);
 #endif
 
-// The Multi Session Install Lockout prevents updates from being installed at
-// startup when they normally would be if there are other instances using the
-// installation. We only do this for a limited amount of time before we go ahead
-// and apply the update anyways.
-// Hopefully, at some point, updating Thunderbird while it is running will not break
-// things and this mechanism can be removed.
-// Note that these prefs are bit dangerous because having different values in
-// different profiles could cause erratic behavior.
-// This feature is also affected by
-// `app.update.multiSessionInstallLockout.timeoutMs`, which is in the branding
-// section.
-pref("app.update.multiSessionInstallLockout.enabled", true);
-
 // URL for "Learn More" for DataCollection
 pref("toolkit.datacollection.infoURL",
      "https://www.mozilla.org/thunderbird/legal/privacy/#telemetry");
@@ -215,6 +202,11 @@ pref("extensions.abuseReport.enabled", false);
 // This is needed on Wayland systems, but can be enabled for other
 // systems for debug purposes as well. See Bug 1905622.
 pref("extensions.openPopupDelayedFullyLoaded.enabled", false);
+
+// Status information used by our IAN system. Default to true, because a false
+// positive is worse then a false negative IAN evaluation.
+pref("extensions.hasExtensionsInstalled", true);
+pref("extensions.hasExperimentsInstalled", true);
 
 // Strict compatibility makes add-ons incompatible by default.
 #ifndef RELEASE_OR_BETA
@@ -616,6 +608,13 @@ pref("toolbar.customization.usesheet", true);
 #else
 pref("toolbar.customization.usesheet", false);
 #endif
+
+// Comma separated list of allowed hostnames to have the account data at.
+pref("mail.allowed_unc_hosts", "");
+
+// Comma separated list of allowed hostnames detached attachments can
+// be located at.
+pref("mail.allowed_attachment_hostnames", "");
 
 // Start compositions with (empty) attachment pane showing
 pref("mail.compose.show_attachment_pane", false);
@@ -1472,3 +1471,15 @@ pref("mail.accounthub.enabled", false);
 
 // Export to mobile logging level.
 pref("mail.qrexport.loglevel", "Warn");
+
+// New calendar dialog
+pref("calendar.dialogs.new.enabled", false);
+
+// Layout and UI settings.
+// List view style for the thread pane:
+// 0 - Cards view.
+// 1 - Table view.
+pref("mail.threadpane.listview", 0);
+
+// Row count for the cards view, currently bound to a range between 2 and 3.
+pref("mail.threadpane.cardsview.rowcount", 3);

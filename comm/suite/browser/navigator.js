@@ -53,11 +53,10 @@ var ZoomListeners =
   name: "browser.content.full-zoom",
 
   QueryInterface:
-  XPCOMUtils.generateQI([Ci.nsIObserver,
-                         Ci.nsIContentPrefObserver,
-                         Ci.nsIContentPrefCallback2,
-                         Ci.nsISupportsWeakReference,
-                         Ci.nsISupports]),
+  ChromeUtils.generateQI([Ci.nsIObserver,
+                          Ci.nsIContentPrefObserver,
+                          Ci.nsIContentPrefCallback2,
+                          Ci.nsISupportsWeakReference]),
 
   init: function ()
   {
@@ -180,8 +179,8 @@ var gStatusBarPopupIconPrefListener =
 };
 
 var gFormSubmitObserver = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIFormSubmitObserver,
-                                         Ci.nsIObserver]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIFormSubmitObserver,
+                                          Ci.nsIObserver]),
 
   panel: null,
 
@@ -1547,7 +1546,7 @@ var BrowserSearch = {
    * @param [optional] aEvent
    *        The event object passed from the caller.
    */
-  loadSearch: function BrowserSearch_search(aSearchText, aNewWindowOrTab, aEvent) {
+  loadSearch: function BrowserSearch_search(aSearchText) {
     var engine;
 
     // If the search bar is visible, use the current engine, otherwise, fall
@@ -1565,20 +1564,12 @@ var BrowserSearch = {
     // SearchService._addEngineToStore() should fail for such an engine),
     // but let's be on the safe side.
     // If you change the code here, remember to make the corresponding
-    // changes in suite/mailnews/mailWindowOverlay.js->MsgOpenSearch
+    // changes in suite/base/content/nsContextMenu.js->openSearch
     if (!submission)
       return;
 
-    if (aNewWindowOrTab) {
-      let newTabPref = Services.prefs.getBoolPref("browser.search.opentabforcontextsearch");
-      let where = newTabPref ? aEvent && aEvent.shiftKey ? "tabshifted" : "tab" : "window";
-      openUILinkIn(submission.uri.spec, where, null, submission.postData);
-      if (where == "window")
-        return;
-    } else {
-      loadURI(submission.uri.spec, null, submission.postData, false);
-      window.content.focus();
-    }
+    loadURI(submission.uri.spec, null, submission.postData, false);
+    window.content.focus();
   },
 
   /**

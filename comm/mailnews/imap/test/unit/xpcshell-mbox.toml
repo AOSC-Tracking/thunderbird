@@ -1,0 +1,14 @@
+[DEFAULT]
+head = "head_server.js"
+tags = [
+  "mbox",
+  "cpp",
+]
+dupe-manifest = true
+run-sequentially = true
+
+["include:xpcshell-shared.ini"]
+
+["test_fetchWhileLocked.js"]
+
+["test_nstmpCleanup.js"]

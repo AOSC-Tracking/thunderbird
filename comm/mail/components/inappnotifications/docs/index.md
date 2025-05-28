@@ -48,7 +48,7 @@ The seeds are stored in an object, keyed by notification ID with the value being
 
 ## Data format/contents
 
-The schema for the notifiation data is maintained at https://github.com/thunderbird/thunderbird-notifications/.
+The schema for the notification data is maintained at https://github.com/thunderbird/thunderbird-notifications/.
 
 ### Text fields
 
@@ -66,9 +66,9 @@ Type               | Behavior                                                   
 -------------------|----------------------------------------------------------------------------------------------|-------------------------------------|----------------------------------------
 `donation_browser` | Opens tab in the default system browser                                                      | `URL`                               | `interaction`
 `donation_tab`     | Opens tab within the application                                                             | `URL`                               | `interaction`
-`donation`         | Shows a dismissable notification with illustrations related to our typical fundraising look. | `title`, `description`, `CTA`/`URL` | `shown`, `interaction`, `closed`, `dismissed`
-`blog`             | Shows a dismissable notification with a simple style and a "circle-question" icon.           | `title`, `description`, `CTA`/`URL` | `shown`, `interaction`, `closed`, `dismissed`
-`message`          | Shows a dismissable notification with a simple style and a "circle-error" icon.              | `title`, `description`, `CTA`/`URL` | `shown`, `interaction`, `closed`, `dismissed`
+`donation`         | Shows a dismissable notification with illustrations related to our typical fundraising look. This notification type can be disabled by setting Enterprise Policy 'InAppNotification.DonationEnabled' to false.                                     | `title`, `description`, `CTA`/`URL` | `shown`, `interaction`, `closed`, `dismissed`
+`blog`             | Shows a dismissable notification with a simple style and a "circle-question" icon. The use of this type is primarily for survey invitations and can be disabled by setting Enterprise Policy 'InAppNotification.SurveyEnabled' to false.       | `title`, `description`, `CTA`/`URL` | `shown`, `interaction`, `closed`, `dismissed`
+`message`          | Shows a dismissable notification with a simple style and a "circle-error" icon. The use of this type is primarily for important (but not critical) updates and can be disabled by setting Enterprise Policy 'InAppNotification.MessageEnabled` to false. | `title`, `description`, `CTA`/`URL` | `shown`, `interaction`, `closed`, `dismissed`
 `security`         | Shows a dismissable notification with a simple style and a "warning" icon.                   | `title`, `description`, `CTA`/`URL` | `shown`, `interaction`, `closed`, `dismissed`
 
 Notably the `shown` telemetry event is triggered every time a notification is shown, which can be multiple times per profile, since it will be shown every time the application is launched until any of the other three events occurs.
@@ -98,6 +98,8 @@ Single values are `locales`, `versions`, `channels` and `operating systems` - th
 `displayed_notifications`, `pref_true` and `pref_false` compare against lists of values. So all of the items listed in the targeting profile have to be true for the profile to match.
 
 If any key is missing or `null` it will not affect the filtering result. Meanwhile an empty array will behave differently for the single values, leading to the profile always matching, while it behaves like `null` for the properties for lists of values.
+
+For example the `locales` values will be compared to the current app locale (`Services.locale.appLocaleAsBCP47`) without any further locale matching logic, so `en` doesn't match `en-US`. As such, all values listed should be the BCP 47 (`fr`, `cak`, `en-US` etc.) language tags that we distribute the application with. The file [`/mail/locales/shipped-locales`](https://searchfox.org/comm-central/source/mail/locales/shipped-locales) in this repository lists locales we are currently distributing for release builds.
 
 (displayed-notifications)=
 ##### displayed_notifications

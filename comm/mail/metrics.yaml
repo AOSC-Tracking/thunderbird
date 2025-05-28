@@ -185,10 +185,9 @@ mail:
       - layers.acceleration.disabled
       - layout.css.always_underline_links
       - ldap_2.autoComplete.useDirectory
-      - mail.addressDisplayFormat
       - mail.biff.alert.show_preview
       - mail.biff.alert.show_sender
-      - mail.biff.alert.show_subjec
+      - mail.biff.alert.show_subject
       - mail.biff.play_sound
       - mail.biff.show_alert
       - mail.biff.show_tray_icon
@@ -212,7 +211,6 @@ mail:
       - mail.enable_autocomplete
       - mail.fixed_width_messages
       - mail.forward_add_extension
-      - mail.mailnews.scroll_to_new_message
       - mail.mdn.report.enabled
       - mail.minimizeToTray
       - mail.operate_on_msgs_in_collapsed_threads
@@ -235,6 +233,7 @@ mail:
       - mailnews.mark_message_read.auto
       - mailnews.mark_message_read.delay
       - mailnews.message_display.disable_remote_image
+      - mailnews.scroll_to_new_message
       - mailnews.sendformat.auto_downgrade
       - mailnews.start_page.enabled
       - messenger.options.getAttentionOnNewMessages
@@ -246,20 +245,12 @@ mail:
       - network.proxy.socks_remote_dns
       - offline.autoDetect
       - places.history.enabled
-      - pref.advanced.proxies.disable_button.reload
-      - pref.ldap.disable_button.edit_directories
-      - pref.privacy.disable_button.cookie_exceptions
-      - pref.privacy.disable_button.view_cookies
-      - pref.privacy.disable_button.view_passwords
       - privacy.clearOnShutdown.cache
       - privacy.donottrackheader.enabled
       - purple.conversations.im.send_typing
       - purple.logging.log_chats
       - purple.logging.log_ims
-      - purple.logging.log_system
       - searchintegration.enable
-      - security.disable_button.openCertManager
-      - security.disable_button.openDeviceManager
       - signon.autologin.proxy
       - widget.gtk.overlay-scrollbars.enabled
 
@@ -277,6 +268,8 @@ mail:
       - telemetry-client-dev@thunderbird.net
     expires: never
     labels:
+      - mail.addressDisplayFormat
+      - mail.biff.alert.preview_length
       - mail.pane_config.dynamic
       - mail.ui.display.dateformat.default
       - mail.ui.display.dateformat.thisweek
@@ -581,3 +574,32 @@ mail:
       result:
         description: Success or failure.
         type: string
+
+  notification_enabled_actions:
+    type: string_list
+    description:
+      The enabled actions on the new mail notification, in order.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1955165
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1955165
+    data_sensitivity:
+      - technical
+    notification_emails:
+      - telemetry-client-dev@thunderbird.net
+    expires: never
+
+  notification_used_actions:
+    type: labeled_counter
+    description: >
+       A count of how many times each new mail notification action is used.
+       Labels identify the actions, as defined in MailNotificationManager.sys.mjs.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1955165
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1955165
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - telemetry-client-dev@thunderbird.net
+    expires: never

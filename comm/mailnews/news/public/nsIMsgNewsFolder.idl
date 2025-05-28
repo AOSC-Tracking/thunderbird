@@ -93,14 +93,11 @@ interface nsIMsgNewsFolder : nsISupports {
   readonly attribute ACString charset;
 
   readonly attribute AUTF8String newsrcLine;
-  readonly attribute ACString optionLines;
-  readonly attribute ACString unsubscribedNewsgroupLines;
   void SetNewsrcHasChanged(in boolean newsrcHasChanged);
   void updateSummaryFromNNTPInfo(in long oldest, in long youngest, in long total);
   void removeMessage(in nsMsgKey key);
   void removeMessages(in Array<nsMsgKey> keys);
   void cancelComplete();
-  void cancelFailed();
 
   ACString getMessageIdForKey(in nsMsgKey key);
 
@@ -128,4 +125,6 @@ interface nsIMsgNewsFolder : nsISupports {
    * @param aMsgWindow  The standard message window object, for error dialogs.
    */
   void cancelMessage(in nsIMsgDBHdr aMsgHdr, in nsIMsgWindow aMsgWindow);
+
+  void refreshSizeOnDisk();
 };

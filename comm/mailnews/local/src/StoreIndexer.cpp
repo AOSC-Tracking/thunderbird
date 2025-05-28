@@ -35,10 +35,10 @@ nsresult StoreIndexer::GoIndex(nsMsgLocalMailFolder* folder,
   // NOTE: the folder semaphore is not a thread-safe mechanism!
   // The folder just sets a member var to track who is currently holding
   // it. It's thoroughly main-thread-only.
-  nsresult rv = folder->AcquireSemaphore(this);
+  nsresult rv = folder->AcquireSemaphore(this, "StoreIndexer::GoIndex"_ns);
   NS_ENSURE_SUCCESS(rv, rv);
-  auto scopeGuard =
-      mozilla::MakeScopeExit([&] { folder->ReleaseSemaphore(this); });
+  auto scopeGuard = mozilla::MakeScopeExit(
+      [&] { folder->ReleaseSemaphore(this, "StoreIndexer::GoIndex"_ns); });
 
   mProgressFn = progressFn;
   mCompletionFn = completionFn;
@@ -93,7 +93,7 @@ nsresult StoreIndexer::GoIndex(nsMsgLocalMailFolder* folder,
 void StoreIndexer::ReleaseFolder() {
   // mFolder is only set if we took a lock on it.
   if (mFolder) {
-    mFolder->ReleaseSemaphore(this);
+    mFolder->ReleaseSemaphore(this, "StoreIndexer::ReleaseFolder"_ns);
     mFolder = nullptr;
   }
   // Release
@@ -177,8 +177,8 @@ NS_IMETHODIMP StoreIndexer::OnDataAvailable(nsIRequest* req,
 
       if (!mIsStupidlyLongLine) {
         MOZ_ASSERT(!incompleteLine);
-        // Ignore result of ParseFolderLine(). Better to just keep going.
-        mParser->ParseFolderLine(line.Elements(), line.Length());
+        // Ignore result of ParseAFolderLine(). Better to just keep going.
+        mParser->ParseAFolderLine(line.Elements(), line.Length());
       } else if (!incompleteLine) {
         // Soaked up entire stupidly-long-line, stop discarding data.
         mIsStupidlyLongLine = false;
@@ -214,8 +214,8 @@ NS_IMETHODIMP StoreIndexer::OnStopRequest(nsIRequest* req, nsresult status) {
   // This stuff is loosely based on nsMsgMailboxParser::PublishMsgHeader()
 
   // Tell the world about the message header (add to db, and view, if any)
-  nsCOMPtr<nsIMsgDBHdr> hdr = mParser->m_newMsgHdr;
-
+  nsCOMPtr<nsIMsgDBHdr> hdr;
+  mParser->GetNewMsgHdr(getter_AddRefs(hdr));
   if (hdr) {
     // nsParseMailMessageState will parse flags from X-Mozilla-Status[2],
     // if present. So we can check to see if a message has been deleted
@@ -253,7 +253,7 @@ NS_IMETHODIMP StoreIndexer::OnStopRequest(nsIRequest* req, nsresult status) {
   // Clear up our per-message vars.
   mStoreToken.Truncate();
   mCurrentMsgSize = 0;
-  mParser->m_newMsgHdr = nullptr;
+  mParser->SetNewMsgHdr(nullptr);
   mParser = nullptr;
   return NS_OK;
 }

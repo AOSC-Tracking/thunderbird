@@ -119,58 +119,39 @@ interface nsIMsgPluggableStore : nsISupports {
                   in AUTF8String aNewName);
 
   /**
-   * Get an output stream for a message in a folder.
+   * getNewMsgOutputStream() returns a new stream for writing raw message
+   * data into the given folder.
+   * NOTE: Each folder can have only one write stream active at a time.
+   * If this function is called on a folder with an outstanding write stream,
+   * the old stream will be closed and rolled back and a new one created.
    *
-   * @param aFolder folder to create a message output stream for.
-   * @param aNewHdr If aNewHdr is set on input, then this is probably for
-   *                offline storage of an existing message. If null, the
-   *                this is a newly downloaded message and the store needs
-   *                to create a new header for the new message. If the db
-   *                is invalid, this can be null. But if the db is valid,
-   *                the store should create a message header with the right
-   *                message key, or whatever other property it needs to set to
-   *                be able to retrieve the message contents later. If the store
-   *                needs to base any of this on the contents of the message,
-   *                it will need remember the message header and hook into
-   *                the output stream somehow to alter the message header.
+   * The caller then writes the message to the stream as usual, then calls
+   * either finishNewMessage() or discardNewMessage() when done.
    *
-   * @return The output stream to write to. The output stream will be positioned
-   *         for writing (e.g., for berkeley mailbox, it will be at the end).
+   * @param folder - The target nsIMsgFolder.
+   * @returns a stream that a raw message can be written to.
    */
-  nsIOutputStream getNewMsgOutputStream(in nsIMsgFolder aFolder,
-                                        inout nsIMsgDBHdr aNewHdr);
-
+  nsIOutputStream getNewMsgOutputStream(in nsIMsgFolder folder);
 
   /**
-   * Called when the current message is discarded, e.g., it is moved
-   * to an other folder as a filter action, or is deleted because it's
-   * a duplicate. This gives the berkeley mailbox store a chance to simply
-   * truncate the Inbox w/o leaving a deleted message in the store.
+   * finishNewMessage() concludes writing of a message, committing to
+   * the store all the data which was written to the stream.
    *
-   * discardNewMessage closes aOutputStream always unless the passed stream
-   * is nullptr due to error processing..
-   * (Clarification/Rationale in Bug 1121842, 1122698, 1242030)
-   *
-   * @param aOutputStream stream we were writing the message to be discarded to
-   * @param aNewHdr header of message to discard
+   * @param folder - The target nsIMsgFolder.
+   * @param stream - The stream obtained by getNewMsgOutputStream().
+   * @return a storeToken string which can used to retrieve the message
+   *         data back from the store (via getMsgInputStream2()).
    */
-  void discardNewMessage(in nsIOutputStream aOutputStream,
-                         in nsIMsgDBHdr aNewHdr);
+  AUTF8String finishNewMessage(in nsIMsgFolder folder, in nsIOutputStream stream);
 
   /**
-   * Must be called by code that calls getNewMsgOutputStream to finish
-   * the process of storing a new message, if the new msg has not been
-   * discarded. Could/should this be combined with discardNewMessage?
+   * discardNewMessage() concludes a write by throwing away any message
+   * data that was written to the stream.
    *
-   * finishNewMessage closes aOutputStream always unless the passed stream
-   * is nullptr due to error processing.
-   * (Clarification/Rationale in Bug 1121842, 1122698, 1242030)
-   *
-   * @param aOutputStream stream we were writing the message to.
-   * @param aNewHdr header of message finished.
+   * @param folder - The target nsIMsgFolder.
+   * @param stream - The stream obtained by getNewMsgOutputStream().
    */
-  void finishNewMessage(in nsIOutputStream aOutputStream,
-                        in nsIMsgDBHdr aNewHdr);
+  void discardNewMessage(in nsIMsgFolder folder, in nsIOutputStream stream);
 
   /**
    * Called by pop3 message filters when a newly downloaded message is being

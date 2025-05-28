@@ -502,22 +502,6 @@ NS_IMETHODIMP nsParseMailMessageState::GetAllHeaders(char** pHeaders,
   return NS_OK;
 }
 
-// generate headers as a string, with CRLF between the headers
-NS_IMETHODIMP nsParseMailMessageState::GetHeaders(char** pHeaders) {
-  NS_ENSURE_ARG_POINTER(pHeaders);
-  nsCString crlfHeaders;
-  char* curHeader = m_headers.begin();
-  for (uint32_t headerPos = 0; headerPos < m_headers.length();) {
-    crlfHeaders.Append(curHeader);
-    crlfHeaders.Append(CRLF);
-    int32_t headerLen = strlen(curHeader);
-    curHeader += headerLen + 1;
-    headerPos += headerLen + 1;
-  }
-  *pHeaders = ToNewCString(crlfHeaders);
-  return NS_OK;
-}
-
 /* largely lifted from mimehtml.c, which does similar parsing, sigh...
  */
 nsresult nsParseMailMessageState::ParseHeaders() {
@@ -1317,7 +1301,8 @@ void nsParseNewMailState::PublishMsgHeader(nsIMsgWindow* msgWindow) {
               nsresult rv =
                   m_downloadFolder->GetMsgStore(getter_AddRefs(msgStore));
               if (NS_SUCCEEDED(rv)) {
-                rv = msgStore->DiscardNewMessage(m_outputStream, m_newMsgHdr);
+                rv = msgStore->DiscardNewMessage(m_downloadFolder,
+                                                 m_outputStream);
                 if (NS_FAILED(rv))
                   m_rootFolder->ThrowAlertMsg("dupDeleteFolderTruncateFailed",
                                               msgWindow);
@@ -1953,15 +1938,22 @@ nsresult nsParseNewMailState::AppendMsgFromStream(nsIInputStream* fileStream,
   nsCOMPtr<nsIOutputStream> destOutputStream;
   nsresult rv = destFolder->GetMsgStore(getter_AddRefs(store));
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = store->GetNewMsgOutputStream(destFolder, &aHdr,
+  rv = store->GetNewMsgOutputStream(destFolder,
                                     getter_AddRefs(destOutputStream));
   NS_ENSURE_SUCCESS(rv, rv);
+
+  auto guard = mozilla::MakeScopeExit(
+      [&] { store->DiscardNewMessage(destFolder, destOutputStream); });
 
   uint64_t bytesCopied;
   rv = SyncCopyStream(fileStream, destOutputStream, bytesCopied);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = store->FinishNewMessage(destOutputStream, aHdr);
+  nsAutoCString storeToken;
+  rv = store->FinishNewMessage(destFolder, destOutputStream, storeToken);
+  NS_ENSURE_SUCCESS(rv, rv);
+  guard.release();
+  rv = aHdr->SetStoreToken(storeToken);
   NS_ENSURE_SUCCESS(rv, rv);
   return NS_OK;
 }
@@ -2011,7 +2003,9 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
       do_QueryInterface(static_cast<nsIMsgParseMailMsgState*>(this));
 
   // Make sure no one else is writing into this folder
-  if (NS_FAILED(rv = destIFolder->AcquireSemaphore(myISupports))) {
+  if (NS_FAILED(rv = destIFolder->AcquireSemaphore(
+                    myISupports,
+                    "nsParseNewMailState::MoveIncorporatedMessage"_ns))) {
     destIFolder->ThrowAlertMsg("filterFolderDeniedLocked", msgWindow);
     return rv;
   }
@@ -2020,14 +2014,16 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
       m_downloadFolder->GetLocalMsgStream(mailHdr, getter_AddRefs(inputStream));
   if (NS_FAILED(rv)) {
     NS_ERROR("couldn't get source msg input stream in move filter");
-    destIFolder->ReleaseSemaphore(myISupports);
+    destIFolder->ReleaseSemaphore(
+        myISupports, "nsParseNewMailState::MoveIncorporatedMessage"_ns);
     return NS_MSG_FOLDER_UNREADABLE;  // ### dmb
   }
 
   nsCOMPtr<nsIMsgDatabase> destMailDB;
 
   if (!localFolder) {
-    destIFolder->ReleaseSemaphore(myISupports);
+    destIFolder->ReleaseSemaphore(
+        myISupports, "nsParseNewMailState::MoveIncorporatedMessage"_ns);
     return NS_MSG_POP_FILTER_TARGET_ERROR;
   }
 
@@ -2055,7 +2051,8 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
   if (NS_FAILED(rv)) {
     if (destMailDB) destMailDB->Close(true);
 
-    destIFolder->ReleaseSemaphore(myISupports);
+    destIFolder->ReleaseSemaphore(
+        myISupports, "nsParseNewMailState::MoveIncorporatedMessage"_ns);
 
     return NS_MSG_ERROR_WRITING_MAIL_FOLDER;
   }
@@ -2089,7 +2086,8 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
   if (!m_filterTargetFolders.Contains(destIFolder))
     m_filterTargetFolders.AppendObject(destIFolder);
 
-  destIFolder->ReleaseSemaphore(myISupports);
+  destIFolder->ReleaseSemaphore(
+      myISupports, "nsParseNewMailState::MoveIncorporatedMessage"_ns);
 
   (void)localFolder->RefreshSizeOnDisk();
 
@@ -2099,15 +2097,18 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
     nsresult rv = mailHdr->GetFolder(getter_AddRefs(folder));
     if (NS_SUCCEEDED(rv)) {
       notifier->NotifyMsgUnincorporatedMoved(folder, newHdr);
+      nsCOMPtr<nsIMsgPluggableStore> store;
+      m_downloadFolder->GetMsgStore(getter_AddRefs(store));
+      if (store) {
+        store->DiscardNewMessage(folder, m_outputStream);
+      }
+      if (sourceDB) {
+        sourceDB->RemoveHeaderMdbRow(mailHdr);
+      }
     } else {
       NS_WARNING("Can't get folder for message that was moved.");
     }
   }
-
-  nsCOMPtr<nsIMsgPluggableStore> store;
-  rv = m_downloadFolder->GetMsgStore(getter_AddRefs(store));
-  if (store) store->DiscardNewMessage(m_outputStream, mailHdr);
-  if (sourceDB) sourceDB->RemoveHeaderMdbRow(mailHdr);
 
   // update the folder size so we won't reparse.
   UpdateDBFolderInfo(destMailDB);

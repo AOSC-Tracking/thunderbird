@@ -389,7 +389,11 @@ clear-cache-shutdown-label =
     .label = Clear cache on shutdown
     .accesskey = s
 
-fonts-legend = Fonts & Colors
+always-underline-links =
+    .label = Always underline links
+    .accesskey = k
+
+font-legend = Fonts
 
 default-font-label =
     .value = Default font:
@@ -402,10 +406,6 @@ default-size-label =
 font-options-button =
     .label = Advanced…
     .accesskey = A
-
-color-options-button =
-    .label = Colors…
-    .accesskey = C
 
 display-width-legend = Plain Text Messages
 
@@ -566,7 +566,7 @@ dark-message-mode-legend = Message reader style
 dark-message-mode-checkbox-label =
     .label = Enable dark message mode
     .accesskey = d
-dark-message-mode-checkbox-description = Experimental feature to make the message body follow dark themes
+dark-message-mode-description = Force the message body to follow dark themes
 
 dark-message-mode-toggle-label =
     .label = Show dark message mode toggle
@@ -1189,6 +1189,30 @@ appearance-category-header = Appearance
 
 default-message-list-legend = Message List
 
+appearance-view-style =
+    .value = View Style:
+
+appearance-radio-table =
+    .label = Table view
+
+appearance-radio-cards =
+    .label = Cards view
+
+cards-view-legend = Cards View Options
+
+table-view-legend = Table View Options
+
+appearance-card-rows =
+    .value = Row Count:
+
+appearance-card-style-3 =
+    .label = 3 rows
+
+appearance-card-style-2 =
+    .label = 2 rows
+
+default-message-list-sorting-legend = Sorting and Threading
+
 default-message-list-description = Define the default sorting and threading options for newly created folders.
 
 default-flag-label =
@@ -1271,7 +1295,7 @@ default-sort-descending =
 
 default-sort-descending-description = New messages at the top
 
-apply-sort-label = Apply these settings to:
+apply-thread-sort-label = Propagate threading and sorting settings to:
 
 apply-sort-to-all-button =
     .label = All existing folders

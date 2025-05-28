@@ -40,6 +40,7 @@ function getMockNotifications() {
       end_at: endDate,
       severity: 1,
       targeting: {},
+      type: "donation",
     },
     {
       id: "bar",
@@ -48,6 +49,7 @@ function getMockNotifications() {
       end_at: endDate,
       severity: 5,
       targeting: {},
+      type: "donation",
     },
   ];
 }
@@ -59,7 +61,7 @@ add_setup(async () => {
   NotificationManager._PER_TIME_UNIT = 1;
 
   registerCleanupFunction(() => {
-    clearInterval(NotificationUpdater._interval);
+    NotificationUpdater._clearStateForTests();
     clearTimeout(InAppNotifications._showNotificationTimer);
   });
 });
@@ -154,6 +156,7 @@ add_task(async function test_getNotifications_expiry() {
       start_at: new Date(now - SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
     },
     {
       id: "future bar",
@@ -161,6 +164,7 @@ add_task(async function test_getNotifications_expiry() {
       start_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + 2 * SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
     },
     {
       id: "past bar",
@@ -168,6 +172,7 @@ add_task(async function test_getNotifications_expiry() {
       start_at: new Date(now - 2 * SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now - SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
     },
     {
       id: "invalid",
@@ -175,6 +180,7 @@ add_task(async function test_getNotifications_expiry() {
       start_at: "foo",
       end_at: "bar",
       targeting: {},
+      type: "donation",
     },
   ];
   await InAppNotifications.updateNotifications(mockData);
@@ -302,6 +308,7 @@ add_task(async function test_updateNotificationManager() {
       start_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + 2 * SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
       severity: 1,
     },
     {
@@ -310,6 +317,7 @@ add_task(async function test_updateNotificationManager() {
       start_at: new Date(now - SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
       severity: 5,
     },
   ];
@@ -337,6 +345,35 @@ add_task(async function test_updateNotificationManager() {
   InAppNotifications.notificationManager.updatedNotifications.restore();
 });
 
+add_task(async function test_updateNotificationManager_duringLocaleDebounce() {
+  InAppNotifications._localeChangeDebounce = "foo";
+
+  let hadEvent = false;
+  const eventHandler = () => {
+    hadEvent = true;
+    Assert.ok(false, "Should not get new notification event");
+  };
+
+  InAppNotifications.notificationManager.addEventListener(
+    NotificationManager.NEW_NOTIFICATION_EVENT,
+    eventHandler
+  );
+
+  await InAppNotifications.updateNotifications(getMockNotifications());
+
+  Assert.ok(
+    !InAppNotifications._showNotificationTimer,
+    "Should not have a timer for the next notification"
+  );
+  Assert.ok(!hadEvent, "Should not have seen a new notification event");
+
+  InAppNotifications.notificationManager.removeEventListener(
+    NotificationManager.NEW_NOTIFICATION_EVENT,
+    eventHandler
+  );
+  InAppNotifications._localeChangeDebounce = null;
+});
+
 add_task(async function test_updateNotifications_filtered() {
   const now = Date.now();
   const mockData = [
@@ -346,6 +383,7 @@ add_task(async function test_updateNotifications_filtered() {
       start_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + 2 * SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
       severity: 1,
     },
     {
@@ -354,6 +392,7 @@ add_task(async function test_updateNotifications_filtered() {
       start_at: new Date(now - SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
       severity: 5,
     },
   ];
@@ -396,6 +435,7 @@ add_task(async function test_updateNotificationManager_localeChange() {
           },
         ],
       },
+      type: "donation",
       severity: 5,
     },
     {
@@ -410,6 +450,7 @@ add_task(async function test_updateNotificationManager_localeChange() {
           },
         ],
       },
+      type: "donation",
       severity: 5,
     },
   ];
@@ -433,7 +474,9 @@ add_task(async function test_updateNotificationManager_localeChange() {
 
   const { detail: newNotification } = await BrowserTestUtils.waitForEvent(
     InAppNotifications.notificationManager,
-    NotificationManager.NEW_NOTIFICATION_EVENT
+    NotificationManager.NEW_NOTIFICATION_EVENT,
+    false,
+    event => event.detail.id !== notification.id
   );
 
   Assert.notEqual(
@@ -446,10 +489,21 @@ add_task(async function test_updateNotificationManager_localeChange() {
     "foo weird",
     "Should see en-EU notification"
   );
+  Assert.ok(
+    !InAppNotifications._localeChangeDebounce,
+    "Should not have an active debounce timeout"
+  );
 
   Services.locale.availableLocales = availableLocales;
   Services.locale.requestedLocales = currentLocales;
   await InAppNotifications.updateNotifications([]);
+  // Clear the locale change debounce from restoring the normal conditions
+  // manually to accelerate the tests..
+  if (InAppNotifications._localeChangeDebounce) {
+    clearTimeout(InAppNotifications._localeChangeDebounce);
+    InAppNotifications._localeChangeDebounce = null;
+    InAppNotifications._updateNotificationManager();
+  }
 });
 
 add_task(async function test_scheduledNotification() {
@@ -462,6 +516,7 @@ add_task(async function test_scheduledNotification() {
       start_at: new Date(now + delay).toISOString(),
       end_at: new Date(now + delay + 2 * SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
       severity: 1,
     },
   ];

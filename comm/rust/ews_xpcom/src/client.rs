@@ -40,10 +40,10 @@ use uuid::Uuid;
 use xpcom::{
     getter_addrefs,
     interfaces::{
-        nsIMsgDBHdr, nsIMsgOutgoingListener, nsIStringInputStream, nsIURI, nsMsgFolderFlagType,
-        nsMsgFolderFlags, nsMsgKey, IEwsClient, IEwsFolderCallbacks, IEwsFolderDeleteCallbacks,
-        IEwsMessageCallbacks, IEwsMessageCreateCallbacks, IEwsMessageDeleteCallbacks,
-        IEwsMessageFetchCallbacks,
+        nsIMsgDBHdr, nsIMsgOutgoingListener, nsIStringInputStream, nsIURI, nsIUrlListener,
+        nsMsgFolderFlagType, nsMsgFolderFlags, nsMsgKey, IEwsClient, IEwsFolderCallbacks,
+        IEwsFolderDeleteCallbacks, IEwsMessageCallbacks, IEwsMessageCreateCallbacks,
+        IEwsMessageDeleteCallbacks, IEwsMessageFetchCallbacks,
     },
     RefPtr,
 };
@@ -79,6 +79,68 @@ pub(crate) struct XpComEwsClient {
 }
 
 impl XpComEwsClient {
+    /// Performs a connectivity check to the EWS server.
+    ///
+    /// Because EWS does not have a dedicated endpoint to test connectivity and
+    /// authentication, we try to look up the ID of the account's root mail
+    /// folder, since it produces a fairly small request and represents the
+    /// first operation performed when adding a new account to Thunderbird.
+    pub(crate) async fn check_connectivity(
+        self,
+        uri: RefPtr<nsIURI>,
+        listener: RefPtr<nsIUrlListener>,
+    ) {
+        unsafe { listener.OnStartRunningUrl(uri.coerce()) };
+
+        match self.check_connectivity_inner().await {
+            Ok(_) => unsafe {
+                listener.OnStopRunningUrl(uri.coerce(), nserror::NS_OK);
+            },
+            Err(err) => unsafe {
+                listener.OnStopRunningUrl(uri.coerce(), err.into());
+            },
+        }
+    }
+
+    async fn check_connectivity_inner(self) -> Result<(), XpComEwsError> {
+        // Request the EWS ID of the root folder.
+        let get_root_folder = GetFolder {
+            folder_shape: FolderShape {
+                base_shape: BaseShape::IdOnly,
+            },
+            folder_ids: vec![BaseFolderId::DistinguishedFolderId {
+                id: EWS_ROOT_FOLDER.to_string(),
+                change_key: None,
+            }],
+        };
+
+        let res = self.make_operation_request(get_root_folder).await?;
+
+        let response_message_count = res.response_messages.get_folder_response_message.len();
+        if response_message_count != 1 {
+            return Err(XpComEwsError::Processing {
+                message: format!("expected 1 response message, got {response_message_count}"),
+            });
+        }
+
+        // Get the first (and only) response message so we can inspect it.
+        // Unwrapping is fine here, because we've already made sure there's one
+        // message.
+        let message = res
+            .response_messages
+            .get_folder_response_message
+            .into_iter()
+            .next()
+            .unwrap();
+
+        // Any error fetching the root folder is fatal, since it likely means
+        // all subsequent request will fail, and that we won't manage to sync
+        // the folder list later.
+        validate_get_folder_response_message(&message)?;
+
+        Ok(())
+    }
+
     /// Performs a [`SyncFolderHierarchy`] operation via EWS.
     ///
     /// This will fetch a list of remote changes since the specified sync state,
@@ -295,6 +357,7 @@ impl XpComEwsClient {
                         "item:DisplayCc",
                         "item:HasAttachments",
                         "item:Importance",
+                        "message:References",
                     ],
                     false,
                 )
@@ -812,15 +875,41 @@ impl XpComEwsClient {
                         .into_iter()
                         .next()
                         .and_then(|folder| match &folder {
-                            Folder::Folder { folder_class, .. } => {
-                                // Filter out non-mail folders, which will have
-                                // a class value other than "IPF.Note".
-                                if let Some("IPF.Note") =
-                                    folder_class.as_ref().map(|string| string.as_str())
-                                {
-                                    Some(Ok(folder))
-                                } else {
-                                    None
+                            Folder::Folder {
+                                folder_class,
+                                display_name,
+                                ..
+                            } => {
+                                let folder_class =
+                                    folder_class.as_ref().map(|string| string.as_str());
+
+                                // Filter out non-mail folders. According to EWS
+                                // docs, this should be any folder which class
+                                // start is "IPF.Note", or starts with
+                                // "IPF.Note." (to allow some systems to define
+                                // custom mail-derived classes).
+                                //
+                                // See
+                                // <https://learn.microsoft.com/en-us/exchange/client-developer/exchange-web-services/folders-and-items-in-ews-in-exchange>
+                                match folder_class {
+                                    Some(folder_class) => {
+                                        if folder_class == "IPF.Note"
+                                            || folder_class.starts_with("IPF.Note.")
+                                        {
+                                            Some(Ok(folder))
+                                        } else {
+                                            log::debug!("Skipping folder with unsupported class: {folder_class}");
+                                            None
+                                        }
+                                    }
+                                    None => {
+                                        log::warn!(
+                                            "Skipping folder without a class: {}",
+                                            display_name.clone().unwrap_or("unknown".to_string())
+                                        );
+
+                                        None
+                                    }
                                 }
                             }
 
@@ -1038,6 +1127,7 @@ impl XpComEwsClient {
         self,
         folder_id: String,
         is_draft: bool,
+        is_read: bool,
         content: Vec<u8>,
         callbacks: RefPtr<IEwsMessageCreateCallbacks>,
     ) {
@@ -1045,7 +1135,7 @@ impl XpComEwsClient {
         // Use the return value to determine which status we should use when
         // notifying the end of the request.
         let status = match self
-            .create_message_inner(folder_id, is_draft, content, &callbacks)
+            .create_message_inner(folder_id, is_draft, is_read, content, &callbacks)
             .await
         {
             Ok(_) => nserror::NS_OK,
@@ -1065,6 +1155,7 @@ impl XpComEwsClient {
         &self,
         folder_id: String,
         is_draft: bool,
+        is_read: bool,
         content: Vec<u8>,
         callbacks: &IEwsMessageCreateCallbacks,
     ) -> Result<(), XpComEwsError> {
@@ -1074,6 +1165,7 @@ impl XpComEwsClient {
                 character_set: None,
                 content: BASE64_STANDARD.encode(&content),
             }),
+            is_read: Some(is_read),
             ..Default::default()
         };
 
@@ -1528,6 +1620,11 @@ fn populate_db_message_header_from_message_headers(
 
     if let Some(priority) = msg.priority() {
         unsafe { header.SetPriority(priority) }.to_result()?;
+    }
+
+    if let Some(references) = msg.references() {
+        let references = nsCString::from(references.as_ref());
+        unsafe { header.SetReferences(&*references) }.to_result()?;
     }
 
     Ok(())

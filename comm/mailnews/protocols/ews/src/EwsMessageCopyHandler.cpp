@@ -134,21 +134,17 @@ NS_IMETHODIMP MessageCreateCallbacks::OnRemoteCreateSuccessful(
   // remote server.
   MOZ_TRY(mMsgInputStream->Seek(0, nsISeekableStream::NS_SEEK_SET));
 
-  // Create a new `nsIMsgDBHdr` in the database for this message. We could do it
-  // in one go via `nsIMsgPluggableStore::GetNewMsgOutputStream()`, but we'll
-  // want the message database and store to be more decoupled going forwards.
-  nsCOMPtr<nsIMsgDatabase> msgDB;
-  nsresult rv = mFolder->GetMsgDatabase(getter_AddRefs(msgDB));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIMsgDBHdr> hdr;
-  rv = msgDB->CreateNewHdr(nsMsgKey_None, getter_AddRefs(hdr));
+  nsCOMPtr<nsIMsgPluggableStore> store;
+  nsresult rv = mFolder->GetMsgStore(getter_AddRefs(store));
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Create a new output stream to the folder's message store.
   nsCOMPtr<nsIOutputStream> outStream;
-  rv = mFolder->GetOfflineStoreOutputStream(hdr, getter_AddRefs(outStream));
+  rv = store->GetNewMsgOutputStream(mFolder, getter_AddRefs(outStream));
   NS_ENSURE_SUCCESS(rv, rv);
+
+  auto outGuard = mozilla::MakeScopeExit(
+      [&] { store->DiscardNewMessage(mFolder, outStream); });
 
   // Stream the message content to the store.
   nsCOMPtr<nsIInputStream> inputStream =
@@ -159,11 +155,20 @@ NS_IMETHODIMP MessageCreateCallbacks::OnRemoteCreateSuccessful(
   rv = SyncCopyStream(inputStream, outStream, bytesCopied);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIMsgPluggableStore> store;
-  rv = mFolder->GetMsgStore(getter_AddRefs(store));
+  nsAutoCString storeToken;
+  rv = store->FinishNewMessage(mFolder, outStream, storeToken);
+  NS_ENSURE_SUCCESS(rv, rv);
+  outGuard.release();
+
+  // Create a new `nsIMsgDBHdr` in the database for this message.
+  nsCOMPtr<nsIMsgDatabase> msgDB;
+  rv = mFolder->GetMsgDatabase(getter_AddRefs(msgDB));
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIMsgDBHdr> hdr;
+  rv = msgDB->CreateNewHdr(nsMsgKey_None, getter_AddRefs(hdr));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = store->FinishNewMessage(outStream, hdr);
+  rv = hdr->SetStoreToken(storeToken);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Update some of the header's metadata, such as the size, the offline flag
@@ -382,8 +387,8 @@ nsresult MessageCopyHandler::OnCopyCompleted(nsresult status) {
   return copyService->NotifyCompletion(srcSupports, mDstFolder, status);
 }
 
-// Private methods on `MessageCopyHandler`, intended to be called by its friend
-// class `MessageCreateCallbacks`.
+// Protected methods on `MessageCopyHandler`, intended to be called by its
+// friend class `MessageCreateCallbacks`.
 
 nsresult MessageCopyHandler::OnCreateFinished(nsresult status) {
   // If we encountered a failure, bail now. Additionally, if we're copying from
@@ -449,6 +454,7 @@ nsresult MessageCopyHandler::SetMessageKey(nsMsgKey aKey) {
 
 nsresult MessageCopyHandler::CreateRemoteMessage() {
   nsresult rv;
+  bool isRead = false;
   nsCOMPtr<nsIInputStream> inputStream;
 
   // Get a stream containing the file's content, according to its source.
@@ -462,13 +468,21 @@ nsresult MessageCopyHandler::CreateRemoteMessage() {
     MOZ_TRY(stream->SetByteStringData(mBuffer));
 
     inputStream = stream;
-    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Make sure we apply the correct read flag onto the new message.
+    RefPtr<nsIMsgDBHdr> curHeader = mHeaders[mCurIndex];
+    MOZ_TRY(curHeader->GetIsRead(&isRead));
   } else if (mSrcFile) {
     // If we're copying from a file, open an input stream with the file's
     // content.
     nsCOMPtr<nsIFile> file = mSrcFile.value();
     rv = NS_NewLocalFileInputStream(getter_AddRefs(inputStream), file);
     NS_ENSURE_SUCCESS(rv, rv);
+
+    // When creating a message from a file, we're saving to either the Sent
+    // folder (in which case we mark the message as read) or to the Draft folder
+    // (in which case we mark the message as unread).
+    isRead = !mIsDraft;
   } else {
     return NS_ERROR_UNEXPECTED;
   }
@@ -482,5 +496,6 @@ nsresult MessageCopyHandler::CreateRemoteMessage() {
   RefPtr<MessageCreateCallbacks> callbacks =
       new MessageCreateCallbacks(mDstFolder, seekable, this);
 
-  return mClient->CreateMessage(mDstFolderId, mIsDraft, inputStream, callbacks);
+  return mClient->CreateMessage(mDstFolderId, mIsDraft, isRead, inputStream,
+                                callbacks);
 }

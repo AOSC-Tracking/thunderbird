@@ -48,6 +48,7 @@
 #include "nsReadLine.h"
 #include "nsIURIMutator.h"
 #include "mozilla/Components.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/UniquePtr.h"
 #include "StoreIndexer.h"
 #include "nsIPropertyBag2.h"
@@ -71,7 +72,6 @@ nsLocalMailCopyState::nsLocalMailCopyState()
       m_isFolder(false),
       m_addXMozillaHeaders(false),
       m_copyingMultipleMessages(false),
-      m_fromLineSeen(false),
       m_allowUndo(false),
       m_writeFailed(false),
       m_notifyFolderLoaded(false) {}
@@ -1252,7 +1252,8 @@ nsresult nsMsgLocalMailFolder::InitCopyState(
   GetLocked(&isLocked);
   if (isLocked) return NS_MSG_FOLDER_BUSY;
 
-  AcquireSemaphore(static_cast<nsIMsgLocalMailFolder*>(this));
+  AcquireSemaphore(static_cast<nsIMsgLocalMailFolder*>(this),
+                   "nsMsgLocalMailFolder::InitCopyState"_ns);
 
   mCopyState = new nsLocalMailCopyState();
   NS_ENSURE_TRUE(mCopyState, NS_ERROR_OUT_OF_MEMORY);
@@ -1291,7 +1292,8 @@ nsMsgLocalMailFolder::OnCopyCompleted(nsISupports* srcSupport,
   nsresult rv =
       TestSemaphore(static_cast<nsIMsgLocalMailFolder*>(this), &haveSemaphore);
   if (NS_SUCCEEDED(rv) && haveSemaphore)
-    ReleaseSemaphore(static_cast<nsIMsgLocalMailFolder*>(this));
+    ReleaseSemaphore(static_cast<nsIMsgLocalMailFolder*>(this),
+                     "nsMsgLocalMailFolder::OnCopyCompleted"_ns);
 
   if (mCopyState && !mCopyState->m_newMsgKeywords.IsEmpty() &&
       mCopyState->m_newHdr) {
@@ -1394,6 +1396,7 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsITransaction> undoTxn;
   nsTArray<RefPtr<nsIMsgDBHdr>> dstHdrs;
+  // Store might have a shortcut, but mbox one doesn't.
   rv = msgStore->CopyMessages(isMove, srcHdrs, this, dstHdrs,
                               getter_AddRefs(undoTxn), &storeDidCopy);
   if (storeDidCopy) {
@@ -1887,9 +1890,10 @@ nsresult nsMsgLocalMailFolder::WriteStartOfNewMessage() {
     mCopyState->m_parseMsgState->m_envelope_pos =
         mCopyState->m_parseMsgState->m_position;
 
-    if (mCopyState->m_parseMsgState->m_newMsgHdr) {
-      mCopyState->m_parseMsgState->m_newMsgHdr->GetMessageKey(
-          &mCopyState->m_curDstKey);
+    nsCOMPtr<nsIMsgDBHdr> hdr;
+    mCopyState->m_parseMsgState->GetNewMsgHdr(getter_AddRefs(hdr));
+    if (hdr) {
+      hdr->GetMessageKey(&mCopyState->m_curDstKey);
     }
     mCopyState->m_parseMsgState->SetState(
         nsIMsgParseMailMsgState::ParseHeadersState);
@@ -1952,9 +1956,17 @@ nsresult nsMsgLocalMailFolder::WriteStartOfNewMessage() {
 nsresult nsMsgLocalMailFolder::InitCopyMsgHdrAndFileStream() {
   nsresult rv = GetMsgStore(getter_AddRefs(mCopyState->m_msgStore));
   NS_ENSURE_SUCCESS(rv, rv);
+
+  // NOTE: you can copy into folders without a database... (sigh).
+  // See also test_copyToInvalidDB.js.
+  if (mCopyState->m_destDB) {
+    rv = mCopyState->m_destDB->CreateNewHdr(
+        nsMsgKey_None, getter_AddRefs(mCopyState->m_newHdr));
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
   rv = mCopyState->m_msgStore->GetNewMsgOutputStream(
-      this, getter_AddRefs(mCopyState->m_newHdr),
-      getter_AddRefs(mCopyState->m_fileStream));
+      this, getter_AddRefs(mCopyState->m_fileStream));
   NS_ENSURE_SUCCESS(rv, rv);
   if (mCopyState->m_parseMsgState)
     mCopyState->m_parseMsgState->SetNewMsgHdr(mCopyState->m_newHdr);
@@ -2140,8 +2152,8 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
   if (!aCopySucceeded || mCopyState->m_writeFailed) {
     if (mCopyState->m_fileStream) {
       if (mCopyState->m_curDstKey != nsMsgKey_None) {
-        mCopyState->m_msgStore->DiscardNewMessage(mCopyState->m_fileStream,
-                                                  mCopyState->m_newHdr);
+        mCopyState->m_msgStore->DiscardNewMessage(this,
+                                                  mCopyState->m_fileStream);
       }
       mCopyState->m_fileStream = nullptr;
     }
@@ -2176,9 +2188,13 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
   // has already been processed by EndMessage so it is not doubly added here.
 
   if (mCopyState->m_fileStream) {
-    rv = mCopyState->m_msgStore->FinishNewMessage(mCopyState->m_fileStream,
-                                                  mCopyState->m_newHdr);
+    nsAutoCString storeToken;
+    rv = mCopyState->m_msgStore->FinishNewMessage(
+        this, mCopyState->m_fileStream, storeToken);
+    // NOTE: you can copy into folders without a database... (sigh).
+    // See also test_copyToInvalidDB.js.
     if (NS_SUCCEEDED(rv) && mCopyState->m_newHdr) {
+      mCopyState->m_newHdr->SetStoreToken(storeToken);
       mCopyState->m_newHdr->GetMessageKey(&mCopyState->m_curDstKey);
     }
     mCopyState->m_fileStream = nullptr;
@@ -2515,8 +2531,14 @@ NS_IMETHODIMP nsMsgLocalMailFolder::EndMessage(nsMsgKey key) {
   // Request addition of X-Mozilla-Status et al.
   mCopyState->m_addXMozillaHeaders = true;
   if (mCopyState->m_fileStream) {
-    rv = mCopyState->m_msgStore->FinishNewMessage(mCopyState->m_fileStream,
-                                                  mCopyState->m_newHdr);
+    nsAutoCString storeToken;
+    rv = mCopyState->m_msgStore->FinishNewMessage(
+        this, mCopyState->m_fileStream, storeToken);
+    // NOTE: you can copy into folders without a database... (sigh).
+    // See also test_copyToInvalidDB.js.
+    if (NS_SUCCEEDED(rv) && mCopyState->m_newHdr) {
+      mCopyState->m_newHdr->SetStoreToken(storeToken);
+    }
     mCopyState->m_fileStream = nullptr;
   }
 
@@ -3246,6 +3268,7 @@ nsMsgLocalMailFolder::GetUidlFromFolder(nsLocalFolderScanState* aState,
  */
 NS_IMETHODIMP
 nsMsgLocalMailFolder::AddMessage(const char* aMessage, nsIMsgDBHdr** aHdr) {
+  AUTO_PROFILER_LABEL("nsMsgLocalMailFolder::AddMessage", MAILNEWS);
   NS_ENSURE_ARG_POINTER(aHdr);
   AutoTArray<nsCString, 1> aMessages = {nsDependentCString(aMessage)};
   nsTArray<RefPtr<nsIMsgDBHdr>> hdrs;
@@ -3259,6 +3282,7 @@ NS_IMETHODIMP
 nsMsgLocalMailFolder::AddMessageBatch(
     const nsTArray<nsCString>& aMessages,
     nsTArray<RefPtr<nsIMsgDBHdr>>& aHdrArray) {
+  AUTO_PROFILER_LABEL("nsMsgLocalMailFolder::AddMessageBatch", MAILNEWS);
 #ifdef MOZ_PANORAMA
   if (Preferences::GetBool("mail.panorama.enabled", false)) {
     return AddMessageBatch2(aMessages, aHdrArray);
@@ -3267,15 +3291,12 @@ nsMsgLocalMailFolder::AddMessageBatch(
   aHdrArray.ClearAndRetainStorage();
   aHdrArray.SetCapacity(aMessages.Length());
 
-  nsCOMPtr<nsIMsgIncomingServer> server;
-  nsresult rv = GetServer(getter_AddRefs(server));
+  nsCOMPtr<nsIMsgPluggableStore> msgStore;
+  nsresult rv = GetMsgStore(getter_AddRefs(msgStore));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIMsgPluggableStore> msgStore;
-  nsCOMPtr<nsIOutputStream> outFileStream;
-  nsCOMPtr<nsIMsgDBHdr> newHdr;
-
-  rv = server->GetMsgStore(getter_AddRefs(msgStore));
+  nsCOMPtr<nsIMsgDatabase> db;
+  rv = GetDatabaseWOReparse(getter_AddRefs(db));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIMsgFolder> rootFolder;
@@ -3287,7 +3308,8 @@ nsMsgLocalMailFolder::AddMessageBatch(
   GetLocked(&isLocked);
   if (isLocked) return NS_MSG_FOLDER_BUSY;
 
-  AcquireSemaphore(static_cast<nsIMsgLocalMailFolder*>(this));
+  AcquireSemaphore(static_cast<nsIMsgLocalMailFolder*>(this),
+                   "nsMsgLocalMailFolder::AddMessageBatch"_ns);
 
   if (NS_SUCCEEDED(rv)) {
     NS_ENSURE_SUCCESS(rv, rv);
@@ -3295,10 +3317,17 @@ nsMsgLocalMailFolder::AddMessageBatch(
       RefPtr<nsParseNewMailState> newMailParser = new nsParseNewMailState;
       NS_ENSURE_TRUE(newMailParser, NS_ERROR_OUT_OF_MEMORY);
       if (!mGettingNewMessages) newMailParser->DisableFilters();
-      rv = msgStore->GetNewMsgOutputStream(this, getter_AddRefs(newHdr),
-                                           getter_AddRefs(outFileStream));
+
+      nsCOMPtr<nsIMsgDBHdr> newHdr;
+      rv = db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(newHdr));
       NS_ENSURE_SUCCESS(rv, rv);
 
+      nsCOMPtr<nsIOutputStream> outStream;
+      rv = msgStore->GetNewMsgOutputStream(this, getter_AddRefs(outStream));
+      NS_ENSURE_SUCCESS(rv, rv);
+      // Just in case we exit early.
+      auto outGuard = mozilla::MakeScopeExit(
+          [&] { msgStore->DiscardNewMessage(this, outStream); });
       // Get a msgWindow. Proceed without one, but filter actions to imap
       // folders will silently fail if not signed in and no window for a
       // prompt.
@@ -3308,27 +3337,30 @@ nsMsgLocalMailFolder::AddMessageBatch(
       if (NS_SUCCEEDED(rv))
         mailSession->GetTopmostMsgWindow(getter_AddRefs(msgWindow));
 
-      rv = newMailParser->Init(rootFolder, this, msgWindow, newHdr,
-                               outFileStream);
+      rv = newMailParser->Init(rootFolder, this, msgWindow, newHdr, outStream);
       NS_ENSURE_SUCCESS(rv, rv);
       newMailParser->SetState(nsIMsgParseMailMsgState::ParseHeadersState);
 
-      uint32_t bytesWritten;
       uint32_t messageLen = aMessages[i].Length();
-      outFileStream->Write(aMessages[i].get(), messageLen, &bytesWritten);
+      SyncWriteAll(outStream, aMessages[i].get(), messageLen);
       rv = newMailParser->BufferInput(aMessages[i].get(), messageLen);
       NS_ENSURE_SUCCESS(rv, rv);
       rv = newMailParser->Flush();
       NS_ENSURE_SUCCESS(rv, rv);
 
-      msgStore->FinishNewMessage(outFileStream, newHdr);
-      outFileStream = nullptr;
+      nsAutoCString storeToken;
+      rv = msgStore->FinishNewMessage(this, outStream, storeToken);
+      NS_ENSURE_SUCCESS(rv, rv);
+      outGuard.release();
+      rv = newHdr->SetStoreToken(storeToken);
+      NS_ENSURE_SUCCESS(rv, rv);
       newMailParser->DoneParsing();
       newMailParser->EndMsgDownload();
       aHdrArray.AppendElement(newHdr);
     }
   }
-  ReleaseSemaphore(static_cast<nsIMsgLocalMailFolder*>(this));
+  ReleaseSemaphore(static_cast<nsIMsgLocalMailFolder*>(this),
+                   "nsMsgLocalMailFolder::AddMessageBatch"_ns);
   return rv;
 }
 
@@ -3355,14 +3387,17 @@ nsresult nsMsgLocalMailFolder::AddMessageBatch2(
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Make sure nobody else is trying to fiddle with the folder.
-  rv = AcquireSemaphore(static_cast<nsIMsgLocalMailFolder*>(this));
+  rv = AcquireSemaphore(static_cast<nsIMsgLocalMailFolder*>(this),
+                        "nsMsgLocalMailFolder::AddMessageBatch2"_ns);
   if (rv == NS_MSG_FOLDER_BUSY) {
     return rv;
   }
   NS_ENSURE_SUCCESS(rv, rv);
 
-  auto cleanup = mozilla::MakeScopeExit(
-      [&] { ReleaseSemaphore(static_cast<nsIMsgLocalMailFolder*>(this)); });
+  auto cleanup = mozilla::MakeScopeExit([&] {
+    ReleaseSemaphore(static_cast<nsIMsgLocalMailFolder*>(this),
+                     "nsMsgLocalMailFolder::AddMessageBatch2"_ns);
+  });
 
   // For each message...
   for (nsCString const& raw : rawMessages) {
@@ -3378,20 +3413,18 @@ nsresult nsMsgLocalMailFolder::AddMessageBatch2(
 
     // Write it to the local message store.
     nsCOMPtr<nsIOutputStream> outStream;
-    nsIMsgDBHdr* temp = dbHdr;
-    rv =
-        msgStore->GetNewMsgOutputStream(this, &temp, getter_AddRefs(outStream));
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
+    rv = msgStore->GetNewMsgOutputStream(this, getter_AddRefs(outStream));
+    NS_ENSURE_SUCCESS(rv, rv);
     rv = SyncWriteAll(outStream, raw.BeginReading(), raw.Length());
     if (NS_FAILED(rv)) {
-      msgStore->DiscardNewMessage(outStream, dbHdr);
+      msgStore->DiscardNewMessage(this, outStream);
       return rv;
     }
-    rv = msgStore->FinishNewMessage(outStream, dbHdr);
+    nsAutoCString storeToken;
+    rv = msgStore->FinishNewMessage(this, outStream, storeToken);
     NS_ENSURE_SUCCESS(rv, rv);
-
+    rv = dbHdr->SetStoreToken(storeToken);
+    NS_ENSURE_SUCCESS(rv, rv);
     rv = dbHdr->SetMessageSize((uint32_t)raw.Length());
     NS_ENSURE_SUCCESS(rv, rv);
 

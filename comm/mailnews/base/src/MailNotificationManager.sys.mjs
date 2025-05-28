@@ -20,8 +20,8 @@ ChromeUtils.defineLazyGetter(
 );
 
 const availableActions = [
-  { action: "action1", l10n: "mark-as-read-action" },
-  { action: "action2", l10n: "do-nothing-action" },
+  { action: "mark-as-read", l10n: "mark-as-read-action" },
+  { action: "delete", l10n: "delete-action" },
 ];
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
@@ -49,6 +49,18 @@ XPCOMUtils.defineLazyPreferenceGetter(
  * mails if necessary.
  */
 export class MailNotificationManager {
+  static get availableActions() {
+    for (const action of availableActions) {
+      if (!action.title) {
+        action.title = lazy.l10n.formatValueSync(action.l10n);
+      }
+    }
+    return availableActions;
+  }
+  static get enabledActions() {
+    return lazy.enabledActions;
+  }
+
   QueryInterface = ChromeUtils.generateQI([
     "nsIObserver",
     "nsIFolderListener",
@@ -388,14 +400,24 @@ export class MailNotificationManager {
     );
     if (numNewMessages == 1) {
       alert.actions = lazy.enabledActions;
+      if (!folder.canDeleteMessages) {
+        alert.actions = alert.actions.filter(a => a.action != "delete");
+      }
     }
     alertsService.showAlert(alert, (subject, topic) => {
       if (topic != "alertclickcallback") {
         return;
       }
       if (subject?.QueryInterface(Ci.nsIAlertAction)) {
-        if (subject.action == "action1") {
-          msgHdr.folder.markMessagesRead([msgHdr], true);
+        Glean.mail.notificationUsedActions[subject.action].add(1);
+        switch (subject.action) {
+          case "mark-as-read":
+            folder.markMessagesRead([msgHdr], true);
+            break;
+          case "delete":
+            folder.markMessagesRead([msgHdr], true);
+            folder.deleteMessages([msgHdr], null, false, false, null, true);
+            break;
         }
         return;
       }

@@ -20,8 +20,8 @@
 class MessageCreateCallbacks;
 
 /**
- * A handler for a single copy/move operation, the source for which can be
- * either a file or a folder.
+ * A handler for a single message copy/move operation, the source for which can
+ * be either a file or a folder.
  *
  * An instance of `MessageCopyHandler` is created for each copy/move operation,
  * but a single copy/move operation can target multiple messages.
@@ -202,7 +202,7 @@ class MessageCopyHandler : public nsICopyMessageListener {
   RefPtr<nsIMsgCopyServiceListener> mCopyServiceListener;
 
   // The index into `mHeaders` of the message currently being copied/move.
-  size_t mCurIndex{};
+  size_t mCurIndex;
 
   // A buffer containing the full message content.
   //

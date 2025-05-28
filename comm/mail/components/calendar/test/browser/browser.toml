@@ -6,13 +6,22 @@ prefs = [
   "mail.winsearch.firstRunDone=true",
   "mailnews.start_page.override_url=about:blank",
   "mailnews.start_page.url=about:blank",
+  "calendar.dialogs.new.enabled=true"
 ]
+head = ["head.js"]
 support-files = [
   "files/*"
 ]
 subsuite = "thunderbird"
 
 ["browser_calendarDialog.js"]
+
+["browser_calendarDialogCategories.js"]
+
 ["browser_calendarDialogDateRow.js"]
+
+["browser_calendarDialogIntegration.js"]
+
 ["browser_calendarDialogRow.js"]
+
 ["browser_calendarDialogSubviewManager.js"]

@@ -45,6 +45,7 @@ tasktype_map:
     repackage-signing: repackage
     repackage-signing-msi: repackage
     repackage-signing-shippable-l10n-msix: signing
+    release-deb-repackage: repackage
 platform_names:
     filename_platform:
         by-platform:
@@ -397,6 +398,26 @@ mapping:
             - ${year}/${month}/${upload_date}-${branch}
             - latest-${branch}
             - latest-${branch}-l10n
+    target.deb:
+        <<: *default
+        description: "Debian package for Linux platforms"
+        all_locales: true
+        from:
+            - repackage
+        only_for_platforms:
+            - linux-shippable
+            - linux64-shippable
+        pretty_name: thunderbird-${version}.${locale}.${filename_platform}.deb
+        checksums_path: thunderbird-${version}.${locale}.${filename_platform}.deb
+        destinations:
+            by-locale:
+                en-US:
+                    - ${year}/${month}/${upload_date}-${branch}
+                    - latest-${branch}
+                    - latest-${branch}-l10n
+                default:
+                    - ${year}/${month}/${upload_date}-${branch}-l10n
+                    - latest-${branch}-l10n
     target.complete.mar:
         <<: *default
         description: "The main installer we ship our mobile products baked within"

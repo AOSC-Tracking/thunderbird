@@ -968,14 +968,10 @@ var dbViewWrapperListener = {
       "nsIMsgDBViewCommandUpdater",
       "nsISupportsWeakReference",
     ]),
-    updateCommandStatus() {},
     updateNextMessageAfterDelete() {
       dbViewWrapperListener._nextViewIndexAfterDelete = gDBView
         ? gDBView.msgToSelectAfterDelete
         : null;
-    },
-    summarizeSelection() {
-      return true;
     },
     selectedMessageRemoved() {
       // Virtual folders end up here while being loaded, when they restore their
@@ -1037,6 +1033,11 @@ var dbViewWrapperListener = {
     this._allMessagesLoaded = false;
 
     if (!window.threadTree || !gViewWrapper) {
+      if (location.href == "about:message" && window.msgLoading) {
+        // Apparently the view has been re-created after the underlying folder
+        // has been compacted.
+        window.ReloadMessage();
+      }
       return;
     }
 

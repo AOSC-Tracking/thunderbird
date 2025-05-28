@@ -2,11 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/* globals InAppNotifications, NotificationScheduler, NotificationManager
+ */
+
 "use strict";
 
-const { InAppNotifications } = ChromeUtils.importESModule(
-  "resource:///modules/InAppNotifications.sys.mjs"
-);
+add_setup(function () {
+  NotificationManager._PER_TIME_UNIT = 1;
+  NotificationScheduler.observe(null, "active");
+});
 
 add_task(async function testInAppNotificationDonationTab() {
   const tabmail = document.getElementById("tabmail");

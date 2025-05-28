@@ -4,17 +4,6 @@
 
 @import url("chrome://messenger/skin/shared/contextMenu.css");
 
-menupopup {
-
-  & > menuitem:is([type="checkbox"],[type="radio"]) .menu-iconic-icon {
-    appearance: none;
-  }
-
-  &:is([needsgutter], .webextension-menupopup) >
-    :is(menu,menuitem:not(:is([type="checkbox"],[type="radio"]))) > .menu-text,
-  menubar > menu &:not([needsgutter], .webextension-menupopup) >
-    :is(menu:not(.menu-iconic),menuitem:not(.menuitem-iconic)) > .menu-text {
-    /* Align with the checkbox and radio menuitems. */
-    padding-inline-start: 21px;
-  }
+menupopup > menuitem:is([type="checkbox"],[type="radio"]) .menu-icon {
+  appearance: none;
 }

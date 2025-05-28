@@ -37,7 +37,6 @@
 #include "nsNetCID.h"
 #include "nsINntpUrl.h"
 
-#include "nsNewsDownloader.h"
 #include "nsIStringBundle.h"
 #include "nsMsgI18N.h"
 
@@ -785,7 +784,7 @@ int32_t nsMsgNewsFolder::HandleNewsrcLine(const char* line,
   if (line[0] == '#' || line[0] == '\r' || line[0] == '\n') return 0;
 
   if ((line[0] == 'o' || line[0] == 'O') && !PL_strncasecmp(line, "options", 7))
-    return RememberLine(nsDependentCString(line));
+    return 0;
 
   const char* s = nullptr;
   const char* setStr = nullptr;
@@ -794,8 +793,9 @@ int32_t nsMsgNewsFolder::HandleNewsrcLine(const char* line,
   for (s = line; s < end; s++)
     if ((*s == ':') || (*s == '!')) break;
 
-  if (*s == 0) /* What is this?? Well, don't just throw it away... */
-    return RememberLine(nsDependentCString(line));
+  if (*s == 0) {
+    return 0;
+  }
 
   bool subscribed = (*s == ':');
   setStr = s + 1;
@@ -832,35 +832,9 @@ int32_t nsMsgNewsFolder::HandleNewsrcLine(const char* line,
     rv = AddNewsgroup(Substring(line, s), nsDependentCString(setStr),
                       getter_AddRefs(child));
     if (NS_FAILED(rv)) return -1;
-  } else {
-    rv = RememberUnsubscribedGroup(nsDependentCString(line),
-                                   nsDependentCString(setStr));
-    if (NS_FAILED(rv)) return -1;
   }
 
   return 0;
-}
-
-nsresult nsMsgNewsFolder::RememberUnsubscribedGroup(const nsACString& newsgroup,
-                                                    const nsACString& setStr) {
-  mUnsubscribedNewsgroupLines.Append(newsgroup);
-  mUnsubscribedNewsgroupLines.AppendLiteral("! ");
-  if (!setStr.IsEmpty())
-    mUnsubscribedNewsgroupLines.Append(setStr);
-  else
-    mUnsubscribedNewsgroupLines.Append(MSG_LINEBREAK);
-  return NS_OK;
-}
-
-int32_t nsMsgNewsFolder::RememberLine(const nsACString& line) {
-  mOptionLines = line;
-  mOptionLines.Append(MSG_LINEBREAK);
-  return 0;
-}
-
-nsresult nsMsgNewsFolder::ForgetLine() {
-  mOptionLines.Truncate();
-  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgNewsFolder::GetGroupUsername(nsACString& aGroupUsername) {
@@ -1205,19 +1179,6 @@ NS_IMETHODIMP nsMsgNewsFolder::SetReadSetFromStr(const nsACString& newsrcLine) {
 }
 
 NS_IMETHODIMP
-nsMsgNewsFolder::GetUnsubscribedNewsgroupLines(
-    nsACString& aUnsubscribedNewsgroupLines) {
-  aUnsubscribedNewsgroupLines = mUnsubscribedNewsgroupLines;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgNewsFolder::GetOptionLines(nsACString& optionLines) {
-  optionLines = mOptionLines;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsMsgNewsFolder::OnReadChanged(nsIDBChangeListener* aInstigator) {
   return SetNewsrcHasChanged(true);
 }
@@ -1307,11 +1268,6 @@ NS_IMETHODIMP nsMsgNewsFolder::CancelComplete() {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::CancelFailed() {
-  NotifyFolderEvent(kDeleteOrMoveMsgFailed);
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgNewsFolder::GetSaveArticleOffline(bool* aBool) {
   NS_ENSURE_ARG(aBool);
   *aBool = m_downloadMessageForOfflineUse;
@@ -1325,54 +1281,34 @@ NS_IMETHODIMP nsMsgNewsFolder::SetSaveArticleOffline(bool aBool) {
 
 NS_IMETHODIMP nsMsgNewsFolder::DownloadAllForOffline(nsIUrlListener* listener,
                                                      nsIMsgWindow* msgWindow) {
-  nsTArray<nsMsgKey> srcKeyArray;
-  SetSaveArticleOffline(true);
   nsresult rv = NS_OK;
 
-  // build up message keys.
-  if (mDatabase) {
-    nsCOMPtr<nsIMsgEnumerator> enumerator;
-    rv = mDatabase->EnumerateMessages(getter_AddRefs(enumerator));
-    if (NS_SUCCEEDED(rv) && enumerator) {
-      bool hasMore;
-      while (NS_SUCCEEDED(rv = enumerator->HasMoreElements(&hasMore)) &&
-             hasMore) {
-        nsCOMPtr<nsIMsgDBHdr> header;
-        rv = enumerator->GetNext(getter_AddRefs(header));
-        if (header && NS_SUCCEEDED(rv)) {
-          bool shouldStoreMsgOffline = false;
-          nsMsgKey msgKey;
-          header->GetMessageKey(&msgKey);
-          MsgFitsDownloadCriteria(msgKey, &shouldStoreMsgOffline);
-          if (shouldStoreMsgOffline) srcKeyArray.AppendElement(msgKey);
-        }
-      }
-    }
+  nsCOMPtr<nsINntpService> nntpService(
+      do_GetService("@mozilla.org/messenger/nntpservice;1", &rv));
+  if (NS_SUCCEEDED(rv) && nntpService) {
+    rv = nntpService->DownloadFolderForOffline(this, msgWindow);
   }
-  RefPtr<DownloadNewsArticlesToOfflineStore> downloadState =
-      new DownloadNewsArticlesToOfflineStore(msgWindow, mDatabase, this);
-  rv = downloadState->DownloadArticles(msgWindow, this, &srcKeyArray);
-  (void)RefreshSizeOnDisk();
+
   return rv;
 }
 
 NS_IMETHODIMP nsMsgNewsFolder::DownloadMessagesForOffline(
-    nsTArray<RefPtr<nsIMsgDBHdr>> const& messages, nsIMsgWindow* window) {
-  nsresult rv;
-  SetSaveArticleOffline(
-      true);  // ### TODO need to clear this when we've finished
-  // build up message keys.
+    nsTArray<RefPtr<nsIMsgDBHdr>> const& messages, nsIMsgWindow* msgWindow) {
+  nsresult rv = NS_OK;
+
   nsTArray<nsMsgKey> srcKeyArray(messages.Length());
-  for (nsIMsgDBHdr* hdr : messages) {
+  for (const auto& hdr : messages) {
     nsMsgKey key;
     rv = hdr->GetMessageKey(&key);
     if (NS_SUCCEEDED(rv)) srcKeyArray.AppendElement(key);
   }
-  RefPtr<DownloadNewsArticlesToOfflineStore> downloadState =
-      new DownloadNewsArticlesToOfflineStore(window, mDatabase, this);
 
-  rv = downloadState->DownloadArticles(window, this, &srcKeyArray);
-  (void)RefreshSizeOnDisk();
+  nsCOMPtr<nsINntpService> nntpService(
+      do_GetService("@mozilla.org/messenger/nntpservice;1", &rv));
+  if (NS_SUCCEEDED(rv) && nntpService) {
+    rv = nntpService->DownloadMessagesForOffline(this, srcKeyArray, msgWindow);
+  }
+
   return rv;
 }
 

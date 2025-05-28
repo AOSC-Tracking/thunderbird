@@ -7872,14 +7872,12 @@ function ComposeCanClose() {
     // call window.focus, since we need to pop up a dialog
     // and therefore need to be visible (to prevent user confusion)
     window.focus();
-    const draftFolderURI = gCurrentIdentity.draftFolder;
-    const draftFolderName =
-      MailUtils.getOrCreateFolder(draftFolderURI).prettyName;
+    const draftsFolder = gCurrentIdentity.getOrCreateDraftsFolder();
     const result = Services.prompt.confirmEx(
       window,
       getComposeBundle().getString("saveDlogTitle"),
       getComposeBundle().getFormattedString("saveDlogMessages3", [
-        draftFolderName,
+        draftsFolder.name,
       ]),
       Services.prompt.BUTTON_TITLE_SAVE * Services.prompt.BUTTON_POS_0 +
         Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1 +
@@ -8152,7 +8150,13 @@ async function AddAttachments(aAttachments, aContentChanged = true) {
         "messageAttachmentSafeName"
       );
     } else if (/^file:|^mailbox:|^imap:|^s?news:/i.test(attachment.name)) {
+      const ext = attachment.name.includes(".")
+        ? attachment.name.split(".").pop()
+        : null;
       attachment.name = getComposeBundle().getString("partAttachmentSafeName");
+      if (ext && !ext.includes(" ")) {
+        attachment.name += `.${ext}`;
+      }
     }
 
     // Create temporary files for message attachments.

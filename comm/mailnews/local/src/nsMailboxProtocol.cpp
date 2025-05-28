@@ -5,6 +5,7 @@
 
 #include "msgCore.h"
 
+#include "nsPrintfCString.h"
 #include "nsMailboxProtocol.h"
 #include "nscore.h"
 #include "nsIInputStreamPump.h"
@@ -15,6 +16,7 @@
 #include "nsICopyMessageListener.h"
 #include "prtime.h"
 #include "mozilla/Logging.h"
+#include "mozilla/Preferences.h"
 #include "prerror.h"
 #include "prprf.h"
 #include "nspr.h"
@@ -24,6 +26,7 @@
 #include "nsMsgUtils.h"
 #include "nsIMsgWindow.h"
 #include "nsStreamUtils.h"
+#include "nsIScriptError.h"
 
 using namespace mozilla;
 
@@ -50,21 +53,87 @@ nsMailboxProtocol::~nsMailboxProtocol() {}
 
 nsresult nsMailboxProtocol::Initialize(nsIURI* aURL) {
   NS_ASSERTION(aURL, "invalid URL passed into MAILBOX Protocol");
+
   nsresult rv = NS_OK;
   if (aURL) {
+    // We want to prevent mailbox URLs using UNC paths to access
+    // access arbitrary remote servers. But we don't want to disallow the
+    // case where a user's profile is on a shared drive on the LAN.
+    //
+    // Note that individual accounts can have their storage pointed
+    // to places outside the profile.
+    //
+    // UNC names are of the form:
+    //   \\host-name\share-name\object-name
+    // We'll disallow access to any host-name which looks like a FQDN,
+    // unless it is listed as an exception in `allowed_unc_hosts`.
+    //
+    // So:
+    //  "\\profileserver\bob\mail\Inbox"   -> OK
+    //  "\\steal-your-stuff.com\bob\mail/Inbox"  -> NO!
+    //            unless "steal-your-stuff.com" is in `mail.allowed_unc_hosts`.
+
     m_runningUrl = do_QueryInterface(aURL, &rv);
-    if (NS_SUCCEEDED(rv) && m_runningUrl) {
-      nsCOMPtr<nsIMsgWindow> window;
-      rv = m_runningUrl->GetMailboxAction(&m_mailboxAction);
-      // clear stopped flag on msg window, because we care.
-      nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(m_runningUrl);
-      if (mailnewsUrl) {
-        mailnewsUrl->GetMsgWindow(getter_AddRefs(window));
-        if (window) window->SetStopped(false);
+    nsCString filePath;
+    rv = aURL->GetFilePath(filePath);
+    NS_ENSURE_SUCCESS(rv, rv);
+    NS_UnescapeURL(filePath);
+    filePath.ReplaceChar('\\', '/');
+    if (filePath.Length() >= 2 && filePath.CharAt(1) == '/') {
+      // We have an UNC path - file:////
+      // file:// +  path of which first may be / (linux root) - ok.
+      // If second is also / we have an UNC path.
+
+      int32_t dashPos = filePath.FindChar('/', 2);
+      if (dashPos <= 0) {
+        NS_WARNING(nsPrintfCString("Bad mailbox: %s", filePath.get()).get());
+        return NS_ERROR_FILE_UNRECOGNIZED_PATH;
       }
 
-      MOZ_ASSERT(m_mailboxAction != nsIMailboxUrl::ActionInvalid);
+      nsCOMPtr<nsIFile> profD;
+      rv = NS_GetSpecialDirectory("ProfD", getter_AddRefs(profD));
+      NS_ENSURE_SUCCESS(rv, rv);
+      nsCOMPtr<nsIURI> profileFileURI;
+      nsresult rv = NS_NewFileURI(getter_AddRefs(profileFileURI), profD);
+      NS_ENSURE_SUCCESS(rv, rv);
+      nsCString profileSpec = profileFileURI->GetSpecOrDefault();
+      profileSpec.Replace(0, 5, "mailbox:"_ns);  // file: -> mailbox:
+      // If under the profile, allow it.
+      if (!StringBeginsWith(aURL->GetSpecOrDefault(), profileSpec)) {
+        // It's not a path under the profile. See if we still can allow it.
+        nsCString uncPath(StringHead(filePath, dashPos));  // -> //example.com
 
+        nsCString uncHosts;
+        Preferences::GetCString("mail.allowed_unc_hosts", uncHosts);
+        nsTArray<nsCString> hosts;
+        ParseString(uncHosts, ',', hosts);
+        bool allowed = false;
+        for (auto host : hosts) {
+          if (StringEndsWith(uncPath, "/"_ns + host)) {
+            allowed = true;
+            break;
+          }
+        }
+
+        if (!allowed) {
+          // Not explicitely allowd.
+          // Then check if FQDN or IPv4/v6 and deny if it is.
+          if (uncPath.FindChar('.') != -1 || uncPath.FindChar(':') != -1) {
+            // Disallow remote UNC mailbox:// access.
+            nsPrintfCString blocked("Blocking UNC mailbox at %s.",
+                                    uncPath.get());
+            NS_WARNING(blocked.get());
+            blocked.Append(
+                " To allow, add the hostname to mail.allowed_unc_hosts."_ns);
+            MsgLogToConsole4(NS_ConvertUTF8toUTF16(blocked),
+                             nsCString(__FILE__), __LINE__,
+                             nsIScriptError::warningFlag);
+            return NS_ERROR_FILE_UNRECOGNIZED_PATH;
+          }
+        }
+      }
+    }
+    if (NS_SUCCEEDED(rv) && m_runningUrl) {
       if (RunningMultipleMsgUrl()) {
         // if we're running multiple msg url, we clear the event sink because
         // the multiple msg urls will handle setting the progress.
@@ -91,6 +160,11 @@ nsresult nsMailboxProtocol::Initialize(nsIURI* aURL) {
             m_runningUrl->SetMessageSize(msgSize);
 
             SetContentLength(msgSize);
+            rv = m_runningUrl->GetMailboxAction(&m_mailboxAction);
+            NS_ENSURE_SUCCESS(rv, rv);
+            nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl =
+                do_QueryInterface(m_runningUrl);
+            MOZ_ASSERT(m_mailboxAction != nsIMailboxUrl::ActionInvalid);
             mailnewsUrl->SetMaxProgress(msgSize);
 
             rv = msgHdr->GetFolder(getter_AddRefs(folder));
@@ -117,9 +191,6 @@ nsresult nsMailboxProtocol::Initialize(nsIURI* aURL) {
   m_lineStreamBuffer = new nsMsgLineStreamBuffer(OUTPUT_BUFFER_SIZE, true);
 
   mCurrentProgress = 0;
-
-  // do we really need both?
-  m_tempMessageFile = m_tempMsgFile;
   return rv;
 }
 
@@ -150,16 +221,8 @@ NS_IMETHODIMP nsMailboxProtocol::OnStopRequest(nsIRequest* request,
     DoneReadingMessage();
   }
   // I'm not getting cancel status - maybe the load group still has the status.
-  bool stopped = false;
   if (m_runningUrl) {
-    nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(m_runningUrl);
-    if (mailnewsUrl) {
-      nsCOMPtr<nsIMsgWindow> window;
-      mailnewsUrl->GetMsgWindow(getter_AddRefs(window));
-      if (window) window->GetStopped(&stopped);
-    }
-
-    if (!stopped && NS_SUCCEEDED(aStatus) &&
+    if (NS_SUCCEEDED(aStatus) &&
         (m_mailboxAction == nsIMailboxUrl::ActionCopyMessage ||
          m_mailboxAction == nsIMailboxUrl::ActionMoveMessage)) {
       uint32_t numMoveCopyMsgs;
@@ -347,33 +410,27 @@ nsresult nsMailboxProtocol::LoadUrl(nsIURI* aURL, nsISupports* aConsumer) {
           case nsIMailboxUrl::ActionInvalid:
             MOZ_ASSERT(false);  // Bad URL.
             break;
-          case nsIMailboxUrl::ActionSaveMessageToDisk:
-            // ohhh, display message already writes a msg to disk (as part of a
-            // hack) so we can piggy back off of that!! We just need to change
-            // m_tempMessageFile to be the name of our save message to disk
-            // file. Since save message to disk urls are run without a docshell
-            // to display the msg into, we won't be trying to display the
-            // message after we write it to disk...
-            {
-              nsCOMPtr<nsIMsgMessageUrl> messageUrl =
-                  do_QueryInterface(m_runningUrl, &rv);
-              if (NS_SUCCEEDED(rv)) {
-                messageUrl->GetMessageFile(getter_AddRefs(m_tempMessageFile));
-                rv = MsgNewBufferedFileOutputStream(
-                    getter_AddRefs(m_msgFileOutputStream), m_tempMessageFile,
-                    -1, 00600);
-                NS_ENSURE_SUCCESS(rv, rv);
+          case nsIMailboxUrl::ActionSaveMessageToDisk: {
+            nsCOMPtr<nsIMsgMessageUrl> messageUrl =
+                do_QueryInterface(m_runningUrl, &rv);
+            NS_ENSURE_SUCCESS(rv, rv);
+            nsCOMPtr<nsIFile> tempMsgFile;
+            messageUrl->GetMessageFile(getter_AddRefs(tempMsgFile));
+            NS_ENSURE_STATE(tempMsgFile);
+            rv = MsgNewBufferedFileOutputStream(
+                getter_AddRefs(m_msgFileOutputStream), tempMsgFile, -1, 00600);
+            NS_ENSURE_SUCCESS(rv, rv);
 
-                bool addDummyEnvelope = false;
-                messageUrl->GetAddDummyEnvelope(&addDummyEnvelope);
-                if (addDummyEnvelope)
-                  SetFlag(MAILBOX_MSG_PARSE_FIRST_LINE);
-                else
-                  ClearFlag(MAILBOX_MSG_PARSE_FIRST_LINE);
-              }
-            }
+            bool addDummyEnvelope = false;
+            messageUrl->GetAddDummyEnvelope(&addDummyEnvelope);
+            if (addDummyEnvelope)
+              SetFlag(MAILBOX_MSG_PARSE_FIRST_LINE);
+            else
+              ClearFlag(MAILBOX_MSG_PARSE_FIRST_LINE);
+
             m_nextState = MAILBOX_READ_MESSAGE;
             break;
+          }
           case nsIMailboxUrl::ActionCopyMessage:
           case nsIMailboxUrl::ActionMoveMessage:
           case nsIMailboxUrl::ActionFetchMessage:

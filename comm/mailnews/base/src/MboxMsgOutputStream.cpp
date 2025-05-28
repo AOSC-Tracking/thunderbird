@@ -180,6 +180,13 @@ NS_IMETHODIMP MboxMsgOutputStream::Write(const char* buf, uint32_t count,
   MOZ_LOG(gMboxLog, LogLevel::Verbose,
           ("MboxMsgOutputStream::Write() %" PRIu32 " bytes: `%s`", count,
            CEscapeString(nsDependentCSubstring(buf, count), 80).get()));
+  if (mState == eClosed) {
+    return NS_BASE_STREAM_CLOSED;
+  }
+  if (mState == eError) {
+    return NS_ERROR_FAILURE;
+  }
+
   nsresult rv;
   *bytesWritten = 0;
   if (count == 0) {
@@ -345,9 +352,13 @@ nsresult MboxMsgOutputStream::InternalClose() {
     rv = NS_ERROR_UNEXPECTED;
   }
 
+  // Make sure everything is flushed out before we truncate (Bug 1960252).
+  if (NS_SUCCEEDED(rv)) {
+    rv = mInner->Flush();
+  }
+
   if (NS_SUCCEEDED(rv)) {
     // Attempt to truncate the target file back to our start position.
-    nsresult rv;
     rv = mSeekable->Seek(nsISeekableStream::NS_SEEK_SET, mStartPos);
     if (NS_SUCCEEDED(rv)) {
       rv = mSeekable->SetEOF();
@@ -358,8 +369,8 @@ nsresult MboxMsgOutputStream::InternalClose() {
   }
 
   if (mCloseInnerWhenDone) {
-    // Don't want to obscure a previous error
     nsresult rv2 = mInner->Close();
+    // Don't want to obscure a previous error
     if (NS_SUCCEEDED(rv)) {
       rv = rv2;
     }
@@ -369,7 +380,8 @@ nsresult MboxMsgOutputStream::InternalClose() {
   // not too much we can do to, other than complain loudly, close anyway
   // and return the failure.
   if (NS_FAILED(rv)) {
-    MOZ_LOG(gMboxLog, LogLevel::Error, ("MboxMsgOutputStream::Close() failed"));
+    MOZ_LOG(gMboxLog, LogLevel::Error,
+            ("MboxMsgOutputStream::Close() failed: rv=0x%x", rv));
     NS_WARNING("Failed to roll back mbox file");
   }
 

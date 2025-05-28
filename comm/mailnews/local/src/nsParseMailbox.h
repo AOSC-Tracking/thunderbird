@@ -47,11 +47,6 @@ class nsParseMailMessageState : public nsIMsgParseMailMsgState,
 
   nsParseMailMessageState();
 
-  nsresult ParseFolderLine(const char* line, uint32_t lineLength);
-  nsresult ParseHeaders();
-  nsresult FinalizeHeaders();
-  nsresult InternSubject(HeaderData* header);
-
   // A way to pass in 'out-of-band' envelope sender/timestamp data.
   // Totally optional, but envDate is used to fill in on malformed messages
   // without a "Date:" header.
@@ -60,10 +55,21 @@ class nsParseMailMessageState : public nsIMsgParseMailMsgState,
     m_EnvDate = envDate;
   }
 
-  nsCOMPtr<nsIMsgDBHdr> m_newMsgHdr; /* current message header we're building */
   nsCOMPtr<nsIMsgDatabase> m_mailDB;
   nsCOMPtr<nsIMsgDatabase> m_backupMailDB;
+  int64_t m_position;
+  // The start of the "From " line (the line before the start of the message).
+  uint64_t m_envelope_pos;
+  uint16_t m_body_lines;
 
+ protected:
+  nsresult ParseFolderLine(const char* line, uint32_t lineLength);
+  nsresult ParseHeaders();
+  nsresult FinalizeHeaders();
+  nsresult InternSubject(HeaderData* header);
+
+  nsMailboxParseState m_state;
+  nsCOMPtr<nsIMsgDBHdr> m_newMsgHdr; /* current message header we're building */
   // These two aren't part of the message, but may be provided 'out-of-band',
   // via SetEnvDetails();
   // Traditionally they are parsed from the "From " lines in
@@ -71,10 +77,6 @@ class nsParseMailMessageState : public nsIMsgParseMailMsgState,
   nsAutoCString m_EnvAddr;  // "" if missing.
   PRTime m_EnvDate;         // 0 if missing.
 
-  nsMailboxParseState m_state;
-  int64_t m_position;
-  // The start of the "From " line (the line before the start of the message).
-  uint64_t m_envelope_pos;
   nsMsgKey m_new_key;  // DB key for the new header.
 
   // The raw header data.
@@ -111,7 +113,6 @@ class nsParseMailMessageState : public nsIMsgParseMailMsgState,
   HeaderData m_mdn_dnt; /* MDN Disposition-Notification-To: header */
 
   PRTime m_receivedTime;
-  uint16_t m_body_lines;
 
   // this enables extensions to add the values of particular headers to
   // the .msf file as properties of nsIMsgHdr. It is initialized from a
@@ -119,7 +120,6 @@ class nsParseMailMessageState : public nsIMsgParseMailMsgState,
   nsTArray<nsCString> m_customDBHeaders;
   nsTArray<HeaderData> m_customDBHeaderData;
   nsCString m_receivedValue;  // accumulated received header
- protected:
   virtual ~nsParseMailMessageState() {};
 };
 
