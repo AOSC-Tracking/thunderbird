@@ -3,11 +3,21 @@
 
 "use strict";
 
+// This test might take a very long time on slow platforms such as TSAN.
+requestLongerTimeout(2);
+
 /* import-globals-from network-overrides-test-helpers.js */
 Services.scriptloader.loadSubScript(
   CHROME_URL_ROOT + "network-overrides-test-helpers.js",
   this
 );
+
+function clearMemoryCache(browser) {
+  info("Clearing subresource cache");
+  return SpecialPowers.spawn(browser, [], () => {
+    ChromeUtils.clearResourceCache();
+  });
+}
 
 /**
  * Test adding and removing overrides for three resources:
@@ -263,6 +273,8 @@ async function testStylesheetOverrideWithOptions(options) {
   const scriptRequest = findRequestByInitiator(document, "script");
   assertOverrideCellStatus(scriptRequest, { overridden: false });
 
+  await clearMemoryCache(tab.linkedBrowser);
+
   info("Reloading to check the overridden script is loaded on the page");
   let waitForEvents = waitForNetworkEvents(monitor, 3);
   tab.linkedBrowser.reload();
@@ -282,6 +294,8 @@ async function testStylesheetOverrideWithOptions(options) {
     !stylesheetRequest.querySelector(".requests-list-override"),
     "There is no override cell"
   );
+
+  await clearMemoryCache(tab.linkedBrowser);
 
   info("Reload again to check the overridden stylesheet is no longer loaded");
   waitForEvents = waitForNetworkEvents(monitor, 3);

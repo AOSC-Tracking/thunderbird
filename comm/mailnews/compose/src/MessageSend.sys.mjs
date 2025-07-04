@@ -148,7 +148,7 @@ export class MessageSend {
     } catch (e) {
       lazy.MsgUtils.sendLogger.error(e);
       let errorMsg = "";
-      if (e.result == lazy.MsgUtils.NS_MSG_ERROR_ATTACHING_FILE) {
+      if (e.result == Cr.NS_ERROR_FILE_NOT_FOUND) {
         errorMsg = this._composeBundle.formatStringFromName(
           "errorAttachingFile",
           [e.data.name || e.data.url]
@@ -360,13 +360,6 @@ export class MessageSend {
     this.abort();
 
     return exitCode;
-  }
-
-  getPartForDomIndex() {
-    throw Components.Exception(
-      "getPartForDomIndex not implemented",
-      Cr.NS_ERROR_NOT_IMPLEMENTED
-    );
   }
 
   getProgress() {
@@ -628,7 +621,9 @@ export class MessageSend {
       let isNSSError = false;
       const errorName = lazy.MsgUtils.getErrorStringName(exitCode);
       let errorMsg;
-      if (
+      if (exitCode == Cr.NS_ERROR_FAILURE) {
+        errorMsg = errMsg;
+      } else if (
         [
           Cr.NS_ERROR_UNKNOWN_HOST,
           Cr.NS_ERROR_UNKNOWN_PROXY_HOST,
@@ -637,13 +632,6 @@ export class MessageSend {
           Cr.NS_ERROR_NET_INTERRUPT,
           Cr.NS_ERROR_NET_TIMEOUT,
           Cr.NS_ERROR_NET_RESET,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_FAILURE,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_GSSAPI,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_MECH_NOT_SUPPORTED,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_NO_SSL,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_SSL,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_CHANGE_PLAIN_TO_ENCRYPT,
-          lazy.MsgUtils.NS_ERROR_STARTTLS_FAILED_EHLO_STARTTLS,
         ].includes(exitCode)
       ) {
         errorMsg = lazy.MsgUtils.formatStringWithSMTPHostName(
@@ -673,27 +661,15 @@ export class MessageSend {
             // errMsg is an already localized message, usually combined with the
             // error message from SMTP server.
             errorMsg = errMsg;
-          } else if (errorName != "sendFailed") {
-            // Not the default string. A mailnews error occurred that does not
-            // require the server name to be encoded. Just print the descriptive
-            // string.
-            errorMsg = this._composeBundle.GetStringFromName(errorName);
           } else {
-            errorMsg = this._composeBundle.GetStringFromName(
-              "sendFailedUnexpected"
-            );
-            // nsIStringBundle.formatStringFromName doesn't work with %X.
-            errorMsg.replace("%X", `0x${exitCode.toString(16)}`);
-            errorMsg =
-              "\n" +
-              lazy.MsgUtils.formatStringWithSMTPHostName(
-                this._userIdentity,
-                this._composeBundle,
-                "smtpSendFailedUnknownReason"
-              );
+            // May be the default string "sendFailed". Should be and error that
+            //  does require the server name to be encoded.
+            errorMsg = this._composeBundle.GetStringFromName(errorName);
           }
         }
       }
+      this.notifyListenerOnStopSending(null, exitCode, null, null);
+      this.fail(exitCode, errorMsg);
       if (isNSSError) {
         this.notifyListenerOnTransportSecurityError(
           null,
@@ -702,8 +678,6 @@ export class MessageSend {
           serverURI.asciiHostPort
         );
       }
-      this.notifyListenerOnStopSending(null, exitCode, null, null);
-      this.fail(exitCode, errorMsg);
       return;
     }
 
@@ -735,10 +709,10 @@ export class MessageSend {
     if (isNewsDelivery) {
       if (
         !Components.isSuccessCode(exitCode) &&
-        exitCode != Cr.NS_ERROR_ABORT &&
-        !lazy.MsgUtils.isMsgError(exitCode)
+        exitCode != Cr.NS_ERROR_ABORT
       ) {
-        exitCode = lazy.MsgUtils.NS_ERROR_POST_FAILED;
+        exitCode = Cr.NS_ERROR_FAILURE;
+        errMsg = this._composeBundle.GetStringFromName("postFailed");
       }
       return this._deliveryExitProcessing(
         serverURI,
@@ -825,7 +799,7 @@ export class MessageSend {
         [messenger.formatFileSize(file.fileSize)]
       );
       if (!Services.prompt.confirm(this._parentWindow, null, msg)) {
-        this.fail(lazy.MsgUtils.NS_ERROR_BUT_DONT_SHOW_ALERT, msg);
+        this.fail(Cr.NS_ERROR_ABORT);
         throw Components.Exception(
           "Cancelled sending large message",
           Cr.NS_ERROR_FAILURE

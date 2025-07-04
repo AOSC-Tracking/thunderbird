@@ -7,6 +7,7 @@ package org.mozilla.fenix.ui
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.core.net.toUri
 import mozilla.components.concept.engine.utils.EngineReleaseChannel
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.mozilla.fenix.customannotations.SmokeTest
@@ -27,6 +28,7 @@ import org.mozilla.fenix.helpers.TestHelper.mDevice
 import org.mozilla.fenix.helpers.TestHelper.restartApp
 import org.mozilla.fenix.helpers.TestHelper.verifySnackBarText
 import org.mozilla.fenix.helpers.TestSetup
+import org.mozilla.fenix.helpers.perf.DetectMemoryLeaksRule
 import org.mozilla.fenix.nimbus.FxNimbus
 import org.mozilla.fenix.nimbus.Translations
 import org.mozilla.fenix.ui.robots.browserScreen
@@ -42,6 +44,9 @@ class MainMenuTest : TestSetup() {
 
     @get:Rule
     val composeTestRule = AndroidComposeTestRule(activityTestRule) { it.activity }
+
+    @get:Rule
+    val memoryLeaksRule = DetectMemoryLeaksRule()
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/233849
     @Test
@@ -70,9 +75,9 @@ class MainMenuTest : TestSetup() {
         homeScreen {
         }.openThreeDotMenu {
             verifyHomeThreeDotMainMenuItems()
-        }.openBookmarks {
-            verifyBookmarksMenuView()
-        }.goBack {
+        }.openBookmarksMenu(composeTestRule) {
+            verifyEmptyBookmarksMenuView()
+        }.goBackToHomeScreen {
         }.openThreeDotMenu {
         }.openHistory {
             verifyHistoryMenuView()
@@ -80,7 +85,7 @@ class MainMenuTest : TestSetup() {
         }.openThreeDotMenu {
         }.openDownloadsManager {
             verifyEmptyDownloadsList(composeTestRule)
-        }.goBack {
+        }.goBack(composeTestRule) {
         }.openThreeDotMenu {
         }.openPasswords {
             verifySecurityPromptForLogins()
@@ -99,11 +104,11 @@ class MainMenuTest : TestSetup() {
         }.openThreeDotMenu {
         }.openWhatsNew {
             verifyWhatsNewURL()
-        }.goToHomescreen {
+        }.goToHomescreen(composeTestRule) {
         }.openThreeDotMenu {
         }.openHelp {
             verifyHelpUrl()
-        }.goToHomescreen {
+        }.goToHomescreen(composeTestRule) {
         }.openThreeDotMenu {
         }.openCustomizeHome {
             verifyHomePageView()
@@ -370,6 +375,7 @@ class MainMenuTest : TestSetup() {
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2937924
+    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1967946")
     @Test
     fun verifyTheWhatIsBrokenErrorMessageTest() {
         runWithCondition(
@@ -394,6 +400,7 @@ class MainMenuTest : TestSetup() {
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2937926
+    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1967946")
     @Test
     fun verifyThatTheBrokenSiteFormCanBeCanceledTest() {
         runWithCondition(
@@ -418,6 +425,7 @@ class MainMenuTest : TestSetup() {
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2937927
+    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1967946")
     @Test
     fun verifyTheBrokenSiteFormSubmissionTest() {
         runWithCondition(
@@ -447,6 +455,7 @@ class MainMenuTest : TestSetup() {
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2937930
+    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1967946")
     @Test
     fun verifyThatTheBrokenSiteFormInfoPersistsTest() {
         runWithCondition(
@@ -472,6 +481,7 @@ class MainMenuTest : TestSetup() {
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2937931
+    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1967946")
     @Test
     fun verifyTheBrokenSiteFormIsEmptyWithoutSubmittingThePreviousOneTest() {
         runWithCondition(
@@ -502,6 +512,7 @@ class MainMenuTest : TestSetup() {
     }
 
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2937932
+    @Ignore("Failing, see: https://bugzilla.mozilla.org/show_bug.cgi?id=1967946")
     @Test
     fun verifyThatTheBrokenSiteFormInfoIsErasedWhenKillingTheAppTest() {
         runWithCondition(

@@ -41,6 +41,11 @@ sealed interface DownloadUIAction : Action {
     data class AddPendingDeletionSet(val itemIds: Set<String>) : DownloadUIAction
 
     /**
+     * [DownloadUIAction] to undo the last pending deletion of a set of downloaded files.
+     */
+    data object UndoPendingDeletion : DownloadUIAction
+
+    /**
      * [DownloadUIAction] to undo a set of [FileItem] IDs from the pending deletion set.
      */
     data class UndoPendingDeletionSet(val itemIds: Set<String>) : DownloadUIAction
@@ -70,4 +75,24 @@ sealed interface DownloadUIAction : Action {
      * [DownloadUIAction] to share the file of a [FileItem].
      */
     data class ShareFileClicked(val filePath: String, val contentType: String?) : DownloadUIAction
+
+    /**
+     * [DownloadUIAction] when a search query is entered.
+     */
+    data class SearchQueryEntered(val searchQuery: String) : DownloadUIAction
+
+    /**
+     * [DownloadUIAction] to show or hide the delete confirmation dialog.
+     */
+    data class UpdateDeleteDialogVisibility(val visibility: Boolean) : DownloadUIAction
+
+    /**
+     * [DownloadUIAction] to show the search bar.
+     */
+    data object SearchBarVisibilityRequest : DownloadUIAction
+
+    /**
+     * [DownloadUIAction] to hide the search bar.
+     */
+    data object SearchBarDismissRequest : DownloadUIAction
 }

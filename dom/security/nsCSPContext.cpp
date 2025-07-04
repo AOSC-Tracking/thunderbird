@@ -506,6 +506,16 @@ nsCSPContext::GetAllowsEval(bool* outShouldReportViolation,
   *outShouldReportViolation = false;
   *outAllowsEval = true;
 
+  if (CSP_IsBrowserXHTML(mSelfURI)) {
+    // Allow eval in browser.xhtml, just like
+    // nsContentSecurityUtils::IsEvalAllowed allows it for other privileged
+    // contexts.
+    if (StaticPrefs::
+            security_allow_unsafe_dangerous_privileged_evil_eval_AtStartup()) {
+      return NS_OK;
+    }
+  }
+
   for (uint32_t i = 0; i < mPolicies.Length(); i++) {
     if (!mPolicies[i]->allows(SCRIPT_SRC_DIRECTIVE, CSP_UNSAFE_EVAL, u""_ns)) {
       // policy is violated: must report the violation and allow the inline
@@ -544,10 +554,10 @@ nsCSPContext::GetAllowsWasmEval(bool* outShouldReportViolation,
 }
 
 // Helper function to report inline violations
-void nsCSPContext::reportInlineViolation(
+void nsCSPContext::ReportInlineViolation(
     CSPDirective aDirective, Element* aTriggeringElement,
     nsICSPEventListener* aCSPEventListener, const nsAString& aNonce,
-    bool aReportSample, const nsAString& aSample,
+    bool aReportSample, const nsAString& aSourceCode,
     const nsAString& aViolatedDirective,
     const nsAString& aViolatedDirectiveString, CSPDirective aEffectiveDirective,
     uint32_t aViolatedPolicyIndex,  // TODO, use report only flag for that
@@ -584,6 +594,18 @@ void nsCSPContext::reportInlineViolation(
     loc.mColumn = aColumnNumber;
   }
 
+  nsAutoCString hashSHA256;
+  // We optionally include the hash to create more helpful error messages.
+  nsCOMPtr<nsICryptoHash> hasher;
+  if (NS_SUCCEEDED(
+          NS_NewCryptoHash(nsICryptoHash::SHA256, getter_AddRefs(hasher)))) {
+    NS_ConvertUTF16toUTF8 source(aSourceCode);
+    if (NS_SUCCEEDED(hasher->Update(
+            reinterpret_cast<const uint8_t*>(source.get()), source.Length()))) {
+      (void)hasher->Finish(true, hashSHA256);
+    }
+  }
+
   CSPViolationData cspViolationData{
       aViolatedPolicyIndex,
       CSPViolationData::Resource{
@@ -593,7 +615,8 @@ void nsCSPContext::reportInlineViolation(
       loc.mLine,
       loc.mColumn,
       aTriggeringElement,
-      aSample};
+      aSourceCode,
+      hashSHA256};
 
   AsyncReportViolation(aCSPEventListener, std::move(cspViolationData),
                        mSelfURI,            // aOriginalURI
@@ -707,7 +730,7 @@ nsCSPContext::GetAllowsInline(CSPDirective aDirective, bool aHasUnsafeHash,
           aDirective, violatedDirective, violatedDirectiveString,
           &reportSample);
 
-      reportInlineViolation(aDirective, aTriggeringElement, aCSPEventListener,
+      ReportInlineViolation(aDirective, aTriggeringElement, aCSPEventListener,
                             aNonce, reportSample, content, violatedDirective,
                             violatedDirectiveString, aDirective, i, aLineNumber,
                             aColumnNumber);
@@ -1006,10 +1029,9 @@ void StripURIForReporting(nsIURI* aSelfURI, nsIURI* aURI,
   // If the origin of aURI is a globally unique identifier (for example,
   // aURI has a scheme of data, blob, or filesystem), then
   // return the ASCII serialization of uri’s scheme.
-  bool isHttpOrWs = (aURI->SchemeIs("http") || aURI->SchemeIs("https") ||
-                     aURI->SchemeIs("ws") || aURI->SchemeIs("wss"));
+  bool isWsOrWss = aURI->SchemeIs("ws") || aURI->SchemeIs("wss");
 
-  if (!isHttpOrWs) {
+  if (!net::SchemeIsHttpOrHttps(aURI) && !isWsOrWss) {
     // not strictly spec compliant, but what we really care about is
     // http/https. If it's not http/https, then treat aURI
     // as if it's a globally unique identifier and just return the scheme.
@@ -1192,7 +1214,8 @@ nsresult nsCSPContext::SendReports(
   EnsureIPCPoliciesRead();
   NS_ENSURE_ARG_MAX(aViolatedPolicyIndex, mPolicies.Length() - 1);
 
-  if (ShouldThrottleReport(aViolationEventInit)) {
+  if (!StaticPrefs::security_csp_reporting_enabled() ||
+      ShouldThrottleReport(aViolationEventInit)) {
     return NS_OK;
   }
 
@@ -1207,7 +1230,7 @@ nsresult nsCSPContext::SendReports(
   nsTArray<nsString> reportURIs;
   mPolicies[aViolatedPolicyIndex]->getReportURIs(reportURIs);
 
-  //[Deprecated] CSP Level 2 Reporting
+  // [Deprecated] CSP Level 2 Reporting
   if (!reportURIs.IsEmpty()) {
     return SendReportsToURIs(reportURIs, aViolationEventInit);
   }
@@ -1338,10 +1361,7 @@ nsresult nsCSPContext::SendReportsToURIs(
     }
 
     // log a warning to console if scheme is not http or https
-    bool isHttpScheme =
-        reportURI->SchemeIs("http") || reportURI->SchemeIs("https");
-
-    if (!isHttpScheme) {
+    if (!net::SchemeIsHttpOrHttps(reportURI)) {
       AutoTArray<nsString, 1> params = {reportURIs[r]};
       logToConsole("reportURInotHttpsOrHttp2", params,
                    NS_ConvertUTF16toUTF8(aViolationEventInit.mSourceFile),
@@ -1661,21 +1681,22 @@ class CSPReportSenderRunnable final : public Runnable {
                 CSPDirective::STYLE_SRC_ATTR_DIRECTIVE ||
             mCSPViolationData.mEffectiveDirective ==
                 CSPDirective::STYLE_SRC_ELEM_DIRECTIVE) {
-          errorName = mReportOnlyFlag ? "CSPROInlineStyleViolation"
-                                      : "CSPInlineStyleViolation";
+          errorName = mReportOnlyFlag ? "CSPROInlineStyleViolation2"
+                                      : "CSPInlineStyleViolation2";
         } else if (mCSPViolationData.mEffectiveDirective ==
                    CSPDirective::SCRIPT_SRC_ATTR_DIRECTIVE) {
-          errorName = mReportOnlyFlag ? "CSPROEventHandlerScriptViolation"
-                                      : "CSPEventHandlerScriptViolation";
+          errorName = mReportOnlyFlag ? "CSPROEventHandlerScriptViolation2"
+                                      : "CSPEventHandlerScriptViolation2";
         } else {
           MOZ_ASSERT(mCSPViolationData.mEffectiveDirective ==
                      CSPDirective::SCRIPT_SRC_ELEM_DIRECTIVE);
-          errorName = mReportOnlyFlag ? "CSPROInlineScriptViolation"
-                                      : "CSPInlineScriptViolation";
+          errorName = mReportOnlyFlag ? "CSPROInlineScriptViolation2"
+                                      : "CSPInlineScriptViolation2";
         }
 
-        AutoTArray<nsString, 2> params = {mViolatedDirectiveNameAndValue,
-                                          effectiveDirective};
+        AutoTArray<nsString, 3> params = {
+            mViolatedDirectiveNameAndValue, effectiveDirective,
+            NS_ConvertUTF8toUTF16(mCSPViolationData.mHashSHA256)};
         mCSPContext->logToConsole(
             errorName, params, mCSPViolationData.mSourceFile,
             mCSPViolationData.mSample, mCSPViolationData.mLineNumber,
@@ -2253,11 +2274,9 @@ nsresult nsCSPContext::TryReadPolicies(PolicyDataVersion aVersion,
       }
     }
 
-    // Note: The (empty) "trustedTypesDirectiveExpressions" is going to be
-    // removed completely in bug 1959034.
     policies.AppendElement(
         ContentSecurityPolicy(policyString, reportOnly, deliveredViaMetaTag,
-                              hasRequireTrustedTypesForDirective, {}));
+                              hasRequireTrustedTypesForDirective));
   }
 
   // Make sure all data was consumed.
@@ -2331,14 +2350,10 @@ void nsCSPContext::SerializePolicies(
   for (auto* policy : mPolicies) {
     nsAutoString policyString;
     policy->toString(policyString);
-    nsTArray<nsString> trustedTypesDirectiveExpressions;
-    policy->getTrustedTypesDirectiveExpressions(
-        trustedTypesDirectiveExpressions);
     aPolicies.AppendElement(
         ContentSecurityPolicy(policyString, policy->getReportOnlyFlag(),
                               policy->getDeliveredViaMetaTagFlag(),
-                              policy->hasRequireTrustedTypesForDirective(),
-                              trustedTypesDirectiveExpressions));
+                              policy->hasRequireTrustedTypesForDirective()));
   }
 
   aPolicies.AppendElements(mIPCPolicies);

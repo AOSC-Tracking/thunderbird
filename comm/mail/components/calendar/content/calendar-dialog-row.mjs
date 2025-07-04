@@ -8,6 +8,8 @@
  *
  * @tagname calendar-dialog-row
  *
+ * @attribute {boolean} [expanding] - Determines whether content can be expanded.
+ * @attribute {boolean} [expanded] - Determines whether content is expanded.
  * @slot icon - The icon image for the row
  * @slot label - The label for the row.
  * @slot content - Body content for the row.

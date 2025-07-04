@@ -22,7 +22,7 @@ import {
   isCompressedFloatTextureFormat,
   isDepthTextureFormat,
   kAllTextureFormats,
-  textureDimensionAndFormatCompatible,
+  textureFormatAndDimensionPossiblyCompatible,
   isCompressedTextureFormat,
   kPossibleMultisampledTextureFormats,
   kDepthTextureFormats,
@@ -47,7 +47,7 @@ import {
   generateTextureBuiltinInputs2D,
   generateTextureBuiltinInputs3D,
 
-  createVideoFrameWithRandomDataAndGetTexels,
+  createCanvasWithRandomDataAndGetTexels,
 
   isFillable } from
 './texture_utils.js';
@@ -98,7 +98,7 @@ params((u) =>
 u.
 combine('stage', kShortShaderStages).
 combine('format', kAllTextureFormats).
-filter((t) => textureDimensionAndFormatCompatible('1d', t.format))
+filter((t) => textureFormatAndDimensionPossiblyCompatible('1d', t.format))
 // 1d textures can't have a height !== 1
 .filter((t) => !isCompressedTextureFormat(t.format)).
 beginSubcases().
@@ -109,6 +109,7 @@ combine('L', ['i32', 'u32'])
 fn(async (t) => {
   const { format, stage, C, L, samplePoints } = t.params;
   t.skipIfTextureFormatNotSupported(format);
+  t.skipIfTextureFormatAndDimensionNotCompatible(format, '1d');
 
   // We want at least 4 blocks or something wide enough for 3 mip levels.
   const [width] = chooseTextureSize({ minSize: 8, minBlocks: 4, format });
@@ -260,7 +261,8 @@ params((u) =>
 u.
 combine('stage', kShortShaderStages).
 combine('format', kAllTextureFormats).
-filter((t) => textureDimensionAndFormatCompatible('3d', t.format)).
+filter((t) => textureFormatAndDimensionPossiblyCompatible('3d', t.format)).
+filter((t) => !isCompressedFloatTextureFormat(t.format)).
 beginSubcases().
 combine('samplePoints', kSamplePointMethods).
 combine('C', ['i32', 'u32']).
@@ -269,6 +271,7 @@ combine('L', ['i32', 'u32'])
 fn(async (t) => {
   const { format, stage, samplePoints, C, L } = t.params;
   t.skipIfTextureFormatNotSupported(format);
+  t.skipIfTextureFormatAndDimensionNotCompatible(format, '3d');
 
   // We want at least 4 blocks or something wide enough for 3 mip levels.
   const size = chooseTextureSize({ minSize: 8, minBlocks: 4, format, viewDimension: '3d' });
@@ -506,15 +509,13 @@ params((u) =>
 u.
 combine('stage', kShortShaderStages).
 beginSubcases().
+combine('importExternalTexture', [false, true]).
 combine('samplePoints', kSamplePointMethods).
 combine('C', ['i32', 'u32']).
 combine('L', ['i32', 'u32'])
 ).
-beforeAllSubcases((t) =>
-t.skipIf(typeof VideoFrame === 'undefined', 'VideoFrames are not supported')
-).
 fn(async (t) => {
-  const { stage, samplePoints, C, L } = t.params;
+  const { stage, importExternalTexture, samplePoints, C, L } = t.params;
 
   const size = [8, 8, 1];
 
@@ -526,8 +527,31 @@ fn(async (t) => {
     usage: GPUTextureUsage.COPY_DST
   };
 
-  const { texels, videoFrame } = createVideoFrameWithRandomDataAndGetTexels(descriptor.size);
-  const texture = t.device.importExternalTexture({ source: videoFrame });
+  t.skipIf(typeof OffscreenCanvas === 'undefined', 'OffscreenCanvas is not supported');
+  const { texels, canvas } = createCanvasWithRandomDataAndGetTexels(descriptor.size);
+
+  let videoFrame;
+  let texture;
+  if (importExternalTexture) {
+    t.skipIf(typeof VideoFrame === 'undefined', 'VideoFrames are not supported');
+
+    videoFrame = new VideoFrame(canvas, { timestamp: 0 });
+    texture = t.device.importExternalTexture({ source: videoFrame });
+  } else {
+    texture = t.createTextureTracked({
+      format: descriptor.format,
+      size: descriptor.size,
+      usage:
+      GPUTextureUsage.COPY_DST |
+      GPUTextureUsage.RENDER_ATTACHMENT |
+      GPUTextureUsage.TEXTURE_BINDING
+    });
+    t.queue.copyExternalImageToTexture(
+      { source: canvas },
+      { texture, premultipliedAlpha: true },
+      size
+    );
+  }
 
   const calls = generateTextureBuiltinInputs2D(50, {
     method: samplePoints,
@@ -563,7 +587,7 @@ fn(async (t) => {
     stage
   );
   t.expectOK(res);
-  videoFrame.close();
+  videoFrame?.close();
 });
 
 g.test('arrayed').

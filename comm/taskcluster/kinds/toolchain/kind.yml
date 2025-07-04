@@ -26,6 +26,7 @@ reference-tasks:
     - linux64-grcov
     - linux64-hfsplus
     - linux64-libdmg
+    - linux64-libxml2
     - linux64-llvm-symbolizer
     - linux64-makecab
     - linux64-mar-tools
@@ -48,6 +49,7 @@ reference-tasks:
     - linux64-rust-windows-toolchain
     - linux64-sccache
     - linux64-toolchain-sysroot
+    - linux64-toolchain-sysroot-gcc10
     - linux64-upx
     - linux64-winchecksec
     - linux64-wine

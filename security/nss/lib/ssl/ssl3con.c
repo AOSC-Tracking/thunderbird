@@ -11767,6 +11767,7 @@ ssl3_AuthCertificate(sslSocket *ss)
     SECStatus rv;
     PRBool isServer = ss->sec.isServer;
     int errCode;
+    CERTCertList *peerChain = NULL;
 
     ss->ssl3.hs.authCertificatePending = PR_FALSE;
 
@@ -11795,8 +11796,24 @@ ssl3_AuthCertificate(sslSocket *ss)
     /*
      * Ask caller-supplied callback function to validate cert chain.
      */
+    if (ss->opt.dbLoadCertChain) {
+        /* Imports the certificate chain into the db. Indirectly used by the
+         * authCertificate callback below. */
+        peerChain = SSL_PeerCertificateChain(ss->fd);
+        if (!peerChain) {
+            errCode = PORT_GetError();
+            goto loser;
+        }
+    }
+
     rv = (SECStatus)(*ss->authCertificate)(ss->authCertificateArg, ss->fd,
                                            PR_TRUE, isServer);
+
+    if (ss->opt.dbLoadCertChain && peerChain) {
+        CERT_DestroyCertList(peerChain);
+        peerChain = NULL;
+    }
+
     if (rv != SECSuccess) {
         errCode = PORT_GetError();
         if (errCode == 0) {
@@ -12492,6 +12509,9 @@ ssl3_FillInCachedSID(sslSocket *ss, sslSessionID *sid, PK11SymKey *secret)
     sid->sigScheme = ss->sec.signatureScheme;
     sid->lastAccessTime = sid->creationTime = ssl_Time(ss);
     sid->expirationTime = sid->creationTime + (ssl_ticket_lifetime * PR_USEC_PER_SEC);
+    if (sid->localCert) {
+        CERT_DestroyCertificate(sid->localCert);
+    }
     sid->localCert = CERT_DupCertificate(ss->sec.localCert);
     if (ss->sec.isServer) {
         sid->namedCurve = ss->sec.serverCert->namedCurve;

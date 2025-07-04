@@ -7,8 +7,6 @@ import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  BrowserSearchTelemetry:
-    "moz-src:///browser/components/search/BrowserSearchTelemetry.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.sys.mjs",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.sys.mjs",
@@ -106,7 +104,7 @@ export class UrlbarController {
    * Takes a query context and starts the query based on the user input.
    *
    * @param {UrlbarQueryContext} queryContext The query details.
-   * @returns {UrlbarQueryContext}
+   * @returns {Promise<UrlbarQueryContext>}
    *   The updated query context.
    */
   async startQuery(queryContext) {
@@ -602,32 +600,6 @@ export class UrlbarController {
   }
 
   /**
-   * Records details of the selected result in telemetry. We only record the
-   * selection behavior, type and index.
-   *
-   * @param {Event} event
-   *   The event which triggered the result to be selected.
-   * @param {UrlbarResult} result
-   *   The selected result.
-   */
-  recordSelectedResult(event, result) {
-    let resultIndex = result ? result.rowIndex : -1;
-    let selectedResult = -1;
-    if (resultIndex >= 0) {
-      // Except for the history popup, the urlbar always has a selection.  The
-      // first result at index 0 is the "heuristic" result that indicates what
-      // will happen when you press the Enter key.  Treat it as no selection.
-      selectedResult = resultIndex > 0 || !result.heuristic ? resultIndex : -1;
-    }
-    lazy.BrowserSearchTelemetry.recordSearchSuggestionSelectionMethod(
-      event,
-      "urlbar",
-      selectedResult,
-      this._userSelectionBehavior
-    );
-  }
-
-  /**
    * Triggers a "dismiss" engagement for the selected result if one is selected
    * and it's not the heuristic. Providers that can respond to dismissals of
    * their results should implement `onEngagement()`, handle the
@@ -732,7 +704,7 @@ export class UrlbarController {
   }
 
   #focusOnUnifiedSearchButton() {
-    this.input.toggleAttribute("unifiedsearchbutton-available", true);
+    this.input.setUnifiedSearchButtonAvailability(true);
 
     const switcher = this.input.document.getElementById(
       "urlbar-searchmode-switcher"
@@ -782,7 +754,9 @@ class TelemetryEvent {
   constructor(controller, category) {
     this._controller = controller;
     this._category = category;
-    this.#beginObservingPingPrefs();
+    lazy.UrlbarPrefs.addObserver(this);
+    this.#readPingPrefs();
+    this._lastSearchDetailsForDisableSuggestTracking = null;
   }
 
   /**
@@ -938,31 +912,11 @@ class TelemetryEvent {
       throw new Error("Invalid event details: " + details);
     }
 
-    let action;
-    if (!event) {
-      action =
-        startEventInfo.interactionType == "dropped" ? "drop_go" : "paste_go";
-    } else if (event.type == "blur") {
-      action = "blur";
-    } else if (event.type == "tabswitch") {
-      action = "tab_switch";
-    } else if (
-      details.element?.dataset.command &&
-      // The "help" selType is recognized by legacy telemetry, and `action`
-      // should be set to either "click" or "enter" depending on whether the
-      // event is a mouse event, so ignore "help" here.
-      details.element.dataset.command != "help"
-    ) {
-      action = details.element.dataset.command;
-    } else if (details.selType == "dismiss") {
-      action = "dismiss";
-    } else if (MouseEvent.isInstance(event)) {
-      action = event.target.classList.contains("urlbar-go-button")
-        ? "go_button"
-        : "click";
-    } else {
-      action = "enter";
-    }
+    let action = this.#getActionFromEvent(
+      event,
+      details,
+      startEventInfo.interactionType
+    );
 
     let method =
       action == "blur" || action == "tab_switch" ? "abandonment" : "engagement";
@@ -991,26 +945,32 @@ class TelemetryEvent {
 
     let { queryContext } = this._controller._lastQueryContextWrapper || {};
 
-    this._recordSearchEngagementTelemetry(
-      queryContext,
-      method,
-      startEventInfo,
-      {
-        action,
-        numChars,
-        numWords,
-        searchWords,
-        provider: details.provider,
-        searchSource: details.searchSource,
-        searchMode: details.searchMode,
-        selectedElement: details.element,
-        selIndex: details.selIndex,
-        selType: details.selType,
-      }
-    );
+    this._recordSearchEngagementTelemetry(method, startEventInfo, {
+      action,
+      numChars,
+      numWords,
+      searchWords,
+      provider: details.provider,
+      searchSource: details.searchSource,
+      searchMode: details.searchMode,
+      selectedElement: details.element,
+      selIndex: details.selIndex,
+      selType: details.selType,
+    });
 
     if (!details.isSessionOngoing) {
       this.#recordExposures(queryContext);
+    }
+
+    const visibleResults = this._controller.view?.visibleResults ?? [];
+
+    // Start tracking for a disable event if there was a Suggest result
+    // during an engagement or abandonment event.
+    if (
+      (method == "engagement" || method == "abandonment") &&
+      visibleResults.some(r => r.providerName == "UrlbarProviderQuickSuggest")
+    ) {
+      this.startTrackingDisableSuggest(event, details);
     }
 
     try {
@@ -1028,7 +988,6 @@ class TelemetryEvent {
   }
 
   _recordSearchEngagementTelemetry(
-    queryContext,
     method,
     startEventInfo,
     {
@@ -1146,6 +1105,30 @@ class TelemetryEvent {
         groups,
         results,
         actions,
+      };
+    } else if (method == "disable") {
+      const previousEvent =
+        action == "blur" || action == "tab_switch"
+          ? "abandonment"
+          : "engagement";
+      let selected_result = "none";
+      if (previousEvent == "engagement") {
+        selected_result = lazy.UrlbarUtils.searchEngagementTelemetryType(
+          currentResults[selIndex],
+          selType
+        );
+      }
+      eventInfo = {
+        sap,
+        interaction,
+        search_mode,
+        search_engine_default_id,
+        n_chars: numChars,
+        n_words: numWords,
+        n_results: numResults,
+        selected_result,
+        results,
+        feature: "suggest",
       };
     } else {
       console.error(`Unknown telemetry event method: ${method}`);
@@ -1352,6 +1335,33 @@ class TelemetryEvent {
     return source ?? "unknown";
   }
 
+  #getActionFromEvent(event, details, defaultInteractionType) {
+    if (!event) {
+      return defaultInteractionType === "dropped" ? "drop_go" : "paste_go";
+    }
+    if (event.type === "blur") {
+      return "blur";
+    }
+    if (event.type === "tabswitch") {
+      return "tab_switch";
+    }
+    if (
+      details.element?.dataset.command &&
+      details.element.dataset.command !== "help"
+    ) {
+      return details.element.dataset.command;
+    }
+    if (details.selType === "dismiss") {
+      return "dismiss";
+    }
+    if (MouseEvent.isInstance(event)) {
+      return event.target.classList.contains("urlbar-go-button")
+        ? "go_button"
+        : "click";
+    }
+    return "enter";
+  }
+
   _parseSearchString(searchString) {
     let numChars = searchString.length.toString();
     let searchWords = searchString
@@ -1463,17 +1473,25 @@ class TelemetryEvent {
     "suggest.topsites": Glean.urlbar.prefSuggestTopsites,
   };
 
-  #beginObservingPingPrefs() {
+  #readPingPrefs() {
     for (const p of Object.keys(this.#PING_PREFS)) {
       this.onPrefChanged(p);
     }
-    lazy.UrlbarPrefs.addObserver(this);
   }
 
   onPrefChanged(pref) {
     const metric = this.#PING_PREFS[pref];
+    const prefValue = lazy.UrlbarPrefs.get(pref);
     if (metric) {
-      metric.set(lazy.UrlbarPrefs.get(pref));
+      metric.set(prefValue);
+    }
+    switch (pref) {
+      case "suggest.quicksuggest.nonsponsored":
+      case "suggest.quicksuggest.sponsored":
+      case "quicksuggest.enabled":
+        if (!prefValue) {
+          this.handleDisableSuggest();
+        }
     }
   }
 
@@ -1519,4 +1537,90 @@ class TelemetryEvent {
   #exposures = [];
   #tentativeExposures = [];
   #exposureResults = new WeakSet();
+
+  /**
+   * Start tracking a potential disable suggest event after user has seen a
+   * suggest result.
+   *
+   * @param {event} [event] A DOM event.
+   * @param {object} details An object describing interaction details.
+   */
+  startTrackingDisableSuggest(event, details) {
+    this._lastSearchDetailsForDisableSuggestTracking = {
+      // The time when a user interacts a suggest result, either through
+      // an engagement or an abandonment.
+      interactionTime: this.getCurrentTime(),
+      event,
+      details,
+    };
+  }
+
+  handleDisableSuggest() {
+    let state = this._lastSearchDetailsForDisableSuggestTracking;
+    if (
+      !state ||
+      this.getCurrentTime() - state.interactionTime >
+        lazy.UrlbarPrefs.get("events.disableSuggest.maxSecondsFromLastSearch") *
+          1000
+    ) {
+      this._lastSearchDetailsForDisableSuggestTracking = null;
+      return;
+    }
+
+    let event = state.event;
+    let details = state.details;
+
+    let startEventInfo = {
+      interactionType: this._getStartInteractionType(
+        event,
+        details.searchString
+      ),
+      searchString: details.searchString,
+    };
+
+    if (
+      !event &&
+      startEventInfo.interactionType != "pasted" &&
+      startEventInfo.interactionType != "dropped"
+    ) {
+      // If no event is passed, we must be executing either paste&go or drop&go.
+      throw new Error("Event must be defined, unless input was pasted/dropped");
+    }
+    if (!details) {
+      throw new Error("Invalid event details: " + details);
+    }
+
+    let action = this.#getActionFromEvent(
+      event,
+      details,
+      startEventInfo.interactionType
+    );
+    let method = "disable";
+
+    let { numChars, numWords, searchWords } = this._parseSearchString(
+      details.searchString
+    );
+
+    details.provider = details.result?.providerName;
+    details.selIndex = details.result?.rowIndex ?? -1;
+
+    this._recordSearchEngagementTelemetry(method, startEventInfo, {
+      action,
+      numChars,
+      numWords,
+      searchWords,
+      provider: details.provider,
+      searchSource: details.searchSource,
+      searchMode: details.searchMode,
+      selectedElement: details.element,
+      selIndex: details.selIndex,
+      selType: details.selType,
+    });
+
+    this._lastSearchDetailsForDisableSuggestTracking = null;
+  }
+
+  getCurrentTime() {
+    return Cu.now();
+  }
 }

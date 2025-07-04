@@ -5,6 +5,9 @@
 const { MessageGenerator } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
+const { ensure_cards_view, ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
+);
 
 const tabmail = document.getElementById("tabmail");
 const about3Pane = tabmail.currentAbout3Pane;
@@ -42,9 +45,11 @@ add_setup(async function () {
   about3Pane.paneLayout.messagePaneVisible = false;
   goDoCommand("cmd_expandAllThreads");
 
-  await ensure_table_view();
+  await ensure_table_view(document);
 
   // Check the initial state of a sample of messages.
+
+  await new Promise(about3Pane.requestAnimationFrame);
 
   checkRowThreadState(0, true);
   checkRowThreadState(1, false);
@@ -57,7 +62,7 @@ add_setup(async function () {
   checkRowThreadState(20, true);
 
   registerCleanupFunction(async () => {
-    await ensure_cards_view();
+    await ensure_cards_view(document);
     MailServices.accounts.removeAccount(account, false);
     about3Pane.paneLayout.messagePaneVisible = true;
     Services.prefs.clearUserPref("mail.ignore_thread.learn_more_url");
@@ -180,6 +185,7 @@ add_task(async function testIgnoreThread() {
   // Click the Undo button, and check it stops ignoring the thread.
   EventUtils.synthesizeMouseAtCenter(buttons[1], {}, about3Pane);
   await TestUtils.waitForCondition(() => !notification.parentNode);
+  await new Promise(about3Pane.requestAnimationFrame);
   checkRowThreadState(1, true);
 
   goDoCommand("cmd_expandAllThreads");
@@ -242,6 +248,7 @@ add_task(async function testIgnoreSubthread() {
   // Click the Undo button, and check it stops ignoring the subthread.
   EventUtils.synthesizeMouseAtCenter(buttons[1], {}, about3Pane);
   await TestUtils.waitForCondition(() => !notification.parentNode);
+  await new Promise(about3Pane.requestAnimationFrame);
   checkRowThreadState(17, false);
   checkRowThreadState(18, false);
   checkRowThreadState(19, false);
@@ -300,7 +307,7 @@ add_task(async function testIconsUnThreaded() {
   );
 
   goDoCommand("cmd_sort", { target: { value: "unthreaded" } });
-  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
+  await new Promise(about3Pane.requestAnimationFrame);
 
   // Switched to unthreaded and test again.
   threadTree.selectedIndex = 0;
@@ -350,7 +357,7 @@ async function checkContextMenu(index, expectedStates, itemToActivate) {
     contextMenu.hidePopup();
   }
   await BrowserTestUtils.waitForPopupEvent(contextMenu, "hidden");
-  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
+  await new Promise(about3Pane.requestAnimationFrame);
 }
 
 async function checkMessageMenu(expectedStates) {

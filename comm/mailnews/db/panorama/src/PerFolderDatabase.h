@@ -44,6 +44,8 @@ class PerFolderDatabase : public nsIMsgDatabase,
   // MessageListener functions.
   void OnMessageAdded(Message* message) override;
   void OnMessageRemoved(Message* message) override;
+  void OnMessageFlagsChanged(Message* message, uint64_t oldFlags,
+                             uint64_t newFlags) override;
 
  private:
   virtual ~PerFolderDatabase() {};
@@ -96,7 +98,9 @@ class ThreadEnumerator : public nsBaseMsgThreadEnumerator {
 
 class FolderInfo : public nsIDBFolderInfo {
  public:
-  explicit FolderInfo(FolderDatabase* folderDatabase, uint64_t folderId);
+  explicit FolderInfo(FolderDatabase* folderDatabase,
+                      MessageDatabase* messageDatabase,
+                      PerFolderDatabase* perFolderDatabase, uint64_t folderId);
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIDBFOLDERINFO
@@ -105,6 +109,8 @@ class FolderInfo : public nsIDBFolderInfo {
   virtual ~FolderInfo() {};
 
   FolderDatabase* mFolderDatabase;
+  MessageDatabase* mMessageDatabase;
+  PerFolderDatabase* mPerFolderDatabase;
   nsCOMPtr<nsIFolder> mFolder;
 };
 

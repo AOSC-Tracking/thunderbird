@@ -4,7 +4,6 @@
 
 package org.mozilla.fenix
 
-import android.annotation.SuppressLint
 import android.app.assist.AssistContent
 import android.content.ComponentName
 import android.content.Context
@@ -15,7 +14,6 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.os.StrictMode
-import android.text.TextUtils
 import android.text.format.DateUtils
 import android.util.AttributeSet
 import android.view.ActionMode
@@ -24,6 +22,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.view.WindowManager.LayoutParams.FLAG_SECURE
 import androidx.activity.BackEventCompat
 import androidx.annotation.CallSuper
@@ -36,7 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import androidx.core.view.doOnAttach
+import androidx.core.text.layoutDirection
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
@@ -54,6 +53,7 @@ import mozilla.components.browser.state.action.MediaSessionAction
 import mozilla.components.browser.state.action.SearchAction
 import mozilla.components.browser.state.search.SearchEngine
 import mozilla.components.browser.state.selector.getNormalOrPrivateTabs
+import mozilla.components.browser.state.selector.privateTabs
 import mozilla.components.browser.state.selector.selectedTab
 import mozilla.components.browser.state.state.WebExtensionState
 import mozilla.components.concept.engine.EngineSession
@@ -69,7 +69,6 @@ import mozilla.components.service.pocket.PocketStoriesService
 import mozilla.components.support.base.feature.ActivityResultHandler
 import mozilla.components.support.base.feature.UserInteractionHandler
 import mozilla.components.support.base.feature.UserInteractionOnBackPressedCallback
-import mozilla.components.support.base.log.logger.Logger
 import mozilla.components.support.ktx.android.arch.lifecycle.addObservers
 import mozilla.components.support.ktx.android.content.call
 import mozilla.components.support.ktx.android.content.email
@@ -78,7 +77,7 @@ import mozilla.components.support.ktx.android.view.setupPersistentInsets
 import mozilla.components.support.locale.LocaleAwareAppCompatActivity
 import mozilla.components.support.utils.BootUtils
 import mozilla.components.support.utils.BrowsersCache
-import mozilla.components.support.utils.ManufacturerCodes
+import mozilla.components.support.utils.BuildManufacturerChecker
 import mozilla.components.support.utils.SafeIntent
 import mozilla.components.support.utils.toSafeIntent
 import mozilla.components.support.webextensions.WebExtensionPopupObserver
@@ -87,7 +86,6 @@ import org.mozilla.experiments.nimbus.initializeTooling
 import org.mozilla.fenix.GleanMetrics.AppIcon
 import org.mozilla.fenix.GleanMetrics.Events
 import org.mozilla.fenix.GleanMetrics.Metrics
-import org.mozilla.fenix.GleanMetrics.NavigationBar
 import org.mozilla.fenix.GleanMetrics.SplashScreen
 import org.mozilla.fenix.GleanMetrics.StartOnHome
 import org.mozilla.fenix.addons.ExtensionsProcessDisabledBackgroundController
@@ -122,9 +120,9 @@ import org.mozilla.fenix.ext.openSetDefaultBrowserOption
 import org.mozilla.fenix.ext.recordEventInNimbus
 import org.mozilla.fenix.ext.setNavigationIcon
 import org.mozilla.fenix.ext.settings
-import org.mozilla.fenix.ext.systemGesturesInsets
 import org.mozilla.fenix.extension.WebExtensionPromptFeature
 import org.mozilla.fenix.home.HomeFragment
+import org.mozilla.fenix.home.TopSitesRefresher
 import org.mozilla.fenix.home.intent.AssistIntentProcessor
 import org.mozilla.fenix.home.intent.CrashReporterIntentProcessor
 import org.mozilla.fenix.home.intent.HomeDeepLinkIntentProcessor
@@ -343,7 +341,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
 
         // Changing a language on the Language screen restarts the activity, but the activity keeps
         // the old layout direction. We have to update the direction manually.
-        window.decorView.layoutDirection = TextUtils.getLayoutDirectionFromLocale(Locale.getDefault())
+        window.decorView.layoutDirection = Locale.getDefault().layoutDirection
         window.setupPersistentInsets()
 
         binding = ActivityHomeBinding.inflate(layoutInflater)
@@ -372,6 +370,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
                     nimbus = components.nimbus.sdk,
                 )
             },
+            scope = lifecycleScope,
             splashScreenTimeout = FxNimbus.features.splashScreen.value().maximumDurationMs.toLong(),
             isDeviceSupported = { Build.VERSION.SDK_INT > Build.VERSION_CODES.M },
             storage = DefaultSplashScreenStorage(components.settings),
@@ -454,10 +453,6 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
             } else {
                 StartOnHome.enterHomeScreen.record(NoExtras())
             }
-
-            if (settings().showHomeOnboardingDialog && components.fenixOnboarding.userHasBeenOnboarded()) {
-                navHost.navController.navigate(NavGraphDirections.actionGlobalHomeOnboardingDialog())
-            }
         }
 
         Performance.processIntentIfPerformanceTest(intent, this)
@@ -496,6 +491,15 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
             extensionsProcessDisabledBackgroundController,
             serviceWorkerSupport,
             crashReporterBinding,
+            TopSitesRefresher(
+                settings = settings(),
+                topSitesProvider = if (settings().marsAPIEnabled) {
+                    components.core.marsTopSitesProvider
+                } else {
+                    components.core.contileTopSitesProvider
+                },
+            ),
+            components.privateBrowsingLockFeature,
         )
 
         if (!isCustomTabIntent(intent)) {
@@ -603,12 +607,16 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
             // This is to avoid disk read violations on some devices such as samsung and pixel for android 9/10
             components.strictMode.resetAfter(StrictMode.allowThreadDiskReads()) {
                 components.appStore.dispatch(AppAction.UpdateWasNativeDefaultBrowserPromptShown(true))
-                openSetDefaultBrowserOption().also {
-                    Metrics.setAsDefaultBrowserNativePromptShown.record()
-                    settings().setAsDefaultPromptCalled()
-                }
+                showSetDefaultBrowserPrompt()
+                Metrics.setAsDefaultBrowserNativePromptShown.record()
+                settings().setAsDefaultPromptCalled()
             }
         }
+    }
+
+    @VisibleForTesting
+    internal fun showSetDefaultBrowserPrompt() {
+        openSetDefaultBrowserOption()
     }
 
     /**
@@ -641,7 +649,6 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
     }
 
     @CallSuper
-    @Suppress("TooGenericExceptionCaught")
     override fun onResume() {
         super.onResume()
 
@@ -652,18 +659,6 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
         )
 
         lifecycleScope.launch(IO) {
-            try {
-                if (settings().showContileFeature) {
-                    if (settings().marsAPIEnabled) {
-                        components.core.marsTopSitesProvider.refreshTopSitesIfCacheExpired()
-                    } else {
-                        components.core.contileTopSitesProvider.refreshTopSitesIfCacheExpired()
-                    }
-                }
-            } catch (e: Exception) {
-                Logger.error("Failed to refresh contile top sites", e)
-            }
-
             if (settings().checkIfFenixIsDefaultBrowserOnAppResume()) {
                 if (components.appStore.state.wasNativeDefaultBrowserPromptShown) {
                     Metrics.defaultBrowserChangedViaNativeSystemPrompt.record(NoExtras())
@@ -671,7 +666,6 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
                 Events.defaultBrowserChanged.record(NoExtras())
             }
 
-            collectOSNavigationTelemetry()
             GrowthDataWorker.sendActivatedSignalIfNeeded(applicationContext)
             FontEnumerationWorker.sendActivatedSignalIfNeeded(applicationContext)
 
@@ -814,6 +808,10 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
         privateNotificationObserver?.stop()
         components.notificationsDelegate.unBindActivity(this)
         MarketingAttributionService(applicationContext).stop()
+
+        // clear hierarchy change listener set by AndroidX SplashScreen
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=1950295
+        (window.decorView as? ViewGroup)?.setOnHierarchyChangeListener(null)
 
         val activityStartedWithLink = startupPathProvider.startupPathForActivity == StartupPathProvider.StartupPath.VIEW
         if (this !is ExternalAppBrowserActivity && !activityStartedWithLink) {
@@ -977,7 +975,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
             Build.VERSION.SDK_INT == Build.VERSION_CODES.N || Build.VERSION.SDK_INT == Build.VERSION_CODES.N_MR1
         // Huawei devices seem to have problems with onKeyLongPress
         // See https://github.com/mozilla-mobile/fenix/issues/13498
-        return isAndroidN || ManufacturerCodes.isHuawei
+        return isAndroidN || BuildManufacturerChecker().isHuawei()
     }
 
     /**
@@ -1292,6 +1290,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
     private fun createBrowsingModeManager(initialMode: BrowsingMode): BrowsingModeManager {
         return DefaultBrowsingModeManager(initialMode, components.settings) { newMode ->
             updateSecureWindowFlags(newMode)
+            addPrivateHomepageTabIfNecessary(newMode)
             themeManager.currentTheme = newMode
         }.also {
             updateSecureWindowFlags(initialMode)
@@ -1303,6 +1302,22 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
             window.addFlags(FLAG_SECURE)
         } else {
             window.clearFlags(FLAG_SECURE)
+        }
+    }
+
+    /**
+     * When switching to private mode, add a private homepage tab if there are
+     * no private tabs available.
+     *
+     * @param mode The new [BrowsingMode] that is being swapped to.
+     */
+    @VisibleForTesting
+    internal fun addPrivateHomepageTabIfNecessary(mode: BrowsingMode) {
+        if (settings().enableHomepageAsNewTab &&
+            mode.isPrivate &&
+            components.core.store.state.privateTabs.isEmpty()
+        ) {
+            components.useCases.fenixBrowserUseCases.addNewHomepageTab(private = true)
         }
     }
 
@@ -1413,18 +1428,6 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
         val currentBootUniqueIdentifier = BootUtils.getBootIdentifier(context)
 
         messaging.onMessageDisplayed(nextMessage, currentBootUniqueIdentifier)
-    }
-
-    @VisibleForTesting
-    @SuppressLint("NewApi") // The Android Q check is done in the systemGesturesInsets property getter
-    internal fun collectOSNavigationTelemetry() {
-        binding.root.doOnAttach {
-            val systemGestureInsets = binding.root.systemGesturesInsets
-
-            val isUsingGesturesNavigation =
-                (systemGestureInsets?.left ?: 0) > 0 && (systemGestureInsets?.right ?: 0) > 0
-            NavigationBar.osNavigationUsesGestures.set(isUsingGesturesNavigation)
-        }
     }
 
     private fun showCrashReporter() {

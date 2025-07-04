@@ -51,26 +51,31 @@ MessageDatabase::GetTotalCount(uint64_t* aTotalCount) {
 
 NS_IMETHODIMP MessageDatabase::AddMessage(
     uint64_t aFolderId, const nsACString& aMessageId, PRTime aDate,
-    const nsACString& aSender, const nsACString& aSubject, uint64_t aFlags,
-    const nsACString& aTags, nsMsgKey* aKey) {
-  // TODO: normalise
-
+    const nsACString& aSender, const nsACString& aRecipients,
+    const nsACString& aCcList, const nsACString& aBccList,
+    const nsACString& aSubject, uint64_t aFlags, const nsACString& aTags,
+    nsMsgKey* aKey) {
   nsCOMPtr<mozIStorageStatement> stmt;
   DatabaseCore::GetStatement("AddMessage"_ns,
                              "INSERT INTO messages ( \
-                                folderId, messageId, date, sender, subject, flags, tags \
+                                folderId, messageId, date, sender, recipients, ccList, bccList, subject, flags, tags \
                               ) VALUES ( \
-                                :folderId, :messageId, :date, :sender, :subject, :flags, :tags \
-                              ) RETURNING id"_ns,
+                                :folderId, :messageId, :date, :sender, :recipients, :ccList, :bccList, :subject, :flags, :tags \
+                              ) RETURNING "_ns MESSAGE_SQL_FIELDS,
                              getter_AddRefs(stmt));
 
   stmt->BindInt64ByName("folderId"_ns, aFolderId);
-  stmt->BindUTF8StringByName("messageId"_ns, aMessageId);
+  stmt->BindUTF8StringByName("messageId"_ns,
+                             DatabaseUtils::Normalize(aMessageId));
   stmt->BindInt64ByName("date"_ns, aDate);
-  stmt->BindUTF8StringByName("sender"_ns, aSender);
-  stmt->BindUTF8StringByName("subject"_ns, aSubject);
+  stmt->BindUTF8StringByName("sender"_ns, DatabaseUtils::Normalize(aSender));
+  stmt->BindUTF8StringByName("recipients"_ns,
+                             DatabaseUtils::Normalize(aRecipients));
+  stmt->BindUTF8StringByName("ccList"_ns, DatabaseUtils::Normalize(aCcList));
+  stmt->BindUTF8StringByName("bccList"_ns, DatabaseUtils::Normalize(aBccList));
+  stmt->BindUTF8StringByName("subject"_ns, DatabaseUtils::Normalize(aSubject));
   stmt->BindInt64ByName("flags"_ns, aFlags);
-  stmt->BindUTF8StringByName("tags"_ns, aTags);
+  stmt->BindUTF8StringByName("tags"_ns, DatabaseUtils::Normalize(aTags));
 
   bool hasResult;
   nsresult rv = stmt->ExecuteStep(&hasResult);
@@ -80,16 +85,7 @@ NS_IMETHODIMP MessageDatabase::AddMessage(
     return NS_ERROR_UNEXPECTED;
   }
 
-  RefPtr<Message> message = new Message(this);
-  message->mId = (nsMsgKey)(stmt->AsInt64(0));
-  message->mFolderId = aFolderId;
-  message->mMessageId = aMessageId;
-  message->mDate = aDate;
-  message->mSender = aSender;
-  message->mSubject = aSubject;
-  message->mFlags = aFlags;
-  message->mTags = aTags;
-
+  RefPtr<Message> message = new Message(this, stmt);
   stmt->Reset();
 
   for (RefPtr<MessageListener> messageListener :
@@ -106,7 +102,7 @@ NS_IMETHODIMP MessageDatabase::RemoveMessage(nsMsgKey aKey) {
   DatabaseCore::GetStatement("RemoveMessage"_ns,
                              "DELETE FROM messages \
                               WHERE id = :id \
-                              RETURNING folderId, messageId, date, sender, subject, flags, tags"_ns,
+                              RETURNING "_ns MESSAGE_SQL_FIELDS,
                              getter_AddRefs(stmt));
 
   stmt->BindInt64ByName("id"_ns, aKey);
@@ -119,17 +115,7 @@ NS_IMETHODIMP MessageDatabase::RemoveMessage(nsMsgKey aKey) {
     return NS_ERROR_UNEXPECTED;
   }
 
-  uint32_t len;
-  RefPtr<Message> message = new Message(this);
-  message->mId = aKey;
-  message->mFolderId = stmt->AsInt64(0);
-  message->mMessageId = stmt->AsSharedUTF8String(1, &len);
-  message->mDate = stmt->AsDouble(2);
-  message->mSender = stmt->AsSharedUTF8String(3, &len);
-  message->mSubject = stmt->AsSharedUTF8String(4, &len);
-  message->mFlags = stmt->AsInt64(5);
-  message->mTags = stmt->AsSharedUTF8String(6, &len);
-
+  RefPtr<Message> message = new Message(this, stmt);
   stmt->Reset();
 
   for (RefPtr<MessageListener> messageListener :
@@ -161,11 +147,38 @@ nsresult MessageDatabase::ListAllKeys(uint64_t aFolderId,
 
 nsresult MessageDatabase::GetMessage(nsMsgKey aKey, Message** aMessage) {
   nsCOMPtr<mozIStorageStatement> stmt;
-  DatabaseCore::GetStatement("GetMessage"_ns,
+  DatabaseCore::GetStatement("GetMessageByKey"_ns,
                              "SELECT "_ns MESSAGE_SQL_FIELDS
                              " FROM messages WHERE id = :id"_ns,
                              getter_AddRefs(stmt));
   stmt->BindInt64ByName("id"_ns, (uint64_t)aKey);
+
+  bool hasResult;
+  nsresult rv = stmt->ExecuteStep(&hasResult);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!hasResult) {
+    stmt->Reset();
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  RefPtr<Message> message = new Message(this, stmt);
+  message.forget(aMessage);
+  stmt->Reset();
+
+  return NS_OK;
+}
+
+nsresult MessageDatabase::GetMessageForMessageID(uint64_t aFolderId,
+                                                 const nsACString& aMessageId,
+                                                 Message** aMessage) {
+  nsCOMPtr<mozIStorageStatement> stmt;
+  DatabaseCore::GetStatement(
+      "GetMessageByMessageId"_ns,
+      "SELECT "_ns MESSAGE_SQL_FIELDS
+      " FROM messages WHERE folderId = :folderId AND messageId = :messageId"_ns,
+      getter_AddRefs(stmt));
+  stmt->BindInt64ByName("folderId"_ns, aFolderId);
+  stmt->BindUTF8StringByName("messageId"_ns, aMessageId);
 
   bool hasResult;
   nsresult rv = stmt->ExecuteStep(&hasResult);
@@ -190,36 +203,53 @@ nsresult MessageDatabase::GetMessageFlag(nsMsgKey aKey, uint64_t aFlag,
   return NS_OK;
 }
 
-nsresult MessageDatabase::SetMessageFlag(nsMsgKey aKey, uint64_t aFlag,
-                                         bool aSetFlag) {
-  nsCOMPtr<mozIStorageStatement> stmt;
-  if (aSetFlag) {
-    DatabaseCore::GetStatement(
-        "SetMessageFlag"_ns,
-        "UPDATE messages SET flags = flags | :flag WHERE id = :id"_ns,
-        getter_AddRefs(stmt));
-  } else {
-    DatabaseCore::GetStatement(
-        "MessageClearFlag"_ns,
-        "UPDATE messages SET flags = flags & ~:flag WHERE id = :id"_ns,
-        getter_AddRefs(stmt));
-  }
+nsresult MessageDatabase::SetMessageFlag(nsMsgKey key, uint64_t flag,
+                                         bool setFlag) {
+  RefPtr<Message> message;
+  nsresult rv = GetMessage(key, getter_AddRefs(message));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  stmt->BindInt64ByName("id"_ns, aKey);
-  stmt->BindInt64ByName("flag"_ns, aFlag);
-  return stmt->Execute();
+  nsCOMPtr<mozIStorageStatement> stmt;
+  if (setFlag) {
+    return SetMessageFlagsInternal(message, message->mFlags | flag);
+  } else {
+    return SetMessageFlagsInternal(message, message->mFlags & ~flag);
+  }
 }
 
-nsresult MessageDatabase::SetMessageFlags(uint64_t aId, uint64_t aFlags) {
+nsresult MessageDatabase::SetMessageFlags(nsMsgKey key, uint64_t newFlags) {
+  RefPtr<Message> message;
+  nsresult rv = GetMessage(key, getter_AddRefs(message));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return SetMessageFlagsInternal(message, newFlags);
+}
+
+nsresult MessageDatabase::SetMessageFlagsInternal(Message* message,
+                                                  uint64_t newFlags) {
+  uint64_t oldFlags = message->mFlags;
+  if (newFlags == oldFlags) {
+    return NS_OK;
+  }
+
   nsCOMPtr<mozIStorageStatement> stmt;
   DatabaseCore::GetStatement(
       "SetMessageFlags"_ns,
       "UPDATE messages SET flags = :flags WHERE id = :id"_ns,
       getter_AddRefs(stmt));
 
-  stmt->BindInt64ByName("id"_ns, aId);
-  stmt->BindInt64ByName("flags"_ns, aFlags);
-  return stmt->Execute();
+  stmt->BindInt64ByName("id"_ns, message->mId);
+  stmt->BindInt64ByName("flags"_ns, newFlags);
+  nsresult rv = stmt->Execute();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  message->mFlags = newFlags;
+
+  for (RefPtr<MessageListener> messageListener :
+       mMessageListeners.EndLimitedRange()) {
+    messageListener->OnMessageFlagsChanged(message, oldFlags, newFlags);
+  }
+  return NS_OK;
 }
 
 nsresult MessageDatabase::MarkAllRead(uint64_t aFolderId,
@@ -243,6 +273,48 @@ nsresult MessageDatabase::MarkAllRead(uint64_t aFolderId,
   stmt->Reset();
 
   return NS_OK;
+}
+
+nsresult MessageDatabase::GetNumMessages(uint64_t folderId,
+                                         uint64_t* numMessages) {
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = DatabaseCore::GetStatement(
+      "GetNumMessages"_ns,
+      "SELECT COUNT(*) AS numMessages FROM messages WHERE folderId = :folderId"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  stmt->BindInt64ByName("folderId"_ns, folderId);
+
+  *numMessages = 0;
+  bool hasResult;
+  if (NS_SUCCEEDED(stmt->ExecuteStep(&hasResult)) && hasResult) {
+    *numMessages = (uint64_t)stmt->AsInt64(0);
+  }
+  stmt->Reset();
+
+  return rv;
+}
+
+nsresult MessageDatabase::GetNumUnread(uint64_t folderId, uint64_t* numUnread) {
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = DatabaseCore::GetStatement(
+      "GetNumUnread"_ns,
+      "SELECT COUNT(*) AS numUnread FROM messages WHERE folderId = :folderId AND flags & :flag = 0"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  stmt->BindInt64ByName("folderId"_ns, folderId);
+  stmt->BindInt64ByName("flag"_ns, nsMsgMessageFlags::Read);
+
+  *numUnread = 0;
+  bool hasResult;
+  if (NS_SUCCEEDED(stmt->ExecuteStep(&hasResult)) && hasResult) {
+    *numUnread = (uint64_t)stmt->AsInt64(0);
+  }
+  stmt->Reset();
+
+  return rv;
 }
 
 nsresult MessageDatabase::GetMessageProperties(
@@ -309,7 +381,7 @@ nsresult MessageDatabase::GetMessageProperty(nsMsgKey aKey,
   *aValue = 0;
   bool hasResult;
   if (NS_SUCCEEDED(stmt->ExecuteStep(&hasResult)) && hasResult) {
-    *aValue = stmt->AsInt64(0);  // Strange cast, can't do much about it.
+    *aValue = (uint32_t)stmt->AsInt64(0);
   }
   stmt->Reset();
 

@@ -66,8 +66,10 @@ class Navigation final : public DOMEventTargetHelper {
   void Navigate(JSContext* aCx, const nsAString& aUrl,
                 const NavigationNavigateOptions& aOptions,
                 NavigationResult& aResult) {}
-  void Reload(JSContext* aCx, const NavigationReloadOptions& aOptions,
-              NavigationResult& aResult) {}
+
+  MOZ_CAN_RUN_SCRIPT void Reload(JSContext* aCx,
+                                 const NavigationReloadOptions& aOptions,
+                                 NavigationResult& aResult);
 
   void TraverseTo(JSContext* aCx, const nsAString& aKey,
                   const NavigationOptions& aOptions,
@@ -107,23 +109,29 @@ class Navigation final : public DOMEventTargetHelper {
   // https://html.spec.whatwg.org/#navigate-event-firing
 
   MOZ_CAN_RUN_SCRIPT bool FireTraverseNavigateEvent(
-      SessionHistoryInfo* aDestinationSessionHistoryInfo,
+      JSContext* aCx, SessionHistoryInfo* aDestinationSessionHistoryInfo,
       Maybe<UserNavigationInvolvement> aUserInvolvement);
 
   MOZ_CAN_RUN_SCRIPT bool FirePushReplaceReloadNavigateEvent(
-      NavigationType aNavigationType, nsIURI* aDestinationURL,
+      JSContext* aCx, NavigationType aNavigationType, nsIURI* aDestinationURL,
       bool aIsSameDocument, Maybe<UserNavigationInvolvement> aUserInvolvement,
-      Element* aSourceElement, Maybe<const FormData&> aFormDataEntryList,
+      Element* aSourceElement, already_AddRefed<FormData> aFormDataEntryList,
       nsIStructuredCloneContainer* aNavigationAPIState,
       nsIStructuredCloneContainer* aClassicHistoryAPIState);
 
   MOZ_CAN_RUN_SCRIPT bool FireDownloadRequestNavigateEvent(
-      nsIURI* aDestinationURL, UserNavigationInvolvement aUserInvolvement,
-      Element* aSourceElement, const nsAString& aFilename);
+      JSContext* aCx, nsIURI* aDestinationURL,
+      UserNavigationInvolvement aUserInvolvement, Element* aSourceElement,
+      const nsAString& aFilename);
 
   bool FocusedChangedDuringOngoingNavigation() const;
   void SetFocusedChangedDuringOngoingNavigation(
-      bool aFocusChangedDUringOngoingNavigation);
+      bool aFocusChangedDuringOngoingNavigation);
+
+  bool HasOngoingNavigateEvent() const;
+
+  void AbortOngoingNavigation(
+      JSContext* aCx, JS::Handle<JS::Value> aError = JS::UndefinedHandleValue);
 
  private:
   using UpcomingTraverseAPIMethodTrackers =
@@ -141,11 +149,15 @@ class Navigation final : public DOMEventTargetHelper {
 
   nsresult FireEvent(const nsAString& aName);
 
+  nsresult FireErrorEvent(const nsAString& aName,
+                          const ErrorEventInit& aEventInitDict);
+
   // https://html.spec.whatwg.org/#inner-navigate-event-firing-algorithm
   MOZ_CAN_RUN_SCRIPT bool InnerFireNavigateEvent(
-      NavigationType aNavigationType, NavigationDestination* aDestination,
+      JSContext* aCx, NavigationType aNavigationType,
+      NavigationDestination* aDestination,
       UserNavigationInvolvement aUserInvolvement, Element* aSourceElement,
-      Maybe<const FormData&> aFormDataEntryList,
+      already_AddRefed<FormData> aFormDataEntryList,
       nsIStructuredCloneContainer* aClassicHistoryAPIState,
       const nsAString& aDownloadRequestFilename);
 
@@ -154,9 +166,29 @@ class Navigation final : public DOMEventTargetHelper {
 
   void PromoteUpcomingAPIMethodTrackerToOngoing(Maybe<nsID>&& aDestinationKey);
 
+  RefPtr<NavigationAPIMethodTracker>
+  MaybeSetUpcomingNonTraverseAPIMethodTracker(
+      JS::Handle<JS::Value> aInfo,
+      nsIStructuredCloneContainer* aSerializedState);
+
+  RefPtr<NavigationAPIMethodTracker> AddUpcomingTraverseAPIMethodTracker(
+      const nsID& aKey, JS::Handle<JS::Value> aInfo);
+
+  void SetEarlyErrorResult(NavigationResult& aResult, ErrorResult&& aRv) const;
+
+  bool CheckIfDocumentIsFullyActiveAndMaybeSetEarlyErrorResult(
+      const Document* aDocument, NavigationResult& aResult) const;
+
+  bool CheckDocumentUnloadCounterAndMaybeSetEarlyErrorResult(
+      const Document* aDocument, NavigationResult& aResult) const;
+
+  already_AddRefed<nsIStructuredCloneContainer>
+  CreateSerializedStateAndMaybeSetEarlyErrorResult(
+      JSContext* aCx, const JS::Value& aState, NavigationResult& aResult) const;
+
   static void CleanUp(NavigationAPIMethodTracker* aNavigationAPIMethodTracker);
 
-  void AbortOngoingNavigation();
+  Document* GetAssociatedDocument() const;
 
   void LogHistory() const;
 
@@ -170,7 +202,7 @@ class Navigation final : public DOMEventTargetHelper {
   RefPtr<NavigateEvent> mOngoingNavigateEvent;
 
   // https://html.spec.whatwg.org/multipage/nav-history-apis.html#focus-changed-during-ongoing-navigation
-  bool mFocusChangedDUringOngoingNavigation = false;
+  bool mFocusChangedDuringOngoingNavigation = false;
 
   // https://html.spec.whatwg.org/multipage/nav-history-apis.html#suppress-normal-scroll-restoration-during-ongoing-navigation
   bool mSuppressNormalScrollRestorationDuringOngoingNavigation = false;

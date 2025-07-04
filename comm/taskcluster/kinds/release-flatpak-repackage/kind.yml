@@ -7,7 +7,7 @@ loader: taskgraph.loader.transform:loader
 transforms:
     - gecko_taskgraph.transforms.release:run_on_releases
     - gecko_taskgraph.transforms.release_deps:transforms
-    - gecko_taskgraph.transforms.release_flatpak_repackage:transforms
+    - comm_taskgraph.transforms.release_flatpak_repackage:transforms
     - comm_taskgraph.transforms.packaging_l10n:transforms
     - gecko_taskgraph.transforms.task:transforms
 
@@ -18,7 +18,7 @@ kind-dependencies:
 task-defaults:
     description: Generates flatpak by repackaging the existing .tar.xz
     run-on-projects: []  # to make sure this never runs as part of CI
-    run-on-releases: [beta, release, esr128]
+    run-on-releases: [beta, release, esr140]
     shipping-phase: promote
     scopes: []
     package-locales-file: comm/mail/locales/onchange-locales

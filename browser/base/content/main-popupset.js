@@ -88,16 +88,28 @@ document.addEventListener(
           TabContextMenu.closeContextTabs();
           break;
         case "context_closeDuplicateTabs":
-          gBrowser.removeDuplicateTabs(TabContextMenu.contextTab);
+          gBrowser.removeDuplicateTabs(
+            TabContextMenu.contextTab,
+            lazy.TabMetrics.userTriggeredContext()
+          );
           break;
         case "context_closeTabsToTheStart":
-          gBrowser.removeTabsToTheStartFrom(TabContextMenu.contextTab);
+          gBrowser.removeTabsToTheStartFrom(
+            TabContextMenu.contextTab,
+            lazy.TabMetrics.userTriggeredContext()
+          );
           break;
         case "context_closeTabsToTheEnd":
-          gBrowser.removeTabsToTheEndFrom(TabContextMenu.contextTab);
+          gBrowser.removeTabsToTheEndFrom(
+            TabContextMenu.contextTab,
+            lazy.TabMetrics.userTriggeredContext()
+          );
           break;
         case "context_closeOtherTabs":
-          gBrowser.removeAllTabsBut(TabContextMenu.contextTab);
+          gBrowser.removeAllTabsBut(
+            TabContextMenu.contextTab,
+            lazy.TabMetrics.userTriggeredContext()
+          );
           break;
         case "context_unloadTab":
           TabContextMenu.explicitUnloadTabs();
@@ -121,10 +133,9 @@ document.addEventListener(
           {
             let { tabGroupId } = event.target.parentElement.triggerNode.dataset;
             let otherTabGroup = gBrowser.getTabGroupById(tabGroupId);
-            let adoptedTabGroup = gBrowser.adoptTabGroup(
-              otherTabGroup,
-              gBrowser.tabs.length
-            );
+            let adoptedTabGroup = gBrowser.adoptTabGroup(otherTabGroup, {
+              tabIndex: gBrowser.tabs.length,
+            });
             adoptedTabGroup.select();
           }
           break;
@@ -148,7 +159,7 @@ document.addEventListener(
           {
             let { tabGroupId } = event.target.parentElement.triggerNode.dataset;
             SessionStore.openSavedTabGroup(tabGroupId, window, {
-              source: lazy.TabMetrics.METRIC_SOURCE.RECENT_TABS,
+              source: lazy.TabMetrics.METRIC_SOURCE.TAB_OVERFLOW_MENU,
             });
           }
           break;
@@ -157,7 +168,7 @@ document.addEventListener(
             // TODO Bug 1940112: "Open Group in New Window" should directly restore saved tab groups into a new window
             let { tabGroupId } = event.target.parentElement.triggerNode.dataset;
             let tabGroup = SessionStore.openSavedTabGroup(tabGroupId, window, {
-              source: lazy.TabMetrics.METRIC_SOURCE.RECENT_TABS,
+              source: lazy.TabMetrics.METRIC_SOURCE.TAB_OVERFLOW_MENU,
             });
             gBrowser.replaceGroupWithWindow(tabGroup);
           }
@@ -223,7 +234,20 @@ document.addEventListener(
         case "toolbar-context-autohide-downloads-button":
           ToolbarContextMenu.onDownloadsAutoHideChange(event);
           break;
+        case "toolbar-context-always-show-extensions-button":
+          if (event.target.getAttribute("checked") == "true") {
+            gUnifiedExtensions.showExtensionsButtonInToolbar();
+          } else {
+            gUnifiedExtensions.hideExtensionsButtonFromToolbar();
+          }
+          break;
         case "toolbar-context-remove-from-toolbar":
+          if (
+            event.target.parentNode.triggerNode === gUnifiedExtensions.button
+          ) {
+            gUnifiedExtensions.hideExtensionsButtonFromToolbar();
+            break;
+          }
           gCustomizeMode.removeFromArea(
             event.target.parentNode.triggerNode,
             "toolbar-context-menu"
@@ -385,6 +409,16 @@ document.addEventListener(
       }
     });
 
+    const containerHistoryPopup = document.getElementById(
+      "sidebar-history-context-menu-container-popup"
+    );
+    containerHistoryPopup.addEventListener("command", event =>
+      PlacesUIUtils.openInContainerTab(event)
+    );
+    containerHistoryPopup.addEventListener("popupshowing", event =>
+      PlacesUIUtils.createContainerTabMenu(event)
+    );
+
     document
       .getElementById("context_reopenInContainerPopupMenu")
       .addEventListener("command", event => {
@@ -457,7 +491,8 @@ document.addEventListener(
           );
           ToolbarContextMenu.updateDownloadsAutoHide(event.target);
           ToolbarContextMenu.updateDownloadsAlwaysOpenPanel(event.target);
-          ToolbarContextMenu.updateExtension(event.target, event);
+          ToolbarContextMenu.updateExtensionsButtonContextMenu(event.target);
+          ToolbarContextMenu.updateExtension(event.target);
           break;
         case "pageActionContextMenu":
           BrowserPageActions.onContextMenuShowing(event, event.target);

@@ -20,6 +20,7 @@ use ews::{
     soap,
     sync_folder_hierarchy::{self, SyncFolderHierarchy},
     sync_folder_items::{self, SyncFolderItems},
+    update_folder::{FolderChange, FolderChanges, UpdateFolder, Updates as FolderUpdates},
     update_item::{
         ConflictResolution, ItemChange, ItemChangeDescription, ItemChangeInner, UpdateItem, Updates,
     },
@@ -40,16 +41,18 @@ use uuid::Uuid;
 use xpcom::{
     getter_addrefs,
     interfaces::{
-        nsIMsgDBHdr, nsIMsgOutgoingListener, nsIStringInputStream, nsIURI, nsMsgFolderFlagType,
-        nsMsgFolderFlags, nsMsgKey, IEwsClient, IEwsFolderCallbacks, IEwsFolderDeleteCallbacks,
-        IEwsMessageCallbacks, IEwsMessageCreateCallbacks, IEwsMessageDeleteCallbacks,
-        IEwsMessageFetchCallbacks,
+        nsIMsgDBHdr, nsIMsgOutgoingListener, nsIStringInputStream, nsIURI, nsIUrlListener,
+        nsMsgKey, IEwsFolderDeleteCallbacks, IEwsFolderUpdateCallbacks, IEwsMessageCallbacks,
+        IEwsMessageCreateCallbacks, IEwsMessageDeleteCallbacks, IEwsMessageFetchCallbacks,
     },
     RefPtr,
 };
 
-use crate::headers::{Mailbox, MessageHeaders};
 use crate::{authentication::credentials::Credentials, cancellable_request::CancellableRequest};
+use crate::{
+    headers::{Mailbox, MessageHeaders},
+    safe_xpcom::{EwsClientError, SafeEwsFolderCallbacks},
+};
 
 // Flags to use for setting the `PR_MESSAGE_FLAGS` MAPI property.
 //
@@ -79,6 +82,68 @@ pub(crate) struct XpComEwsClient {
 }
 
 impl XpComEwsClient {
+    /// Performs a connectivity check to the EWS server.
+    ///
+    /// Because EWS does not have a dedicated endpoint to test connectivity and
+    /// authentication, we try to look up the ID of the account's root mail
+    /// folder, since it produces a fairly small request and represents the
+    /// first operation performed when adding a new account to Thunderbird.
+    pub(crate) async fn check_connectivity(
+        self,
+        uri: RefPtr<nsIURI>,
+        listener: RefPtr<nsIUrlListener>,
+    ) {
+        unsafe { listener.OnStartRunningUrl(uri.coerce()) };
+
+        match self.check_connectivity_inner().await {
+            Ok(_) => unsafe {
+                listener.OnStopRunningUrl(uri.coerce(), nserror::NS_OK);
+            },
+            Err(err) => unsafe {
+                listener.OnStopRunningUrl(uri.coerce(), err.into());
+            },
+        }
+    }
+
+    async fn check_connectivity_inner(self) -> Result<(), XpComEwsError> {
+        // Request the EWS ID of the root folder.
+        let get_root_folder = GetFolder {
+            folder_shape: FolderShape {
+                base_shape: BaseShape::IdOnly,
+            },
+            folder_ids: vec![BaseFolderId::DistinguishedFolderId {
+                id: EWS_ROOT_FOLDER.to_string(),
+                change_key: None,
+            }],
+        };
+
+        let res = self.make_operation_request(get_root_folder).await?;
+
+        let response_message_count = res.response_messages.get_folder_response_message.len();
+        if response_message_count != 1 {
+            return Err(XpComEwsError::Processing {
+                message: format!("expected 1 response message, got {response_message_count}"),
+            });
+        }
+
+        // Get the first (and only) response message so we can inspect it.
+        // Unwrapping is fine here, because we've already made sure there's one
+        // message.
+        let message = res
+            .response_messages
+            .get_folder_response_message
+            .into_iter()
+            .next()
+            .unwrap();
+
+        // Any error fetching the root folder is fatal, since it likely means
+        // all subsequent request will fail, and that we won't manage to sync
+        // the folder list later.
+        validate_get_folder_response_message(&message)?;
+
+        Ok(())
+    }
+
     /// Performs a [`SyncFolderHierarchy`] operation via EWS.
     ///
     /// This will fetch a list of remote changes since the specified sync state,
@@ -89,21 +154,21 @@ impl XpComEwsClient {
     /// [`SyncFolderHierarchy`] https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/syncfolderhierarchy-operation
     pub(crate) async fn sync_folder_hierarchy(
         self,
-        callbacks: RefPtr<IEwsFolderCallbacks>,
+        callbacks: SafeEwsFolderCallbacks,
         sync_state_token: Option<String>,
     ) {
         // Call an inner function to perform the operation in order to allow us
         // to handle errors while letting the inner function simply propagate.
         self.sync_folder_hierarchy_inner(&callbacks, sync_state_token)
             .await
-            .unwrap_or_else(process_error_with_cb(move |client_err, desc| unsafe {
-                callbacks.OnError(client_err, &*desc);
+            .unwrap_or_else(process_error_with_cb(move |client_err, desc| {
+                let _ = callbacks.on_error(client_err, &*desc);
             }));
     }
 
     async fn sync_folder_hierarchy_inner(
         self,
-        callbacks: &IEwsFolderCallbacks,
+        callbacks: &SafeEwsFolderCallbacks,
         mut sync_state_token: Option<String>,
     ) -> Result<(), XpComEwsError> {
         // If we have received no sync state, assume that this is the first time
@@ -190,6 +255,8 @@ impl XpComEwsClient {
             sync_state_token = Some(message.sync_state);
         }
 
+        callbacks.on_success()?;
+
         Ok(())
     }
 
@@ -203,7 +270,7 @@ impl XpComEwsClient {
         // to handle errors while letting the inner function simply propagate.
         self.sync_messages_for_folder_inner(&callbacks, folder_id, sync_state_token)
             .await
-            .unwrap_or_else(process_error_with_cb(move |client_err, desc| unsafe {
+            .unwrap_or_else(process_error_with_cb_cpp(move |client_err, desc| unsafe {
                 callbacks.OnError(client_err, &*desc);
             }));
     }
@@ -252,12 +319,8 @@ impl XpComEwsClient {
                 .iter()
                 .filter_map(|change| {
                     let message = match change {
-                        sync_folder_items::Change::Create {
-                            item: RealItem::Message(message),
-                        } => message,
-                        sync_folder_items::Change::Update {
-                            item: RealItem::Message(message),
-                        } => message,
+                        sync_folder_items::Change::Create { item } => item.inner_message(),
+                        sync_folder_items::Change::Update { item } => item.inner_message(),
 
                         // We don't fetch items for anything other than messages,
                         // since we don't have support for other items, and we don't
@@ -295,22 +358,19 @@ impl XpComEwsClient {
                         "item:DisplayCc",
                         "item:HasAttachments",
                         "item:Importance",
+                        "message:References",
                     ],
                     false,
                 )
                 .await?
                 .into_iter()
-                .map(|item| match item {
-                    RealItem::Message(message) => message
+                .map(|item| {
+                    let message = item.into_inner_message();
+                    message
                         .item_id
                         .clone()
                         .ok_or_else(|| XpComEwsError::MissingIdInResponse)
-                        .map(|item_id| (item_id.id.to_owned(), message)),
-
-                    // We should have filtered above for only Message-related
-                    // changes.
-                    #[allow(unreachable_patterns)]
-                    _ => panic!("Encountered unexpected non-Message item in response"),
+                        .map(|item_id| (item_id.id.to_owned(), message))
                 })
                 .collect::<Result<_, _>>()?;
 
@@ -349,23 +409,16 @@ impl XpComEwsClient {
             for change in changes {
                 match change {
                     sync_folder_items::Change::Create { item } => {
-                        let item_id = match item {
-                            RealItem::Message(message) => {
-                                message
-                                    .item_id
-                                    .ok_or_else(|| XpComEwsError::MissingIdInResponse)?
-                                    .id
-                            }
-
-                            // We don't currently handle anything other than
-                            // messages, so skip this change.
-                            #[allow(unreachable_patterns)]
-                            _ => continue,
-                        };
+                        let item_id = &item
+                            .inner_message()
+                            .item_id
+                            .as_ref()
+                            .ok_or_else(|| XpComEwsError::MissingIdInResponse)?
+                            .id;
 
                         log::info!("Processing Create change with ID {item_id}");
 
-                        let msg = messages_by_id.get(&item_id).ok_or_else(|| {
+                        let msg = messages_by_id.get(item_id).ok_or_else(|| {
                             XpComEwsError::Processing {
                                 message: format!("Unable to fetch message with ID {item_id}"),
                             }
@@ -375,7 +428,7 @@ impl XpComEwsClient {
                         // us. We don't create it ourselves so that the database
                         // can fill out any fields it wants beforehand. The
                         // header we get back will have its EWS ID already set.
-                        let ews_id = nsCString::from(&item_id);
+                        let ews_id = nsCString::from(item_id);
                         let result = getter_addrefs(|hdr| unsafe {
                             callbacks.CreateNewHeaderForItem(&*ews_id, hdr)
                         });
@@ -398,29 +451,22 @@ impl XpComEwsClient {
                     }
 
                     sync_folder_items::Change::Update { item } => {
-                        let item_id = match item {
-                            RealItem::Message(message) => {
-                                message
-                                    .item_id
-                                    .ok_or_else(|| XpComEwsError::MissingIdInResponse)?
-                                    .id
-                            }
-
-                            // We don't currently handle anything other than
-                            // messages, so skip this change.
-                            #[allow(unreachable_patterns)]
-                            _ => continue,
-                        };
+                        let item_id = &item
+                            .inner_message()
+                            .item_id
+                            .as_ref()
+                            .ok_or_else(|| XpComEwsError::MissingIdInResponse)?
+                            .id;
 
                         log::info!("Processing Update change with ID {item_id}");
 
-                        let msg = messages_by_id.get(&item_id).ok_or_else(|| {
+                        let msg = messages_by_id.get(item_id).ok_or_else(|| {
                             XpComEwsError::Processing {
                                 message: format!("Unable to fetch message with ID {item_id}"),
                             }
                         })?;
 
-                        let ews_id = nsCString::from(&item_id);
+                        let ews_id = nsCString::from(item_id);
                         let mut result =
                             getter_addrefs(|p| unsafe { callbacks.GetHeaderForItem(&*ews_id, p) });
 
@@ -536,12 +582,11 @@ impl XpComEwsClient {
         // Extract the Internet Message Format content of the message from the
         // response. We've guaranteed above that the iteration will produce
         // at least one element, so unwrapping is okay here.
-        let message = match items.into_iter().next().unwrap() {
-            RealItem::Message(message) => message,
-        };
+        let item = items.into_iter().next().unwrap();
+        let message = item.inner_message();
 
-        let raw_mime = if let Some(raw_mime) = message.mime_content {
-            raw_mime.content
+        let raw_mime = if let Some(raw_mime) = &message.mime_content {
+            &raw_mime.content
         } else {
             return Err(XpComEwsError::Processing {
                 message: format!("item has no content"),
@@ -589,7 +634,7 @@ impl XpComEwsClient {
     /// calls and well-known IDs associated with special folders.
     async fn get_well_known_folder_map(
         &self,
-        callbacks: &IEwsFolderCallbacks,
+        callbacks: &SafeEwsFolderCallbacks,
     ) -> Result<FxHashMap<String, &str>, XpComEwsError> {
         const DISTINGUISHED_IDS: &[&str] = &[
             EWS_ROOT_FOLDER,
@@ -645,9 +690,7 @@ impl XpComEwsClient {
         // Any error fetching the root folder is fatal, since we can't correctly
         // set the parents of any folders it contains without knowing its ID.
         let root_folder_id = validate_get_folder_response_message(&message)?;
-        let folder_id = nsCString::from(root_folder_id.id);
-
-        unsafe { callbacks.RecordRootFolder(&*folder_id) }.to_result()?;
+        callbacks.record_root_folder(root_folder_id)?;
 
         // Build the mapping for the remaining folders.
         message_iter
@@ -677,7 +720,7 @@ impl XpComEwsClient {
 
     async fn push_sync_state_to_ui(
         &self,
-        callbacks: &IEwsFolderCallbacks,
+        callbacks: &SafeEwsFolderCallbacks,
         create_ids: Vec<String>,
         update_ids: Vec<String>,
         delete_ids: Vec<String>,
@@ -693,30 +736,12 @@ impl XpComEwsClient {
                         parent_folder_id,
                         display_name,
                         ..
-                    } => {
-                        // We should have already verified that the folder ID is
-                        // present, so it should be okay to unwrap here.
-                        let id = folder_id.unwrap().id;
-                        let display_name = display_name.ok_or(nserror::NS_ERROR_FAILURE)?;
-
-                        let well_known_folder_flag = well_known_map
-                            .as_ref()
-                            .and_then(|map| map.get(&id))
-                            .map(distinguished_id_to_flag)
-                            .unwrap_or_default();
-
-                        let id = nsCString::from(id);
-                        let parent_struct = parent_folder_id.ok_or(nserror::NS_ERROR_FAILURE)?;
-                        let parent_folder_id = nsCString::from(parent_struct.id);
-                        let display_name = nsCString::from(display_name);
-                        let flags = nsMsgFolderFlags::Mail | well_known_folder_flag;
-
-                        unsafe {
-                            callbacks.Create(&*id, &*parent_folder_id, &*display_name, flags)
-                        }
-                        .to_result()?;
-                    }
-
+                    } => callbacks.create(
+                        folder_id,
+                        parent_folder_id,
+                        display_name,
+                        &well_known_map,
+                    )?,
                     _ => return Err(nserror::NS_ERROR_FAILURE.into()),
                 }
             }
@@ -728,32 +753,20 @@ impl XpComEwsClient {
                 match folder {
                     Folder::Folder {
                         folder_id,
+                        parent_folder_id,
                         display_name,
                         ..
-                    } => {
-                        // We should have already verified that the folder ID is
-                        // present, so it should be okay to unwrap here.
-                        let id = folder_id.unwrap().id;
-                        let display_name = display_name.ok_or(nserror::NS_ERROR_FAILURE)?;
-
-                        let id = nsCString::from(id);
-                        let display_name = nsCString::from(display_name);
-
-                        unsafe { callbacks.Update(&*id, &*display_name) }.to_result()?;
-                    }
-
+                    } => callbacks.update(folder_id, parent_folder_id, display_name)?,
                     _ => return Err(nserror::NS_ERROR_FAILURE.into()),
                 }
             }
         }
 
         for id in delete_ids {
-            let id = nsCString::from(id);
-            unsafe { callbacks.Delete(&*id) }.to_result()?;
+            callbacks.delete(id)?;
         }
 
-        let sync_state = nsCString::from(sync_state);
-        unsafe { callbacks.UpdateSyncState(&*sync_state) }.to_result()?;
+        callbacks.update_sync_state(sync_state)?;
 
         Ok(())
     }
@@ -812,15 +825,41 @@ impl XpComEwsClient {
                         .into_iter()
                         .next()
                         .and_then(|folder| match &folder {
-                            Folder::Folder { folder_class, .. } => {
-                                // Filter out non-mail folders, which will have
-                                // a class value other than "IPF.Note".
-                                if let Some("IPF.Note") =
-                                    folder_class.as_ref().map(|string| string.as_str())
-                                {
-                                    Some(Ok(folder))
-                                } else {
-                                    None
+                            Folder::Folder {
+                                folder_class,
+                                display_name,
+                                ..
+                            } => {
+                                let folder_class =
+                                    folder_class.as_ref().map(|string| string.as_str());
+
+                                // Filter out non-mail folders. According to EWS
+                                // docs, this should be any folder which class
+                                // start is "IPF.Note", or starts with
+                                // "IPF.Note." (to allow some systems to define
+                                // custom mail-derived classes).
+                                //
+                                // See
+                                // <https://learn.microsoft.com/en-us/exchange/client-developer/exchange-web-services/folders-and-items-in-ews-in-exchange>
+                                match folder_class {
+                                    Some(folder_class) => {
+                                        if folder_class == "IPF.Note"
+                                            || folder_class.starts_with("IPF.Note.")
+                                        {
+                                            Some(Ok(folder))
+                                        } else {
+                                            log::debug!("Skipping folder with unsupported class: {folder_class}");
+                                            None
+                                        }
+                                    }
+                                    None => {
+                                        log::warn!(
+                                            "Skipping folder without a class: {}",
+                                            display_name.clone().unwrap_or("unknown".to_string())
+                                        );
+
+                                        None
+                                    }
                                 }
                             }
 
@@ -1038,6 +1077,7 @@ impl XpComEwsClient {
         self,
         folder_id: String,
         is_draft: bool,
+        is_read: bool,
         content: Vec<u8>,
         callbacks: RefPtr<IEwsMessageCreateCallbacks>,
     ) {
@@ -1045,7 +1085,7 @@ impl XpComEwsClient {
         // Use the return value to determine which status we should use when
         // notifying the end of the request.
         let status = match self
-            .create_message_inner(folder_id, is_draft, content, &callbacks)
+            .create_message_inner(folder_id, is_draft, is_read, content, &callbacks)
             .await
         {
             Ok(_) => nserror::NS_OK,
@@ -1065,6 +1105,7 @@ impl XpComEwsClient {
         &self,
         folder_id: String,
         is_draft: bool,
+        is_read: bool,
         content: Vec<u8>,
         callbacks: &IEwsMessageCreateCallbacks,
     ) -> Result<(), XpComEwsError> {
@@ -1074,6 +1115,7 @@ impl XpComEwsClient {
                 character_set: None,
                 content: BASE64_STANDARD.encode(&content),
             }),
+            is_read: Some(is_read),
             ..Default::default()
         };
 
@@ -1262,7 +1304,7 @@ impl XpComEwsClient {
         // to handle errors while letting the inner function simply propagate.
         self.delete_messages_inner(ews_ids, &callbacks)
             .await
-            .unwrap_or_else(process_error_with_cb(move |client_err, desc| unsafe {
+            .unwrap_or_else(process_error_with_cb_cpp(move |client_err, desc| unsafe {
                 callbacks.OnError(client_err, &*desc);
             }));
     }
@@ -1378,6 +1420,71 @@ impl XpComEwsClient {
 
         // Delete the folder from the server's database.
         unsafe { callbacks.OnRemoteDeleteFolderSuccessful() }
+            .to_result()
+            .map_err(|err| err.into())
+    }
+
+    pub async fn update_folder(
+        self,
+        callbacks: RefPtr<IEwsFolderUpdateCallbacks>,
+        folder_id: String,
+        folder_name: String,
+    ) {
+        // Call an inner function to perform the operation in order to allow us
+        // to handle errors while letting the inner function simply propagate.
+        if let Err(err) = self
+            .update_folder_inner(&callbacks, folder_id, folder_name)
+            .await
+        {
+            log::error!("an error occurred while attempting to delete the folder: {err:?}");
+        }
+    }
+
+    async fn update_folder_inner(
+        self,
+        callbacks: &IEwsFolderUpdateCallbacks,
+        folder_id: String,
+        folder_name: String,
+    ) -> Result<(), XpComEwsError> {
+        let update_folder = UpdateFolder {
+            folder_changes: FolderChanges {
+                folder_change: FolderChange {
+                    folder_id: BaseFolderId::FolderId {
+                        id: folder_id,
+                        change_key: None,
+                    },
+                    updates: FolderUpdates::SetFolderField {
+                        field_URI: PathToElement::FieldURI {
+                            field_URI: "folder:DisplayName".to_string(),
+                        },
+                        folder: Folder::Folder {
+                            display_name: Some(folder_name),
+                            folder_id: None,
+                            parent_folder_id: None,
+                            folder_class: None,
+                            total_count: None,
+                            child_folder_count: None,
+                            extended_property: None,
+                            unread_count: None,
+                        },
+                    },
+                },
+            },
+        };
+
+        let response = self.make_operation_request(update_folder).await?;
+        let response_messages = response.response_messages.update_folder_response_message;
+        validate_response_message_count(&response_messages, 1)?;
+
+        let response_message = response_messages.into_iter().next().unwrap();
+        process_response_message_class(
+            "UpdateFolder",
+            &response_message.response_class,
+            &response_message.response_code,
+            &response_message.message_text,
+        )?;
+
+        unsafe { callbacks.OnRemoteFolderUpdateSuccessful() }
             .to_result()
             .map_err(|err| err.into())
     }
@@ -1530,6 +1637,11 @@ fn populate_db_message_header_from_message_headers(
         unsafe { header.SetPriority(priority) }.to_result()?;
     }
 
+    if let Some(references) = msg.references() {
+        let references = nsCString::from(references.as_ref());
+        unsafe { header.SetReferences(&*references) }.to_result()?;
+    }
+
     Ok(())
 }
 
@@ -1568,22 +1680,6 @@ fn make_header_string_for_mailbox_list<'a>(
         .collect();
 
     strings.join(", ")
-}
-
-/// Gets the Thunderbird flag corresponding to an EWS distinguished ID.
-fn distinguished_id_to_flag(id: &&str) -> nsMsgFolderFlagType {
-    // The type signature here is a little weird due to being passed directly to
-    // `map()`.
-    match *id {
-        "inbox" => nsMsgFolderFlags::Inbox,
-        "deleteditems" => nsMsgFolderFlags::Trash,
-        "drafts" => nsMsgFolderFlags::Drafts,
-        "outbox" => nsMsgFolderFlags::Queue,
-        "sentitems" => nsMsgFolderFlags::SentMail,
-        "junkemail" => nsMsgFolderFlags::Junk,
-        "archiveinbox" => nsMsgFolderFlags::Archive,
-        _ => Default::default(),
-    }
 }
 
 #[derive(Debug, Error)]
@@ -1625,10 +1721,10 @@ impl From<XpComEwsError> for nsresult {
 }
 
 /// Returns a function for processing an error and providing it to the provided
-/// error-handling callback.
+/// error-handling callback. This version allows only safe Rust types as input.
 fn process_error_with_cb<Cb>(handler: Cb) -> impl FnOnce(XpComEwsError)
 where
-    Cb: FnOnce(u8, nsCString),
+    Cb: FnOnce(EwsClientError, &str),
 {
     |err| {
         let (client_err, desc) = match err {
@@ -1638,7 +1734,7 @@ where
             }) => {
                 // Authentication failed. Let Thunderbird know so we can
                 // handle it appropriately.
-                (IEwsClient::EWS_ERR_AUTHENTICATION_FAILED, nsCString::new())
+                (EwsClientError::AuthenticationFailed, "")
             }
 
             _ => {
@@ -1655,15 +1751,27 @@ where
                     _ => (),
                 }
 
-                (
-                    IEwsClient::EWS_ERR_UNEXPECTED,
-                    nsCString::from("an unexpected error occurred"),
-                )
+                (EwsClientError::Unexpected, "an unexpected error occurred")
             }
         };
 
         handler(client_err, desc);
     }
+}
+
+/// Returns a function for processing an error and providing it to the provided
+/// error-handling callback. This version allows unsafe C++ types as input.
+/// This version is provided for compatibility until other callback interface
+/// implementations are given safe Rust wrappers.
+fn process_error_with_cb_cpp<Cb>(handler: Cb) -> impl FnOnce(XpComEwsError)
+where
+    Cb: FnOnce(u8, nsCString),
+{
+    process_error_with_cb(|error, description| {
+        let error_code = error.into();
+        let desc = nsCString::from(description);
+        handler(error_code, desc);
+    })
 }
 
 /// Look at the response class of a response message, and do nothing, warn or
@@ -1758,12 +1866,12 @@ fn create_and_populate_header_from_create_response(
         });
     }
 
-    let message = match items.into_iter().next().unwrap() {
-        RealItem::Message(message) => message,
-    };
+    let item = items.into_iter().next().unwrap();
+    let message = item.inner_message();
 
-    let ews_id = message
+    let ews_id = &message
         .item_id
+        .as_ref()
         .ok_or(XpComEwsError::MissingIdInResponse)?
         .id;
     let ews_id = nsCString::from(ews_id);

@@ -8,10 +8,10 @@
 # documentation and how to modify this file.
 repo: comm-central
 created_at: '2022-10-20T11:26:42.853013'
-updated_at: '2025-02-18T11:25:41.975990+00:00'
+updated_at: '2025-05-19T08:37:21.498691+00:00'
 hashes:
-  config: ef80745b0c969e8ec27dd402f43c8b0fb86e5057
-  export: 3e3361e78ff0bee3988fb6fc06e39ff6059efb41
+  config: ad0afefe9d516d65a5368aaf697726af5d7c8f50
+  export: a53636322d3b9feba414ad72710c890d244b82ce
 export:
   path: ./docs/mots/index.md
   format: md
@@ -116,6 +116,10 @@ people:
     bmo_id: 1537
     name: Dan Mosendale
     nick: dmose
+  - &edicharry
+    bmo_id: 771441
+    name: Eleanor Dicharry
+    nick: edicharry
   - &Fallen
     bmo_id: 253233
     name: Philipp Kewisch
@@ -160,6 +164,10 @@ people:
     bmo_id: 149682
     name: Matthew Willis
     nick: lilmatt
+  - &madmaks
+    bmo_id: 122566
+    name: Tim Maks van den Broek
+    nick: mad_maks
   - &Mark_Carson
     bmo_id: 150844
     name: Mark Carson
@@ -172,6 +180,10 @@ people:
     bmo_id: 227901
     name: Michael Büttner
     nick: mickey
+  - &micz
+    bmo_id: 395011
+    name: Michele Zelco
+    nick: micz
   - &mkmelin
     bmo_id: 101158
     name: Magnus Melin
@@ -232,8 +244,7 @@ people:
     bmo_id: 141755
     name: Robert Strong
     nick: rstrong
-  - &sdk
-    bmo_id: 598568
+  - bmo_id: 598568
     name: Danny Colin
     nick: sdk
   - &sebo
@@ -283,15 +294,16 @@ people:
 modules:
   - name: Thunderbird Council
     machine_name: 00-thunderbird_council
-    description: "The Thunderbird Council is the elected governing body for the Thunderbird
+    description: |
+      The Thunderbird Council is the elected governing body for the Thunderbird
       Project, including the code modules that develop the code in Thunderbird product(s).
-      It is the top-level module of the project, and Peers are members of the Council.\n
+      It is the top-level module of the project, and Peers are members of the Council.
       To read the details about the qualifications and expectations of Council members,
-      please see the [Council Bylaws on GitHub](https://github.com/thunderbird/council-docs/blob/main/BY_LAWS.md#election-procedure).\n
+      please see the Council Bylaws (https://github.com/thunderbird/council-docs/blob/main/BY_LAWS.md#election-procedure).
       Below you can find a list of all current council members along with their bugzilla.mozilla.org
-      \\(BMO\\) handle.\nTo contact the council members, please email <council@thunderbird.net>."
-    owners: [*sdk]
-    peers: [*TbSync, *clokep, *Fallen, *tdulcet, *KaiE]
+      (BMO) handle. To contact the council members, please email <council@thunderbird.net>.
+    owners: [*Fallen]
+    peers: [*clokep, *tdulcet, *mkmelin, *madmaks, *micz]
     includes: [README.md]
     excludes:
       - suite/**
@@ -497,9 +509,10 @@ modules:
         peers:
           - *heather
           - *mkmelin
+          - *edicharry
         meta:
-          # TODO No component for Exchange?
-          components: []
+          components:
+            - 'MailNews Core::Network: Exchange'
           owners_emeritus: [*leftmostcat]
       - name: Feeds
         machine_name: feeds

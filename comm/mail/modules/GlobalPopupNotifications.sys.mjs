@@ -4,6 +4,8 @@
 
 /** This file is a semi-fork of PopupNotifications.sys.mjs */
 
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
+
 const NOTIFICATION_EVENT_DISMISSED = "dismissed";
 const NOTIFICATION_EVENT_REMOVED = "removed";
 const NOTIFICATION_EVENT_SHOWING = "showing";
@@ -14,20 +16,9 @@ const ICON_SELECTOR = ".notification-anchor-icon";
 const ICON_ATTRIBUTE_SHOWING = "showing";
 
 const PREF_SECURITY_DELAY = "security.notification_enable_delay";
+const lazy = {};
 
-// Enumerated values for the POPUP_NOTIFICATION_STATS telemetry histogram.
-const TELEMETRY_STAT_OFFERED = 0;
-const TELEMETRY_STAT_ACTION_1 = 1;
-const TELEMETRY_STAT_ACTION_2 = 2;
-// const TELEMETRY_STAT_ACTION_3 = 3;
-const TELEMETRY_STAT_ACTION_LAST = 4;
-const TELEMETRY_STAT_DISMISSAL_CLICK_ELSEWHERE = 5;
-const TELEMETRY_STAT_DISMISSAL_LEAVE_PAGE = 6;
-const TELEMETRY_STAT_DISMISSAL_CLOSE_BUTTON = 7;
-const TELEMETRY_STAT_OPEN_SUBMENU = 10;
-const TELEMETRY_STAT_LEARN_MORE = 11;
-
-const TELEMETRY_STAT_REOPENED_OFFSET = 20;
+XPCOMUtils.defineLazyPreferenceGetter(lazy, "buttonDelay", PREF_SECURITY_DELAY);
 
 var popupNotificationsMap = [];
 var gNotificationParents = new WeakMap();
@@ -40,12 +31,13 @@ function getNotificationFromElement(aElement) {
 }
 
 /**
- * Notification object describes a single popup notification.
+ * PopupNotification object describes a single popup notification.
  *
  * @see PopupNotifications.show()
  */
-// eslint-disable-next-line no-shadow
-function Notification(
+// Named "Notification" by upstream, but clashes with
+// https://searchfox.org/mozilla-central/source/dom/webidl/Notification.webidl
+function PopupNotification(
   id,
   message,
   anchorID,
@@ -67,12 +59,10 @@ function Notification(
   this._dismissed = false;
   // Will become a boolean when manually toggled by the user.
   this._checkboxChecked = null;
-  this.wasDismissed = false;
-  this.recordedTelemetryStats = new Set();
-  this.timeCreated = this.owner.window.performance.now();
+  this.timeCreated = Cu.now();
 }
 
-Notification.prototype = {
+PopupNotification.prototype = {
   id: null,
   message: null,
   anchorID: null,
@@ -88,10 +78,6 @@ Notification.prototype = {
    */
   set dismissed(value) {
     this._dismissed = value;
-    if (value) {
-      // Keep the dismissal into account when recording telemetry.
-      this.wasDismissed = true;
-    }
   },
   get dismissed() {
     return this._dismissed;
@@ -111,33 +97,6 @@ Notification.prototype = {
 
   reshow() {
     this.owner._reshowNotifications(this.anchorElement, this.browser);
-  },
-
-  /**
-   * Adds a value to the specified histogram, that must be keyed by ID.
-   */
-  _recordTelemetry(histogramId, value) {
-    const histogram = Services.telemetry.getKeyedHistogramById(histogramId);
-    histogram.add("(all)", value);
-    histogram.add(this.id, value);
-  },
-
-  /**
-   * Adds an enumerated value to the POPUP_NOTIFICATION_STATS histogram,
-   * ensuring that it is recorded at most once for each distinct Notification.
-   *
-   * Statistics for reopened notifications are recorded in separate buckets.
-   *
-   * @param {integer} value - One of the TELEMETRY_STAT_ constants.
-   */
-  _recordTelemetryStat(value) {
-    if (this.wasDismissed) {
-      value += TELEMETRY_STAT_REOPENED_OFFSET;
-    }
-    if (!this.recordedTelemetryStats.has(value)) {
-      this.recordedTelemetryStats.add(value);
-      this._recordTelemetry("POPUP_NOTIFICATION_STATS", value);
-    }
   },
 };
 
@@ -179,7 +138,6 @@ export function PopupNotifications(tabbrowser, panel, iconBox, options = {}) {
   this.panel = panel;
   this.tabbrowser = tabbrowser;
   this.iconBox = iconBox;
-  this.buttonDelay = Services.prefs.getIntPref(PREF_SECURITY_DELAY);
 
   this.panel.addEventListener("popuphidden", this, true);
   this.panel.classList.add("popup-notification-panel", "panel-no-padding");
@@ -205,6 +163,7 @@ export function PopupNotifications(tabbrowser, panel, iconBox, options = {}) {
       !focusedElement ||
       focusedElement == doc.body ||
       focusedElement == this.tabbrowser.selectedBrowser ||
+      // Ignore focused elements inside the notification.
       notification.contains(focusedElement)
     ) {
       this._onButtonEvent(
@@ -276,7 +235,7 @@ PopupNotifications.prototype = {
    *
    * @param {string} id - The Notification ID to search for.
    *
-   * @returns {?Notification} the corresponding Notification object, or null
+   * @returns {?PopupNotification} the corresponding Notification object, or null
    *   if no such notification exists.
    */
   getNotification(id) {
@@ -405,8 +364,6 @@ PopupNotifications.prototype = {
    *                     different icons.
    *        popupIconURL:
    *                     A string. URL of the image to be displayed in the popup.
-   *                     Normally specified in CSS using list-style-image and the
-   *                     .popup-notification-icon[popupid=...] selector.
    *        learnMoreURL:
    *                     A string URL. Setting this property will make the
    *                     prompt display a "Learn More" link that, when clicked,
@@ -420,7 +377,7 @@ PopupNotifications.prototype = {
    *                     An optional string formatted to look bold and used in the
    *                     notifiation description header text. Usually a host name or
    *                     addon name.
-   * @returns {Notification} the Notification object corresponding to the added notification.
+   * @returns {PopupNotification} the Notification object corresponding to the added notification.
    */
   show(browser, id, message, anchorID, mainAction, secondaryActions, options) {
     function isInvalidAction(a) {
@@ -439,7 +396,7 @@ PopupNotifications.prototype = {
       throw new Error("PopupNotifications_show: invalid secondaryActions");
     }
 
-    const notification = new Notification(
+    const notification = new PopupNotification(
       id,
       message,
       anchorID,
@@ -507,7 +464,7 @@ PopupNotifications.prototype = {
   /**
    * Removes a Notification.
    *
-   * @param {Notification} notification -The Notification object to remove.
+   * @param {PopupNotification} notification -The Notification object to remove.
    */
   remove(notification) {
     this._remove(notification);
@@ -526,11 +483,15 @@ PopupNotifications.prototype = {
       case "activate":
         if (this.isPanelOpen) {
           for (const elt of this.panel.children) {
-            elt.notification.timeShown = this.window.performance.now();
+            const now = Cu.now();
+            elt.notification.timeShown = Math.max(
+              now,
+              elt.notification.timeShown ?? 0
+            );
           }
           break;
         }
-      // Falls through
+      // fall through
       case "TabSelect": {
         const self = this;
         // This is where we could detect if the panel is dismissed if the page
@@ -538,7 +499,6 @@ PopupNotifications.prototype = {
         // at this point so this value only gets recorded for programmatic
         // reasons, like the "Learn More" link being clicked and resulting in a
         // tab switch.
-        this.nextDismissReason = TELEMETRY_STAT_DISMISSAL_LEAVE_PAGE;
         // setTimeout(..., 0) needed, otherwise openPopup from "activate" event
         // handler results in the popup being hidden again for some reason...
         this.window.setTimeout(function () {
@@ -549,15 +509,6 @@ PopupNotifications.prototype = {
       case "click":
       case "keypress":
         this._onIconBoxCommand(aEvent);
-        break;
-      case "buttoncommand":
-        this._onButtonEvent(aEvent, "buttoncommand");
-        break;
-      case "secondarybuttoncommand":
-        this._onButtonEvent(aEvent, "secondarybuttoncommand");
-        break;
-      case "learnmoreclick":
-        this._onButtonEvent(aEvent, "learnmoreclick");
         break;
     }
   },
@@ -592,14 +543,10 @@ PopupNotifications.prototype = {
   /**
    * Dismisses the notification without removing it.
    */
-  _dismiss(event, telemetryReason) {
-    if (telemetryReason) {
-      this.nextDismissReason = telemetryReason;
-    }
-
+  _dismiss(event) {
     // An explicitly dismissed persistent notification effectively becomes
     // non-persistent.
-    if (event && telemetryReason == TELEMETRY_STAT_DISMISSAL_CLOSE_BUTTON) {
+    if (event) {
       const notificationEl = getNotificationFromElement(event.target);
       if (notificationEl) {
         notificationEl.notification.options.persistent = false;
@@ -659,7 +606,7 @@ PopupNotifications.prototype = {
    * and splits it into three parts if the message contains "<>" as
    * placeholder.
    *
-   * @param {Notification} n - The object which contains the message to format.
+   * @param {PopupNotification} n - The object which contains the message to format.
    *
    * @returns {object} object - an object that has the following properties:
    * @returns {string} object.start - A start label string containing the first part
@@ -716,7 +663,7 @@ PopupNotifications.prototype = {
       );
       popupnotification.setAttribute(
         "closebuttoncommand",
-        `PopupNotifications._dismiss(event, ${TELEMETRY_STAT_DISMISSAL_CLOSE_BUTTON});`
+        "PopupNotifications._dismiss(event);"
       );
 
       if (n.mainAction) {
@@ -729,30 +676,19 @@ PopupNotifications.prototype = {
           "buttonhighlight",
           !n.mainAction.disableHighlight
         );
-        popupnotification.addEventListener("buttoncommand", PopupNotifications);
         popupnotification.setAttribute(
           "dropmarkerpopupshown",
           "PopupNotifications._onButtonEvent(event, 'dropmarkerpopupshown');"
-        );
-        popupnotification.addEventListener(
-          "learnmoreclick",
-          PopupNotifications
         );
         popupnotification.setAttribute(
           "menucommand",
           "PopupNotifications._onMenuCommand(event);"
         );
       } else {
-        // Enable the default button to let the user close the popup if the close button is hidden
-        popupnotification.addEventListener("buttoncommand", PopupNotifications);
         popupnotification.setAttribute("buttonhighlight", "true");
         popupnotification.removeAttribute("buttonlabel");
         popupnotification.removeAttribute("buttonaccesskey");
         popupnotification.removeAttribute("dropmarkerpopupshown");
-        popupnotification.removeEventListener(
-          "learnmoreclick",
-          PopupNotifications
-        );
         popupnotification.removeAttribute("menucommand");
       }
 
@@ -799,8 +735,6 @@ PopupNotifications.prototype = {
       const menuitems = [];
 
       if (n.mainAction && n.secondaryActions && n.secondaryActions.length > 0) {
-        let telemetryStatId = TELEMETRY_STAT_ACTION_2;
-
         const secondaryAction = n.secondaryActions[0];
         popupnotification.setAttribute(
           "secondarybuttonlabel",
@@ -809,10 +743,6 @@ PopupNotifications.prototype = {
         popupnotification.setAttribute(
           "secondarybuttonaccesskey",
           secondaryAction.accessKey
-        );
-        popupnotification.addEventListener(
-          "secondarybuttoncommand",
-          PopupNotifications
         );
         popupnotification.removeAttribute("secondarybuttonhidden");
 
@@ -825,13 +755,6 @@ PopupNotifications.prototype = {
           item.action = action;
 
           menuitems.push(item);
-
-          // We can only record a limited number of actions in telemetry. If
-          // there are more, the latest are all recorded in the last bucket.
-          item.action.telemetryStatId = telemetryStatId;
-          if (telemetryStatId < TELEMETRY_STAT_ACTION_LAST) {
-            telemetryStatId++;
-          }
         }
 
         if (n.secondaryActions.length < 2) {
@@ -947,6 +870,9 @@ PopupNotifications.prototype = {
 
     if (this.isPanelOpen && this._currentAnchorElement == anchorElement) {
       notificationsToShow.forEach(function (n) {
+        // If the panel is already open remember the time the notification was
+        // shown for the security delay.
+        n.timeShown = Math.max(Cu.now(), n.timeShown ?? 0);
         this._fireCallback(n, NOTIFICATION_EVENT_SHOWN);
       }, this);
 
@@ -979,19 +905,6 @@ PopupNotifications.prototype = {
         this.panel.removeAttribute("noautohide");
       }
 
-      notificationsToShow.forEach(function (n) {
-        // Record that the notification was actually displayed on screen.
-        // Notifications that were opened a second time or that were originally
-        // shown with "options.dismissed" will be recorded in a separate bucket.
-        n._recordTelemetryStat(TELEMETRY_STAT_OFFERED);
-        // Remember the time the notification was shown for the security delay.
-        n.timeShown = this.window.performance.now();
-      }, this);
-
-      // Unless the panel closing is triggered by a specific known code path,
-      // the next reason will be that the user clicked elsewhere.
-      this.nextDismissReason = TELEMETRY_STAT_DISMISSAL_CLICK_ELSEWHERE;
-
       let target = this.panel;
       if (target.parentNode) {
         // NOTIFICATION_EVENT_SHOWN should be fired for the panel before
@@ -1019,6 +932,9 @@ PopupNotifications.prototype = {
         this._popupshownListener = null;
 
         notificationsToShow.forEach(function (n) {
+          // The panel has been opened, remember the time the notification was
+          // shown for the security delay.
+          n.timeShown = Math.max(Cu.now(), n.timeShown ?? 0);
           this._fireCallback(n, NOTIFICATION_EVENT_SHOWN);
         }, this);
         // These notifications are used by tests to know when all the processing
@@ -1040,7 +956,7 @@ PopupNotifications.prototype = {
    * Updates the notification state in response to window activation or tab
    * selection changes.
    *
-   * @param {?Notification[]} notifications - An array of Notification instances.
+   * @param {?PopupNotification[]} notifications - An array of Notification instances.
    *   If null, notifications will be retrieved off the current browser tab.
    * @param {Element|Set<Element>} anchors - Is a XUL element or a Set of XUL
    *   elements that the notifications panel(s) will be anchored to.
@@ -1057,7 +973,7 @@ PopupNotifications.prototype = {
       notifications = this._currentNotifications;
     }
 
-    const haveNotifications = notifications.length > 0;
+    const haveNotifications = !!notifications.length;
     if (!anchors.size && haveNotifications) {
       anchors = this._getAnchorsForNotifications(notifications);
     }
@@ -1104,7 +1020,7 @@ PopupNotifications.prototype = {
       }
     }
 
-    if (notificationsToShow.length > 0) {
+    if (notificationsToShow.length) {
       const anchorElement = anchors.values().next().value;
       if (anchorElement) {
         this._showPanel(notificationsToShow, anchorElement);
@@ -1201,7 +1117,11 @@ PopupNotifications.prototype = {
     }
   },
 
-  _getNotificationsForBrowser() {
+  /**
+   * Gets and sets notifications for the browser.
+   * Note: Thunderbird does not store notifications per browser.
+   */
+  _getNotificationsForBrowser(_browser) {
     return popupNotificationsMap;
   },
   _setNotificationsForBrowser(browser, notifications) {
@@ -1239,7 +1159,7 @@ PopupNotifications.prototype = {
       return;
     }
 
-    if (this._currentNotifications.length == 0) {
+    if (!this._currentNotifications.length) {
       return;
     }
 
@@ -1303,7 +1223,7 @@ PopupNotifications.prototype = {
     let ourNotifications = this._getNotificationsForBrowser(ourBrowser);
     const other = otherBrowser.ownerGlobal.PopupNotifications;
     if (!other) {
-      if (ourNotifications.length > 0) {
+      if (ourNotifications.length) {
         console.error(
           "unable to swap notifications: otherBrowser doesn't support notifications"
         );
@@ -1339,10 +1259,10 @@ PopupNotifications.prototype = {
     this._setNotificationsForBrowser(otherBrowser, ourNotifications);
     other._setNotificationsForBrowser(ourBrowser, otherNotifications);
 
-    if (otherNotifications.length > 0) {
+    if (otherNotifications.length) {
       this._update(otherNotifications);
     }
-    if (ourNotifications.length > 0) {
+    if (ourNotifications.length) {
       other._update(ourNotifications);
     }
   },
@@ -1362,6 +1282,11 @@ PopupNotifications.prototype = {
     if (event.target != this.panel) {
       return;
     }
+
+    // It's possible that a popupnotification set `aria-describedby` on the
+    // panel element in its eventCallback function. If so, we'll clear that out
+    // before showing the next notification.
+    this.panel.removeAttribute("aria-describedby");
 
     // We may have removed the "noautofocus" attribute before showing the panel
     // if the notification specified it wants to autofocus on first show.
@@ -1399,21 +1324,6 @@ PopupNotifications.prototype = {
       if (!notifications.includes(notificationObj)) {
         return;
       }
-
-      // Record the time of the first notification dismissal if the main action
-      // was not triggered in the meantime.
-      const timeSinceShown =
-        this.window.performance.now() - notificationObj.timeShown;
-      if (
-        !notificationObj.wasDismissed &&
-        !notificationObj.recordedTelemetryMainAction
-      ) {
-        notificationObj._recordTelemetry(
-          "POPUP_NOTIFICATION_DISMISSAL_MS",
-          timeSinceShown
-        );
-      }
-      notificationObj._recordTelemetryStat(this.nextDismissReason);
 
       // Do not mark the notification as dismissed or fire NOTIFICATION_EVENT_DISMISSED
       // if the notification is removed.
@@ -1476,28 +1386,23 @@ PopupNotifications.prototype = {
 
     const notification = notificationEl.notification;
 
+    // Receiving a button event means the notification should have been shown.
+    // Make sure that timeShown is always set to ensure we don't break the
+    // security delay calculation below.
+    if (!notification.timeShown) {
+      console.warn(
+        "_onButtonEvent: notification.timeShown is unset. Setting to now.",
+        notification
+      );
+      notification.timeShown = Cu.now();
+    }
+
     if (type == "dropmarkerpopupshown") {
-      notification._recordTelemetryStat(TELEMETRY_STAT_OPEN_SUBMENU);
       return;
     }
 
     if (type == "learnmoreclick") {
-      notification._recordTelemetryStat(TELEMETRY_STAT_LEARN_MORE);
       return;
-    }
-
-    if (type == "buttoncommand") {
-      // Record the total timing of the main action since the notification was
-      // created, even if the notification was dismissed in the meantime.
-      const timeSinceCreated =
-        this.window.performance.now() - notification.timeCreated;
-      if (!notification.recordedTelemetryMainAction) {
-        notification.recordedTelemetryMainAction = true;
-        notification._recordTelemetry(
-          "POPUP_NOTIFICATION_MAIN_ACTION_MS",
-          timeSinceCreated
-        );
-      }
     }
 
     if (type == "buttoncommand" || type == "secondarybuttoncommand") {
@@ -1510,28 +1415,24 @@ PopupNotifications.prototype = {
         return;
       }
 
-      const timeSinceShown =
-        this.window.performance.now() - notification.timeShown;
-      if (timeSinceShown < this.buttonDelay) {
+      const now = Cu.now();
+      const timeSinceShown = now - notification.timeShown;
+      if (timeSinceShown < lazy.buttonDelay) {
         Services.console.logStringMessage(
           "PopupNotifications._onButtonEvent: " +
             "Button click happened before the security delay: " +
             timeSinceShown +
             "ms"
         );
+        notification.timeShown = Math.max(now, notification.timeShown);
         return;
       }
     }
 
     let action = notification.mainAction;
-    let telemetryStatId = TELEMETRY_STAT_ACTION_1;
-
     if (type == "secondarybuttoncommand") {
       action = notification.secondaryActions[0];
-      telemetryStatId = TELEMETRY_STAT_ACTION_2;
     }
-
-    notification._recordTelemetryStat(telemetryStatId);
 
     if (action) {
       try {
@@ -1563,8 +1464,6 @@ PopupNotifications.prototype = {
 
     const notificationEl = getNotificationFromElement(target);
     event.stopPropagation();
-
-    target.notification._recordTelemetryStat(target.action.telemetryStatId);
 
     try {
       target.action.callback.call(undefined, {

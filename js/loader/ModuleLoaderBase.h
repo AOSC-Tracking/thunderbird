@@ -236,10 +236,10 @@ class ModuleLoaderBase : public nsISupports {
    * These are tracked in the mFetchingModules map.
    */
   class LoadingRequest final : public nsISupports {
-    virtual ~LoadingRequest() = default;
+    ~LoadingRequest() = default;
 
    public:
-    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
     NS_DECL_CYCLE_COLLECTION_CLASS(LoadingRequest)
 
     // The request that initiated the load and which is currently fetching or
@@ -485,11 +485,14 @@ class ModuleLoaderBase : public nsISupports {
   bool ModuleMapContainsURL(const ModuleMapKey& key) const;
   bool IsModuleFetching(const ModuleMapKey& key) const;
   void WaitForModuleFetch(ModuleLoadRequest* aRequest);
+
+ protected:
   void SetModuleFetchStarted(ModuleLoadRequest* aRequest);
 
+ private:
   ModuleScript* GetFetchedModule(const ModuleMapKey& moduleMapKey) const;
 
-  JS::Value FindFirstParseError(ModuleLoadRequest* aRequest);
+  JS::Value FindFirstParseError(JSContext* aCx, ModuleLoadRequest* aRequest);
   static nsresult InitDebuggerDataForModuleGraph(JSContext* aCx,
                                                  ModuleLoadRequest* aRequest);
   nsresult ResolveRequestedModules(

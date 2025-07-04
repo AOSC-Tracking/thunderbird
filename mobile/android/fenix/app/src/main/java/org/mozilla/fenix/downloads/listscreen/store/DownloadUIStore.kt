@@ -35,10 +35,14 @@ private fun downloadStateReducer(
 ): DownloadUIState {
     return when (action) {
         is DownloadUIAction.AddItemForRemoval ->
-            state.copy(mode = Mode.Editing(state.mode.selectedItems + action.item))
+            state.copy(
+                mode = Mode.Editing(state.mode.selectedItems + action.item),
+            )
 
         is DownloadUIAction.AddAllItemsForRemoval -> {
-            state.copy(mode = Mode.Editing(state.itemsNotPendingDeletion.toSet()))
+            state.copy(
+                mode = Mode.Editing(state.itemsMatchingFilters.toSet()),
+            )
         }
 
         is DownloadUIAction.RemoveItemForRemoval -> {
@@ -54,25 +58,30 @@ private fun downloadStateReducer(
 
         is DownloadUIAction.ExitEditMode -> state.copy(mode = Mode.Normal)
         is DownloadUIAction.AddPendingDeletionSet ->
-            state.copy(
-                pendingDeletionIds = state.pendingDeletionIds + action.itemIds,
-            )
+            state.copy(pendingDeletionIds = state.pendingDeletionIds + action.itemIds)
 
         is DownloadUIAction.UndoPendingDeletionSet ->
-            state.copy(
-                pendingDeletionIds = state.pendingDeletionIds - action.itemIds,
-            )
+            state.copy(pendingDeletionIds = state.pendingDeletionIds - action.itemIds)
 
-        is DownloadUIAction.UpdateFileItems -> state.copy(
-            items = action.items.filter { it.id !in state.pendingDeletionIds },
-        )
+        is DownloadUIAction.UpdateFileItems -> state.copy(items = action.items)
 
         is DownloadUIAction.ContentTypeSelected -> state.copy(userSelectedContentTypeFilter = action.contentTypeFilter)
 
         is DownloadUIAction.FileItemDeletedSuccessfully -> state
 
+        is DownloadUIAction.SearchQueryEntered -> state.copy(searchQuery = action.searchQuery)
+        is DownloadUIAction.UpdateDeleteDialogVisibility -> state.copy(isDeleteDialogVisible = action.visibility)
+
         DownloadUIAction.Init -> state
         is DownloadUIAction.ShareUrlClicked -> state
         is DownloadUIAction.ShareFileClicked -> state
+        is DownloadUIAction.UndoPendingDeletion -> state
+
+        is DownloadUIAction.SearchBarDismissRequest -> state.copy(
+            isSearchFieldRequested = false,
+            searchQuery = "",
+        )
+
+        is DownloadUIAction.SearchBarVisibilityRequest -> state.copy(isSearchFieldRequested = true)
     }
 }

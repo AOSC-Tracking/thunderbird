@@ -283,12 +283,6 @@ var gXPInstallObserver = {
         install.install();
       }
       installInfo = null;
-
-      Services.telemetry
-        .getHistogramById("SECURITY_UI")
-        .add(
-          Ci.nsISecurityUITelemetry.WARNING_CONFIRM_ADDON_INSTALL_CLICK_THROUGH
-        );
     };
 
     const cancelInstallation = () => {
@@ -365,10 +359,6 @@ var gXPInstallObserver = {
       options
     );
     removeNotificationOnEnd(popup, installInfo.installs);
-
-    Services.telemetry
-      .getHistogramById("SECURITY_UI")
-      .add(Ci.nsISecurityUITelemetry.WARNING_CONFIRM_ADDON_INSTALL);
   },
 
   // IDs of addon install related notifications
@@ -471,10 +461,6 @@ var gXPInstallObserver = {
         options.removeOnDismissal = true;
         options.persistent = false;
 
-        const secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
-        secHistogram.add(
-          Ci.nsISecurityUITelemetry.WARNING_ADDON_ASKING_PREVENTED
-        );
         const popup = PopupNotifications.show(
           browser,
           aTopic,
@@ -539,6 +525,7 @@ var gXPInstallObserver = {
           if (topic !== "showing") {
             return;
           }
+          // The "browser" is from messenger.xhtml.
           const doc = browser.ownerDocument;
           const message = doc.getElementById("addon-install-blocked-message");
           // We must remove any prior use of this panel message in this window.
@@ -562,11 +549,6 @@ var gXPInstallObserver = {
           learnMore.setAttribute("support-page", article);
         };
 
-        const secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
-        secHistogram.add(
-          Ci.nsISecurityUITelemetry.WARNING_ADDON_ASKING_PREVENTED
-        );
-
         const [
           installMsg,
           dontAllowMsg,
@@ -580,10 +562,6 @@ var gXPInstallObserver = {
         ]);
 
         const action = buildNotificationAction(installMsg, () => {
-          secHistogram.add(
-            Ci.nsISecurityUITelemetry
-              .WARNING_ADDON_ASKING_PREVENTED_CLICK_THROUGH
-          );
           installInfo.install();
         });
 
@@ -1002,10 +980,10 @@ export var ExtensionsUI = {
         ]);
         const [header, msg] = await PERMISSION_L10N.formatValues([
           {
-            id: "webext-perms-header-with-perms",
+            id: "webext-perms-header2",
             args: { extension: "<>" },
           },
-          "webext-perms-description-experiment",
+          "webext-perms-description-experiment-access",
         ]);
         strings.header = header;
         strings.msgs = [msg];
@@ -1178,22 +1156,27 @@ export var ExtensionsUI = {
   },
 
   async showPermissionsPrompt(target, strings, icon) {
-    const { browser } = getTabBrowser(target);
+    // The mail3pane could be in a state where target/browser is null, for example
+    // if no message has been selected and the "webbrowser" of the mail3pane is
+    // also not loaded. Since Thunderbird's GlobalPopupNotifications.sys.mjs does
+    // not store notifications per tab/browser, we can use the top mail window to
+    // store pendigNotifications.
+    const browser = target ? getTabBrowser(target).browser : null;
+    const window = browser ? browser.ownerGlobal : getTopWindow();
+    const doc = window.document;
 
     // Wait for any pending prompts to complete before showing the next one.
     let pending;
-    while ((pending = this.pendingNotifications.get(browser))) {
+    while ((pending = this.pendingNotifications.get(window))) {
       await pending;
     }
 
     const promise = new Promise(resolve => {
       function eventCallback(topic) {
-        const doc = this.browser.ownerDocument;
         if (topic == "showing") {
           const textEl = doc.getElementById("addon-webext-perm-text");
           textEl.textContent = strings.text;
           textEl.hidden = !strings.text;
-
           // By default, multiline strings don't get formatted properly. These
           // are presently only used in site permission add-ons, so we treat it
           // as a special case to avoid unintended effects on other things.
@@ -1218,22 +1201,21 @@ export var ExtensionsUI = {
           while (list.firstChild) {
             list.firstChild.remove();
           }
-          const singleEntryEl = doc.getElementById(
-            "addon-webext-perm-single-entry"
-          );
-          singleEntryEl.textContent = "";
-          singleEntryEl.hidden = true;
           list.hidden = true;
 
-          if (strings.msgs.length === 1) {
-            singleEntryEl.textContent = strings.msgs[0];
-            singleEntryEl.hidden = false;
-          } else if (strings.msgs.length) {
+          const permsTitleEl = doc.getElementById(
+            "addon-webext-perm-title-required"
+          );
+          permsTitleEl.textContent = strings.sectionHeaders.required;
+          permsTitleEl.hidden = true;
+
+          if (strings.msgs.length) {
             for (const msg of strings.msgs) {
               const item = doc.createElementNS(HTML_NS, "li");
               item.textContent = msg;
               list.appendChild(item);
             }
+            permsTitleEl.hidden = false;
             list.hidden = false;
           }
 
@@ -1307,8 +1289,8 @@ export var ExtensionsUI = {
       );
     });
 
-    this.pendingNotifications.set(browser, promise);
-    promise.finally(() => this.pendingNotifications.delete(browser));
+    this.pendingNotifications.set(window, promise);
+    promise.finally(() => this.pendingNotifications.delete(window));
     return promise;
   },
 

@@ -45,9 +45,7 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
   nsLookAndFeel();
   virtual ~nsLookAndFeel();
 
-  void RecordChange(NativeChangeKind aKind) {
-    mPendingChanges |= aKind;
-  }
+  void RecordChange(NativeChangeKind aKind) { mPendingChanges |= aKind; }
   void NativeInit() final;
   nsresult NativeGetInt(IntID aID, int32_t& aResult) override;
   nsresult NativeGetFloat(FloatID aID, float& aResult) override;
@@ -135,15 +133,9 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
     ColorPair mButtonHover;
     ColorPair mButtonActive;
     nscolor mButtonBorder = kBlack;
-    nscolor mThreeDHighlight = kBlack;
-    nscolor mThreeDShadow = kBlack;
-    nscolor mOddCellBackground = kWhite;
+    nscolor mFrameBorder = kBlack;
     nscolor mNativeHyperLinkText = kBlack;
     nscolor mNativeVisitedHyperLinkText = kBlack;
-    // FIXME: This doesn't seem like it'd be sound since we use Window for
-    // -moz-Combobox... But I guess we rely on chrome code not setting
-    // appearance: none on selects or overriding the color if they do.
-    nscolor mComboBoxText = kBlack;
     ColorPair mField;
     ColorPair mWindow;
     ColorPair mDialog;
@@ -174,13 +166,15 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
 
     float mCaretRatio = 0.0f;
     int32_t mTitlebarRadius = 0;
+    int32_t mTooltipRadius = 0;
     int32_t mTitlebarButtonSpacing = 0;
     char16_t mInvisibleCharacter = 0;
     bool mMenuSupportsDrag = false;
 
     void Init();
     nsresult GetColor(ColorID, nscolor&) const;
-    bool GetFont(FontID, nsString& aFontName, gfxFontStyle&) const;
+    bool GetFont(FontID, nsString& aFontName, gfxFontStyle&,
+                 float aTextScaleFactor) const;
     void InitCellHighlightColors();
   };
 
@@ -234,6 +228,7 @@ class nsLookAndFeel final : public nsXPLookAndFeel {
   int32_t mCSDCloseButtonPosition = 0;
   TitlebarAction mDoubleClickAction = TitlebarAction::None;
   TitlebarAction mMiddleClickAction = TitlebarAction::None;
+  float mTextScaleFactor = 1.0f;
 
   RefPtr<GtkCssProvider> mRoundedCornerProvider;
   void UpdateRoundedBottomCornerStyles();

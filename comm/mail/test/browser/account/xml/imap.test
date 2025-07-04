@@ -2,7 +2,7 @@
 <clientConfig>
   <emailProvider id="imap.test">
     <domain>imap.test</domain>
-    <displayName>Example Två</displayName>
+    <displayName>John Doe</displayName>
     <incomingServer type="imap">
       <hostname>localhost</hostname>
       <port>1993</port>

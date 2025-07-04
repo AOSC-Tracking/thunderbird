@@ -26,7 +26,6 @@
 #include "nsThreadUtils.h"
 #include "nsIMsgWindow.h"
 #include "nsIMsgProgress.h"
-#include "nsComposeStrings.h"
 #include "prmem.h"
 #include "nsServiceManagerUtils.h"
 #include "nsMsgUtils.h"
@@ -148,7 +147,7 @@ nsMsgCopy::StartCopyOperation(nsIMsgIdentity* aUserIdentity, nsIFile* aFile,
     // Do not mark outgoing messages as read.
     msgFlags = 0;
     if (!dstFolder || NS_FAILED(rv)) {
-      return NS_MSG_UNABLE_TO_SEND_LATER;
+      return NS_ERROR_FAILURE;
     }
   } else if (aMode == nsIMsgSend::nsMsgSaveAsDraft)  // SaveAsDraft (Drafts)
   {
@@ -156,7 +155,7 @@ nsMsgCopy::StartCopyOperation(nsIMsgIdentity* aUserIdentity, nsIFile* aFile,
     isDraft = true;
     // Do not mark drafts as read.
     msgFlags = 0;
-    if (!dstFolder || NS_FAILED(rv)) return NS_MSG_UNABLE_TO_SAVE_DRAFT;
+    if (!dstFolder || NS_FAILED(rv)) return NS_ERROR_FAILURE;
   } else if (aMode ==
              nsIMsgSend::nsMsgSaveAsTemplate)  // SaveAsTemplate (Templates)
   {
@@ -165,14 +164,14 @@ nsMsgCopy::StartCopyOperation(nsIMsgIdentity* aUserIdentity, nsIFile* aFile,
     // Mark saved templates as read.
     isDraft = false;
     msgFlags = nsMsgMessageFlags::Read;
-    if (!dstFolder || NS_FAILED(rv)) return NS_MSG_UNABLE_TO_SAVE_TEMPLATE;
+    if (!dstFolder || NS_FAILED(rv)) return NS_ERROR_FAILURE;
   } else  // SaveInSentFolder (Sent) -  nsMsgDeliverNow or nsMsgSendUnsent
   {
     rv = GetSentFolder(aUserIdentity, getter_AddRefs(dstFolder), &waitForUrl);
     // Mark send messages as read.
     isDraft = false;
     msgFlags = nsMsgMessageFlags::Read;
-    if (!dstFolder || NS_FAILED(rv)) return NS_MSG_COULDNT_OPEN_FCC_FOLDER;
+    if (!dstFolder || NS_FAILED(rv)) return NS_ERROR_FAILURE;
   }
 
   nsCOMPtr<nsIMsgWindow> msgWindow;
@@ -308,7 +307,7 @@ nsresult nsMsgCopy::GetSentFolder(nsIMsgIdentity* userIdentity,
   if (*folder) {
     // If mSavePref is the same as the identity's fcc folder, set the sent flag.
     nsCString identityFccUri;
-    userIdentity->GetFccFolder(identityFccUri);
+    userIdentity->GetFccFolderURI(identityFccUri);  // TODO
     if (identityFccUri.Equals(mSavePref))
       (*folder)->SetFlag(nsMsgFolderFlags::SentMail);
   }

@@ -553,6 +553,9 @@ struct PackingInfo final {
   friend bool operator==(const Self& a, const Self& b) {
     return TiedFields(a) == TiedFields(b);
   }
+  friend bool operator!=(const Self& a, const Self& b) {
+    return TiedFields(a) != TiedFields(b);
+  }
 
   template <class T>
   friend T& operator<<(T& s, const PackingInfo& pi) {
@@ -561,13 +564,28 @@ struct PackingInfo final {
     return s;
   }
 };
+std::string format_as(const PackingInfo& pi);
 
 struct DriverUnpackInfo final {
+  using Self = DriverUnpackInfo;
+
   GLenum internalFormat = 0;
   GLenum unpackFormat = 0;
   GLenum unpackType = 0;
 
   PackingInfo ToPacking() const { return {unpackFormat, unpackType}; }
+
+  template <class ConstOrMutSelf>
+  static constexpr auto Fields(ConstOrMutSelf& self) {
+    return std::tie(self.internalFormat, self.unpackFormat, self.unpackType);
+  }
+
+  constexpr bool operator==(const Self& rhs) const {
+    return Fields(*this) == Fields(rhs);
+  }
+  constexpr bool operator!=(const Self& rhs) const {
+    return Fields(*this) != Fields(rhs);
+  }
 };
 
 // -
@@ -788,14 +806,10 @@ struct InitContextResult final {
   Limits limits;
   EnumMask<layers::SurfaceDescriptor::Type> uploadableSdTypes;
   // Padded because of "Android 5.0 ARMv7" builds:
-  Padded<
-    std::unordered_map<
-      GetShaderPrecisionFormatArgs,
-      ShaderPrecisionFormat,
-      TupleStdHash<GetShaderPrecisionFormatArgs>
-    >,
-    64
-  > shaderPrecisions;
+  Padded<std::unordered_map<GetShaderPrecisionFormatArgs, ShaderPrecisionFormat,
+                            TupleStdHash<GetShaderPrecisionFormatArgs>>,
+         64>
+      shaderPrecisions;
 
   auto MutTiedFields() {
     return std::tie(error, options, vendor, optionalRenderableFormatBits,
@@ -1394,10 +1408,9 @@ inline std::string ToStringWithCommas(uint64_t v) {
 // https://en.cppreference.com/w/cpp/container/array/to_array
 
 namespace detail {
-template<class T, size_t N, size_t... I>
-constexpr std::array<std::remove_cv_t<T>, N>
-  to_array_impl(T (&a)[N], std::index_sequence<I...>)
-{
+template <class T, size_t N, size_t... I>
+constexpr std::array<std::remove_cv_t<T>, N> to_array_impl(
+    T (&a)[N], std::index_sequence<I...>) {
   return {{a[I]...}};
 }
 
@@ -1408,9 +1421,9 @@ constexpr std::array<std::remove_cv_t<T>, N> to_array_impl(
 }
 }  // namespace detail
 
-template<class T, size_t N>
+template <class T, size_t N>
 constexpr std::array<std::remove_cv_t<T>, N> to_array(T (&a)[N]) {
-    return detail::to_array_impl(a, std::make_index_sequence<N>{});
+  return detail::to_array_impl(a, std::make_index_sequence<N>{});
 }
 
 template <class T, size_t N>

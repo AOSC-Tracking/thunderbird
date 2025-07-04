@@ -24,8 +24,6 @@ Otherwise, we manage a pool of `VkFence` objects behind each `hal::Fence`.
 
 !*/
 
-#![allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
-
 mod adapter;
 mod command;
 mod conv;
@@ -34,19 +32,12 @@ mod drm;
 mod instance;
 mod sampler;
 
-use std::{
-    borrow::Borrow,
-    boxed::Box,
-    ffi::{CStr, CString},
-    fmt, mem,
-    num::NonZeroU32,
-    ops::DerefMut,
-    sync::Arc,
-    vec::Vec,
-};
+use alloc::{boxed::Box, ffi::CString, sync::Arc, vec::Vec};
+use core::{borrow::Borrow, ffi::CStr, fmt, mem, num::NonZeroU32, ops::DerefMut};
 
 use arrayvec::ArrayVec;
 use ash::{ext, khr, vk};
+use bytemuck::{Pod, Zeroable};
 use hashbrown::HashSet;
 use parking_lot::{Mutex, RwLock};
 
@@ -161,6 +152,7 @@ pub struct InstanceShared {
     extensions: Vec<&'static CStr>,
     drop_guard: Option<crate::DropGuard>,
     flags: wgt::InstanceFlags,
+    memory_budget_thresholds: wgt::MemoryBudgetThresholds,
     debug_utils: Option<DebugUtils>,
     get_physical_device_properties: Option<khr::get_physical_device_properties2::Instance>,
     entry: ash::Entry,
@@ -348,12 +340,10 @@ impl SwapchainImageSemaphores {
 
 struct Swapchain {
     raw: vk::SwapchainKHR,
-    raw_flags: vk::SwapchainCreateFlagsKHR,
     functor: khr::swapchain::Device,
     device: Arc<DeviceShared>,
     images: Vec<vk::Image>,
     config: crate::SurfaceConfiguration,
-    view_formats: Vec<wgt::TextureFormat>,
     /// One wait semaphore per swapchain image. This will be associated with the
     /// surface texture, and later collected during submission.
     ///
@@ -496,11 +486,6 @@ struct RayTracingDeviceExtensionFunctions {
 /// device geometry, but affect the code paths taken internally.
 #[derive(Clone, Debug)]
 struct PrivateCapabilities {
-    /// Y-flipping is implemented with either `VK_AMD_negative_viewport_height` or `VK_KHR_maintenance1`/1.1+. The AMD extension for negative viewport height does not require a Y shift.
-    ///
-    /// This flag is `true` if the device has `VK_KHR_maintenance1`/1.1+ and `false` otherwise (i.e. in the case of `VK_AMD_negative_viewport_height`).
-    flip_y_requires_shift: bool,
-    imageless_framebuffers: bool,
     image_view_usage: bool,
     timeline_semaphores: bool,
     texture_d24: bool,
@@ -543,6 +528,14 @@ struct PrivateCapabilities {
     zero_initialize_workgroup_memory: bool,
     image_format_list: bool,
     maximum_samplers: u32,
+
+    /// True if this adapter supports the [`VK_KHR_shader_integer_dot_product`] extension
+    /// (promoted to Vulkan 1.3).
+    ///
+    /// This is used to generate optimized code for WGSL's `dot4{I, U}8Packed`.
+    ///
+    /// [`VK_KHR_shader_integer_dot_product`]: https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_shader_integer_dot_product.html
+    shader_integer_dot_product: bool,
 }
 
 bitflags::bitflags!(
@@ -617,23 +610,6 @@ struct RenderPassKey {
     multiview: Option<NonZeroU32>,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct FramebufferAttachment {
-    /// Can be NULL if the framebuffer is image-less
-    raw: vk::ImageView,
-    raw_image_flags: vk::ImageCreateFlags,
-    view_usage: wgt::TextureUses,
-    view_format: wgt::TextureFormat,
-    raw_view_formats: Vec<vk::Format>,
-}
-
-#[derive(Clone, Eq, Hash, PartialEq)]
-struct FramebufferKey {
-    attachments: ArrayVec<FramebufferAttachment, { MAX_TOTAL_ATTACHMENTS }>,
-    extent: wgt::Extent3d,
-    sample_count: u32,
-}
-
 struct DeviceShared {
     raw: ash::Device,
     family_index: u32,
@@ -651,7 +627,6 @@ struct DeviceShared {
     workarounds: Workarounds,
     features: wgt::Features,
     render_passes: Mutex<FastHashMap<RenderPassKey, vk::RenderPass>>,
-    framebuffers: Mutex<FastHashMap<FramebufferKey, vk::Framebuffer>>,
     sampler_cache: Mutex<sampler::SamplerCache>,
     memory_allocations_counter: InternalCounter,
 }
@@ -660,9 +635,6 @@ impl Drop for DeviceShared {
     fn drop(&mut self) {
         for &raw in self.render_passes.lock().values() {
             unsafe { self.raw.destroy_render_pass(raw, None) };
-        }
-        for &raw in self.framebuffers.lock().values() {
-            unsafe { self.raw.destroy_framebuffer(raw, None) };
         }
         if self.drop_guard.is_none() {
             unsafe { self.raw.destroy_device(None) };
@@ -809,11 +781,8 @@ pub struct Texture {
     drop_guard: Option<crate::DropGuard>,
     external_memory: Option<vk::DeviceMemory>,
     block: Option<gpu_alloc::MemoryBlock<vk::DeviceMemory>>,
-    usage: wgt::TextureUses,
     format: wgt::TextureFormat,
-    raw_flags: vk::ImageCreateFlags,
     copy_size: crate::CopyExtent,
-    view_formats: Vec<wgt::TextureFormat>,
 }
 
 impl crate::DynTexture for Texture {}
@@ -829,9 +798,13 @@ impl Texture {
 
 #[derive(Debug)]
 pub struct TextureView {
+    raw_texture: vk::Image,
     raw: vk::ImageView,
     layers: NonZeroU32,
-    attachment: FramebufferAttachment,
+    format: wgt::TextureFormat,
+    raw_format: vk::Format,
+    base_mip_level: u32,
+    dimension: wgt::TextureViewDimension,
 }
 
 impl crate::DynTextureView for TextureView {}
@@ -902,6 +875,21 @@ impl Temp {
     }
 }
 
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct FramebufferKey {
+    raw_pass: vk::RenderPass,
+    attachments: ArrayVec<vk::ImageView, { MAX_TOTAL_ATTACHMENTS }>,
+    extent: wgt::Extent3d,
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct TempTextureViewKey {
+    texture: vk::Image,
+    format: vk::Format,
+    mip_level: u32,
+    depth_slice: u32,
+}
+
 pub struct CommandEncoder {
     raw: vk::CommandPool,
     device: Arc<DeviceShared>,
@@ -938,6 +926,9 @@ pub struct CommandEncoder {
     /// the given pool & location.
     end_of_pass_timer_query: Option<(vk::QueryPool, u32)>,
 
+    framebuffers: FastHashMap<FramebufferKey, vk::Framebuffer>,
+    temp_texture_views: FastHashMap<TempTextureViewKey, vk::ImageView>,
+
     counters: Arc<wgt::HalCounters>,
 }
 
@@ -959,6 +950,15 @@ impl Drop for CommandEncoder {
             // fields.
             self.device.raw.destroy_command_pool(self.raw, None);
         }
+
+        for (_, fb) in self.framebuffers.drain() {
+            unsafe { self.device.raw.destroy_framebuffer(fb, None) };
+        }
+
+        for (_, view) in self.temp_texture_views.drain() {
+            unsafe { self.device.raw.destroy_image_view(view, None) };
+        }
+
         self.counters.command_encoders.sub(1);
     }
 }
@@ -1469,13 +1469,8 @@ fn get_unexpected_err(_err: vk::Result) -> crate::DeviceError {
     crate::DeviceError::Unexpected
 }
 
-/// Returns [`crate::DeviceError::OutOfMemory`] or panics if the `oom_panic`
-/// feature flag is enabled.
+/// Returns [`crate::DeviceError::OutOfMemory`].
 fn get_oom_err(_err: vk::Result) -> crate::DeviceError {
-    #[cfg(feature = "oom_panic")]
-    panic!("Out of memory ({_err:?})");
-
-    #[allow(unreachable_code)]
     crate::DeviceError::OutOfMemory
 }
 
@@ -1489,7 +1484,7 @@ fn get_lost_err() -> crate::DeviceError {
     crate::DeviceError::Lost
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 struct RawTlasInstance {
     transform: [f32; 12],

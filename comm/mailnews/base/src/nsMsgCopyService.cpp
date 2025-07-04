@@ -11,6 +11,7 @@
 #include "nsServiceManagerUtils.h"
 #include "nsMsgUtils.h"
 #include "mozilla/Logging.h"
+#include "mozilla/ProfilerMarkers.h"
 
 static mozilla::LazyLogModule gCopyServiceLog("MsgCopyService");
 
@@ -39,15 +40,15 @@ nsCopyRequest::nsCopyRequest()
       m_isMoveOrDraftOrTemplate(false),
       m_allowUndo(false),
       m_processed(false),
-      m_newMsgFlags(0) {
+      m_newMsgFlags(0),
+      mPendingRemoval(false) {
   MOZ_COUNT_CTOR(nsCopyRequest);
 }
 
 nsCopyRequest::~nsCopyRequest() {
-  MOZ_COUNT_DTOR(nsCopyRequest);
-
   int32_t j = m_copySourceArray.Length();
   while (j-- > 0) delete m_copySourceArray.ElementAt(j);
+  MOZ_COUNT_DTOR(nsCopyRequest);
 }
 
 nsresult nsCopyRequest::Init(nsCopyRequestType type, nsISupports* aSupport,
@@ -60,6 +61,7 @@ nsresult nsCopyRequest::Init(nsCopyRequestType type, nsISupports* aSupport,
   m_requestType = type;
   m_srcSupport = aSupport;
   m_dstFolder = dstFolder;
+  m_arrFolder = nullptr;
   m_isMoveOrDraftOrTemplate = bVal;
   m_allowUndo = allowUndo;
   m_newMsgFlags = newMsgFlags;
@@ -163,8 +165,12 @@ nsresult nsMsgCopyService::ClearRequest(nsCopyRequest* aRequest, nsresult rv) {
         aRequest->m_txnMgr)
       aRequest->m_txnMgr->EndBatch(false);
 
+    if (aRequest->m_listener) {
+      // Call onStopCopy BEFORE RemoveElement.
+      aRequest->mPendingRemoval = true;
+      aRequest->m_listener->OnStopCopy(rv);
+    }
     m_copyRequests.RemoveElement(aRequest);
-    if (aRequest->m_listener) aRequest->m_listener->OnStopCopy(rv);
     delete aRequest;
   }
 
@@ -329,7 +335,8 @@ nsCopyRequest* nsMsgCopyService::FindRequest(nsISupports* aSupport,
                                              nsIMsgFolder* dstFolder) {
   nsCopyRequest* matchingRequest = nullptr;
   for (auto copyRequest : m_copyRequests) {
-    if (!SameCOMIdentity(copyRequest->m_srcSupport, aSupport)) {
+    if (copyRequest->mPendingRemoval ||
+        !SameCOMIdentity(copyRequest->m_srcSupport, aSupport)) {
       continue;
     }
     if (SameCOMIdentity(copyRequest->m_dstFolder.get(), dstFolder)) {
@@ -367,6 +374,7 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP nsMsgCopyService::CopyMessages(
     nsTArray<RefPtr<nsIMsgDBHdr>> const& messages, nsIMsgFolder* dstFolder,
     bool isMove, nsIMsgCopyServiceListener* listener, nsIMsgWindow* window,
     bool allowUndo) {
+  AUTO_PROFILER_LABEL("nsMsgCopyService::CopyMessages", MAILNEWS);
   NS_ENSURE_ARG_POINTER(srcFolder);
   NS_ENSURE_ARG_POINTER(dstFolder);
 
@@ -490,6 +498,7 @@ nsMsgCopyService::CopyFileMessage(nsIFile* file, nsIMsgFolder* dstFolder,
                                   const nsACString& aNewMsgKeywords,
                                   nsIMsgCopyServiceListener* listener,
                                   nsIMsgWindow* window) {
+  AUTO_PROFILER_LABEL("nsMsgCopyService::CopyFileMessage", MAILNEWS);
   nsresult rv = NS_ERROR_NULL_POINTER;
   nsCopyRequest* copyRequest;
   nsCopySource* copySource = nullptr;
@@ -561,6 +570,7 @@ nsMsgCopyService::NotifyCompletion(nsISupports* aSupport,
       if (sourceIndex >= sourceCount) copyRequest->m_processed = true;
       // if this request is done, or failed, clear it.
       if (copyRequest->m_processed || NS_FAILED(result)) {
+        copyRequest->m_arrFolder = dstFolder;
         ClearRequest(copyRequest, result);
         numOrigRequests--;
       } else
@@ -570,4 +580,19 @@ nsMsgCopyService::NotifyCompletion(nsISupports* aSupport,
   } while (copyRequest);
 
   return DoNextCopy();
+}
+
+NS_IMETHODIMP
+nsMsgCopyService::GetArrivedFolder(nsIMsgFolder* aSrcFolder,
+                                   nsIMsgFolder** aArrFolder) {
+  NS_ENSURE_ARG_POINTER(aArrFolder);
+  for (auto copyRequest : m_copyRequests) {
+    if (SameCOMIdentity(copyRequest->m_srcSupport, aSrcFolder) &&
+        copyRequest->m_processed) {
+      NS_IF_ADDREF(*aArrFolder = copyRequest->m_arrFolder);
+      return NS_OK;
+    }
+  }
+  *aArrFolder = nullptr;
+  return NS_OK;
 }

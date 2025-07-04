@@ -10,20 +10,31 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.sys.mjs",
-  InterruptKind: "resource://gre/modules/RustSuggest.sys.mjs",
+  InterruptKind:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustSuggest.sys.mjs",
   ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
   QuickSuggest: "resource:///modules/QuickSuggest.sys.mjs",
   Region: "resource://gre/modules/Region.sys.mjs",
-  RemoteSettingsConfig2: "resource://gre/modules/RustRemoteSettings.sys.mjs",
-  RemoteSettingsContext: "resource://gre/modules/RustRemoteSettings.sys.mjs",
-  RemoteSettingsServer: "resource://gre/modules/RustRemoteSettings.sys.mjs",
-  RemoteSettingsService: "resource://gre/modules/RustRemoteSettings.sys.mjs",
-  SuggestIngestionConstraints: "resource://gre/modules/RustSuggest.sys.mjs",
-  SuggestStoreBuilder: "resource://gre/modules/RustSuggest.sys.mjs",
-  Suggestion: "resource://gre/modules/RustSuggest.sys.mjs",
-  SuggestionProvider: "resource://gre/modules/RustSuggest.sys.mjs",
-  SuggestionProviderConstraints: "resource://gre/modules/RustSuggest.sys.mjs",
-  SuggestionQuery: "resource://gre/modules/RustSuggest.sys.mjs",
+  RemoteSettingsConfig2:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustRemoteSettings.sys.mjs",
+  RemoteSettingsContext:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustRemoteSettings.sys.mjs",
+  RemoteSettingsServer:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustRemoteSettings.sys.mjs",
+  RemoteSettingsService:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustRemoteSettings.sys.mjs",
+  SuggestIngestionConstraints:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustSuggest.sys.mjs",
+  SuggestStoreBuilder:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustSuggest.sys.mjs",
+  Suggestion:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustSuggest.sys.mjs",
+  SuggestionProvider:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustSuggest.sys.mjs",
+  SuggestionProviderConstraints:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustSuggest.sys.mjs",
+  SuggestionQuery:
+    "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustSuggest.sys.mjs",
   TaskQueue: "resource:///modules/UrlbarUtils.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   Utils: "resource://services-settings/Utils.sys.mjs",
@@ -208,9 +219,15 @@ export class SuggestBackendRust extends SuggestBackend {
       Glean.suggest.queryTime[label].accumulateSingleSample(value);
     }
 
-    for (let suggestion of suggestions) {
-      let type = getSuggestionType(suggestion);
+    let liftedSuggestions = [];
+    for (let s of suggestions) {
+      let type = getSuggestionType(s);
       if (!type) {
+        continue;
+      }
+
+      let suggestion = liftSuggestion(s);
+      if (!suggestion) {
         continue;
       }
 
@@ -220,15 +237,16 @@ export class SuggestBackendRust extends SuggestBackend {
         suggestion.icon_blob = new Blob([suggestion.icon], {
           type: suggestion.iconMimetype ?? "",
         });
-
         delete suggestion.icon;
         delete suggestion.iconMimetype;
       }
+
+      liftedSuggestions.push(suggestion);
     }
 
-    this.logger.debug("Got suggestions", suggestions);
+    this.logger.debug("Got suggestions", liftedSuggestions);
 
-    return suggestions;
+    return liftedSuggestions;
   }
 
   cancelQuery() {
@@ -290,6 +308,112 @@ export class SuggestBackendRust extends SuggestBackend {
         );
         this.#ingestSuggestionType({ type, providerConstraints });
       }
+    }
+  }
+
+  /**
+   * Registers a dismissal for a Rust suggestion.
+   *
+   * @param {Suggestion} suggestion
+   *   The suggestion to dismiss, an instance of one of the `Suggestion`
+   *   subclasses exposed over FFI, e.g., `Suggestion.Wikipedia`. Typically the
+   *   suggestion will have been returned from the Rust component, but tests may
+   *   find it useful to make a `Suggestion` object directly.
+   */
+  async dismissRustSuggestion(suggestion) {
+    let lowered = lowerSuggestion(suggestion);
+    try {
+      await this.#store?.dismissBySuggestion(lowered);
+    } catch (error) {
+      this.logger.error("Error: dismissRustSuggestion", { error, suggestion });
+    }
+  }
+
+  /**
+   * Registers a dismissal using a dismissal key. If you have a suggestion
+   * object returned from the Rust component, use `dismissRustSuggestion()`
+   * instead. This method can be used to record dismissals for suggestions from
+   * other backends, like Merino.
+   *
+   * @param {string} dismissalKey
+   *   The dismissal key.
+   */
+  async dismissByKey(dismissalKey) {
+    try {
+      await this.#store?.dismissByKey(dismissalKey);
+    } catch (error) {
+      this.logger.error("Error: dismissByKey", { error, dismissalKey });
+    }
+  }
+
+  /**
+   * Returns whether a dismissal is recorded for a Rust suggestion.
+   *
+   * @param {Suggestion} suggestion
+   *   The suggestion to dismiss, an instance of one of the `Suggestion`
+   *   subclasses exposed over FFI, e.g., `Suggestion.Wikipedia`. Typically the
+   *   suggestion will have been returned from the Rust component, but tests may
+   *   find it useful to make a `Suggestion` object directly.
+   * @returns {boolean}
+   *   Whether the suggestion has been dismissed.
+   */
+  async isRustSuggestionDismissed(suggestion) {
+    let lowered = lowerSuggestion(suggestion);
+    try {
+      return await this.#store?.isDismissedBySuggestion(lowered);
+    } catch (error) {
+      this.logger.error("Error: isDismissedBySuggestion", {
+        error,
+        suggestion,
+      });
+    }
+    return false;
+  }
+
+  /**
+   * Returns whether a dismissal is recorded for a dismissal key. If you have a
+   * suggestion object returned from the Rust component, use
+   * `isRustSuggestionDismissed()` instead. This method can be used to determine
+   * whether suggestions from other backends, like Merino, have been dismissed.
+   *
+   * @param {string} dismissalKey
+   *   The dismissal key.
+   * @returns {boolean}
+   *   Whether a dismissal is recorded for the key.
+   */
+  async isDismissedByKey(dismissalKey) {
+    try {
+      return await this.#store?.isDismissedByKey(dismissalKey);
+    } catch (error) {
+      this.logger.error("Error: isDismissedByKey", { error, dismissalKey });
+    }
+    return false;
+  }
+
+  /**
+   * Returns whether any dismissals are recorded.
+   *
+   * @returns {boolean}
+   *   Whether any suggestions have been dismissed.
+   */
+  async anyDismissedSuggestions() {
+    try {
+      return await this.#store?.anyDismissedSuggestions();
+    } catch (error) {
+      this.logger.error("Error: anyDismissedSuggestions", error);
+    }
+    // Return true because there may be dismissed suggestions, we don't know.
+    return true;
+  }
+
+  /**
+   * Removes all registered dismissals.
+   */
+  async clearDismissedSuggestions() {
+    try {
+      await this.#store?.clearDismissedSuggestions();
+    } catch (error) {
+      this.logger.error("Error clearing dismissed suggestions", error);
     }
   }
 
@@ -424,6 +548,14 @@ export class SuggestBackendRust extends SuggestBackend {
     // becomes enabled after this point, its `SuggestProvider` will update and
     // call `ingestEnabledSuggestions()`, which will be its initial ingest.
     this.#ingestAll();
+
+    this.#migrateBlockedDigests().then(() => {
+      // Now that the backend has finished initializing, send
+      // `quicksuggest-dismissals-changed` to let consumers know that the
+      // dismissal API is available. about:preferences relies on this to update
+      // its "Restore" button if it's open at this time.
+      Services.obs.notifyObservers(null, "quicksuggest-dismissals-changed");
+    });
   }
 
   #makeStore() {
@@ -438,12 +570,19 @@ export class SuggestBackendRust extends SuggestBackend {
       return null;
     }
 
-    let customTargetingAttributes = {
+    let rsContext = {
       formFactor: "desktop",
+      appId: Services.appinfo.ID || "",
+      channel: AppConstants.IS_ESR ? "esr" : AppConstants.MOZ_UPDATE_CHANNEL,
+      appVersion: Services.appinfo.version,
+      locale: Services.locale.appLocaleAsBCP47,
+      os: AppConstants.platform,
+      osVersion: Services.sysinfo.get("version"),
     };
+
+    // We assume `QuickSuggest` init already awaited `Region.init()`.
     if (lazy.Region.home) {
-      // We assume `QuickSuggest` init already awaited `Region.init()`.
-      customTargetingAttributes.country = lazy.Region.home;
+      rsContext.country = lazy.Region.home;
     }
 
     let rsService;
@@ -453,22 +592,7 @@ export class SuggestBackendRust extends SuggestBackend {
         new lazy.RemoteSettingsConfig2({
           server: this.#remoteSettingsServer,
           bucketName: this.#remoteSettingsBucketName,
-          appContext: new lazy.RemoteSettingsContext({
-            appName: Services.appinfo.name || "",
-            appId: Services.appinfo.ID || "",
-            channel: AppConstants.IS_ESR
-              ? "esr"
-              : AppConstants.MOZ_UPDATE_CHANNEL,
-            appVersion: Services.appinfo.version,
-            appBuild: Services.appinfo.appBuildID,
-            architecture: Services.sysinfo.get("arch"),
-            locale: Services.locale.appLocaleAsBCP47,
-            os: AppConstants.platform,
-            osVersion: Services.sysinfo.get("version"),
-            customTargetingAttributes: JSON.stringify(
-              customTargetingAttributes
-            ),
-          }),
+          appContext: new lazy.RemoteSettingsContext(rsContext),
         })
       );
     } catch (error) {
@@ -622,6 +746,71 @@ export class SuggestBackendRust extends SuggestBackend {
     this.#remoteSettingsBucketName = bucketName;
   }
 
+  /**
+   * Dismissals are stored in the Rust component but were previously stored as
+   * URL digests in a pref. This method migrates the pref to the Rust component
+   * by registering each digest as a dismissal key in the Rust component. The
+   * pref is cleared when the migration successfully finishes.
+   */
+  async #migrateBlockedDigests() {
+    if (!this.#store) {
+      return;
+    }
+
+    let pref = "browser.urlbar.quicksuggest.blockedDigests";
+    this.logger.debug("Checking blockedDigests migration", { pref });
+
+    let json;
+    // eslint-disable-next-line mozilla/use-default-preference-values
+    try {
+      json = Services.prefs.getCharPref(pref);
+    } catch (error) {
+      if (error.result != Cr.NS_ERROR_UNEXPECTED) {
+        throw error;
+      }
+      this.logger.debug(
+        "blockedDigests pref does not exist, migration not necessary"
+      );
+      return;
+    }
+
+    await this.#migrateBlockedDigestsJson(json);
+
+    // Don't clear the pref until migration finishes successfully, in case
+    // there's some uncaught error. We don't want to lose the user's data.
+    Services.prefs.clearUserPref(pref);
+  }
+
+  // This assumes `this.#store` is non-null!
+  async #migrateBlockedDigestsJson(json) {
+    let digests;
+    try {
+      digests = JSON.parse(json);
+    } catch (error) {
+      this.logger.debug("blockedDigests is not valid JSON, discarding it");
+      return;
+    }
+
+    if (!digests) {
+      this.logger.debug("blockedDigests is falsey, discarding it");
+      return;
+    }
+
+    if (!Array.isArray(digests)) {
+      this.logger.debug("blockedDigests is not an array, discarding it");
+      return;
+    }
+
+    let promises = [];
+    for (let digest of digests) {
+      if (typeof digest != "string") {
+        continue;
+      }
+      promises.push(this.#store.dismissByKey(digest));
+    }
+    await Promise.all(promises);
+  }
+
   get _test_store() {
     return this.#store;
   }
@@ -707,4 +896,77 @@ function getSuggestionType(suggestion) {
     }
   }
   return type;
+}
+
+/**
+ * The Rust component exports a custom UniFFI type called `JsonValue`, which is
+ * just an alias of `serde_json::Value`. The type represents any value that can
+ * be serialized as JSON, but UniFFI exports it as its JSON serialization rather
+ * than the value itself. The UniFFI JS bindings don't currently deserialize the
+ * JSON back to the underlying value, so we use this function to do it
+ * ourselves. The process of converting the exported Rust value into a more
+ * convenient JS representation is called "lifting".
+ *
+ * Currently dynamic suggestions are the only objects exported from the Rust
+ * component that include a `JsonValue`.
+ *
+ * @param {Suggestion} suggestion
+ *   A `Suggestion` instance from the Rust component.
+ * @returns {Suggestion}
+ *   If any properties of the suggestion need to be lifted, returns a new
+ *   `Suggestion` that's a copy of it except the appropriate properties are
+ *   lifted. Otherwise returns the passed-in suggestion itself.
+ */
+function liftSuggestion(suggestion) {
+  if (suggestion instanceof lazy.Suggestion.Dynamic) {
+    let { data } = suggestion;
+    if (typeof data == "string") {
+      try {
+        data = JSON.parse(data);
+      } catch (error) {
+        // This shouldn't ever happen since `suggestion.data` is serialized in
+        // the Rust component and should therefore always be valid.
+        return null;
+      }
+    }
+    return new lazy.Suggestion.Dynamic(
+      suggestion.suggestionType,
+      data,
+      suggestion.dismissalKey,
+      suggestion.score
+    );
+  }
+
+  return suggestion;
+}
+
+/**
+ * This is the opposite of `liftSuggestion()`: It converts a lifted suggestion
+ * object back to the value expected by the Rust component. This is only
+ * necessary when passing a suggestion back in to the Rust component. This
+ * process is called "lowering".
+ *
+ * @param {Suggestion|object} suggestion
+ *   A suggestion object. Technically this can be a plain JS object or a
+ *   `Suggestion` instance from the Rust component.
+ * @returns {Suggestion}
+ *   If any properties of the suggestion need to be lowered, returns a new
+ *   `Suggestion` that's a copy of it except the appropriate properties are
+ *   lowered. Otherwise returns the passed-in suggestion itself.
+ */
+function lowerSuggestion(suggestion) {
+  if (suggestion.provider == "Dynamic") {
+    let { data } = suggestion;
+    if (data !== null && data !== undefined) {
+      data = JSON.stringify(data);
+    }
+    return new lazy.Suggestion.Dynamic(
+      suggestion.suggestionType,
+      data,
+      suggestion.dismissalKey,
+      suggestion.score
+    );
+  }
+
+  return suggestion;
 }

@@ -166,7 +166,7 @@ nsresult nsPop3Sink::BeginMailDelivery(bool uidlDownload,
   if (!isLocked) {
     MOZ_LOG(POP3LOGMODULE, mozilla::LogLevel::Debug,
             (POP3LOG("BeginMailDelivery acquiring semaphore")));
-    m_folder->AcquireSemaphore(supports);
+    m_folder->AcquireSemaphore(supports, "nsPop3Sink::BeginMailDelivery"_ns);
   } else {
     MOZ_LOG(POP3LOGMODULE, mozilla::LogLevel::Debug,
             (POP3LOG("BeginMailDelivery folder locked")));
@@ -192,7 +192,6 @@ nsresult nsPop3Sink::EndMailDelivery(nsIPop3Protocol* protocol) {
   }
 
   if (m_newMailParser) {
-    if (m_outFileStream) m_outFileStream->Flush();  // try this.
     m_newMailParser->DoneParsing();
     m_newMailParser->EndMsgDownload();
   }
@@ -269,7 +268,8 @@ nsresult nsPop3Sink::ReleaseFolderLock() {
            haveSemaphore ? "TRUE" : "FALSE"));
 
   if (NS_SUCCEEDED(result) && haveSemaphore)
-    result = m_folder->ReleaseSemaphore(supports);
+    result = m_folder->ReleaseSemaphore(supports,
+                                        "nsPop3Sink::ReleaseFolderLock"_ns);
   return result;
 }
 
@@ -308,14 +308,14 @@ nsPop3Sink::IncorporateBegin(const char* uidlString, uint32_t flags) {
 #endif
 
   nsresult rv;
-  nsCOMPtr<nsIMsgDBHdr> newHdr;
 
-  nsCOMPtr<nsIMsgIncomingServer> server = do_QueryInterface(m_popServer);
-  if (!server) return NS_ERROR_UNEXPECTED;
-
-  rv = server->GetMsgStore(getter_AddRefs(m_msgStore));
+  nsCOMPtr<nsIMsgDatabase> db;
+  rv = m_folder->GetMsgDatabase(getter_AddRefs(db));
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = m_msgStore->GetNewMsgOutputStream(m_folder, getter_AddRefs(newHdr),
+
+  rv = m_folder->GetMsgStore(getter_AddRefs(m_msgStore));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = m_msgStore->GetNewMsgOutputStream(m_folder,
                                          getter_AddRefs(m_outFileStream));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -337,6 +337,11 @@ nsPop3Sink::IncorporateBegin(const char* uidlString, uint32_t flags) {
     m_newMailParser->m_moveCoalescer = nullptr;
     m_newMailParser = nullptr;
   }
+
+  nsCOMPtr<nsIMsgDBHdr> newHdr;
+  rv = db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(newHdr));
+  NS_ENSURE_SUCCESS(rv, rv);
+
   // Create a new mail parser to parse out the headers of the message and
   // load the details into the message database.
   m_newMailParser = new nsParseNewMailState;
@@ -434,7 +439,7 @@ NS_IMETHODIMP nsPop3Sink::SetMsgsToDownload(uint32_t aNumMessages) {
   return NS_OK;
 }
 
-nsresult nsPop3Sink::IncorporateWrite(const char* block, int32_t length) {
+NS_IMETHODIMP nsPop3Sink::IncorporateWrite(const char* block, int32_t length) {
   return WriteLineToMailbox(nsDependentCString(block, length));
 }
 
@@ -448,85 +453,24 @@ nsresult nsPop3Sink::WriteLineToMailbox(const nsACString& buffer) {
     // lose the messages See bug 62480
     NS_ENSURE_TRUE(m_outFileStream, NS_ERROR_OUT_OF_MEMORY);
 
-    // To remove seeking to the end for each line to be written, remove the
-    // following line. See bug 1116055 for details.
-#define SEEK_TO_END
-#ifdef SEEK_TO_END
-    // seek to the end in case someone else has sought elsewhere in our stream.
-    nsCOMPtr<nsISeekableStream> seekableOutStream =
-        do_QueryInterface(m_outFileStream);
-
-    if (seekableOutStream) {
-      int64_t before_seek_pos;
-      nsresult rv2 = seekableOutStream->Tell(&before_seek_pos);
-      MOZ_ASSERT(NS_SUCCEEDED(rv2),
-                 "seekableOutStream->Tell(&before_seek_pos) failed");
-
-      // XXX Handle error such as network error for remote file system.
-      seekableOutStream->Seek(nsISeekableStream::NS_SEEK_END, 0);
-
-      int64_t after_seek_pos;
-      nsresult rv3 = seekableOutStream->Tell(&after_seek_pos);
-      MOZ_ASSERT(NS_SUCCEEDED(rv3),
-                 "seekableOutStream->Tell(&after_seek_pos) failed");
-
-      if (NS_SUCCEEDED(rv2) && NS_SUCCEEDED(rv3)) {
-        if (before_seek_pos != after_seek_pos) {
-          nsAutoCString folderName;
-          if (m_folder) m_folder->GetPrettyName(folderName);
-          // This merits a console message, it's poor man's telemetry.
-          MsgLogToConsole4(
-              u"Unexpected file position change detected"_ns +
-                  (folderName.IsEmpty() ? EmptyString() : u" in folder "_ns) +
-                  (folderName.IsEmpty() ? EmptyString()
-                                        : NS_ConvertUTF8toUTF16(folderName)) +
-                  u". "
-                  "If you can reliably reproduce this, please report the "
-                  "steps you used to dev-apps-thunderbird@lists.mozilla.org "
-                  "or to bug 1308335 at bugzilla.mozilla.org. "
-                  "Resolving this problem will allow speeding up message "
-                  "downloads."_ns,
-              nsCString(__FILE__), __LINE__, nsIScriptError::errorFlag);
-#  ifdef DEBUG
-          // Debugging, see bug 1116055.
-          if (!folderName.IsEmpty()) {
-            fprintf(stderr,
-                    "(seekdebug) WriteLineToMailbox() detected an unexpected "
-                    "file position change in folder %s.\n",
-                    folderName.get());
-          } else {
-            fprintf(stderr,
-                    "(seekdebug) WriteLineToMailbox() detected an unexpected "
-                    "file position change.\n");
-          }
-          fprintf(stderr,
-                  "(seekdebug) before_seek_pos=0x%016llx, "
-                  "after_seek_pos=0x%016llx\n",
-                  (long long unsigned int)before_seek_pos,
-                  (long long unsigned int)after_seek_pos);
-#  endif
-        }
-      }
-    }
-#endif
-
-    uint32_t bytesWritten;
     nsresult rv =
-        m_outFileStream->Write(buffer.BeginReading(), bufferLen, &bytesWritten);
+        SyncWriteAll(m_outFileStream, buffer.BeginReading(), bufferLen);
     NS_ENSURE_SUCCESS(rv, rv);
-    NS_ENSURE_TRUE(bytesWritten == bufferLen, NS_ERROR_FAILURE);
   }
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsPop3Sink::IncorporateComplete(nsIMsgWindow* aMsgWindow, int32_t aSize) {
-  if (m_buildMessageUri && !m_baseMessageUri.IsEmpty() && m_newMailParser &&
-      m_newMailParser->m_newMsgHdr) {
-    nsMsgKey msgKey;
-    m_newMailParser->m_newMsgHdr->GetMessageKey(&msgKey);
-    m_messageUri.Truncate();
-    nsBuildLocalMessageURI(m_baseMessageUri, msgKey, m_messageUri);
+  if (m_buildMessageUri && !m_baseMessageUri.IsEmpty() && m_newMailParser) {
+    nsCOMPtr<nsIMsgDBHdr> hdr;
+    m_newMailParser->GetNewMsgHdr(getter_AddRefs(hdr));
+    if (hdr) {
+      nsMsgKey msgKey;
+      hdr->GetMessageKey(&msgKey);
+      m_messageUri.Truncate();
+      nsBuildLocalMessageURI(m_baseMessageUri, msgKey, m_messageUri);
+    }
   }
 
   nsresult rv;
@@ -550,7 +494,8 @@ nsPop3Sink::IncorporateComplete(nsIMsgWindow* aMsgWindow, int32_t aSize) {
   if (m_newMailParser) {
     // PublishMsgHdr clears m_newMsgHdr, so we need a comptr to
     // hold onto it.
-    nsCOMPtr<nsIMsgDBHdr> hdr = m_newMailParser->m_newMsgHdr;
+    nsCOMPtr<nsIMsgDBHdr> hdr;
+    m_newMailParser->GetNewMsgHdr(getter_AddRefs(hdr));
     NS_ASSERTION(hdr, "m_newMailParser->m_newMsgHdr wasn't set");
     if (!hdr) return NS_ERROR_FAILURE;
 
@@ -569,7 +514,13 @@ nsPop3Sink::IncorporateComplete(nsIMsgWindow* aMsgWindow, int32_t aSize) {
         localFolder->UpdateNewMsgHdr(oldMsgHdr, hdr);
       }
     }
-    m_msgStore->FinishNewMessage(m_outFileStream, hdr);
+
+    nsAutoCString storeToken;
+    rv = m_msgStore->FinishNewMessage(m_folder, m_outFileStream, storeToken);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = hdr->SetStoreToken(storeToken);
+    NS_ENSURE_SUCCESS(rv, rv);
+
     m_newMailParser->PublishMsgHeader(aMsgWindow);
     m_newMailParser->ApplyForwardAndReplyFilter(aMsgWindow);
     if (aSize) hdr->SetUint32Property("onlineSize", aSize);
@@ -622,17 +573,16 @@ nsPop3Sink::IncorporateComplete(nsIMsgWindow* aMsgWindow, int32_t aSize) {
 
 NS_IMETHODIMP
 nsPop3Sink::IncorporateAbort() {
-  NS_ENSURE_STATE(m_outFileStream);
-  nsresult rv = m_outFileStream->Close();
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (m_msgStore && m_newMailParser && m_newMailParser->m_newMsgHdr) {
-    m_msgStore->DiscardNewMessage(m_outFileStream,
-                                  m_newMailParser->m_newMsgHdr);
+  if (m_msgStore && m_newMailParser) {
+    nsCOMPtr<nsIMsgDBHdr> hdr;
+    m_newMailParser->GetNewMsgHdr(getter_AddRefs(hdr));
+    m_msgStore->DiscardNewMessage(m_folder, m_outFileStream);
   }
+  m_outFileStream = nullptr;
 #ifdef DEBUG
   printf("Incorporate message abort.\n");
 #endif
-  return rv;
+  return NS_OK;
 }
 
 nsresult nsPop3Sink::SetBiffStateAndUpdateFE(uint32_t aBiffState,

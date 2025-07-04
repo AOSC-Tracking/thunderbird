@@ -18,6 +18,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   migrateToolbarForSpace: "resource:///modules/ToolbarMigration.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
+  SearchIntegration: "resource:///modules/SearchIntegration.sys.mjs",
 });
 
 export var MailMigrator = {
@@ -28,7 +29,7 @@ export var MailMigrator = {
   _migrateUI() {
     // The code for this was ported from
     // mozilla/browser/components/nsBrowserGlue.js
-    const UI_VERSION = 47;
+    const UI_VERSION = 51;
     const UI_VERSION_PREF = "mail.ui-rdf.version";
     let currentUIVersion = Services.prefs.getIntPref(UI_VERSION_PREF, 0);
 
@@ -237,6 +238,53 @@ export var MailMigrator = {
         } catch (ex) {}
       }
 
+      if (currentUIVersion < 48) {
+        // Reflect the actual state of the search integration in the platform
+        // independent pref.
+        Services.prefs.setBoolPref(
+          "searchintegration.enable",
+          lazy.SearchIntegration?.prefEnabled ?? false
+        );
+      }
+
+      if (currentUIVersion < 49) {
+        // Migrate xulStore UI settings to actual prefs if we have them.
+        const docURL = "chrome://messenger/content/messenger.xhtml";
+        if (Services.xulStore.hasValue(docURL, "threadPane", "view")) {
+          const view = Services.xulStore.getValue(docURL, "threadPane", "view");
+          Services.prefs.setIntPref(
+            "mail.threadpane.listview",
+            view == "table" ? 1 : 0
+          );
+          Services.xulStore.removeValue(docURL, "threadPane", "view");
+        }
+      }
+
+      if (currentUIVersion < 50) {
+        // Previous UI let users set this. Non-default value interacts badly
+        // with current dark mode.
+        Services.prefs.clearUserPref("browser.display.document_color_use");
+      }
+
+      if (currentUIVersion < 51) {
+        // Bug 1968963: Re-run migration 48 and 49 becasue they were skipped on
+        // release due to the uplifting of the patch containing migration 50.
+        Services.prefs.setBoolPref(
+          "searchintegration.enable",
+          lazy.SearchIntegration?.prefEnabled ?? false
+        );
+
+        const docURL = "chrome://messenger/content/messenger.xhtml";
+        if (Services.xulStore.hasValue(docURL, "threadPane", "view")) {
+          const view = Services.xulStore.getValue(docURL, "threadPane", "view");
+          Services.prefs.setIntPref(
+            "mail.threadpane.listview",
+            view == "table" ? 1 : 0
+          );
+          Services.xulStore.removeValue(docURL, "threadPane", "view");
+        }
+      }
+
       // Migration tasks that may take a long time are not run immediately, but
       // added to the MigrationTasks object then run at the end.
       //
@@ -295,91 +343,11 @@ export var MailMigrator = {
   },
 
   /**
-   * Scan through a profile, removing 'nstmp' / 'nstmp-N'
-   * files left over from failed folder compactions.
-   * See Bug 1878541.
-   */
-  async _nstmpCleanup() {
-    // Latch to ensure this only ever runs once.
-    if (Services.prefs.getBoolPref("mail.nstmp_cleanup_completed", false)) {
-      return;
-    }
-
-    const logger = console.createInstance({
-      prefix: "nstmp cleanup",
-      maxLogLevel: "Log",
-    });
-    logger.log("Looking for left-over nstmp files to remove...");
-
-    // Go through all known folders, building up a list of the directories
-    // and all the potential mbox files in those directories.
-    // Each entry is a set of the potential mbox filenames in the dir.
-    const dirs = {};
-    for (const s of MailServices.accounts.allServers) {
-      if (s.msgStore.storeType != "mbox") {
-        continue;
-      }
-      // Don't process the root folder here (it shouldn't have an mbox).
-      for (const child of s.rootFolder.descendants) {
-        const mbox = child.filePath.path;
-        const d = PathUtils.parent(mbox);
-        if (!Object.hasOwn(dirs, d)) {
-          dirs[d] = new Set();
-        }
-        // We'll be doing case-insensitive compares.
-        dirs[d].add(PathUtils.filename(mbox).toLowerCase());
-      }
-    }
-
-    // For each directory, find nstmp files, excluding names of known folders.
-    const doomed = [];
-    for (const [dir, mboxes] of Object.entries(dirs)) {
-      const files = await IOUtils.getChildren(dir, { ignoreAbsent: true });
-      for (const file of files) {
-        // Skip anything that isn't a regular file.
-        const info = await IOUtils.stat(file);
-        if (info.type != "regular") {
-          continue;
-        }
-
-        // Looks like an nstmp file? (as created by createUnique()).
-        const bare = PathUtils.filename(file);
-        if (/^nstmp(-[0-9]{1,4})?$/.test(bare)) {
-          // Make sure it doesn't match any of the potential mbox files (case
-          // insensitive).
-          if (mboxes.has(bare.toLowerCase())) {
-            continue;
-          }
-          doomed.push(file);
-        }
-      }
-    }
-
-    if (doomed.length > 0) {
-      logger.log("Found left-over nstmp files to remove:", doomed);
-    }
-    for (const f of doomed) {
-      await IOUtils.remove(f);
-    }
-
-    Services.prefs.setBoolPref("mail.nstmp_cleanup_completed", true);
-    logger.log(`nstmp cleanup completed: ${doomed.length} files removed.`);
-  },
-
-  /**
    * Perform any migration work that needs to occur once the user profile has
    * been loaded.
    */
   migrateAtProfileStartup() {
     this._migrateUI();
-  },
-
-  /**
-   * Perform any migration work that needs to occur once everything is up and
-   * running.
-   */
-  async migrateAfterStartupComplete() {
-    await this._nstmpCleanup();
   },
 };
 

@@ -9,7 +9,12 @@ import androidx.core.net.toUri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.MediumTest
 import androidx.test.platform.app.InstrumentationRegistry
-import org.hamcrest.Matchers.* // ktlint-disable no-wildcard-imports
+import org.hamcrest.Matchers.containsString
+import org.hamcrest.Matchers.endsWith
+import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.isEmptyOrNullString
+import org.hamcrest.Matchers.notNullValue
+import org.hamcrest.Matchers.nullValue
 import org.junit.Assert
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -665,82 +670,6 @@ class PromptDelegateTest : BaseSessionTest(
             "Result should match",
             mainSession.waitForJS("prompt('Prompt:', 'default')") as String,
             equalTo("foo"),
-        )
-    }
-
-    @Test
-    fun fedCMProviderPromptTest() {
-        sessionRule.setPrefsUntilTestEnd(
-            mapOf(
-                "dom.security.credentialmanagement.identity.enabled" to true,
-            ),
-        )
-        sessionRule.setPrefsUntilTestEnd(
-            mapOf(
-                "dom.security.credentialmanagement.identity.heavyweight.enabled" to true,
-            ),
-        )
-        sessionRule.setPrefsUntilTestEnd(
-            mapOf(
-                "dom.security.credentialmanagement.identity.test_ignore_well_known" to true,
-            ),
-        )
-        mainSession.loadTestPath(FEDCM_RP_HTML_PATH)
-
-        sessionRule.delegateDuringNextWait(object : PromptDelegate {
-            @AssertCalled(count = 1)
-            override fun onSelectIdentityCredentialProvider(
-                session: GeckoSession,
-                prompt: PromptDelegate.IdentityCredential.ProviderSelectorPrompt,
-            ): GeckoResult<PromptResponse> {
-                prompt.providers.mapIndexed { index, item ->
-                    assertThat("ID should match", index, equalTo(item.id))
-                    assertThat(
-                        "Name should be the name of the IDP taken from the manifest",
-                        item.name,
-                        containsString("Demo IDP"),
-                    )
-                    assertThat("Icon should contain a valid image", item.icon ?: "", containsString("data:image"))
-                }
-                return GeckoResult.fromValue(prompt.confirm(0))
-            }
-
-            @AssertCalled(count = 1)
-            override fun onSelectIdentityCredentialAccount(
-                session: GeckoSession,
-                prompt: PromptDelegate.IdentityCredential.AccountSelectorPrompt,
-            ): GeckoResult<PromptResponse> {
-                prompt.accounts.forEachIndexed { index, item ->
-                    assertThat("ID should match", index, equalTo(item.id))
-                }
-                return GeckoResult.fromValue(prompt.confirm(0))
-            }
-
-            @AssertCalled(count = 1)
-            override fun onShowPrivacyPolicyIdentityCredential(
-                session: GeckoSession,
-                prompt: PromptDelegate.IdentityCredential.PrivacyPolicyPrompt,
-            ): GeckoResult<PromptResponse> {
-                assertThat("Host should be localhost", prompt.host, equalTo("localhost"))
-                assertThat("Privacy policy url should be the same as specified in fedcm_idp_metadata.json ", prompt.privacyPolicyUrl, equalTo("privacy_policy"))
-                assertThat("Terms of service url should be the same as specified in fedcm_idp_metadata.json ", prompt.termsOfServiceUrl, equalTo("terms_of_service"))
-                assertThat("Icon should contain a valid image", prompt.icon ?: "", containsString("data:image"))
-                return GeckoResult.fromValue(prompt.confirm(true))
-            }
-        })
-
-        mainSession.waitForJS(
-            """
-        navigator.credentials.get({
-        identity: {
-          providers: [{
-            configURL: "${createTestUrl(FEDCM_IDP_MANIFEST_PATH)}",
-            clientId: "localhost",
-            nonce: "nonce",
-          }]
-        }
-      });
-            """.trimIndent(),
         )
     }
 

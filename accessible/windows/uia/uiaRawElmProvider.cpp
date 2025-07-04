@@ -91,9 +91,6 @@ class LabelTextLeafRule : public PivotRule {
 
 static void MaybeRaiseUiaLiveRegionEvent(Accessible* aAcc,
                                          uint32_t aGeckoEvent) {
-  if (!::UiaClientsAreListening()) {
-    return;
-  }
   if (Accessible* live = nsAccUtils::GetLiveRegionRoot(aAcc)) {
     auto* uia = MsaaAccessible::GetFrom(live);
     ::UiaRaiseAutomationEvent(uia, UIA_LiveRegionChangedEventId);
@@ -140,13 +137,18 @@ Accessible* uiaRawElmProvider::Acc() const {
 /* static */
 void uiaRawElmProvider::RaiseUiaEventForGeckoEvent(Accessible* aAcc,
                                                    uint32_t aGeckoEvent) {
-  if (!Compatibility::IsUiaEnabled()) {
+  if (!Compatibility::IsUiaEnabled() || !::UiaClientsAreListening()) {
     return;
   }
   auto* uia = MsaaAccessible::GetFrom(aAcc);
   if (!uia) {
     return;
   }
+  // Some UIA events include or depend on data that might not be cached yet. We
+  // shouldn't request additional cache domains in this case because a client
+  // might not even care about these events. Instead, we use explicit client
+  // queries as a signal to request domains.
+  CacheDomainActivationBlocker cacheBlocker;
   PROPERTYID property = 0;
   _variant_t newVal;
   bool gotNewVal = false;
@@ -205,7 +207,7 @@ void uiaRawElmProvider::RaiseUiaEventForGeckoEvent(Accessible* aAcc,
       gotNewVal = true;
       break;
   }
-  if (property && ::UiaClientsAreListening()) {
+  if (property) {
     // We can't get the old value. Thankfully, clients don't seem to need it.
     _variant_t oldVal;
     if (!gotNewVal) {
@@ -220,7 +222,7 @@ void uiaRawElmProvider::RaiseUiaEventForGeckoEvent(Accessible* aAcc,
 void uiaRawElmProvider::RaiseUiaEventForStateChange(Accessible* aAcc,
                                                     uint64_t aState,
                                                     bool aEnabled) {
-  if (!Compatibility::IsUiaEnabled()) {
+  if (!Compatibility::IsUiaEnabled() || !::UiaClientsAreListening()) {
     return;
   }
   auto* uia = MsaaAccessible::GetFrom(aAcc);
@@ -260,11 +262,9 @@ void uiaRawElmProvider::RaiseUiaEventForStateChange(Accessible* aAcc,
       return;
   }
   MOZ_ASSERT(property);
-  if (::UiaClientsAreListening()) {
-    // We can't get the old value. Thankfully, clients don't seem to need it.
-    _variant_t oldVal;
-    ::UiaRaiseAutomationPropertyChangedEvent(uia, property, oldVal, newVal);
-  }
+  // We can't get the old value. Thankfully, clients don't seem to need it.
+  _variant_t oldVal;
+  ::UiaRaiseAutomationPropertyChangedEvent(uia, property, oldVal, newVal);
 }
 
 // IUnknown
@@ -514,13 +514,14 @@ uiaRawElmProvider::GetPropertyValue(PROPERTYID aPropertyId,
   switch (aPropertyId) {
     // Accelerator Key / shortcut.
     case UIA_AcceleratorKeyPropertyId: {
-      if (!localAcc) {
-        // KeyboardShortcut is only currently relevant for LocalAccessible.
-        break;
-      }
       nsAutoString keyString;
 
-      localAcc->KeyboardShortcut().ToString(keyString);
+      if (!acc->GetStringARIAAttr(nsGkAtoms::aria_keyshortcuts, keyString)) {
+        if (localAcc) {
+          // KeyboardShortcut is only currently relevant for LocalAccessible.
+          localAcc->KeyboardShortcut().ToString(keyString);
+        }
+      }
 
       if (!keyString.IsEmpty()) {
         aPropertyValue->vt = VT_BSTR;
@@ -1009,6 +1010,11 @@ uiaRawElmProvider::get_Value(__RPC__deref_out_opt BSTR* aRetVal) {
   }
   nsAutoString value;
   acc->Value(value);
+  if (value.IsEmpty() && acc->IsDoc()) {
+    // Exposing the URl via the Value pattern doesn't seem to be documented
+    // anywhere. However, Chromium does it, as does the IA2 -> UIA proxy.
+    nsAccUtils::DocumentURL(acc, value);
+  }
   *aRetVal = ::SysAllocStringLen(value.get(), value.Length());
   if (!*aRetVal) {
     return E_OUTOFMEMORY;
@@ -1391,7 +1397,7 @@ bool uiaRawElmProvider::HasValuePattern() const {
   Accessible* acc = Acc();
   MOZ_ASSERT(acc);
   if (acc->HasNumericValue() || acc->IsCombobox() || acc->IsHTMLLink() ||
-      acc->IsTextField()) {
+      acc->IsTextField() || acc->IsDoc()) {
     return true;
   }
   const nsRoleMapEntry* roleMapEntry = acc->ARIARoleMap();

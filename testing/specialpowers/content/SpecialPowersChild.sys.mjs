@@ -25,7 +25,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "resource://testing-common/SpecialPowersSandbox.sys.mjs",
   WrapPrivileged: "resource://testing-common/WrapPrivileged.sys.mjs",
 });
-import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 Cu.crashIfNotInAutomation();
 
@@ -304,6 +303,7 @@ export class SpecialPowersChild extends JSWindowActorChild {
 
       case "Assert":
         {
+          // Handles info & Assert reports from SpecialPowersSandbox.sys.mjs.
           if ("info" in message.data) {
             (this.xpcshellScope || this.SimpleTest).info(message.data.info);
             break;
@@ -312,12 +312,11 @@ export class SpecialPowersChild extends JSWindowActorChild {
           // An assertion has been done in a mochitest chrome script
           let { name, passed, stack, diag, expectFail } = message.data;
 
-          let { SimpleTest } = this;
-          if (SimpleTest) {
-            let expected = expectFail ? "fail" : "pass";
-            SimpleTest.record(passed, name, diag, stack, expected);
-          } else if (this.xpcshellScope) {
+          if (this.xpcshellScope) {
             this.xpcshellScope.do_report_result(passed, name, stack);
+          } else if (this.SimpleTest) {
+            let expected = expectFail ? "fail" : "pass";
+            this.SimpleTest.record(passed, name, diag, stack, expected);
           } else {
             // Well, this is unexpected.
             dump(name + "\n");
@@ -493,24 +492,6 @@ export class SpecialPowersChild extends JSWindowActorChild {
     }
 
     return [];
-  }
-
-  /*
-   * Load a privileged script that runs same-process. This is different from
-   * |loadChromeScript|, which will run in the parent process in e10s mode.
-   */
-  loadPrivilegedScript(aFunction) {
-    var str = "(" + aFunction.toString() + ")();";
-    let gGlobalObject = Cu.getGlobalForObject(this);
-    let sb = Cu.Sandbox(gGlobalObject);
-    var window = this.contentWindow;
-    var mc = new window.MessageChannel();
-    sb.port = mc.port1;
-    let blob = new Blob([str], { type: "application/javascript" });
-    let blobUrl = URL.createObjectURL(blob);
-    Services.scriptloader.loadSubScript(blobUrl, sb);
-
-    return mc.port2;
   }
 
   _readUrlAsString(aUrl) {
@@ -1525,6 +1506,13 @@ export class SpecialPowersChild extends JSWindowActorChild {
    * The sandbox also has access to an Assert object, as provided by
    * Assert.sys.mjs. Any assertion methods called before the task resolves
    * will be relayed back to the test environment of the caller.
+   * Assertions triggered after a task returns may be relayed back if
+   * setAsDefaultAssertHandler() has been called, until this SpecialPowers
+   * instance is destroyed.
+   *
+   * If your assertions need to outlive this SpecialPowers instance,
+   * use SpecialPowersForProcess from SpecialPowersProcessActor.sys.mjs,
+   * which lives until the specified child process terminates.
    *
    * @param {BrowsingContext or FrameLoaderOwner or WindowProxy} target
    *        The target in which to run the task. This may be any element
@@ -2320,6 +2308,3 @@ SpecialPowersChild.prototype._proxiedObservers = {
     );
   },
 };
-
-SpecialPowersChild.prototype.EARLY_BETA_OR_EARLIER =
-  AppConstants.EARLY_BETA_OR_EARLIER;

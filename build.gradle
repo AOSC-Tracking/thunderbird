@@ -1,3 +1,4 @@
+import org.gradle.api.services.BuildServiceParameters
 import org.tomlj.Toml
 import org.tomlj.TomlParseResult
 import org.tomlj.TomlTable
@@ -139,7 +140,6 @@ allprojects {
     }
 
     // Use the semanticdb-javac and semanticdb-kotlinc plugins to generate semanticdb files for Searchfox
-    // NOTE: Kotlin code indexing is currently removed due to lack of Kotlin 2.x support (see bug 1938622)
     if (mozconfig.substs.ENABLE_MOZSEARCH_PLUGIN || mozconfig.substs.DOWNLOAD_ALL_GRADLE_DEPENDENCIES) {
         def targetRoot = new File(topobjdir, "mozsearch_java_index")
 
@@ -154,12 +154,20 @@ allprojects {
             addDependencyToConfigurationIfExists("compileOnly", libs.semanticdb.java)
             addDependencyToConfigurationIfExists("testCompileOnly", libs.semanticdb.java)
             addDependencyToConfigurationIfExists("androidTestCompileOnly", libs.semanticdb.java)
+            addDependencyToConfigurationIfExists("kotlinCompilerPluginClasspath", libs.semanticdb.kotlin)
         }
 
         tasks.withType(JavaCompile) {
             options.compilerArgs += [
                 "-Xplugin:semanticdb -sourceroot:${topsrcdir} -targetroot:${targetRoot}",
             ]
+        }
+
+        tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile) {
+            compilerOptions.freeCompilerArgs.addAll([
+                "-P", "plugin:semanticdb-kotlinc:sourceroot=${topsrcdir}".toString(),
+                "-P", "plugin:semanticdb-kotlinc:targetroot=${targetRoot}".toString(),
+            ])
         }
     }
 
@@ -193,7 +201,6 @@ allprojects {
     }
 }
 
-import  org.gradle.api.services.BuildServiceParameters
 abstract class MozconfigService implements BuildService<MozconfigService.Params>, AutoCloseable {
     interface Params extends BuildServiceParameters {
         MapProperty<String, Object> getMozconfigParam()
@@ -489,7 +496,18 @@ subprojects { project ->
                     include '**/*.kt'
                     exclude '**/thirdparty/**'
                 }
-                ktlint("${libs.versions.ktlint.get()}")
+                ktlint("${libs.versions.ktlint.get()}").editorConfigOverride([
+                        // Disable some of the new ktlint rules for GV code.
+                        'ktlint_standard_annotation'                 : 'disabled',
+                        'ktlint_standard_argument-list-wrapping'     : 'disabled',
+                        'ktlint_standard_class-signature'            : 'disabled',
+                        'ktlint_standard_enum-wrapping'              : 'disabled',
+                        'ktlint_standard_function-expression-body'   : 'disabled',
+                        'ktlint_standard_function-signature'         : 'disabled',
+                        'ktlint_standard_max-line-length'            : 'disabled',
+                        'ktlint_standard_property-naming'            : 'disabled',
+                        'ktlint_standard_statement-wrapping'         : 'disabled',
+                ])
             }
         }
     }
@@ -513,6 +531,15 @@ subprojects { project ->
                 select(toBeSelected)
             }
             because 'use GeckoView Glean instead of standalone Glean'
+        }
+    }
+}
+
+tasks.register("lint-a-c") {
+    subprojects.each{
+        if (it.tasks.findByName("lint") != null && it.projectDir.absolutePath.contains("android-components")) {
+            dependsOn it.tasks.named("lint")
+            println("Subproject ${it.name} has a lint task")
         }
     }
 }

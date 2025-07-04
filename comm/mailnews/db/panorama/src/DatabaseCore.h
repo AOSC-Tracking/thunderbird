@@ -11,16 +11,14 @@
 #include "mozilla/WeakPtr.h"
 #include "mozIStorageConnection.h"
 #include "mozIStorageStatement.h"
+#include "nsCOMPtr.h"
 #include "nsIDatabaseCore.h"
 #include "nsIMsgDatabase.h"
-#include "nsIMsgFolder.h"
 #include "nsIObserver.h"
 #include "nsTHashMap.h"
 
 #define DATABASE_CORE_CID \
   {0xbb308d0b, 0xbb99, 0x4699, {0x89, 0xde, 0x42, 0x82, 0x65, 0x2d, 0x0e, 0x16}}
-
-class nsIMsgFolder;
 
 namespace mozilla::mailnews {
 
@@ -28,8 +26,7 @@ class PerFolderDatabase;
 
 class DatabaseCore : public nsIDatabaseCore,
                      public nsIMsgDBService,
-                     public nsIObserver,
-                     public MessageListener {
+                     public nsIObserver {
  public:
   DatabaseCore();
 
@@ -37,10 +34,6 @@ class DatabaseCore : public nsIDatabaseCore,
   NS_DECL_NSIDATABASECORE
   NS_DECL_NSIMSGDBSERVICE
   NS_DECL_NSIOBSERVER
-
-  // MessageListener functions.
-  void OnMessageAdded(Message* message) override;
-  void OnMessageRemoved(Message* message) override;
 
  protected:
   virtual ~DatabaseCore() {};
@@ -66,9 +59,16 @@ class DatabaseCore : public nsIDatabaseCore,
   RefPtr<FolderDatabase> mFolderDatabase;
   RefPtr<MessageDatabase> mMessageDatabase;
 
-  nsresult GetFolderForMsgFolder(nsIMsgFolder* aMsgFolder, nsIFolder** aFolder);
-
   nsTHashMap<uint64_t, WeakPtr<PerFolderDatabase>> mOpenDatabases;
+  nsTHashMap<nsString, WeakPtr<PerFolderDatabase>> mOpenDatabasesByFile;
+};
+
+class DatabaseCoreFactory final : public nsIFactory {
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIFACTORY
+
+ private:
+  ~DatabaseCoreFactory() = default;
 };
 
 }  // namespace mozilla::mailnews

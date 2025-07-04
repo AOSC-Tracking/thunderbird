@@ -359,12 +359,12 @@ void ScriptLoader::RegisterShadowRealmModuleLoader(ModuleLoader* aLoader) {
 // Collect telemtry data about the cache information, and the kind of source
 // which are being loaded, and where it is being loaded from.
 static void CollectScriptTelemetry(ScriptLoadRequest* aRequest) {
-  using namespace mozilla::Telemetry;
+  using namespace mozilla::glean::dom;
 
   MOZ_ASSERT(aRequest->IsFetching());
 
   // Skip this function if we are not running telemetry.
-  if (!CanRecordExtended()) {
+  if (!mozilla::Telemetry::CanRecordExtended()) {
     return;
   }
 
@@ -373,15 +373,16 @@ static void CollectScriptTelemetry(ScriptLoadRequest* aRequest) {
   // source-fallback and alternate-data being roughtly equal to source loads.
   if (aRequest->mFetchSourceOnly) {
     if (aRequest->GetScriptLoadContext()->mIsInline) {
-      AccumulateCategorical(LABELS_DOM_SCRIPT_LOADING_SOURCE::Inline);
+      script_loading_source.EnumGet(ScriptLoadingSourceLabel::eInline).Add();
     } else if (aRequest->IsTextSource()) {
-      AccumulateCategorical(LABELS_DOM_SCRIPT_LOADING_SOURCE::SourceFallback);
+      script_loading_source.EnumGet(ScriptLoadingSourceLabel::eSourcefallback)
+          .Add();
     }
   } else {
     if (aRequest->IsTextSource()) {
-      AccumulateCategorical(LABELS_DOM_SCRIPT_LOADING_SOURCE::Source);
+      script_loading_source.EnumGet(ScriptLoadingSourceLabel::eSource).Add();
     } else if (aRequest->IsBytecode()) {
-      AccumulateCategorical(LABELS_DOM_SCRIPT_LOADING_SOURCE::AltData);
+      script_loading_source.EnumGet(ScriptLoadingSourceLabel::eAltdata).Add();
     }
   }
 }
@@ -476,11 +477,11 @@ nsresult ScriptLoader::CheckContentPolicy(nsIScriptElement* aElement,
   if (aElement) {
     requestingNode = do_QueryInterface(aElement);
   }
-  nsCOMPtr<nsILoadInfo> secCheckLoadInfo = new net::LoadInfo(
+  nsCOMPtr<nsILoadInfo> secCheckLoadInfo = MOZ_TRY(net::LoadInfo::Create(
       mDocument->NodePrincipal(),  // loading principal
       mDocument->NodePrincipal(),  // triggering principal
       requestingNode, nsILoadInfo::SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK,
-      contentPolicyType);
+      contentPolicyType));
   secCheckLoadInfo->SetParserCreatedScript(aElement &&
                                            aElement->GetParserCreated() !=
                                                mozilla::dom::NOT_FROM_PARSER);
@@ -1123,7 +1124,9 @@ already_AddRefed<ScriptLoadRequest> ScriptLoader::CreateLoadRequest(
 
   if (aKind == ScriptKind::eModule) {
     RefPtr<ModuleLoadRequest> request = mModuleLoader->CreateTopLevel(
-        aURI, aReferrerPolicy, fetchOptions, aIntegrity, referrer, context);
+        aURI, aElement, aReferrerPolicy, fetchOptions, aIntegrity, referrer,
+        context, aRequestType);
+
     return request.forget();
   }
 
@@ -2435,7 +2438,10 @@ nsresult ScriptLoader::ProcessRequest(ScriptLoadRequest* aRequest) {
   if (runScript) {
     nsContentUtils::DispatchTrustedEvent(
         scriptElem->OwnerDoc(), scriptElem, u"beforescriptexecute"_ns,
-        CanBubble::eYes, Cancelable::eYes, &runScript);
+        CanBubble::eYes, Cancelable::eYes, &runScript,
+        StaticPrefs::dom_events_script_execute_enabled()
+            ? SystemGroupOnly::eNo
+            : SystemGroupOnly::eYes);
   }
 
   // Inner window could have gone away after firing beforescriptexecute
@@ -2454,9 +2460,12 @@ nsresult ScriptLoader::ProcessRequest(ScriptLoadRequest* aRequest) {
       doc->DecrementIgnoreDestructiveWritesCounter();
     }
 
-    nsContentUtils::DispatchTrustedEvent(scriptElem->OwnerDoc(), scriptElem,
-                                         u"afterscriptexecute"_ns,
-                                         CanBubble::eYes, Cancelable::eNo);
+    nsContentUtils::DispatchTrustedEvent(
+        scriptElem->OwnerDoc(), scriptElem, u"afterscriptexecute"_ns,
+        CanBubble::eYes, Cancelable::eNo, nullptr,
+        StaticPrefs::dom_events_script_execute_enabled()
+            ? SystemGroupOnly::eNo
+            : SystemGroupOnly::eYes);
   }
 
   FireScriptEvaluated(rv, aRequest);
@@ -2634,6 +2643,12 @@ void ScriptLoader::CalculateBytecodeCacheFlag(ScriptLoadRequest* aRequest) {
     return;
   }
 
+  if (aRequest->IsModuleRequest() &&
+      aRequest->AsModuleRequest()->mModuleType != JS::ModuleType::JavaScript) {
+    aRequest->MarkSkippedBytecodeEncoding();
+    return;
+  }
+
   // We need the nsICacheInfoChannel to exist to be able to open the alternate
   // data output stream. This pointer would only be non-null if the bytecode was
   // activated at the time the channel got created in StartLoad.
@@ -2754,7 +2769,6 @@ static void ExecuteCompiledScript(JSContext* aCx, ClassicScript* aLoaderScript,
 }
 
 nsresult ScriptLoader::EvaluateScriptElement(ScriptLoadRequest* aRequest) {
-  using namespace mozilla::Telemetry;
   MOZ_ASSERT(aRequest->IsFinished());
 
   // We need a document to evaluate scripts.

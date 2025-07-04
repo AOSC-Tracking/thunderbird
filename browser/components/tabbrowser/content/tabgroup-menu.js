@@ -200,7 +200,7 @@
     static markup = /*html*/ `
     <panel
         type="arrow"
-        class="panel tab-group-editor-panel"
+        class="tab-group-editor-panel"
         orient="vertical"
         role="dialog"
         ignorekeys="true"
@@ -254,7 +254,7 @@
             data-l10n-id="tab-group-editor-no-tabs-found-message">
           </html:p>
         </html:div>
-        
+
         ${this.defaultActions}
 
       </html:div>
@@ -309,6 +309,8 @@
     #suggestionState = MozTabbrowserTabGroupMenu.State.CREATE_STANDARD_INITIAL;
     #suggestionsHeading;
     #defaultHeader;
+    /** @type {string} */
+    #initialTabGroupName;
     #suggestionsContainer;
     #suggestions;
     #suggestionButton;
@@ -326,6 +328,7 @@
     #suggestionsLoadCancel;
     #suggestionsSeparator;
     #smartTabGroupingManager;
+    #smartTabGroupsInitiated = false;
     #suggestionsOptinContainer;
     #suggestionsOptin;
     #suggestionsRunToken;
@@ -352,7 +355,8 @@
         this,
         "smartTabGroupsOptin",
         "browser.tabs.groups.smart.optin",
-        false
+        false,
+        this.#onSmartTabGroupsOptInPrefChange.bind(this)
       );
     }
 
@@ -448,7 +452,10 @@
       );
 
       this.#commandButtons.ungroupTabs.addEventListener("command", () => {
-        this.activeGroup.ungroupTabs();
+        this.activeGroup.ungroupTabs({
+          isUserTriggered: true,
+          telemetrySource: TabMetrics.METRIC_SOURCE.TAB_GROUP_MENU,
+        });
       });
 
       this.#commandButtons.saveAndCloseGroup.addEventListener("command", () => {
@@ -468,6 +475,7 @@
       this.panel.addEventListener("popuphidden", this);
       this.panel.addEventListener("keypress", this);
       this.#swatchesContainer.addEventListener("change", this);
+      Glean.tabgroup.smartTabEnabled.set(this.smartTabGroupsPrefEnabled);
     }
 
     get smartTabGroupsEnabled() {
@@ -478,13 +486,35 @@
       );
     }
 
+    get smartTabGroupsPrefEnabled() {
+      return (
+        this.smartTabGroupsUserEnabled &&
+        this.smartTabGroupsFeatureConfigEnabled &&
+        this.smartTabGroupsOptin
+      );
+    }
+
     #onSmartTabGroupsPrefChange(_preName, _prev, _latest) {
+      if (!this.#smartTabGroupsInitiated && this.smartTabGroupsEnabled) {
+        this.#initSuggestions();
+      }
       const icon = this.smartTabGroupsEnabled
         ? MozTabbrowserTabGroupMenu.AI_ICON
         : "";
 
       this.#suggestionButton.iconSrc = icon;
       this.#suggestionsMessage.iconSrc = icon;
+      Glean.tabgroup.smartTab.record({
+        enabled: this.smartTabGroupsPrefEnabled,
+      });
+      Glean.tabgroup.smartTabEnabled.set(this.smartTabGroupsPrefEnabled);
+    }
+
+    #onSmartTabGroupsOptInPrefChange(_preName, _prev, _latest) {
+      Glean.tabgroup.smartTab.record({
+        enabled: this.smartTabGroupsPrefEnabled,
+      });
+      Glean.tabgroup.smartTabEnabled.set(this.smartTabGroupsPrefEnabled);
     }
 
     #initSmartTabGroupsOptin() {
@@ -532,6 +562,19 @@
         }
       );
 
+      // On Message link click
+      this.#suggestionsOptin.addEventListener(
+        "MlModelOptinMessageLinkClick",
+        () => {
+          this.#handleMLOptinTelemetry("step0-optin-link-click");
+          openTrustedLinkIn(
+            // this is a placeholder link, it should be replaced with the actual link
+            "https://support.mozilla.org",
+            "tab"
+          );
+        }
+      );
+
       // On Footer link click
       this.#suggestionsOptin.addEventListener(
         "MlModelOptinFooterLinkClick",
@@ -544,6 +587,9 @@
     }
 
     #initSuggestions() {
+      if (!this.smartTabGroupsEnabled || this.#smartTabGroupsInitiated) {
+        return;
+      }
       const { SmartTabGroupingManager } = ChromeUtils.importESModule(
         "moz-src:///browser/components/tabbrowser/SmartTabGrouping.sys.mjs"
       );
@@ -629,6 +675,7 @@
         this.#suggestionsRunToken = null;
         this.#handleLoadSuggestionsCancel();
       });
+      this.#smartTabGroupsInitiated = true;
     }
 
     #populateSwatches() {
@@ -729,13 +776,24 @@
       return "bottomleft topleft";
     }
 
-    #initMlGroupLabel() {
-      if (!this.smartTabGroupsEnabled) {
+    /**
+     * Sets the suggested title for the group
+     */
+    async #initMlGroupLabel() {
+      if (!this.smartTabGroupsEnabled || !this.activeGroup.tabs?.length) {
         return;
       }
-      gBrowser.getGroupTitleForTabs(this.activeGroup.tabs).then(newLabel => {
-        this.#setMlGroupLabel(newLabel);
-      });
+
+      const tabs = this.activeGroup.tabs;
+      const otherTabs = gBrowser.visibleTabs.filter(
+        t => !tabs.includes(t) && !t.pinned
+      );
+      let predictedLabel =
+        await this.#smartTabGroupingManager.getPredictedLabelForGroup(
+          tabs,
+          otherTabs
+        );
+      this.#setMlGroupLabel(predictedLabel);
     }
 
     /**
@@ -772,8 +830,15 @@
       this.#panel.openPopup(group.firstChild, {
         position: this.#panelPosition,
       });
+      if (!this.smartTabGroupsOptin) {
+        return;
+      }
       // If user has opted in kick off label generation
-      this.smartTabGroupsOptin && this.#initMlGroupLabel();
+      this.#initMlGroupLabel();
+      if (this.smartTabGroupsEnabled) {
+        // initialize the embedding engine in the background
+        this.#smartTabGroupingManager.initEmbeddingEngine();
+      }
     }
 
     /*
@@ -844,6 +909,7 @@
       if (this.createMode) {
         this.#keepNewlyCreatedGroup = true;
       }
+      this.#initialTabGroupName = this.activeGroup?.label;
       this.#nameField.focus();
 
       for (const button of Object.values(this.#commandButtons)) {
@@ -865,14 +931,20 @@
             this.#handleMlTelemetry("save-popup-hidden");
           }
         } else {
-          this.activeGroup.ungroupTabs();
+          this.activeGroup.ungroupTabs({
+            isUserTriggered: true,
+            telemetrySource: TabMetrics.METRIC_SOURCE.CANCEL_TAB_GROUP_CREATION,
+          });
         }
       }
       if (this.#nameField.disabled) {
         this.#setFormToDisabled(false);
       }
+      if (this.activeGroup?.label != this.#initialTabGroupName) {
+        Glean.tabgroup.groupInteractions.rename.add(1);
+      }
       this.activeGroup = null;
-      this.#smartTabGroupingManager.terminateProcess();
+      this.#smartTabGroupingManager?.terminateProcess();
     }
 
     on_keypress(event) {
@@ -886,9 +958,12 @@
           this.close(false);
           break;
         case KeyEvent.DOM_VK_RETURN:
-          // When focus is on a toolbarbutton, we need to wait for the command
-          // event, which will ultimately close the panel as well.
-          if (event.target.nodeName != "toolbarbutton") {
+          // When focus is on a button, we need to let that handle the Enter key,
+          // which should ultimately close the panel as well.
+          if (
+            event.target.localName != "toolbarbutton" &&
+            event.target.localName != "moz-button"
+          ) {
             this.close();
           }
           break;
@@ -904,6 +979,7 @@
       }
       if (this.activeGroup) {
         this.activeGroup.color = aEvent.target.value;
+        Glean.tabgroup.groupInteractions.change_color.add(1);
       }
     }
 
@@ -1146,6 +1222,9 @@
      * @param {boolean} shouldShow - Whether the element should be shown (true) or hidden (false).
      */
     #setElementVisibility(element, shouldShow) {
+      if (!element) {
+        return;
+      }
       element.hidden = !shouldShow;
     }
 
@@ -1199,9 +1278,13 @@
       this.#setSuggestModeSuggestionState(false);
       this.#suggestedTabs = [];
       this.#selectedSuggestedTabs = [];
-      this.#suggestions.innerHTML = "";
+      if (this.#suggestions) {
+        this.#suggestions.innerHTML = "";
+      }
       this.#showSmartSuggestionsContainer(false);
-      this.#suggestionsOptinContainer.innerHTML = "";
+      if (this.#suggestionsOptinContainer) {
+        this.#suggestionsOptinContainer.innerHTML = "";
+      }
     }
 
     #renderSuggestionState() {

@@ -193,11 +193,18 @@ struct FeatureImplementationStatus {
       case dom::GPUFeatureName::Texture_compression_bc:
         return implemented(WGPUWEBGPU_FEATURE_TEXTURE_COMPRESSION_BC);
 
+      case dom::GPUFeatureName::Texture_compression_bc_sliced_3d:
+        return implemented(WGPUWEBGPU_FEATURE_TEXTURE_COMPRESSION_BC_SLICED_3D);
+
       case dom::GPUFeatureName::Texture_compression_etc2:
         return implemented(WGPUWEBGPU_FEATURE_TEXTURE_COMPRESSION_ETC2);
 
       case dom::GPUFeatureName::Texture_compression_astc:
         return implemented(WGPUWEBGPU_FEATURE_TEXTURE_COMPRESSION_ASTC);
+
+      case dom::GPUFeatureName::Texture_compression_astc_sliced_3d:
+        return implemented(
+            WGPUWEBGPU_FEATURE_TEXTURE_COMPRESSION_ASTC_SLICED_3D);
 
       case dom::GPUFeatureName::Timestamp_query:
         return implemented(WGPUWEBGPU_FEATURE_TIMESTAMP_QUERY);
@@ -234,6 +241,13 @@ struct FeatureImplementationStatus {
         // return implemented(WGPUWEBGPU_FEATURE_SUBGROUPS);
         return unimplemented(
             "https://bugzilla.mozilla.org/show_bug.cgi?id=1955417");
+
+      case dom::GPUFeatureName::Core_features_and_limits:
+        // NOTE: `0` means that no bits are set in calling code, but this is on
+        // purpose. We currently _always_ return this feature elsewhere. If this
+        // actually corresponds to a value in the future, remove the
+        // unconditional setting of this feature!
+        return implemented(0);
     }
     MOZ_CRASH("Bad GPUFeatureName.");
   }
@@ -335,6 +349,18 @@ Adapter::Adapter(Instance* const aParent, WebGPUChild* const aBridge,
       // feature.
     }
   }
+  // TODO: Once we implement compat mode (see
+  // <https://bugzilla.mozilla.org/show_bug.cgi?id=1905951>), do not report this
+  // unconditionally.
+  //
+  // Meanwhile, the current spec. proposal's `Initialization` section (see
+  // <https://github.com/gpuweb/gpuweb/blob/main/proposals/compatibility-mode.md#initialization>)
+  // says:
+  //
+  // > Core-defaulting adapters *always* support the
+  // > `"core-features-and-limits"` feature. It is *automatically enabled* on
+  // > devices created from such adapters.
+  mFeatures->Add(dom::GPUFeatureName::Core_features_and_limits, ignoredRv);
 
   // We clamp limits to defaults when requestDevice is called, but
   // we return the actual limits when only requestAdapter is called.
@@ -625,9 +651,23 @@ already_AddRefed<dom::Promise> Adapter::RequestDevice(
     }
     RefPtr<Device> device = new Device(
         this, request->mDeviceId, request->mQueueId, ffiDesc.required_limits);
+    device->SetLabel(aDesc.mLabel);
+
     for (const auto& feature : aDesc.mRequiredFeatures) {
       device->mFeatures->Add(feature, aRv);
     }
+    // TODO: Once we implement compat mode (see
+    // <https://bugzilla.mozilla.org/show_bug.cgi?id=1905951>), do not report
+    // this unconditionally.
+    //
+    // Meanwhile, the current spec. proposal's `Initialization` section (see
+    // <https://github.com/gpuweb/gpuweb/blob/main/proposals/compatibility-mode.md#initialization>)
+    // says:
+    //
+    // > Core-defaulting adapters *always* support the
+    // > `"core-features-and-limits"` feature. It is *automatically enabled* on
+    // > devices created from such adapters.
+    device->mFeatures->Add(dom::GPUFeatureName::Core_features_and_limits, aRv);
 
     request->mPromise->Then(
         GetCurrentSerialEventTarget(), __func__,

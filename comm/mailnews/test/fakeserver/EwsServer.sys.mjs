@@ -64,6 +64,39 @@ const SYNC_FOLDER_HIERARCHY_RESPONSE_BASE = `${EWS_SOAP_HEAD}
     </m:SyncFolderHierarchyResponse>
   ${EWS_SOAP_FOOT}`;
 
+// The base for a SyncFolderItems operation request. Before sending, the server
+// will populate `m:Changes`, as well as add and populate a `m:SyncState`
+// element.
+const SYNC_FOLDER_ITEMS_RESPONSE_BASE = `${EWS_SOAP_HEAD}
+    <m:SyncFolderItemsResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                                xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                                xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:SyncFolderItemsResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:IncludesLastItemInRange>true</m:IncludesLastItemInRange>
+            <m:Changes>
+            </m:Changes>
+        </m:SyncFolderItemsResponseMessage>
+      </m:ResponseMessages>
+    </m:SyncFolderItemsResponse>
+${EWS_SOAP_FOOT}`;
+
+const CREATE_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
+    <m:CreateItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                          xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                          xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:CreateItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Items />
+        </m:CreateItemResponseMessage>
+      </m:ResponseMessages>
+    </m:CreateItemResponse>
+${EWS_SOAP_FOOT}`;
+
 /**
  * A remote folder to sync from the EWS server. While initiating a test, an
  * array of folders is given to the EWS server, which will use it to populate
@@ -127,6 +160,20 @@ export class EwsServer {
   folders = [];
 
   /**
+   * The folders flagged to be deleted on this EWS server.
+   *
+   * @type {RemoteFolder[]}
+   */
+  deletedFolders = [];
+
+  /**
+   * The ids of folders that have had updates applied.
+   *
+   * @type {string[]}
+   */
+  updatedFolderIds = [];
+
+  /**
    * A mapping from EWS identifier to folder specification.
    *
    * @type {Map<string, RemoteFolder>}
@@ -154,6 +201,15 @@ export class EwsServer {
    * @type {XMLSerializer}
    */
   #serializer;
+
+  /*
+   * The value of the `Authorization` value as read from the latest request.
+   *
+   * If no such header was found in the latest request, this is an empty string.
+   *
+   * @type {string}
+   */
+  #lastAuthorizationValue;
 
   constructor() {
     this.#httpServer = new HttpServer();
@@ -203,6 +259,17 @@ export class EwsServer {
   }
 
   /**
+   * The value of the `Authorization` value as read from the latest request.
+   *
+   * If no such header was found in the latest request, this is an empty string.
+   *
+   * @type {string}
+   */
+  get lastAuthorizationValue() {
+    return this.#lastAuthorizationValue;
+  }
+
+  /**
    * Set the exclusive list of folders this server should use to generate
    * responses. If this method is called more than once, the previous list of
    * folders is replaced by the new one.
@@ -215,11 +282,7 @@ export class EwsServer {
     this.#distinguishedIdToFolder.clear();
 
     folders.forEach(folder => {
-      this.folders.push(folder);
-      this.#idToFolder.set(folder.id, folder);
-      if (folder.distinguishedId) {
-        this.#distinguishedIdToFolder.set(folder.distinguishedId, folder);
-      }
+      this.appendRemoteFolder(folder);
     });
   }
 
@@ -250,6 +313,13 @@ export class EwsServer {
    * @throws Throws if no supported EWS operation could be found.
    */
   #requestHandler(request, response) {
+    // Try to read the value of the `Authorization` header.
+    if (request.hasHeader("Authorization")) {
+      this.#lastAuthorizationValue = request.getHeader("Authorization");
+    } else {
+      this.#lastAuthorizationValue = "";
+    }
+
     // Read the request content and parse it as XML.
     const reqBytes = CommonUtils.readBytesFromInputStream(
       request.bodyInputStream
@@ -262,11 +332,45 @@ export class EwsServer {
       resBytes = this.#generateSyncFolderHierarchyResponse(reqDoc);
     } else if (reqDoc.getElementsByTagName("GetFolder").length) {
       resBytes = this.#generateGetFolderResponse(reqDoc);
+    } else if (reqDoc.getElementsByTagName("SyncFolderItems").length) {
+      resBytes = this.#generateSyncFolderItemsResponse(reqDoc);
+    } else if (reqDoc.getElementsByTagName("CreateItem").length) {
+      resBytes = this.#generateCreateItemResponse(reqDoc);
     } else {
       throw new Error("Unexpected EWS operation");
     }
     // Send the response.
     response.bodyOutputStream.write(resBytes, resBytes.length);
+  }
+
+  /**
+   * Generate a response to a SyncFolderItems operation.
+   *
+   * Currently, generated responses will not include any item.
+   *
+   * @see
+   * {@link https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/syncfolderitems-operation#successful-syncfolderitems-response}
+   * @param {XMLDocument} _reqDoc - The parsed document for the request to
+   * respond to.
+   * @returns {string} A serialized XML document.
+   */
+  #generateSyncFolderItemsResponse(_reqDoc) {
+    const resDoc = this.#parser.parseFromString(
+      SYNC_FOLDER_ITEMS_RESPONSE_BASE,
+      "text/xml"
+    );
+
+    const responseMessageEl = resDoc.getElementsByTagName(
+      "m:SyncFolderItemsResponseMessage"
+    )[0];
+
+    // Append a dummy sync state.
+    // TODO: Make this dynamic.
+    const syncStateEl = resDoc.createElement("m:SyncState");
+    syncStateEl.appendChild(resDoc.createTextNode("H4sIAAA=="));
+    responseMessageEl.appendChild(syncStateEl);
+
+    return this.#serializer.serializeToString(resDoc);
   }
 
   /**
@@ -309,6 +413,25 @@ export class EwsServer {
       folderEl.appendChild(folderIdEl);
       createEl.appendChild(folderEl);
       changesEl.appendChild(createEl);
+    });
+
+    this.deletedFolders.forEach(folder => {
+      const deleteEl = resDoc.createElement("t:Delete");
+      const folderIdEl = resDoc.createElement("t:FolderId");
+      folderIdEl.setAttribute("Id", folder.id);
+      deleteEl.appendChild(folderIdEl);
+      changesEl.appendChild(deleteEl);
+    });
+
+    this.updatedFolderIds.forEach(folderId => {
+      const updateEl = resDoc.createElement("t:Update");
+      const folderEl = resDoc.createElement("t:Folder");
+      const folderIdEl = resDoc.createElement("t:FolderId");
+      folderIdEl.setAttribute("Id", folderId);
+
+      folderEl.appendChild(folderIdEl);
+      updateEl.appendChild(folderEl);
+      changesEl.appendChild(updateEl);
     });
 
     return this.#serializer.serializeToString(resDoc);
@@ -400,5 +523,79 @@ export class EwsServer {
 
     // Serialize the response to a string that the consumer can return in a response.
     return this.#serializer.serializeToString(resDoc);
+  }
+
+  /**
+   * Generate a response to a SyncFolderItems operation.
+   *
+   * Currently, generated responses will always serve a static success report.
+   *
+   * @see
+   * {@link https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/createitem-operation-email-message#successful-createitem-response}
+   * @param {XMLDocument} _reqDoc - The parsed document for the request to
+   * respond to.
+   * @returns {string} A serialized XML document.
+   */
+  #generateCreateItemResponse(_reqDoc) {
+    return CREATE_ITEM_RESPONSE_BASE;
+  }
+
+  /**
+   * Add a new remote folder to the server to include in future responses.
+   *
+   * @param {RemoteFolder} folder
+   */
+  appendRemoteFolder(folder) {
+    this.folders.push(folder);
+    this.#idToFolder.set(folder.id, folder);
+    if (folder.distinguishedId) {
+      this.#distinguishedIdToFolder.set(folder.distinguishedId, folder);
+    }
+  }
+
+  /**
+   * Delete a remote folder given its id.
+   *
+   * @param {string} id
+   */
+  deleteRemoteFolderById(id) {
+    const folderToDelete = this.folders.find(value => value.id == id);
+    if (folderToDelete) {
+      const indexOfDeletedFolder = this.folders.indexOf(folderToDelete);
+      this.folders.splice(indexOfDeletedFolder, 1);
+      this.#idToFolder.delete(folderToDelete.id);
+      if (folderToDelete.distinguishedId) {
+        this.#distinguishedIdToFolder.delete(folderToDelete.distinguishedId);
+      }
+      this.deletedFolders.push(folderToDelete);
+    }
+  }
+
+  /**
+   * Rename a folder given its id and a new name.
+   *
+   * @param {string} id
+   * @param {string} newName
+   */
+  renameFolderById(id, newName) {
+    const folder = this.#idToFolder.get(id);
+    if (folder) {
+      folder.displayName = newName;
+      this.updatedFolderIds.push(id);
+    }
+  }
+
+  /**
+   * Change the parent folder of a folder.
+   *
+   * @param {string} id - The id of the folder to change the parent of.
+   * @param {string} newParentId - The id of the new parent folder.
+   */
+  reparentFolderById(id, newParentId) {
+    const childFolder = this.#idToFolder.get(id);
+    if (!!childFolder && this.#idToFolder.has(newParentId)) {
+      childFolder.parentId = newParentId;
+      this.updatedFolderIds.push(id);
+    }
   }
 }

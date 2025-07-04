@@ -1800,8 +1800,8 @@ export var RNP = {
    *   If the value is set to True, then meta data related to
    *   the encryption layer is read from the "options" parameter and
    *   copied over to the result object.
-   * @returns {object} - Various flags that contain the decrypted data
-   *   and related meta data.
+   * @returns {DecryptVerifyResult} - Various flags that contain the decrypted
+   *    data and related meta data.
    */
   async decrypt(encrypted_string, options, alreadyDecrypted = false) {
     const arr = encrypted_string.split("").map(e => e.charCodeAt());
@@ -1819,8 +1819,7 @@ export var RNP = {
    *   of function decrypt().
    * @param {boolean} alreadyDecrypted - See description of the same
    *   parameter of function decrypt().
-   * @returns {object} - See description of the result object of
-   *   function decrypt().
+   * @returns {DecryptVerifyResult}
    */
   async decryptArray(encrypted_array, options, alreadyDecrypted = false) {
     const result = new DecryptVerifyResult();
@@ -2215,7 +2214,7 @@ export var RNP = {
         encrypted_array,
         this.enArmorCDataMessage.bind(this)
       );
-      if (!r2.exitCode && r2.decryptedData) {
+      if (r2 && !r2.exitCode && r2.decryptedData) {
         // TODO: obtain info which key ID was used for decryption
         //       and set result.decryptKey*
         //       It isn't obvious how to do that with GPGME, because
@@ -2510,13 +2509,20 @@ export var RNP = {
     return true;
   },
 
-  async verifyDetached(data, options) {
+  /**
+   * Verify signature of data.
+   *
+   * @param {string} data - The (allegedly) signed data.
+   * @param {string} mimeSignatureData - The signature.
+   * @param {?string} fromAddr - Email address.
+   * @param {?Date} msgDate - Date.
+   * @returns {DecryptVerifyResult} containing verification status details.
+   */
+  async verifyDetached(data, mimeSignatureData, fromAddr, msgDate) {
     const result = new DecryptVerifyResult();
 
-    const sig_arr = options.mimeSignatureData
-      .split("")
-      .map(e => e.charCodeAt());
-    var sig_array = lazy.ctypes.uint8_t.array()(sig_arr);
+    const sig_arr = mimeSignatureData.split("").map(e => e.charCodeAt());
+    const sig_array = lazy.ctypes.uint8_t.array()(sig_arr);
 
     const input_sig = new RNPLib.rnp_input_t();
     RNPLib.rnp_input_from_memory(
@@ -2529,7 +2535,7 @@ export var RNP = {
     const input_from_memory = new RNPLib.rnp_input_t();
 
     const arr = data.split("").map(e => e.charCodeAt());
-    var data_array = lazy.ctypes.uint8_t.array()(arr);
+    const data_array = lazy.ctypes.uint8_t.array()(arr);
 
     RNPLib.rnp_input_from_memory(
       input_from_memory.address(),
@@ -2554,8 +2560,8 @@ export var RNP = {
 
     const haveSignature = await this.getVerifyDetails(
       RNPLib.ffi,
-      options.fromAddr,
-      options.msgDate,
+      fromAddr,
+      msgDate,
       verify_op,
       result
     );
@@ -3778,6 +3784,9 @@ export var RNP = {
         const orgEncrypt = args.encrypt;
         args.encrypt = false;
         signedInner = await lazy.GPGME.sign(plaintext, args, resultStatus);
+        if (!signedInner) {
+          throw new Error("GPGME.sign failed");
+        }
         // Despite our request to produce binary data, GPGME.sign might
         // have produce ASCII armored encoding, e.g. if the user has
         // a configuration file that enables it.
@@ -3790,7 +3799,15 @@ export var RNP = {
         // caller needs the detatched signature, either for MIME
         // mime encoding with separate signature part, or for the nested
         // approach with separate signing and encryption layers.
-        return lazy.GPGME.signDetached(plaintext, args, resultStatus);
+        const signResult = lazy.GPGME.signDetached(
+          plaintext,
+          args,
+          resultStatus
+        );
+        if (!signResult) {
+          throw new Error("GPGME.signDetached failed");
+        }
+        return signResult;
       }
     }
 
@@ -5303,7 +5320,20 @@ export var RNP = {
     return unsupportedFeatures != 0;
   },
 
-  async verifyAttachment(_dataFile, _sigFile) {
-    throw new Error("verifyAttachment not implemented");
+  /**
+   * Verify an attachment.
+   *
+   * @param {string} dataPath - The data to verify.
+   * @param {string} signaturePath - The signature data.
+   * @returns {boolean} true if verification succeeded.
+   */
+  async verifyAttachment(dataPath, signaturePath) {
+    const data = lazy.MailStringUtils.uint8ArrayToByteString(
+      await IOUtils.read(dataPath)
+    );
+    const signature = lazy.MailStringUtils.uint8ArrayToByteString(
+      await IOUtils.read(signaturePath)
+    );
+    return !(await this.verifyDetached(data, signature)).exitCode;
   },
 };

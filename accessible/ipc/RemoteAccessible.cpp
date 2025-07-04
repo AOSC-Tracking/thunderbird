@@ -1544,10 +1544,10 @@ already_AddRefed<AccAttributes> RemoteAccessible::DefaultTextAttributes() {
   return result.forget();
 }
 
-RefPtr<const AccAttributes> RemoteAccessible::GetCachedARIAAttributes() const {
+const AccAttributes* RemoteAccessible::GetCachedARIAAttributes() const {
   ASSERT_DOMAINS_ACTIVE(CacheDomain::ARIA);
   if (mCachedFields) {
-    auto attrs = mCachedFields->GetAttributeRefPtr<AccAttributes>(
+    auto attrs = mCachedFields->GetAttributeWeakPtr<AccAttributes>(
         CacheKey::ARIAAttributes);
     VERIFY_CACHE(CacheDomain::ARIA);
     return attrs;
@@ -1845,7 +1845,7 @@ void RemoteAccessible::LiveRegionAttributes(nsAString* aLive,
   if (!mCachedFields) {
     return;
   }
-  RefPtr<const AccAttributes> attrs = GetCachedARIAAttributes();
+  auto attrs = GetCachedARIAAttributes();
   if (!attrs) {
     return;
   }
@@ -2329,12 +2329,24 @@ Maybe<int32_t> RemoteAccessible::GetIntARIAAttr(nsAtom* aAttrName) const {
   if (RequestDomainsIfInactive(CacheDomain::ARIA)) {
     return Nothing();
   }
-  if (RefPtr<const AccAttributes> attrs = GetCachedARIAAttributes()) {
+  if (auto attrs = GetCachedARIAAttributes()) {
     if (auto val = attrs->GetAttribute<int32_t>(aAttrName)) {
       return val;
     }
   }
   return Nothing();
+}
+
+bool RemoteAccessible::GetStringARIAAttr(nsAtom* aAttrName,
+                                         nsAString& aAttrValue) const {
+  if (RequestDomainsIfInactive(CacheDomain::ARIA)) {
+    return false;
+  }
+  if (auto attrs = GetCachedARIAAttributes()) {
+    return attrs->GetAttribute(aAttrName, aAttrValue);
+  }
+
+  return false;
 }
 
 void RemoteAccessible::Language(nsAString& aLocale) {

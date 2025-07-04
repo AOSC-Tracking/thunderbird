@@ -41,6 +41,7 @@
 #include "mozilla/LoadInfo.h"
 
 using namespace mozilla;
+using mozilla::net::LoadInfo;
 
 // Despite its name, this contains a folder path, for example INBOX/Trash.
 #define PREF_TRASH_FOLDER_PATH "trash_folder_name"
@@ -749,10 +750,11 @@ nsresult nsImapIncomingServer::CreateProtocolInstance(
   rv = protocolInstance->Initialize(hostSession, this);
   NS_ENSURE_SUCCESS(rv, rv);
   // It implements nsIChannel, and all channels require loadInfo.
-  protocolInstance->SetLoadInfo(new mozilla::net::LoadInfo(
-      nsContentUtils::GetSystemPrincipal(), nullptr, nullptr,
-      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
-      nsIContentPolicy::TYPE_OTHER));
+  nsCOMPtr<nsILoadInfo> loadInfo = MOZ_TRY(
+      LoadInfo::Create(nsContentUtils::GetSystemPrincipal(), nullptr, nullptr,
+                       nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
+                       nsIContentPolicy::TYPE_OTHER));
+  protocolInstance->SetLoadInfo(loadInfo);
 
   // take the protocol instance and add it to the connectionCache
   m_connectionCache.AppendObject(protocolInstance);
@@ -1315,31 +1317,31 @@ NS_IMETHODIMP nsImapIncomingServer::DiscoveryDone() {
     rv = accountMgr->GetFirstIdentityForServer(this, getter_AddRefs(identity));
     if (NS_SUCCEEDED(rv) && identity) {
       nsCString folderUri;
-      identity->GetFccFolder(folderUri);
+      identity->GetFccFolderURI(folderUri);
       nsCString existingUri;
 
       if (CheckSpecialFolder(folderUri, nsMsgFolderFlags::SentMail,
                              existingUri)) {
-        identity->SetFccFolder(existingUri);
+        identity->SetFccFolderURI(existingUri);
         identity->SetFccFolderPickerMode("1"_ns);
       }
-      identity->GetDraftFolder(folderUri);
+      identity->GetDraftsFolderURI(folderUri);
       if (CheckSpecialFolder(folderUri, nsMsgFolderFlags::Drafts,
                              existingUri)) {
-        identity->SetDraftFolder(existingUri);
+        identity->SetDraftsFolderURI(existingUri);
         identity->SetDraftsFolderPickerMode("1"_ns);
       }
       bool archiveEnabled;
       identity->GetArchiveEnabled(&archiveEnabled);
       if (archiveEnabled) {
-        identity->GetArchiveFolder(folderUri);
+        identity->GetArchivesFolderURI(folderUri);
         if (CheckSpecialFolder(folderUri, nsMsgFolderFlags::Archive,
                                existingUri)) {
-          identity->SetArchiveFolder(existingUri);
+          identity->SetArchivesFolderURI(existingUri);
           identity->SetArchivesFolderPickerMode("1"_ns);
         }
       }
-      identity->GetStationeryFolder(folderUri);
+      identity->GetTemplatesFolderURI(folderUri);
       if (!folderUri.IsEmpty()) {
         nsCOMPtr<nsIMsgFolder> folder;
         rv = GetOrCreateFolder(folderUri, getter_AddRefs(folder));
@@ -1456,9 +1458,24 @@ NS_IMETHODIMP nsImapIncomingServer::DiscoveryDone() {
         // Go through the trashFolders and un-flag as `trash` ones that don't
         // match prefPath.
         for (auto trashFolder : trashFolders) {
-          nsAutoCString trashFolderPath;
-          if (NS_SUCCEEDED(PathFromFolder(trashFolder, trashFolderPath))) {
-            if (!prefPath.Equals(trashFolderPath)) {
+          nsAutoCString trashFolderPathUtf7or8;
+          if (NS_SUCCEEDED(
+                  PathFromFolder(trashFolder, trashFolderPathUtf7or8))) {
+            // The value for trashFolderPathUtf7or8 comes from the server, which
+            // for non UTF-8 servers will be encoded as MUTF-7. The preference
+            // is stored in UTF-8, so we need to convert if this is not a UTF-8
+            // server to compare the preference value to the server value.
+            bool isUtf8;
+            GetUtf8AcceptEnabled(&isUtf8);
+            nsAutoCString trashFolderPathUtf8;
+            if (isUtf8) {
+              trashFolderPathUtf8 = trashFolderPathUtf7or8;
+            } else {
+              nsAutoString trashFolderPathUtf16;
+              CopyMUTF7toUTF16(trashFolderPathUtf7or8, trashFolderPathUtf16);
+              CopyUTF16toUTF8(trashFolderPathUtf16, trashFolderPathUtf8);
+            }
+            if (!prefPath.Equals(trashFolderPathUtf8)) {
               // We clear the trash folder flag if the trash folder path doesn't
               // match mail.server.serverX.trash_folder_name.
               trashFolder->ClearFlag(nsMsgFolderFlags::Trash);

@@ -131,13 +131,6 @@ class NewRenderer : public RendererEvent {
       }
     }
 
-    // Only allow the layer compositor in nightly builds, for now.
-    bool use_layer_compositor = false;
-#ifdef NIGHTLY_BUILD
-    use_layer_compositor =
-        StaticPrefs::gfx_webrender_layer_compositor_AtStartup();
-#endif
-
     if (!wr_window_new(
             aWindowId, mSize.width, mSize.height,
             mWindowKind == WindowKind::MAIN, supportLowPriorityTransactions,
@@ -159,7 +152,7 @@ class NewRenderer : public RendererEvent {
             StaticPrefs::gfx_webrender_low_quality_pinch_zoom_AtStartup(),
             StaticPrefs::gfx_webrender_max_shared_surface_size_AtStartup(),
             StaticPrefs::gfx_webrender_enable_subpixel_aa_AtStartup(),
-            use_layer_compositor)) {
+            compositor->ShouldUseLayerCompositor())) {
       // wr_window_new puts a message into gfxCriticalNote if it returns false
       MOZ_ASSERT(errorMessage);
       mError->AssignASCII(errorMessage);
@@ -708,8 +701,13 @@ void WebRenderAPI::Readback(const TimeStamp& aStartTime, gfx::IntSize size,
 
     void Run(RenderThread& aRenderThread, WindowId aWindowId) override {
       RendererStats stats = {0};
-      aRenderThread.UpdateAndRender(aWindowId, VsyncId(), mStartTime,
-                                    /* aRender */ true, Some(mSize),
+      wr::FrameReadyParams params = {
+          .present = true,
+          .render = true,
+          .scrolled = false,
+      };
+      aRenderThread.UpdateAndRender(aWindowId, VsyncId(), mStartTime, params,
+                                    Some(mSize),
                                     wr::SurfaceFormatToImageFormat(mFormat),
                                     Some(mBuffer), &stats, mNeedsYFlip);
       layers::AutoCompleteTask complete(mTask);

@@ -334,7 +334,7 @@ class AccountHubEmail extends HTMLElement {
   }
 
   /**
-   * Initialize the UI of one of the email setup subviews.
+   * Load a template of a subview using the template ID.
    *
    * @param {string} templateId - ID of the template that needs to be loaded.
    */
@@ -653,28 +653,31 @@ class AccountHubEmail extends HTMLElement {
         this.#emailFooter.toggleForwardDisabled(stateData.edited);
         // TODO: Validate incoming config details.
         break;
-      case "outgoingConfigSubview":
       case "emailConfigFoundSubview":
+      case "outgoingConfigSubview":
+        this.#currentConfig = this.#fillAccountConfig(stateData);
+
         if (this.#currentConfig.isOauthOnly()) {
           //TODO share this with the code path for pw entry...
           this.#startLoading("account-hub-oauth-pending");
           gAccountSetupLogger.debug("Create button clicked.");
           try {
-            await this.#validateAndFinish(this.#currentConfig.copy());
+            await this.#validateAndFinish(this.#currentConfig);
           } finally {
+            this.#configVerifier.cleanup();
             this.#stopLoading();
           }
+
           await this.#initUI("emailSyncAccountsSubview");
           this.#states[this.#currentState].previousStep = currentState;
           try {
-            // TODO: Loading notification for fetching address books.
+            this.#startLoading("account-hub-fetching-sync-accounts");
             const syncAccounts = {};
             //TODO fetch address books and calendars in parallel?
             syncAccounts.addressBooks = await this.#getAddressBooks("");
-            // TODO: Loading notification for fetching calendars.
             syncAccounts.calendars = await this.#getCalendars("", false);
             this.#currentSubview.setState(syncAccounts);
-            this.#configVerifier.cleanup();
+            this.#stopLoading();
 
             const accountsFound =
               syncAccounts.addressBooks.length || syncAccounts.calendars.length;
@@ -684,15 +687,16 @@ class AccountHubEmail extends HTMLElement {
                 : "account-hub-sync-accounts-not-found",
               type: accountsFound ? "success" : "info",
             });
-            break;
           } catch (error) {
+            this.#stopLoading();
             this.#currentSubview.showNotification({
               fluentTitleId: "account-hub-sync-accounts-not-found",
               type: "error",
               error,
             });
-            break;
           }
+
+          break;
         }
         // Move to the password stage where validateAndFinish is run.
         await this.#initUI(this.#states[this.#currentState].nextStep);
@@ -708,56 +712,56 @@ class AccountHubEmail extends HTMLElement {
         break;
       case "emailPasswordSubview":
         this.#startLoading("account-hub-creating-account");
-
-        // Get password and remember from the state and apply it to the config.
-        this.#currentConfig = this.#fillAccountConfig(
-          this.#currentConfig,
-          stateData.password
-        );
-        this.#currentConfig.rememberPassword = stateData.rememberPassword;
-        gAccountSetupLogger.debug("Create button clicked.");
-
         try {
+          // Get password and remember from the state and apply it to the config.
+          this.#currentConfig = this.#fillAccountConfig(
+            this.#currentConfig,
+            stateData.password
+          );
+          this.#currentConfig.rememberPassword = stateData.rememberPassword;
+          gAccountSetupLogger.debug("Create button clicked.");
+
           await this.#validateAndFinish(this.#currentConfig.copy());
         } catch (error) {
           this.#stopLoading();
           throw error;
+        } finally {
+          this.#configVerifier.cleanup();
         }
 
         this.#stopLoading();
         await this.#initUI(this.#states[this.#currentState].nextStep);
         try {
-          // TODO: Loading notification for fetching address books.
+          this.#startLoading("account-hub-fetching-sync-accounts");
           const syncAccounts = {};
           syncAccounts.addressBooks = await this.#getAddressBooks(
             stateData.password
           );
-          // TODO: Loading notification for fetching calendars.
           syncAccounts.calendars = await this.#getCalendars(
             stateData.password,
             stateData.rememberPassword
           );
           this.#currentSubview.setState(syncAccounts);
-          this.#configVerifier.cleanup();
+          this.#stopLoading();
+
           const accountsFound =
             syncAccounts.addressBooks.length || syncAccounts.calendars.length;
-
           this.#currentSubview.showNotification({
             fluentTitleId: accountsFound
               ? "account-hub-sync-accounts-found"
               : "account-hub-sync-accounts-not-found",
             type: accountsFound ? "success" : "info",
           });
-          break;
         } catch (error) {
+          this.#stopLoading();
           this.#currentSubview.showNotification({
             fluentTitleId: "account-hub-sync-accounts-not-found",
             type: "error",
             error,
           });
-          break;
         }
 
+        break;
       case "emailSyncAccountsSubview":
         try {
           // Add the selected sync address books and calendars.
@@ -1019,13 +1023,14 @@ class AccountHubEmail extends HTMLElement {
       this.#email,
       password
     );
-
     return configData;
   }
 
   /**
    * Called when guessConfig fails and we need to provide manual config a
    * default AccountConfig.
+   *
+   * @returns {AccountConfig} - An AccountConfig object.
    */
   #getEmptyAccountConfig() {
     const config = new lazy.AccountConfig();
@@ -1085,12 +1090,10 @@ class AccountHubEmail extends HTMLElement {
         completeConfig.source != lazy.AccountConfig.kSourceXML
       );
       // The auth might have changed, so we should update the current config.
-      this.#currentConfig.incoming.auth = successfulConfig.incoming.auth;
-      this.#currentConfig.outgoing.auth = successfulConfig.outgoing.auth;
-      this.#currentConfig.incoming.username =
-        successfulConfig.incoming.username;
-      this.#currentConfig.outgoing.username =
-        successfulConfig.outgoing.username;
+      completeConfig.incoming.auth = successfulConfig.incoming.auth;
+      completeConfig.outgoing.auth = successfulConfig.outgoing.auth;
+      completeConfig.incoming.username = successfulConfig.incoming.username;
+      completeConfig.outgoing.username = successfulConfig.outgoing.username;
 
       this.#currentConfig = completeConfig;
       this.#finishEmailAccountAddition(completeConfig);

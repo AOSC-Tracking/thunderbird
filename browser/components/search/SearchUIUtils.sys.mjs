@@ -62,6 +62,9 @@ export var SearchUIUtils = {
       case "search-engine-removal":
         this.removalOfSearchEngineNotificationBox(...args);
         break;
+      case "search-settings-reset":
+        this.searchSettingsResetNotificationBox(...args);
+        break;
     }
   },
 
@@ -124,6 +127,45 @@ export var SearchUIUtils = {
   },
 
   /**
+   * Infobar informing the user that the search settings had to be reset
+   * and what their new default engine is.
+   *
+   * @param {string} newEngine
+   *   Name of the new default engine.
+   */
+  async searchSettingsResetNotificationBox(newEngine) {
+    let win = lazy.BrowserWindowTracker.getTopWindow();
+
+    let buttons = [
+      {
+        "l10n-id": "reset-search-settings-button",
+        primary: true,
+        callback() {
+          const notificationBox = win.gNotificationBox.getNotificationWithValue(
+            "search-settings-reset"
+          );
+          win.gNotificationBox.removeNotification(notificationBox);
+        },
+      },
+      {
+        supportPage: "prefs-search",
+      },
+    ];
+
+    await win.gNotificationBox.appendNotification(
+      "search-settings-reset",
+      {
+        label: {
+          "l10n-id": "reset-search-settings-message",
+          "l10n-args": { newEngine },
+        },
+        priority: win.gNotificationBox.PRIORITY_SYSTEM,
+      },
+      buttons
+    );
+  },
+
+  /**
    * Adds an open search engine and handles error UI.
    *
    * @param {string} locationURL
@@ -134,7 +176,7 @@ export var SearchUIUtils = {
    *   engine description file.
    * @param {object} browsingContext
    *   The browsing context any error prompt should be opened for.
-   * @returns {boolean}
+   * @returns {Promise<boolean>}
    *   Returns true if the engine was added.
    */
   async addOpenSearchEngine(locationURL, image, browsingContext) {

@@ -11,7 +11,6 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_privacy.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/ThrottledEventQueue.h"
 #include "mozilla/TimeStamp.h"
 #include "nsINamed.h"
@@ -24,6 +23,7 @@
 #include "mozilla/net/WebSocketEventService.h"
 #include "mozilla/MediaManager.h"
 #include "mozilla/dom/WorkerScope.h"
+#include "mozilla/dom/WebTaskScheduler.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -322,7 +322,7 @@ TimeDuration TimeoutManager::CalculateDelay(Timeout* aTimeout) const {
   TimeDuration result = aTimeout->mInterval;
 
   if (aTimeout->mNestingLevel >=
-      StaticPrefs::dom_clamp_timeout_nesting_level_AtStartup()) {
+      StaticPrefs::dom_clamp_timeout_nesting_level()) {
     uint32_t minTimeoutValue = StaticPrefs::dom_min_timeout_value();
     result = TimeDuration::Max(result,
                                TimeDuration::FromMilliseconds(minTimeoutValue));
@@ -468,6 +468,7 @@ int32_t TimeoutManager::GetTimeoutId(Timeout::Reason aReason) {
         }
         break;
       case Timeout::Reason::eDelayedWebTaskTimeout:
+      case Timeout::Reason::eJSTimeout:
       default:
         return -1;  // no cancellation support
     }
@@ -528,7 +529,7 @@ nsresult TimeoutManager::SetTimeout(TimeoutHandler* aHandler, int32_t interval,
     const uint32_t nestingLevel{mIsWindow ? GetNestingLevelForWindow()
                                           : GetNestingLevelForWorker()};
     timeout->mNestingLevel =
-        nestingLevel < StaticPrefs::dom_clamp_timeout_nesting_level_AtStartup()
+        nestingLevel < StaticPrefs::dom_clamp_timeout_nesting_level()
             ? nestingLevel + 1
             : nestingLevel;
   }
@@ -673,6 +674,17 @@ void TimeoutManager::RunTimeout(const TimeStamp& aNow,
 
   if (mGlobalObject.IsSuspended()) {
     return;
+  }
+
+  if (!GetInnerWindow()) {
+    // Workers don't use TaskController at the moment, so all the
+    // runnables have the same priorities. So we special case it
+    // here to allow "higher" prority tasks to run first before
+    // timers.
+    if (mGlobalObject.HasScheduledNormalOrHighPriorityWebTasks()) {
+      MOZ_ALWAYS_SUCCEEDS(MaybeSchedule(aNow));
+      return;
+    }
   }
 
   Timeouts& timeouts(aProcessIdle ? mIdleTimeouts : mTimeouts);
@@ -976,8 +988,12 @@ void TimeoutManager::RunTimeout(const TimeStamp& aNow,
       }
       // Check to see if we have run out of time to execute timeout handlers.
       // If we've exceeded our time budget then terminate the loop immediately.
+      //
+      // Or if there are high priority tasks dispatched by the Scheduler API,
+      // they should run first before timers.
       TimeDuration elapsed = now - start;
-      if (elapsed >= totalTimeLimit) {
+      if (elapsed >= totalTimeLimit ||
+          mGlobalObject.HasScheduledNormalOrHighPriorityWebTasks()) {
         // We ran out of time.  Make sure to schedule the executor to
         // run immediately for the next timer, if it exists.  Its possible,
         // however, that the last timeout handler suspended the window.  If
@@ -1023,7 +1039,7 @@ bool TimeoutManager::RescheduleTimeout(Timeout* aTimeout,
   // Automatically increase the nesting level when a setInterval()
   // is rescheduled just as if it was using a chained setTimeout().
   if (aTimeout->mNestingLevel <
-      StaticPrefs::dom_clamp_timeout_nesting_level_AtStartup()) {
+      StaticPrefs::dom_clamp_timeout_nesting_level()) {
     aTimeout->mNestingLevel += 1;
   }
 

@@ -423,6 +423,11 @@ namespace ChromeUtils {
                                   optional ImportESModuleOptionsDictionary aOptions = {});
 
   /**
+   * Returns whether |str| is a valid JS identifier
+   */
+  boolean isJSIdentifier(DOMString str);
+
+  /**
    * IF YOU ADD NEW METHODS HERE, MAKE SURE THEY ARE THREAD-SAFE.
    */
 };
@@ -784,6 +789,25 @@ partial namespace ChromeUtils {
   boolean shouldResistFingerprinting(JSRFPTarget target,
                                      nsIRFPTargetSetIDL? overriddenFingerprintingSettings,
                                      optional boolean isPBM);
+
+  // Equivalent to pressing the home button. Exclusively for testing.
+  [ChromeOnly]
+  undefined androidMoveTaskToBack();
+
+  [Throws]
+  ContentSecurityPolicy createCSPFromHeader(DOMString header, URI selfURI, Principal loadingPrincipal);
+
+  // This helper function executes `func` and redirects any exception
+  // that may be thrown while running it to the DevTools Console currently
+  // debugging `targetGlobal`.
+  //
+  // This helps flag the nsIScriptError with a particular innerWindowID
+  // which is especially useful for WebExtension content scripts
+  // where script are running in a Sandbox whose prototype is the content window.
+  // We expect content script exception to be flagged with the content window
+  // innerWindowID in order to appear in the tab's DevTools.
+  [ChromeOnly, Throws]
+  any callFunctionAndLogException(any targetGlobal, any func);
 };
 
 /*
@@ -1136,6 +1160,8 @@ enum JSRFPTarget {
   "RoundWindowSize",
   "SiteSpecificZoom",
   "CSSPrefersColorScheme",
+  "JSLocalePrompt",
+  "HttpUserAgent",
 };
 
 #ifdef XP_UNIX

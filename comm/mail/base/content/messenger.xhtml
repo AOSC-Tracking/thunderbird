@@ -36,7 +36,7 @@
 <head>
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src chrome:; script-src chrome: resource: 'unsafe-inline'; style-src chrome: 'unsafe-inline'; img-src chrome: data: moz-icon:"
+    content="default-src chrome:; script-src chrome: resource: 'unsafe-inline'; style-src chrome: 'unsafe-inline'; img-src chrome: data: moz-icon: https://addons.thunderbird.net"
   />
   <link rel="stylesheet" href="chrome://messenger/skin/mailWindow1.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/tagColors.css" />
@@ -77,6 +77,11 @@
     rel="stylesheet"
     href="chrome://calendar/skin/shared/dialogs/calendar-event-dialog.css"
   />
+  <link
+    rel="stylesheet"
+    href="chrome://messenger/skin/calendar/calendarDialog.css"
+  />
+
   <link rel="stylesheet" href="chrome://calendar/skin/today-pane.css" />
   <link rel="stylesheet" href="chrome://calendar/skin/calendar-unifinder.css" />
   <link rel="stylesheet" href="chrome://calendar/skin/calendar-task-tree.css" />
@@ -127,7 +132,6 @@
   <script defer="defer" src="chrome://messenger/content/globalOverlay.js"></script>
   <script defer="defer" src="chrome://global/content/editMenuOverlay.js"></script>
   <script defer="defer" src="chrome://messenger/content/mailWindow.js"></script>
-  <script defer="defer" src="chrome://messenger/content/selectionsummaries.js"></script>
   <script defer="defer" src="chrome://messenger/content/messenger.js"></script>
   <script defer="defer" src="chrome://messenger/content/specialTabs.js"></script>
   <script defer="defer" src="chrome://messenger/content/spacesToolbar.js"></script>
@@ -439,7 +443,7 @@
     <popupnotificationcontent class="addon-webext-perm-notification-content" orient="vertical">
       <description id="addon-webext-perm-text" class="addon-webext-perm-text"/>
       <label id="addon-webext-perm-intro" class="addon-webext-perm-text"/>
-      <label id="addon-webext-perm-single-entry" class="addon-webext-perm-single-entry"/>
+      <label id ="addon-webext-perm-title-required" class="addon-webext-perm-title-required"/>
       <html:ul id="addon-webext-perm-list" class="addon-webext-perm-list"/>
       <description id="addon-webext-experiment-warning" class="addon-webext-experiment-warning"/>
       <hbox>
@@ -487,9 +491,12 @@
 
 <div class="in-app-notification-root" role="status"></div>
 
+<!-- Include the new calendar dialog. -->
+#include ../../components/calendar/content/calendar.inc.xhtml
+<div class="calendar-dialog-root"></div>
+
 #include ../../../calendar/base/content/calendar-context-menus-and-tooltips.inc.xhtml
 #include ../../components/unifiedtoolbar/content/unifiedToolbarTemplates.inc.xhtml
-
 #include spacesToolbar.inc.xhtml
 
 <!--

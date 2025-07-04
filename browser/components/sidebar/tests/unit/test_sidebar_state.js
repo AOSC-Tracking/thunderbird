@@ -8,7 +8,7 @@ const { sinon } = ChromeUtils.importESModule(
 );
 
 const { SidebarState } = ChromeUtils.importESModule(
-  "resource:///modules/SidebarState.sys.mjs"
+  "moz-src:///browser/components/sidebar/SidebarState.sys.mjs"
 );
 
 const mockElement = {
@@ -32,6 +32,7 @@ const mockController = {
   sidebarRevampVisibility: "always-show",
   sidebars: new Set(["viewBookmarksSidebar"]),
   updateToolbarButton: sinon.stub(),
+  SidebarManager: { hasSidebarLauncherBeenVisible: false },
 };
 
 add_task(async function test_load_legacy_session_restore_data() {

@@ -20,6 +20,7 @@ import androidx.core.net.toUri
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.work.Configuration.Builder
 import androidx.work.Configuration.Provider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,7 @@ import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
-import mozilla.appservices.Megazord
+import mozilla.appservices.RustComponentsInitializer
 import mozilla.appservices.autofill.AutofillApiException
 import mozilla.components.browser.state.action.SystemAction
 import mozilla.components.browser.state.selector.selectedTab
@@ -63,6 +64,7 @@ import mozilla.components.support.ktx.android.arch.lifecycle.addObservers
 import mozilla.components.support.ktx.android.content.isMainProcess
 import mozilla.components.support.ktx.android.content.runOnlyInMainProcess
 import mozilla.components.support.locale.LocaleAwareApplication
+import mozilla.components.support.remotesettings.GlobalRemoteSettingsDependencyProvider
 import mozilla.components.support.rusterrors.initializeRustErrors
 import mozilla.components.support.rusthttp.RustHttpConfig
 import mozilla.components.support.rustlog.RustLog
@@ -94,6 +96,8 @@ import org.mozilla.fenix.ext.containsQueryParameters
 import org.mozilla.fenix.ext.isCustomEngine
 import org.mozilla.fenix.ext.isKnownSearchDomain
 import org.mozilla.fenix.ext.settings
+import org.mozilla.fenix.home.topsites.TopSitesConfigConstants.TOP_SITES_PROVIDER_LIMIT
+import org.mozilla.fenix.home.topsites.TopSitesConfigConstants.TOP_SITES_PROVIDER_MAX_THRESHOLD
 import org.mozilla.fenix.lifecycle.StoreLifecycleObserver
 import org.mozilla.fenix.lifecycle.VisibilityLifecycleObserver
 import org.mozilla.fenix.nimbus.FxNimbus
@@ -109,13 +113,11 @@ import org.mozilla.fenix.push.WebPushEngineIntegration
 import org.mozilla.fenix.session.PerformanceActivityLifecycleCallbacks
 import org.mozilla.fenix.session.VisibilityLifecycleCallback
 import org.mozilla.fenix.utils.Settings
-import org.mozilla.fenix.utils.Settings.Companion.TOP_SITES_PROVIDER_LIMIT
-import org.mozilla.fenix.utils.Settings.Companion.TOP_SITES_PROVIDER_MAX_THRESHOLD
+import org.mozilla.fenix.utils.isLargeScreenSize
 import org.mozilla.fenix.wallpapers.Wallpaper
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToLong
-import mozilla.appservices.init_rust_components.initialize as InitializeRustComponents
 
 private const val RAM_THRESHOLD_MEGABYTES = 1024
 private const val BYTES_TO_MEGABYTES_CONVERSION = 1024.0 * 1024.0
@@ -143,12 +145,6 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
 
     override fun onCreate() {
         super.onCreate()
-
-        if (shouldShowPrivacyNotice()) {
-            // For Mozilla Online build: Delay initialization on first run until privacy notice
-            // is accepted by the user.
-            return
-        }
 
         initialize()
     }
@@ -190,7 +186,8 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
     protected open fun initializeGlean() {
         val settings = settings()
         // We delay the Glean initialization until, we have user consent (After onboarding).
-        if (components.fenixOnboarding.userHasBeenOnboarded()) {
+        // If onboarding is disabled (when in local builds), continue to initialize Glean.
+        if (components.fenixOnboarding.userHasBeenOnboarded() || !FeatureFlags.onboardingFeatureEnabled) {
             initializeGlean(this, logger, settings.isTelemetryEnabled, components.core.client)
         }
 
@@ -247,6 +244,8 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
 
             GlobalSyncedTabsCommandsProvider.initialize(lazy { components.backgroundServices.syncedTabsCommands })
 
+            initializeRemoteSettingsSupport()
+
             restoreBrowserState()
             restoreDownloads()
             restoreMessaging()
@@ -292,7 +291,9 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
 
         components.analytics.metricsStorage.tryRegisterAsUsageRecorder(this)
 
-        downloadWallpapers()
+        CoroutineScope(IO).launch {
+            components.useCases.wallpaperUseCases.fetchCurrentWallpaperUseCase.invoke()
+        }
     }
 
     @OptIn(DelicateCoroutinesApi::class) // GlobalScope usage
@@ -339,11 +340,15 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
                         // we can prevent with this.
                         components.core.topSitesStorage.getTopSites(
                             totalSites = components.settings.topSitesMaxLimit,
-                            frecencyConfig = TopSitesFrecencyConfig(
-                                FrecencyThresholdOption.SKIP_ONE_TIME_PAGES,
-                            ) {
-                                !it.url.toUri()
-                                    .containsQueryParameters(components.settings.frecencyFilterQuery)
+                            frecencyConfig = if (FxNimbus.features.homepageHideFrecentTopSites.value().enabled) {
+                                null
+                            } else {
+                                TopSitesFrecencyConfig(
+                                    frecencyTresholdOption = FrecencyThresholdOption.SKIP_ONE_TIME_PAGES,
+                                ) {
+                                    !it.url.toUri()
+                                        .containsQueryParameters(components.settings.frecencyFilterQuery)
+                                }
                             },
                             providerConfig = TopSitesProviderConfig(
                                 showProviderTopSites = components.settings.showContileFeature,
@@ -438,6 +443,12 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
             }
         }
 
+        fun queueDownloadWallpapers() {
+            queue.runIfReadyOrQueue {
+                downloadWallpapers()
+            }
+        }
+
         initQueue()
 
         // We init these items in the visual completeness queue to avoid them initing in the critical
@@ -448,6 +459,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         queueRestoreLocale()
         queueStorageMaintenance()
         queueNimbusFetchInForeground()
+        queueDownloadWallpapers()
         if (settings().enableFxSuggest) {
             queueSuggestIngest()
         }
@@ -523,10 +535,7 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
      */
     private fun beginSetupMegazord() {
         // Rust components must be initialized at the very beginning, before any other Rust call, ...
-        InitializeRustComponents()
-
-        // ... then Megazord.init() must be called as soon as possible, ...
-        Megazord.init()
+        RustComponentsInitializer.init()
 
         initializeRustErrors(components.analytics.crashReporter)
         // ... but RustHttpConfig.setClient() and RustLog.enable() can be called later.
@@ -642,6 +651,11 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         GlobalScope.launch(Dispatchers.Default) {
             BrowsersCache.all(this@FenixApplication)
         }
+    }
+
+    private fun initializeRemoteSettingsSupport() {
+        GlobalRemoteSettingsDependencyProvider.initialize(components.remoteSettingsService.value)
+        components.remoteSettingsSyncScheduler.registerForSync()
     }
 
     @Suppress("ForbiddenComment")
@@ -813,6 +827,8 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
 
             ramMoreThanThreshold.set(isDeviceRamAboveThreshold)
             deviceTotalRam.set(getDeviceTotalRAM())
+
+            isLargeDevice.set(isLargeScreenSize())
         }
 
         with(AndroidAutofill) {
@@ -1029,15 +1045,5 @@ open class FenixApplication : LocaleAwareApplication(), Provider {
         GlobalScope.launch {
             components.useCases.wallpaperUseCases.initialize()
         }
-    }
-
-    /**
-     * Checks whether or not a privacy notice needs to be displayed before
-     * the application can continue to initialize.
-     */
-    internal fun shouldShowPrivacyNotice(): Boolean {
-        return Config.channel.isMozillaOnline &&
-            settings().shouldShowPrivacyPopWindow &&
-            !components.fenixOnboarding.userHasBeenOnboarded()
     }
 }

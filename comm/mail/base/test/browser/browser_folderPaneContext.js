@@ -46,7 +46,8 @@ const folderPaneContextData = {
   ],
   "folderPaneContext-copyMenu": ["plain", "rssFeed", "multiselect-plain"],
   "folderPaneContext-compact": [
-    ...servers,
+    "server",
+    "rssRoot",
     ...realFolders,
     "multiselect",
     "multiselect-plain",
@@ -606,6 +607,7 @@ add_task(async function testPropertiesSettingsFilters() {
         Assert.equal(nameInput.value, "folderPaneContextFolder");
         Assert.equal(locationInput.value, plainFolder.URI);
 
+        info("Clicking OK in folderProps.xhtml dialog");
         acceptButton.click();
       },
     }
@@ -632,6 +634,7 @@ add_task(async function testPropertiesSettingsFilters() {
           `folderPaneContextVirtual on ${account.incomingServer.prettyName}`
         );
 
+        info("Clicking OK in virtualFolderProperties.xhtml dialog");
         acceptButton.click();
       },
     }
@@ -658,12 +661,16 @@ add_task(async function testPropertiesSettingsFilters() {
   if (browser.docShell.isLoadingDocument) {
     await BrowserTestUtils.browserLoaded(browser);
   }
-  Assert.equal(browser.currentURI.spec, "about:accountsettings");
+  Assert.equal(
+    browser.currentURI.spec,
+    "about:accountsettings",
+    "should show accountsettings"
+  );
   await new Promise(resolve => setTimeout(resolve));
   Assert.equal(
     browser.contentDocument.querySelector("#accounttree li.selected").id,
     account.key,
-    "account should be selected"
+    `account with key=${account.key} should be selected`
   );
   tabmail.closeTab(tabInfo);
 
@@ -677,8 +684,13 @@ add_task(async function testPropertiesSettingsFilters() {
         const doc = win.document;
         const serverMenu = doc.getElementById("serverMenu");
 
-        Assert.equal(serverMenu.value, rootFolder.URI);
+        Assert.equal(
+          serverMenu.value,
+          rootFolder.URI,
+          "serverMenu value should be rootFolder.URI"
+        );
 
+        info("Hitting ESC to dismiss FilterListDialog.xhtml dialog");
         EventUtils.synthesizeKey("KEY_Escape", {}, win);
       },
     }

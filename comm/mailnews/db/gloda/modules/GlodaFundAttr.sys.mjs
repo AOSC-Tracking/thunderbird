@@ -508,15 +508,14 @@ export var GlodaFundAttr = {
       )
     );
 
-    if (authorIdentities.length != 1) {
+    if (authorIdentities.length < 1) {
       throw new Gloda.BadItemContentsError(
         "Message with subject '" +
           aMsgHdr.mime2DecodedSubject +
           "' somehow lacks a valid author.  Bailing."
       );
     }
-    const authorIdentity = authorIdentities[0];
-    aGlodaMessage.from = authorIdentity;
+    aGlodaMessage.from = authorIdentities[0];
 
     // -- To, Cc, Bcc
     aGlodaMessage.to = toIdentities;
@@ -624,12 +623,12 @@ export var GlodaFundAttr = {
 
     // for simplicity this is used for both involves and recipients
     const involvesIdentities = {};
-    const involves = aGlodaMessage.involves || [];
-    const recipients = aGlodaMessage.recipients || [];
+    const involves = [];
+    const recipients = [];
 
     // 'me' specialization optimizations
-    const toMe = aGlodaMessage.toMe || [];
-    const fromMe = aGlodaMessage.fromMe || [];
+    const toMe = [];
+    const fromMe = [];
 
     const myIdentities = Gloda.myIdentities; // needless optimization?
     const authorIdentity = aGlodaMessage.from;

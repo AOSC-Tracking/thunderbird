@@ -87,6 +87,11 @@ window.addEventListener("load", () => {
   document
     .getElementById("booksPaneCreateBook")
     .addEventListener("click", event => {
+      if (Services.prefs.getBoolPref("mail.accounthub.addressbook.enabled")) {
+        window.browsingContext.topChromeWindow.openAccountHub("ADDRESS_BOOK");
+        return;
+      }
+
       document
         .getElementById("booksPaneCreateBookContext")
         .openPopup(event.target, {
@@ -2567,7 +2572,7 @@ var detailsPane = {
       // If there are no dirty fields, clear the flag, otherwise set it.
       this.isDirty = this.dirtyFields.size > 0;
     });
-    this.form.addEventListener("keypress", event => {
+    this.form.addEventListener("keydown", event => {
       // Prevent scrolling of the html tag when space is used on a button or
       // checkbox.
       if (

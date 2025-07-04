@@ -5,62 +5,24 @@
 
 add_setup(async function setup() {
   const cleanup = await setupTest();
+
+  SpecialPowers.addTaskImport(
+    "ExperimentAPI",
+    "resource://nimbus/ExperimentAPI.sys.mjs"
+  );
+  SpecialPowers.addTaskImport(
+    "NimbusFeatures",
+    "resource://nimbus/ExperimentAPI.sys.mjs"
+  );
+  SpecialPowers.addTaskImport(
+    "TestUtils",
+    "resource://testing-common/TestUtils.sys.mjs"
+  );
+
   registerCleanupFunction(cleanup);
 });
 
-/**
- * Set up a listener for a SharedData update in the process corresponding to the
- * specified browser.
- *
- * You must await the promise returned by this function *before* triggering a
- * SharedData flush.
- *
- * After triggering the flush, you must await the promise inside the returned
- * object.
- *
- * Example:
- *
- * ```js
- * const childUpdated = await childSharedDataChanged(browser);
- * // Do something to modify SharedData
- * Services.ppmm.sharedData.flush();
- * await childUpdated.promise;
- * ```
- *
- * @returns {Promise<object>}
- *          A promise that resolves to an object containing a promise. The outer
- *          promise resolves when the event handler has been registered in the
- *          child. The inner promise resolves when the event has fired in the
- *          child.
- */
-async function childSharedDataChanged(browser) {
-  const MESSAGE = "browser_experimentapi_child:shared-data-changed";
-
-  const deferred = Promise.withResolvers();
-  const listener = () => {
-    deferred.resolve();
-    Services.ppmm.removeMessageListener(MESSAGE, listener);
-  };
-
-  Services.ppmm.addMessageListener(MESSAGE, listener);
-
-  await SpecialPowers.spawn(browser, [MESSAGE], async MESSAGE => {
-    Services.cpmm.sharedData.addEventListener(
-      "change",
-      async () => {
-        await Services.cpmm.sendAsyncMessage(MESSAGE);
-      },
-      { once: true }
-    );
-  });
-
-  // We can't return promise here because JavaScript will collapse it and
-  // awaiting this function will await *that* promise, which we don't want to
-  // do.
-  return { promise: deferred.promise };
-}
-
-add_task(async function testGetExperimentFromChildNewEnrollment() {
+add_task(async function testGetFromChildNewEnrollment() {
   const browserWindow = Services.wm.getMostRecentWindow("navigator:browser");
 
   // Open a tab so we have a content process.
@@ -74,10 +36,6 @@ add_task(async function testGetExperimentFromChildNewEnrollment() {
   // Assert that the tab is in fact a content process and that we don't have any
   // experiments available yet.
   await SpecialPowers.spawn(browser, [], async () => {
-    const { ExperimentAPI } = ChromeUtils.importESModule(
-      "resource://nimbus/ExperimentAPI.sys.mjs"
-    );
-
     Assert.equal(
       Services.appinfo.processType,
       Services.appinfo.PROCESS_TYPE_CONTENT,
@@ -87,12 +45,7 @@ add_task(async function testGetExperimentFromChildNewEnrollment() {
     await ExperimentAPI.ready();
 
     Assert.equal(
-      ExperimentAPI.getExperiment({ slug: "foo" }),
-      null,
-      "Experiment should not exist in child yet"
-    );
-    Assert.equal(
-      ExperimentAPI.getExperiment({ featureId: "test-feature" }),
+      NimbusFeatures.testFeature.getEnrollmentMetadata(),
       null,
       "Experiment should not exist in child yet"
     );
@@ -101,27 +54,15 @@ add_task(async function testGetExperimentFromChildNewEnrollment() {
   let childUpdated = await childSharedDataChanged(browser);
 
   // Enroll in an experiment in the parent process.
-  await ExperimentAPI._manager.enroll(
-    ExperimentFakes.recipe("foo", {
-      bucketConfig: {
-        ...ExperimentFakes.recipe.bucketConfig,
-        count: 1000,
+  await ExperimentAPI.manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig("foo", {
+      featureId: "testFeature",
+      value: {
+        enabled: true,
+        testInt: 123,
       },
-      branches: [
-        {
-          slug: "control",
-          ratio: 1,
-          features: [
-            {
-              featureId: "testFeature",
-              value: {
-                foo: "bar",
-              },
-            },
-          ],
-        },
-      ],
-    })
+    }),
+    "test"
   );
 
   // Immediately serialize sharedData and broadcast changes to the child processes.
@@ -136,96 +77,58 @@ add_task(async function testGetExperimentFromChildNewEnrollment() {
 
   // Check that the new state is reflected in the content process.
   await SpecialPowers.spawn(browser, [], async () => {
-    const { ExperimentAPI } = ChromeUtils.importESModule(
-      "resource://nimbus/ExperimentAPI.sys.mjs"
-    );
-    const { TestUtils } = ChromeUtils.importESModule(
-      "resource://testing-common/TestUtils.sys.mjs"
-    );
-
     await TestUtils.waitForCondition(
-      () => ExperimentAPI.getExperiment({ slug: "foo" }),
+      () => NimbusFeatures.testFeature.getEnrollmentMetadata(),
       "Wait for enrollment child to sync"
     );
 
-    const bySlug = ExperimentAPI.getExperiment({ slug: "foo" });
-    const byFeature = ExperimentAPI.getExperiment({ featureId: "testFeature" });
+    const meta = NimbusFeatures.testFeature.getEnrollmentMetadata();
 
-    for (const [rv, field] of [
-      [bySlug, "slug"],
-      [byFeature, "featureId"],
-    ]) {
-      info(`when calling ExperimentAPI.getExperiment with ${field}:`);
+    Assert.equal(meta.slug, "foo", "Experiment slug is correct");
+    Assert.equal(meta.branch, "control", "Experiment branch slug is correct");
 
-      Assert.equal(rv.slug, "foo", "Experiment slug is correct");
-      Assert.ok(rv.active, "Experiment is active");
-      Assert.equal(
-        rv.branch.slug,
-        "control",
-        "Experiment branch slug is correct"
-      );
-      Assert.deepEqual(
-        rv.branch.features,
-        [
-          {
-            featureId: "testFeature",
-            value: {
-              foo: "bar",
-            },
-          },
-        ],
-        "Experiment branch value is correct"
-      );
-    }
+    Assert.deepEqual(
+      NimbusFeatures.testFeature.getAllVariables(),
+      { enabled: true, testInt: 123 },
+      "Experiment values are correct"
+    );
+
+    Assert.equal(
+      NimbusFeatures.testFeature.getVariable("enabled"),
+      true,
+      "Experiment values are correct"
+    );
+
+    Assert.equal(
+      NimbusFeatures.testFeature.getVariable("testInt"),
+      123,
+      "Experiment values are correct"
+    );
   });
 
   childUpdated = await childSharedDataChanged(browser);
   // Unenroll from the experiment in the parent process.
-  ExperimentAPI._manager.unenroll("foo");
+  await ExperimentAPI.manager.unenroll("foo");
   // Propagate the change to child processes.
   Services.ppmm.sharedData.flush();
   await childUpdated.promise;
 
   // Check that the new state is reflected in the content process.
   await SpecialPowers.spawn(browser, [], async () => {
-    const { ExperimentAPI } = ChromeUtils.importESModule(
-      "resource://nimbus/ExperimentAPI.sys.mjs"
-    );
-    const { TestUtils } = ChromeUtils.importESModule(
-      "resource://testing-common/TestUtils.sys.mjs"
-    );
-
     await TestUtils.waitForCondition(
-      () => !ExperimentAPI.getExperiment({ slug: "foo" }).active,
+      () => NimbusFeatures.testFeature.getEnrollmentMetadata() === null,
       "Wait for unenrollment to sync"
     );
-
-    const bySlug = ExperimentAPI.getExperiment({ slug: "foo" });
-    const byFeature = ExperimentAPI.getExperiment({ featureId: "testFeature" });
-
-    info(
-      "After unenrollment, when calling ExperimentAPI.getExperiment with slug:"
-    );
-
-    Assert.notEqual(bySlug, null, "Experiment is not null");
-    Assert.ok(!bySlug.active, "Experiment is not active");
-    Assert.equal(bySlug.branch.slug, "control", "Experiment branch is correct");
-
-    info(
-      "After unenrollment, when calling ExperimentAPI.getExperiment with featureId:"
-    );
-
-    Assert.equal(byFeature, null, "Experiment is null");
   });
 
-  ExperimentAPI._manager.store._deleteForTests("foo");
+  ExperimentAPI.manager.store._deleteForTests("foo");
 
   BrowserTestUtils.removeTab(tab);
 
   Services.ppmm.sharedData.flush();
 });
 
-add_task(async function testGetExperimentFromChildExistingEnrollment() {
+add_task(async function testGetFromChildExistingEnrollment() {
   const browserWindow =
     Services.wm.getMostRecentBrowserWindow("navigator:browser");
 
@@ -233,27 +136,16 @@ add_task(async function testGetExperimentFromChildExistingEnrollment() {
   // existing processes.
   Services.ppmm.releaseCachedProcesses();
 
-  await ExperimentAPI._manager.enroll(
-    ExperimentFakes.recipe("qux", {
-      bucketConfig: {
-        ...ExperimentFakes.recipe.bucketConfig,
-        count: 1000,
+  await ExperimentAPI.manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig("qux", {
+      branchSlug: "treatment",
+      featureId: "testFeature",
+      value: {
+        enabled: false,
+        testInt: 456,
       },
-      branches: [
-        {
-          slug: "treatment",
-          ratio: 1,
-          features: [
-            {
-              featureId: "testFeature",
-              value: {
-                foo: "bar",
-              },
-            },
-          ],
-        },
-      ],
-    })
+    }),
+    "test"
   );
 
   // We don't have to wait for this to update in the client, but we *do* have to
@@ -271,48 +163,34 @@ add_task(async function testGetExperimentFromChildExistingEnrollment() {
 
   // Check that the experiment is available in the child process.
   await SpecialPowers.spawn(browser, [], async () => {
-    const { ExperimentAPI } = ChromeUtils.importESModule(
-      "resource://nimbus/ExperimentAPI.sys.mjs"
-    );
-    const { Assert } = ChromeUtils.importESModule(
-      "resource://testing-common/Assert.sys.mjs"
-    );
-
     await ExperimentAPI.ready();
 
-    const bySlug = ExperimentAPI.getExperiment({ slug: "qux" });
-    const byFeature = ExperimentAPI.getExperiment({ featureId: "testFeature" });
+    const meta = NimbusFeatures.testFeature.getEnrollmentMetadata();
 
-    for (const [rv, field] of [
-      [bySlug, "slug"],
-      [byFeature, "featureId"],
-    ]) {
-      info(`when calling ExperimentAPI.getExperiment with ${field}:`);
+    Assert.equal(meta.slug, "qux", "Experiment slug is correct");
+    Assert.equal(meta.branch, "treatment", "Experiment branch slug is correct");
 
-      Assert.equal(rv.slug, "qux", "Experiment slug is correct");
-      Assert.ok(rv.active, "Experiment is active");
-      Assert.equal(
-        rv.branch.slug,
-        "treatment",
-        "Experiment branch slug is correct"
-      );
-      Assert.deepEqual(
-        rv.branch.features,
-        [
-          {
-            featureId: "testFeature",
-            value: {
-              foo: "bar",
-            },
-          },
-        ],
-        "Experiment branch value is correct"
-      );
-    }
+    Assert.deepEqual(
+      NimbusFeatures.testFeature.getAllVariables(),
+      { enabled: false, testInt: 456 },
+      "Experiment values are correct"
+    );
+
+    Assert.equal(
+      NimbusFeatures.testFeature.getVariable("enabled"),
+      false,
+      "Experiment values are correct"
+    );
+
+    Assert.equal(
+      NimbusFeatures.testFeature.getVariable("testInt"),
+      456,
+      "Experiment values are correct"
+    );
   });
 
-  ExperimentAPI._manager.unenroll("qux");
-  ExperimentAPI._manager.store._deleteForTests("qux");
+  await ExperimentAPI.manager.unenroll("qux");
+  ExperimentAPI.manager.store._deleteForTests("qux");
   BrowserTestUtils.removeTab(tab);
 
   Services.ppmm.sharedData.flush();

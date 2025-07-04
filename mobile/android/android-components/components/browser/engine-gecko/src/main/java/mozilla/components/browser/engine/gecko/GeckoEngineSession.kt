@@ -609,6 +609,13 @@ class GeckoEngineSession(
     }
 
     /**
+     * See [EngineSession.onPipModeChanged].
+     */
+    override fun onPipModeChanged(enabled: Boolean) {
+        geckoSession.compositorController.onPipModeChanged(enabled)
+    }
+
+    /**
      * See [EngineSession.checkForFormData].
      */
     override fun checkForFormData(adjustPriority: Boolean) {
@@ -686,6 +693,27 @@ class GeckoEngineSession(
     }
 
     /**
+     * See [EngineSession.sendMoreWebCompatInfo].
+     */
+    override fun sendMoreWebCompatInfo(
+        info: JSONObject,
+        onResult: () -> Unit,
+        onException: (Throwable) -> Unit,
+    ) {
+        geckoSession.sendMoreWebCompatInfo(info).then(
+            {
+                onResult()
+                GeckoResult<Void>()
+            },
+            { throwable ->
+                logger.error("Sending more web compat info failed.", throwable)
+                onException(throwable)
+                GeckoResult()
+            },
+        )
+    }
+
+    /**
      * See [EngineSession.requestTranslate]
      */
     override fun requestTranslate(
@@ -715,8 +743,7 @@ class GeckoEngineSession(
                 onTranslateComplete(TranslationOperation.TRANSLATE)
             }
             GeckoResult<Void>()
-        }, {
-                throwable ->
+        }, { throwable ->
             logger.error("Request for translation failed: ", throwable)
             notifyObservers {
                 onTranslateException(
@@ -747,8 +774,7 @@ class GeckoEngineSession(
                 onTranslateComplete(TranslationOperation.RESTORE)
             }
             GeckoResult<Void>()
-        }, {
-                throwable ->
+        }, { throwable ->
             logger.error("Request for translation failed: ", throwable)
             notifyObservers {
                 onTranslateException(TranslationOperation.RESTORE, throwable.intoTranslationError())
@@ -769,8 +795,7 @@ class GeckoEngineSession(
             return
         }
 
-        geckoSession.sessionTranslation!!.neverTranslateSiteSetting.then({
-                response ->
+        geckoSession.sessionTranslation!!.neverTranslateSiteSetting.then({ response ->
             if (response == null) {
                 logger.error("Did not receive a site setting response.")
                 onException(
@@ -780,8 +805,7 @@ class GeckoEngineSession(
             }
             onResult(response)
             GeckoResult<Boolean>()
-        }, {
-                throwable ->
+        }, { throwable ->
             logger.error("Request for site translation preference failed: ", throwable)
             onException(throwable.intoTranslationError())
             GeckoResult()
@@ -804,8 +828,7 @@ class GeckoEngineSession(
         geckoSession.sessionTranslation!!.setNeverTranslateSiteSetting(setting).then({
             onResult()
             GeckoResult<Boolean>()
-        }, {
-                throwable ->
+        }, { throwable ->
             logger.error("Request for setting site translation preference failed: ", throwable)
             onException(throwable.intoTranslationError())
             GeckoResult()
@@ -1000,7 +1023,12 @@ class GeckoEngineSession(
                         is InterceptionResponse.AppIntent -> {
                             appRedirectUrl = lastLoadRequestUri
                             notifyObservers {
-                                onLaunchIntentRequest(url = url, appIntent = appIntent)
+                                onLaunchIntentRequest(
+                                    url = url,
+                                    appIntent = appIntent,
+                                    fallbackUrl = fallbackUrl,
+                                    appName = appName,
+                                )
                             }
                         }
 
@@ -1441,7 +1469,7 @@ class GeckoEngineSession(
             val geckoResult = GeckoResult<Int>()
             val uri = geckoContentPermission.uri
             val type = geckoContentPermission.permission
-            val request = GeckoPermissionRequest.Content(uri, type, geckoContentPermission, geckoResult)
+            val request = GeckoPermissionRequest.Content(uri, type, geckoContentPermission, mutableListOf(geckoResult))
             notifyObservers { onContentPermissionRequest(request) }
             return geckoResult
         }

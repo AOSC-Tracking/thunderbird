@@ -17,7 +17,6 @@
 #include "mozilla/AppShutdown.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/BackgroundHangMonitor.h"
-#include "mozilla/BenchmarkStorageChild.h"
 #include "mozilla/FOGIPC.h"
 #include "GMPServiceChild.h"
 #include "Geolocation.h"
@@ -81,6 +80,7 @@
 #include "mozilla/dom/PSessionStorageObserverChild.h"
 #include "mozilla/dom/PostMessageEvent.h"
 #include "mozilla/dom/PushNotifier.h"
+#include "mozilla/dom/RemoteWorkerDebuggerManagerChild.h"
 #include "mozilla/dom/RemoteWorkerService.h"
 #include "mozilla/dom/ScreenOrientation.h"
 #include "mozilla/dom/ServiceWorkerManager.h"
@@ -290,6 +290,10 @@
 
 #ifdef MOZ_CODE_COVERAGE
 #  include "mozilla/CodeCoverageHandler.h"
+#endif
+
+#ifdef MOZ_WMF_CDM
+#  include "mozilla/dom/MediaKeySystemAccess.h"
 #endif
 
 extern mozilla::LazyLogModule gSHIPBFCacheLog;
@@ -2007,16 +2011,6 @@ bool ContentChild::DeallocPMediaChild(media::PMediaChild* aActor) {
   return media::DeallocPMediaChild(aActor);
 }
 
-PBenchmarkStorageChild* ContentChild::AllocPBenchmarkStorageChild() {
-  return BenchmarkStorageChild::Instance();
-}
-
-bool ContentChild::DeallocPBenchmarkStorageChild(
-    PBenchmarkStorageChild* aActor) {
-  delete aActor;
-  return true;
-}
-
 #ifdef MOZ_WEBRTC
 PWebrtcGlobalChild* ContentChild::AllocPWebrtcGlobalChild() {
   auto* child = new WebrtcGlobalChild();
@@ -2459,7 +2453,7 @@ mozilla::ipc::IPCResult ContentChild::RecvAddPermission(
   // child processes don't care about modification time.
   int64_t modificationTime = 0;
 
-  permissionManager->AddInternal(
+  permissionManager->Add(
       principal, nsCString(permission.type), permission.capability, 0,
       permission.expireType, permission.expireTime, modificationTime,
       PermissionManager::eNotify, PermissionManager::eNoDBOperation);
@@ -2679,8 +2673,10 @@ void ContentChild::PreallocInit() {
 const nsACString& ContentChild::GetRemoteType() const { return mRemoteType; }
 
 mozilla::ipc::IPCResult ContentChild::RecvInitRemoteWorkerService(
-    Endpoint<PRemoteWorkerServiceChild>&& aEndpoint) {
-  RemoteWorkerService::InitializeChild(std::move(aEndpoint));
+    Endpoint<PRemoteWorkerServiceChild>&& aEndpoint,
+    Endpoint<PRemoteWorkerDebuggerManagerChild>&& aDebuggerChiledEp) {
+  RemoteWorkerService::InitializeChild(std::move(aEndpoint),
+                                       std::move(aDebuggerChiledEp));
   return IPC_OK();
 }
 
@@ -4327,6 +4323,14 @@ mozilla::ipc::IPCResult ContentChild::RecvHistoryCommitIndexAndLength(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult ContentChild::RecvConsumeHistoryActivation(
+    const MaybeDiscarded<BrowsingContext>& aTop) {
+  if (!aTop.IsNullOrDiscarded()) {
+    aTop->ConsumeHistoryActivation();
+  }
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult ContentChild::RecvGetLayoutHistoryState(
     const MaybeDiscarded<BrowsingContext>& aContext,
     GetLayoutHistoryStateResolver&& aResolver) {
@@ -4680,6 +4684,14 @@ void ContentChild::ConfigureThreadPerformanceHints(
     mPerformanceHintSession = nullptr;
   }
 }
+
+#ifdef MOZ_WMF_CDM
+mozilla::ipc::IPCResult ContentChild::RecvUpdateMFCDMOriginEntries(
+    const nsTArray<IPCOriginStatusEntry>& aEntries) {
+  MediaKeySystemAccess::UpdateMFCDMOriginEntries(aEntries);
+  return IPC_OK();
+}
+#endif
 
 }  // namespace dom
 

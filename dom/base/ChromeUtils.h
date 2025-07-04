@@ -321,6 +321,12 @@ class ChromeUtils {
       nsIRFPTargetSetIDL* aOverriddenFingerprintingSettings,
       const Optional<bool>& aIsPBM);
 
+  static void CallFunctionAndLogException(GlobalObject& aGlobal,
+                                          JS::Handle<JS::Value> aTargetGlobal,
+                                          JS::Handle<JS::Value> aFunction,
+                                          JS::MutableHandle<JS::Value> aRetval,
+                                          ErrorResult& aRv);
+
 #ifdef MOZ_WMF_CDM
   static already_AddRefed<Promise> GetWMFContentDecryptionModuleInformation(
       GlobalObject& aGlobal, ErrorResult& aRv);
@@ -328,6 +334,14 @@ class ChromeUtils {
 
   static already_AddRefed<Promise> GetGMPContentDecryptionModuleInformation(
       GlobalObject& aGlobal, ErrorResult& aRv);
+
+  static void AndroidMoveTaskToBack(GlobalObject& aGlobal);
+
+  static already_AddRefed<nsIContentSecurityPolicy> CreateCSPFromHeader(
+      GlobalObject& aGlobal, const nsAString& aHeader, nsIURI* aSelfURI,
+      nsIPrincipal* aLoadingPrincipal, ErrorResult& aRv);
+
+  static bool IsJSIdentifier(GlobalObject& aGlobal, const nsAString& aStr);
 
  private:
   // Number of DevTools session debugging the current process

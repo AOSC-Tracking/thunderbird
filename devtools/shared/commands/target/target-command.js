@@ -194,6 +194,7 @@ class TargetCommand extends EventEmitter {
   // Called whenever a new Target front is available.
   // Either because a target was already available as we started calling startListening
   // or if it has just been created
+  // eslint-disable-next-line complexity
   async _onTargetAvailable(targetFront) {
     // We put the `commands` on the targetFront so it can be retrieved from any front easily.
     // Without this, protocol.js fronts won't have any easy access to it.
@@ -248,10 +249,6 @@ class TargetCommand extends EventEmitter {
       }
     }
 
-    // Map the descriptor typeName to a target type.
-    const targetType = this.getTargetType(targetFront);
-    targetFront.setTargetType(targetType);
-
     this._targets.add(targetFront);
     try {
       await targetFront.attachAndInitThread(this);
@@ -272,7 +269,7 @@ class TargetCommand extends EventEmitter {
     this.store.dispatch(registerTarget(targetFront));
 
     // Then, once the target is attached, notify the target front creation listeners
-    await this._createListeners.emitAsync(targetType, {
+    await this._createListeners.emitAsync(targetFront.targetType, {
       targetFront,
       isTargetSwitching,
     });
@@ -445,8 +442,7 @@ class TargetCommand extends EventEmitter {
     }
 
     this.#selectedTargetFront = targetFront;
-    const targetType = this.getTargetType(targetFront);
-    await this._selectListeners.emitAsync(targetType, {
+    await this._selectListeners.emitAsync(targetFront.targetType, {
       targetFront,
     });
   }
@@ -575,7 +571,6 @@ class TargetCommand extends EventEmitter {
     // Note that this is a public attribute, used outside of this class
     // and helps knowing what is the current top level target we debug.
     this.targetFront = await this.descriptorFront.getTarget();
-    this.targetFront.setTargetType(this.getTargetType(this.targetFront));
     this.targetFront.setIsTopLevel(true);
     this._gotFirstTopLevelTarget = true;
 
@@ -721,46 +716,6 @@ class TargetCommand extends EventEmitter {
     } else {
       throw new Error(`Unsupported target type '${type}'`);
     }
-  }
-
-  getTargetType(target) {
-    const { targetType } = target.targetForm;
-    if (targetType) {
-      return targetType;
-    }
-
-    // @backward-compat { version 137 } This can be removed as target.targetForm.targetType
-    // will always be defined. We can then remove TargetCommand.getTargetType and TargetMixin.setTargetType
-    // and instead have a getter like this `TargetMixin.targetType() this.targetForm.targetType`.
-    const { typeName } = target;
-    if (typeName == "windowGlobalTarget") {
-      return TargetCommand.TYPES.FRAME;
-    }
-
-    if (
-      typeName == "contentProcessTarget" ||
-      typeName == "parentProcessTarget"
-    ) {
-      return TargetCommand.TYPES.PROCESS;
-    }
-
-    if (typeName == "contentScriptTarget") {
-      return TargetCommand.TYPES.CONTENT_SCRIPT;
-    }
-
-    if (typeName == "workerDescriptor" || typeName == "workerTarget") {
-      if (target.isSharedWorker) {
-        return TargetCommand.TYPES.SHARED_WORKER;
-      }
-
-      if (target.isServiceWorker) {
-        return TargetCommand.TYPES.SERVICE_WORKER;
-      }
-
-      return TargetCommand.TYPES.WORKER;
-    }
-
-    throw new Error("Unsupported target typeName: " + typeName);
   }
 
   _matchTargetType(type, target) {
@@ -1136,6 +1091,58 @@ class TargetCommand extends EventEmitter {
   }
 
   /**
+   * Navigate the top level document to a new URL.
+   *
+   * @param {String} url
+   * @param {Boolean} waitForLoad
+   *        Default to true and wait for the document to be fully loaded before resolving.
+   * @return Promise
+   *        Promise resolved once the navigation has been proceeded by the remote runtime,
+   *        and if waitForLoad is true, resolved only once the target url is fully loaded.
+   */
+  navigateTo(url, waitForLoad = true) {
+    if (this.descriptorFront.traits.supportsNavigation) {
+      return this.descriptorFront.navigateTo(url, waitForLoad);
+    }
+
+    // @backward-compat { version 140 } Tab descriptor started supporting `navigateTo`.
+    // Also, this method should only be used by about:debugging's remote toolboxes
+    // when debugging tabs.
+    //
+    // Once we only support Firefox 140, we can start throwing when supportsNavigation traits
+    // doesn't exists and only support the descriptor's codepath.
+    return this.targetFront.navigateTo({ url });
+  }
+
+  goBack() {
+    if (this.descriptorFront.traits.supportsNavigation) {
+      return this.descriptorFront.goBack();
+    }
+
+    // @backward-compat { version 140 } Tab descriptor started supporting `goBack`.
+    // Also, this method should only be used by about:debugging's remote toolboxes
+    // when debugging tabs.
+    //
+    // Once we only support Firefox 140, we can start throwing when supportsNavigation traits
+    // doesn't exists and only support the descriptor's codepath.
+    return this.targetFront.goBack();
+  }
+
+  goForward() {
+    if (this.descriptorFront.traits.supportsNavigation) {
+      return this.descriptorFront.goForward();
+    }
+
+    // @backward-compat { version 140 } Tab descriptor started supporting `goBack`.
+    // Also, this method should only be used by about:debugging's remote toolboxes
+    // when debugging tabs.
+    //
+    // Once we only support Firefox 140, we can start throwing when supportsNavigation traits
+    // doesn't exists and only support the descriptor's codepath.
+    return this.targetFront.goForward();
+  }
+
+  /**
    * Called when the top level target is replaced by a new one.
    * Typically when we navigate to another domain which requires to be loaded in a distinct process.
    *
@@ -1154,12 +1161,12 @@ class TargetCommand extends EventEmitter {
    * @param {WindowGlobalTargetFront} targetFront
    *        The target front we want the toolbox to focus on.
    */
-  selectTarget(targetFront) {
+  async selectTarget(targetFront) {
     // Ignore any target which we may try to select, but is already being destroyed
     if (targetFront.isDestroyedOrBeingDestroyed()) {
       return;
     }
-    return this._onTargetSelected(targetFront);
+    await this._onTargetSelected(targetFront);
   }
 
   /**

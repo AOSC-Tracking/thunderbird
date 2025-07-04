@@ -40,6 +40,7 @@
 #include "nsICancelable.h"
 #include "nsMimeTypes.h"
 #include "mozilla/Components.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/SlicedInputStream.h"
 #include "nsContentSecurityManager.h"
 #include "nsPrintfCString.h"
@@ -60,9 +61,6 @@ nsMsgProtocol::nsMsgProtocol(nsIURI* aURL) {
   mContentLength = -1;
   m_isChannel = false;
   mContentDisposition = nsIChannel::DISPOSITION_INLINE;
-
-  GetSpecialDirectoryWithFileName(NS_OS_TEMP_DIR, "tempMessage.eml",
-                                  getter_AddRefs(m_tempMsgFile));
 
   mSuppressListenerNotifications = false;
   InitFromURI(aURL);
@@ -198,6 +196,7 @@ NS_IMETHODIMP nsMsgProtocol::OnDataAvailable(nsIRequest* request,
                                              nsIInputStream* inStr,
                                              uint64_t sourceOffset,
                                              uint32_t count) {
+  AUTO_PROFILER_LABEL("nsMsgProtocol::OnDataAvailable", MAILNEWS);
   // right now, this really just means turn around and churn through the state
   // machine
   nsCOMPtr<nsIURI> uri;
@@ -285,6 +284,7 @@ void nsMsgProtocol::ShowAlertMessage(nsIMsgMailNewsUrl* aMsgUrl,
 // aURL is going away.
 NS_IMETHODIMP nsMsgProtocol::OnStopRequest(nsIRequest* request,
                                            nsresult aStatus) {
+  AUTO_PROFILER_LABEL("nsMsgProtocol::OnStopRequest", MAILNEWS);
   nsresult rv = NS_OK;
 
   // if we are set up as a channel, we should notify our channel listener that
@@ -318,6 +318,7 @@ NS_IMETHODIMP nsMsgProtocol::OnStopRequest(nsIRequest* request,
   // Drop notification callbacks to prevent cycles.
   mCallbacks = nullptr;
   mProgressEventSink = nullptr;
+  m_channelListener = nullptr;
   // Call CloseSocket(), in case we got here because the server dropped the
   // connection while reading, and we never get a chance to get back into
   // the protocol state machine via OnDataAvailable.

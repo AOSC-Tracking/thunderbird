@@ -465,7 +465,6 @@ pref("mailnews.thread_pane_column_unthreads", false);
 pref("mail.identity.default.compose_html", true);
 pref("mail.identity.default.valid", true);
 pref("mail.identity.default.fcc", true);
-pref("mail.identity.default.fcc_folder", "mailbox://nobody@Local%20Folders/Sent");
 pref("mail.identity.default.fcc_reply_follows_parent", false);
 pref("mail.identity.default.autocompleteToMyDomain", false);
 
@@ -482,8 +481,6 @@ pref("mail.identity.default.bcc_self", false);
 pref("mail.identity.default.bcc_others", false);
 pref("mail.identity.default.bcc_list", "");
 
-pref("mail.identity.default.draft_folder", "mailbox://nobody@Local%20Folders/Drafts");
-pref("mail.identity.default.stationery_folder", "mailbox://nobody@Local%20Folders/Templates");
 pref("mail.identity.default.directoryServer", "");
 pref("mail.identity.default.overrideGlobal_Pref", false);
 pref("mail.identity.default.auto_quote", true);
@@ -837,9 +834,7 @@ pref("mail.biff.alert.show_preview", true);
 pref("mail.biff.alert.show_subject", true);
 pref("mail.biff.alert.show_sender",  true);
 pref("mail.biff.alert.preview_length", 40);
-#ifdef NIGHTLY_BUILD
-pref("mail.biff.alert.enabled_actions", "action1,action2");
-#endif
+pref("mail.biff.alert.enabled_actions", "mark-as-read,delete");
 
 #ifdef XP_MACOSX
 pref("mail.biff.play_sound", false);

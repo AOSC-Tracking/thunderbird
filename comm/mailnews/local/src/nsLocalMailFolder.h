@@ -67,7 +67,6 @@ struct nsLocalMailCopyState {
   bool m_isFolder;            // isFolder move/copy
   bool m_addXMozillaHeaders;  // Should prepend X-Mozilla-Status et al?
   bool m_copyingMultipleMessages;
-  bool m_fromLineSeen;
   bool m_allowUndo;
   bool m_writeFailed;
   bool m_notifyFolderLoaded;
@@ -192,6 +191,7 @@ class nsMsgLocalMailFolder : public nsMsgDBFolder,
   nsresult AddMessageBatch2(const nsTArray<nsCString>& rawMessages,
                             nsTArray<RefPtr<nsIMsgDBHdr>>& addedHdrs);
 #endif
+  nsresult UpdateMsgFlagsInStore(nsTArray<RefPtr<nsIMsgDBHdr>> const& msgs);
   nsresult CopyFolderAcrossServer(nsIMsgFolder* srcFolder,
                                   nsIMsgWindow* msgWindow,
                                   nsIMsgCopyServiceListener* listener,

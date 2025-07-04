@@ -99,6 +99,9 @@
                 class="context-menu-open-link"
                 data-l10n-id="main-context-menu-open-link-new-private-window"
                 />
+      <menuitem id="context-previewlink"
+                data-l10n-id="main-context-menu-preview-link"
+                />
       <menuseparator id="context-sep-open"/>
       <menuitem id="context-bookmarklink"
                 data-l10n-id="main-context-menu-bookmark-link-2"
@@ -216,11 +219,9 @@
       <menuitem id="context-saveaudio"
                 data-l10n-id="main-context-menu-audio-save-as"
                 />
-#ifdef CONTEXT_COPY_IMAGE_CONTENTS
       <menuitem id="context-copyimage-contents"
                 data-l10n-id="main-context-menu-image-copy"
                 />
-#endif
       <menuitem id="context-copyimage"
                 data-l10n-id="main-context-menu-image-copy-link"
                 />

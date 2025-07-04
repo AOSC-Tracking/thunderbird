@@ -304,6 +304,7 @@ describe("<DSCard>", () => {
           source: "FOO",
           action_position: 1,
           value: {
+            event_source: "card",
             card_type: "organic",
             recommendation_id: undefined,
             tile_id: "fooidx",
@@ -314,9 +315,11 @@ describe("<DSCard>", () => {
             recommended_at: undefined,
             received_rank: undefined,
             topic: undefined,
+            features: undefined,
             matches_selected_topic: undefined,
             selected_topics: undefined,
             is_list_card: undefined,
+            format: "medium-card",
           },
         })
       );
@@ -334,6 +337,7 @@ describe("<DSCard>", () => {
               topic: undefined,
               selected_topics: undefined,
               is_list_card: undefined,
+              format: "medium-card",
             },
           ],
           window_inner_width: 1000,
@@ -343,7 +347,13 @@ describe("<DSCard>", () => {
     });
 
     it("should set the right card_type on spocs", () => {
-      wrapper.setProps({ id: "fooidx", pos: 1, type: "foo", flightId: 12345 });
+      wrapper.setProps({
+        id: "fooidx",
+        pos: 1,
+        type: "foo",
+        flightId: 12345,
+        format: "spoc",
+      });
       sandbox
         .stub(wrapper.instance(), "doesLinkTopicMatchSelectedTopic")
         .returns(undefined);
@@ -357,6 +367,7 @@ describe("<DSCard>", () => {
           source: "FOO",
           action_position: 1,
           value: {
+            event_source: "card",
             card_type: "spoc",
             recommendation_id: undefined,
             tile_id: "fooidx",
@@ -367,9 +378,11 @@ describe("<DSCard>", () => {
             recommended_at: undefined,
             received_rank: undefined,
             topic: undefined,
+            features: undefined,
             matches_selected_topic: undefined,
             selected_topics: undefined,
             is_list_card: undefined,
+            format: "spoc",
           },
         })
       );
@@ -387,6 +400,7 @@ describe("<DSCard>", () => {
               topic: undefined,
               selected_topics: undefined,
               is_list_card: undefined,
+              format: "spoc",
             },
           ],
           window_inner_width: 1000,
@@ -418,6 +432,7 @@ describe("<DSCard>", () => {
           source: "FOO",
           action_position: 1,
           value: {
+            event_source: "card",
             card_type: "organic",
             recommendation_id: undefined,
             tile_id: "fooidx",
@@ -429,9 +444,11 @@ describe("<DSCard>", () => {
             recommended_at: undefined,
             received_rank: undefined,
             topic: undefined,
+            features: undefined,
             matches_selected_topic: undefined,
             selected_topics: undefined,
             is_list_card: undefined,
+            format: "medium-card",
           },
         })
       );
@@ -450,6 +467,7 @@ describe("<DSCard>", () => {
               topic: undefined,
               selected_topics: undefined,
               is_list_card: undefined,
+              format: "medium-card",
             },
           ],
           window_inner_width: 1000,
@@ -567,7 +585,9 @@ describe("<DSCard>", () => {
     beforeEach(() => {
       const props = {
         App: {
-          isForStartupCache: true,
+          isForStartupCache: {
+            App: true,
+          },
         },
         DiscoveryStream: INITIAL_STATE.DiscoveryStream,
         Prefs: INITIAL_STATE.Prefs,
@@ -709,29 +729,20 @@ describe("<DSCard>", () => {
       // Add active class name to DSCard wrapper
       // to simulate menu open state
       cardNode.classList.add("active");
-      assert.equal(
-        cardNode.className,
-        "ds-card ds-card-title-lines-3 ds-card-desc-lines-3 active"
-      );
+      assert.include(cardNode.className, "active");
 
       const dsCardInstance = wrapper.find(DSCard).instance();
       dsCardInstance.onMenuUpdate(false);
       wrapper.update();
 
-      assert.equal(
-        cardNode.className,
-        "ds-card ds-card-title-lines-3 ds-card-desc-lines-3"
-      );
+      assert.notInclude(cardNode.className, "active");
     });
 
     it("Should add active on Menu Show", async () => {
       const dsCardInstance = wrapper.find(DSCard).instance();
       await dsCardInstance.onMenuShow();
       wrapper.update();
-      assert.equal(
-        cardNode.className,
-        "ds-card ds-card-title-lines-3 ds-card-desc-lines-3 active"
-      );
+      assert.include(cardNode.className, "active");
     });
 
     it("Should add last-item to support resized window", async () => {
@@ -739,10 +750,8 @@ describe("<DSCard>", () => {
       const dsCardInstance = wrapper.find(DSCard).instance();
       await dsCardInstance.onMenuShow();
       wrapper.update();
-      assert.equal(
-        cardNode.className,
-        "ds-card ds-card-title-lines-3 ds-card-desc-lines-3 last-item active"
-      );
+      assert.include(cardNode.className, "last-item");
+      assert.include(cardNode.className, "active");
     });
 
     it("should remove .active and .last-item classes", () => {

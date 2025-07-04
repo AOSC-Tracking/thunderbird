@@ -40,6 +40,7 @@ function getMockNotifications() {
       end_at: endDate,
       severity: 1,
       targeting: {},
+      type: "donation",
     },
     {
       id: "bar",
@@ -48,6 +49,7 @@ function getMockNotifications() {
       end_at: endDate,
       severity: 5,
       targeting: {},
+      type: "donation",
     },
   ];
 }
@@ -59,7 +61,7 @@ add_setup(async () => {
   NotificationManager._PER_TIME_UNIT = 1;
 
   registerCleanupFunction(() => {
-    clearInterval(NotificationUpdater._interval);
+    NotificationUpdater._clearStateForTests();
     clearTimeout(InAppNotifications._showNotificationTimer);
   });
 });
@@ -154,6 +156,7 @@ add_task(async function test_getNotifications_expiry() {
       start_at: new Date(now - SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
     },
     {
       id: "future bar",
@@ -161,6 +164,7 @@ add_task(async function test_getNotifications_expiry() {
       start_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + 2 * SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
     },
     {
       id: "past bar",
@@ -168,6 +172,7 @@ add_task(async function test_getNotifications_expiry() {
       start_at: new Date(now - 2 * SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now - SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
     },
     {
       id: "invalid",
@@ -175,6 +180,7 @@ add_task(async function test_getNotifications_expiry() {
       start_at: "foo",
       end_at: "bar",
       targeting: {},
+      type: "donation",
     },
   ];
   await InAppNotifications.updateNotifications(mockData);
@@ -231,10 +237,15 @@ add_task(async function test_getSeed() {
     "Seed is constant for a given ID"
   );
 
-  Assert.notEqual(
-    InAppNotifications._getSeed("bar"),
-    seed,
-    "Different ID gives a different seed"
+  // Test multiple seeds to sample more random values and find issues faster.
+  const seeds = new Set([seed]);
+  for (let attempt = 0; attempt < 100 && seeds.size < 10; ++attempt) {
+    seeds.add(InAppNotifications._getSeed(`test${attempt}`));
+  }
+  Assert.greaterOrEqual(
+    seeds.size,
+    2,
+    "Should get different seeds with enough attempts."
   );
 
   Assert.strictEqual(
@@ -249,17 +260,10 @@ add_task(async function test_getSeed() {
     "Seed is stored in JSON storage"
   );
 
-  Assert.ok(Number.isInteger(seed), "Seed is an integer");
-  Assert.greaterOrEqual(seed, 0, "Seed is at least 0");
-  Assert.lessOrEqual(seed, 100, "Seed is at most 100");
-
-  // Test multiple seeds to sample more random values and find issues faster.
-  for (let i = 0; i < 10; ++i) {
-    const testSeed = InAppNotifications._getSeed(`test${i}`);
-
-    Assert.ok(Number.isInteger(testSeed), `Seed ${i} is an integer`);
-    Assert.greaterOrEqual(testSeed, 0, `Seed ${i} is at least 0`);
-    Assert.lessOrEqual(testSeed, 100, `Seed ${i} is at most 100`);
+  for (const testSeed of seeds) {
+    Assert.ok(Number.isInteger(testSeed), `Seed ${testSeed} is an integer`);
+    Assert.greaterOrEqual(testSeed, 0, "Seed is at least 0");
+    Assert.lessOrEqual(testSeed, 100, "Seed is at most 100");
   }
 
   await InAppNotifications.updateNotifications([]);
@@ -302,6 +306,7 @@ add_task(async function test_updateNotificationManager() {
       start_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + 2 * SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
       severity: 1,
     },
     {
@@ -310,6 +315,7 @@ add_task(async function test_updateNotificationManager() {
       start_at: new Date(now - SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
       severity: 5,
     },
   ];
@@ -337,6 +343,35 @@ add_task(async function test_updateNotificationManager() {
   InAppNotifications.notificationManager.updatedNotifications.restore();
 });
 
+add_task(async function test_updateNotificationManager_duringLocaleDebounce() {
+  InAppNotifications._localeChangeDebounce = "foo";
+
+  let hadEvent = false;
+  const eventHandler = () => {
+    hadEvent = true;
+    Assert.ok(false, "Should not get new notification event");
+  };
+
+  InAppNotifications.notificationManager.addEventListener(
+    NotificationManager.NEW_NOTIFICATION_EVENT,
+    eventHandler
+  );
+
+  await InAppNotifications.updateNotifications(getMockNotifications());
+
+  Assert.ok(
+    !InAppNotifications._showNotificationTimer,
+    "Should not have a timer for the next notification"
+  );
+  Assert.ok(!hadEvent, "Should not have seen a new notification event");
+
+  InAppNotifications.notificationManager.removeEventListener(
+    NotificationManager.NEW_NOTIFICATION_EVENT,
+    eventHandler
+  );
+  InAppNotifications._localeChangeDebounce = null;
+});
+
 add_task(async function test_updateNotifications_filtered() {
   const now = Date.now();
   const mockData = [
@@ -346,6 +381,7 @@ add_task(async function test_updateNotifications_filtered() {
       start_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + 2 * SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
       severity: 1,
     },
     {
@@ -354,6 +390,7 @@ add_task(async function test_updateNotifications_filtered() {
       start_at: new Date(now - SAFETY_MARGIN_MS).toISOString(),
       end_at: new Date(now + SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
       severity: 5,
     },
   ];
@@ -396,6 +433,7 @@ add_task(async function test_updateNotificationManager_localeChange() {
           },
         ],
       },
+      type: "donation",
       severity: 5,
     },
     {
@@ -410,6 +448,7 @@ add_task(async function test_updateNotificationManager_localeChange() {
           },
         ],
       },
+      type: "donation",
       severity: 5,
     },
   ];
@@ -433,7 +472,9 @@ add_task(async function test_updateNotificationManager_localeChange() {
 
   const { detail: newNotification } = await BrowserTestUtils.waitForEvent(
     InAppNotifications.notificationManager,
-    NotificationManager.NEW_NOTIFICATION_EVENT
+    NotificationManager.NEW_NOTIFICATION_EVENT,
+    false,
+    event => event.detail.id !== notification.id
   );
 
   Assert.notEqual(
@@ -446,10 +487,21 @@ add_task(async function test_updateNotificationManager_localeChange() {
     "foo weird",
     "Should see en-EU notification"
   );
+  Assert.ok(
+    !InAppNotifications._localeChangeDebounce,
+    "Should not have an active debounce timeout"
+  );
 
   Services.locale.availableLocales = availableLocales;
   Services.locale.requestedLocales = currentLocales;
   await InAppNotifications.updateNotifications([]);
+  // Clear the locale change debounce from restoring the normal conditions
+  // manually to accelerate the tests..
+  if (InAppNotifications._localeChangeDebounce) {
+    clearTimeout(InAppNotifications._localeChangeDebounce);
+    InAppNotifications._localeChangeDebounce = null;
+    InAppNotifications._updateNotificationManager();
+  }
 });
 
 add_task(async function test_scheduledNotification() {
@@ -462,6 +514,7 @@ add_task(async function test_scheduledNotification() {
       start_at: new Date(now + delay).toISOString(),
       end_at: new Date(now + delay + 2 * SAFETY_MARGIN_MS).toISOString(),
       targeting: {},
+      type: "donation",
       severity: 1,
     },
   ];
@@ -489,6 +542,28 @@ add_task(async function test_scheduledNotification() {
   Assert.ok(
     !InAppNotifications._showNotificationTimer,
     "Should have no timer for any future notifications"
+  );
+
+  await InAppNotifications.updateNotifications([]);
+});
+
+add_task(async function test_updateNotifications_noCleanup() {
+  const mockData = getMockNotifications();
+  await InAppNotifications.updateNotifications(mockData);
+  const notificationId = mockData[0].id;
+  InAppNotifications.markAsInteractedWith(notificationId);
+  const seed = InAppNotifications._getSeed(notificationId);
+
+  await InAppNotifications.updateNotifications([], true);
+
+  Assert.ok(
+    InAppNotifications._jsonFile.data.interactedWith.includes(notificationId),
+    `Should preserve interacted with ${notificationId}`
+  );
+  Assert.equal(
+    InAppNotifications._getSeed(notificationId),
+    seed,
+    `Seed for ${notificationId} should stay the same`
   );
 
   await InAppNotifications.updateNotifications([]);

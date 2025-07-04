@@ -15,6 +15,7 @@ class ModelOptin extends MozLitElement {
   static properties = {
     headingL10nId: { type: String, fluent: true },
     headingIcon: { type: String },
+    iconAtEnd: { type: Boolean },
     messageL10nId: { type: String, fluent: true },
     optinButtonL10nId: { type: String, fluent: true },
     optoutButtonL10nId: { type: String, fluent: true },
@@ -29,6 +30,7 @@ class ModelOptin extends MozLitElement {
     confirm: "MlModelOptinConfirm",
     deny: "MlModelOptinDeny",
     cancelDownload: "MlModelOptinCancelDownload",
+    messageLinkClick: "MlModelOptinMessageLinkClick",
     footerLinkClick: "MlModelOptinFooterLinkClick",
   };
 
@@ -41,9 +43,11 @@ class ModelOptin extends MozLitElement {
     super();
     this.isLoading = false;
     this.isHidden = false;
+    this.iconAtEnd = false;
     this.optinButtonL10nId = "genai-model-optin-continue";
     this.optoutButtonL10nId = "genai-model-optin-optout";
     this.cancelDownloadButtonL10nId = "genai-model-optin-cancel";
+    this.footerMessageL10nId = "";
   }
 
   dispatch(event) {
@@ -65,6 +69,14 @@ class ModelOptin extends MozLitElement {
     this.dispatch(ModelOptin.events.cancelDownload);
     this.isLoading = false;
     this.progressStatus = undefined;
+  }
+
+  handleMessageLinkClick(e) {
+    // ftl overrides the html, need to manually watch for event in parent.
+    if (e.target.id !== "optin-message-link") {
+      return;
+    }
+    this.dispatch(ModelOptin.events.messageLinkClick);
   }
 
   handleFooterLinkClick(e) {
@@ -100,14 +112,22 @@ class ModelOptin extends MozLitElement {
               ? html`<img
                   src=${this.headingIcon}
                   alt=${this.headingL10nId}
-                  class="optin-heading-icon"
+                  class="optin-heading-icon ${this.iconAtEnd
+                    ? "icon-at-end"
+                    : ""}"
                 />`
               : ""}
             <h3 class="optin-heading" data-l10n-id=${this.headingL10nId}></h3>
           </div>
         </div>
 
-        <p class="optin-message" data-l10n-id=${this.messageL10nId}></p>
+        <p
+          class="optin-message"
+          data-l10n-id=${this.messageL10nId}
+          @click=${this.handleMessageLinkClick}
+        >
+          <a id="optin-message-link" data-l10n-name="support" href="#"></a>
+        </p>
         <slot></slot>
 
         ${this.isLoading

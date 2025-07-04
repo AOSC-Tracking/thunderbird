@@ -14,9 +14,6 @@
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
-var { EnigmailCore } = ChromeUtils.importESModule(
-  "chrome://openpgp/content/modules/core.sys.mjs"
-);
 var { EnigmailFuncs } = ChromeUtils.importESModule(
   "chrome://openpgp/content/modules/funcs.sys.mjs"
 );
@@ -47,10 +44,6 @@ var { MailStringUtils } = ChromeUtils.importESModule(
 const { OpenPGPAlias } = ChromeUtils.importESModule(
   "chrome://openpgp/content/modules/OpenPGPAlias.sys.mjs"
 );
-var { jsmime } = ChromeUtils.importESModule(
-  "resource:///modules/jsmime.sys.mjs"
-);
-
 const { getMimeTreeFromUrl } = ChromeUtils.importESModule(
   "chrome://openpgp/content/modules/MimeTree.sys.mjs"
 );
@@ -460,8 +453,6 @@ Enigmail.msg = {
     emailForFilename,
     warnOnError
   ) {
-    EnigmailCore.init();
-
     var tmpFile = Services.dirsvc.get("TmpD", Ci.nsIFile);
     tmpFile.append("key.asc");
     tmpFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
@@ -877,9 +868,6 @@ Enigmail.msg = {
     }
 
     const fromAddr = this.getSenderUserId();
-
-    EnigmailCore.init();
-
     const senderKeyUsable = await EnigmailEncryption.determineOwnKeyUsability(
       sendFlags,
       fromAddr,
@@ -1177,11 +1165,7 @@ Enigmail.msg = {
     }
 
     if (gWindowLocked) {
-      Services.prompt.alert(
-        window,
-        null,
-        await document.l10n.formatValue("window-locked")
-      );
+      console.error("Compose window is locked; send cancelled");
       return false;
     }
 
@@ -1341,8 +1325,6 @@ Enigmail.msg = {
         "Signing inline only supported for plain text composition!"
       );
     }
-
-    EnigmailCore.init();
 
     if (Services.prefs.getBoolPref("mail.strictly_mime")) {
       if (
@@ -1708,8 +1690,6 @@ Enigmail.msg = {
       return;
     }
 
-    EnigmailCore.init();
-
     var encoderFlags =
       Ci.nsIDocumentEncoder.OutputFormatted |
       Ci.nsIDocumentEncoder.OutputLFLineBreak;
@@ -1808,7 +1788,7 @@ Enigmail.msg = {
 
     var plainText = "";
 
-    plainText = EnigmailDecryption.decryptMessage(
+    plainText = await EnigmailDecryption.decryptMessage(
       window,
       uiFlags,
       cipherText,

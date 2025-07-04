@@ -41,8 +41,6 @@ class nsMsgNewsFolder : public nsMsgDBFolder, public nsIMsgNewsFolder {
   NS_IMETHOD GetExpungedBytesCount(int64_t* count);
   NS_IMETHOD GetDeletable(bool* deletable) override;
 
-  NS_IMETHOD RefreshSizeOnDisk();
-
   NS_IMETHOD GetSizeOnDisk(int64_t* size) override;
 
   NS_IMETHOD GetDBFolderInfoAndDB(nsIDBFolderInfo** folderInfo,
@@ -67,8 +65,6 @@ class nsMsgNewsFolder : public nsMsgDBFolder, public nsIMsgNewsFolder {
       nsIMsgWindow* window) override;
   NS_IMETHOD GetLocalMsgStream(nsIMsgDBHdr* hdr,
                                nsIInputStream** stream) override;
-  NS_IMETHOD Compact(nsIUrlListener* aListener,
-                     nsIMsgWindow* aMsgWindow) override;
   NS_IMETHOD DownloadAllForOffline(nsIUrlListener* listener,
                                    nsIMsgWindow* msgWindow) override;
   NS_IMETHOD GetSortOrder(int32_t* order) override;
@@ -111,8 +107,6 @@ class nsMsgNewsFolder : public nsMsgDBFolder, public nsIMsgNewsFolder {
   bool mInitialized;
   bool m_downloadMessageForOfflineUse;
 
-  nsCString mOptionLines;
-  nsCString mUnsubscribedNewsgroupLines;
   RefPtr<nsMsgKeySet> mReadSet;
 
   nsCOMPtr<nsIFile> mNewsrcFilePath;

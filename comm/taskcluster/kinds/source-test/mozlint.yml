@@ -10,7 +10,7 @@ task-defaults:
         kind: test
         tier: 1
     platform: lint/opt
-    worker-type: t-linux-xlarge-source
+    worker-type: t-linux-docker
     worker:
         docker-image: {in-tree: "lint"}
         max-run-time: 1800
@@ -249,6 +249,18 @@ trojan-source:
               comm/*
     optimization:
         skip-unless-mozlint: trojan-source.yml
+
+test-manifest:
+    description: lint test manifests
+    treeherder:
+        symbol: misc(tm)
+    run:
+        mach: >
+            commlint -v -l test-manifest-toml -f treeherder
+            -f json:/builds/worker/mozlint.json
+            comm
+    optimization:
+        skip-unless-mozlint: test-manifest-toml.yml
 
 yaml:
     description: yamllint run over the taskcluster configuration

@@ -15,9 +15,11 @@ const SIDEBAR_TOOLS = "sidebar.main.tools";
 const DEFAULT_LAUNCHER_TOOLS = "aichat,syncedtabs,history,bookmarks";
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
-  ExperimentAPI: "resource://nimbus/ExperimentAPI.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  CustomizableUI: "resource:///modules/CustomizableUI.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   PrefUtils: "resource://normandy/lib/PrefUtils.sys.mjs",
+  SidebarState: "moz-src:///browser/components/sidebar/SidebarState.sys.mjs",
 });
 XPCOMUtils.defineLazyPreferenceGetter(lazy, "sidebarNimbus", "sidebar.nimbus");
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -63,14 +65,11 @@ export const SidebarManager = {
     const featureId = "sidebar";
     lazy.NimbusFeatures[featureId].onUpdate(() => {
       // Set prefs only if we have an enrollment that's new
-      const feature = { featureId };
-      const enrollment =
-        lazy.ExperimentAPI.getExperimentMetaData(feature) ??
-        lazy.ExperimentAPI.getRolloutMetaData(feature);
+      const enrollment = lazy.NimbusFeatures[featureId].getEnrollmentMetadata();
       if (!enrollment) {
         return;
       }
-      const slug = enrollment.slug + ":" + enrollment.branch.slug;
+      const slug = enrollment.slug + ":" + enrollment.branch;
       if (slug == lazy.sidebarNimbus) {
         return;
       }
@@ -101,6 +100,8 @@ export const SidebarManager = {
       );
     });
 
+    lazy.CustomizableUI.addListener(this);
+
     Services.prefs.addObserver(
       "sidebar.newTool.migration.",
       this.updateDefaultTools.bind(this)
@@ -118,6 +119,41 @@ export const SidebarManager = {
   },
 
   /**
+   * Called when any widget is removed. We're only interested in the sidebar
+   * button. Note that this is also invoked if the button is merely moved
+   * to another area.
+   *
+   * @param {string} aWidgetId
+   *   The widget being removed.
+   */
+  async onWidgetRemoved(aWidgetId) {
+    if (aWidgetId == "sidebar-button") {
+      // Wait for JS to run to completion. Once that has happened, we'll
+      // know if we were _really_ removed or just moved elsewhere.
+      await Promise.resolve();
+      if (!lazy.CustomizableUI.getPlacementOfWidget(aWidgetId)) {
+        Services.prefs.setStringPref(VISIBILITY_SETTING_PREF, "hide-sidebar");
+        this.closeAllSidebars();
+      }
+    }
+  },
+
+  /**
+   * Convenience method to tell all sidebars to close when the toolbar button
+   * is removed.
+   */
+  closeAllSidebars() {
+    for (let w of lazy.BrowserWindowTracker.getOrderedWindows()) {
+      if (w.SidebarController.isOpen) {
+        w.SidebarController.hide();
+      }
+      w.SidebarController._state.loadInitialState({
+        ...lazy.SidebarState.defaultProperties,
+      });
+    }
+  },
+
+  /**
    * Adjust for a change to the verticalTabs pref.
    */
   handleVerticalTabsPrefChange(isEnabled, resetVisibility = true) {
@@ -128,6 +164,31 @@ export const SidebarManager = {
       // only reset visibility pref when switching to vertical tabs and explictly indicated
       Services.prefs.setStringPref(VISIBILITY_SETTING_PREF, "always-show");
     }
+  },
+
+  /**
+   * Has the new sidebar launcher already been visible and "used" in this profile?
+   */
+  get hasSidebarLauncherBeenVisible() {
+    // Its possible sidebar.revamp was enabled previously, but we can effectively reset if its currently false
+    if (!lazy.sidebarRevampEnabled) {
+      return false;
+    }
+    if (lazy.verticalTabsEnabled) {
+      return true;
+    }
+    // this pref tells us a sidebar panel has been opened, so it implies the launcher has
+    // been visible, but can't reliably indicate that the launcher has *not* been visible.
+    if (Services.prefs.getBoolPref("sidebar.new-sidebar.has-used", false)) {
+      return true;
+    }
+    // check if the launcher has ever been visible (in this session) in any of our open windows,
+    for (let w of lazy.BrowserWindowTracker.getOrderedWindows()) {
+      if (w.SidebarController.launcherEverVisible) {
+        return true;
+      }
+    }
+    return false;
   },
 
   /**

@@ -463,8 +463,9 @@
   skin/classic/messenger/smime/msgCompSecurityInfo.css        (../shared/smime/msgCompSecurityInfo.css)
 
 # Calendar
-  skin/classic/messenger/calendar/calendarDialog.css          (../shared/mail/calendar/calendarDialog.css)
-  skin/classic/messenger/calendar/calendarDialogRow.css       (../shared/mail/calendar/calendarDialogRow.css)
+  skin/classic/messenger/calendar/calendarDialog.css            (../shared/mail/calendar/calendarDialog.css)
+  skin/classic/messenger/calendar/calendarDialogCategories.css  (../shared/mail/calendar/calendarDialogCategories.css)
+  skin/classic/messenger/calendar/calendarDialogRow.css         (../shared/mail/calendar/calendarDialogRow.css)
 
 # Illustrations
   skin/classic/messenger/illustrations/accounts.svg           (../shared/mail/illustrations/accounts.svg)
@@ -480,7 +481,9 @@
   skin/classic/messenger/illustrations/accounthub-success.svg                        (../shared/mail/illustrations/accounthub-success.svg)
   skin/classic/messenger/illustrations/accounthub-success-dark-compact.svg           (../shared/mail/illustrations/accounthub-success-dark-compact.svg)
   skin/classic/messenger/illustrations/accounthub-success-compact.svg                (../shared/mail/illustrations/accounthub-success-compact.svg)
+  skin/classic/messenger/illustrations/pictograph-cards-view.svg                     (../shared/mail/illustrations/pictograph-cards-view.svg)
   skin/classic/messenger/illustrations/pictograph-grouped.svg                        (../shared/mail/illustrations/pictograph-grouped.svg)
+  skin/classic/messenger/illustrations/pictograph-table-view.svg                     (../shared/mail/illustrations/pictograph-table-view.svg)
   skin/classic/messenger/illustrations/pictograph-threaded.svg                       (../shared/mail/illustrations/pictograph-threaded.svg)
   skin/classic/messenger/illustrations/pictograph-unthreaded.svg                     (../shared/mail/illustrations/pictograph-unthreaded.svg)
 
@@ -534,6 +537,7 @@
   skin/classic/messenger/icons/new/compact/eye.svg            (../shared/mail/icons/new/compact/eye.svg)
   skin/classic/messenger/icons/new/compact/features.svg       (../shared/mail/icons/new/compact/features.svg)
   skin/classic/messenger/icons/new/compact/file.svg           (../shared/mail/icons/new/compact/file.svg)
+  skin/classic/messenger/icons/new/compact/file-draft.svg     (../shared/mail/icons/new/compact/file-draft.svg)
   skin/classic/messenger/icons/new/compact/filter.svg         (../shared/mail/icons/new/compact/filter.svg)
   skin/classic/messenger/icons/new/compact/fingerprint.svg    (../shared/mail/icons/new/compact/fingerprint.svg)
   skin/classic/messenger/icons/new/compact/flexible-space.svg (../shared/mail/icons/new/compact/flexible-space.svg)
@@ -670,6 +674,8 @@
 
   skin/classic/messenger/icons/new/touch/add-circle.svg       (../shared/mail/icons/new/touch/add-circle.svg)
   skin/classic/messenger/icons/new/touch/address-book.svg     (../shared/mail/icons/new/touch/address-book.svg)
+  skin/classic/messenger/icons/new/touch/address-book-new.svg (../shared/mail/icons/new/touch/address-book-new.svg)
+  skin/classic/messenger/icons/new/touch/address-book-remote.svg (../shared/mail/icons/new/touch/address-book-remote.svg)
   skin/classic/messenger/icons/new/touch/calendar.svg         (../shared/mail/icons/new/touch/calendar.svg)
   skin/classic/messenger/icons/new/touch/chat.svg             (../shared/mail/icons/new/touch/chat.svg)
   skin/classic/messenger/icons/new/touch/collapse.svg         (../shared/mail/icons/new/touch/collapse.svg)
@@ -790,4 +796,4 @@
   skin/classic/messenger/icons/lg/mobile-export.svg            (../shared/mail/icons/lg/mobile-export.svg)
   skin/classic/messenger/icons/lg/mobile-import.svg            (../shared/mail/icons/lg/mobile-import.svg)
 
-  skin/classic/messenger/icons/brand/nebula-logo.webp          (../shared/mail/icons/brand/nebula-logo.webp)
+  skin/classic/messenger/icons/brand/eclipse-logo.webp         (../shared/mail/icons/brand/eclipse-logo.webp)

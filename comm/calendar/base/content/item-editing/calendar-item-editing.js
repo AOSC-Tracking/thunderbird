@@ -363,12 +363,13 @@ function createTodoWithDialog(calendar, dueDate, summary, todo, initialDate) {
  * openEventDialog so invitation responses can be edited.
  *
  * @param {calIItemBase} item - The calendar item to view.
+ * @param {Event} event - The triggering event.
  */
-function openEventDialogForViewing(item) {
+function openEventDialogForViewing(item, event) {
   function onDialogComplete(newItem, calendar, originalItem, listener, extresponse) {
     doTransaction("modify", newItem, calendar, originalItem, listener, extresponse);
   }
-  openEventDialog(item, item.calendar, "view", onDialogComplete);
+  openEventDialog(item, item.calendar, "view", onDialogComplete, undefined, undefined, event);
 }
 
 /**
@@ -439,6 +440,7 @@ function modifyEventWithDialog(aItem, aPromptOccurrence, initialDate = null, aCo
  *   datepickers.
  * @param {?object} counterProposal - An object representing the
  *   counterproposal - see description for modifyEventWithDialog().
+ * @param {Event} event - The triggering event.
  */
 function openEventDialog(
   calendarItem,
@@ -446,7 +448,8 @@ function openEventDialog(
   mode,
   callback,
   initialDate = null,
-  counterProposal
+  counterProposal,
+  event
 ) {
   const dlg = cal.item.findWindow(calendarItem);
   if (dlg) {
@@ -532,9 +535,6 @@ function openEventDialog(
     createTodoWithDialog(opcalendar);
   };
 
-  // the dialog will reset this to auto when it is done loading.
-  window.setCursor("wait");
-
   // Ask the provider if this item is an invitation. If this is the case,
   // we'll open the summary dialog since the user is not allowed to change
   // the details of the item.
@@ -563,7 +563,34 @@ function openEventDialog(
     const tabmail = document.getElementById("tabmail");
     const tabtype = args.calendarEvent.isEvent() ? "calendarEvent" : "calendarTask";
     tabmail.openTab(tabtype, args);
+
+    // the dialog will reset this to auto when it is done loading.
+    window.setCursor("wait");
+  } else if (
+    Services.prefs.getBoolPref("calendar.dialogs.new.enabled") &&
+    calendarItem.isEvent() &&
+    mode === "view"
+  ) {
+    const showDialog = () => {
+      const dialog = document.getElementById("calendarDialog");
+      dialog.setCalendarEvent(calendarItem);
+      dialog.show(event);
+    };
+    if (!document.getElementById("calendarDialog")) {
+      import("chrome://messenger/content/calendar-dialog.mjs").then(() => {
+        const dialog = document.createElement("dialog", {
+          is: "calendar-dialog",
+        });
+        dialog.id = "calendarDialog";
+        document.querySelector(".calendar-dialog-root").replaceChildren(dialog);
+        showDialog();
+      });
+    } else {
+      showDialog();
+    }
   } else {
+    // the dialog will reset this to auto when it is done loading.
+    window.setCursor("wait");
     // open in a window
     openDialog(url, "_blank", "centerscreen,chrome,titlebar,toolbar,resizable", args);
   }

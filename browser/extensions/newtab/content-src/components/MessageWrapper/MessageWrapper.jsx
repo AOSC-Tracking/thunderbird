@@ -7,7 +7,7 @@ import { actionCreators as ac, actionTypes as at } from "common/Actions.mjs";
 import { useSelector } from "react-redux";
 import { useIntersectionObserver } from "../../lib/utils";
 
-function MessageWrapper({ children, dispatch }) {
+function MessageWrapper({ children, dispatch, hiddenOverride, onDismiss }) {
   const message = useSelector(state => state.Messages);
   const [isIntersecting, setIsIntersecting] = useState(false);
   const [hasRun, setHasRun] = useState();
@@ -53,7 +53,8 @@ function MessageWrapper({ children, dispatch }) {
     } else {
       dispatch(ac.AlsoToMain(action));
     }
-  }, [dispatch, message]);
+    onDismiss?.();
+  }, [dispatch, message, onDismiss]);
 
   function handleDismiss() {
     const { id } = message.messageData;
@@ -92,24 +93,26 @@ function MessageWrapper({ children, dispatch }) {
     }
   }
 
+  if (!message || (!hiddenOverride && message.isHidden)) {
+    return null;
+  }
+
   // only display the message if `isHidden` is false
   return (
-    !message.isHidden && (
-      <div
-        ref={el => {
-          ref.current = [el];
-        }}
-        className="message-wrapper"
-      >
-        {React.cloneElement(children, {
-          isIntersecting,
-          handleDismiss,
-          handleClick,
-          handleBlock,
-          handleClose,
-        })}
-      </div>
-    )
+    <div
+      ref={el => {
+        ref.current = [el];
+      }}
+      className="message-wrapper"
+    >
+      {React.cloneElement(children, {
+        isIntersecting,
+        handleDismiss,
+        handleClick,
+        handleBlock,
+        handleClose,
+      })}
+    </div>
   );
 }
 

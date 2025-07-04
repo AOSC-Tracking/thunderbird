@@ -168,6 +168,8 @@ var currentHeaderData = {};
 
 /**
  * CurrentAttachments is an array of AttachmentInfo objects.
+ *
+ * @type {AttachmentInfo[]}
  */
 var currentAttachments = [];
 
@@ -1396,6 +1398,10 @@ function UpdateExpandedMessageHeaders() {
     }
 
     if (headerEntry) {
+      if (gCustomComposeHeaders.includes(headerName)) {
+        headerEntry.hidden = !showCustomComposeHeaders;
+      }
+
       if (gViewAllHeaders) {
         headerEntry.hidden = false;
       }
@@ -1412,11 +1418,7 @@ function UpdateExpandedMessageHeaders() {
         // pref show references is deactivated and the currently displayed
         // message isn't a newsgroup posting.
         headerEntry.valid = false;
-      } else if (
-        !headerEntry.hidden &&
-        (showCustomComposeHeaders ||
-          !gCustomComposeHeaders.includes(headerName))
-      ) {
+      } else if (!headerEntry.hidden) {
         // Set the row element visible before populating the field.
         headerEntry.enclosingRow.hidden = false;
         const headerField = currentHeaderData[headerName];
@@ -1936,32 +1938,34 @@ function displayAttachmentsForExpandedViewExternal() {
     "tooltiptextexternalnotfound",
     externalAttachmentNotFound
   );
-  attachmentName.addEventListener("mouseover", () =>
-    top.MsgStatusFeedback.setOverLink(firstAttachment.displayUrl)
-  );
-  attachmentName.addEventListener("mouseout", () =>
-    top.MsgStatusFeedback.setOverLink("")
-  );
-  attachmentName.addEventListener("focus", () =>
-    top.MsgStatusFeedback.setOverLink(firstAttachment.displayUrl)
-  );
-  attachmentName.addEventListener("blur", () =>
-    top.MsgStatusFeedback.setOverLink("")
-  );
+
   attachmentName.classList.remove("text-link");
   attachmentName.classList.remove("notfound");
 
-  if (firstAttachment.isDeleted) {
-    attachmentName.classList.add("notfound");
-  }
-
   if (firstAttachment.isExternalAttachment) {
+    attachmentName.addEventListener("mouseover", () =>
+      top.MsgStatusFeedback.setOverLink(firstAttachment.displayUrl)
+    );
+    attachmentName.addEventListener("mouseout", () =>
+      top.MsgStatusFeedback.setOverLink("")
+    );
+    attachmentName.addEventListener("focus", () =>
+      top.MsgStatusFeedback.setOverLink(firstAttachment.displayUrl)
+    );
+    attachmentName.addEventListener("blur", () =>
+      top.MsgStatusFeedback.setOverLink("")
+    );
+
     attachmentName.classList.add("text-link");
 
     if (!firstAttachment.hasFile) {
       attachmentName.setAttribute("tooltiptext", externalAttachmentNotFound);
       attachmentName.classList.add("notfound");
     }
+  }
+
+  if (firstAttachment.isDeleted) {
+    attachmentName.classList.add("notfound");
   }
 
   // Expanded attachment list.
@@ -3749,7 +3753,7 @@ function HandleJunkStatusChanged(msgHdr) {
         (isJunk && !msgHdr.folder.server.spamSettings.manualMark) ||
         (isJunk && msgHdr.folder.isSpecialFolder(Ci.nsMsgFolderFlags.Junk))
       ) {
-        ReloadMessage();
+        setTimeout(ReloadMessage);
         return;
       }
     }

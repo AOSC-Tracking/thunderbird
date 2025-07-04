@@ -6,6 +6,7 @@
 #include "ClientWebGLContext.h"
 
 #include <bitset>
+#include <fmt/format.h>
 
 #include "ClientWebGLExtensions.h"
 #include "gfxCrashReporterUtils.h"
@@ -1139,6 +1140,11 @@ already_AddRefed<gfx::SourceSurface> ClientWebGLContext::GetSurfaceSnapshot(
   }
 
   return ret.forget();
+}
+
+mozilla::ipc::IProtocol* ClientWebGLContext::SupportsSnapshotExternalCanvas()
+    const {
+  return GetChild();
 }
 
 RefPtr<gfx::SourceSurface> ClientWebGLContext::GetFrontBufferSnapshot(
@@ -2394,14 +2400,20 @@ void ClientWebGLContext::GetParameter(JSContext* cx, GLenum pname,
 
         switch (pname) {
           case dom::WEBGL_debug_renderer_info_Binding::UNMASKED_RENDERER_WEBGL:
-            ret = GetUnmaskedRenderer();
-            if (ret && StaticPrefs::webgl_sanitize_unmasked_renderer()) {
-              *ret = webgl::SanitizeRenderer(*ret);
+            if (ShouldResistFingerprinting(RFPTarget::WebGLRenderInfo)) {
+              ret = Some("Mozilla"_ns);
+            } else {
+              ret = GetUnmaskedRenderer();
+              if (ret && StaticPrefs::webgl_sanitize_unmasked_renderer()) {
+                ret = Some(webgl::SanitizeRenderer(*ret));
+              }
             }
             break;
 
           case dom::WEBGL_debug_renderer_info_Binding::UNMASKED_VENDOR_WEBGL:
-            ret = GetUnmaskedVendor();
+            ret = ShouldResistFingerprinting(RFPTarget::WebGLRenderInfo)
+                      ? Some("Mozilla"_ns)
+                      : GetUnmaskedVendor();
             break;
 
           default:
@@ -2486,7 +2498,7 @@ void ClientWebGLContext::GetParameter(JSContext* cx, GLenum pname,
         case LOCAL_GL_TRANSFORM_FEEDBACK_ACTIVE:
         case LOCAL_GL_TRANSFORM_FEEDBACK_PAUSED:
           retval.set(JS::BooleanValue(*maybe));
-          break;
+          return;
 
         // 4 bools
         case LOCAL_GL_COLOR_WRITEMASK: {
@@ -2501,9 +2513,19 @@ void ClientWebGLContext::GetParameter(JSContext* cx, GLenum pname,
           return;
         }
 
+        case LOCAL_GL_IMPLEMENTATION_COLOR_READ_TYPE: {
+          auto readType = (GLenum)*maybe;
+          // Map HALF_FLOAT to HALF_FLOAT_OES for webgl 1 clients.
+          if (readType == LOCAL_GL_HALF_FLOAT && !mIsWebGL2) {
+            readType = LOCAL_GL_HALF_FLOAT_OES;
+          }
+          retval.set(JS::NumberValue(readType));
+          return;
+        }
+
         default:
           retval.set(JS::NumberValue(*maybe));
-          break;
+          return;
       }
     }
   }
@@ -5128,7 +5150,7 @@ void ClientWebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
                                     dom::CallerType aCallerType,
                                     ErrorResult& out_error) const {
   const FuncScope funcScope(*this, "readPixels");
-  if (!ReadPixels_SharedPrecheck(aCallerType, out_error)) return;
+  if (!ReadPixels_SharedPrecheck(&type, aCallerType, out_error)) return;
   const auto& state = State();
   if (!ValidateNonNegative("width", width)) return;
   if (!ValidateNonNegative("height", height)) return;
@@ -5148,7 +5170,7 @@ void ClientWebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
                                     dom::CallerType aCallerType,
                                     ErrorResult& out_error) const {
   const FuncScope funcScope(*this, "readPixels");
-  if (!ReadPixels_SharedPrecheck(aCallerType, out_error)) return;
+  if (!ReadPixels_SharedPrecheck(&type, aCallerType, out_error)) return;
   const auto& state = State();
   if (!ValidateNonNegative("width", width)) return;
   if (!ValidateNonNegative("height", height)) return;
@@ -5245,8 +5267,27 @@ bool ClientWebGLContext::DoReadPixels(const webgl::ReadPixelsDesc& desc,
 }
 
 bool ClientWebGLContext::ReadPixels_SharedPrecheck(
-    dom::CallerType aCallerType, ErrorResult& out_error) const {
+    GLenum* const inout_readType, dom::CallerType aCallerType,
+    ErrorResult& out_error) const {
   if (IsContextLost()) return false;
+
+  GLenum validHalfFloatType = LOCAL_GL_HALF_FLOAT;
+  GLenum forbiddenHalfFloatType = LOCAL_GL_HALF_FLOAT_OES;
+  if (!mIsWebGL2) {
+    std::swap(validHalfFloatType, forbiddenHalfFloatType);  // Tragic.
+  }
+  if (*inout_readType == forbiddenHalfFloatType) {
+    const auto msg = fmt::format(
+        FMT_STRING("For WebGL {}, for `type`, enum {} is forbidden. Use {}."),
+        mIsWebGL2 ? "2" : "1", EnumString(forbiddenHalfFloatType),
+        EnumString(validHalfFloatType));
+    EnqueueError({LOCAL_GL_INVALID_ENUM, msg});
+    return false;
+  }
+  // Normalize to HALF_FLOAT non-_OES internally:
+  if (*inout_readType == LOCAL_GL_HALF_FLOAT_OES) {
+    *inout_readType = LOCAL_GL_HALF_FLOAT;
+  }
 
   if (mCanvasElement && mCanvasElement->IsWriteOnly() &&
       aCallerType != dom::CallerType::System) {
@@ -5861,8 +5902,7 @@ bool ClientWebGLContext::IsExtensionForbiddenForCaller(
       return true;
 
     case WebGLExtensionID::WEBGL_debug_renderer_info:
-      return ShouldResistFingerprinting(RFPTarget::WebGLRenderInfo) ||
-             !StaticPrefs::webgl_enable_debug_renderer_info();
+      return !StaticPrefs::webgl_enable_debug_renderer_info();
 
     case WebGLExtensionID::WEBGL_debug_shaders:
       return ShouldResistFingerprinting(RFPTarget::WebGLRenderInfo);

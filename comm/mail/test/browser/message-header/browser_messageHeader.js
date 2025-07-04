@@ -36,6 +36,9 @@ var {
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
+const { ensure_cards_view, ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
+);
 
 const about3Pane = get_about_3pane();
 const aboutMessage = get_about_message();
@@ -101,10 +104,10 @@ add_setup(async function () {
   // async openings. The panel is lazy-loaded, so it needs to be referenced
   // this way rather than finding it in the DOM.
   aboutMessage.editContactInlineUI.panel.setAttribute("animate", false);
-  await ensure_table_view();
+  await ensure_table_view(document);
 
   registerCleanupFunction(async () => {
-    await ensure_cards_view();
+    await ensure_cards_view(document);
     // Delete created folder.
     folder.deleteSelf(null);
     folderMore.deleteSelf(null);
@@ -135,7 +138,7 @@ function get_last_visible_address(recipientsList) {
 
 add_task(async function test_add_tag_with_really_long_label() {
   await be_in_folder(folder);
-  await ensure_table_view();
+  await ensure_table_view(document);
 
   // Select the first message, which will display it.
   const curMessage = await select_click_row(-1);
@@ -459,8 +462,22 @@ add_task(async function test_focus_after_button_click() {
     );
   };
 
+  const tree = about3Pane.document.getElementById("threadTree");
+  const rowCount = tree.view.rowCount;
   await clickButtonAndCheckFocus("hdrTrashButton", true);
+  await TestUtils.waitForTick();
+  Assert.equal(
+    tree.view.rowCount,
+    rowCount - 1,
+    "trashing should have removed one msg"
+  );
   await clickButtonAndCheckFocus("starMessageButton", false);
+  await TestUtils.waitForTick();
+  Assert.equal(
+    tree.view.rowCount,
+    rowCount - 1,
+    "starring should not have removed any msg"
+  );
 });
 
 // Full keyboard navigation on OSX only works if Full Keyboard Access setting is
@@ -469,6 +486,13 @@ add_task(async function test_focus_after_button_click() {
 // Accessibility > Keyboard > Full Keyboard Access.
 
 add_task(async function test_more_button_with_many_recipients() {
+  const tree = about3Pane.document.getElementById("threadTree");
+  Assert.greaterOrEqual(
+    tree.view.rowCount,
+    2,
+    "should have the 2 messages we need for the test"
+  );
+
   // Start on the interesting message.
   let curMessage = await select_click_row(-1);
 
@@ -857,6 +881,9 @@ add_task(async function test_context_menu_list_id() {
     aboutMessage.document.getElementById("listIdPopup"),
     "shown"
   );
+
+  const listIdCopy = aboutMessage.document.getElementById("listIdCopy");
+  Assert.equal(listIdCopy.hidden, false, "copy should show");
 
   const listIdPlaceHolder =
     aboutMessage.document.getElementById("listIdPlaceHolder");

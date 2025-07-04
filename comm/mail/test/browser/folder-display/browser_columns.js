@@ -33,6 +33,9 @@ var { click_menus_in_sequence } = ChromeUtils.importESModule(
 var { MailUtils } = ChromeUtils.importESModule(
   "resource:///modules/MailUtils.sys.mjs"
 );
+const { ensure_cards_view, ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
+);
 
 var { GlodaSyntheticView } = ChromeUtils.importESModule(
   "resource:///modules/gloda/GlodaSyntheticView.sys.mjs"
@@ -122,9 +125,9 @@ add_setup(async function () {
   folderSource = await create_folder("ColumnsApplySource");
 
   // Switch to table view.
-  await ensure_table_view();
+  await ensure_table_view(document);
   registerCleanupFunction(async () => {
-    await ensure_cards_view();
+    await ensure_cards_view(document);
   });
 
   // Add a message.
@@ -237,6 +240,7 @@ async function toggleColumn(columnID) {
   // The column picker menupopup doesn't close automatically on purpose.
   EventUtils.synthesizeKey("VK_ESCAPE", {}, about3Pane);
   await BrowserTestUtils.waitForPopupEvent(colPickerPopup, "hidden");
+  await new Promise(about3Pane.requestAnimationFrame);
 }
 
 /**
@@ -612,6 +616,7 @@ async function invoke_column_picker_option(aActions) {
 async function restore_default_columns() {
   const tabmail = document.getElementById("tabmail");
   const about3Pane = tabmail.currentAbout3Pane;
+  await TestUtils.waitForTick();
   const restoreEvent = BrowserTestUtils.waitForEvent(
     about3Pane.document,
     "restore-columns"

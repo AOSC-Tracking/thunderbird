@@ -19,10 +19,7 @@
 #include "nsIMsgFilterList.h"
 #include "prmon.h"
 #include "nsIMsgImapMailFolder.h"
-#include "nsIMsgThread.h"
-#include "nsIImapMailFolderSink.h"
 #include "nsIMsgFilterPlugin.h"
-#include "nsIStringEnumerator.h"
 #include "nsTHashMap.h"
 #include "nsITimer.h"
 #include "nsAutoSyncState.h"
@@ -30,6 +27,7 @@
 class nsImapMoveCoalescer;
 class nsIMsgIdentity;
 class nsIMsgOfflineImapOperation;
+class nsIMsgThread;
 
 #define COPY_BUFFER_SIZE 16384
 
@@ -38,7 +36,7 @@ class nsIMsgOfflineImapOperation;
 
 class nsImapMailCopyState : public nsISupports {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMAPMAILCOPYSTATE_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMAPMAILCOPYSTATE_IID)
 
   NS_DECL_THREADSAFE_ISUPPORTS
 
@@ -52,6 +50,9 @@ class nsImapMailCopyState : public nsISupports {
                                                    // operation
   nsCOMPtr<nsIFile> m_tmpFile;         // temp file spec for copy operation
   nsCOMPtr<nsIMsgWindow> m_msgWindow;  // msg window for copy operation
+  nsCOMPtr<nsIMsgFolder> m_arrFolder;  // arrived folder (actual folder
+                                       // resulting from moving/copying a
+                                       // folder)
 
   nsCOMPtr<nsIMsgMessageService>
       m_msgService;        // source folder message service; can
@@ -78,8 +79,6 @@ class nsImapMailCopyState : public nsISupports {
  private:
   virtual ~nsImapMailCopyState();
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsImapMailCopyState, NS_IMAPMAILCOPYSTATE_IID)
 
 // ACLs for this folder.
 // Generally, we will try to always query this class when performing
@@ -263,8 +262,8 @@ class nsImapMailFolder : public nsMsgDBFolder,
                                  bool markFlagged) override;
   NS_IMETHOD MarkThreadRead(nsIMsgThread* thread) override;
   NS_IMETHOD SetJunkScoreForMessages(
-      const nsTArray<RefPtr<nsIMsgDBHdr>>& aMessages,
-      const nsACString& aJunkScore) override;
+      const nsTArray<RefPtr<nsIMsgDBHdr>>& messages, nsMsgJunkScore junkScore,
+      const nsACString& junkScoreOrigin, int32_t junkPercent) override;
   NS_IMETHOD DeleteSelf(nsIMsgWindow* msgWindow) override;
   NS_IMETHOD ReadFromFolderCacheElem(
       nsIMsgFolderCacheElement* element) override;
@@ -291,9 +290,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
                              nsIMsgCopyServiceListener* listener) override;
   NS_IMETHOD GetNewMessages(nsIMsgWindow* aWindow,
                             nsIUrlListener* aListener) override;
-
-  NS_IMETHOD GetFilePath(nsIFile** aPathName) override;
-  NS_IMETHOD SetFilePath(nsIFile* aPath) override;
 
   NS_IMETHOD Shutdown(bool shutdownChildren) override;
 
@@ -452,9 +448,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
   nsresult GetClearedOriginalOp(nsIMsgOfflineImapOperation* op,
                                 nsIMsgOfflineImapOperation** originalOp,
                                 nsIMsgDatabase** originalDB);
-  nsresult GetOriginalOp(nsIMsgOfflineImapOperation* op,
-                         nsIMsgOfflineImapOperation** originalOp,
-                         nsIMsgDatabase** originalDB);
   MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult CopyMessagesOffline(
       nsIMsgFolder* srcFolder, nsTArray<RefPtr<nsIMsgDBHdr>> const& messages,
       bool isMove, nsIMsgWindow* msgWindow,

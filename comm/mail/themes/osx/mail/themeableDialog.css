@@ -69,16 +69,8 @@ menulist {
   }
 }
 
-.menu-right {
+menupopup > menu::after {
   margin-top: 3px;
-}
-
-tabbox {
-  margin-inline: 0;
-}
-
-.tab-middle {
-  padding: 0;
 }
 
 #commonDialog:not([subdialog]) {

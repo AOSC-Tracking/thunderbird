@@ -9,9 +9,9 @@
 const fs = require("fs");
 const path = require("path");
 
-function readFile(path) {
+function readFile(filePath) {
   return fs
-    .readFileSync(path, { encoding: "utf-8" })
+    .readFileSync(filePath, { encoding: "utf-8" })
     .split("\n")
     .filter(p => p && !p.startsWith("#"))
     .map(p => p.replace(/^comm\//, ""));
@@ -45,7 +45,10 @@ module.exports = {
     "function-no-unknown": [
       true,
       {
-        ignoreFunctions: ["add" /* Used in mathml.css */],
+        ignoreFunctions: [
+          "add" /* Used in mathml.css */,
+          "-moz-symbolic-icon" /* Used for GTK icons */,
+        ],
       },
     ],
     /*
@@ -255,5 +258,11 @@ module.exports = {
     "max-nesting-depth": 5,
 
     "@stylistic/color-hex-case": "lower",
+    "@stylistic/selector-list-comma-newline-after": "always",
+    "@stylistic/selector-max-empty-lines": 0,
+    // attribute selector should "look like html"
+    "@stylistic/selector-attribute-operator-space-before": "never",
+    "@stylistic/selector-attribute-operator-space-after": "never",
+    "@stylistic/selector-attribute-brackets-space-inside": "never",
   },
 };

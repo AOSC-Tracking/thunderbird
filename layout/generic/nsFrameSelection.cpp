@@ -81,7 +81,6 @@
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/SelectionBinding.h"
 #include "mozilla/AsyncEventDispatcher.h"
-#include "mozilla/Telemetry.h"
 
 #include "nsFocusManager.h"
 #include "nsPIDOMWindow.h"
@@ -1639,6 +1638,19 @@ void nsFrameSelection::AddHighlightSelection(
     mHighlightSelections.AppendElement(
         CompactPair<RefPtr<nsAtom>, RefPtr<Selection>>(aHighlightName,
                                                        std::move(selection)));
+  }
+}
+
+void nsFrameSelection::RepaintHighlightSelection(
+    nsAtom* aHighlightName) {
+  if (auto iter =
+          std::find_if(mHighlightSelections.begin(), mHighlightSelections.end(),
+                       [&aHighlightName](auto const& aElm) {
+                         return aElm.first() == aHighlightName;
+                       });
+      iter != mHighlightSelections.end()) {
+    RefPtr selection = iter->second();
+    selection->Repaint(mPresShell->GetPresContext());
   }
 }
 

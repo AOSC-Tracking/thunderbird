@@ -17,10 +17,10 @@ add_task(async function test_translations_telemetry_retranslate() {
     "The button is available."
   );
 
-  await FullPageTranslationsTestUtils.assertPageIsUntranslated(runInPage);
+  await FullPageTranslationsTestUtils.assertPageIsNotTranslated(runInPage);
 
   await FullPageTranslationsTestUtils.openPanel({
-    onOpenPanel: FullPageTranslationsTestUtils.assertPanelViewDefault,
+    onOpenPanel: FullPageTranslationsTestUtils.assertPanelViewIntro,
   });
 
   await FullPageTranslationsTestUtils.changeSelectedFromLanguage({
@@ -31,7 +31,7 @@ add_task(async function test_translations_telemetry_retranslate() {
     downloadHandler: resolveDownloads,
   });
 
-  await FullPageTranslationsTestUtils.assertPageIsTranslated({
+  await FullPageTranslationsTestUtils.assertOnlyIntersectingNodesAreTranslated({
     fromLanguage: "fr",
     toLanguage: "en",
     runInPage,
@@ -100,7 +100,7 @@ add_task(async function test_translations_telemetry_retranslate() {
     downloadHandler: resolveDownloads,
   });
 
-  await FullPageTranslationsTestUtils.assertPageIsTranslated({
+  await FullPageTranslationsTestUtils.assertOnlyIntersectingNodesAreTranslated({
     fromLanguage: "fr",
     toLanguage: "uk",
     runInPage,

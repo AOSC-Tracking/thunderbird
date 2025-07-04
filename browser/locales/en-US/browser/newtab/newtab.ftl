@@ -112,7 +112,8 @@ newtab-menu-delete-pocket = Delete from { -pocket-brand-name }
 newtab-menu-archive-pocket = Archive in { -pocket-brand-name }
 newtab-menu-show-privacy-info = Our sponsors & your privacy
 newtab-menu-about-fakespot = About { -fakespot-brand-name }
-newtab-menu-report-content = Report this content
+# Report is a verb (i.e. report issue with the content).
+newtab-menu-report = Report
 # Context menu option to personalize New Tab recommended stories by blocking a section of stories,
 # e.g. "Sports". "Block" is a verb here.
 newtab-menu-section-block = Block
@@ -189,6 +190,9 @@ newtab-label-sponsored-by = Sponsored by { $sponsor }
 #   $source (string) - The name of a company or their domain
 #   $timeToRead (number) - The estimated number of minutes to read this story
 newtab-label-source-read-time = { $source } · { $timeToRead } min
+
+# This string is used under fixed size ads to indicate sponsored content
+newtab-label-sponsored-fixed = Sponsored
 
 ## Section Menu: These strings are displayed in the section context menu and are
 ## meant as a call to action for the given section.
@@ -478,9 +482,42 @@ newtab-section-mangage-topics-followed-topics-empty-state = You have not followe
 newtab-section-mangage-topics-blocked-topics = Blocked
 newtab-section-mangage-topics-blocked-topics-empty-state = You have not blocked any topics yet.
 
-# Strings for custom wallpaper highlight
+## Strings for custom wallpaper highlight
 
 newtab-custom-wallpaper-title = Custom wallpapers are here
 # 'Make firefox yours" means to customize or personalize
 newtab-custom-wallpaper-subtitle = Upload your own wallpaper or pick a custom color to make { -brand-product-name } yours.
 newtab-custom-wallpaper-cta = Try it
+
+## Strings for download mobile highlight
+
+newtab-download-mobile-highlight-title = Download { -brand-product-name } for mobile
+# "Scan the code" refers to scanning the QR code that appears above the body text that leads to Firefox for mobile download.
+newtab-download-mobile-highlight-body-variant-a = Scan the code to securely browse on the go.
+newtab-download-mobile-highlight-body-variant-b = Pick up where you left off when you sync your tabs, passwords, and more.
+newtab-download-mobile-highlight-body-variant-c = Did you know you can take { -brand-product-name } on the go? Same browser. In your pocket.
+newtab-download-mobile-highlight-image =
+    .aria-label = QR code to download { -brand-product-name } for mobile
+
+## Strings for reporting ads and content
+
+newtab-report-content-why-reporting-this =
+  .label = Why are you reporting this?
+newtab-report-ads-reason-not-interested =
+  .label = I’m not interested
+newtab-report-ads-reason-inappropriate =
+  .label = It’s inappropriate
+newtab-report-ads-reason-seen-it-too-many-times =
+  .label = I’ve seen it too many times
+newtab-report-content-wrong-category =
+  .label = Wrong category
+newtab-report-content-outdated =
+  .label = Outdated
+newtab-report-content-inappropriate-offensive =
+  .label = Inappropriate or offensive
+newtab-report-content-spam-misleading =
+  .label = Spam or misleading
+newtab-report-cancel = Cancel
+newtab-report-submit = Submit
+newtab-toast-thanks-for-reporting =
+    .message = Thank you for reporting this.

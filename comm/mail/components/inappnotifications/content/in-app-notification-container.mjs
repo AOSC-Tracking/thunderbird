@@ -10,6 +10,14 @@ const attrs = ["cta", "description", "heading", "url", "data-id", "type"];
 /**
  * Container for in app notifications.
  * Template ID: #inAppNotificationContainerTemplate
+ *
+ * @tagname in-app-notification-container
+ * @attribute {string} cta - Call to action label.
+ * @attribute {string} description - Notification body text.
+ * @attribute {string} heading - Notification title text.
+ * @attribute {string} url - URL to open from the CTA button.
+ * @attribute {string} data-id - ID of the notification.
+ * @attribute {"donation"|"message"|"blog"|"security"} type - Type of the notification.
  */
 class InAppNotificationContainer extends HTMLElement {
   static observedAttributes = attrs;
@@ -60,7 +68,7 @@ class InAppNotificationContainer extends HTMLElement {
         if (newValue) {
           this.shadowRoot.querySelector(
             '[is="in-app-notification-button"]'
-          ).href = newValue;
+          ).href = Services.urlFormatter.formatURL(newValue);
         } else {
           this.shadowRoot
             .querySelector('[is="in-app-notification-button"]')

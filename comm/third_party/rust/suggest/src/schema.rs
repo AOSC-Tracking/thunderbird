@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-use crate::db::Sqlite3Extension;
+use crate::{db::Sqlite3Extension, geoname::geonames_collate};
 use rusqlite::{Connection, Transaction};
 use sql_support::{
     open_database::{self, ConnectionInitializer},
@@ -23,7 +23,7 @@ use sql_support::{
 ///     `clear_database()` by adding their names to `conditional_tables`, unless
 ///     they are cleared via a deletion trigger or there's some other good
 ///     reason not to do so.
-pub const VERSION: u32 = 34;
+pub const VERSION: u32 = 41;
 
 /// The current Suggest database schema.
 pub const SQL: &str = "
@@ -48,16 +48,16 @@ CREATE TABLE keywords(
     PRIMARY KEY (keyword, suggestion_id)
 ) WITHOUT ROWID;
 
--- Metrics for the `keywords` table per provider. Not all providers use or
--- update it. If you modify an existing provider to use this, you will need to
--- populate this table somehow with metrics for the provider's existing
--- keywords, for example as part of a schema migration.
+-- Keywords metrics per record ID and type. Currently we only record metrics for
+-- a small number of record types.
 CREATE TABLE keywords_metrics(
     record_id TEXT NOT NULL PRIMARY KEY,
-    provider INTEGER NOT NULL,
-    max_length INTEGER NOT NULL,
+    record_type TEXT NOT NULL,
+    max_len INTEGER NOT NULL,
     max_word_count INTEGER NOT NULL
 ) WITHOUT ROWID;
+
+CREATE INDEX keywords_metrics_record_type ON keywords_metrics(record_type);
 
 -- full keywords are what we display to the user when a (partial) keyword matches
 CREATE TABLE full_keywords(
@@ -161,6 +161,7 @@ CREATE TABLE icons(
 
 CREATE TABLE yelp_subjects(
     keyword TEXT PRIMARY KEY,
+    subject_type INTEGER NOT NULL DEFAULT 0,
     record_id TEXT NOT NULL
 ) WITHOUT ROWID;
 
@@ -169,12 +170,6 @@ CREATE TABLE yelp_modifiers(
     keyword TEXT NOT NULL,
     record_id TEXT NOT NULL,
     PRIMARY KEY (type, keyword)
-) WITHOUT ROWID;
-
-CREATE TABLE yelp_location_signs(
-    keyword TEXT PRIMARY KEY,
-    need_location INTEGER NOT NULL,
-    record_id TEXT NOT NULL
 ) WITHOUT ROWID;
 
 CREATE TABLE yelp_custom_details(
@@ -189,39 +184,56 @@ CREATE TABLE mdn_custom_details(
     FOREIGN KEY(suggestion_id) REFERENCES suggestions(id) ON DELETE CASCADE
 );
 
-CREATE TABLE exposure_custom_details(
+CREATE TABLE dynamic_custom_details(
     suggestion_id INTEGER PRIMARY KEY,
-    type TEXT NOT NULL,
+    suggestion_type TEXT NOT NULL,
+    json_data TEXT,
     FOREIGN KEY(suggestion_id) REFERENCES suggestions(id) ON DELETE CASCADE
 );
-CREATE INDEX exposure_custom_details_type ON exposure_custom_details(type);
+CREATE INDEX dynamic_custom_details_suggestion_type ON dynamic_custom_details(suggestion_type);
 
 CREATE TABLE geonames(
     id INTEGER PRIMARY KEY,
     record_id TEXT NOT NULL,
     name TEXT NOT NULL,
-    latitude REAL NOT NULL,
-    longitude REAL NOT NULL,
     feature_class TEXT NOT NULL,
     feature_code TEXT NOT NULL,
     country_code TEXT NOT NULL,
-    admin1_code TEXT NOT NULL,
-    population INTEGER NOT NULL
+    admin1_code TEXT,
+    admin2_code TEXT,
+    admin3_code TEXT,
+    admin4_code TEXT,
+    population INTEGER,
+    latitude TEXT,
+    longitude TEXT
 );
-CREATE INDEX geonames_feature_class ON geonames(feature_class);
-CREATE INDEX geonames_feature_code ON geonames(feature_code);
 
+-- `language` is a lowercase ISO 639 code: 'en', 'de', 'fr', etc. It can also be
+-- a geonames pseudo-language like 'abbr' for abbreviations and 'iata' for
+-- airport codes. It will be null for names derived from a geoname's primary
+-- name (see `Geoname::name` and `Geoname::ascii_name`).
+-- `geoname_id` is not defined as a foreign key because the main geonames
+-- records are not guaranteed to be ingested before alternates records.
 CREATE TABLE geonames_alternates(
-    name TEXT NOT NULL,
+    id INTEGER PRIMARY KEY,
+    record_id TEXT NOT NULL,
     geoname_id INTEGER NOT NULL,
-    -- The value of the `iso_language` field for the alternate. This will be
-    -- null for the alternate we artificially create for the `name` in the
-    -- corresponding geoname record.
-    iso_language TEXT,
-    PRIMARY KEY (name, geoname_id),
-    FOREIGN KEY(geoname_id) REFERENCES geonames(id) ON DELETE CASCADE
-) WITHOUT ROWID;
-CREATE INDEX geonames_alternates_geoname_id ON geonames_alternates(geoname_id);
+    language TEXT,
+    name TEXT NOT NULL COLLATE geonames_collate,
+    is_preferred INTEGER,
+    is_short INTEGER
+);
+
+CREATE INDEX geonames_alternates_geoname_id_language
+    ON geonames_alternates(geoname_id, language);
+
+CREATE INDEX geonames_alternates_name
+    ON geonames_alternates(name);
+
+CREATE TRIGGER geonames_alternates_delete AFTER DELETE ON geonames BEGIN
+    DELETE FROM geonames_alternates
+    WHERE geoname_id = old.id;
+END;
 
 CREATE TABLE geonames_metrics(
     record_id TEXT NOT NULL PRIMARY KEY,
@@ -229,6 +241,8 @@ CREATE TABLE geonames_metrics(
     max_name_word_count INTEGER NOT NULL
 ) WITHOUT ROWID;
 
+-- `url` may be an opaque dismissal key rather than a URL depending on the
+-- suggestion type.
 CREATE TABLE dismissed_suggestions (
     url TEXT PRIMARY KEY
 ) WITHOUT ROWID;
@@ -257,6 +271,11 @@ impl<'a> SuggestConnectionInitializer<'a> {
         }
         Ok(())
     }
+
+    fn create_custom_functions(&self, conn: &Connection) -> open_database::Result<()> {
+        conn.create_collation("geonames_collate", geonames_collate)?;
+        Ok(())
+    }
 }
 
 impl ConnectionInitializer for SuggestConnectionInitializer<'_> {
@@ -268,7 +287,7 @@ impl ConnectionInitializer for SuggestConnectionInitializer<'_> {
         sql_support::setup_sqlite_defaults(conn)?;
         conn.execute("PRAGMA foreign_keys = ON", ())?;
         sql_support::debug_tools::define_debug_functions(conn)?;
-
+        self.create_custom_functions(conn)?;
         Ok(())
     }
 
@@ -278,6 +297,10 @@ impl ConnectionInitializer for SuggestConnectionInitializer<'_> {
     }
 
     fn upgrade_from(&self, tx: &Transaction<'_>, version: u32) -> open_database::Result<()> {
+        // Custom functions are per connection. `prepare` usually handles
+        // creating them but on upgrade it's not called before this method is.
+        self.create_custom_functions(tx)?;
+
         match version {
             1..=15 => {
                 // Treat databases with these older schema versions as corrupt,
@@ -624,6 +647,134 @@ impl ConnectionInitializer for SuggestConnectionInitializer<'_> {
                 clear_database(tx)?;
                 Ok(())
             }
+            34 => {
+                // Replace the exposure suggestions table and index with the
+                // dynamic suggestions table and index.
+                tx.execute_batch(
+                    r#"
+                    DROP INDEX exposure_custom_details_type;
+                    DROP TABLE exposure_custom_details;
+                    CREATE TABLE dynamic_custom_details(
+                        suggestion_id INTEGER PRIMARY KEY,
+                        suggestion_type TEXT NOT NULL,
+                        json_data TEXT,
+                        FOREIGN KEY(suggestion_id) REFERENCES suggestions(id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX dynamic_custom_details_suggestion_type ON dynamic_custom_details(suggestion_type);
+                    "#,
+                )?;
+                Ok(())
+            }
+            35 => {
+                // The commit that added this migration was reverted.
+                Ok(())
+            }
+            36 => {
+                tx.execute_batch("DROP TABLE IF EXISTS yelp_location_signs;")?;
+                Ok(())
+            }
+            37 => {
+                clear_database(tx)?;
+                tx.execute_batch(
+                    "
+                    DROP TABLE yelp_subjects;
+                    CREATE TABLE yelp_subjects(
+                        keyword TEXT PRIMARY KEY,
+                        subject_type INTEGER NOT NULL DEFAULT 0,
+                        record_id TEXT NOT NULL
+                    ) WITHOUT ROWID;
+                    ",
+                )?;
+                Ok(())
+            }
+            38 => {
+                // This migration makes changes to geonames.
+                tx.execute_batch(
+                    r#"
+                    DROP INDEX geonames_alternates_geoname_id;
+                    DROP TABLE geonames_alternates;
+
+                    DROP INDEX geonames_feature_class;
+                    DROP INDEX geonames_feature_code;
+                    DROP TABLE geonames;
+
+                    CREATE TABLE geonames(
+                        id INTEGER PRIMARY KEY,
+                        record_id TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        feature_class TEXT NOT NULL,
+                        feature_code TEXT NOT NULL,
+                        country_code TEXT NOT NULL,
+                        admin1_code TEXT,
+                        admin2_code TEXT,
+                        admin3_code TEXT,
+                        admin4_code TEXT,
+                        population INTEGER,
+                        latitude TEXT,
+                        longitude TEXT
+                    );
+
+                    CREATE TABLE geonames_alternates(
+                        record_id TEXT NOT NULL,
+                        geoname_id INTEGER NOT NULL,
+                        language TEXT,
+                        name TEXT NOT NULL COLLATE geonames_collate,
+                        PRIMARY KEY(geoname_id, language, name)
+                    );
+                    CREATE INDEX geonames_alternates_geoname_id ON geonames_alternates(geoname_id);
+                    CREATE INDEX geonames_alternates_name ON geonames_alternates(name);
+
+                    CREATE TRIGGER geonames_alternates_delete AFTER DELETE ON geonames BEGIN
+                        DELETE FROM geonames_alternates
+                        WHERE geoname_id = old.id;
+                    END;
+                    "#,
+                )?;
+                Ok(())
+            }
+            39 => {
+                // This migration makes changes to keywords metrics.
+                clear_database(tx)?;
+                tx.execute_batch(
+                    r#"
+                    DROP TABLE keywords_metrics;
+                    CREATE TABLE keywords_metrics(
+                        record_id TEXT NOT NULL PRIMARY KEY,
+                        record_type TEXT NOT NULL,
+                        max_len INTEGER NOT NULL,
+                        max_word_count INTEGER NOT NULL
+                    ) WITHOUT ROWID;
+                    CREATE INDEX keywords_metrics_record_type ON keywords_metrics(record_type);
+                    "#,
+                )?;
+                Ok(())
+            }
+            40 => {
+                // This migration makes changes to geonames.
+                clear_database(tx)?;
+                tx.execute_batch(
+                    r#"
+                    DROP INDEX geonames_alternates_geoname_id;
+                    DROP INDEX geonames_alternates_name;
+                    DROP TABLE geonames_alternates;
+
+                    CREATE TABLE geonames_alternates(
+                        id INTEGER PRIMARY KEY,
+                        record_id TEXT NOT NULL,
+                        geoname_id INTEGER NOT NULL,
+                        language TEXT,
+                        name TEXT NOT NULL COLLATE geonames_collate,
+                        is_preferred INTEGER,
+                        is_short INTEGER
+                    );
+                    CREATE INDEX geonames_alternates_geoname_id_language
+                        ON geonames_alternates(geoname_id, language);
+                    CREATE INDEX geonames_alternates_name
+                        ON geonames_alternates(name);
+                    "#,
+                )?;
+                Ok(())
+            }
             _ => Err(open_database::Error::IncompatibleVersion(version)),
         }
     }
@@ -641,7 +792,6 @@ pub fn clear_database(db: &Connection) -> rusqlite::Result<()> {
         DELETE FROM icons;
         DELETE FROM yelp_subjects;
         DELETE FROM yelp_modifiers;
-        DELETE FROM yelp_location_signs;
         DELETE FROM yelp_custom_details;
         ",
     )?;
@@ -822,6 +972,28 @@ PRAGMA user_version=16;
             "ingested_records should be empty"
         );
         conn.close().expect("Connection should be closed");
+
+        Ok(())
+    }
+
+    /// Test that yelp_location_signs table could be removed correctly.
+    #[test]
+    fn test_remove_yelp_location_signs_table() -> anyhow::Result<()> {
+        // Start with the v16 schema.
+        let db_file =
+            MigratedDatabaseFile::new(SuggestConnectionInitializer::default(), V16_SCHEMA);
+
+        // Upgrade to v36.
+        db_file.upgrade_to(36);
+
+        // Drop the table to simulate old 35 > 36 migration.
+        let conn = db_file.open();
+        conn.execute("DROP table yelp_location_signs", ())?;
+        conn.close().expect("Connection should be closed");
+
+        // Finish upgrading to the current version.
+        db_file.upgrade_to(VERSION);
+        db_file.assert_schema_matches_new_database();
 
         Ok(())
     }

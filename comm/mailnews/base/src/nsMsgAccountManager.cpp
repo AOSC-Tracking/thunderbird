@@ -60,6 +60,7 @@
 #include "nsIMsgFilterList.h"
 #include "nsDirectoryServiceUtils.h"
 #include "mozilla/Components.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/Services.h"
 #include "nsIFileStreams.h"
 #include "nsIOutputStream.h"
@@ -69,7 +70,8 @@
 #include "UrlListener.h"
 #include "nsIIDNService.h"
 #ifdef MOZ_PANORAMA
-#  include "nsIDatabaseCore.h"
+#  include "nsIComponentRegistrar.h"
+#  include "DatabaseCore.h"
 #endif  // MOZ_PANORAMA
 
 #define PREF_MAIL_ACCOUNTMANAGER_ACCOUNTS "mail.accountmanager.accounts"
@@ -139,10 +141,10 @@ static nsCOMPtr<nsIAsyncShutdownService> GetShutdownService() {
   return service;
 }
 
-static nsCOMPtr<nsIAsyncShutdownClient> GetQuitApplicationGranted() {
+static nsCOMPtr<nsIAsyncShutdownClient> GetAppShutdownConfirmed() {
   nsCOMPtr<nsIAsyncShutdownClient> barrier;
   nsresult rv =
-      GetShutdownService()->GetQuitApplicationGranted(getter_AddRefs(barrier));
+      GetShutdownService()->GetAppShutdownConfirmed(getter_AddRefs(barrier));
   MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
   MOZ_RELEASE_ASSERT(barrier);
   return barrier;
@@ -158,6 +160,7 @@ static nsCOMPtr<nsIAsyncShutdownClient> GetProfileBeforeChange() {
 }
 
 nsresult nsMsgAccountManager::Init() {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::Init", MAILNEWS);
   if (!XRE_IsParentProcess()) {
     return NS_ERROR_NOT_AVAILABLE;
   }
@@ -165,9 +168,18 @@ nsresult nsMsgAccountManager::Init() {
   nsresult rv;
 #ifdef MOZ_PANORAMA
   if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    // Replace the database service with the Panorama database.
+    nsCOMPtr<nsIComponentRegistrar> componentRegistrar;
+    rv = NS_GetComponentRegistrar(getter_AddRefs(componentRegistrar));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    componentRegistrar->RegisterFactory(
+        nsID::GenerateUUID(), "", "@mozilla.org/msgDatabase/msgDBService;1",
+        new mozilla::mailnews::DatabaseCoreFactory());
+
     // Start up the database.
     nsCOMPtr<nsIDatabaseCore> unused =
-        do_GetService("@mozilla.org/mailnews/database-core;1", &rv);
+        do_GetService("@mozilla.org/msgDatabase/msgDBService;1", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 #endif  // MOZ_PANORAMA
@@ -183,7 +195,7 @@ nsresult nsMsgAccountManager::Init() {
     observerService->AddObserver(this, "sleep_notification", true);
   }
 
-  GetQuitApplicationGranted()->AddBlocker(
+  GetAppShutdownConfirmed()->AddBlocker(
       this, NS_LITERAL_STRING_FROM_CSTRING(__FILE__), __LINE__,
       u"nsMsgAccountManager cleanup on exit"_ns);
   GetProfileBeforeChange()->AddBlocker(
@@ -376,6 +388,7 @@ nsMsgAccountManager::GetUniqueServerKey(nsACString& aResult) {
 }
 
 nsresult nsMsgAccountManager::CreateIdentity(nsIMsgIdentity** _retval) {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::CreateIdentity", MAILNEWS);
   NS_ENSURE_ARG_POINTER(_retval);
   nsresult rv;
   nsAutoCString key;
@@ -432,6 +445,7 @@ nsMsgAccountManager::CreateIncomingServer(const nsACString& username,
                                           const nsACString& hostname,
                                           const nsACString& type,
                                           nsIMsgIncomingServer** _retval) {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::CreateIncomingServer", MAILNEWS);
   NS_ENSURE_ARG_POINTER(_retval);
 
   // Make sure the hostname is usable when creating a new incoming server.
@@ -526,15 +540,8 @@ nsMsgAccountManager::RemoveIncomingServer(nsIMsgIncomingServer* aServer,
   nsresult rv = aServer->GetKey(serverKey);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // close cached connections and forget session password
+  // Close cached connections and forget session password.
   LogoutOfServer(aServer);
-
-  // invalidate the FindServer() cache if we are removing the cached server
-  if (m_lastFindServerResult == aServer)
-    SetLastServerFound(nullptr, EmptyCString(), EmptyCString(), 0,
-                       EmptyCString());
-
-  m_incomingServers.Remove(serverKey);
 
   nsCOMPtr<nsIMsgFolder> rootFolder;
   rv = aServer->GetRootFolder(getter_AddRefs(rootFolder));
@@ -544,13 +551,62 @@ nsMsgAccountManager::RemoveIncomingServer(nsIMsgIncomingServer* aServer,
   rv = rootFolder->GetDescendants(allDescendants);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // Remove every folder on the account from the folder cache.
+  for (const auto& folder : allDescendants) {
+    nsresult cacherv = RemoveFolderFromCache(folder);
+    if (NS_FAILED(cacherv)) {
+      // Some tests don't use on-disk storage for folders, in which case we'll
+      // fail to remove them from the folder cache because we can't resolve
+      // their path. In all other case, this should be considered an error, but
+      // returning an error would fail said tests, so we log the error instead,
+      // which is the next best thing.
+      nsCString name;
+      folder->GetName(name);
+      NS_WARNING(nsPrintfCString("failed to remove folder %s from cache: %s",
+                                 name.get(),
+                                 mozilla::GetStaticErrorName(cacherv))
+                     .get());
+    }
+  }
+
+  nsresult cacherv = RemoveFolderFromCache(rootFolder);
+  if (NS_FAILED(cacherv)) {
+    NS_WARNING(nsPrintfCString("failed to remove root folder from cache: %s",
+                               mozilla::GetStaticErrorName(cacherv))
+                   .get());
+  }
+
+  // Update the on-disk copy of the cache, so we don't end up with unneeded
+  // folders if e.g. Thunderbird crashes or gets SIGKILL'd later on.
+  nsCOMPtr<nsIMsgFolderCache> folderCache;
+  MOZ_TRY(GetFolderCache(getter_AddRefs(folderCache)));
+  MOZ_TRY(folderCache->Flush());
+
+  // Invalidate the `FindServer()` cache entry for this server. We need to do
+  // this after the folders have been removed from the folder cache, because the
+  // folders might end up querying the account manager to get a reference on
+  // their server (to help them compute their path on disk, which we use as
+  // their cache key). But we also need to do this before we notify other
+  // components about the folders' removal, because some observers will behave
+  // differently if the deletion is happening in the context of deleting an
+  // account (which they find out by testing if `FindServer()` can be used for
+  // the current account).
+  if (m_lastFindServerResult == aServer) {
+    SetLastServerFound(nullptr, EmptyCString(), EmptyCString(), 0,
+                       EmptyCString());
+  }
+
+  m_incomingServers.Remove(serverKey);
+
+  // Notify any observer about the deletion of every folder in the account.
   nsCOMPtr<nsIMsgFolderNotificationService> notifier =
       do_GetService("@mozilla.org/messenger/msgnotificationservice;1");
   nsCOMPtr<nsIFolderListener> mailSession =
       do_GetService("@mozilla.org/messenger/services/session;1");
 
-  for (auto folder : allDescendants) {
+  for (const auto& folder : allDescendants) {
     folder->ForceDBClosed();
+
     if (notifier) notifier->NotifyFolderDeleted(folder);
     if (mailSession) {
       nsCOMPtr<nsIMsgFolder> parentFolder;
@@ -578,6 +634,45 @@ nsMsgAccountManager::RemoveIncomingServer(nsIMsgIncomingServer* aServer,
   aServer->ClearAllValues();
   rootFolder->Shutdown(true);
   return rv;
+}
+
+nsresult nsMsgAccountManager::RemoveFolderFromCache(nsIMsgFolder* aFolder) {
+  NS_ENSURE_ARG_POINTER(aFolder);
+
+  // Get the file path for the folder. This path is different depending on
+  // whether the folder is the server or not. We can then use it to derive the
+  // cache key for the folder, which is the string-ified absolute path for this
+  // file.
+  bool isServer;
+  MOZ_TRY(aFolder->GetIsServer(&isServer));
+
+  nsCOMPtr<nsIFile> folderPath;
+  if (isServer) {
+    MOZ_TRY(aFolder->GetFilePath(getter_AddRefs(folderPath)));
+  } else {
+    MOZ_TRY(aFolder->GetSummaryFile(getter_AddRefs(folderPath)));
+  }
+
+  if (!folderPath) {
+    // Some accounts, such as those used for chat, use synthetic implementations
+    // of `nsIMsgFolder` that don't actually exist on disk. The way those
+    // implementations are written makes it so `GetFilePath`/`GetSummaryFile`
+    // don't return an error, but instead leave `folderPath` null. This isn't
+    // technically an issue for us: if these folders don't have paths on disk,
+    // they don't have entries in the folder cache, and so they don't need to be
+    // removed from it.
+    return NS_OK;
+  }
+
+  // Get the folder file's absolute path, which is its cache key.
+  nsCString folderCacheKey;
+  MOZ_TRY(folderPath->GetPersistentDescriptor(folderCacheKey));
+
+  // Get the folder cache and remove the folder from it.
+  nsCOMPtr<nsIMsgFolderCache> folderCache;
+  MOZ_TRY(GetFolderCache(getter_AddRefs(folderCache)));
+
+  return folderCache->RemoveElement(folderCacheKey);
 }
 
 /**
@@ -653,6 +748,7 @@ nsresult nsMsgAccountManager::createKeyedServer(
 NS_IMETHODIMP
 nsMsgAccountManager::RemoveAccount(nsIMsgAccount* aAccount,
                                    bool aRemoveFiles = false) {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::RemoveAccount", MAILNEWS);
   NS_ENSURE_ARG_POINTER(aAccount);
   // Hold account in scope while we tidy up potentially-shared identities.
   nsresult rv = LoadAccounts();
@@ -914,6 +1010,7 @@ NS_IMETHODIMP nsMsgAccountManager::GetFolderCache(
 
 NS_IMETHODIMP
 nsMsgAccountManager::GetAccounts(nsTArray<RefPtr<nsIMsgAccount>>& accounts) {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::GetAccounts", MAILNEWS);
   nsresult rv = LoadAccounts();
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -936,6 +1033,7 @@ nsMsgAccountManager::GetAccounts(nsTArray<RefPtr<nsIMsgAccount>>& accounts) {
 NS_IMETHODIMP
 nsMsgAccountManager::GetAllIdentities(
     nsTArray<RefPtr<nsIMsgIdentity>>& result) {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::GetAllIdentities", MAILNEWS);
   nsresult rv = LoadAccounts();
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -973,6 +1071,7 @@ nsMsgAccountManager::GetAllIdentities(
 NS_IMETHODIMP
 nsMsgAccountManager::GetAllServers(
     nsTArray<RefPtr<nsIMsgIncomingServer>>& servers) {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::GetAllServers", MAILNEWS);
   servers.Clear();
   nsresult rv = LoadAccounts();
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1379,6 +1478,12 @@ nsMsgAccountManager::ReactivateAccounts() {
 // and makes sure the folder flags are set there, too
 NS_IMETHODIMP
 nsMsgAccountManager::SetSpecialFolders() {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::SetSpecialFolders", MAILNEWS);
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    // Skip this for now.
+    return NS_OK;
+  }
+
   nsTArray<RefPtr<nsIMsgIdentity>> identities;
   GetAllIdentities(identities);
 
@@ -1387,9 +1492,9 @@ nsMsgAccountManager::SetSpecialFolders() {
     nsCString folderUri;
     nsCOMPtr<nsIMsgFolder> folder;
 
-    identity->GetFccFolder(folderUri);
+    identity->GetFccFolderURI(folderUri);
     if (!folderUri.IsEmpty() &&
-        NS_SUCCEEDED(GetOrCreateFolder(folderUri, getter_AddRefs(folder)))) {
+        NS_SUCCEEDED(GetExistingFolder(folderUri, getter_AddRefs(folder)))) {
       nsCOMPtr<nsIMsgFolder> parent;
       rv = folder->GetParent(getter_AddRefs(parent));
       if (NS_SUCCEEDED(rv) && parent) {
@@ -1398,9 +1503,9 @@ nsMsgAccountManager::SetSpecialFolders() {
       }
     }
 
-    identity->GetDraftFolder(folderUri);
+    identity->GetDraftsFolderURI(folderUri);
     if (!folderUri.IsEmpty() &&
-        NS_SUCCEEDED(GetOrCreateFolder(folderUri, getter_AddRefs(folder)))) {
+        NS_SUCCEEDED(GetExistingFolder(folderUri, getter_AddRefs(folder)))) {
       nsCOMPtr<nsIMsgFolder> parent;
       rv = folder->GetParent(getter_AddRefs(parent));
       if (NS_SUCCEEDED(rv) && parent) {
@@ -1409,9 +1514,9 @@ nsMsgAccountManager::SetSpecialFolders() {
       }
     }
 
-    identity->GetArchiveFolder(folderUri);
+    identity->GetArchivesFolderURI(folderUri);
     if (!folderUri.IsEmpty() &&
-        NS_SUCCEEDED(GetOrCreateFolder(folderUri, getter_AddRefs(folder)))) {
+        NS_SUCCEEDED(GetExistingFolder(folderUri, getter_AddRefs(folder)))) {
       nsCOMPtr<nsIMsgFolder> parent;
       rv = folder->GetParent(getter_AddRefs(parent));
       if (NS_SUCCEEDED(rv) && parent) {
@@ -1425,9 +1530,9 @@ nsMsgAccountManager::SetSpecialFolders() {
       }
     }
 
-    identity->GetStationeryFolder(folderUri);
+    identity->GetTemplatesFolderURI(folderUri);
     if (!folderUri.IsEmpty() &&
-        NS_SUCCEEDED(GetOrCreateFolder(folderUri, getter_AddRefs(folder)))) {
+        NS_SUCCEEDED(GetExistingFolder(folderUri, getter_AddRefs(folder)))) {
       nsCOMPtr<nsIMsgFolder> parent;
       rv = folder->GetParent(getter_AddRefs(parent));
       if (NS_SUCCEEDED(rv) && parent) {
@@ -1649,7 +1754,7 @@ nsresult nsMsgAccountManager::CleanupOnExit() {
     }
   }
 
-  GetQuitApplicationGranted()->RemoveBlocker(this);
+  GetAppShutdownConfirmed()->RemoveBlocker(this);
 
   // Try to do this early on in the shutdown process before
   // necko shuts itself down.
@@ -1671,7 +1776,7 @@ NS_IMETHODIMP
 nsMsgAccountManager::BlockShutdown(nsIAsyncShutdownClient* aClient) {
   nsAutoString name;
   aClient->GetName(name);
-  if (name.Equals(u"quit-application-granted"_ns)) {
+  if (name.Equals(u"quit-application"_ns)) {
     return CleanupOnExit();
   } else {
     // profile-before-change
@@ -2220,6 +2325,7 @@ nsresult nsMsgAccountManager::GetLocalFoldersPrettyName(
 
 NS_IMETHODIMP
 nsMsgAccountManager::CreateLocalMailAccount(nsIMsgAccount** _retval) {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::CreateLocalMailAccount", MAILNEWS);
   // create the server
   nsCOMPtr<nsIMsgIncomingServer> server;
   nsresult rv = CreateIncomingServer("nobody"_ns, "Local Folders"_ns, "none"_ns,
@@ -2745,6 +2851,12 @@ nsresult nsMsgAccountManager::GetVirtualFoldersFile(nsCOMPtr<nsIFile>& aFile) {
 }
 
 NS_IMETHODIMP nsMsgAccountManager::LoadVirtualFolders() {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::LoadVirtualFolders", MAILNEWS);
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    // Skip this for now.
+    return NS_OK;
+  }
+
   nsCOMPtr<nsIFile> file;
   GetVirtualFoldersFile(file);
   if (!file) return NS_ERROR_FAILURE;
@@ -2889,6 +3001,7 @@ NS_IMETHODIMP nsMsgAccountManager::LoadVirtualFolders() {
 }
 
 NS_IMETHODIMP nsMsgAccountManager::SaveVirtualFolders() {
+  AUTO_PROFILER_LABEL("nsMsgAccountManager::SaveVirtualFolders", MAILNEWS);
   if (!m_virtualFoldersLoaded) return NS_OK;
 
   nsCOMPtr<nsIFile> file;

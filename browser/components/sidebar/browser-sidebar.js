@@ -8,9 +8,6 @@
  * and provides APIs for sidebar extensions, etc.
  */
 
-var { ShoppingUtils } = ChromeUtils.importESModule(
-  "resource:///modules/ShoppingUtils.sys.mjs"
-);
 const { DeferredTask } = ChromeUtils.importESModule(
   "resource://gre/modules/DeferredTask.sys.mjs"
 );
@@ -20,7 +17,6 @@ const toolsNameMap = {
   viewTabsSidebar: "syncedtabs",
   viewHistorySidebar: "history",
   viewBookmarksSidebar: "bookmarks",
-  viewReviewCheckerSidebar: "reviewchecker",
   viewCPMSidebar: "passwords",
 };
 const EXPAND_ON_HOVER_DEBOUNCE_RATE_MS = 200;
@@ -171,24 +167,6 @@ var SidebarController = {
       }
     );
 
-    if (!PrivateBrowsingUtils.isWindowPrivate(window)) {
-      this.registerPrefSidebar(
-        "browser.shopping.experience2023.integratedSidebar",
-        "viewReviewCheckerSidebar",
-        {
-          elementId: "sidebar-switcher-review-checker",
-          url: "chrome://browser/content/shopping/review-checker.xhtml",
-          menuId: "menu_reviewCheckerSidebar",
-          menuL10nId: "menu-view-review-checker",
-          revampL10nId: "sidebar-menu-review-checker-label",
-          iconUrl: "chrome://browser/content/shopping/assets/shopping.svg",
-          gleanEvent: Glean.shopping.sidebarToggle,
-          gleanClickEvent: Glean.sidebar.shoppingReviewCheckerIconClick,
-          recordSidebarVersion: true,
-        }
-      );
-    }
-
     this.registerPrefSidebar(
       "browser.contextual-password-manager.enabled",
       "viewCPMSidebar",
@@ -203,13 +181,15 @@ var SidebarController = {
       }
     );
 
-    this._sidebars.set("viewCustomizeSidebar", {
-      url: "chrome://browser/content/sidebar/sidebar-customize.html",
-      revampL10nId: "sidebar-menu-customize-label",
-      iconUrl: "chrome://global/skin/icons/settings.svg",
-      gleanEvent: Glean.sidebarCustomize.panelToggle,
-      visible: false,
-    });
+    if (this.sidebarRevampEnabled) {
+      this._sidebars.set("viewCustomizeSidebar", {
+        url: "chrome://browser/content/sidebar/sidebar-customize.html",
+        revampL10nId: "sidebar-menu-customize-label",
+        iconUrl: "chrome://global/skin/icons/settings.svg",
+        gleanEvent: Glean.sidebarCustomize.panelToggle,
+        visible: false,
+      });
+    }
 
     return this._sidebars;
   },
@@ -250,6 +230,8 @@ var SidebarController = {
   lastOpenedId: null,
 
   _box: null,
+  _pinnedTabsContainer: null,
+  _pinnedTabsItemsWrapper: null,
   // The constructor of this label accesses the browser element due to the
   // control="sidebar" attribute, so avoid getting this label during startup.
   get _title() {
@@ -332,6 +314,10 @@ var SidebarController = {
     return this._launcherSplitter.getAttribute("state") === "dragging";
   },
 
+  get isPinnedTabsDragging() {
+    return this._pinnedTabsSplitter.getAttribute("state") === "dragging";
+  },
+
   init() {
     // Initialize global state manager.
     this.SidebarManager;
@@ -341,10 +327,20 @@ var SidebarController = {
       this._state = new this.SidebarState(this);
     }
 
+    this._pinnedTabsContainer = document.getElementById(
+      "vertical-pinned-tabs-container"
+    );
+    this._pinnedTabsItemsWrapper =
+      this._pinnedTabsContainer.shadowRoot.querySelector(
+        "[part=items-wrapper]"
+      );
     this._box = document.getElementById("sidebar-box");
     this._splitter = document.getElementById("sidebar-splitter");
     this._launcherSplitter = document.getElementById(
       "sidebar-launcher-splitter"
+    );
+    this._pinnedTabsSplitter = document.getElementById(
+      "vertical-pinned-tabs-splitter"
     );
     this._reversePositionButton = document.getElementById(
       "sidebar-reverse-position"
@@ -384,8 +380,6 @@ var SidebarController = {
       this._handleLauncherResize(entry)
     );
 
-    CustomizableUI.addListener(this);
-
     if (this.sidebarRevampEnabled) {
       if (!customElements.get("sidebar-main")) {
         ChromeUtils.importESModule(
@@ -416,6 +410,7 @@ var SidebarController = {
         this._splitter.addEventListener("command", this._browserResizeObserver);
       }
       this._enableLauncherDragging();
+      this._enablePinnedTabsSplitterDragging();
 
       // Record Glean metrics.
       this.recordVisibilitySetting();
@@ -436,6 +431,7 @@ var SidebarController = {
         this._switcherListenersAdded = true;
       }
       this._disableLauncherDragging();
+      this._disablePinnedTabsDragging();
     }
     // We need to update the tab strip for vertical tabs during init
     // as there will be no tabstrip-orientation-change event
@@ -514,6 +510,7 @@ var SidebarController = {
     }
     this._splitter.removeEventListener("command", this._browserResizeObserver);
     this._disableLauncherDragging();
+    this._disablePinnedTabsDragging();
   },
 
   /**
@@ -627,7 +624,8 @@ var SidebarController = {
     let observer = this._observer;
     if (!observer) {
       observer = new MutationObserver(() => {
-        this.title = this.sidebars.get(this.lastOpenedId).title;
+        // it's possible for lastOpenedId to be null here
+        this.title = this.sidebars.get(this.lastOpenedId)?.title;
       });
       // Re-use the observer.
       this._observer = observer;
@@ -803,10 +801,16 @@ var SidebarController = {
     }
     if (!this._sidebars.get(this.lastOpenedId)) {
       this.lastOpenedId = this.DEFAULT_SIDEBAR_ID;
+      wasOpen = false;
     }
     this.updateToolbarButton();
     this._inited = false;
     this.init();
+
+    // Reopen the panel in the new or old sidebar now that we've inited
+    if (wasOpen) {
+      this.toggle();
+    }
   },
 
   /**
@@ -961,6 +965,10 @@ var SidebarController = {
     return this._state?.launcherVisible;
   },
 
+  get launcherEverVisible() {
+    return this._state?.launcherEverVisible;
+  },
+
   get title() {
     return this._title.value;
   },
@@ -1074,13 +1082,12 @@ var SidebarController = {
 
     let fromRects = this._getRects(animatingElements);
 
-    // We need to wait for rAF for lit to re-render, and us to get the final
-    // width. This is a bit unfortunate but alas...
-    let toRects = await new Promise(resolve => {
-      requestAnimationFrame(() => {
-        resolve(this._getRects(animatingElements));
-      });
+    // We need to wait for lit to re-render, and us to get the final width.
+    // This is a bit unfortunate but alas...
+    await new Promise(resolve => {
+      queueMicrotask(() => resolve(this.sidebarMain.updateComplete));
     });
+    let toRects = this._getRects(animatingElements);
 
     const options = {
       duration: document.documentElement.hasAttribute("sidebar-expand-on-hover")
@@ -1304,6 +1311,66 @@ var SidebarController = {
   },
 
   /**
+   * Enable the splitter which can be used to resize the pinned tabs container.
+   */
+  _enablePinnedTabsSplitterDragging() {
+    if (!this._pinnedTabsSplitter.hidden) {
+      // Already showing the launcher splitter with observers connected.
+      // Nothing to do.
+      return;
+    }
+    this._pinnedTabsResizeObserver = new ResizeObserver(([entry]) => {
+      if (this.isPinnedTabsDragging) {
+        this._state.pinnedTabsDragActive = true;
+      }
+      if (
+        (entry.contentBoxSize[0].blockSize ===
+          this._state.expandedPinnedTabsHeight &&
+          this._state.launcherExpanded) ||
+        (entry.contentBoxSize[0].blockSize ===
+          this._state.collapsedPinnedTabsHeight &&
+          !this._state.launcherExpanded)
+      ) {
+        // condition already met, no need to re-update
+        return;
+      }
+      this._state.pinnedTabsHeight = entry.contentBoxSize[0].blockSize;
+    });
+
+    this._itemsWrapperResizeObserver = new ResizeObserver(async () => {
+      await window.promiseDocumentFlushed(() => {
+        // Adjust pinned tabs container height if needed
+        let itemsWrapperHeight = window.windowUtils.getBoundsWithoutFlushing(
+          this._pinnedTabsItemsWrapper
+        ).height;
+        requestAnimationFrame(() => {
+          if (this._state.pinnedTabsHeight > itemsWrapperHeight) {
+            this._state.pinnedTabsHeight = itemsWrapperHeight;
+            if (this._state.launcherExpanded) {
+              this._state.expandedPinnedTabsHeight =
+                this._state.pinnedTabsHeight;
+            } else {
+              this._state.collapsedPinnedTabsHeight =
+                this._state.pinnedTabsHeight;
+            }
+          }
+        });
+      });
+    });
+    this._pinnedTabsResizeObserver.observe(this._pinnedTabsContainer);
+    this._itemsWrapperResizeObserver.observe(this._pinnedTabsItemsWrapper);
+
+    this._pinnedTabsDropHandler = () =>
+      (this._state.pinnedTabsDragActive = false);
+    this._pinnedTabsSplitter.addEventListener(
+      "command",
+      this._pinnedTabsDropHandler
+    );
+
+    this._pinnedTabsSplitter.hidden = false;
+  },
+
+  /**
    * Disable the launcher splitter and remove any active observers.
    */
   _disableLauncherDragging() {
@@ -1316,6 +1383,20 @@ var SidebarController = {
     );
 
     this._launcherSplitter.hidden = true;
+  },
+
+  /**
+   * Disable the pinned tabs splitter and remove any active observers.
+   */
+  _disablePinnedTabsDragging() {
+    if (this._pinnedTabsResizeObserver) {
+      this._pinnedTabsResizeObserver.disconnect();
+    }
+    if (this._itemsWrapperResizeObserver) {
+      this._itemsWrapperResizeObserver.disconnect();
+    }
+
+    this._pinnedTabsSplitter.hidden = true;
   },
 
   _loadSidebarExtension(commandID) {
@@ -1882,16 +1963,6 @@ var SidebarController = {
     }
   },
 
-  onWidgetRemoved(aWidgetId) {
-    if (aWidgetId == "sidebar-button") {
-      if (this.isOpen) {
-        this.hide();
-      }
-      this._state.loadInitialState({ ...this.SidebarState.defaultProperties });
-      Services.prefs.setStringPref("sidebar.visibility", "hide-sidebar");
-    }
-  },
-
   toggleTabstrip() {
     let toVerticalTabs = CustomizableUI.verticalTabsEnabled;
     let tabStrip = gBrowser.tabContainer;
@@ -1922,6 +1993,14 @@ var SidebarController = {
     // Re-render sidebar-main so that templating is updated
     // for proper keyboard navigation for Tools
     this.sidebarMain.requestUpdate();
+    if (
+      !this.verticalTabsEnabled &&
+      this.sidebarRevampVisibility == "hide-sidebar"
+    ) {
+      // the sidebar.visibility pref didn't change so updateVisbility hasn't
+      // been called; we need to call it here to un-expand the launcher
+      this._state.updateVisibility(undefined, false);
+    }
   },
 
   debouncedMouseEnter() {
@@ -1992,6 +2071,31 @@ var SidebarController = {
     };
   },
 
+  async handleEvent(e) {
+    switch (e.type) {
+      case "popupshown":
+        /* Temporarily remove MousePosTracker listener when a context menu is open */
+        if (e.composedTarget.id !== "tab-preview-panel") {
+          MousePosTracker.removeListener(this);
+        }
+        break;
+      case "popuphidden":
+        if (e.composedTarget.id !== "tab-preview-panel") {
+          if (this._state.launcherExpanded) {
+            if (this._animationEnabled && !window.gReduceMotion) {
+              this._animateSidebarMain();
+            }
+            this._state.launcherExpanded = false;
+          }
+          await this.waitUntilStable();
+          MousePosTracker.addListener(this);
+        }
+        break;
+      default:
+        break;
+    }
+  },
+
   async toggleExpandOnHover(isEnabled, isDragEnded) {
     document.documentElement.toggleAttribute(
       "sidebar-expand-on-hover",
@@ -2006,12 +2110,21 @@ var SidebarController = {
       if (!isDragEnded) {
         await this.setLauncherCollapsedWidth();
       }
+      document.addEventListener("popupshown", this);
+      document.addEventListener("popuphidden", this);
     } else {
       MousePosTracker.removeListener(this);
       if (!this.mouseOverTask?.isFinalized) {
         this.mouseOverTask?.finalize();
       }
+      document.removeEventListener("popupshown", this);
+      document.removeEventListener("popuphidden", this);
     }
+
+    document.documentElement.toggleAttribute(
+      "sidebar-expand-on-hover",
+      isEnabled
+    );
   },
 
   /**
@@ -2049,8 +2162,9 @@ var SidebarController = {
 };
 
 ChromeUtils.defineESModuleGetters(SidebarController, {
-  SidebarManager: "resource:///modules/SidebarManager.sys.mjs",
-  SidebarState: "resource:///modules/SidebarState.sys.mjs",
+  SidebarManager:
+    "moz-src:///browser/components/sidebar/SidebarManager.sys.mjs",
+  SidebarState: "moz-src:///browser/components/sidebar/SidebarState.sys.mjs",
 });
 
 // Add getters related to the position here, since we will want them
@@ -2175,6 +2289,11 @@ XPCOMUtils.defineLazyPreferenceGetter(
       !SidebarController.inSingleTabWindow
     ) {
       SidebarController.recordTabsLayoutSetting(newValue);
+      if (newValue) {
+        SidebarController._enablePinnedTabsSplitterDragging();
+      } else {
+        SidebarController._disablePinnedTabsDragging();
+      }
     }
   }
 );

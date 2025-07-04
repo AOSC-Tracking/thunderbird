@@ -74,20 +74,6 @@ export class NntpNewsGroup {
         this._db.highWaterArticleNum
       );
     }
-    if (this._knownKeySet.has(lastPossible)) {
-      const bundle = Services.strings.createBundle(
-        "chrome://messenger/locale/news.properties"
-      );
-      const messengerBundle = Services.strings.createBundle(
-        "chrome://messenger/locale/messenger.properties"
-      );
-      msgWindow?.statusFeedback.showStatusString(
-        messengerBundle.formatStringFromName("statusMessage", [
-          this._server.prettyName,
-          bundle.GetStringFromName("noNewMessages"),
-        ])
-      );
-    }
 
     if (this._getOldMessages || !this._knownKeySet.has(lastPossible)) {
       let [start, end] = this._knownKeySet.getLastMissingRange(
@@ -250,7 +236,7 @@ export class NntpNewsGroup {
    */
   processHeadLine(line) {
     const colonIndex = line.indexOf(":");
-    const name = line.slice(0, colonIndex);
+    const name = line.slice(0, colonIndex).toLowerCase();
     const value = line.slice(colonIndex + 1).trim();
     switch (name) {
       case "from":

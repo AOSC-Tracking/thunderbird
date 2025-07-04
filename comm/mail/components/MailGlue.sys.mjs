@@ -36,6 +36,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   cal: "resource:///modules/calendar/calUtils.sys.mjs",
   ChatCore: "resource:///modules/chatHandler.sys.mjs",
   ExtensionSupport: "resource:///modules/ExtensionSupport.sys.mjs",
+  checkInstalledExtensions: "resource:///modules/ExtensionUtilities.sys.mjs",
   InAppNotifications: "resource:///modules/InAppNotifications.sys.mjs",
   LightweightThemeConsumer:
     "resource://gre/modules/LightweightThemeConsumer.sys.mjs",
@@ -430,30 +431,6 @@ MailGlue.prototype = {
           "extensions.lastAppVersion",
           "0"
         );
-
-        // Replace the database service with the Panorama database.
-        // This should only happen if MOZ_PANORAMA is true in the build config
-        // (but we can't check that here). Otherwise, if the preference is set
-        // to true, you're gonna have a bad time.
-        if (Services.prefs.getBoolPref("mail.panorama.enabled", false)) {
-          const componentRegistrar = Components.manager.QueryInterface(
-            Ci.nsIComponentRegistrar
-          );
-
-          componentRegistrar.registerFactory(
-            Services.uuid.generateUUID(),
-            "",
-            "@mozilla.org/msgDatabase/msgDBService;1",
-            {
-              createInstance(iid) {
-                return Cc["@mozilla.org/mailnews/database-core;1"].getService(
-                  iid
-                );
-              },
-            }
-          );
-        }
-
         break;
       case "command-line-startup": {
         // Check if this process is the developer toolbox process, and if it
@@ -904,6 +881,20 @@ MailGlue.prototype = {
         },
       },
       {
+        name: "checkInstalledExtensions",
+        task: async () => {
+          lazy.AddonManager.addAddonListener({
+            onInstalled() {
+              lazy.checkInstalledExtensions();
+            },
+            onUninstalled() {
+              lazy.checkInstalledExtensions();
+            },
+          });
+          await lazy.checkInstalledExtensions();
+        },
+      },
+      {
         task() {
           // Use idleDispatch a second time to run this after the per-window
           // idle tasks.
@@ -971,8 +962,6 @@ MailGlue.prototype = {
    */
   _scheduleBestEffortUserIdleTasks() {
     const idleTasks = [
-      // Migration work that needs happen after we're up and running.
-      () => lazy.MailMigrator.migrateAfterStartupComplete(),
       // Certificates revocation list, etc.
       () => lazy.RemoteSecuritySettings.init(),
       // If we haven't already, ensure the address book manager is ready.
@@ -1318,27 +1307,26 @@ function reportPreferences() {
   const booleanPrefs = [
     // General
     "browser.cache.disk.smart_size.enabled",
-    "privacy.clearOnShutdown.cache",
     "general.autoScroll",
     "general.smoothScroll",
     "intl.regional_prefs.use_os_locales",
     "layers.acceleration.disabled",
     "mail.biff.play_sound",
     "mail.close_message_window.on_delete",
-    "mail.delete_matches_sort_order",
-    "mail.display_glyph",
-    "mail.mailnews.scroll_to_new_message",
-    "mail.prompt_purge_threshold",
-    "mail.purge.ask",
-    "mail.addressDisplayFormat",
-    "mail.showCondensedAddresses",
-    "mail.threadpane.table.horizontal_scroll",
     "mail.dark-reader.enabled",
     "mail.dark-reader.show-toggle",
+    "mail.delete_matches_sort_order",
+    "mail.display_glyph",
+    "mail.prompt_purge_threshold",
+    "mail.purge.ask",
+    "mail.showCondensedAddresses",
+    "mail.threadpane.table.horizontal_scroll",
     "mailnews.database.global.indexer.enabled",
     "mailnews.mark_message_read.auto",
     "mailnews.mark_message_read.delay",
+    "mailnews.scroll_to_new_message",
     "mailnews.start_page.enabled",
+    "privacy.clearOnShutdown.cache",
     "searchintegration.enable",
 
     // Fonts
@@ -1355,7 +1343,6 @@ function reportPreferences() {
     // Connection
     "network.proxy.share_proxy_settings",
     "network.proxy.socks_remote_dns",
-    "pref.advanced.proxies.disable_button.reload",
     "signon.autologin.proxy",
 
     // Offline
@@ -1377,7 +1364,6 @@ function reportPreferences() {
     "mail.spellcheck.inline",
     "mail.warn_on_send_accel_key",
     "msgcompose.default_colors",
-    "pref.ldap.disable_button.edit_directories",
 
     // Send options
     "mailnews.sendformat.auto_downgrade",
@@ -1392,13 +1378,8 @@ function reportPreferences() {
     "mailnews.message_display.disable_remote_image",
     "network.cookie.blockFutureCookies",
     "places.history.enabled",
-    "pref.privacy.disable_button.cookie_exceptions",
-    "pref.privacy.disable_button.view_cookies",
-    "pref.privacy.disable_button.view_passwords",
     "privacy.donottrackheader.enabled",
     "privacy.globalprivacycontrol.enabled",
-    "security.disable_button.openCertManager",
-    "security.disable_button.openDeviceManager",
 
     // Chat
     "messenger.options.getAttentionOnNewMessages",
@@ -1410,7 +1391,12 @@ function reportPreferences() {
     "purple.conversations.im.send_typing",
     "purple.logging.log_chats",
     "purple.logging.log_ims",
-    "purple.logging.log_system",
+
+    // Notifications
+    "mail.biff.alert.show_preview",
+    "mail.biff.alert.show_sender",
+    "mail.biff.alert.show_subject",
+    "mail.biff.show_alert",
 
     // Unlisted
     "mail.operate_on_msgs_in_collapsed_threads",
@@ -1441,6 +1427,8 @@ function reportPreferences() {
 
   const integerPrefs = [
     // Mail UI
+    "mail.addressDisplayFormat",
+    "mail.biff.alert.preview_length",
     "mail.pane_config.dynamic",
     "mail.ui.display.dateformat.default",
     "mail.ui.display.dateformat.thisweek",
@@ -1453,15 +1441,7 @@ function reportPreferences() {
   }
 
   if (AppConstants.platform !== "macosx") {
-    booleanPrefs.push(
-      "mail.biff.show_alert",
-      "mail.biff.use_system_alert",
-
-      // Notifications
-      "mail.biff.alert.show_preview",
-      "mail.biff.alert.show_sender",
-      "mail.biff.alert.show_subject"
-    );
+    booleanPrefs.push("mail.biff.use_system_alert");
   }
 
   // Compile-time flag-dependent preferences
@@ -1537,6 +1517,12 @@ function reportUIConfiguration() {
       Glean.mail.uiConfigurationMessageHeader[key].set(value);
     }
   }
+
+  const actions = Services.prefs.getStringPref(
+    "mail.biff.alert.enabled_actions",
+    ""
+  );
+  Glean.mail.notificationEnabledActions.set(actions ? actions.split(",") : []);
 }
 
 /**

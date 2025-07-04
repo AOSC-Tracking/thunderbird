@@ -182,6 +182,29 @@ class CanvasTranslator final : public gfx::InlineTranslator,
   void PauseTranslation();
 
   /**
+   * Wait for a given sync-id to be encountered before resume translation.
+   */
+  void AwaitTranslationSync(uint64_t aSyncId);
+
+  /**
+   * Signal that translation should resume if waiting on the given sync-id.
+   */
+  void SyncTranslation(uint64_t aSyncId);
+
+  /**
+   * Snapshot an external canvas and label it for later lookup under a sync-id.
+   */
+  mozilla::ipc::IPCResult RecvSnapshotExternalCanvas(uint64_t aSyncId,
+                                                     uint32_t aManagerId,
+                                                     ActorId aCanvasId);
+
+  /**
+   * Resolves the given sync-id from the recording stream to a snapshot from
+   * an external canvas that was received from an IPDL message.
+   */
+  already_AddRefed<gfx::SourceSurface> LookupExternalSnapshot(uint64_t aSyncId);
+
+  /**
    * Removes the texture and other objects associated with a texture ID.
    *
    * @param aTextureOwnerId the texture ID to remove
@@ -302,6 +325,19 @@ class CanvasTranslator final : public gfx::InlineTranslator,
   already_AddRefed<gfx::DataSourceSurface> WaitForSurface(uintptr_t aId);
 
   static void Shutdown();
+
+  void AddExportSurface(gfx::ReferencePtr aRefPtr,
+                        gfx::SourceSurface* aSurface) {
+    mExportSurfaces.InsertOrUpdate(aRefPtr, RefPtr{aSurface});
+  }
+
+  void RemoveExportSurface(gfx::ReferencePtr aRefPtr) {
+    mExportSurfaces.Remove(aRefPtr);
+  }
+
+  gfx::SourceSurface* LookupExportSurface(gfx::ReferencePtr aRefPtr) {
+    return mExportSurfaces.GetWeak(aRefPtr);
+  }
 
  private:
   ~CanvasTranslator();
@@ -482,6 +518,18 @@ class CanvasTranslator final : public gfx::InlineTranslator,
   // so long as the checkpoint has not yet been reached.
   int64_t mFlushCheckpoint = 0;
 
+  // The sync-id that the translator is awaiting and must be encountered before
+  // it is ready to resume translation.
+  uint64_t mAwaitSyncId = 0;
+  // The last sync-id that was actually encountered.
+  uint64_t mLastSyncId = 0;
+  // A table of external canvas snapshots associated with a given sync-id.
+  nsRefPtrHashtable<nsUint64HashKey, gfx::SourceSurface> mExternalSnapshots;
+
+  // Signal that translation should pause because it is still awaiting a sync-id
+  // that has not been encountered yet.
+  bool PauseUntilSync() const { return mAwaitSyncId > mLastSyncId; }
+
   struct CanvasShmem {
     ipc::ReadOnlySharedMemoryMapping shmem;
     bool IsValid() const { return shmem.IsValid(); }
@@ -540,6 +588,8 @@ class CanvasTranslator final : public gfx::InlineTranslator,
   Mutex mCanvasTranslatorEventsLock;
   RefPtr<nsIRunnable> mCanvasTranslatorEventsRunnable;
   std::deque<UniquePtr<CanvasTranslatorEvent>> mPendingCanvasTranslatorEvents;
+
+  nsRefPtrHashtable<nsPtrHashKey<void>, gfx::SourceSurface> mExportSurfaces;
 };
 
 }  // namespace layers

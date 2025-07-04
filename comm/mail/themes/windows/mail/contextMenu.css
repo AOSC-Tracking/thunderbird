@@ -24,8 +24,8 @@ menupopup {
     padding-inline-end: 5px;
   }
 
-  &:is([needsgutter], .webextension-menupopup) > menu:not([icon], .menu-iconic),
-  &:is([needsgutter], .webextension-menupopup) > menuitem:not([checked="true"], [icon], .menuitem-iconic),
+  &.webextension-menupopup > menu:not([icon], .menu-iconic),
+  &.webextension-menupopup > menuitem:not([checked="true"], [icon], .menuitem-iconic),
   menubar > menu
     &:not([needsgutter]) > :is(menu:not(.menu-iconic),menuitem:not(.menuitem-iconic)) {
     padding-inline-start: 32px;
@@ -38,12 +38,9 @@ menupopup {
       padding-inline-start: 8px;
     }
 
-    & > menuitem:is([type="checkbox"],[type="radio"]):not([checked="true"]) > .menu-iconic-left {
+    & > menuitem:is([type="checkbox"],[type="radio"]):not([checked="true"]) > .menu-icon {
       padding-inline-end: 8px;
-
-      & > .menu-iconic-icon {
-        display: flex;
-      }
+      display: flex;
     }
   }
 

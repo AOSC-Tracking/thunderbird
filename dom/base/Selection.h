@@ -136,6 +136,7 @@ class Selection final : public nsSupportsWeakReference,
                         public SupportsWeakPtr {
   using AllowRangeCrossShadowBoundary =
       mozilla::dom::AllowRangeCrossShadowBoundary;
+  using IsUnlinking = AbstractRange::IsUnlinking;
 
  protected:
   virtual ~Selection();
@@ -273,7 +274,8 @@ class Selection final : public nsSupportsWeakReference,
 
  public:
   nsresult RemoveCollapsedRanges();
-  void Clear(nsPresContext* aPresContext);
+  void Clear(nsPresContext* aPresContext,
+             IsUnlinking aIsUnlinking = IsUnlinking::No);
   MOZ_CAN_RUN_SCRIPT nsresult CollapseInLimiter(nsINode* aContainer,
                                                 uint32_t aOffset) {
     if (!aContainer) {
@@ -932,11 +934,8 @@ class Selection final : public nsSupportsWeakReference,
       PostContentIterator& aPostOrderIter, nsIContent* aContent,
       bool aSelected) const;
 
-  /**
-   * https://dom.spec.whatwg.org/#concept-shadow-including-descendant
-   */
-  void SelectFramesOfShadowIncludingDescendantsOfContent(nsIContent* aContent,
-                                                         bool aSelected) const;
+  void SelectFramesOfFlattenedTreeOfContent(nsIContent* aContent,
+                                            bool aSelected) const;
 
   nsresult SelectFrames(nsPresContext* aPresContext, AbstractRange& aRange,
                         bool aSelect) const;
@@ -957,7 +956,8 @@ class Selection final : public nsSupportsWeakReference,
 
   Document* GetDocument() const;
 
-  MOZ_CAN_RUN_SCRIPT void RemoveAllRangesInternal(mozilla::ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT void RemoveAllRangesInternal(
+      mozilla::ErrorResult& aRv, IsUnlinking aIsUnlinking = IsUnlinking::No);
 
   void Disconnect();
 
@@ -1070,7 +1070,7 @@ class Selection final : public nsSupportsWeakReference,
     static nsresult SubtractRange(StyledRange& aRange, nsRange& aSubtract,
                                   nsTArray<StyledRange>* aOutput);
 
-    void UnregisterSelection();
+    void UnregisterSelection(IsUnlinking aIsUnlinking = IsUnlinking::No);
 
     // `mRanges` always needs to be sorted by the Range's start point.
     // Especially when dealing with `StaticRange`s this is not guaranteed

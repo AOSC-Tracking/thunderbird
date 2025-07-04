@@ -67,6 +67,8 @@ ChromeUtils.defineESModuleGetters(this, {
   PopupBlockerObserver: "resource:///modules/PopupBlockerObserver.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   ProcessHangMonitor: "resource:///modules/ProcessHangMonitor.sys.mjs",
+  ProfilesDatastoreService:
+    "moz-src:///toolkit/profile/ProfilesDatastoreService.sys.mjs",
   PromptUtils: "resource://gre/modules/PromptUtils.sys.mjs",
   ReaderMode: "moz-src:///toolkit/components/reader/ReaderMode.sys.mjs",
   ResetPBMPanel: "resource:///modules/ResetPBMPanel.sys.mjs",
@@ -75,11 +77,11 @@ ChromeUtils.defineESModuleGetters(this, {
   SaveToPocket: "chrome://pocket/content/SaveToPocket.sys.mjs",
   ScreenshotsUtils: "resource:///modules/ScreenshotsUtils.sys.mjs",
   SearchUIUtils: "moz-src:///browser/components/search/SearchUIUtils.sys.mjs",
+  SelectableProfileService:
+    "resource:///modules/profiles/SelectableProfileService.sys.mjs",
   SessionStartup: "resource:///modules/sessionstore/SessionStartup.sys.mjs",
   SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
   SharingUtils: "resource:///modules/SharingUtils.sys.mjs",
-  ShoppingSidebarParent: "resource:///actors/ShoppingSidebarParent.sys.mjs",
-  ShoppingSidebarManager: "resource:///actors/ShoppingSidebarParent.sys.mjs",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.sys.mjs",
   SiteDataManager: "resource:///modules/SiteDataManager.sys.mjs",
   SitePermissions: "resource:///modules/SitePermissions.sys.mjs",
@@ -88,10 +90,11 @@ ChromeUtils.defineESModuleGetters(this, {
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.sys.mjs",
   TabsSetupFlowManager:
     "resource:///modules/firefox-view-tabs-setup-manager.sys.mjs",
-  TaskbarTabUI: "resource:///modules/TaskbarTabUI.sys.mjs",
+  TaskbarTabUI: "resource:///modules/taskbartabs/TaskbarTabUI.sys.mjs",
   TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.sys.mjs",
   ToolbarContextMenu: "resource:///modules/ToolbarContextMenu.sys.mjs",
   ToolbarDropHandler: "resource:///modules/ToolbarDropHandler.sys.mjs",
+  ToolbarIconColor: "moz-src:///browser/themes/ToolbarIconColor.sys.mjs",
   TranslationsParent: "resource://gre/actors/TranslationsParent.sys.mjs",
   UITour: "moz-src:///browser/components/uitour/UITour.sys.mjs",
   UpdateUtils: "resource://gre/modules/UpdateUtils.sys.mjs",
@@ -108,17 +111,6 @@ ChromeUtils.defineESModuleGetters(this, {
   webrtcUI: "resource:///modules/webrtcUI.sys.mjs",
   WebsiteFilter: "resource:///modules/policies/WebsiteFilter.sys.mjs",
   ZoomUI: "resource:///modules/ZoomUI.sys.mjs",
-});
-
-// Bug 1894239: We will move this up to ChromeUtils.defineESModuleGetters once
-// the MOZ_SELECTABLE_PROFILES flag is removed
-ChromeUtils.defineLazyGetter(this, "SelectableProfileService", () => {
-  if (!AppConstants.MOZ_SELECTABLE_PROFILES) {
-    return null;
-  }
-  return ChromeUtils.importESModule(
-    "resource:///modules/profiles/SelectableProfileService.sys.mjs"
-  ).SelectableProfileService;
 });
 
 ChromeUtils.defineLazyGetter(this, "fxAccounts", () => {
@@ -341,6 +333,10 @@ if (AppConstants.ENABLE_WEBDRIVER) {
 ChromeUtils.defineLazyGetter(this, "RTL_UI", () => {
   return Services.locale.isAppLocaleRTL;
 });
+function gLocaleChangeObserver() {
+  delete window.RTL_UI;
+  window.RTL_UI = Services.locale.isAppLocaleRTL;
+}
 
 ChromeUtils.defineLazyGetter(this, "gBrandBundle", () => {
   return Services.strings.createBundle(
@@ -463,6 +459,9 @@ ChromeUtils.defineLazyGetter(this, "PopupNotifications", () => {
       // If the anchor element is present in the Urlbar,
       // ensure that both the anchor and page URL are visible.
       gURLBar.maybeHandleRevertFromPopup(anchorElement);
+      anchorElement?.dispatchEvent(
+        new CustomEvent("PopupNotificationsBeforeAnchor", { bubbles: true })
+      );
       if (anchorElement?.checkVisibility()) {
         return anchorElement;
       }
@@ -586,39 +585,11 @@ XPCOMUtils.defineLazyPreferenceGetter(
 
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "gScreenshotsDisabled",
-  "extensions.screenshots.disabled",
-  false,
-  () => {
-    Services.obs.notifyObservers(
-      window,
-      "toggle-screenshot-disable",
-      gScreenshots.shouldScreenshotsButtonBeDisabled()
-    );
-  }
-);
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
   "gPrintEnabled",
   "print.enabled",
   false,
   (aPref, aOldVal, aNewVal) => {
     updatePrintCommands(aNewVal);
-  }
-);
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
-  "gScreenshotsComponentEnabled",
-  "screenshots.browser.component.enabled",
-  false,
-  () => {
-    Services.obs.notifyObservers(
-      window,
-      "toggle-screenshot-disable",
-      gScreenshots.shouldScreenshotsButtonBeDisabled()
-    );
   }
 );
 
@@ -777,21 +748,6 @@ var gNavigatorBundle = {
   },
   getFormattedString(key, array) {
     return gBrowserBundle.formatStringFromName(key, array);
-  },
-};
-
-var gScreenshots = {
-  shouldScreenshotsButtonBeDisabled() {
-    // About pages other than about:reader are not currently supported by
-    // the screenshots extension (see Bug 1620992).
-    let uri = gBrowser.selectedBrowser.currentURI;
-    let shouldBeDisabled =
-      gScreenshotsDisabled ||
-      (!gScreenshotsComponentEnabled &&
-        uri.scheme === "about" &&
-        !uri.spec.startsWith("about:reader"));
-
-    return shouldBeDisabled;
   },
 };
 
@@ -1248,11 +1204,15 @@ var gKeywordURIFixup = {
       },
     };
 
-    Services.uriFixup.checkHost(
-      fixedURI,
-      onLookupCompleteListener,
-      contentPrincipal.originAttributes
-    );
+    try {
+      Services.uriFixup.checkHost(
+        fixedURI,
+        onLookupCompleteListener,
+        contentPrincipal.originAttributes
+      );
+    } catch (ex) {
+      // Ignore errors.
+    }
   },
 
   observe(fixupInfo) {
@@ -1423,10 +1383,6 @@ var gLastOpenDirectory = {
   },
 };
 
-function getLoadContext() {
-  return window.docShell.QueryInterface(Ci.nsILoadContext);
-}
-
 function readFromClipboard() {
   var url;
 
@@ -1435,7 +1391,7 @@ function readFromClipboard() {
     var trans = Cc["@mozilla.org/widget/transferable;1"].createInstance(
       Ci.nsITransferable
     );
-    trans.init(getLoadContext());
+    trans.init(window.docShell.QueryInterface(Ci.nsILoadContext));
 
     trans.addDataFlavor("text/plain");
 
@@ -2274,14 +2230,6 @@ var XULBrowserWindow = {
       closeOpenPanels("panel[locationspecific='true']");
     }
 
-    let screenshotsButtonsDisabled =
-      gScreenshots.shouldScreenshotsButtonBeDisabled();
-    Services.obs.notifyObservers(
-      window,
-      "toggle-screenshot-disable",
-      screenshotsButtonsDisabled
-    );
-
     gPermissionPanel.onLocationChange();
 
     gProtectionsHandler.onLocationChange();
@@ -2966,10 +2914,6 @@ var TabsProgressListener = {
     if (!aWebProgress.isTopLevel) {
       return;
     }
-
-    // Some shops use pushState to move between individual products, so
-    // the shopping code needs to be told about all of these.
-    ShoppingSidebarManager.onLocationChange(aBrowser, aLocationURI, aFlags);
 
     // Filter out location changes caused by anchor navigation
     // or history.push/pop/replaceState.
@@ -4912,44 +4856,32 @@ var RestoreLastSessionObserver = {
       !PrivateBrowsingUtils.isWindowPrivate(window)
     ) {
       Services.obs.addObserver(this, "sessionstore-last-session-cleared", true);
+      Services.obs.addObserver(
+        this,
+        "sessionstore-last-session-re-enable",
+        true
+      );
       goSetCommandEnabled("Browser:RestoreLastSession", true);
     } else if (SessionStore.willAutoRestore) {
       document.getElementById("Browser:RestoreLastSession").hidden = true;
     }
   },
 
-  observe() {
-    // The last session can only be restored once so there's
-    // no way we need to re-enable our menu item.
-    Services.obs.removeObserver(this, "sessionstore-last-session-cleared");
-    goSetCommandEnabled("Browser:RestoreLastSession", false);
+  observe(aSubject, aTopic) {
+    switch (aTopic) {
+      case "sessionstore-last-session-cleared":
+        goSetCommandEnabled("Browser:RestoreLastSession", false);
+        break;
+      case "sessionstore-last-session-re-enable":
+        goSetCommandEnabled("Browser:RestoreLastSession", true);
+        break;
+    }
   },
 
   QueryInterface: ChromeUtils.generateQI([
     "nsIObserver",
     "nsISupportsWeakReference",
   ]),
-};
-
-/* Observes menus and adjusts their size for better
- * usability when opened via a touch screen. */
-var MenuTouchModeObserver = {
-  init() {
-    window.addEventListener("popupshowing", this, true);
-  },
-
-  handleEvent(event) {
-    let target = event.originalTarget;
-    if (event.inputSource == MouseEvent.MOZ_SOURCE_TOUCH) {
-      target.setAttribute("touchmode", "true");
-    } else {
-      target.removeAttribute("touchmode");
-    }
-  },
-
-  uninit() {
-    window.removeEventListener("popupshowing", this, true);
-  },
 };
 
 // Prompt user to restart the browser in safe mode
@@ -5110,120 +5042,6 @@ var MousePosTracker = {
   },
 };
 
-var ToolbarIconColor = {
-  _windowState: {
-    active: false,
-    fullscreen: false,
-    customtitlebar: false,
-  },
-  init() {
-    this._initialized = true;
-
-    window.addEventListener("nativethemechange", this);
-    window.addEventListener("activate", this);
-    window.addEventListener("deactivate", this);
-    window.addEventListener("toolbarvisibilitychange", this);
-    window.addEventListener("windowlwthemeupdate", this);
-
-    // If the window isn't active now, we assume that it has never been active
-    // before and will soon become active such that inferFromText will be
-    // called from the initial activate event.
-    if (Services.focus.activeWindow == window) {
-      this.inferFromText("activate");
-    }
-  },
-
-  uninit() {
-    this._initialized = false;
-
-    window.removeEventListener("nativethemechange", this);
-    window.removeEventListener("activate", this);
-    window.removeEventListener("deactivate", this);
-    window.removeEventListener("toolbarvisibilitychange", this);
-    window.removeEventListener("windowlwthemeupdate", this);
-  },
-
-  handleEvent(event) {
-    switch (event.type) {
-      case "activate":
-      case "deactivate":
-      case "nativethemechange":
-      case "windowlwthemeupdate":
-        this.inferFromText(event.type);
-        break;
-      case "toolbarvisibilitychange":
-        this.inferFromText(event.type, event.visible);
-        break;
-    }
-  },
-
-  // a cache of luminance values for each toolbar
-  // to avoid unnecessary calls to getComputedStyle
-  _toolbarLuminanceCache: new Map(),
-
-  inferFromText(reason, reasonValue) {
-    if (!this._initialized) {
-      return;
-    }
-    switch (reason) {
-      case "activate": // falls through
-      case "deactivate":
-        this._windowState.active = reason === "activate";
-        break;
-      case "fullscreen":
-        this._windowState.fullscreen = reasonValue;
-        break;
-      case "nativethemechange":
-      case "windowlwthemeupdate":
-        // theme change, we'll need to recalculate all color values
-        this._toolbarLuminanceCache.clear();
-        break;
-      case "toolbarvisibilitychange":
-        // toolbar changes dont require reset of the cached color values
-        break;
-      case "customtitlebar":
-        this._windowState.customtitlebar = reasonValue;
-        break;
-    }
-
-    let toolbarSelector = ".browser-toolbar:not([collapsed=true])";
-    if (AppConstants.platform == "macosx") {
-      toolbarSelector += ":not([type=menubar])";
-    }
-
-    // The getComputedStyle calls and setting the brighttext are separated in
-    // two loops to avoid flushing layout and making it dirty repeatedly.
-    let cachedLuminances = this._toolbarLuminanceCache;
-    let luminances = new Map();
-    for (let toolbar of document.querySelectorAll(toolbarSelector)) {
-      // toolbars *should* all have ids, but guard anyway to avoid blowing up
-      let cacheKey =
-        toolbar.id && toolbar.id + JSON.stringify(this._windowState);
-      // lookup cached luminance value for this toolbar in this window state
-      let luminance = cacheKey && cachedLuminances.get(cacheKey);
-      if (isNaN(luminance)) {
-        let { r, g, b } = InspectorUtils.colorToRGBA(
-          getComputedStyle(toolbar).color
-        );
-        luminance = 0.2125 * r + 0.7154 * g + 0.0721 * b;
-        if (cacheKey) {
-          cachedLuminances.set(cacheKey, luminance);
-        }
-      }
-      luminances.set(toolbar, luminance);
-    }
-
-    const luminanceThreshold = 127; // In between 0 and 255
-    for (let [toolbar, luminance] of luminances) {
-      if (luminance <= luminanceThreshold) {
-        toolbar.removeAttribute("brighttext");
-      } else {
-        toolbar.setAttribute("brighttext", "true");
-      }
-    }
-  },
-};
-
 var PanicButtonNotifier = {
   init() {
     this._initialized = true;
@@ -5299,7 +5117,9 @@ var PanicButtonNotifier = {
  */
 class TabDialogBox {
   static _containerFor(browser) {
-    return browser.closest(".browserStack, .webextension-popup-stack");
+    return browser.closest(
+      ".browserStack, .webextension-popup-stack, .sidebar-browser-stack"
+    );
   }
 
   constructor(browser) {
@@ -5348,6 +5168,8 @@ class TabDialogBox {
    * users credentials for a toplevel load of a resource from a base domain different from the base domain of the currently loaded page.
    * To avoid auth prompt spoofing (see bug 791594) we hide the current sites content
    * (among other protection mechanisms, that are not handled here, see the bug for reference).
+   * @param {nsIWebProgress} [aOptions.webProgress] - If passed, use to detect when a site is being
+   * navigated to in order to close the dialog. By default, this.browser.webProgress is used.
    * @returns {Object} [result] Returns an object { closedPromise, dialog }.
    * @returns {Promise} [result.closedPromise] Resolves once the dialog has been closed.
    * @returns {SubDialog} [result.dialog] A reference to the opened SubDialog.
@@ -5362,6 +5184,7 @@ class TabDialogBox {
       modalType = null,
       allowFocusCheckbox = false,
       hideContent = false,
+      webProgress = undefined,
     } = {},
     ...aParams
   ) {
@@ -5378,12 +5201,12 @@ class TabDialogBox {
       this._contentDialogManager?.hasDialogs;
 
     if (!hasDialogs()) {
-      this._onFirstDialogOpen();
+      this._onFirstDialogOpen(webProgress ?? this.browser.webProgress);
     }
 
     let closingCallback = event => {
       if (!hasDialogs()) {
-        this._onLastDialogClose();
+        this._onLastDialogClose(webProgress ?? this.browser.webProgress);
       }
 
       if (allowFocusCheckbox && !event.detail?.abort) {
@@ -5418,25 +5241,25 @@ class TabDialogBox {
     return { closedPromise, dialog };
   }
 
-  _onFirstDialogOpen() {
+  _onFirstDialogOpen(webProgress) {
     // Hide PopupNotifications to prevent them from covering up dialogs.
     this.browser.setAttribute("tabDialogShowing", true);
     UpdatePopupNotificationsVisibility();
 
     // Register listeners
     this._lastPrincipal = this.browser.contentPrincipal;
-    this.browser.addProgressListener(this, Ci.nsIWebProgress.NOTIFY_LOCATION);
+    webProgress.addProgressListener(this, Ci.nsIWebProgress.NOTIFY_LOCATION);
 
     this.tab?.addEventListener("TabClose", this);
   }
 
-  _onLastDialogClose() {
+  _onLastDialogClose(webProgress) {
     // Show PopupNotifications again.
     this.browser.removeAttribute("tabDialogShowing");
     UpdatePopupNotificationsVisibility();
 
     // Clean up listeners
-    this.browser.removeProgressListener(this);
+    webProgress.removeProgressListener(this);
     this._lastPrincipal = null;
 
     this.tab?.removeEventListener("TabClose", this);

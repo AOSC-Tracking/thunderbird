@@ -5,13 +5,17 @@
 package org.mozilla.geckoview.test
 
 import android.content.Context
-import android.graphics.* // ktlint-disable no-wildcard-imports
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
 import android.view.inputmethod.InputMethodManager
+import androidx.core.graphics.createBitmap
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.MediumTest
-import org.hamcrest.Matchers.* // ktlint-disable no-wildcard-imports
+import org.hamcrest.Matchers.equalTo
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -119,7 +123,7 @@ class InteractiveWidgetTest : BaseSessionTest() {
             val rect = Rect()
             mainSession.getSurfaceBounds(rect)
 
-            val bitmap = Bitmap.createBitmap(rect.width(), height.toInt(), Bitmap.Config.ARGB_8888)
+            val bitmap = createBitmap(rect.width(), height.toInt(), Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
             val paint = Paint()
             paint.color = Color.rgb(255, 255, 255)
@@ -193,7 +197,7 @@ class InteractiveWidgetTest : BaseSessionTest() {
             val rect = Rect()
             mainSession.getSurfaceBounds(rect)
 
-            val bitmap = Bitmap.createBitmap(rect.width(), height.toInt(), Bitmap.Config.ARGB_8888)
+            val bitmap = createBitmap(rect.width(), height.toInt(), Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
             val paint = Paint()
             paint.color = Color.rgb(0, 128, 0)

@@ -6,16 +6,20 @@
 
 #include "mozilla/dom/Navigation.h"
 
+#include "mozilla/dom/DOMException.h"
+#include "mozilla/dom/ErrorEvent.h"
 #include "mozilla/dom/RootedDictionary.h"
 #include "nsContentUtils.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsDocShell.h"
 #include "nsGlobalWindowInner.h"
+#include "nsIPrincipal.h"
 #include "nsIStructuredCloneContainer.h"
 #include "nsIXULRuntime.h"
 #include "nsNetUtil.h"
 #include "nsTHashtable.h"
 
+#include "jsapi.h"
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/CycleCollectedUniquePtr.h"
 #include "mozilla/HoldDropJSObjects.h"
@@ -42,13 +46,28 @@ struct NavigationAPIMethodTracker final : public nsISupports {
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(NavigationAPIMethodTracker)
 
-  NavigationAPIMethodTracker() { mozilla::HoldJSObjects(this); }
+  NavigationAPIMethodTracker(Navigation* aNavigationObject,
+                             const Maybe<nsID> aKey, const JS::Value& aInfo,
+                             nsIStructuredCloneContainer* aSerializedState,
+                             NavigationHistoryEntry* aCommittedToEntry,
+                             Promise* aCommittedPromise,
+                             Promise* aFinishedPromise)
+      : mNavigationObject(aNavigationObject),
+        mKey(aKey),
+        mInfo(aInfo),
+        mSerializedState(aSerializedState),
+        mCommittedToEntry(aCommittedToEntry),
+        mCommittedPromise(aCommittedPromise),
+        mFinishedPromise(aFinishedPromise) {
+    mozilla::HoldJSObjects(this);
+  }
 
   RefPtr<Navigation> mNavigationObject;
   Maybe<nsID> mKey;
   JS::Heap<JS::Value> mInfo;
-  RefPtr<nsStructuredCloneContainer> mSerializedState;
+  RefPtr<nsIStructuredCloneContainer> mSerializedState;
   RefPtr<NavigationHistoryEntry> mCommittedToEntry;
+  RefPtr<Promise> mCommittedPromise;
   RefPtr<Promise> mFinishedPromise;
 
  private:
@@ -57,7 +76,8 @@ struct NavigationAPIMethodTracker final : public nsISupports {
 
 NS_IMPL_CYCLE_COLLECTION_WITH_JS_MEMBERS(NavigationAPIMethodTracker,
                                          (mNavigationObject, mSerializedState,
-                                          mCommittedToEntry, mFinishedPromise),
+                                          mCommittedToEntry, mCommittedPromise,
+                                          mFinishedPromise),
                                          (mInfo))
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(NavigationAPIMethodTracker)
@@ -154,7 +174,7 @@ NavigationActivation* Navigation::GetActivation() const { return mActivation; }
 
 // https://html.spec.whatwg.org/#has-entries-and-events-disabled
 bool Navigation::HasEntriesAndEventsDisabled() const {
-  Document* doc = GetDocumentIfCurrent();
+  Document* doc = GetAssociatedDocument();
   return !doc || !doc->IsCurrentActiveDocument() ||
          (NS_IsAboutBlankAllowQueryAndFragment(doc->GetDocumentURI()) &&
           doc->IsInitialDocument()) ||
@@ -282,6 +302,159 @@ void Navigation::ScheduleEventsFromNavigation(
       }));
 }
 
+// https://html.spec.whatwg.org/#navigation-api-early-error-result
+void Navigation::SetEarlyErrorResult(NavigationResult& aResult,
+                                     ErrorResult&& aRv) const {
+  MOZ_ASSERT(aRv.Failed());
+  // An early error result for an exception e is a NavigationResult dictionary
+  // instance given by
+  // «[ "committed" → a promise rejected with e,
+  //    "finished" → a promise rejected with e ]».
+
+  RefPtr global = GetOwnerGlobal();
+  if (!global) {
+    // Creating a promise should only fail if there is no global.
+    // In this case, the only solution is to ignore the error.
+    aRv.SuppressException();
+    return;
+  }
+  ErrorResult rv2;
+  aRv.CloneTo(rv2);
+  aResult.mCommitted.Reset();
+  aResult.mCommitted.Construct(
+      Promise::CreateRejectedWithErrorResult(global, aRv));
+  aResult.mFinished.Reset();
+  aResult.mFinished.Construct(
+      Promise::CreateRejectedWithErrorResult(global, rv2));
+}
+
+// https://html.spec.whatwg.org/#navigation-api-method-tracker-derived-result
+static void CreateResultFromAPIMethodTracker(
+    NavigationAPIMethodTracker* aApiMethodTracker, NavigationResult& aResult) {
+  // A navigation API method tracker-derived result for a navigation API
+  // method tracker is a NavigationResult dictionary instance given by
+  // «[ "committed" → apiMethodTracker's committed promise,
+  //    "finished" → apiMethodTracker's finished promise ]».
+  MOZ_ASSERT(aApiMethodTracker);
+  aResult.mCommitted.Reset();
+  aResult.mCommitted.Construct(aApiMethodTracker->mCommittedPromise.forget());
+  aResult.mFinished.Reset();
+  aResult.mFinished.Construct(aApiMethodTracker->mFinishedPromise.forget());
+}
+
+bool Navigation::CheckIfDocumentIsFullyActiveAndMaybeSetEarlyErrorResult(
+    const Document* aDocument, NavigationResult& aResult) const {
+  if (!aDocument || !aDocument->IsFullyActive()) {
+    ErrorResult rv;
+    rv.ThrowInvalidStateError("Document is not fully active");
+    SetEarlyErrorResult(aResult, std::move(rv));
+    return false;
+  }
+  return true;
+}
+
+bool Navigation::CheckDocumentUnloadCounterAndMaybeSetEarlyErrorResult(
+    const Document* aDocument, NavigationResult& aResult) const {
+  if (!aDocument || aDocument->ShouldIgnoreOpens()) {
+    ErrorResult rv;
+    rv.ThrowInvalidStateError("Document is unloading");
+    SetEarlyErrorResult(aResult, std::move(rv));
+    return false;
+  }
+  return true;
+}
+
+already_AddRefed<nsIStructuredCloneContainer>
+Navigation::CreateSerializedStateAndMaybeSetEarlyErrorResult(
+    JSContext* aCx, const JS::Value& aState, NavigationResult& aResult) const {
+  JS::Rooted<JS::Value> state(aCx, aState);
+  RefPtr global = GetOwnerGlobal();
+  MOZ_DIAGNOSTIC_ASSERT(global);
+
+  RefPtr<nsIStructuredCloneContainer> serializedState =
+      new nsStructuredCloneContainer();
+  const nsresult rv = serializedState->InitFromJSVal(state, aCx);
+  if (NS_FAILED(rv)) {
+    JS::Rooted<JS::Value> exception(aCx);
+    if (JS_GetPendingException(aCx, &exception)) {
+      JS_ClearPendingException(aCx);
+      aResult.mCommitted.Reset();
+      aResult.mCommitted.Construct(
+          Promise::Reject(global, exception, IgnoreErrors()));
+      aResult.mFinished.Reset();
+      aResult.mFinished.Construct(
+          Promise::Reject(global, exception, IgnoreErrors()));
+      return nullptr;
+    }
+    SetEarlyErrorResult(aResult, ErrorResult(rv));
+    return nullptr;
+  }
+  return serializedState.forget();
+}
+
+// https://html.spec.whatwg.org/#dom-navigation-reload
+void Navigation::Reload(JSContext* aCx, const NavigationReloadOptions& aOptions,
+                        NavigationResult& aResult) {
+  // 1. Let document be this's relevant global object's associated Document.
+  const RefPtr<Document> document = GetAssociatedDocument();
+  if (!document) {
+    return;
+  }
+
+  // 2. Let serializedState be StructuredSerializeForStorage(undefined).
+  RefPtr<nsIStructuredCloneContainer> serializedState;
+
+  // 3. If options["state"] exists, then set serializedState to
+  //    StructuredSerializeForStorage(options["state"]). If this throws an
+  //    exception, then return an early error result for that exception.
+  if (!aOptions.mState.isUndefined()) {
+    serializedState = CreateSerializedStateAndMaybeSetEarlyErrorResult(
+        aCx, aOptions.mState, aResult);
+    if (!serializedState) {
+      return;
+    }
+  } else {
+    // 4. Otherwise:
+    // 4.1 Let current be the current entry of this.
+    // 4.2 If current is not null, then set serializedState to current's
+    //     session history entry's navigation API state.
+    if (RefPtr<NavigationHistoryEntry> current = GetCurrentEntry()) {
+      serializedState = current->GetNavigationState();
+    }
+  }
+  // 5. If document is not fully active, then return an early error result for
+  //    an "InvalidStateError" DOMException.
+  if (!CheckIfDocumentIsFullyActiveAndMaybeSetEarlyErrorResult(document,
+                                                               aResult)) {
+    return;
+  }
+
+  // 6. If document's unload counter is greater than 0, then return an early
+  //    error result for an "InvalidStateError" DOMException.
+  if (!CheckDocumentUnloadCounterAndMaybeSetEarlyErrorResult(document,
+                                                             aResult)) {
+    return;
+  }
+
+  // 7. Let info be options["info"], if it exists; otherwise, undefined.
+  JS::Rooted<JS::Value> info(aCx, aOptions.mInfo);
+  // 8. Let apiMethodTracker be the result of maybe setting the upcoming
+  //    non-traverse API method tracker for this given info and serializedState.
+  RefPtr<NavigationAPIMethodTracker> apiMethodTracker =
+      MaybeSetUpcomingNonTraverseAPIMethodTracker(info, serializedState);
+  MOZ_ASSERT(apiMethodTracker);
+  // 9. Reload document's node navigable with navigationAPIState set to
+  //    serializedState.
+  RefPtr docShell = nsDocShell::Cast(document->GetDocShell());
+  MOZ_ASSERT(docShell);
+  docShell->ReloadNavigable(aCx, nsIWebNavigation::LOAD_FLAGS_NONE,
+                            serializedState);
+
+  // 10. Return a navigation API method tracker-derived result for
+  //     apiMethodTracker.
+  CreateResultFromAPIMethodTracker(apiMethodTracker, aResult);
+}
+
 namespace {
 
 void LogEntry(NavigationHistoryEntry* aEntry, uint64_t aIndex, uint64_t aTotal,
@@ -310,7 +483,7 @@ void LogEntry(NavigationHistoryEntry* aEntry, uint64_t aIndex, uint64_t aTotal,
 
 // https://html.spec.whatwg.org/#fire-a-traverse-navigate-event
 bool Navigation::FireTraverseNavigateEvent(
-    SessionHistoryInfo* aDestinationSessionHistoryInfo,
+    JSContext* aCx, SessionHistoryInfo* aDestinationSessionHistoryInfo,
     Maybe<UserNavigationInvolvement> aUserInvolvement) {
   // aDestinationSessionHistoryInfo corresponds to
   // https://html.spec.whatwg.org/#fire-navigate-traverse-destinationshe
@@ -348,19 +521,19 @@ bool Navigation::FireTraverseNavigateEvent(
 
   // Step 9
   return InnerFireNavigateEvent(
-      NavigationType::Traverse, destination,
+      aCx, NavigationType::Traverse, destination,
       aUserInvolvement.valueOr(UserNavigationInvolvement::None),
       /* aSourceElement */ nullptr,
-      /* aFormDataEntryList*/ Nothing(),
+      /* aFormDataEntryList*/ nullptr,
       /* aClassicHistoryAPIState */ nullptr,
-      /* aDownloadRequestFilename */ u""_ns);
+      /* aDownloadRequestFilename */ VoidString());
 }
 
 // https://html.spec.whatwg.org/#fire-a-push/replace/reload-navigate-event
 bool Navigation::FirePushReplaceReloadNavigateEvent(
-    NavigationType aNavigationType, nsIURI* aDestinationURL,
+    JSContext* aCx, NavigationType aNavigationType, nsIURI* aDestinationURL,
     bool aIsSameDocument, Maybe<UserNavigationInvolvement> aUserInvolvement,
-    Element* aSourceElement, Maybe<const FormData&> aFormDataEntryList,
+    Element* aSourceElement, already_AddRefed<FormData> aFormDataEntryList,
     nsIStructuredCloneContainer* aNavigationAPIState,
     nsIStructuredCloneContainer* aClassicHistoryAPIState) {
   // To not unnecessarily create an event that's never used, step 1 and step 2
@@ -376,16 +549,17 @@ bool Navigation::FirePushReplaceReloadNavigateEvent(
 
   // Step 8
   return InnerFireNavigateEvent(
-      aNavigationType, destination,
+      aCx, aNavigationType, destination,
       aUserInvolvement.valueOr(UserNavigationInvolvement::None), aSourceElement,
-      aFormDataEntryList, aClassicHistoryAPIState,
-      /* aDownloadRequestFilename */ u""_ns);
+      std::move(aFormDataEntryList), aClassicHistoryAPIState,
+      /* aDownloadRequestFilename */ VoidString());
 }
 
 // https://html.spec.whatwg.org/#fire-a-download-request-navigate-event
 bool Navigation::FireDownloadRequestNavigateEvent(
-    nsIURI* aDestinationURL, UserNavigationInvolvement aUserInvolvement,
-    Element* aSourceElement, const nsAString& aFilename) {
+    JSContext* aCx, nsIURI* aDestinationURL,
+    UserNavigationInvolvement aUserInvolvement, Element* aSourceElement,
+    const nsAString& aFilename) {
   // To not unnecessarily create an event that's never used, step 1 and step 2
   // in #fire-a-download-request-navigate-event have been moved to after step
   // 25 in #inner-navigate-event-firing-algorithm in our implementation.
@@ -399,14 +573,10 @@ bool Navigation::FireDownloadRequestNavigateEvent(
 
   // Step 8
   return InnerFireNavigateEvent(
-      NavigationType::Push, destination, aUserInvolvement, aSourceElement,
-      /* aFormDataEntryList */ Nothing(),
+      aCx, NavigationType::Push, destination, aUserInvolvement, aSourceElement,
+      /* aFormDataEntryList */ nullptr,
       /* aClassicHistoryAPIState */ nullptr, aFilename);
 }
-
-// Implementation of this will be done in Bug 1948596.
-// https://html.spec.whatwg.org/#can-have-its-url-rewritten
-static bool CanBeRewritten(nsIURI* aURI, nsIURI* aOtherURI) { return false; }
 
 static bool HasHistoryActionActivation(
     Maybe<nsGlobalWindowInner&> aRelevantGlobalObject) {
@@ -434,7 +604,14 @@ static bool HasUAVisualTransition(Maybe<Document&>) { return false; }
 static bool EqualsExceptRef(nsIURI* aURI, nsIURI* aOtherURI) {
   bool equalsExceptRef = false;
   return aURI && aOtherURI &&
-         NS_SUCCEEDED(aURI->EqualsExceptRef(aOtherURI, &equalsExceptRef));
+         NS_SUCCEEDED(aURI->EqualsExceptRef(aOtherURI, &equalsExceptRef)) &&
+         equalsExceptRef;
+}
+
+static bool Equals(nsIURI* aURI, nsIURI* aOtherURI) {
+  bool equals = false;
+  return aURI && aOtherURI && NS_SUCCEEDED(aURI->Equals(aOtherURI, &equals)) &&
+         equals;
 }
 
 static bool HasIdenticalFragment(nsIURI* aURI, nsIURI* aOtherURI) {
@@ -462,11 +639,31 @@ nsresult Navigation::FireEvent(const nsAString& aName) {
   return rv.StealNSResult();
 }
 
+static void ExtractErrorInformation(JSContext* aCx,
+                                    JS::Handle<JS::Value> aError,
+                                    ErrorEventInit& aErrorEventInitDict) {
+  nsContentUtils::ExtractErrorValues(
+      aCx, aError, aErrorEventInitDict.mFilename, &aErrorEventInitDict.mLineno,
+      &aErrorEventInitDict.mColno, aErrorEventInitDict.mMessage);
+  aErrorEventInitDict.mError = aError;
+  aErrorEventInitDict.mBubbles = false;
+  aErrorEventInitDict.mCancelable = false;
+}
+
+nsresult Navigation::FireErrorEvent(const nsAString& aName,
+                                    const ErrorEventInit& aEventInitDict) {
+  RefPtr<Event> event = ErrorEvent::Constructor(this, aName, aEventInitDict);
+  ErrorResult rv;
+  DispatchEvent(*event, rv);
+  return rv.StealNSResult();
+}
+
 // https://html.spec.whatwg.org/#inner-navigate-event-firing-algorithm
 bool Navigation::InnerFireNavigateEvent(
-    NavigationType aNavigationType, NavigationDestination* aDestination,
+    JSContext* aCx, NavigationType aNavigationType,
+    NavigationDestination* aDestination,
     UserNavigationInvolvement aUserInvolvement, Element* aSourceElement,
-    Maybe<const FormData&> aFormDataEntryList,
+    already_AddRefed<FormData> aFormDataEntryList,
     nsIStructuredCloneContainer* aClassicHistoryAPIState,
     const nsAString& aDownloadRequestFilename) {
   // Step 1
@@ -512,11 +709,10 @@ bool Navigation::InnerFireNavigateEvent(
           .valueOr(nullptr);
 
   // Step 9
-  init.mCanIntercept =
-      document &&
-      CanBeRewritten(document->GetDocumentURI(), aDestination->GetURI()) &&
-      (aDestination->SameDocument() ||
-       aNavigationType != NavigationType::Traverse);
+  init.mCanIntercept = document &&
+                       document->CanRewriteURL(aDestination->GetURI()) &&
+                       (aDestination->SameDocument() ||
+                        aNavigationType != NavigationType::Traverse);
 
   // Step 10 and step 11
   init.mCancelable =
@@ -538,7 +734,7 @@ bool Navigation::InnerFireNavigateEvent(
 
   // Step 17
   init.mHasUAVisualTransition =
-      HasUAVisualTransition(ToMaybeRef(GetDocumentIfCurrent()));
+      HasUAVisualTransition(ToMaybeRef(GetAssociatedDocument()));
 
   // Step 18
   init.mSourceElement = aSourceElement;
@@ -562,7 +758,7 @@ bool Navigation::InnerFireNavigateEvent(
   init.mUserInitiated = aUserInvolvement != UserNavigationInvolvement::None;
 
   // Step 24
-  init.mFormData = aFormDataEntryList ? aFormDataEntryList->Clone() : nullptr;
+  init.mFormData = aFormDataEntryList;
 
   // Step 25
   MOZ_DIAGNOSTIC_ASSERT(!mOngoingNavigateEvent);
@@ -575,12 +771,15 @@ bool Navigation::InnerFireNavigateEvent(
   // delay it until here.
   RefPtr<NavigateEvent> event = NavigateEvent::Constructor(
       this, u"navigate"_ns, init, aClassicHistoryAPIState, abortController);
+  // Here we're running #concept-event-create from https://dom.spec.whatwg.org/
+  // which explicitly sets event's isTrusted attribute to true.
+  event->SetTrusted(true);
 
   // Step 26
   mOngoingNavigateEvent = event;
 
   // Step 27
-  mFocusChangedDUringOngoingNavigation = false;
+  mFocusChangedDuringOngoingNavigation = false;
 
   // Step 28
   mSuppressNormalScrollRestorationDuringOngoingNavigation = false;
@@ -594,7 +793,7 @@ bool Navigation::InnerFireNavigateEvent(
 
     // Step 30.2
     if (!abortController->Signal()->Aborted()) {
-      AbortOngoingNavigation();
+      AbortOngoingNavigation(aCx);
     }
 
     // Step 30.3
@@ -640,7 +839,8 @@ bool Navigation::InnerFireNavigateEvent(
           docShell->UpdateURLAndHistory(
               document, aDestination->GetURI(), event->ClassicHistoryAPIState(),
               *NavigationUtils::NavigationHistoryBehavior(aNavigationType),
-              document->GetDocumentURI(), aDestination->SameDocument());
+              document->GetDocumentURI(),
+              Equals(aDestination->GetURI(), document->GetDocumentURI()));
         }
         break;
       case NavigationType::Reload:
@@ -672,91 +872,97 @@ bool Navigation::InnerFireNavigateEvent(
     }
 
     // Step 34.4
+    nsCOMPtr<nsIGlobalObject> globalObject = GetOwnerGlobal();
     Promise::WaitForAll(
-        GetOwnerGlobal(), promiseList,
+        globalObject, promiseList,
         [self = RefPtr(this), event,
-         apiMethodTracker](const Span<JS::Heap<JS::Value>>&) {
-          // Success steps
-          // Step 1
-          if (nsCOMPtr<nsPIDOMWindowInner> window =
-                  do_QueryInterface(event->GetParentObject());
-              window && !window->IsFullyActive()) {
-            return;
-          }
+         apiMethodTracker](const Span<JS::Heap<JS::Value>>&)
+            MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
+              // Success steps
+              // Step 1
+              if (RefPtr document = event->GetDocument();
+                  !document || !document->IsFullyActive()) {
+                return;
+              }
 
-          // Step 2
-          if (AbortSignal* signal = event->Signal(); signal->Aborted()) {
-            return;
-          }
+              // Step 2
+              if (AbortSignal* signal = event->Signal(); signal->Aborted()) {
+                return;
+              }
 
-          // Step 3
-          MOZ_DIAGNOSTIC_ASSERT(event == self->mOngoingNavigateEvent);
+              // Step 3
+              MOZ_DIAGNOSTIC_ASSERT(event == self->mOngoingNavigateEvent);
 
-          // Step 4
-          self->mOngoingNavigateEvent = nullptr;
+              // Step 4
+              self->mOngoingNavigateEvent = nullptr;
 
-          // Step 5
-          event->Finish(true);
+              // Step 5
+              event->Finish(true);
 
-          // Step 6
-          self->FireEvent(u"navigatesuccess"_ns);
+              // Step 6
+              self->FireEvent(u"navigatesuccess"_ns);
 
-          // Step 7
-          if (apiMethodTracker) {
-            apiMethodTracker->mFinishedPromise->MaybeResolveWithUndefined();
-          }
+              // Step 7
+              if (apiMethodTracker) {
+                apiMethodTracker->mFinishedPromise->MaybeResolveWithUndefined();
+              }
 
-          // Step 8
-          if (self->mTransition) {
-            self->mTransition->Finished()->MaybeResolveWithUndefined();
-          }
+              // Step 8
+              if (self->mTransition) {
+                self->mTransition->Finished()->MaybeResolveWithUndefined();
+              }
 
-          self->mTransition = nullptr;
-        },
+              // Step 9
+              self->mTransition = nullptr;
+            },
         [self = RefPtr(this), event,
-         apiMethodTracker](JS::Handle<JS::Value> aRejectionReason) {
-          // Failure steps
-          // Step 1
-          if (nsCOMPtr<nsPIDOMWindowInner> window =
-                  do_QueryInterface(event->GetParentObject());
-              window && !window->IsFullyActive()) {
-            return;
-          }
+         apiMethodTracker](JS::Handle<JS::Value> aRejectionReason)
+            MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
+              // Failure steps
+              // Step 1
+              if (RefPtr document = event->GetDocument();
+                  !document || !document->IsFullyActive()) {
+                return;
+              }
 
-          // Step 2
-          if (AbortSignal* signal = event->Signal(); signal->Aborted()) {
-            return;
-          }
+              // Step 2
+              if (AbortSignal* signal = event->Signal(); signal->Aborted()) {
+                return;
+              }
 
-          // Step 3
-          MOZ_DIAGNOSTIC_ASSERT(event == self->mOngoingNavigateEvent);
+              // Step 3
+              MOZ_DIAGNOSTIC_ASSERT(event == self->mOngoingNavigateEvent);
 
-          // Step 4
-          self->mOngoingNavigateEvent = nullptr;
+              // Step 4
+              self->mOngoingNavigateEvent = nullptr;
 
-          // Step 5
-          event->Finish(false);
+              // Step 5
+              event->Finish(false);
 
-          // Step 6 and step 7 will be implemented in Bug 1949499.
-          // Step 6: Let errorInfo be the result of extracting error
-          // information from rejectionReason.
+              if (AutoJSAPI jsapi;
+                  !NS_WARN_IF(!jsapi.Init(event->GetParentObject()))) {
+                // Step 6
+                RootedDictionary<ErrorEventInit> init(jsapi.cx());
+                ExtractErrorInformation(jsapi.cx(), aRejectionReason, init);
 
-          // Step 7: Fire an event named navigateerror at navigation using
-          // ErrorEvent, with additional attributes initialized according to
-          // errorInfo.
+                // Step 7
+                self->FireErrorEvent(u"navigateerror"_ns, init);
+              }
 
-          // Step 8
-          if (apiMethodTracker) {
-            apiMethodTracker->mFinishedPromise->MaybeReject(aRejectionReason);
-          }
+              // Step 8
+              if (apiMethodTracker) {
+                apiMethodTracker->mFinishedPromise->MaybeReject(
+                    aRejectionReason);
+              }
 
-          // Step 9
-          if (self->mTransition) {
-            self->mTransition->Finished()->MaybeReject(aRejectionReason);
-          }
+              // Step 9
+              if (self->mTransition) {
+                self->mTransition->Finished()->MaybeReject(aRejectionReason);
+              }
 
-          self->mTransition = nullptr;
-        });
+              // Step 10
+              self->mTransition = nullptr;
+            });
   }
 
   // Step 35
@@ -824,15 +1030,81 @@ void Navigation::PromoteUpcomingAPIMethodTrackerToOngoing(
 }
 
 // https://html.spec.whatwg.org/#abort-the-ongoing-navigation
-void Navigation::AbortOngoingNavigation() {}
+void Navigation::AbortOngoingNavigation(JSContext* aCx,
+                                        JS::Handle<JS::Value> aError) {
+  // Step 1
+  RefPtr<NavigateEvent> event = mOngoingNavigateEvent;
+
+  // Step 2
+  MOZ_DIAGNOSTIC_ASSERT(event);
+
+  // Step 3
+  mFocusChangedDuringOngoingNavigation = false;
+
+  // Step 4
+  mSuppressNormalScrollRestorationDuringOngoingNavigation = false;
+
+  JS::Rooted<JS::Value> error(aCx, aError);
+
+  // Step 5
+  if (aError.isUndefined()) {
+    RefPtr<DOMException> exception =
+        DOMException::Create(NS_ERROR_DOM_ABORT_ERR);
+    // It's OK if this fails, it just means that we'll get an empty error
+    // dictionary below.
+    GetOrCreateDOMReflector(aCx, exception, &error);
+  }
+
+  // Step 6
+  if (event->IsBeingDispatched()) {
+    event->PreventDefault();
+  }
+
+  // Step 7
+  event->AbortController()->Abort(aCx, error);
+
+  // Step 8
+  mOngoingNavigateEvent = nullptr;
+
+  // Step 9
+  RootedDictionary<ErrorEventInit> init(aCx);
+  ExtractErrorInformation(aCx, error, init);
+
+  // Step 10
+  FireErrorEvent(u"navigateerror"_ns, init);
+
+  // Step 11
+  if (mOngoingAPIMethodTracker) {
+    mOngoingAPIMethodTracker->mFinishedPromise->MaybeReject(error);
+  }
+
+  // Step 12
+  if (mTransition) {
+    // Step 12.1
+    mTransition->Finished()->MaybeReject(error);
+
+    // Step 12.2
+    mTransition = nullptr;
+  }
+}
 
 bool Navigation::FocusedChangedDuringOngoingNavigation() const {
-  return mFocusChangedDUringOngoingNavigation;
+  return mFocusChangedDuringOngoingNavigation;
 }
 
 void Navigation::SetFocusedChangedDuringOngoingNavigation(
     bool aFocusChangedDUringOngoingNavigation) {
-  mFocusChangedDUringOngoingNavigation = aFocusChangedDUringOngoingNavigation;
+  mFocusChangedDuringOngoingNavigation = aFocusChangedDUringOngoingNavigation;
+}
+
+bool Navigation::HasOngoingNavigateEvent() const {
+  return mOngoingNavigateEvent;
+}
+
+// The associated document of navigation's relevant global object.
+Document* Navigation::GetAssociatedDocument() const {
+  nsGlobalWindowInner* window = GetOwnerWindow();
+  return window ? window->GetDocument() : nullptr;
 }
 
 void Navigation::LogHistory() const {
@@ -850,4 +1122,65 @@ void Navigation::LogHistory() const {
   }
 }
 
+// https://html.spec.whatwg.org/#maybe-set-the-upcoming-non-traverse-api-method-tracker
+RefPtr<NavigationAPIMethodTracker>
+Navigation::MaybeSetUpcomingNonTraverseAPIMethodTracker(
+    JS::Handle<JS::Value> aInfo,
+    nsIStructuredCloneContainer* aSerializedState) {
+  // To maybe set the upcoming non-traverse API method tracker given a
+  // Navigation navigation, a JavaScript value info, and a serialized
+  // state-or-null serializedState:
+  // 1. Let committedPromise and finishedPromise be new promises created in
+  //    navigation's relevant realm.
+  RefPtr committedPromise = Promise::CreateInfallible(GetOwnerGlobal());
+  RefPtr finishedPromise = Promise::CreateInfallible(GetOwnerGlobal());
+  // 2. Mark as handled finishedPromise.
+  MOZ_ALWAYS_TRUE(finishedPromise->SetAnyPromiseIsHandled());
+
+  // 3. Let apiMethodTracker be a new navigation API method tracker with:
+  RefPtr<NavigationAPIMethodTracker> apiMethodTracker =
+      MakeAndAddRef<NavigationAPIMethodTracker>(
+          this, /* aKey */ Nothing{}, aInfo, aSerializedState,
+          /* aCommittedToEntry */ nullptr, committedPromise, finishedPromise);
+
+  // 4. Assert: navigation's upcoming non-traverse API method tracker is null.
+  MOZ_DIAGNOSTIC_ASSERT(!mUpcomingNonTraverseAPIMethodTracker);
+
+  // 5. If navigation does not have entries and events disabled, then set
+  //    navigation's upcoming non-traverse API method tracker to
+  //    apiMethodTracker.
+  if (!HasEntriesAndEventsDisabled()) {
+    mUpcomingNonTraverseAPIMethodTracker = apiMethodTracker;
+  }
+  // 6. Return apiMethodTracker.
+  return apiMethodTracker;
+}
+
+// https://html.spec.whatwg.org/#add-an-upcoming-traverse-api-method-tracker
+RefPtr<NavigationAPIMethodTracker>
+Navigation::AddUpcomingTraverseAPIMethodTracker(const nsID& aKey,
+                                                JS::Handle<JS::Value> aInfo) {
+  // To add an upcoming traverse API method tracker given a Navigation
+  // navigation, a string destinationKey, and a JavaScript value info:
+  // 1. Let committedPromise and finishedPromise be new promises created in
+  //    navigation's relevant realm.
+  RefPtr committedPromise = Promise::CreateInfallible(GetOwnerGlobal());
+  RefPtr finishedPromise = Promise::CreateInfallible(GetOwnerGlobal());
+
+  // 2. Mark as handled finishedPromise.
+  MOZ_ALWAYS_TRUE(finishedPromise->SetAnyPromiseIsHandled());
+
+  // 3. Let apiMethodTracker be a new navigation API method tracker with:
+  RefPtr<NavigationAPIMethodTracker> apiMethodTracker =
+      MakeAndAddRef<NavigationAPIMethodTracker>(
+          this, Some(aKey), aInfo,
+          /* aSerializedState */ nullptr,
+          /* aCommittedToEntry */ nullptr, committedPromise, finishedPromise);
+
+  // 4. Set navigation's upcoming traverse API method trackers[destinationKey]
+  //    to apiMethodTracker.
+  // 5. Return apiMethodTracker.
+  return mUpcomingTraverseAPIMethodTrackers.InsertOrUpdate(aKey,
+                                                           apiMethodTracker);
+}
 }  // namespace mozilla::dom

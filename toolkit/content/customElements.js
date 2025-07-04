@@ -773,9 +773,9 @@
   window.MozHTMLElement = MozHTMLElement;
 
   customElements.setElementCreationCallback("browser", () => {
-    Services.scriptloader.loadSubScript(
-      "chrome://global/content/elements/browser-custom-element.js",
-      window
+    ChromeUtils.importESModule(
+      "chrome://global/content/elements/browser-custom-element.mjs",
+      { global: "current" }
     );
   });
 
@@ -821,6 +821,10 @@
           [
             "moz-box-button",
             "chrome://global/content/elements/moz-box-button.mjs",
+          ],
+          [
+            "moz-box-group",
+            "chrome://global/content/elements/moz-box-group.mjs",
           ],
           ["moz-box-item", "chrome://global/content/elements/moz-box-item.mjs"],
           ["moz-box-link", "chrome://global/content/elements/moz-box-link.mjs"],
@@ -870,6 +874,14 @@
             "chrome://global/content/elements/moz-support-link.mjs",
           ],
           ["moz-toggle", "chrome://global/content/elements/moz-toggle.mjs"],
+          [
+            "moz-visual-picker",
+            "chrome://global/content/elements/moz-visual-picker.mjs",
+          ],
+          [
+            "moz-visual-picker-item",
+            "chrome://global/content/elements/moz-visual-picker.mjs",
+          ],
         ]) {
           if (!customElements.get(tag)) {
             customElements.setElementCreationCallback(

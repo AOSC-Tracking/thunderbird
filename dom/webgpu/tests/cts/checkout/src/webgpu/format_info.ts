@@ -2,7 +2,8 @@ import { isCompatibilityDevice } from '../common/framework/test_config.js';
 import { keysOf } from '../common/util/data_tables.js';
 import { assert, unreachable } from '../common/util/util.js';
 
-import { align } from './util/math.js';
+import { align, roundDown } from './util/math.js';
+import { getTextureDimensionFromView } from './util/texture/base.js';
 import { ImageCopyType } from './util/texture/layout.js';
 
 //
@@ -24,8 +25,21 @@ const kFormatUniversalDefaults = {
   color: undefined,
   depth: undefined,
   stencil: undefined,
+  /**
+   * Info when this format can be used as a color render target. The format may require a feature
+   * to actually be used as a render target. Eg: rg11b10ufloat which requires rg11b10ufloat-renderable
+   * Call {@link isTextureFormatPossiblyUsableAsColorRenderAttachment} before having a device
+   * Call {@link isTextureFormatColorRenderable}(device, format) to find out for a particular device.
+   * Use {@link kPossibleColorRenderableTextureFormats} for params.
+   */
   colorRender: undefined,
-  /** Whether the format can be used in a multisample texture. */
+  /**
+   * Whether the format can possibly be used as a multisample texture. The format may require a
+   * feature to actually multisampled. Eg: rg11b10ufloat which requires rg11b10ufloat-renderable
+   * Call {@link isTextureFormatPossiblyMultisampled} before having a device
+   * Call {@link isTextureFormatMultisampled}(device, format) to find out for a particular device.
+   * Use {@link kPossibleMultisampledTextureFormats} for params.
+   */
   multisample: undefined,
   /** Optional feature required to use this format, or `undefined` if none. */
   feature: undefined,
@@ -553,7 +567,8 @@ const kRegularTextureFormatInfo = formatTableWithDefaults({
         readWriteStorage: false,
         bytes: 4,
       },
-      multisample: false,
+      colorRender: { blend: true, resolve: true, byteCost: 8, alignment: 4 },
+      multisample: true,
       /*prettier-ignore*/ get bytesPerBlock() { return this.color.bytes; },
     },
 
@@ -1424,10 +1439,12 @@ const kASTCTextureFormatInfo = formatTableWithDefaults({
 /** An uncompressed (block size 1x1) format (regular | depth/stencil). */
 /* prettier-ignore */ export type UncompressedTextureFormat = keyof typeof kUncompressedTextureFormatInfo;
 
-/* prettier-ignore */ export const      kRegularTextureFormats: readonly      RegularTextureFormat[] = keysOf(     kRegularTextureFormatInfo);
-/* prettier-ignore */ export const   kSizedDepthStencilFormats: readonly   SizedDepthStencilFormat[] = keysOf(  kSizedDepthStencilFormatInfo);
-/* prettier-ignore */ export const kUnsizedDepthStencilFormats: readonly UnsizedDepthStencilFormat[] = keysOf(kUnsizedDepthStencilFormatInfo);
-/* prettier-ignore */ export const   kCompressedTextureFormats: readonly   CompressedTextureFormat[] = keysOf(  kCompressedTextureFormatInfo);
+/* prettier-ignore */ export const        kRegularTextureFormats: readonly      RegularTextureFormat[] = keysOf(     kRegularTextureFormatInfo);
+/* prettier-ignore */ export const     kSizedDepthStencilFormats: readonly   SizedDepthStencilFormat[] = keysOf(  kSizedDepthStencilFormatInfo);
+/* prettier-ignore */ export const   kUnsizedDepthStencilFormats: readonly UnsizedDepthStencilFormat[] = keysOf(kUnsizedDepthStencilFormatInfo);
+/* prettier-ignore */ export const     kCompressedTextureFormats: readonly   CompressedTextureFormat[] = keysOf(  kCompressedTextureFormatInfo);
+/* prettier-ignore */ export const   kBCCompressedTextureFormats: readonly   CompressedTextureFormat[] = keysOf(          kBCTextureFormatInfo);
+/* prettier-ignore */ export const kASTCCompressedTextureFormats: readonly   CompressedTextureFormat[] = keysOf(        kASTCTextureFormatInfo);
 
 /* prettier-ignore */ export const        kColorTextureFormats: readonly        ColorTextureFormat[] = keysOf(       kColorTextureFormatInfo);
 /* prettier-ignore */ export const    kEncodableTextureFormats: readonly    EncodableTextureFormat[] = keysOf(   kEncodableTextureFormatInfo);
@@ -1627,14 +1644,12 @@ export const kPossibleReadWriteStorageTextureFormats = [
 export const kPossibleMultisampledTextureFormats = [
   ...kRegularTextureFormats.filter(f => kTextureFormatInfo[f].multisample),
   ...kDepthStencilFormats.filter(f => kTextureFormatInfo[f].multisample),
-  'rg11b10ufloat',
 ] as const;
 
 // Texture formats that may possibly be color renderable.
 // Some may require certain features to be enabled.
 export const kPossibleColorRenderableTextureFormats = [
   ...kRegularTextureFormats.filter(f => kTextureFormatInfo[f].colorRender),
-  'rg11b10ufloat',
 ] as const;
 export type PossibleColorRenderTextureFormat =
   (typeof kPossibleColorRenderableTextureFormats)[number];
@@ -1851,14 +1866,55 @@ export function depthStencilFormatAspectSize(
  * Returns true iff a texture can be created with the provided GPUTextureDimension
  * (defaulting to 2d) and GPUTextureFormat, by spec.
  */
-export function textureDimensionAndFormatCompatible(
+export function textureFormatAndDimensionPossiblyCompatible(
   dimension: undefined | GPUTextureDimension,
   format: GPUTextureFormat
 ): boolean {
+  if (dimension === '3d' && (isBCTextureFormat(format) || isASTCTextureFormat(format))) {
+    return true;
+  }
   const info = kAllTextureFormatInfo[format];
   return !(
     (dimension === '1d' || dimension === '3d') &&
     (info.blockWidth > 1 || info.depth || info.stencil)
+  );
+}
+
+/**
+ * Returns true iff a texture can be created with the provided GPUTextureDimension
+ * (defaulting to 2d) and GPUTextureFormat for a GPU device, by spec.
+ */
+export function textureDimensionAndFormatCompatibleForDevice(
+  device: GPUDevice,
+  dimension: undefined | GPUTextureDimension,
+  format: GPUTextureFormat
+): boolean {
+  if (
+    dimension === '3d' &&
+    ((isBCTextureFormat(format) && device.features.has('texture-compression-bc-sliced-3d')) ||
+      (isASTCTextureFormat(format) && device.features.has('texture-compression-astc-sliced-3d')))
+  ) {
+    return true;
+  }
+  const info = kAllTextureFormatInfo[format];
+  return !(
+    (dimension === '1d' || dimension === '3d') &&
+    (info.blockWidth > 1 || info.depth || info.stencil)
+  );
+}
+
+/**
+ * Returns true iff a texture can be used with the provided GPUTextureViewDimension
+ */
+export function textureViewDimensionAndFormatCompatibleForDevice(
+  device: GPUDevice,
+  dimension: GPUTextureViewDimension,
+  format: GPUTextureFormat
+): boolean {
+  return textureDimensionAndFormatCompatibleForDevice(
+    device,
+    getTextureDimensionFromView(dimension),
+    format
   );
 }
 
@@ -1941,12 +1997,9 @@ export function getBlockInfoForTextureFormat(format: GPUTextureFormat) {
 
 /**
  * Returns the "byteCost" of rendering to a color texture format.
- * MAINTENANCE_TODO: remove `rg11b10ufloat' from here and add its data to table
- * once CTS is refactored. See issue #4181
  */
 export function getColorRenderByteCost(format: PossibleColorRenderTextureFormat) {
-  const byteCost =
-    format === 'rg11b10ufloat' ? 8 : kTextureFormatInfo[format].colorRender?.byteCost;
+  const byteCost = kTextureFormatInfo[format].colorRender?.byteCost;
   // MAINTENANCE_TODO: remove this assert. The issue is typescript thinks
   // PossibleColorRenderTextureFormat contains all texture formats and not just
   // a filtered list.
@@ -1956,12 +2009,9 @@ export function getColorRenderByteCost(format: PossibleColorRenderTextureFormat)
 
 /**
  * Returns the "alignment" of rendering to a color texture format.
- * MAINTENANCE_TODO: remove `rg11b10ufloat' from here and add its data to table
- * once CTS is refactored. See issue #4181
  */
 export function getColorRenderAlignment(format: PossibleColorRenderTextureFormat) {
-  const alignment =
-    format === 'rg11b10ufloat' ? 1 : kTextureFormatInfo[format].colorRender?.alignment;
+  const alignment = kTextureFormatInfo[format].colorRender?.alignment;
   // MAINTENANCE_TODO: remove this assert. The issue is typescript thinks
   // PossibleColorRenderTextureFormat contains all texture formats and not just
   // a filtered list.
@@ -2071,6 +2121,14 @@ export function isCompressedTextureFormat(format: GPUTextureFormat) {
   return format in kCompressedTextureFormatInfo;
 }
 
+export function isBCTextureFormat(format: GPUTextureFormat) {
+  return format in kBCTextureFormatInfo;
+}
+
+export function isASTCTextureFormat(format: GPUTextureFormat) {
+  return format in kASTCTextureFormatInfo;
+}
+
 export function isColorTextureFormat(format: GPUTextureFormat) {
   return !!kTextureFormatInfo[format].color;
 }
@@ -2099,8 +2157,8 @@ export function isTextureFormatUsableAsRenderAttachment(
   device: GPUDevice,
   format: GPUTextureFormat
 ) {
-  if (format === 'rg11b10ufloat' && device.features.has('rg11b10ufloat-renderable')) {
-    return true;
+  if (format === 'rg11b10ufloat') {
+    return device.features.has('rg11b10ufloat-renderable');
   }
   return kTextureFormatInfo[format].colorRender || isDepthOrStencilTextureFormat(format);
 }
@@ -2112,8 +2170,8 @@ export function isTextureFormatColorRenderable(
   device: GPUDevice,
   format: GPUTextureFormat
 ): boolean {
-  if (format === 'rg11b10ufloat' && device.features.has('rg11b10ufloat-renderable')) {
-    return true;
+  if (format === 'rg11b10ufloat') {
+    return device.features.has('rg11b10ufloat-renderable');
   }
   return !!kAllTextureFormatInfo[format].colorRender;
 }
@@ -2125,11 +2183,11 @@ export function isTextureFormatBlendable(device: GPUDevice, format: GPUTextureFo
   if (!isTextureFormatColorRenderable(device, format)) {
     return false;
   }
-  if (format === 'rg11b10ufloat' && device.features.has('rg11b10ufloat-renderable')) {
-    return true;
+  if (format === 'rg11b10ufloat') {
+    return device.features.has('rg11b10ufloat-renderable');
   }
-  if (is32Float(format) && device.features.has('float32-blendable')) {
-    return true;
+  if (is32Float(format)) {
+    return device.features.has('float32-blendable');
   }
   return !!kAllTextureFormatInfo[format].colorRender?.blend;
 }
@@ -2160,7 +2218,7 @@ export function getTextureFormatColorType(format: RegularTextureFormat) {
  */
 export function isTextureFormatPossiblyUsableAsRenderAttachment(format: GPUTextureFormat) {
   const info = kTextureFormatInfo[format];
-  return format === 'rg11b10ufloat' || isDepthOrStencilTextureFormat(format) || !!info.colorRender;
+  return isDepthOrStencilTextureFormat(format) || !!info.colorRender;
 }
 
 /**
@@ -2169,7 +2227,7 @@ export function isTextureFormatPossiblyUsableAsRenderAttachment(format: GPUTextu
  */
 export function isTextureFormatPossiblyUsableAsColorRenderAttachment(format: GPUTextureFormat) {
   const info = kTextureFormatInfo[format];
-  return format === 'rg11b10ufloat' || !!info.colorRender;
+  return !!info.colorRender;
 }
 
 /**
@@ -2178,7 +2236,7 @@ export function isTextureFormatPossiblyUsableAsColorRenderAttachment(format: GPU
  */
 export function isTextureFormatPossiblyMultisampled(format: GPUTextureFormat) {
   const info = kTextureFormatInfo[format];
-  return format === 'rg11b10ufloat' || info.multisample;
+  return info.multisample;
 }
 
 /**
@@ -2327,8 +2385,8 @@ export function isTextureFormatMultisampled(device: GPUDevice, format: GPUTextur
       return false;
     }
   }
-  if (format === 'rg11b10ufloat' && device.features.has('rg11b10ufloat-renderable')) {
-    return true;
+  if (format === 'rg11b10ufloat') {
+    return device.features.has('rg11b10ufloat-renderable');
   }
   return kAllTextureFormatInfo[format].multisample;
 }
@@ -2338,8 +2396,8 @@ export function isTextureFormatMultisampled(device: GPUDevice, format: GPUTextur
  * can not be resolved.
  */
 export function isTextureFormatResolvable(device: GPUDevice, format: GPUTextureFormat): boolean {
-  if (format === 'rg11b10ufloat' && device.features.has('rg11b10ufloat-renderable')) {
-    return true;
+  if (format === 'rg11b10ufloat') {
+    return device.features.has('rg11b10ufloat-renderable');
   }
   // You can't resolve a non-multisampled format.
   if (!isTextureFormatMultisampled(device, format)) {
@@ -2364,10 +2422,7 @@ export function computeBytesPerSampleFromFormats(formats: readonly GPUTextureFor
     // The issue is if we add it now lots of tests will break as they'll think they can
     // render to the format but are not enabling 'rg11b10ufloat-renderable'. Once we
     // get the CTS refactored (see issue 4181), then fix this.
-    const info =
-      format === 'rg11b10ufloat'
-        ? { colorRender: { alignment: 4, byteCost: 8 } }
-        : kTextureFormatInfo[format];
+    const info = kTextureFormatInfo[format];
     const alignedBytesPerSample = align(bytesPerSample, info.colorRender!.alignment);
     bytesPerSample = alignedBytesPerSample + info.colorRender!.byteCost;
   }
@@ -2379,4 +2434,34 @@ export function computeBytesPerSampleFromFormats(formats: readonly GPUTextureFor
  */
 export function computeBytesPerSample(targets: GPUColorTargetState[]) {
   return computeBytesPerSampleFromFormats(targets.map(({ format }) => format));
+}
+
+/**
+ * Returns the maximum valid size in each dimension for a given texture format.
+ * This is useful because compressed formats must be a multiple of blocks in size
+ * so, for example, the largest valid width of a 2d texture
+ * roundDown(device.limits.maxTextureDimension2D, blockWidth)
+ */
+export function getMaxValidTextureSizeForFormatAndDimension(
+  device: GPUDevice,
+  format: GPUTextureFormat,
+  dimension: GPUTextureDimension
+): [number, number, number] {
+  const info = getBlockInfoForTextureFormat(format);
+  switch (dimension) {
+    case '1d':
+      return [device.limits.maxTextureDimension1D, 1, 1];
+    case '2d':
+      return [
+        roundDown(device.limits.maxTextureDimension2D, info.blockWidth),
+        roundDown(device.limits.maxTextureDimension2D, info.blockHeight),
+        device.limits.maxTextureArrayLayers,
+      ];
+    case '3d':
+      return [
+        roundDown(device.limits.maxTextureDimension3D, info.blockWidth),
+        roundDown(device.limits.maxTextureDimension3D, info.blockHeight),
+        device.limits.maxTextureDimension3D,
+      ];
+  }
 }

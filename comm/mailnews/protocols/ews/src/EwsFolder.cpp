@@ -4,9 +4,10 @@
 
 #include "EwsFolder.h"
 
+#include "EwsFolderCopyHandler.h"
+#include "EwsMessageCopyHandler.h"
 #include "IEwsClient.h"
 #include "IEwsIncomingServer.h"
-#include "EwsMessageCopyHandler.h"
 
 #include "ErrorList.h"
 #include "FolderCompactor.h"
@@ -22,6 +23,7 @@
 #include "nsNetUtil.h"
 #include "nsPrintfCString.h"
 #include "nscore.h"
+#include "OfflineStorage.h"
 
 #define kEWSRootURI "ews:/"
 #define kEWSMessageRootURI "ews-message:/"
@@ -284,6 +286,34 @@ NS_IMETHODIMP DeleteFolderCallbacks::OnRemoteDeleteFolderSuccessful() {
   return mFolder->nsMsgDBFolder::DeleteSelf(mWindow);
 }
 
+class FolderUpdateCallbacks : public IEwsFolderUpdateCallbacks {
+ public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_IEWSFOLDERUPDATECALLBACKS
+
+  FolderUpdateCallbacks(EwsFolder* folder, nsIMsgWindow* window,
+                        nsAutoCString newName)
+      : mFolder(folder), mWindow(window), mNewName(std::move(newName)) {}
+
+ protected:
+  virtual ~FolderUpdateCallbacks() = default;
+
+ private:
+  RefPtr<EwsFolder> mFolder;
+  RefPtr<nsIMsgWindow> mWindow;
+  nsAutoCString mNewName;
+};
+
+NS_IMPL_ISUPPORTS(FolderUpdateCallbacks, IEwsFolderUpdateCallbacks)
+
+NS_IMETHODIMP FolderUpdateCallbacks::OnRemoteFolderUpdateSuccessful() {
+  // To rename, we need the current parent.
+  nsCOMPtr<nsIMsgFolder> parentFolder;
+  MOZ_TRY(mFolder->GetParent(getter_AddRefs(parentFolder)));
+
+  return LocalRenameOrReparentFolder(mFolder, parentFolder, mNewName, mWindow);
+}
+
 NS_IMPL_ADDREF_INHERITED(EwsFolder, nsMsgDBFolder)
 NS_IMPL_RELEASE_INHERITED(EwsFolder, nsMsgDBFolder)
 NS_IMPL_QUERY_HEAD(EwsFolder)
@@ -383,13 +413,10 @@ NS_IMETHODIMP EwsFolder::GetIncomingServerType(nsACString& aServerType) {
 
 NS_IMETHODIMP EwsFolder::GetNewMessages(nsIMsgWindow* aWindow,
                                         nsIUrlListener* aListener) {
-  // Delegate folder sync/message fetching to the incoming server. We have no
-  // need for divergent behavior.
-  nsCOMPtr<nsIMsgIncomingServer> server;
-  nsresult rv = GetServer(getter_AddRefs(server));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return server->GetNewMessages(this, aWindow, aListener);
+  // Sync the message list. We don't need to sync the folder tree, because the
+  // only likely consumer of this method is `EwsIncomingServer`, which does this
+  // before asking folders to sync their message lists.
+  return SyncMessages(aWindow);
 }
 
 NS_IMETHODIMP EwsFolder::GetSubFolders(
@@ -458,24 +485,50 @@ NS_IMETHODIMP EwsFolder::MarkMessagesRead(
 }
 
 NS_IMETHODIMP EwsFolder::UpdateFolder(nsIMsgWindow* aWindow) {
-  nsCOMPtr<IEwsClient> client;
-  nsresult rv = GetEwsClient(getter_AddRefs(client));
+  // Sync the message list.
+  // TODO: In the future, we might want to sync the folder hierarchy. Since
+  // we already keep the local folder list quite in sync with remote operations,
+  // and we already sync it in a couple of occurrences (when getting new
+  // messages, performing biff, etc.), it's likely fine to leave this as a
+  // future improvement.
+  return SyncMessages(aWindow);
+}
+
+NS_IMETHODIMP EwsFolder::Rename(const nsACString& aNewName,
+                                nsIMsgWindow* msgWindow) {
+  nsAutoCString currentName;
+  nsresult rv = GetName(currentName);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCString ewsId;
-  rv = GetEwsId(ewsId);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // EWS provides us an opaque value which specifies the last version of
-  // upstream messages we received. Provide that to simplify sync.
-  nsCString syncStateToken;
-  rv = GetStringProperty(SYNC_STATE_PROPERTY, syncStateToken);
-  if (NS_FAILED(rv)) {
-    syncStateToken = EmptyCString();
+  // If the name hasn't changed, then avoid generating network traffic.
+  if (aNewName.Equals(currentName)) {
+    return NS_OK;
   }
 
-  auto listener = RefPtr(new MessageOperationCallbacks(this, aWindow));
-  return client->SyncMessagesForFolder(listener, ewsId, syncStateToken);
+  bool updatable = false;
+  rv = GetCanRename(&updatable);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!updatable) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  nsCOMPtr<IEwsClient> client;
+  rv = GetEwsClient(getter_AddRefs(client));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAutoCString folderId;
+  rv = GetEwsId(folderId);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAutoCString syncStateToken;
+  rv = GetStringProperty(SYNC_STATE_PROPERTY, syncStateToken);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  RefPtr<FolderUpdateCallbacks> ewsFolderListener =
+      new FolderUpdateCallbacks(this, msgWindow, nsAutoCString{aNewName});
+
+  return client->UpdateFolder(ewsFolderListener, folderId, aNewName);
 }
 
 NS_IMETHODIMP EwsFolder::CopyFileMessage(
@@ -527,12 +580,6 @@ NS_IMETHODIMP EwsFolder::CopyMessages(
   RefPtr<MessageCopyHandler> handler = new MessageCopyHandler(
       srcFolder, this, srcHdrs, isMove, msgWindow, ewsId, client, listener);
 
-  // `isFolder` indicates we're moving/copying the whole folder.
-  if (isFolder) {
-    NS_ERROR("Move/Copy of whole folders is not supported yet");
-    return handler->OnCopyCompleted(NS_ERROR_NOT_IMPLEMENTED);
-  }
-
   // Make sure we're not moving/copying to the root folder for the server, since
   // it cannot hold messages.
   bool isServer;
@@ -553,6 +600,21 @@ NS_IMETHODIMP EwsFolder::CopyMessages(
   }
 
   return rv;
+}
+
+NS_IMETHODIMP EwsFolder::CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
+                                    nsIMsgWindow* window,
+                                    nsIMsgCopyServiceListener* listener) {
+  NS_ENSURE_ARG_POINTER(srcFolder);
+
+  // Instantiate a `FolderCopyHandler` for this operation.
+  nsCOMPtr<IEwsClient> client;
+  MOZ_TRY(GetEwsClient(getter_AddRefs(client)));
+
+  RefPtr<FolderCopyHandler> handler = new FolderCopyHandler(
+      srcFolder, this, isMoveFolder, window, client, listener);
+
+  return handler->CopyNextFolder();
 }
 
 NS_IMETHODIMP EwsFolder::DeleteMessages(
@@ -705,7 +767,8 @@ NS_IMETHODIMP EwsFolder::CompactAll(nsIUrlListener* aListener,
     for (auto folder : allDescendants) {
       // If folder doesn't currently have a DB, expungedBytes might be out of
       // whack. Also the compact might do a folder reparse first, which could
-      // change the expungedBytes count (via Expunge flag in X-Mozilla-Status).
+      // change the expungedBytes count (via Expunge flag in
+      // X-Mozilla-Status).
       bool hasDB;
       folder->GetDatabaseOpen(&hasDB);
 
@@ -771,4 +834,25 @@ nsresult EwsFolder::GetTrashFolder(nsIMsgFolder** result) {
   trashFolder.forget(result);
 
   return NS_OK;
+}
+
+nsresult EwsFolder::SyncMessages(nsIMsgWindow* window) {
+  // EWS provides us an opaque value which specifies the last version of
+  // upstream messages we received. Provide that to simplify sync.
+  nsCString syncStateToken;
+  nsresult rv = GetStringProperty(SYNC_STATE_PROPERTY, syncStateToken);
+  if (NS_FAILED(rv)) {
+    syncStateToken = EmptyCString();
+  }
+
+  // Get the EWS ID of the folder to sync (i.e. the current one).
+  nsCString ewsId;
+  MOZ_TRY(GetEwsId(ewsId));
+
+  // Sync the message list for the current folder.
+  nsCOMPtr<IEwsClient> client;
+  MOZ_TRY(GetEwsClient(getter_AddRefs(client)));
+
+  auto listener = RefPtr(new MessageOperationCallbacks(this, window));
+  return client->SyncMessagesForFolder(listener, ewsId, syncStateToken);
 }

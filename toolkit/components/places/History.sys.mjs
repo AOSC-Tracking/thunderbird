@@ -4,61 +4,65 @@
 
 /**
  * Asynchronous API for managing history.
+ * The API makes use of `PageInfo` and `VisitInfo` objects.
  *
- *
- * The API makes use of `PageInfo` and `VisitInfo` objects, defined as follows.
- *
- * A `PageInfo` object is any object that contains A SUBSET of the
- * following properties:
- *
- * - guid: (string)
- *   The globally unique id of the page.
- * - url: (URL|nsIURI|string)
- *   The full URI of the page. Note that `PageInfo` values passed as
- *   argument may hold `nsIURI` or `string` values for property `url`,
- *   but `PageInfo` objects returned by this module always hold `URL`
- *   values.
- * - title: (string)
- *   The title associated with the page, if any.
- * - description: (string)
- *   The description of the page, if any.
- * - previewImageURL: (URL|nsIURI|string)
- *   The preview image URL of the page, if any.
- * - frecency: (number)
- *   The frecency of the page, if any.
- *   See https://developer.mozilla.org/en-US/docs/Mozilla/Tech/Places/Frecency_algorithm
- *   Note that this property may not be used to change the actualy frecency
- *   score of a page, only to retrieve it. In other words, any `frecency` field
- *   passed as argument to a function of this API will be ignored.
- * - visits: (Array<VisitInfo>)
- *   All the visits for this page, if any.
- * - annotations: (Map)
- *   A map containing key/value pairs of the annotations for this page, if any.
- *
- * See the documentation of individual methods to find out which properties
- * are required for `PageInfo` arguments or returned for `PageInfo` results.
- *
- * A `VisitInfo` object is any object that contains A SUBSET of the following
- * properties:
- * - date: (Date)
- *   The time the visit occurred.
- * - transition: (number)
- *   How the user reached the page. See constants `TRANSITIONS.*`
- *   for the possible transition types.
- * - referrer: (URL|nsIURI|string)
- *   The referring URI of this visit. Note that `VisitInfo` passed
- *   as argument may hold `nsIURI` or `string` values for property `referrer`,
- *   but `VisitInfo` objects returned by this module always hold `URL`
- *   values.
- *
- * See the documentation of individual methods to find out which properties
- * are required for `VisitInfo` arguments or returned for `VisitInfo` results.
- *
- * Each successful operation notifies through the PlacesObservers. To listen to such
- * notifications you must register using
+ * Each successful operation notifies through the PlacesObservers.
+ * To listen to such notifications, you must register using
  * PlacesObservers `addListener` and `removeListener` methods.
  *
  * @see PlacesObservers
+ */
+
+/**
+ * @typedef PageInfo
+ * A `PageInfo` object is any object that contains A SUBSET of the
+ * following properties. See the documentation of individual methods
+ * to find out which properties are required for `PageInfo` arguments
+ * or returned for `PageInfo` results.
+ *
+ * @property {string} [guid]
+ *  The globally unique id of the page.
+ * @property {string|URL|nsIURI} [url]
+ *  The full URI of the page. Note that `PageInfo` values passed as
+ *  argument may hold `nsIURI` or `string` values for property `url`,
+ *  but `PageInfo` objects returned by this module always hold `URL`
+ *  values.
+ * @property {string} [title]
+ *  The title associated with the page, if any.
+ * @property {string} [description]
+ *  The description of the page, if any.
+ * @property {string|URL|nsIURI} [previewImageURL]
+ *  The preview image URL of the page, if any.
+ * @property {string} [siteName]
+ *  The name of the site, if any.
+ * @property {number} [frecency]
+ *  The frecency of the page, if any.
+ *  See https://firefox-source-docs.mozilla.org/browser/urlbar/ranking.html.
+ *  Note that this property may not be used to change the actual frecency
+ *  score of a page, only to retrieve it. In other words, any `frecency` field
+ *  passed as argument to a function of this API will be ignored.
+ * @property {VisitInfo[]} [visits]
+ *  All the visits for this page, if any.
+ * @property {Map} [annotations]
+ *  A map containing key/value pairs of the annotations for this page, if any.
+ */
+
+/**
+ * @typedef VisitInfo
+ * A `VisitInfo` object is any object that contains A SUBSET of the following
+ * properties. See the documentation of individual methods to find out which
+ * properties are required for `VisitInfo` arguments or returned for `VisitInfo`
+ * results.
+ *
+ * @property {Date} [date]
+ * The time the visit occurred.
+ * @property {nsINavHistoryService.TransitionType} [transition]
+ *  How the user reached the page.
+ * @property {string|URL|nsIURI} [referrer]
+ *  The referring URI of this visit. Note that `VisitInfo` passed
+ *  as argument may hold `nsIURI` or `string` values for property `referrer`,
+ *  but `VisitInfo` objects returned by this module always hold `URL`
+ *  values.
  */
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
@@ -87,6 +91,7 @@ const ONRESULT_CHUNK_SIZE = 300;
 // This constant determines the maximum number of remove pages before we cycle.
 const REMOVE_PAGES_CHUNKLEN = 300;
 
+// eslint-disable-next-line no-shadow
 export var History = Object.freeze({
   ANNOTATION_EXPIRE_NEVER: 4,
   // Constants for the type of annotation.
@@ -149,7 +154,7 @@ export var History = Object.freeze({
     }
 
     return lazy.PlacesUtils.promiseDBConnection().then(db =>
-      fetch(db, guidOrURI, options)
+      innerFetch(db, guidOrURI, options)
     );
   },
 
@@ -230,7 +235,7 @@ export var History = Object.freeze({
    *
    * @throws (Error)
    *      If the `url` specified was for a protocol that should not be
-   *      stored (@see nsNavHistory::CanAddURI).
+   *      stored. @see nsNavHistory::CanAddURI
    * @throws (Error)
    *      If `pageInfo` has an unexpected type.
    * @throws (Error)
@@ -282,7 +287,7 @@ export var History = Object.freeze({
    *
    * @throws (Error)
    *      If the `url` specified was for a protocol that should not be
-   *      stored (@see nsNavHistory::CanAddURI).
+   *      stored. @see nsNavHistory::CanAddURI
    * @throws (Error)
    *      If `pageInfos` has an unexpected type.
    * @throws (Error)
@@ -392,11 +397,11 @@ export var History = Object.freeze({
           urlsSlice = urls.splice(0, REMOVE_PAGES_CHUNKLEN - guidsSlice.length);
         }
 
-        let pages = { guids: guidsSlice, urls: urlsSlice };
+        let pagesToRemove = { guids: guidsSlice, urls: urlsSlice };
 
         let result = await lazy.PlacesUtils.withConnectionWrapper(
           "History.sys.mjs: remove",
-          db => remove(db, pages, onResult)
+          db => remove(db, pagesToRemove, onResult)
         );
 
         removedPages = removedPages || result;
@@ -1036,7 +1041,7 @@ var notifyOnResult = async function (data, onResult) {
 };
 
 // Inner implementation of History.fetch.
-var fetch = async function (db, guidOrURL, options) {
+var innerFetch = async function (db, guidOrURL, options) {
   let whereClauseFragment = "";
   let params = {};
   if (URL.isInstance(guidOrURL)) {
@@ -1066,6 +1071,7 @@ var fetch = async function (db, guidOrURL, options) {
                FROM moz_places h ${joinFragment}
                ${whereClauseFragment}
                ${visitOrderFragment}`;
+  /** @type {PageInfo} */
   let pageInfo = null;
   let placeId = null;
   await db.executeCached(query, params, row => {

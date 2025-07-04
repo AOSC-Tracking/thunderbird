@@ -46,6 +46,10 @@ ChromeUtils.defineLazyGetter(this, "gIsPackagedApp", () => {
   return Services.sysinfo.getProperty("isPackagedApp");
 });
 
+ChromeUtils.defineESModuleGetters(this, {
+  SearchIntegration: "resource:///modules/SearchIntegration.sys.mjs",
+});
+
 const TYPE_PDF = "application/pdf";
 
 const PREF_PDFJS_DISABLED = "pdfjs.disabled";
@@ -57,10 +61,12 @@ Preferences.addAll([
   { id: "mailnews.start_page.enabled", type: "bool" },
   { id: "mailnews.start_page.url", type: "string" },
   { id: "mail.accounthub.enabled", type: "bool" },
+  { id: "mail.accounthub.addressbook.enabled", type: "bool" },
   { id: "mail.biff.show_tray_icon", type: "bool" },
   { id: "mail.biff.play_sound", type: "bool" },
   { id: "mail.biff.play_sound.type", type: "int" },
   { id: "mail.biff.play_sound.url", type: "string" },
+  { id: "mail.biff.show_alert", type: "bool" },
   { id: "mail.biff.use_system_alert", type: "bool" },
   { id: "general.autoScroll", type: "bool" },
   { id: "general.smoothScroll", type: "bool" },
@@ -86,7 +92,6 @@ Preferences.addAll([
   { id: "mailnews.labels.color.5", type: "string" },
   { id: "mail.addressDisplayFormat", type: "int" },
   { id: "mail.showCondensedAddresses", type: "bool" },
-  { id: "mail.threadpane.table.horizontal_scroll", type: "bool" },
   { id: "mail.dark-reader.enabled", type: "bool" },
   { id: "mail.dark-reader.show-toggle", type: "bool" },
   { id: "mailnews.mark_message_read.auto", type: "bool" },
@@ -101,15 +106,11 @@ Preferences.addAll([
   { id: "browser.cache.disk.smart_size.enabled", inverted: true, type: "bool" },
   { id: "privacy.clearOnShutdown.cache", type: "bool" },
   { id: "layers.acceleration.disabled", type: "bool", inverted: true },
+  { id: "layout.css.always_underline_links", type: "bool" },
   { id: "searchintegration.enable", type: "bool" },
-  { id: "mail.tabs.drawInTitlebar", type: "bool" },
-  { id: "mail.tabs.autoHide", type: "bool" },
 ]);
 if (AppConstants.platform == "win") {
   Preferences.add({ id: "mail.minimizeToTray", type: "bool" });
-}
-if (AppConstants.platform != "macosx") {
-  Preferences.add({ id: "mail.biff.show_alert", type: "bool" });
 }
 
 var ICON_URL_APP = "";
@@ -225,9 +226,6 @@ var gGeneralPane = {
     // Search integration -- check whether we should hide or disable integration
     let hideSearchUI = false;
     let disableSearchUI = false;
-    const { SearchIntegration } = ChromeUtils.importESModule(
-      "resource:///modules/SearchIntegration.sys.mjs"
-    );
     if (SearchIntegration) {
       disableSearchUI = SearchIntegration.osComponentsNotRunning;
     } else {
@@ -239,7 +237,18 @@ var gGeneralPane = {
     } else if (disableSearchUI) {
       const searchCheckbox = document.getElementById("searchIntegration");
       searchCheckbox.checked = false;
-      Preferences.get("searchintegration.enable").disabled = true;
+      Preferences.get("searchintegration.enable").updateControlDisabledState(
+        true
+      );
+    } else {
+      // Mirror value to the actual search integration.
+      Preferences.get("searchintegration.enable").value =
+        SearchIntegration.prefEnabled;
+      Preferences.get("searchintegration.enable").on("change", () => {
+        SearchIntegration.prefEnabled = Preferences.get(
+          "searchintegration.enable"
+        ).value;
+      });
     }
 
     // If the shell service is not working, disable the "Check now" button
@@ -933,16 +942,6 @@ var gGeneralPane = {
    */
   configureFonts() {
     gSubDialog.open("chrome://messenger/content/preferences/fonts.xhtml", {
-      features: "resizable=no",
-    });
-  },
-
-  /**
-   * Displays the colors dialog, where default web page/link/etc. colors can be
-   * configured.
-   */
-  configureColors() {
-    gSubDialog.open("chrome://messenger/content/preferences/colors.xhtml", {
       features: "resizable=no",
     });
   },
@@ -3072,9 +3071,7 @@ Preferences.get("layers.acceleration.disabled").on(
   "change",
   gGeneralPane.updateHardwareAcceleration
 );
-if (AppConstants.platform != "macosx") {
-  Preferences.get("mail.biff.show_alert").on(
-    "change",
-    gGeneralPane.updateShowAlert
-  );
-}
+Preferences.get("mail.biff.show_alert").on(
+  "change",
+  gGeneralPane.updateShowAlert
+);

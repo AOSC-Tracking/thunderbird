@@ -159,7 +159,7 @@ static ScrollDirections GetOverflowChange(const nsRect& aCurScrolledRect,
 class ScrollContainerFrame::ScrollEvent : public Runnable {
  public:
   NS_DECL_NSIRUNNABLE
-  explicit ScrollEvent(ScrollContainerFrame* aHelper, bool aDelayed);
+  explicit ScrollEvent(ScrollContainerFrame* aHelper);
   void Revoke() { mHelper = nullptr; }
 
  private:
@@ -169,7 +169,7 @@ class ScrollContainerFrame::ScrollEvent : public Runnable {
 class ScrollContainerFrame::ScrollEndEvent : public Runnable {
  public:
   NS_DECL_NSIRUNNABLE
-  explicit ScrollEndEvent(ScrollContainerFrame* aHelper, bool aDelayed);
+  explicit ScrollEndEvent(ScrollContainerFrame* aHelper);
   void Revoke() { mHelper = nullptr; }
 
  private:
@@ -3680,8 +3680,7 @@ void ScrollContainerFrame::MaybeCreateTopLayerAndWrapRootItems(
   };
 
   if (rootStyleFrame &&
-      rootStyleFrame->HasAnyStateBits(NS_FRAME_CAPTURED_IN_VIEW_TRANSITION) &&
-      StaticPrefs::dom_viewTransitions_live_capture()) {
+      rootStyleFrame->HasAnyStateBits(NS_FRAME_CAPTURED_IN_VIEW_TRANSITION)) {
     SerializeList();
     rootResultList.AppendNewToTop<nsDisplayViewTransitionCapture>(
         aBuilder, this, &rootResultList, aBuilder->CurrentActiveScrolledRoot(),
@@ -3730,7 +3729,6 @@ void ScrollContainerFrame::MaybeCreateTopLayerAndWrapRootItems(
 
     if (usingBackdropFilter) {
       SerializeList();
-      DisplayListClipState::AutoSaveRestore clipState(aBuilder);
       nsRect backdropRect =
           GetRectRelativeToSelf() + aBuilder->ToReferenceFrame(this);
       rootResultList.AppendNewToTop<nsDisplayBackdropFilters>(
@@ -3803,6 +3801,15 @@ void ScrollContainerFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
   const bool isRootContent =
       mIsRoot && PresContext()->IsRootContentDocumentCrossProcess();
+
+  const bool capturedByViewTransition = [&] {
+    if (!mIsRoot) {
+      return false;
+    }
+    auto* styleFrame = GetFrameForStyle();
+    return styleFrame &&
+           styleFrame->HasAnyStateBits(NS_FRAME_CAPTURED_IN_VIEW_TRANSITION);
+  }();
 
   // Expand the scroll port to the size including the area covered by dynamic
   // toolbar in the case where the dynamic toolbar is being used since
@@ -4142,6 +4149,8 @@ void ScrollContainerFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
       nsDisplayListBuilder::AutoBuildingDisplayList building(
           aBuilder, this, visibleRectForChildren, dirtyRectForChildren);
+      nsDisplayListBuilder::AutoEnterViewTransitionCapture
+          inViewTransitionCaptureSetter(aBuilder, capturedByViewTransition);
 
       BuildDisplayListForChild(aBuilder, mScrolledFrame, set);
 
@@ -4443,6 +4452,13 @@ nsRect ScrollContainerFrame::RestrictToRootDisplayPort(
 bool ScrollContainerFrame::DecideScrollableLayer(
     nsDisplayListBuilder* aBuilder, nsRect* aVisibleRect, nsRect* aDirtyRect,
     bool aSetBase, bool* aDirtyRectHasBeenOverriden) {
+  if (aBuilder->IsInViewTransitionCapture()) {
+    // If we're in a view transition, don't activate the scrollframe. We don't
+    // create APZ data for those subtrees anyways and they can't scroll.
+    mWillBuildScrollableLayer = false;
+    return false;
+  }
+
   nsIContent* content = GetContent();
   bool hasDisplayPort = DisplayPortUtils::HasDisplayPort(content);
   // For hit testing purposes with fission we want to create a
@@ -5382,29 +5398,19 @@ nsresult ScrollContainerFrame::FireScrollPortEvent() {
   return EventDispatcher::Dispatch(content, presContext, &event);
 }
 
-void ScrollContainerFrame::PostScrollEndEvent(bool aDelayed) {
+void ScrollContainerFrame::PostScrollEndEvent() {
   if (mScrollEndEvent) {
     return;
   }
 
-  // The ScrollEndEvent constructor registers itself with the refresh driver.
-  mScrollEndEvent = new ScrollEndEvent(this, aDelayed);
+  // The ScrollEndEvent constructor registers itself.
+  mScrollEndEvent = new ScrollEndEvent(this);
 }
 
 void ScrollContainerFrame::FireScrollEndEvent() {
-  RefPtr<nsIContent> content = GetContent();
-  MOZ_ASSERT(content);
-
   MOZ_ASSERT(mScrollEndEvent);
   mScrollEndEvent->Revoke();
   mScrollEndEvent = nullptr;
-
-  if (content->GetComposedDoc() &&
-      content->GetComposedDoc()->EventHandlingSuppressed()) {
-    content->GetComposedDoc()->SetHasDelayedRefreshEvent();
-    PostScrollEndEvent(/* aDelayed = */ true);
-    return;
-  }
 
   RefPtr<nsPresContext> presContext = PresContext();
   nsEventStatus status = nsEventStatus_eIgnore;
@@ -5825,10 +5831,9 @@ void ScrollContainerFrame::CurPosAttributeChangedInternal(nsIContent* aContent,
 
 /* ============= Scroll events ========== */
 
-ScrollContainerFrame::ScrollEvent::ScrollEvent(ScrollContainerFrame* aHelper,
-                                               bool aDelayed)
+ScrollContainerFrame::ScrollEvent::ScrollEvent(ScrollContainerFrame* aHelper)
     : Runnable("ScrollContainerFrame::ScrollEvent"), mHelper(aHelper) {
-  mHelper->PresContext()->RefreshDriver()->PostScrollEvent(this, aDelayed);
+  mHelper->PresShell()->PostScrollEvent(this);
 }
 
 // TODO: Convert this to MOZ_CAN_RUN_SCRIPT (bug 1415230, bug 1535398)
@@ -5841,9 +5846,9 @@ ScrollContainerFrame::ScrollEvent::Run() {
 }
 
 ScrollContainerFrame::ScrollEndEvent::ScrollEndEvent(
-    ScrollContainerFrame* aHelper, bool aDelayed)
+    ScrollContainerFrame* aHelper)
     : Runnable("ScrollContainerFrame::ScrollEndEvent"), mHelper(aHelper) {
-  mHelper->PresContext()->RefreshDriver()->PostScrollEvent(this, aDelayed);
+  mHelper->PresShell()->PostScrollEvent(this);
 }
 
 MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP
@@ -5863,16 +5868,6 @@ void ScrollContainerFrame::FireScrollEvent() {
   MOZ_ASSERT(mScrollEvent);
   mScrollEvent->Revoke();
   mScrollEvent = nullptr;
-
-  // If event handling is suppressed, keep posting the scroll event to the
-  // refresh driver until it is unsuppressed. The event is marked as delayed so
-  // that the refresh driver does not continue ticking.
-  if (content->GetComposedDoc() &&
-      content->GetComposedDoc()->EventHandlingSuppressed()) {
-    content->GetComposedDoc()->SetHasDelayedRefreshEvent();
-    PostScrollEvent(/* aDelayed = */ true);
-    return;
-  }
 
   bool oldProcessing = mProcessingScrollEvent;
   AutoWeakFrame weakFrame(this);
@@ -5903,13 +5898,13 @@ void ScrollContainerFrame::FireScrollEvent() {
   }
 }
 
-void ScrollContainerFrame::PostScrollEvent(bool aDelayed) {
+void ScrollContainerFrame::PostScrollEvent() {
   if (mScrollEvent) {
     return;
   }
 
-  // The ScrollEvent constructor registers itself with the refresh driver.
-  mScrollEvent = new ScrollEvent(this, aDelayed);
+  // The ScrollEvent constructor registers itself.
+  mScrollEvent = new ScrollEvent(this);
 }
 
 // TODO: Convert this to MOZ_CAN_RUN_SCRIPT (bug 1415230, bug 1535398)
@@ -5923,18 +5918,7 @@ void ScrollContainerFrame::PostOverflowEvent() {
     return;
   }
 
-  auto overflowEventEnabled = [&]() -> bool {
-    Document* doc = PresContext()->Document();
-    if (nsContentUtils::IsChromeDoc(doc)) {
-      return true;
-    }
-    if (nsContentUtils::IsAddonDoc(doc)) {
-      return StaticPrefs::layout_overflow_underflow_content_enabled_in_addons();
-    }
-    return StaticPrefs::layout_overflow_underflow_content_enabled();
-  }();
-
-  if (!overflowEventEnabled) {
+  if (!nsContentUtils::IsChromeDoc(PresContext()->Document())) {
     return;
   }
 

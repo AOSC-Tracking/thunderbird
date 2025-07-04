@@ -9,26 +9,33 @@ use nserror::{
 };
 use nsstring::nsACString;
 use nsstring::nsCString;
+use std::ptr;
 use std::{cell::OnceCell, ffi::c_void};
 use thin_vec::ThinVec;
 use url::Url;
+use xpcom::get_service;
+use xpcom::getter_addrefs;
+use xpcom::interfaces::nsIIOService;
 use xpcom::{
     interfaces::{
-        nsIInputStream, nsIMsgIncomingServer, IEwsFolderCallbacks, IEwsFolderCreateCallbacks,
-        IEwsFolderDeleteCallbacks, IEwsMessageCallbacks, IEwsMessageCreateCallbacks,
-        IEwsMessageDeleteCallbacks, IEwsMessageFetchCallbacks,
+        nsIInputStream, nsIMsgIncomingServer, nsIURI, nsIUrlListener, IEwsFolderCallbacks,
+        IEwsFolderCreateCallbacks, IEwsFolderDeleteCallbacks, IEwsFolderUpdateCallbacks,
+        IEwsMessageCallbacks, IEwsMessageCreateCallbacks, IEwsMessageDeleteCallbacks,
+        IEwsMessageFetchCallbacks,
     },
     nsIID, xpcom_method, RefPtr,
 };
 
 use authentication::credentials::{AuthenticationProvider, Credentials};
 use client::XpComEwsClient;
+use safe_xpcom::SafeEwsFolderCallbacks;
 
 mod authentication;
 mod cancellable_request;
 mod client;
 mod headers;
 mod outgoing;
+mod safe_xpcom;
 mod xpcom_io;
 
 /// Creates a new instance of the XPCOM/EWS bridge interface [`XpcomEwsBridge`].
@@ -76,6 +83,38 @@ impl XpcomEwsBridge {
         Ok(())
     }
 
+    xpcom_method!(check_connectivity => CheckConnectivity(listener: *const nsIUrlListener) -> *const nsIURI);
+    fn check_connectivity(&self, listener: &nsIUrlListener) -> Result<RefPtr<nsIURI>, nsresult> {
+        // Extract the endpoint URL from the existing server details (or error
+        // if these haven't been set yet).
+        let uri = nsCString::from(
+            self.details
+                .get()
+                .ok_or(nserror::NS_ERROR_NOT_INITIALIZED)?
+                .endpoint
+                .to_string(),
+        );
+
+        // Turn the string URI into an `nsIURI`.
+        let io_service = get_service::<nsIIOService>(c"@mozilla.org/network/io-service;1")
+            .ok_or(nserror::NS_ERROR_FAILURE)?;
+
+        let uri =
+            getter_addrefs(|p| unsafe { io_service.NewURI(&*uri, ptr::null(), ptr::null(), p) })?;
+
+        // Get an EWS client and make a request to check connectivity to the EWS
+        // server.
+        let client = self.try_new_client()?;
+
+        moz_task::spawn_local(
+            "check_connectivity",
+            client.check_connectivity(uri.clone(), RefPtr::new(listener)),
+        )
+        .detach();
+
+        Ok(uri)
+    }
+
     xpcom_method!(sync_folder_hierarchy => SyncFolderHierarchy(callbacks: *const IEwsFolderCallbacks, sync_state: *const nsACString));
     fn sync_folder_hierarchy(
         &self,
@@ -96,7 +135,7 @@ impl XpcomEwsBridge {
         // this scope, so spawn it as a detached `moz_task`.
         moz_task::spawn_local(
             "sync_folder_hierarchy",
-            client.sync_folder_hierarchy(RefPtr::new(callbacks), sync_state),
+            client.sync_folder_hierarchy(SafeEwsFolderCallbacks::new(callbacks), sync_state),
         )
         .detach();
 
@@ -144,6 +183,30 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "delete_folder",
             client.delete_folder(RefPtr::new(callbacks), folder_id.to_utf8().into_owned()),
+        )
+        .detach();
+
+        Ok(())
+    }
+
+    xpcom_method!(update_folder => UpdateFolder(callbacks: *const IEwsFolderUpdateCallbacks, folder_id: *const nsACString, folder_name: *const nsACString));
+    fn update_folder(
+        &self,
+        callbacks: &IEwsFolderUpdateCallbacks,
+        folder_id: &nsACString,
+        folder_name: &nsACString,
+    ) -> Result<(), nsresult> {
+        let client = self.try_new_client()?;
+
+        // The client operation is async and we want it to survive the end of
+        // this scope, so spawn it as a detached `moz_task`.
+        moz_task::spawn_local(
+            "update_folder",
+            client.update_folder(
+                RefPtr::new(callbacks),
+                folder_id.to_utf8().into_owned(),
+                folder_name.to_utf8().into_owned(),
+            ),
         )
         .detach();
 
@@ -228,11 +291,12 @@ impl XpcomEwsBridge {
         Ok(())
     }
 
-    xpcom_method!(create_message => CreateMessage(folder_id: *const nsACString, is_draft: bool, message_stream: *const nsIInputStream, callbacks: *const IEwsMessageCreateCallbacks));
+    xpcom_method!(create_message => CreateMessage(folder_id: *const nsACString, is_draft: bool, is_read: bool, message_stream: *const nsIInputStream, callbacks: *const IEwsMessageCreateCallbacks));
     fn create_message(
         &self,
         folder_id: &nsACString,
         is_draft: bool,
+        is_read: bool,
         message_stream: &nsIInputStream,
         callbacks: &IEwsMessageCreateCallbacks,
     ) -> Result<(), nsresult> {
@@ -247,6 +311,7 @@ impl XpcomEwsBridge {
             client.create_message(
                 folder_id.to_utf8().into(),
                 is_draft,
+                is_read,
                 content,
                 RefPtr::new(callbacks),
             ),

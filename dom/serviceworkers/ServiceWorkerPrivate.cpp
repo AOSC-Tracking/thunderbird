@@ -570,6 +570,10 @@ nsresult ServiceWorkerPrivate::Initialize() {
   nsCOMPtr<nsIURI> firstPartyURI;
   bool foreignByAncestorContext = false;
   bool isOn3PCBExceptionList = false;
+  // Firefox doesn't support service workers in PBM,
+  // but we add this just so that when we do,
+  // we can handle it correctly.
+  bool isPBM = principal->GetIsInPrivateBrowsing();
   if (!principal->OriginAttributesRef().mPartitionKey.IsEmpty()) {
     net::CookieJarSettings::Cast(cookieJarSettings)
         ->SetPartitionKey(principal->OriginAttributesRef().mPartitionKey);
@@ -592,7 +596,7 @@ nsresult ServiceWorkerPrivate::Initialize() {
       if (NS_SUCCEEDED(rv)) {
         overriddenFingerprintingSettings =
             nsRFPService::GetOverriddenFingerprintingSettingsForURI(
-                firstPartyURI, uri);
+                firstPartyURI, uri, isPBM);
         if (overriddenFingerprintingSettings.isSome()) {
           overriddenFingerprintingSettingsArg.emplace(
               overriddenFingerprintingSettings.ref());
@@ -625,9 +629,9 @@ nsresult ServiceWorkerPrivate::Initialize() {
       overriddenFingerprintingSettings =
           isThirdParty
               ? nsRFPService::GetOverriddenFingerprintingSettingsForURI(
-                    firstPartyURI, uri)
+                    firstPartyURI, uri, isPBM)
               : nsRFPService::GetOverriddenFingerprintingSettingsForURI(
-                    uri, nullptr);
+                    uri, nullptr, isPBM);
 
       RefPtr<net::CookieService> csSingleton =
           net::CookieService::GetSingleton();
@@ -650,7 +654,8 @@ nsresult ServiceWorkerPrivate::Initialize() {
     // the service worker as the first-party domain to get the fingerprinting
     // protection overrides.
     overriddenFingerprintingSettings =
-        nsRFPService::GetOverriddenFingerprintingSettingsForURI(uri, nullptr);
+        nsRFPService::GetOverriddenFingerprintingSettingsForURI(uri, nullptr,
+                                                                isPBM);
 
     if (overriddenFingerprintingSettings.isSome()) {
       overriddenFingerprintingSettingsArg.emplace(
@@ -658,7 +663,6 @@ nsresult ServiceWorkerPrivate::Initialize() {
     }
   }
 
-  bool isPBM = principal->GetIsInPrivateBrowsing();
   if (ContentBlockingAllowList::Check(principal, isPBM)) {
     net::CookieJarSettings::Cast(cookieJarSettings)
         ->SetIsOnContentBlockingAllowList(true);
@@ -933,15 +937,14 @@ nsresult ServiceWorkerPrivate::SendLifeCycleEvent(
 }
 
 nsresult ServiceWorkerPrivate::SendCookieChangeEvent(
-    const nsAString& aCookieName, const nsAString& aCookieValue,
-    bool aCookieDeleted, RefPtr<ServiceWorkerRegistrationInfo> aRegistration) {
+    const net::CookieStruct& aCookie, bool aCookieDeleted,
+    RefPtr<ServiceWorkerRegistrationInfo> aRegistration) {
   AssertIsOnMainThread();
   MOZ_ASSERT(mInfo);
   MOZ_ASSERT(aRegistration);
 
   ServiceWorkerCookieChangeEventOpArgs args;
-  args.name() = aCookieName;
-  args.value() = aCookieValue;
+  args.cookie() = aCookie;
   args.deleted() = aCookieDeleted;
 
   if (mInfo->State() == ServiceWorkerState::Activating) {
@@ -1493,7 +1496,10 @@ RefPtr<GenericPromise> ServiceWorkerPrivate::GetIdlePromise() {
   mIdlePromiseObtained = true;
 #endif
 
-  return mIdlePromiseHolder.Ensure(__func__);
+  RefPtr<GenericPromise> promise = mIdlePromiseHolder.Ensure(__func__);
+  mIdlePromiseHolder.UseDirectTaskDispatch(__func__);
+
+  return promise;
 }
 
 namespace {

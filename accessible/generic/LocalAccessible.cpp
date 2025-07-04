@@ -1264,9 +1264,10 @@ already_AddRefed<AccAttributes> LocalAccessible::NativeAttributes() {
   auto GetMargin = [&](mozilla::Side aSide) -> CSSCoord {
     // This is here only to guarantee that we do the same as getComputedStyle
     // does, so that we don't hit precision errors in tests.
-    const auto& margin = f->StyleMargin()->GetMargin(aSide);
-    if (margin.ConvertsToLength()) {
-      return margin.AsLengthPercentage().ToLengthInCSSPixels();
+    const auto margin =
+        f->StyleMargin()->GetMargin(aSide, f->StyleDisplay()->mPosition);
+    if (margin->ConvertsToLength()) {
+      return margin->AsLengthPercentage().ToLengthInCSSPixels();
     }
 
     nscoord coordVal = f->GetUsedMargin().Side(aSide);
@@ -1430,9 +1431,9 @@ void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
   }
 
   // Fire name change and description change events.
-  if (aAttribute == nsGkAtoms::aria_label) {
-    // A valid aria-labelledby would take precedence so an aria-label change
-    // won't change the name.
+  if (aAttribute == nsGkAtoms::aria_label || aAttribute == nsGkAtoms::label) {
+    // A valid aria-labelledby would take precedence over an aria-label or a xul
+    // label attribute. So if that relation exists the name won't change.
     AssociatedElementsIterator iter(mDoc, elm, nsGkAtoms::aria_labelledby);
     if (!iter.NextElem()) {
       mDoc->FireDelayedEvent(nsIAccessibleEvent::EVENT_NAME_CHANGE, this);
@@ -4488,4 +4489,12 @@ Maybe<int32_t> LocalAccessible::GetIntARIAAttr(nsAtom* aAttrName) const {
     // XXX Handle attributes that allow -1; e.g. aria-row/colcount.
   }
   return Nothing();
+}
+
+bool LocalAccessible::GetStringARIAAttr(nsAtom* aAttrName,
+                                        nsAString& aAttrValue) const {
+  if (dom::Element* elm = Elm()) {
+    return nsAccUtils::GetARIAAttr(elm, aAttrName, aAttrValue);
+  }
+  return false;
 }

@@ -82,24 +82,3 @@ NS_IMETHODIMP nsMsgAttachmentData::SetDescription(
   m_description = aDescription;
   return NS_OK;
 }
-
-NS_IMETHODIMP nsMsgAttachmentData::GetXMacType(nsACString& aXMacType) {
-  aXMacType = m_xMacType;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachmentData::SetXMacType(const nsACString& aXMacType) {
-  m_xMacType = aXMacType;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachmentData::GetXMacCreator(nsACString& aXMacCreator) {
-  aXMacCreator = m_xMacCreator;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachmentData::SetXMacCreator(
-    const nsACString& aXMacCreator) {
-  m_xMacCreator = aXMacCreator;
-  return NS_OK;
-}

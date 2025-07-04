@@ -610,13 +610,13 @@ nsresult CacheLoadHandler::DataReceivedFromCache(
   }
 
   if (NS_SUCCEEDED(rv)) {
-    DataReceived();
+    return DataReceived();
   }
 
   return rv;
 }
 
-void CacheLoadHandler::DataReceived() {
+nsresult CacheLoadHandler::DataReceived() {
   MOZ_ASSERT(!mRequestHandle->IsEmpty());
   WorkerLoadContext* loadContext = mRequestHandle->GetContext();
 
@@ -627,12 +627,13 @@ void CacheLoadHandler::DataReceived() {
       // XHR Params Allowed
       mWorkerRef->Private()->SetXHRParamsAllowed(parent->XHRParamsAllowed());
 
-      // Set Eval and ContentSecurityPolicy
-      mWorkerRef->Private()->SetCsp(parent->GetCsp());
-      mWorkerRef->Private()->SetEvalAllowed(parent->IsEvalAllowed());
-      mWorkerRef->Private()->SetWasmEvalAllowed(parent->IsWasmEvalAllowed());
+      // Set ContentSecurityPolicy
+      nsresult rv = mWorkerRef->Private()->SetCsp(parent->GetCsp());
+      NS_ENSURE_SUCCESS(rv, rv);
     }
   }
+
+  return NS_OK;
 }
 
 }  // namespace workerinternals::loader

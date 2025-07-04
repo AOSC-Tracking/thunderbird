@@ -4,33 +4,40 @@ prefs = [
   "logging.config.modules=panorama:4,mozStorage:4",
   "mail.panorama.enabled=true",
 ]
-generated-files = [
-  "db/lookup.sqlite",
-  "db/messages.sqlite",
-  "db/move.sqlite",
-  "db/relations.sqlite",
-  "db/sort.sqlite",
-]
 support-files = [
-  "db/lookup.sqlite",
-  "db/messages.sqlite",
-  "db/move.sqlite",
-  "db/relations.sqlite",
-  "db/sort.sqlite",
+  "db/messages.sql",
+  "db/move.sql",
+  "db/relations.sql",
 ]
 
 ["test_delete.js"]
+
 ["test_findFolders.js"]
-skip-if = true  # Obsolete for now, may come back from the dead.
+
 ["test_flags.js"]
+
 ["test_insert.js"]
+
 ["test_liveView.js"]
+
 ["test_liveViewDataAdapter.js"]
+
 ["test_lookup.js"]
+
 ["test_messages.js"]
+
+["test_messageIngestion.js"]
+
 ["test_move.js"]
+
+["test_msgFolders.js"]
+
 ["test_perFolderDatabase.js"]
+
 ["test_reconcile.js"]
+
 ["test_relations.js"]
+
 ["test_sort.js"]
+
 ["test_sqlFunctions.js"]

@@ -14,7 +14,7 @@
 #include "WinUtils.h"
 #include "WindowsUIUtils.h"
 #include "mozilla/FontPropertyTypes.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/WidgetWindowsMetrics.h"
 #include "mozilla/intl/LocaleService.h"
 #include "mozilla/widget/WinRegistry.h"
 
@@ -119,8 +119,10 @@ uint32_t nsLookAndFeel::SystemColorFilter() {
 }
 
 nsLookAndFeel::nsLookAndFeel() {
-  mozilla::Telemetry::Accumulate(mozilla::Telemetry::TOUCH_ENABLED_DEVICE,
-                                 WinUtils::IsTouchDeviceSupportPresent());
+  glean::widget::touch_enabled_device
+      .EnumGet(static_cast<glean::widget::TouchEnabledDeviceLabel>(
+          WinUtils::IsTouchDeviceSupportPresent()))
+      .Add();
 }
 
 nsLookAndFeel::~nsLookAndFeel() = default;
@@ -400,7 +402,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
     case ColorID::Fieldtext:
       idx = mHighContrastOn ? COLOR_BTNTEXT : COLOR_WINDOWTEXT;
       break;
-    case ColorID::MozEventreerow:
     case ColorID::MozOddtreerow:
     case ColorID::MozSidebar:
     case ColorID::MozCombobox:
@@ -555,7 +556,7 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       aResult = WinUtils::MicaPopupsEnabled();
       break;
     case IntID::AlertNotificationOrigin:
-      aResult = NS_ALERT_TOP;
+      aResult = 0;
       if (intl::LocaleService::GetInstance()->IsAppLocaleRTL()) {
         // If the task bar is right-to-left, move the origin to the left
         aResult |= NS_ALERT_LEFT;

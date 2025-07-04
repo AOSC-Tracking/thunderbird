@@ -12,7 +12,11 @@ const _OpenInPrivateWindow = site => ({
   icon: "new-window-private",
   action: ac.OnlyToMain({
     type: at.OPEN_PRIVATE_WINDOW,
-    data: { url: site.url, referrer: site.referrer },
+    data: {
+      url: site.url,
+      referrer: site.referrer,
+      event_source: "CONTEXT_MENU",
+    },
   }),
   userEvent: "OPEN_PRIVATE_WINDOW",
 });
@@ -71,21 +75,36 @@ export const LinkMenuOptions = {
     action: ac.AlsoToMain({
       type: at.OPEN_NEW_WINDOW,
       data: {
+        card_type: site.card_type,
         referrer: site.referrer,
         typedBonus: site.typedBonus,
         url: site.url,
         sponsored_tile_id: site.sponsored_tile_id,
+        event_source: "CONTEXT_MENU",
+        topic: site.topic,
+        firstVisibleTimestamp: site.firstVisibleTimestamp,
+        tile_id: site.tile_id,
+        recommendation_id: site.recommendation_id,
+        scheduled_corpus_item_id: site.scheduled_corpus_item_id,
+        corpus_item_id: site.corpus_item_id,
+        received_rank: site.received_rank,
+        recommended_at: site.recommended_at,
+        format: site.format,
+        ...(site.flight_id ? { flight_id: site.flight_id } : {}),
+        is_pocket_card: site.type === "CardGrid",
+        is_list_card: site.is_list_card,
         ...(site.section
           ? {
               section: site.section,
               section_position: site.section_position,
-              is_secton_followed: site.is_secton_followed,
+              is_section_followed: site.is_section_followed,
             }
           : {}),
       },
     }),
     userEvent: "OPEN_NEW_WINDOW",
   }),
+
   // This blocks the url for regular stories,
   // but also sends a message to DiscoveryStream with flight_id.
   // If DiscoveryStream sees this message for a flight_id
@@ -93,12 +112,13 @@ export const LinkMenuOptions = {
   BlockUrl: (site, index, eventSource) => {
     return LinkMenuOptions.BlockUrls([site], index, eventSource);
   },
-  // Same as BlockUrl, cept can work on an array of sites.
+  // Same as BlockUrl, except can work on an array of sites.
   BlockUrls: (tiles, pos, eventSource) => ({
     id: "newtab-menu-dismiss",
     icon: "dismiss",
     action: ac.AlsoToMain({
       type: at.BLOCK_URL,
+      source: eventSource,
       data: tiles.map(site => ({
         url: site.original_url || site.open_url || site.url,
         // pocket_id is only for pocket stories being in highlights, and then dismissed.
@@ -134,7 +154,7 @@ export const LinkMenuOptions = {
           ? {
               section: site.section,
               section_position: site.section_position,
-              is_secton_followed: site.is_secton_followed,
+              is_section_followed: site.is_section_followed,
             }
           : {}),
       })),
@@ -447,7 +467,12 @@ export const LinkMenuOptions = {
       type: at.OPEN_ABOUT_FAKESPOT,
     }),
   }),
-  SectionBlock: ({ blockedSections, sectionKey, sectionPosition, title }) => ({
+  SectionBlock: ({
+    sectionPersonalization,
+    sectionKey,
+    sectionPosition,
+    title,
+  }) => ({
     id: "newtab-menu-section-block",
     icon: "delete",
     action: {
@@ -458,10 +483,13 @@ export const LinkMenuOptions = {
           // Once the user confirmed their intention to block this section,
           // update their preferences.
           ac.AlsoToMain({
-            type: at.SET_PREF,
+            type: at.SECTION_PERSONALIZATION_SET,
             data: {
-              name: "discoverystream.sections.blocked",
-              value: [...blockedSections, sectionKey].join(", "),
+              ...sectionPersonalization,
+              [sectionKey]: {
+                isBlocked: true,
+                isFollowed: false,
+              },
             },
           }),
           // Telemetry
@@ -492,16 +520,17 @@ export const LinkMenuOptions = {
     },
     userEvent: "DIALOG_OPEN",
   }),
-  SectionUnfollow: ({ followedSections, sectionKey, sectionPosition }) => ({
+  SectionUnfollow: ({
+    sectionPersonalization,
+    sectionKey,
+    sectionPosition,
+  }) => ({
     id: "newtab-menu-section-unfollow",
     action: ac.AlsoToMain({
-      type: at.SET_PREF,
-      data: {
-        name: "discoverystream.sections.following",
-        value: [...followedSections.filter(item => item !== sectionKey)].join(
-          ", "
-        ),
-      },
+      type: at.SECTION_PERSONALIZATION_SET,
+      data: (({ sectionKey: _sectionKey, ...remaining }) => remaining)(
+        sectionPersonalization
+      ),
     }),
     impression: ac.OnlyToMain({
       type: at.UNFOLLOW_SECTION,
@@ -527,12 +556,40 @@ export const LinkMenuOptions = {
     }),
     userEvent: "CLICK_PRIVACY_INFO",
   }),
-  ReportAd: () => ({
-    id: "newtab-menu-report-this-ad",
-    action: ac.BroadcastToContent({ type: at.REPORT_OPEN }),
-  }),
-  ReportContent: () => ({
-    id: "newtab-menu-report-content",
-    action: ac.BroadcastToContent({ type: at.REPORT_OPEN }),
-  }),
+  ReportAd: site => {
+    return {
+      id: "newtab-menu-report-this-ad",
+      action: ac.AlsoToMain({
+        type: at.REPORT_AD_OPEN,
+        data: {
+          card_type: site.card_type,
+          position: site.position,
+          reporting_url: site.shim.report,
+          url: site.url,
+        },
+      }),
+    };
+  },
+
+  ReportContent: site => {
+    return {
+      id: "newtab-menu-report",
+      action: ac.AlsoToMain({
+        type: at.REPORT_CONTENT_OPEN,
+        data: {
+          card_type: site.card_type,
+          corpus_item_id: site.corpus_item_id,
+          is_section_followed: site.is_section_followed,
+          received_rank: site.received_rank,
+          recommended_at: site.recommended_at,
+          scheduled_corpus_item_id: site.scheduled_corpus_item_id,
+          section_position: site.section_position,
+          section: site.section,
+          title: site.title,
+          topic: site.topic,
+          url: site.url,
+        },
+      }),
+    };
+  },
 };

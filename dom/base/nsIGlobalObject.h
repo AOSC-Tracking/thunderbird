@@ -53,6 +53,7 @@ class ServiceWorkerContainer;
 class ServiceWorkerRegistration;
 class ServiceWorkerRegistrationDescriptor;
 class StorageManager;
+class WebTaskSchedulingState;
 enum class CallerType : uint32_t;
 }  // namespace dom
 namespace ipc {
@@ -78,7 +79,6 @@ class nsIGlobalObject : public nsISupports {
   mozilla::LinkedList<mozilla::GlobalFreezeObserver> mGlobalFreezeObservers;
 
   bool mIsDying;
-  bool mIsScriptForbidden;
 
  protected:
   bool mIsInnerWindow;
@@ -88,7 +88,7 @@ class nsIGlobalObject : public nsISupports {
  public:
   using RTPCallerType = mozilla::RTPCallerType;
   using RFPTarget = mozilla::RFPTarget;
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IGLOBALOBJECT_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IGLOBALOBJECT_IID)
 
   /**
    * This check is added to deal with Promise microtask queues. On the main
@@ -191,6 +191,13 @@ class nsIGlobalObject : public nsISupports {
 
   virtual mozilla::dom::DebuggerNotificationManager*
   GetExistingDebuggerNotificationManager() {
+    return nullptr;
+  }
+
+  virtual void SetWebTaskSchedulingState(
+      mozilla::dom::WebTaskSchedulingState* aState) {}
+  virtual mozilla::dom::WebTaskSchedulingState* GetWebTaskSchedulingState()
+      const {
     return nullptr;
   }
 
@@ -328,7 +335,7 @@ class nsIGlobalObject : public nsISupports {
   }
   // Return true if there is any active IndexedDB databases which could block
   // timeout-throttling.
-  virtual bool HasActiveIndexedDBDatabases() { return false; }
+  virtual bool HasActiveIndexedDBDatabases() const { return false; }
   /**
    * Check whether the active peer connection count is non-zero.
    */
@@ -338,6 +345,15 @@ class nsIGlobalObject : public nsISupports {
   virtual bool HasOpenWebSockets() const { return false; }
 
   virtual bool IsXPCSandbox() { return false; }
+
+  virtual bool HasScheduledNormalOrHighPriorityWebTasks() const {
+    return false;
+  }
+
+  virtual void UpdateWebSocketCount(int32_t aDelta) {};
+  // Increase/Decrease the number of active IndexedDB databases for the
+  // decision making of timeout-throttling.
+  virtual void UpdateActiveIndexedDBDatabaseCount(int32_t aDelta) {}
 
   /**
    * Report a localized error message to the error console.  Currently this
@@ -379,9 +395,6 @@ class nsIGlobalObject : public nsISupports {
 
   void StartDying() { mIsDying = true; }
 
-  void StartForbiddingScript() { mIsScriptForbidden = true; }
-  void StopForbiddingScript() { mIsScriptForbidden = false; }
-
   void DisconnectGlobalTeardownObservers();
   void DisconnectGlobalFreezeObservers();
   void NotifyGlobalFrozen();
@@ -400,7 +413,5 @@ class nsIGlobalObject : public nsISupports {
   // https://streams.spec.whatwg.org/#byte-length-queuing-strategy-size-function
   RefPtr<mozilla::dom::Function> mByteLengthQueuingStrategySizeFunction;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIGlobalObject, NS_IGLOBALOBJECT_IID)
 
 #endif  // nsIGlobalObject_h__

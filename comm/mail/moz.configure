@@ -8,7 +8,20 @@ set_config("MOZ_THUNDERBIRD", True)
 set_define("MOZ_THUNDERBIRD", True)
 
 imply_option("MOZ_APP_NAME", "thunderbird")
-imply_option("MOZ_APP_PROFILE", "thunderbird")
+
+# MOZ_APP_PROFILE: When set, used for application.ini's
+# "Profile" field, which controls profile location.
+if target_is_windows or target_is_osx:
+    imply_option("MOZ_APP_PROFILE", "Thunderbird")
+else:
+    imply_option("MOZ_APP_PROFILE", "thunderbird")
+
+# MOZ_APP_BASENAME: Typically stays consistent for multiple branded
+# versions of a given application (e.g. Daily and Thunderbird both use
+# "Thunderbird"), but may vary for full rebrandings. Used
+# for application.ini's "Name" field, which controls profile location in
+# the absence of a "Profile" field, and various system
+# integration hooks (Unix remoting, Windows MessageWindow name, etc.)
 imply_option("MOZ_APP_BASENAME", "Thunderbird")
 set_config("MOZ_APPUPDATE_HOST", "aus.thunderbird.net")
 
@@ -40,7 +53,6 @@ def bundled_fonts(is_windows, is_linux):
 
 
 set_config("MOZ_BUNDLED_FONTS", bundled_fonts)
-add_old_configure_assignment("MOZ_BUNDLED_FONTS", bundled_fonts)
 
 
 @depends(build_environment, "--help")
@@ -50,7 +62,6 @@ def commtopsrcdir(build_env, _):
     return join(topsrcdir, "comm")
 
 
-add_old_configure_assignment("commtopsrcdir", commtopsrcdir)
 set_config("commtopsrcdir", commtopsrcdir)
 
 
@@ -114,6 +125,7 @@ set_config(
         "toolkit/components/pdfjs/metrics.yaml",
         # Could be useful, but fails "Sorry, Glean found some glinter nits".
         # "toolkit/components/startup/metrics.yaml",
+        "toolkit/components/crashes/pings.yaml",
         "toolkit/mozapps/defaultagent/metrics.yaml",
         "toolkit/mozapps/extensions/metrics.yaml",
         "toolkit/mozapps/update/metrics.yaml",

@@ -6,19 +6,9 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.sys.mjs",
-  TelemetryEvents: "resource://normandy/lib/TelemetryEvents.sys.mjs",
 });
 
-const LEGACY_TELEMETRY_EVENT_OBJECT = "nimbus_experiment";
 const EXPERIMENT_ACTIVE_PREFIX = "nimbus-";
-
-const LegacyTelemetryEvents = Object.freeze({
-  ENROLL: "enroll",
-  ENROLL_FAILED: "enrollFailed",
-  UNENROLL: "unenroll",
-  UNENROLL_FAILED: "unenrollFailed",
-  VALIDATION_FAILED: "validationFailed",
-});
 
 const EnrollmentStatus = Object.freeze({
   ENROLLED: "Enrolled",
@@ -29,6 +19,7 @@ const EnrollmentStatus = Object.freeze({
 });
 
 const EnrollmentStatusReason = Object.freeze({
+  CHANGED_PREF: "ChangedPref",
   QUALIFIED: "Qualified",
   OPT_IN: "OptIn",
   OPT_OUT: "OptOut",
@@ -36,12 +27,20 @@ const EnrollmentStatusReason = Object.freeze({
   NOT_TARGETED: "NotTargeted",
   ENROLLMENTS_PAUSED: "EnrollmentsPaused",
   FEATURE_CONFLICT: "FeatureConflict",
+  FORCE_ENROLLMENT: "ForceEnrollment",
+  NAME_CONFLICT: "NameConflict",
+  PREF_FLIPS_CONFLICT: "PrefFlipsConflict",
   ERROR: "Error",
 });
 
 const EnrollmentFailureReason = Object.freeze({
   FEATURE_CONFLICT: "feature-conflict",
   NAME_CONFLICT: "name-conflict",
+});
+
+const EnrollmentSource = Object.freeze({
+  RS_LOADER: "rs-loader",
+  FORCE_ENROLLMENT: "force-enrollment",
 });
 
 const UnenrollmentFailureReason = Object.freeze({
@@ -62,7 +61,9 @@ const UnenrollReason = Object.freeze({
   BRANCH_REMOVED: "branch-removed",
   BUCKETING: "bucketing",
   CHANGED_PREF: "changed-pref",
+  FORCE_ENROLLMENT: "force-enrollment",
   INDIVIDUAL_OPT_OUT: "individual-opt-out",
+  LABS_OPT_OUT: "labs-opt-out",
   PREF_FLIPS_CONFLICT: "prefFlips-conflict",
   PREF_FLIPS_FAILED: "prefFlips-failed",
   PREF_VARIABLE_CHANGED: "pref-variable-changed",
@@ -77,8 +78,12 @@ const UnenrollReason = Object.freeze({
   ...ValidationFailureReason,
 });
 
+const EXPERIMENT_TYPE_ROLLOUT = "rollout";
+const EXPERIMENT_TYPE_NIMBUS = "nimbus";
+
 export const NimbusTelemetry = {
   EnrollmentFailureReason,
+  EnrollmentSource,
   EnrollmentStatus,
   EnrollmentStatusReason,
   UnenrollReason,
@@ -87,31 +92,39 @@ export const NimbusTelemetry = {
 
   recordEnrollment(enrollment) {
     this.setExperimentActive(enrollment);
-    lazy.TelemetryEvents.sendEvent(
-      LegacyTelemetryEvents.ENROLL,
-      LEGACY_TELEMETRY_EVENT_OBJECT,
-      enrollment.slug,
-      {
-        experimentType: enrollment.experimentType,
-        branch: enrollment.branch.slug,
-      }
-    );
+
+    const experimentType = enrollment.isRollout
+      ? EXPERIMENT_TYPE_ROLLOUT
+      : EXPERIMENT_TYPE_NIMBUS;
+
+    Glean.normandy.enrollNimbusExperiment.record({
+      value: enrollment.slug,
+      branch: enrollment.branch.slug,
+      experimentType,
+    });
     Glean.nimbusEvents.enrollment.record({
       experiment: enrollment.slug,
       branch: enrollment.branch.slug,
-      experiment_type: enrollment.experimentType,
+      experiment_type: experimentType,
+    });
+
+    this.recordEnrollmentStatus({
+      slug: enrollment.slug,
+      branch: enrollment.branch.slug,
+      status: EnrollmentStatus.ENROLLED,
+      reason:
+        enrollment.isFirefoxLabsOptIn ||
+        enrollment.source === EnrollmentSource.FORCE_ENROLLMENT
+          ? EnrollmentStatusReason.OPT_IN
+          : EnrollmentStatusReason.QUALIFIED,
     });
   },
 
   recordEnrollmentFailure(slug, reason) {
-    lazy.TelemetryEvents.sendEvent(
-      LegacyTelemetryEvents.ENROLL_FAILED,
-      LEGACY_TELEMETRY_EVENT_OBJECT,
-      slug,
-      {
-        reason,
-      }
-    );
+    Glean.normandy.enrollFailedNimbusExperiment.record({
+      value: slug,
+      reason,
+    });
     Glean.nimbusEvents.enrollFailed.record({
       experiment: slug,
       reason,
@@ -161,66 +174,101 @@ export const NimbusTelemetry = {
     );
   },
 
-  recordUnenrollment(
-    slug,
-    reason,
-    branchSlug,
-    { changedPref, conflictingSlug, prefType, prefName } = {}
-  ) {
-    lazy.TelemetryEnvironment.setExperimentInactive(slug);
-    Services.fog.setExperimentInactive(slug);
+  recordUnenrollment(enrollment, cause) {
+    lazy.TelemetryEnvironment.setExperimentInactive(enrollment.slug);
+    Services.fog.setExperimentInactive(enrollment.slug);
 
-    lazy.TelemetryEvents.sendEvent(
-      LegacyTelemetryEvents.UNENROLL,
-      LEGACY_TELEMETRY_EVENT_OBJECT,
-      slug,
-      Object.assign(
-        {
-          reason,
-          branch: branchSlug,
-        },
-        reason === UnenrollReason.CHANGED_PREF
-          ? { changedPref: changedPref.name }
-          : {},
-        reason === UnenrollReason.PREF_FLIPS_CONFLICT
-          ? { conflictingSlug }
-          : {},
-        reason === UnenrollReason.PREF_FLIPS_FAILED
-          ? { prefType, prefName }
-          : {}
-      )
-    );
+    const legacyEvent = {
+      value: enrollment.slug,
+      branch: enrollment.branch.slug,
+      reason: cause.reason,
+    };
+    const gleanEvent = {
+      experiment: enrollment.slug,
+      branch: enrollment.branch.slug,
+      reason: cause.reason,
+    };
 
-    Glean.nimbusEvents.unenrollment.record(
-      Object.assign(
-        {
-          experiment: slug,
-          branch: branchSlug,
-          reason,
-        },
-        reason === UnenrollReason.CHANGED_PREF
-          ? { changed_pref: changedPref.name }
-          : {},
-        reason === UnenrollReason.PREF_FLIPS_CONFLICT
-          ? { conflicting_slug: conflictingSlug }
-          : {},
-        reason === UnenrollReason.PREF_FLIPS_FAILED
-          ? {
-              pref_type: prefType,
-              pref_name: prefName,
-            }
-          : {}
-      )
-    );
+    switch (cause.reason) {
+      case UnenrollReason.CHANGED_PREF:
+        legacyEvent.changedPref = cause.changedPref.name;
+        gleanEvent.changed_pref = cause.changedPref.name;
+        break;
+
+      case UnenrollReason.PREF_FLIPS_CONFLICT:
+        legacyEvent.conflictingSlug = cause.conflictingSlug;
+        gleanEvent.conflicting_slug = cause.conflictingSlug;
+        break;
+
+      case UnenrollReason.PREF_FLIPS_FAILED:
+        legacyEvent.prefType = cause.prefType;
+        gleanEvent.pref_type = cause.prefType;
+
+        legacyEvent.prefName = cause.prefName;
+        gleanEvent.pref_name = cause.prefName;
+        break;
+    }
+
+    Glean.normandy.unenrollNimbusExperiment.record(legacyEvent);
+    Glean.nimbusEvents.unenrollment.record(gleanEvent);
+
+    const enrollmentStatus = {
+      slug: enrollment.slug,
+      branch: enrollment.branch.slug,
+    };
+
+    switch (cause.reason) {
+      case UnenrollReason.BUCKETING:
+        enrollmentStatus.status = EnrollmentStatus.DISQUALIFIED;
+        enrollmentStatus.reason = EnrollmentStatusReason.NOT_SELECTED;
+        break;
+
+      case UnenrollReason.RECIPE_NOT_SEEN:
+        enrollmentStatus.status = EnrollmentStatus.WAS_ENROLLED;
+        break;
+
+      case UnenrollReason.TARGETING_MISMATCH:
+        enrollmentStatus.status = EnrollmentStatus.DISQUALIFIED;
+        enrollmentStatus.reason = EnrollmentStatusReason.NOT_TARGETED;
+        break;
+
+      case UnenrollReason.INDIVIDUAL_OPT_OUT:
+      case UnenrollReason.LABS_OPT_OUT:
+      case UnenrollReason.STUDIES_OPT_OUT:
+        enrollmentStatus.status = EnrollmentStatus.DISQUALIFIED;
+        enrollmentStatus.reason = EnrollmentStatusReason.OPT_OUT;
+        break;
+
+      case UnenrollReason.CHANGED_PREF:
+        enrollmentStatus.status = EnrollmentStatus.DISQUALIFIED;
+        enrollmentStatus.reason = EnrollmentStatusReason.CHANGED_PREF;
+        break;
+
+      case UnenrollReason.FORCE_ENROLLMENT:
+        enrollmentStatus.status = EnrollmentStatus.DISQUALIFIED;
+        enrollmentStatus.reason = EnrollmentStatusReason.FORCE_ENROLLMENT;
+        break;
+
+      case UnenrollReason.PREF_FLIPS_CONFLICT:
+        enrollmentStatus.status = EnrollmentStatus.DISQUALIFIED;
+        enrollmentStatus.reason = EnrollmentStatusReason.PREF_FLIPS_CONFLICT;
+        enrollmentStatus.conflict_slug = cause.conflictingSlug;
+        break;
+
+      default:
+        enrollmentStatus.status = EnrollmentStatus.DISQUALIFIED;
+        enrollmentStatus.reason = EnrollmentStatusReason.ERROR;
+        enrollmentStatus.error_string = cause.reason;
+    }
+
+    this.recordEnrollmentStatus(enrollmentStatus);
   },
 
   recordUnenrollmentFailure(slug, reason) {
-    lazy.TelemetryEvents.sendEvent(
-      LegacyTelemetryEvents.UNENROLL_FAILED,
-      LEGACY_TELEMETRY_EVENT_OBJECT,
-      slug,
-      { reason }
-    );
+    Glean.normandy.unenrollFailedNimbusExperiment.record({
+      value: slug,
+      reason,
+    });
     Glean.nimbusEvents.unenrollFailed.record({
       experiment: slug,
       reason,
@@ -228,7 +276,10 @@ export const NimbusTelemetry = {
   },
 
   setExperimentActive(enrollment) {
-    const type = `${EXPERIMENT_ACTIVE_PREFIX}${enrollment.experimentType}`;
+    const experimentType = enrollment.isRollout
+      ? EXPERIMENT_TYPE_ROLLOUT
+      : EXPERIMENT_TYPE_NIMBUS;
+    const type = `${EXPERIMENT_ACTIVE_PREFIX}${experimentType}`;
     lazy.TelemetryEnvironment.setExperimentActive(
       enrollment.slug,
       enrollment.branch.slug,
@@ -243,27 +294,31 @@ export const NimbusTelemetry = {
   recordValidationFailure(
     slug,
     reason,
-    { branch, feature, locale, l10nIds: l10n_ids, featureIds: feature_ids } = {}
+    { branch, locale, l10nIds: l10n_ids } = {}
   ) {
+    // Do not record invalid feature telemetry.
+    if (reason === ValidationFailureReason.INVALID_FEATURE) {
+      return;
+    }
+
+    // Do not record unsupported feature telemetry.
+    if (reason === ValidationFailureReason.UNSUPPORTED_FEATURES) {
+      return;
+    }
+
     const extra = Object.assign(
       { reason },
       reason === ValidationFailureReason.INVALID_BRANCH ? { branch } : {},
-      reason === ValidationFailureReason.INVALID_FEATURE ? { feature } : {},
       reason === ValidationFailureReason.L10N_MISSING_ENTRY
         ? { l10n_ids, locale }
         : {},
-      reason === ValidationFailureReason.L10N_MISSING_LOCALE ? { locale } : {},
-      reason === ValidationFailureReason.UNSUPPORTED_FEATURES
-        ? { feature_ids }
-        : {}
+      reason === ValidationFailureReason.L10N_MISSING_LOCALE ? { locale } : {}
     );
 
-    lazy.TelemetryEvents.sendEvent(
-      LegacyTelemetryEvents.VALIDATION_FAILED,
-      LEGACY_TELEMETRY_EVENT_OBJECT,
-      slug,
-      extra
-    );
+    Glean.normandy.validationFailedNimbusExperiment.record({
+      value: slug,
+      ...extra,
+    });
 
     Glean.nimbusEvents.validationFailed.record({
       experiment: slug,

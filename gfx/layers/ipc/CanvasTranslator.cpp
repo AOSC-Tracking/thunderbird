@@ -17,6 +17,7 @@
 #include "mozilla/gfx/GPUParent.h"
 #include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/gfx/Logging.h"
+#include "mozilla/gfx/Swizzle.h"
 #include "mozilla/ipc/Endpoint.h"
 #include "mozilla/ipc/SharedMemoryHandle.h"
 #include "mozilla/layers/BufferTexture.h"
@@ -29,6 +30,8 @@
 #include "mozilla/SyncRunnable.h"
 #include "mozilla/TaskQueue.h"
 #include "GLContext.h"
+#include "HostWebGLContext.h"
+#include "WebGLParent.h"
 #include "RecordedCanvasEventImpl.h"
 
 #if defined(XP_WIN)
@@ -48,6 +51,12 @@ UniquePtr<TextureData> CanvasTranslator::CreateTextureData(
   switch (mTextureType) {
 #ifdef XP_WIN
     case TextureType::D3D11: {
+      // Prefer keyed mutex than D3D11Fence if remote canvas is enabled. See Bug
+      // 1966082
+      if (gfx::gfxVars::RemoteCanvasEnabled()) {
+        allocFlags =
+            (TextureAllocationFlags)(allocFlags | USE_D3D11_KEYED_MUTEX);
+      }
       textureData =
           D3D11TextureData::Create(aSize, aFormat, allocFlags, mDevice);
       break;
@@ -390,7 +399,8 @@ already_AddRefed<gfx::DataSourceSurface> CanvasTranslator::WaitForSurface(
     return nullptr;
   }
   ReferencePtr idRef(aId);
-  if (!HasSourceSurface(idRef)) {
+  auto* surf = LookupExportSurface(idRef);
+  if (!surf) {
     if (!HasPendingEvent()) {
       return nullptr;
     }
@@ -404,12 +414,13 @@ already_AddRefed<gfx::DataSourceSurface> CanvasTranslator::WaitForSurface(
     mFlushCheckpoint = 0;
     // If there is still no surface, then it is unlikely to be produced
     // now, so give up.
-    if (!HasSourceSurface(idRef)) {
+    surf = LookupExportSurface(idRef);
+    if (!surf) {
       return nullptr;
     }
   }
   // The surface exists, so get its data.
-  return LookupSourceSurface(idRef)->GetDataSurface();
+  return surf->GetDataSurface();
 }
 
 void CanvasTranslator::RecycleBuffer() {
@@ -697,7 +708,7 @@ bool CanvasTranslator::TranslateRecording() {
 
     mHeader->processedCount++;
 
-    if (mHeader->readerState == State::Paused) {
+    if (mHeader->readerState == State::Paused || PauseUntilSync()) {
       // We're waiting for an IPDL message return false, because we will resume
       // translation after it is received.
       Flush();
@@ -760,7 +771,7 @@ void CanvasTranslator::HandleCanvasTranslatorEvents() {
   {
     MutexAutoLock lock(mCanvasTranslatorEventsLock);
     MOZ_ASSERT_IF(mIPDLClosed, mPendingCanvasTranslatorEvents.empty());
-    if (mPendingCanvasTranslatorEvents.empty()) {
+    if (mPendingCanvasTranslatorEvents.empty() || PauseUntilSync()) {
       mCanvasTranslatorEventsRunnable = nullptr;
       return;
     }
@@ -798,6 +809,12 @@ void CanvasTranslator::HandleCanvasTranslatorEvents() {
       MutexAutoLock lock(mCanvasTranslatorEventsLock);
       MOZ_ASSERT_IF(mIPDLClosed, mPendingCanvasTranslatorEvents.empty());
       if (mIPDLClosed) {
+        return;
+      }
+      if (PauseUntilSync()) {
+        mCanvasTranslatorEventsRunnable = nullptr;
+        mPendingCanvasTranslatorEvents.push_front(
+            CanvasTranslatorEvent::TranslateRecording());
         return;
       }
       if (!mIPDLClosed && !dispatchTranslate &&
@@ -1619,6 +1636,99 @@ void CanvasTranslator::CheckpointReached() { CheckAndSignalWriter(); }
 
 void CanvasTranslator::PauseTranslation() {
   mHeader->readerState = State::Paused;
+}
+
+void CanvasTranslator::AwaitTranslationSync(uint64_t aSyncId) {
+  if (NS_WARN_IF(!UsePendingCanvasTranslatorEvents()) ||
+      NS_WARN_IF(!IsInTaskQueue()) || NS_WARN_IF(mAwaitSyncId >= aSyncId)) {
+    return;
+  }
+
+  mAwaitSyncId = aSyncId;
+}
+
+void CanvasTranslator::SyncTranslation(uint64_t aSyncId) {
+  if (NS_WARN_IF(!IsInTaskQueue()) || NS_WARN_IF(aSyncId <= mLastSyncId)) {
+    return;
+  }
+
+  bool wasPaused = PauseUntilSync();
+  mLastSyncId = aSyncId;
+  // If translation was previously paused waiting on a sync-id, check if sync-id
+  // encountered requires restarting translation.
+  if (wasPaused && !PauseUntilSync()) {
+    HandleCanvasTranslatorEvents();
+  }
+}
+
+mozilla::ipc::IPCResult CanvasTranslator::RecvSnapshotExternalCanvas(
+    uint64_t aSyncId, uint32_t aManagerId, ActorId aCanvasId) {
+  if (NS_WARN_IF(!IsInTaskQueue())) {
+    return IPC_FAIL(this,
+                    "RecvSnapshotExternalCanvas used outside of task queue.");
+  }
+
+  // Verify that snapshot requests are not received out of order order.
+  if (NS_WARN_IF(aSyncId <= mLastSyncId)) {
+    return IPC_FAIL(this, "RecvSnapShotExternalCanvas received too late.");
+  }
+
+  // Attempt to snapshot an external canvas that is associated with the same
+  // content process as this canvas. On success, associate it with the sync-id.
+  RefPtr<gfx::SourceSurface> surf;
+  if (auto* actor = gfx::CanvasManagerParent::GetCanvasActor(
+          mContentId, aManagerId, aCanvasId)) {
+    switch (actor->GetProtocolId()) {
+      case ProtocolId::PWebGLMsgStart:
+        if (auto* hostContext =
+                static_cast<dom::WebGLParent*>(actor)->GetHostWebGLContext()) {
+          surf = hostContext->GetWebGLContext()->GetBackBufferSnapshot(true);
+        }
+        break;
+      default:
+        MOZ_ASSERT_UNREACHABLE("Unsupported protocol");
+        break;
+    }
+  }
+
+  if (surf) {
+    mExternalSnapshots.InsertOrUpdate(aSyncId, surf);
+  }
+
+  // Regardless, sync translation so it may resume after attempting snapshot.
+  SyncTranslation(aSyncId);
+
+  if (!surf) {
+    return IPC_FAIL(this, "SnapshotExternalCanvas failed to get surface.");
+  }
+
+  return IPC_OK();
+}
+
+already_AddRefed<gfx::SourceSurface> CanvasTranslator::LookupExternalSnapshot(
+    uint64_t aSyncId) {
+  MOZ_ASSERT(IsInTaskQueue());
+  uint64_t prevSyncId = mLastSyncId;
+  if (NS_WARN_IF(aSyncId > mLastSyncId)) {
+    // If arriving here, a previous SnapshotExternalCanvas IPDL message never
+    // arrived for some reason. Sync translation here to avoid locking up.
+    SyncTranslation(aSyncId);
+  }
+  RefPtr<gfx::SourceSurface> surf;
+  // Check if the snapshot was added. This should only ever be called once per
+  // snapshot, as it is removed from the table when resolved.
+  if (mExternalSnapshots.Remove(aSyncId, getter_AddRefs(surf))) {
+    return surf.forget();
+  }
+  // There was no snapshot available, which can happen if this was called
+  // before or without a corresponding SnapshotExternalCanvas, or if called
+  // multiple times.
+  if (aSyncId > prevSyncId) {
+    gfxCriticalNoteOnce << "External canvas snapshot resolved before creation.";
+  } else {
+    gfxCriticalNoteOnce << "Exernal canvas snapshot already resolved.";
+  }
+  return nullptr;
 }
 
 already_AddRefed<gfx::GradientStops> CanvasTranslator::GetOrCreateGradientStops(

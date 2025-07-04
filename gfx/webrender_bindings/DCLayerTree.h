@@ -41,6 +41,7 @@ struct IDXGIDecodeSwapChain;
 struct IDXGIResource;
 struct IDXGISwapChain1;
 struct IDCompositionVirtualSurface;
+struct IDCompositionRectangleClip;
 
 namespace mozilla {
 
@@ -130,7 +131,12 @@ class DCLayerTree {
   void MaybeUpdateDebug();
   void MaybeCommit();
   void WaitForCommitCompletion();
+
+  bool UseNativeCompositor() const;
+  bool UseLayerCompositor() const;
   void DisableNativeCompositor();
+  void EnableAsyncScreenshot();
+  bool GetAsyncScreenshotEnabled() const { return mEnableAsyncScreenshot; }
 
   // Interface for wr::Compositor
   void CompositorBeginFrame();
@@ -152,7 +158,9 @@ class DCLayerTree {
   void AddSurface(wr::NativeSurfaceId aId,
                   const wr::CompositorSurfaceTransform& aTransform,
                   wr::DeviceIntRect aClipRect,
-                  wr::ImageRendering aImageRendering);
+                  wr::ImageRendering aImageRendering,
+                  wr::DeviceIntRect aRoundedClipRect,
+                  wr::ClipRadius aClipRadius);
   void BindSwapChain(wr::NativeSurfaceId aId);
   void PresentSwapChain(wr::NativeSurfaceId aId);
 
@@ -200,6 +208,10 @@ class DCLayerTree {
       wr::DeviceIntPoint aSurfaceOffset);
   void ReleaseNativeCompositorResources();
   layers::OverlayInfo GetOverlayInfo();
+
+  bool mUseNativeCompositor = true;
+  bool mEnableAsyncScreenshot = false;
+  int mAsyncScreenshotLastFrameUsed = 0;
 
   RefPtr<gl::GLContext> mGL;
   EGLConfig mEGLConfig;
@@ -300,8 +312,10 @@ class DCSurface {
   virtual bool Initialize();
   void CreateTile(int32_t aX, int32_t aY);
   void DestroyTile(int32_t aX, int32_t aY);
+  void SetClip(wr::DeviceIntRect aClipRect, wr::ClipRadius aClipRadius);
 
-  IDCompositionVisual2* GetVisual() const { return mVisual; }
+  IDCompositionVisual2* GetContentVisual() const { return mContentVisual; }
+  IDCompositionVisual2* GetRootVisual() const { return mRootVisual; }
   DCTile* GetTile(int32_t aX, int32_t aY) const;
 
   struct TileKey {
@@ -343,17 +357,22 @@ class DCSurface {
     }
   };
 
-  // The visual for this surface. No content is attached to here, but tiles
-  // that belong to this surface are added as children. In this way, we can
-  // set the clip and scroll offset once, on this visual, to affect all
-  // children.
+  // Each surface creates two visuals. The root is where it gets attached
+  // to parent visuals, the content is where surface (or child visuals)
+  // get attached. Most of the time, the root visual does nothing, but
+  // in the case of a complex clip, we attach the clip here. This allows
+  // us to implement the simple rectangle clip on the content, and apply
+  // the complex clip, if present, in a way that it's not affected by
+  // the transform of the content visual.
   //
-  // However when using a virtual surface, it is directly attached to this
-  // visual and the tiles do not own visuals.
+  // When using a virtual surface, it is directly attached to this
+  // child visual and the tiles do not own visuals.
   //
   // Whether mIsVirtualSurface is enabled is decided at DCSurface creation
   // time based on the pref gfx.webrender.dcomp-use-virtual-surfaces
-  RefPtr<IDCompositionVisual2> mVisual;
+  RefPtr<IDCompositionVisual2> mRootVisual;
+  RefPtr<IDCompositionVisual2> mContentVisual;
+  RefPtr<IDCompositionRectangleClip> mClip;
 
   wr::DeviceIntSize mTileSize;
   bool mIsOpaque;

@@ -162,8 +162,8 @@ merge-automation:
             replacements: []
             merge-old-head: false
             end-tag: "ESR_{major_version}_BASE"
-            to-repo: 'https://hg.mozilla.org/releases/comm-esr128'
-            to-branch: 'comm-esr128'
+            to-repo: 'https://hg.mozilla.org/releases/comm-esr140'
+            to-branch: 'comm-esr140'
         comm-bump-central:
             fetch-version-from: "mail/config/version.txt"
             version-files:
@@ -311,6 +311,11 @@ workers:
                 by-release-level:
                     production: comm-3-tree
                     staging: comm-1-tree
+        t-linux-docker(|-noscratch):
+            provisioner: comm-t
+            implementation: docker-worker
+            os: linux
+            worker-type: '{alias}'
         t-linux(-large|-xlarge|-xlarge-source):
             provisioner: comm-t
             implementation: docker-worker
@@ -336,8 +341,8 @@ workers:
             implementation: generic-worker
             os: macosx
             worker-type: 'gecko-{alias}'
-        win11-64-2009(|-ssd):
-            provisioner: comm-t
+        win11-64-24h2(|-gpu|-source|-large|-ssd):
+            provisioner: 'comm-t'
             implementation: generic-worker
             os: windows
             worker-type: '{alias}'
@@ -380,6 +385,7 @@ mac-signing:
                   force: true
                   # These files are signed without entitlements
                   globs:
+                      - "/Contents/MacOS/crashhelper"
                       - "/Contents/MacOS/crashreporter.app"
                       - "/Contents/MacOS/updater.app/Contents/Frameworks/UpdateSettings.framework"
                       - "/Contents/MacOS/updater.app"
@@ -419,6 +425,7 @@ mac-signing:
                   force: true
                   entitlements: comm/build/macosx/hardenedruntime/v2/developer/utility.xml
                   globs:
+                      - "/Contents/MacOS/crashhelper"
                       - "/Contents/MacOS/crashreporter.app"
                       - "/Contents/MacOS/updater.app/Contents/Frameworks/UpdateSettings.framework"
                       - "/Contents/MacOS/updater.app"

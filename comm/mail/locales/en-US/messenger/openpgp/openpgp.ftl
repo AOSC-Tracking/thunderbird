@@ -487,7 +487,6 @@ key-verification = Verify the fingerprint of the key using a secure communicatio
 # Variables:
 # $problem (String) - Error message from key usability check.
 cannot-use-own-key-because = Unable to send the message, because there is a problem with your personal key. { $problem }
-window-locked = Compose window is locked; send cancelled
 
 ## Strings in keyserver.sys.mjs
 
@@ -764,8 +763,6 @@ failed-decrypt = Error - decryption failed
 fix-broken-exchange-msg-failed = Unable to repair this message.
 
 # Variables:
-# $attachment (String) - File name of the signature file.
-attachment-no-match-from-signature = Could not match signature file ‘{ $attachment }’ to an attachment
 # Variables:
 # $attachment (String) - File name of the attachment.
 attachment-no-match-to-signature = Could not match attachment ‘{ $attachment }’ to a signature file

@@ -3,10 +3,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { html } from "lit";
-import "mail/components/calendar/content/calendar-dialog-date-row.mjs"; //eslint-disable-line import/no-unassigned-import
-import "mail/themes/shared/mail/colors.css"; //eslint-disable-line import/no-unassigned-import
-import "mail/themes/shared/mail/icons.css"; //eslint-disable-line import/no-unassigned-import
-import "mail/themes/shared/mail/calendar/calendarDialog.css"; //eslint-disable-line import/no-unassigned-import
+import "mail/components/calendar/content/calendar-dialog-date-row.mjs";
+import "mail/themes/shared/mail/colors.css";
+import "mail/themes/shared/mail/icons.css";
+import "mail/themes/shared/mail/calendar/calendarDialog.css";
 
 window.MozXULElement?.insertFTLIfNeeded("messenger/calendarDialog.ftl");
 
@@ -22,7 +22,7 @@ const Template = ({
   repeats,
 }) => html`
   <template id="calendarDialogRowTemplate">
-    <div class="calendar-dialog-row">
+    <div part="row">
       <slot name="icon"></slot>
       <slot name="label"></slot>
       <slot name="content"></slot>

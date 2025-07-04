@@ -445,7 +445,7 @@ var folderPaneContextMenu = {
           isVirtual ||
           (isJunk && canRenameDeleteJunkMail)),
       cmd_compactFolder:
-        !isVirtual && (isServer || canCompact) && isCompactEnabled,
+        !isVirtual && !isNNTP && (isServer || canCompact) && isCompactEnabled,
       cmd_emptyTrash: online && !isNNTP,
       cmd_properties: !multiSelection && !isServer && !isSmartTagsFolder,
       cmd_toggleFavoriteFolder:
@@ -778,8 +778,9 @@ var folderPaneContextMenu = {
    * @param {boolean} isMove
    * @param {nsIMsgFolder} sourceFolder
    * @param {nsIMsgFolder} targetFolder
+   * @param {nsIMsgCopyServiceListener} [listener]
    */
-  transferFolder(isMove, sourceFolder, targetFolder) {
+  transferFolder(isMove, sourceFolder, targetFolder, listener = null) {
     if (!isMove && sourceFolder.server == targetFolder.server) {
       // Don't allow folder copy within the same server; only move allowed.
       // Can't copy folder intra-server, change to move.
@@ -793,7 +794,7 @@ var folderPaneContextMenu = {
         sourceFolder,
         targetFolder,
         isMove,
-        null,
+        listener,
         top.msgWindow
       )
     );
@@ -975,7 +976,10 @@ var folderPane = {
 
         const parentRow = folderPane.getRowForFolder(parentFolder, this.name);
         if (!parentRow) {
-          console.error("no parentRow for ", parentFolder.URI, childFolder.URI);
+          // Likely, the folder got created before the account root folder was
+          // associated with any server. Should make sure the server is
+          // assigned to an account before creating folders on the server.
+          throw new Error(`No parentRow for ${parentFolder.URI}`);
         }
         // To auto-expand non-root imap folders, imap URL "discoverchildren" is
         // triggered -- but actually only occurs if server settings configured
@@ -2167,7 +2171,11 @@ var folderPane = {
   _createFolderRow(modeName, folder, nameStyle) {
     const row = document.createElement("li", { is: "folder-tree-row" });
     row.modeName = modeName;
-    row.setFolder(folder, nameStyle);
+    row.setFolder(
+      folder,
+      nameStyle,
+      this._isCompact && this._modes[modeName].canBeCompact
+    );
     return row;
   },
 
@@ -2295,6 +2303,12 @@ var folderPane = {
     filterFunction,
     childAlreadyGone = false
   ) {
+    // This may be the parent of the folder actually removed. Do not proceed
+    // if it matches the mode.
+    if (childAlreadyGone && filterFunction?.(folder)) {
+      return;
+    }
+
     const folderRow = folderPane.getRowForFolder(folder, modeName);
     if (folderPane._isCompact) {
       folderRow?.remove();
@@ -2312,15 +2326,17 @@ var folderPane = {
 
     // Otherwise, move up the folder tree.
     const parentFolder = folderPane._getNonGmailParent(folder);
-    if (
-      parentFolder &&
-      (typeof filterFunction != "function" || !filterFunction(parentFolder))
-    ) {
+    if (parentFolder && !filterFunction?.(parentFolder)) {
       this._removeFolderAndAncestors(parentFolder, modeName, filterFunction);
     }
 
     // Remove the row for this folder.
     folderRow.remove();
+
+    const parentRow = folderPane.getRowForFolder(parentFolder, modeName);
+    if (parentRow?.childList.childElementCount == 0) {
+      folderTree.expandRow(parentRow);
+    }
   },
 
   /**
@@ -3044,11 +3060,8 @@ var folderPane = {
       event.dataTransfer.dropEffect =
         systemDropEffect == "copy" ? "copy" : "move";
     } else if (types.includes("text/x-moz-folder")) {
-      // If cannot create subfolders then don't allow drop here.
-      if (!targetFolder.canCreateSubfolders) {
-        return;
-      }
-
+      let allowReorderOnly = !targetFolder.canCreateSubfolders;
+      let moveWithinSameServer = systemDropEffect == "move";
       for (let i = 0; i < event.dataTransfer.mozItemCount; i++) {
         const sourceFolder = event.dataTransfer
           .mozGetDataAt("text/x-moz-folder", i)
@@ -3058,11 +3071,9 @@ var folderPane = {
         if (targetFolder == sourceFolder) {
           return;
         }
+        const sameServer = sourceFolder.server == targetFolder.server;
         // Don't copy within same server.
-        if (
-          sourceFolder.server == targetFolder.server &&
-          systemDropEffect == "copy"
-        ) {
+        if (sameServer && systemDropEffect == "copy") {
           return;
         }
         // Don't allow immediate child to be dropped onto its parent.
@@ -3070,10 +3081,7 @@ var folderPane = {
           return;
         }
         // Don't allow dragging of virtual folders across accounts.
-        if (
-          sourceFolder.getFlag(Ci.nsMsgFolderFlags.Virtual) &&
-          sourceFolder.server != targetFolder.server
-        ) {
+        if (sourceFolder.getFlag(Ci.nsMsgFolderFlags.Virtual) && !sameServer) {
           return;
         }
         // Don't allow parent to be dropped on its ancestors.
@@ -3082,14 +3090,53 @@ var folderPane = {
         }
         // If there is a folder that can't be renamed, don't allow it to be
         // dropped if it is not to "Local Folders" or is to the same account.
-        if (
+        const noRenamePossible =
           !sourceFolder.canRename &&
-          (targetFolder.server.type != "none" ||
-            sourceFolder.server == targetFolder.server)
+          (targetFolder.server.type != "none" || sameServer);
+        // Don't allow to drop on different hierarchy.
+        if (noRenamePossible && sourceFolder.parent != targetFolder.parent) {
+          return;
+        }
+        // If in the same hierarchy, allow only reordering.
+        allowReorderOnly ||= noRenamePossible;
+        moveWithinSameServer &&= sameServer;
+      }
+
+      // Evaluate the ability to reorder folders.
+      // * Let's keep it simple. Don't allow "insert" when dragging multiple
+      //   folders.
+      // * Also, only allow it in "all" mode. Otherwise there is ambiguity.
+      if (
+        moveWithinSameServer &&
+        !targetFolder.isServer &&
+        event.dataTransfer.mozItemCount == 1 &&
+        row.modeName == "all"
+      ) {
+        const { center, quarterOfHeight } = this._calculateElementHeight(row);
+        if (event.clientY < center - quarterOfHeight) {
+          // Insert before the target.
+          this._clearDropTarget();
+          row.classList.add("reorder-target-before");
+          event.dataTransfer.dropEffect = "move";
+          return;
+        }
+        if (
+          event.clientY > center + quarterOfHeight &&
+          (!row.classList.contains("children") ||
+            row.classList.contains("collapsed"))
         ) {
+          // Insert after the target.
+          this._clearDropTarget();
+          row.classList.add("reorder-target-after");
+          event.dataTransfer.dropEffect = "move";
           return;
         }
       }
+
+      if (allowReorderOnly) {
+        return;
+      }
+
       event.dataTransfer.dropEffect =
         systemDropEffect == "copy" ? "copy" : "move";
     } else if (types.includes("application/x-moz-file")) {
@@ -3198,6 +3245,12 @@ var folderPane = {
 
   _clearDropTarget() {
     folderTree.querySelector(".drop-target")?.classList.remove("drop-target");
+    folderTree
+      .querySelector(".reorder-target-before")
+      ?.classList.remove("reorder-target-before");
+    folderTree
+      .querySelector(".reorder-target-after")
+      ?.classList.remove("reorder-target-after");
   },
 
   _collapseAutoExpandedRows() {
@@ -3208,6 +3261,22 @@ var folderPane = {
       this._autoExpandedRows.length = 0;
       this._clearCollapseTimer();
     }
+  },
+
+  /**
+   * Calculate the center point of a row element related to the client height
+   * and returns it alongside a quarter of its height.
+   *
+   * @param {FolderTreeRow} row
+   * @returns {object}
+   */
+  _calculateElementHeight(row) {
+    const targetElement = row.querySelector(".container") ?? row;
+    const targetRect = targetElement.getBoundingClientRect();
+    const center =
+      targetRect.top + targetElement.clientTop + targetElement.clientHeight / 2;
+    const quarterOfHeight = targetElement.clientHeight / 4;
+    return { center, quarterOfHeight };
   },
 
   _onDrop(event) {
@@ -3265,33 +3334,116 @@ var folderPane = {
         true
       );
     } else if (types.includes("text/x-moz-folder")) {
+      const rows = [];
       let isMove = event.dataTransfer.dropEffect == "move";
-      for (let i = 0; i < event.dataTransfer.mozItemCount; i++) {
+      if (event.dataTransfer.mozItemCount == 1) {
+        // Only one folder was dragged and dropped.
+        // If the dropped Y-coordinate is near the center of the targetFolder,
+        // simply move it into the targetFolder. Otherwise, reorder the dropped
+        // folder above or below the targetFolder.
+
         const sourceFolder = event.dataTransfer
-          .mozGetDataAt("text/x-moz-folder", i)
+          .mozGetDataAt("text/x-moz-folder", 0)
           .QueryInterface(Ci.nsIMsgFolder);
 
-        isMove = folderPaneContextMenu.transferFolder(
-          isMove,
-          sourceFolder,
-          targetFolder
-        );
-      }
-      // Save in prefs the target folder URI and if this was a move or copy.
-      // This is to fill in the next folder or message context menu item
-      // "Move|Copy to <TargetFolderName> Again".
-      Services.prefs.setStringPref(
-        "mail.last_msg_movecopy_target_uri",
-        targetFolder.URI
-      );
-      Services.prefs.setBoolPref("mail.last_msg_movecopy_was_move", isMove);
+        let destinationFolder = targetFolder;
 
-      // FIXME! Bug 1896531.
-      if (event.dataTransfer.mozItemCount > 1) {
+        let isReordering = false;
+        let insertAfter = false;
+        // Only allow moving a folder in "all" mode, otherwise it would be
+        // impossible to reorder folders unambiguously.
+        if (
+          isMove &&
+          targetFolder.parent &&
+          sourceFolder.server == targetFolder.server &&
+          !targetFolder.isServer &&
+          row.modeName == "all"
+        ) {
+          const { center, quarterOfHeight } = this._calculateElementHeight(row);
+          const upperElementEnd = event.clientY < center - quarterOfHeight;
+          const lowerElementEndWithoutChildren =
+            event.clientY > center + quarterOfHeight &&
+            (!row.classList.contains("children") ||
+              row.classList.contains("collapsed"));
+          isReordering = upperElementEnd || lowerElementEndWithoutChildren;
+          insertAfter = lowerElementEndWithoutChildren;
+          if (isReordering) {
+            // To insert the sourceFolder before or after the targetFolder,
+            // we have to transfer sourceFolder to the parent of targetFolder
+            // as a sibling of targetFolder. If it is the same as the current
+            // parent, there is no need to perform the transferFolder, so let
+            // destinationFolder be null.
+            destinationFolder =
+              targetFolder.parent != sourceFolder.parent
+                ? targetFolder.parent
+                : null;
+          }
+        }
+
+        if (destinationFolder) {
+          // Move sourceFolder to a different parent.
+
+          // Reset the sort order of sourceFolder before moving it.
+          sourceFolder.userSortOrder = Ci.nsIMsgFolder.NO_SORT_VALUE;
+          // Start the move. This is done in an asynchronous process, so order
+          // them in the listener that will be called when the move is complete.
+          isMove = folderPaneContextMenu.transferFolder(
+            isMove,
+            sourceFolder,
+            destinationFolder,
+            isReordering
+              ? new ReorderFolderListener(
+                  sourceFolder,
+                  targetFolder,
+                  insertAfter
+                )
+              : null
+          );
+
+          // Save in prefs the destination folder URI and if this was a move
+          // or copy.
+          // This is to fill in the next folder or message context menu item
+          // "Move|Copy to <DestinationFolderName> Again".
+          Services.prefs.setStringPref(
+            "mail.last_msg_movecopy_target_uri",
+            destinationFolder.URI
+          );
+        } else if (isReordering) {
+          // Reorder within current siblings.
+          this.insertFolder(sourceFolder, targetFolder, insertAfter);
+          if (folderTree.selection.has(folderTree.rows.indexOf(row))) {
+            rows.push(this.getRowForFolder(sourceFolder.URI, row.modeName));
+          }
+        }
+        Services.prefs.setBoolPref("mail.last_msg_movecopy_was_move", isMove);
+      } else {
+        // FIXME! Bug 1896531.
         console.warn(
           "Bug 1896531. Copy and move for multiselection is only partially supported and it might fail."
         );
+
+        for (let i = 0; i < event.dataTransfer.mozItemCount; i++) {
+          const sourceFolder = event.dataTransfer
+            .mozGetDataAt("text/x-moz-folder", i)
+            .QueryInterface(Ci.nsIMsgFolder);
+
+          isMove = folderPaneContextMenu.transferFolder(
+            isMove,
+            sourceFolder,
+            targetFolder
+          );
+          rows.push(this.getRowForFolder(sourceFolder.URI, row.modeName));
+        }
+        // Save in prefs the target folder URI and if this was a move or copy.
+        // This is to fill in the next folder or message context menu item
+        // "Move|Copy to <TargetFolderName> Again".
+        Services.prefs.setStringPref(
+          "mail.last_msg_movecopy_target_uri",
+          targetFolder.URI
+        );
+        Services.prefs.setBoolPref("mail.last_msg_movecopy_was_move", isMove);
       }
+      this.swapFolderSelection(rows);
     } else if (types.includes("application/x-moz-file")) {
       for (let i = 0; i < event.dataTransfer.mozItemCount; i++) {
         const extFile = event.dataTransfer
@@ -3323,9 +3475,7 @@ var folderPane = {
         newsRoot.reorderGroup(folder, targetFolder);
         rows.push(this.getRowForFolder(folder, row.modeName));
       }
-      setTimeout(() => {
-        folderTree.swapSelection(rows);
-      });
+      this.swapFolderSelection(rows);
     } else if (
       types.includes("text/x-moz-url-data") ||
       types.includes("text/x-moz-url")
@@ -3437,12 +3587,12 @@ var folderPane = {
     ) {
       // For local mbox, fix classic MacOS line endings.
       try {
-        folder.acquireSemaphore(folder);
+        folder.acquireSemaphore(folder, "folderPane.rebuildFolderSummary");
         await repairMbox(folder.filePath.path);
       } catch (e) {
         console.warn(`Repair mbox FAILED; ${e.message}`);
       } finally {
-        folder.releaseSemaphore(folder);
+        folder.releaseSemaphore(folder, "folderPane.rebuildFolderSummary");
       }
     }
 
@@ -3987,10 +4137,178 @@ var folderPane = {
     }
   },
 
+  /**
+   * Set folder sort order to rows for the folder.
+   *
+   * @param {nsIMsgFolder} folder
+   * @param {integer} order
+   */
+  setOrderToRowInAllModes(folder, order) {
+    for (const name of this.activeModes) {
+      const row = folderPane.getRowForFolder(folder, name);
+      if (row) {
+        row.folderSortOrder = order;
+      }
+    }
+  },
+
+  /**
+   * Sorting comparator for two folders.
+   *
+   * @param {nsIMsgFolder} folderA
+   * @param {nsIMSgFolder} folderB
+   * @returns {number} Sorting value when comparing the two folders.
+   */
+  _sortFolders: (folderA, folderB) =>
+    folderA.sortOrder - folderB.sortOrder ||
+    FolderPaneUtils.nameCollator.compare(folderA.name, folderB.name),
+
+  /**
+   * Set the sort order for the new folder added to the folder group.
+   *
+   * @param {nsIMsgFolder} parentFolder
+   * @param {nsIMsgFolder} newFolder
+   */
+  setSortOrderOnNewFolder(parentFolder, newFolder) {
+    if (newFolder.userSortOrder != Ci.nsIMsgFolder.NO_SORT_VALUE) {
+      return;
+    }
+    const subFolders = parentFolder?.subFolders ?? [];
+    const maxOrderValue = Math.max(
+      -1,
+      ...subFolders
+        .filter(folder => folder.userSortOrder != Ci.nsIMsgFolder.NO_SORT_VALUE)
+        .map(folder => folder.userSortOrder)
+    );
+    if (maxOrderValue == -1) {
+      // None of the sibling folders have a sort order value (i.e. this group of
+      // folders has never been manually sorted). In this case, the natural
+      // order should still be used.
+      return;
+    }
+    // The group has already been ordered. In this case, insert the new folder
+    // before the first folder that is further ahead of it in the natural order.
+    const sibling = subFolders
+      // Skip special folders so new folders don't get created before them.
+      .filter(folder => folder.flags & Ci.nsMsgFolderFlags.SpecialUse)
+      .sort(this._sortFolders)
+      .find(
+        folder =>
+          FolderPaneUtils.nameCollator.compare(folder.name, newFolder.name) > 0
+      );
+    if (sibling) {
+      folderPane.insertFolder(newFolder, sibling, false);
+      return;
+    }
+    // Place the new folder at the bottom.
+    const newOrder = maxOrderValue + 1;
+    newFolder.userSortOrder = newOrder; // Update DB
+    this.setOrderToRowInAllModes(newFolder, newOrder); // Update row info.
+  },
+
+  /**
+   * Insert a folder before/after the target and reorder siblings.
+   * Note: Valid only in "all" mode.
+   *
+   * @param {nsIMsgFolder} folder
+   * @param {nsIMsgFolder} target
+   * @param {boolean} insertAfter
+   */
+  insertFolder(folder, target, insertAfter) {
+    let subFolders = [];
+    try {
+      subFolders = target.parent.subFolders;
+    } catch (ex) {
+      console.error(
+        `Unable to access the subfolders of ${target.parent.URI}`,
+        ex
+      );
+    }
+
+    // Considering the case of a folder inserted between folders with the same
+    // order value X, the order of the inserted folder must be (X+1), even if
+    // it is inserted before the target. And the order of subsequent folders
+    // must be increased by 2.
+    const targetOrder = target.sortOrder;
+    const folderOrder = targetOrder + 1;
+    // Start at the end, so we can stop once we've reached the insertion point.
+    const folders = subFolders
+      .filter(sf => sf != folder)
+      .sort((a, b) => this._sortFolders(b, a));
+    for (const sibling of folders) {
+      // If we've reached the target and we're inserting after it, we've done
+      // all the necessary moving.
+      if (insertAfter && sibling == target) {
+        break;
+      }
+      const order = sibling.sortOrder + 2;
+      sibling.userSortOrder = order; // Update DB.
+      folderPane.setOrderToRowInAllModes(sibling, order); // Update row info.
+      // If we're inserting before the target and we've just updated the target
+      // we can now insert the folder itself.
+      if (!insertAfter && sibling == target) {
+        break;
+      }
+    }
+    folder.userSortOrder = folderOrder; // Update DB.
+    folderPane.setOrderToRowInAllModes(folder, folderOrder); // Update row info.
+
+    // Update folder pane UI.
+    const movedFolderURI = folder.URI;
+    const modeNames = folderPane.activeModes;
+    for (const name of modeNames) {
+      // Find a parent UI element of folder in this mode.
+      // Note that the parent folder on the DB may not be the parent UI element
+      // (as is the case with Gmail). So we find the parent UI element by
+      // querying the CSS selector.
+      const rowToMove = folderPane.getRowForFolder(folder, name);
+      const id = FolderPaneUtils.makeRowID(name, movedFolderURI);
+      const listRow = folderPane._modes[name].containerList.querySelector(
+        `li[is="folder-tree-row"]:has(>ul>li#${CSS.escape(id)})`
+      );
+      if (listRow) {
+        listRow.insertChildInOrder(rowToMove);
+      }
+    }
+  },
+
   get isMultiSelection() {
     return folderTree.selection.size > 1;
   },
+
+  /**
+   * Wrap the swap selection around a timeout to make sure we run this after any
+   * other operation like folder move.
+   *
+   * @param {HTMLLIElement[]} rows - The array of rows to select.
+   */
+  swapFolderSelection(rows) {
+    setTimeout(() => {
+      folderTree.swapSelection(rows);
+    });
+  },
 };
+
+/**
+ * Class responsible for the the UI reorder of the folders after the backend
+ * operation has been completed.
+ */
+class ReorderFolderListener {
+  constructor(sourceFolder, targetFolder, insertAfter) {
+    this.sourceFolder = sourceFolder;
+    this.targetFolder = targetFolder;
+    this.insertAfter = insertAfter;
+  }
+
+  onStopCopy() {
+    // Do reorder within new siblings (all children of new parent).
+    const movedFolder = MailServices.copy.getArrivedFolder(this.sourceFolder);
+    if (!movedFolder) {
+      return;
+    }
+    folderPane.insertFolder(movedFolder, this.targetFolder, this.insertAfter);
+  }
+}
 
 /**
  * Header area of the message list pane.
@@ -4128,17 +4446,6 @@ var threadPaneHeader = {
     event.target
       .querySelector(`[value="group"]`)
       .setAttribute("checked", gViewWrapper.showGroupedBySort);
-  },
-
-  /**
-   * Change the display view of the message list pane.
-   *
-   * @param {DOMEvent} event - The click event.
-   */
-  changePaneView(event) {
-    const view = event.target.value;
-    XULStoreUtils.setValue("messenger", "threadPane", "view", view);
-    threadPane.updateThreadView(view);
   },
 
   /**
@@ -4282,6 +4589,7 @@ var threadPane = {
     this.setUpTagStyles();
     Services.prefs.addObserver("mailnews.tags.", this);
     Services.prefs.addObserver("mail.threadpane.table.horizontal_scroll", this);
+    Services.prefs.addObserver("mail.threadpane.listview", this);
 
     Services.obs.addObserver(this, "addrbook-displayname-changed");
     Services.obs.addObserver(this, "custom-column-added");
@@ -4313,9 +4621,7 @@ var threadPane = {
       "threadPaneApplyColumnMenu",
       "threadPaneApplyViewMenu",
     ]);
-    threadPane.updateThreadView(
-      XULStoreUtils.getValue("messenger", "threadPane", "view")
-    );
+    threadPane.updateThreadView();
 
     XPCOMUtils.defineLazyPreferenceGetter(
       this,
@@ -4325,6 +4631,15 @@ var threadPane = {
       (name, oldValue, newValue) => (threadTree.dataset.selectDelay = newValue)
     );
     threadTree.dataset.selectDelay = this.selectDelay;
+
+    XPCOMUtils.defineLazyPreferenceGetter(
+      this,
+      "rowCount",
+      "mail.threadpane.cardsview.rowcount",
+      3,
+      () => this.updateThreadItemSize(),
+      prefVal => Math.min(Math.max(2, prefVal), 3)
+    );
 
     window.addEventListener("uidensitychange", () => {
       this.updateThreadItemSize();
@@ -4416,6 +4731,7 @@ var threadPane = {
       "mail.threadpane.table.horizontal_scroll",
       this
     );
+    Services.prefs.removeObserver("mail.threadpane.listview", this);
     Services.obs.removeObserver(this, "addrbook-displayname-changed");
     Services.obs.removeObserver(this, "custom-column-added");
     Services.obs.removeObserver(this, "custom-column-removed");
@@ -4508,13 +4824,21 @@ var threadPane = {
           if (gFolder) {
             this.treeTable.updateColumns(this.columns);
           }
-        } else if (data.startsWith("mailnews.tags.")) {
+          break;
+        }
+
+        if (data.startsWith("mailnews.tags.")) {
           this.setUpTagStyles();
+          break;
+        }
+
+        if (data == "mail.threadpane.listview") {
+          this.updateThreadView();
+          this.updateThreadItemSize();
         }
         break;
       case "addrbook-displayname-changed":
       case "custom-column-refreshed":
-      case "global-view-flags-changed":
         // addrbook-displayname-changed: This runs when mail.displayname.version
         // preference observer is notified or the number of the
         // mail.displayname.version preference has been updated.
@@ -4522,9 +4846,6 @@ var threadPane = {
         // but now that filling the cells happens asynchronously, that's too
         // complicated, so it's better to invalidate the whole thing. Kept for
         // add-on compatibility.
-        // global-view-flags-changed: Threading and sorting might have changed
-        // for the currently visible folder. Let's invalidate the tree to avoid
-        // showing a stale thread view.
         threadTree.invalidate();
         break;
       case "custom-column-added":
@@ -4532,6 +4853,13 @@ var threadPane = {
         break;
       case "custom-column-removed":
         this.onCustomColumnRemoved(data);
+        break;
+      case "global-view-flags-changed":
+        // Global view flags have changed. Reload the currently selected message
+        // list to avoid showing a stale configuration. We could be smart here
+        // and check if the currently selected folder is part of the modified
+        // folders but forcing a selection is inexpensive and straightforward.
+        folderTree.dispatchEvent(new CustomEvent("select"));
         break;
     }
   },
@@ -4688,12 +5016,19 @@ var threadPane = {
    */
   _onDragStart(event) {
     const row = event.target.closest(`tr[is^="thread-"]`);
-    if (!row || gViewWrapper.isExpandedGroupedByHeaderAtIndex(row.index)) {
+    const alreadySelected =
+      row && threadTree.selectedIndices.includes(row.index);
+    if (
+      !row ||
+      gViewWrapper.isExpandedGroupedByHeaderAtIndex(row.index) ||
+      (!alreadySelected && (event.ctrlKey || event.shiftKey))
+    ) {
       event.preventDefault();
+      threadTree.ensureCorrectFocus();
       return;
     }
 
-    if (!threadTree.selectedIndices.includes(row.index)) {
+    if (!alreadySelected) {
       threadTree.selectedIndex = row.index;
     }
     const messageURIs = gDBView.getURIsForSelection();
@@ -5037,8 +5372,8 @@ var threadPane = {
     const rowClass = customElements.get("thread-row");
     const cardClass = customElements.get("thread-card");
     const currentFontSize = UIFontSize.size;
-    const cardRows = 3;
-    const cardRowConstant = Math.round(1.5 * cardRows * currentFontSize); // subject line-height * cardRows * current font-size
+    // subject line-height * this.rowCount * current font-size.
+    const cardRowConstant = Math.round(1.5 * this.rowCount * currentFontSize);
     let rowHeight = Math.ceil(currentFontSize * 1.4);
     let lineGap;
     let densityPaddingConstant;
@@ -5049,24 +5384,24 @@ var threadPane = {
         lineGap = 1;
         densityPaddingConstant = 3; // card padding-block + 2 * row padding-block
         cardRowHeight =
-          cardRowConstant + lineGap * cardRows + densityPaddingConstant;
+          cardRowConstant + lineGap * this.rowCount + densityPaddingConstant;
         break;
       case UIDensity.MODE_TOUCH:
         rowHeight = rowHeight + 13;
         lineGap = 6;
         densityPaddingConstant = 12; // card padding-block + 2 * row padding-block
         cardRowHeight =
-          cardRowConstant + lineGap * cardRows + densityPaddingConstant;
+          cardRowConstant + lineGap * this.rowCount + densityPaddingConstant;
         break;
       default:
         rowHeight = rowHeight + 7;
         lineGap = 3;
         densityPaddingConstant = 7; // card padding-block + 2 * row padding-block
         cardRowHeight =
-          cardRowConstant + lineGap * cardRows + densityPaddingConstant;
+          cardRowConstant + lineGap * this.rowCount + densityPaddingConstant;
         break;
     }
-    cardClass.ROW_HEIGHT = Math.max(cardRowHeight, 50);
+    cardClass.ROW_HEIGHT = Math.max(cardRowHeight, 40);
     rowClass.ROW_HEIGHT = Math.max(rowHeight, 18);
   },
 
@@ -5074,6 +5409,7 @@ var threadPane = {
    * Update thread item size in DOM (thread cards and rows).
    */
   async updateThreadItemSize() {
+    threadTree.classList.toggle("cards-row-compact", this.rowCount === 2);
     await this.densityChange();
     threadTree.reset();
   },
@@ -5285,7 +5621,7 @@ var threadPane = {
    * Restore the chevron icon indicating the current sort order.
    */
   restoreSortIndicator() {
-    if (!gDBView) {
+    if (!gViewWrapper?.dbView) {
       return;
     }
     this.updateSortIndicator(gViewWrapper.primarySortColumnId);
@@ -5932,17 +6268,17 @@ var threadPane = {
   /**
    * Update the display view of the message list. Current supported options are
    * table and cards.
-   *
-   * @param {string} view - The view type.
    */
-  updateThreadView(view) {
-    switch (view) {
-      case "table":
+  updateThreadView() {
+    switch (Services.prefs.getIntPref("mail.threadpane.listview", 0)) {
+      case 1:
+        // Table view.
         threadTree.setAttribute("rows", "thread-row");
         threadTree.headerHidden = false;
         break;
-      case "cards":
+      case 0:
       default:
+        // Cards view.
         threadTree.setAttribute("rows", "thread-card");
         threadTree.headerHidden = true;
         break;
@@ -6149,6 +6485,7 @@ function selectMessage(msgHdr) {
 var folderListener = {
   QueryInterface: ChromeUtils.generateQI(["nsIFolderListener"]),
   onFolderAdded(parentFolder, childFolder) {
+    folderPane.setSortOrderOnNewFolder(parentFolder, childFolder);
     folderPane.addFolder(parentFolder, childFolder);
     folderPane.updateFolderRowUIElements();
   },
@@ -6172,6 +6509,8 @@ var folderListener = {
     // multiple folders selected and it wasn't part of the selection range, to
     // ensure the indices match the rows.
     if (folderTree.selection.size > 1 && notInRange) {
+      // Wrap this in a timeout to ensure we don't get stale values from a
+      // selection that still carries deleted rows.
       setTimeout(() => {
         folderTree.swapSelection([...folderTree.selection.values()]);
       });
@@ -6351,6 +6690,12 @@ commandController.registerCallback(
   }
 );
 
+commandController.registerCallback("cmd_threadPaneViewCards", () => {
+  Services.prefs.setIntPref("mail.threadpane.listview", 0);
+});
+commandController.registerCallback("cmd_threadPaneViewTable", () => {
+  Services.prefs.setIntPref("mail.threadpane.listview", 1);
+});
 commandController.registerCallback("cmd_viewClassicMailLayout", () =>
   Services.prefs.setIntPref("mail.pane_config.dynamic", 0)
 );
@@ -6410,7 +6755,7 @@ commandController.registerCallback(
     gFolder &&
     !gFolder.isServer &&
     MailOfflineMgr.isOnline() &&
-    gViewWrapper.dbView.numSelected > 0
+    gViewWrapper?.dbView?.numSelected > 0
 );
 
 var sortController = {
@@ -6785,16 +7130,12 @@ commandController.registerCallback(
 commandController.registerCallback(
   "cmd_runJunkControls",
   () => filterFolderForJunk(gFolder),
-  () =>
-    commandController._getViewCommandStatus(
-      Ci.nsMsgViewCommandType.runJunkControls
-    )
+  () => gViewWrapper?.dbView?.rowCount > 0
 );
 commandController.registerCallback(
   "cmd_deleteJunk",
   () => deleteJunkInFolder(gFolder),
-  () =>
-    commandController._getViewCommandStatus(Ci.nsMsgViewCommandType.deleteJunk)
+  () => gViewWrapper?.dbView?.rowCount > 0 && gFolder?.canDeleteMessages
 );
 
 commandController.registerCallback(

@@ -16,7 +16,6 @@ const {
 const {
   createContext,
   findSource,
-  getCMEditor,
   hoverOnToken,
   openDebuggerAndLog,
   pauseDebugger,
@@ -31,7 +30,9 @@ const {
   addBreakpoint,
   waitForPaused,
   waitForState,
-  isCm6Enabled,
+  openEditorContextMenu,
+  selectEditorContextMenuItem,
+  scrollEditorIntoView,
 } = require("./debugger-helpers");
 
 const IFRAME_BASE_URL =
@@ -48,6 +49,7 @@ const EXPECTED_FUNCTION = "window.hitBreakpoint()";
 
 const TEST_URL = PAGES_BASE_URL + "custom/debugger/app-build/index.html";
 const MINIFIED_URL = `${IFRAME_BASE_URL}custom/debugger/app-build/static/js/minified.js`;
+const MAIN_URL = `${IFRAME_BASE_URL}custom/debugger/app-build/static/js/main.js`;
 
 /*
  * See testing/talos/talos/tests/devtools/addon/content/pages/custom/debugger/app/src for the details
@@ -107,6 +109,7 @@ module.exports = async function () {
   await testPreview(dbg, tab, EXPECTED_FUNCTION);
   await testOpeningLargeMinifiedFile(dbg);
   await testPrettyPrint(dbg, toolbox);
+  await testLargeFileWithWrapping(dbg, toolbox, tab);
 
   await testBigBundle(dbg, tab);
 
@@ -237,25 +240,49 @@ async function testOpeningLargeMinifiedFile(dbg) {
   await garbageCollect();
 }
 
+async function testLargeFileWithWrapping(dbg, toolbox) {
+  await selectSource(dbg, MAIN_URL);
+  dump("Turn on editor wrapping \n");
+  await openEditorContextMenu(dbg, toolbox);
+  await selectEditorContextMenuItem(dbg, toolbox, "editor-wrapping");
+  await waitUntil(() => {
+    return dbg.win.document
+      .querySelector(".cm-content")
+      .classList.contains("cm-lineWrapping");
+  });
+
+  dump("Add breakpoint to main.js with wrap editor switched on\n");
+  const testBreakpoint = runTest(
+    "custom.jsdebugger.with-wrap-editor.add-breakpoint.DAMP"
+  );
+  await addBreakpoint(dbg, 1, MAIN_URL);
+  testBreakpoint.done();
+
+  dump("Scroll main.js with wrap editor switched on\n");
+  const testScroll = runTest("custom.jsdebugger.with-wrap-editor.scroll.DAMP");
+  // Scroll the document until line 2 becomes visible (which is also the bottom of the document)
+  await scrollEditorIntoView(dbg, 2);
+  testScroll.done();
+
+  dump("Turn off editor wrapping \n");
+  await openEditorContextMenu(dbg, toolbox);
+  await selectEditorContextMenuItem(dbg, toolbox, "editor-wrapping");
+  await waitUntil(
+    () => !Services.prefs.getBoolPref("devtools.debugger.ui.editor-wrapping")
+  );
+
+  await removeBreakpoints(dbg);
+  await dbg.actions.closeTabs([findSource(dbg, MAIN_URL)]);
+
+  await garbageCollect();
+}
+
 async function testPrettyPrint(dbg, toolbox) {
   const formattedFileUrl = `${MINIFIED_URL}:formatted`;
   const filePrettyChars = "82603: (e, t, n) => {\n";
 
   dump("Select minified file\n");
   await selectSource(dbg, MINIFIED_URL);
-
-  dump("Wait until CodeMirror highlighting is done\n");
-  const cm = getCMEditor(dbg).codeMirror;
-  await waitUntil(() => {
-    if (isCm6Enabled()) {
-      return true;
-    }
-    // For CM5 highlightFrontier is not documented but is an internal variable indicating the current
-    // line that was just highlighted. This document has only 2 lines, so wait until both
-    // are highlighted. Since there was an other document opened before, we need to do an
-    // exact check to properly wait.
-    return cm.doc.highlightFrontier === 2;
-  });
 
   const prettyPrintButton = await waitUntil(() => {
     return dbg.win.document.querySelector(".source-footer .prettyPrint.active");

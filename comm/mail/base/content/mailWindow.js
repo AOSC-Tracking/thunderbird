@@ -356,13 +356,6 @@ nsMsgStatusFeedback.prototype = {
     }, this);
   },
 
-  // nsIXULBrowserWindow implementation.
-  setJSStatus(status) {
-    if (status.length > 0) {
-      this.showStatusString(status);
-    }
-  },
-
   /*
    * Set the statusbar display for hovered links, from browser.js.
    *
@@ -554,6 +547,7 @@ nsMsgStatusFeedback.prototype = {
     if (this._startRequests == 0 && this._startTimeoutID) {
       clearTimeout(this._startTimeoutID);
       this._startTimeoutID = null;
+      this.showStatusString("");
     }
 
     // If we have no more pending starts and we don't have a stop timeout

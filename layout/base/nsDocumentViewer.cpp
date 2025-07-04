@@ -11,7 +11,6 @@
 #include "mozilla/RestyleManager.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/StaticPrefs_print.h"
-#include "mozilla/Telemetry.h"
 #include "nsThreadUtils.h"
 #include "nscore.h"
 #include "nsCOMPtr.h"
@@ -131,7 +130,6 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/dom/WindowGlobalChild.h"
 
@@ -3272,18 +3270,12 @@ bool nsDocumentViewer::ShouldAttachToTopLevel() {
   if (nsIWidget::UsePuppetWidgets() || mParentWidget->IsPuppetWidget()) {
     return true;
   }
-
-  // TODO(emilio, bug 1919165): Unify this between macOS and other platforms?
-#ifdef XP_MACOSX
-  return false;
-#else
-#  ifdef DEBUG
+#ifdef DEBUG
   nsIWidgetListener* parentListener = mParentWidget->GetWidgetListener();
   MOZ_ASSERT(!parentListener || !parentListener->GetView(),
              "Expect a top level widget");
-#  endif
-  return true;
 #endif
+  return true;
 }
 
 //------------------------------------------------------------

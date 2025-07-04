@@ -42,6 +42,9 @@ class EwsFolder : public nsMsgDBFolder {
                             nsIMsgWindow* msgWindow, bool deleteStorage,
                             bool isMove, nsIMsgCopyServiceListener* listener,
                             bool allowUndo) override;
+  NS_IMETHOD CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
+                        nsIMsgWindow* window,
+                        nsIMsgCopyServiceListener* listener) override;
   NS_IMETHOD DeleteSelf(nsIMsgWindow* aWindow) override;
   NS_IMETHOD GetDBFolderInfoAndDB(nsIDBFolderInfo** folderInfo,
                                   nsIMsgDatabase** _retval) override;
@@ -55,6 +58,8 @@ class EwsFolder : public nsMsgDBFolder {
                               bool markRead) override;
   NS_IMETHOD RenameSubFolders(nsIMsgWindow* msgWindow,
                               nsIMsgFolder* oldFolder) override;
+  NS_IMETHOD Rename(const nsACString& aNewName,
+                    nsIMsgWindow* msgWindow) override;
   NS_IMETHOD UpdateFolder(nsIMsgWindow* aWindow) override;
   NS_IMETHOD Compact(nsIUrlListener* aListener,
                      nsIMsgWindow* aMsgWindow) override;
@@ -86,6 +91,11 @@ class EwsFolder : public nsMsgDBFolder {
    * Looks up the trash folder for the current account.
    */
   nsresult GetTrashFolder(nsIMsgFolder** result);
+
+  /**
+   * Synchronize the message list for the current folder.
+   */
+  nsresult SyncMessages(nsIMsgWindow* window);
 };
 
 #endif

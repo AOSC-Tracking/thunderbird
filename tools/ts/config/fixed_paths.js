@@ -9,10 +9,9 @@
  * build_paths.js script can't match automatically.
  *
  * If TypeScript or your editor can't find your (new) module in
- * `tools/@types/tspaths.json` try running `mach ts paths` first.
+ * `tools/@types/generated/tspaths.json` try running `mach ts paths` first.
  */
-exports.paths = {
-  "moz-src:///*": ["./*"],
+exports.fixed = {
   "chrome://global/content/ml/NLPUtils.sys.mjs": [
     "toolkit/components/ml/content/nlp/Utils.sys.mjs",
   ],
@@ -45,9 +44,6 @@ exports.paths = {
   "resource://devtools/server/actors/descriptors/webextension.js": [
     "devtools/server/actors/descriptors/webextension.js",
   ],
-  "resource://gre/modules/AppConstants.sys.mjs": [
-    "tools/@types/substitutions/AppConstants.sys.d.mts",
-  ],
   "resource://gre/modules/CrashManager.sys.mjs": [
     "toolkit/components/crashes/CrashManager.in.sys.mjs",
   ],
@@ -55,21 +51,9 @@ exports.paths = {
   "resource://gre/modules/components-utils/ClientEnvironment.sys.mjs": [
     "toolkit/components/utils/ClientEnvironment.sys.mjs",
   ],
-  "resource://gre/modules/RFPTargetConstants.sys.mjs": [
-    "toolkit/components/resistfingerprinting/RFPTargetConstants.sys.mjs",
-  ],
   "resource://gre/modules/worker/myModule.js": undefined,
   "resource://gre/modules/workers/Logger.js": undefined,
-  "resource://gre/modules/workers/PromiseWorker.js": [
-    "toolkit/components/promiseworker/worker/PromiseWorker.js",
-  ],
-  "resource://gre/modules/workers/PromiseWorker.mjs": [
-    "toolkit/components/promiseworker/worker/PromiseWorker.mjs",
-  ],
   "resource://gre/modules/workers/SimpleTest.js": undefined,
-  "resource://nimbus/FeatureManifest.sys.mjs": [
-    "toolkit/components/nimbus/FeatureManifest.sys.mjs",
-  ],
   "resource://passwordmgr/passwordstorage.sys.mjs": [
     "toolkit/components/passwordmgr/storage-desktop.sys.mjs",
   ],
@@ -105,4 +89,6 @@ exports.paths = {
   "resource://testing-common/services/sync/utils.sys.mjs": [
     "services/sync/modules-testing/utils.sys.mjs",
   ],
+  // Needs to be last, to prefer fixed paths above for autocomplete.
+  "moz-src:///*": ["./*"],
 };

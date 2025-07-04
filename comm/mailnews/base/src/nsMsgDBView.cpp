@@ -37,6 +37,7 @@
 #include "mozilla/dom/DataTransfer.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "nsTArray.h"
 #include "mozilla/intl/OSPreferences.h"
 #include "mozilla/intl/LocaleService.h"
@@ -124,11 +125,7 @@ nsMsgDBView::nsMsgDBView() {
   m_secondarySort = nsMsgViewSortType::byId;
   m_secondarySortOrder = nsMsgViewSortOrder::ascending;
   m_cachedMsgKey = nsMsgKey_None;
-  mNumSelectedRows = 0;
-  mSuppressCommandUpdating = false;
   mSuppressChangeNotification = false;
-  mSummarizeFailed = false;
-  mSelectionSummarized = false;
 
   mIsNews = false;
   mIsRss = false;
@@ -139,10 +136,6 @@ nsMsgDBView::nsMsgDBView() {
   mShowSizeInLines = false;
   mSortThreadsByRoot = false;
 
-  // mCommandsNeedDisablingBecauseOfSelection - A boolean that tell us if we
-  // needed to disable commands because of what's selected. If we're offline
-  // w/o a downloaded msg selected, or a dummy message was selected.
-  mCommandsNeedDisablingBecauseOfSelection = false;
   mRemovingRow = false;
   m_saveRestoreSelectionDepth = 0;
   mRecentlyDeletedArrayIndex = 0;
@@ -1017,80 +1010,7 @@ nsMsgDBView::SetSelection(nsITreeSelection* aSelection) {
 }
 
 NS_IMETHODIMP
-nsMsgDBView::SelectionChangedXPCOM() {
-  // If the currentSelection changed then we have a message to display -
-  // not if we are in the middle of deleting rows.
-  if (m_deletingRows) return NS_OK;
-
-  nsMsgViewIndexArray selection;
-  GetIndicesForSelection(selection);
-
-  bool commandsNeedDisablingBecauseOfSelection = false;
-
-  if (!selection.IsEmpty()) {
-    if (WeAreOffline())
-      commandsNeedDisablingBecauseOfSelection = !OfflineMsgSelected(selection);
-
-    if (!NonDummyMsgSelected(selection))
-      commandsNeedDisablingBecauseOfSelection = true;
-  }
-
-  bool selectionSummarized = false;
-  mSummarizeFailed = false;
-  // Let the front-end adjust the message pane appropriately with either
-  // the message body, or a summary of the selection.
-  nsCOMPtr<nsIMsgDBViewCommandUpdater> commandUpdater(
-      do_QueryReferent(mCommandUpdater));
-  if (commandUpdater) {
-    commandUpdater->SummarizeSelection(&selectionSummarized);
-    // Check if the selection was not summarized, but we expected it to be,
-    // and if so, remember it so GetHeadersFromSelection won't include
-    // the messages in collapsed threads.
-    if (!selectionSummarized &&
-        (selection.Length() > 1 ||
-         (selection.Length() == 1 &&
-          m_flags[selection[0]] & nsMsgMessageFlags::Elided &&
-          OperateOnMsgsInCollapsedThreads()))) {
-      mSummarizeFailed = true;
-    }
-  }
-
-  bool summaryStateChanged = selectionSummarized != mSelectionSummarized;
-  mSelectionSummarized = selectionSummarized;
-
-  // Determine if we need to push command update notifications out to the UI.
-  // We need to push a command update notification iff, one of the following
-  // conditions are met
-  // (1) the selection went from 0 to 1
-  // (2) it went from 1 to 0
-  // (3) it went from 1 to many
-  // (4) it went from many to 1 or 0
-  // (5) a different msg was selected - perhaps it was offline or not,
-  //     matters only when we are offline
-  // (6) we did a forward/back, or went from having no history to having
-  //     history - not sure how to tell this.
-  // (7) whether the selection was summarized or not changed.
-
-  // I think we're going to need to keep track of whether forward/back were
-  // enabled/should be enabled, and when this changes, force a command update.
-
-  if (!summaryStateChanged &&
-      (selection.Length() == mNumSelectedRows ||
-       (selection.Length() > 1 && mNumSelectedRows > 1)) &&
-      commandsNeedDisablingBecauseOfSelection ==
-          mCommandsNeedDisablingBecauseOfSelection) {
-    // Don't update commands if we're suppressing them, or if we're removing
-    // rows, unless it was the last row.
-  } else if (!mSuppressCommandUpdating && commandUpdater &&
-             (!mRemovingRow || GetSize() == 0)) {
-    commandUpdater->UpdateCommandStatus();
-  }
-
-  mCommandsNeedDisablingBecauseOfSelection =
-      commandsNeedDisablingBecauseOfSelection;
-  mNumSelectedRows = selection.Length();
-  return NS_OK;
-}
+nsMsgDBView::SelectionChangedXPCOM() { return NS_OK; }
 
 NS_IMETHODIMP
 nsMsgDBView::GetRowProperties(int32_t index, nsAString& properties) {
@@ -2145,6 +2065,7 @@ NS_IMETHODIMP
 nsMsgDBView::Open(nsIMsgFolder* folder, nsMsgViewSortTypeValue sortType,
                   nsMsgViewSortOrderValue sortOrder,
                   nsMsgViewFlagsTypeValue viewFlags) {
+  AUTO_PROFILER_LABEL("nsMsgDBView::Open", MAILNEWS);
   m_viewFlags = viewFlags;
   m_sortOrder = sortOrder;
   m_sortType = sortType;
@@ -2272,6 +2193,9 @@ nsMsgDBView::Close() {
   if (mTree) mTree->RowCountChanged(0, -oldSize);
   if (mJSTree) mJSTree->RowCountChanged(0, -oldSize);
 
+  mTree = nullptr;
+  mJSTree = nullptr;
+
   ClearHdrCache();
   if (m_db) {
     m_db->RemoveListener(this);
@@ -2303,18 +2227,6 @@ nsMsgDBView::Init(nsIMessenger* aMessengerInstance, nsIMsgWindow* aMsgWindow,
   mMessengerWeak = do_GetWeakReference(aMessengerInstance);
   mMsgWindowWeak = do_GetWeakReference(aMsgWindow);
   mCommandUpdater = do_GetWeakReference(aCmdUpdater);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgDBView::SetSuppressCommandUpdating(bool aSuppressCommandUpdating) {
-  mSuppressCommandUpdating = aSuppressCommandUpdating;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgDBView::GetSuppressCommandUpdating(bool* aSuppressCommandUpdating) {
-  *aSuppressCommandUpdating = mSuppressCommandUpdating;
   return NS_OK;
 }
 
@@ -2396,7 +2308,8 @@ nsMsgDBView::GetURIForViewIndex(nsMsgViewIndex index, nsACString& result) {
 
   if (index == nsMsgViewIndex_None || index >= m_flags.Length() ||
       m_flags[index] & MSG_VIEW_FLAG_DUMMY) {
-    return NS_MSG_INVALID_DBVIEW_INDEX;
+    result = nullptr;
+    return NS_OK;
   }
 
   return GenerateURIForMsgKey(m_keys[index], folder, result);
@@ -2405,6 +2318,7 @@ nsMsgDBView::GetURIForViewIndex(nsMsgViewIndex index, nsACString& result) {
 NS_IMETHODIMP
 nsMsgDBView::DoCommandWithFolder(nsMsgViewCommandTypeValue command,
                                  nsIMsgFolder* destFolder) {
+  AUTO_PROFILER_LABEL("nsMsgDBView::DoCommandWithFolder", MAILNEWS);
   NS_ENSURE_ARG_POINTER(destFolder);
 
   nsMsgViewIndexArray selection;
@@ -2428,6 +2342,7 @@ nsMsgDBView::DoCommandWithFolder(nsMsgViewCommandTypeValue command,
 
 NS_IMETHODIMP
 nsMsgDBView::DoCommand(nsMsgViewCommandTypeValue command) {
+  AUTO_PROFILER_LABEL("nsMsgDBView::DoCommand", MAILNEWS);
   nsMsgViewIndexArray selection;
   GetIndicesForSelection(selection);
 
@@ -2683,8 +2598,7 @@ nsresult nsMsgDBView::GetHeadersFromSelection(
 
   // Don't include collapsed messages if the front end failed to summarize
   // the selection.
-  bool includeCollapsedMsgs =
-      OperateOnMsgsInCollapsedThreads() && !mSummarizeFailed;
+  bool includeCollapsedMsgs = OperateOnMsgsInCollapsedThreads();
 
   for (nsMsgViewIndex viewIndex : selection) {
     if (NS_FAILED(rv)) {
@@ -6547,13 +6461,16 @@ nsMsgDBView::GetMsgToSelectAfterDelete(nsMsgViewIndex* msgToSelectAfterDelete) {
   return NS_OK;
 }
 
-// If nothing selected, return an NS_ERROR.
 NS_IMETHODIMP
 nsMsgDBView::GetHdrForFirstSelectedMessage(nsIMsgDBHdr** hdr) {
   NS_ENSURE_ARG_POINTER(hdr);
   nsMsgViewIndex index;
   nsresult rv = GetViewIndexForFirstSelectedMsg(&index);
   NS_ENSURE_SUCCESS(rv, rv);
+  if (index == nsMsgViewIndex_None) {
+    *hdr = nullptr;
+    return NS_OK;
+  }
 
   // Do not return a message header if an expanded grouped header is selected.
   uint32_t flags = m_flags[index];
@@ -6565,14 +6482,15 @@ nsMsgDBView::GetHdrForFirstSelectedMessage(nsIMsgDBHdr** hdr) {
   return GetMsgHdrForViewIndex(index, hdr);
 }
 
-// If nothing selected, return an NS_ERROR.
 NS_IMETHODIMP
 nsMsgDBView::GetURIForFirstSelectedMessage(nsACString& uri) {
-  nsresult rv;
   nsMsgViewIndex viewIndex;
-  rv = GetViewIndexForFirstSelectedMsg(&viewIndex);
-  // Don't assert, it is legal for nothing to be selected.
-  if (NS_FAILED(rv)) return rv;
+  nsresult rv = GetViewIndexForFirstSelectedMsg(&viewIndex);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (viewIndex == nsMsgViewIndex_None) {
+    uri = nullptr;
+    return NS_OK;
+  }
 
   return GetURIForViewIndex(viewIndex, uri);
 }
@@ -6671,13 +6589,13 @@ nsMsgDBView::GetViewIndexForFirstSelectedMsg(nsMsgViewIndex* aViewIndex) {
 
   int32_t startRange;
   int32_t endRange;
-  nsresult rv = mTreeSelection->GetRangeAt(0, &startRange, &endRange);
-  // Don't assert, it is legal for nothing to be selected.
-  if (NS_FAILED(rv)) return rv;
+  mTreeSelection->GetRangeAt(0, &startRange, &endRange);
 
   // Check that the first index is valid, it may not be if nothing is selected.
-  if (startRange < 0 || uint32_t(startRange) >= GetSize())
-    return NS_ERROR_UNEXPECTED;
+  if (!IsValidIndex((nsMsgViewIndex)startRange)) {
+    *aViewIndex = nsMsgViewIndex_None;
+    return NS_OK;
+  }
 
   *aViewIndex = startRange;
   return NS_OK;

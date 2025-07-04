@@ -48,8 +48,12 @@ import mozilla.components.feature.autofill.AutofillConfiguration
 import mozilla.components.feature.contextmenu.ContextMenuUseCases
 import mozilla.components.feature.customtabs.CustomTabIntentProcessor
 import mozilla.components.feature.customtabs.store.CustomTabsServiceStore
+import mozilla.components.feature.downloads.DateTimeProvider
+import mozilla.components.feature.downloads.DefaultDateTimeProvider
+import mozilla.components.feature.downloads.DefaultFileSizeFormatter
 import mozilla.components.feature.downloads.DownloadMiddleware
 import mozilla.components.feature.downloads.DownloadsUseCases
+import mozilla.components.feature.downloads.FileSizeFormatter
 import mozilla.components.feature.intent.processing.TabIntentProcessor
 import mozilla.components.feature.media.MediaSessionFeature
 import mozilla.components.feature.media.middleware.RecordingDevicesMiddleware
@@ -239,8 +243,7 @@ open class DefaultComponents(private val applicationContext: Context) {
 
     val appLinksInterceptor by lazy {
         AppLinksInterceptor(
-            applicationContext,
-            interceptLinkClicks = true,
+            context = applicationContext,
             launchInApp = {
                 applicationContext.components.preferences.getBoolean(PREF_LAUNCH_EXTERNAL_APP, false)
             },
@@ -514,4 +517,8 @@ open class DefaultComponents(private val applicationContext: Context) {
 
     val addonUpdater =
         DefaultAddonUpdater(applicationContext, Frequency(1, TimeUnit.DAYS), notificationsDelegate)
+
+    val fileSizeFormatter: FileSizeFormatter by lazy { DefaultFileSizeFormatter(applicationContext) }
+
+    val dateTimeProvider: DateTimeProvider by lazy { DefaultDateTimeProvider() }
 }

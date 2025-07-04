@@ -2,9 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 const lazy = {};
-
 const IN_WORKER = typeof importScripts !== "undefined";
-
 const ES_MODULES_OPTIONS = IN_WORKER ? { global: "current" } : {};
 
 ChromeUtils.defineESModuleGetters(
@@ -13,16 +11,44 @@ ChromeUtils.defineESModuleGetters(
     BLOCK_WORDS_ENCODED: "chrome://global/content/ml/BlockWords.sys.mjs",
     RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
     TranslationsParent: "resource://gre/actors/TranslationsParent.sys.mjs",
+    OPFS: "chrome://global/content/ml/OPFS.sys.mjs",
+    FEATURES: "chrome://global/content/ml/EngineProcess.sys.mjs",
+    PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   },
   ES_MODULES_OPTIONS
 );
 
-ChromeUtils.defineLazyGetter(lazy, "console", () => {
-  return console.createInstance({
-    maxLogLevelPref: IN_WORKER ? "Error" : "browser.ml.logLevel",
-    prefix: "ML:Utils",
+/**
+ * Log level set by the pipeline.
+ *
+ * @type {string}
+ */
+let logLevel = "Error";
+
+/**
+ * Sets the log level.
+ *
+ * @param {string} level - The log level.
+ */
+export function setLogLevel(level) {
+  logLevel = level;
+}
+
+if (IN_WORKER) {
+  ChromeUtils.defineLazyGetter(lazy, "console", () => {
+    return console.createInstance({
+      maxLogLevel: logLevel, // we can't use maxLogLevelPref in workers.
+      prefix: "ML:Utils",
+    });
   });
-});
+} else {
+  ChromeUtils.defineLazyGetter(lazy, "console", () => {
+    return console.createInstance({
+      maxLogLevelPref: "browser.ml.logLevel",
+      prefix: "ML:Utils",
+    });
+  });
+}
 
 /** The name of the remote settings collection holding block list */
 const RS_BLOCK_LIST_COLLECTION = "ml-inference-words-block-list";
@@ -439,98 +465,12 @@ export async function modelToResponse(modelFilePath, headers) {
     }
   }
 
-  const file = await (await getFileHandleFromOPFS(modelFilePath)).getFile();
+  const file = await (await lazy.OPFS.getFileHandle(modelFilePath)).getFile();
 
   return new Response(file.stream(), {
     status: 200,
     headers: responseHeaders,
   });
-}
-
-/**
- * Retrieves a handle to a directory at the specified path in the Origin Private File System (OPFS).
- *
- * @param {string|null} path - The path to the directory, using "/" as the directory separator.
- *                        Example: "subdir1/subdir2/subdir3"
- *                        If null, returns the root.
- * @param {object} options - Configuration object
- * @param {boolean} options.create - if `true` (default is false), create any missing subdirectories.
- * @returns {Promise<FileSystemDirectoryHandle>} - A promise that resolves to the directory handle
- *                                                 for the specified path.
- */
-export async function getDirectoryHandleFromOPFS(
-  path = null,
-  { create = false } = {}
-) {
-  let currentNavigator = globalThis.navigator;
-  if (!currentNavigator) {
-    currentNavigator = Services.wm.getMostRecentBrowserWindow().navigator;
-  }
-  let directoryHandle = await currentNavigator.storage.getDirectory();
-
-  if (!path) {
-    return directoryHandle;
-  }
-
-  // Split the `path` into directory components.
-  const components = path.split("/").filter(Boolean);
-
-  // Traverse or creates subdirectories based on the path components.
-  for (const dirName of components) {
-    directoryHandle = await directoryHandle.getDirectoryHandle(dirName, {
-      create,
-    });
-  }
-
-  return directoryHandle;
-}
-
-/**
- * Retrieves a handle to a file at the specified file path in the Origin Private File System (OPFS).
- *
- * @param {string} filePath - The path to the file, using "/" as the directory separator.
- *                            Example: "subdir1/subdir2/filename.txt"
- * @param {object} options - Configuration object
- * @param {boolean} options.create - if `true` (default is false), create any missing directories
- *                                   and the file itself.
- * @returns {Promise<FileSystemFileHandle>} - A promise that resolves to the file handle
- *                                            for the specified file.
- */
-export async function getFileHandleFromOPFS(filePath, { create = false } = {}) {
-  // Extract the directory path and filename from the filePath.
-  const lastSlashIndex = filePath.lastIndexOf("/");
-  const fileName = filePath.substring(lastSlashIndex + 1);
-  const dirPath = filePath.substring(0, lastSlashIndex);
-
-  // Get or create the directory handle for the file's parent directory.
-  const directoryHandle = await getDirectoryHandleFromOPFS(dirPath, { create });
-
-  // Retrieve or create the file handle within the directory.
-  const fileHandle = await directoryHandle.getFileHandle(fileName, { create });
-
-  return fileHandle;
-}
-
-/**
- * Delete a file or directory from the Origin Private File System (OPFS).
- *
- * @param {string} path - The path to delete, using "/" as the directory separator.
- * @param {object} options - Configuration object
- * @param {boolean} options.recursive - if `true` (default is false) a directory path
- *                                      is recursively deleted.
- * @returns {Promise<void>} A promise that resolves when the path has been successfully deleted.
- */
-export async function removeFromOPFS(path, { recursive = false } = {}) {
-  // Extract the root directory and basename from the path.
-  const lastSlashIndex = path.lastIndexOf("/");
-  const fileName = path.substring(lastSlashIndex + 1);
-  const dirPath = path.substring(0, lastSlashIndex);
-
-  const directoryHandle = await getDirectoryHandleFromOPFS(dirPath);
-  if (!directoryHandle) {
-    throw new Error("Directory does not exist: " + dirPath);
-  }
-  await directoryHandle.removeEntry(fileName, { recursive });
 }
 
 /**
@@ -589,12 +529,6 @@ Progress.ProgressStatusText = ProgressStatusText;
 Progress.ProgressType = ProgressType;
 Progress.readResponse = readResponse;
 Progress.readResponseToWriter = readResponseToWriter;
-
-// OPFS operations
-export var OPFS = OPFS || {};
-OPFS.getFileHandle = getFileHandleFromOPFS;
-OPFS.getDirectoryHandle = getDirectoryHandleFromOPFS;
-OPFS.remove = removeFromOPFS;
 
 export async function getInferenceProcessInfo() {
   // for now we only have a single inference process.
@@ -1088,4 +1022,138 @@ export class RemoteSettingsManager {
 
     return records[0];
   }
+}
+
+const ADDON_PREFIX = "ML-ENGINE-";
+
+/**
+ * Check if an engine id is for an addon
+ *
+ * @param {string} engineId - The engine id to check
+ * @returns {boolean} True if the engine id is for an addon
+ */
+export function isAddonEngineId(engineId) {
+  return engineId.startsWith(ADDON_PREFIX);
+}
+
+/**
+ * Converts an addon id to an engine id
+ *
+ * @param {string} addonId - The addon id to convert
+ * @returns {string} The engine id
+ */
+export function addonIdToEngineId(addonId) {
+  return `${ADDON_PREFIX}${addonId}`;
+}
+
+/**
+ * Converts an engine Id into an addon id
+ *
+ * @param {string} engineId - The engine id to convert
+ * @returns {string|null} The addon id. null if the engine id is invalid
+ */
+export function engineIdToAddonId(engineId) {
+  if (!engineId.startsWith(ADDON_PREFIX)) {
+    return null;
+  }
+  return engineId.substring(ADDON_PREFIX.length);
+}
+
+/**
+ * Converts a feature engine id to a fluent id
+ *
+ * @param {string} engineId
+ * @returns {string|null}
+ */
+export function featureEngineIdToFluentId(engineId) {
+  for (const config of Object.values(lazy.FEATURES)) {
+    if (config.engineId === engineId) {
+      return config.fluentId;
+    }
+  }
+  return null;
+}
+
+/**
+ * Generates a random uuid to use where Services.uuid is not available,
+ * for instance pipelines
+ *
+ * @returns {string}
+ */
+export function generateUUID() {
+  lazy.console.debug("generating uuid");
+  return crypto.randomUUID();
+}
+
+/**
+ * Checks if we are in private browsing mode
+ *
+ * @returns {boolean} True if we are in private browsing mode
+ */
+export function isPrivateBrowsing() {
+  const win = Services.wm.getMostRecentBrowserWindow() ?? null;
+  return lazy.PrivateBrowsingUtils.isWindowPrivate(win);
+}
+
+/**
+ * Helpers used to collect telemetry related to the mlmodel management UI
+ * (used by about:addons)
+ */
+
+function baseRecordData(modelAddonWrapper) {
+  const { usedByAddonIds, usedByFirefoxFeatures, model, version } =
+    modelAddonWrapper;
+  return {
+    extension_ids: usedByAddonIds.join(","),
+    feature_ids: usedByFirefoxFeatures.join(","),
+    model,
+    version,
+  };
+}
+
+export function recordRemoveConfirmationTelemetry(modelAddonWrapper, confirm) {
+  Glean.modelManagement.removeConfirmation.record({
+    ...baseRecordData(modelAddonWrapper),
+    action: confirm ? "remove" : "cancel",
+  });
+}
+
+export function recordListItemManageTelemetry(modelAddonWrapper) {
+  Glean.modelManagement.listItemManage.record({
+    ...baseRecordData(modelAddonWrapper),
+  });
+}
+
+function convertDateToHours(date) {
+  const now = Date.now();
+  return Math.floor((now - date.getTime()) / 1000 / 60 / 60); // hours
+}
+
+export function recordRemoveInitiatedTelemetry(modelAddonWrapper, source) {
+  const { lastUsed, updateDate, totalSize } = modelAddonWrapper;
+  Glean.modelManagement.removeInitiated.record({
+    ...baseRecordData(modelAddonWrapper),
+    source,
+    size: totalSize,
+    last_used: convertDateToHours(lastUsed),
+    last_install: convertDateToHours(updateDate),
+  });
+}
+
+export function recordModelCardLinkTelemetry(modelAddonWrapper) {
+  Glean.modelManagement.modelCardLink.record({
+    ...baseRecordData(modelAddonWrapper),
+  });
+}
+
+export function recordListViewTelemetry(qty) {
+  Glean.modelManagement.listView.record({
+    models: qty,
+  });
+}
+
+export function recordDetailsViewTelemetry(modelAddonWrapper) {
+  Glean.modelManagement.detailsView.record({
+    ...baseRecordData(modelAddonWrapper),
+  });
 }

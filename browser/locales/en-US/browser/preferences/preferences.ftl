@@ -298,8 +298,8 @@ preferences-web-appearance-choice-input-dark =
 
 # This can appear when using windows HCM or "Override colors: always" without
 # system colors.
-preferences-web-appearance-override-warning2 =
-    .message = Your color selections are overriding website appearance.
+preferences-web-appearance-override-warning3 =
+    .message = Your contrast control settings are overriding website appearance.
 
 # This message contains one link. It can be moved within the sentence as needed
 # to adapt to your language, but should not be changed.
@@ -467,19 +467,12 @@ applications-type-description-with-type = { $type-description } ({ $type })
 #   $type (string) - The MIME type (e.g application/binary)
 applications-file-ending-with-type = { applications-file-ending } ({ $type })
 
-# Variables:
-#   $plugin-name (string) - Name of a plugin (e.g Adobe Flash)
-applications-use-plugin-in =
-    .label = Use { $plugin-name } (in { -brand-short-name })
 applications-open-inapp =
     .label = Open in { -brand-short-name }
 
 ## The strings in this group are used to populate
 ## selected label element based on the string from
 ## the selected menu item.
-
-applications-use-plugin-in-label =
-    .value = { applications-use-plugin-in.label }
 
 applications-action-save-label =
     .value = { applications-action-save.label }
@@ -604,6 +597,8 @@ performance-default-content-process-count =
 ## General Section - Browsing
 
 browsing-title = Browsing
+browsing-group-label =
+    .aria-label = Browsing
 
 browsing-use-autoscroll =
     .label = Use autoscrolling
@@ -748,6 +743,13 @@ home-prefs-weather-header =
 home-prefs-weather-description = Today’s forecast at a glance
 home-prefs-weather-learn-more-link = Learn more
 
+# "Support" here means to help sustain or contribute to something, especially through funding or sponsorship.
+home-prefs-support-firefox-header =
+    .label = Support { -brand-product-name }
+
+home-prefs-mission-message = Our sponsors support our mission to build a better web
+home-prefs-mission-message-learn-more-link = Find out how
+
 # Variables:
 #   $num (number) - Number of rows displayed
 home-prefs-sections-rows-option =
@@ -816,6 +818,9 @@ search-remove-engine =
 search-add-engine =
     .label = Add
     .accesskey = A
+search-edit-engine =
+    .label = Edit
+    .accesskey = E
 
 search-find-more-link = Find more search engines
 
@@ -826,6 +831,15 @@ search-keyword-warning-title = Duplicate Keyword
 #   $name (string) - Name of a search engine.
 search-keyword-warning-engine = You have chosen a keyword that is currently in use by “{ $name }”. Please select another.
 search-keyword-warning-bookmark = You have chosen a keyword that is currently in use by a bookmark. Please select another.
+
+# This warning is displayed when the chosen name is already in use.
+# Variables:
+#   $name (string) - Name of a search engine.
+edit-engine-name-warning-duplicate = There already is a search engine with the name “{ $name }”. Please choose another name.
+
+remove-engine-confirmation = Are you sure you want to remove this search engine?
+remove-engine-remove = Remove
+remove-addon-engine-alert = To remove this search engine, remove the associated add-on.
 
 ## Containers Section
 

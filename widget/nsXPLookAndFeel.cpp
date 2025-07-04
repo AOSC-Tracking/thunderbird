@@ -158,12 +158,14 @@ static const char sIntPrefs[][45] = {
     "ui.touchDeviceSupportPresent",
     "ui.titlebarRadius",
     "ui.titlebarButtonSpacing",
+    "ui.tooltipRadius",
     "ui.dynamicRange",
     "ui.panelAnimations",
     "ui.hideCursorWhileTyping",
     "ui.gtkThemeFamily",
     "ui.fullKeyboardAccess",
     "ui.pointingDeviceKinds",
+    "ui.nativeMenubar",
 };
 
 static_assert(std::size(sIntPrefs) == size_t(LookAndFeel::IntID::End),
@@ -237,7 +239,6 @@ static const char sColorPrefs[][41] = {
     "ui.-moz_menuhoverdisabled",
     "ui.-moz_menuhovertext",
     "ui.-moz_menubarhovertext",
-    "ui.-moz_eventreerow",
     "ui.-moz_oddtreerow",
     "ui.-moz-buttonactivetext",
     "ui.-moz-buttonactiveface",
@@ -701,7 +702,6 @@ nscolor nsXPLookAndFeel::GetStandinForNativeColor(ColorID aID,
       COLOR(MozMenuhovertext, 0x00, 0x00, 0x00)
       COLOR(MozMenubarhovertext, 0x00, 0x00, 0x00)
       COLOR(MozMenuhoverdisabled, 0xF0, 0xF0, 0xF0)
-      COLOR(MozEventreerow, 0xFF, 0xFF, 0xFF)
       COLOR(MozOddtreerow, 0xFF, 0xFF, 0xFF)
       COLOR(MozMacFocusring, 0x60, 0x9D, 0xD7)
       COLOR(MozMacDisabledtoolbartext, 0x3F, 0x3F, 0x3F)
@@ -752,7 +752,6 @@ Maybe<nscolor> nsXPLookAndFeel::GenericDarkColor(ColorID aID) {
       color = NS_RGB(0x3a, 0x39, 0x44);
       break;
 
-    case ColorID::MozEventreerow:
     case ColorID::MozOddtreerow:
     case ColorID::MozDialog:  // --background-color-box
       color = NS_RGB(35, 34, 43);

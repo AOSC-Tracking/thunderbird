@@ -9,6 +9,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   JSONFile: "resource://gre/modules/JSONFile.sys.mjs",
   NotificationFilter: "resource:///modules/NotificationFilter.sys.mjs",
+  NotificationScheduler: "resource:///modules/NotificationScheduler.sys.mjs",
   NotificationUpdater: "resource:///modules/NotificationUpdater.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
   clearTimeout: "resource://gre/modules/Timer.sys.mjs",
@@ -29,6 +30,8 @@ export const InAppNotifications = {
    * @type {?JSONFile}
    */
   _jsonFile: null,
+
+  _localeChangeDebounce: null,
 
   /**
    * Notification manager for the front-end to interact with. Immediately
@@ -67,6 +70,9 @@ export const InAppNotifications = {
     lazy.NotificationUpdater.onUpdate = updatedNotifications => {
       this.updateNotifications(updatedNotifications);
     };
+
+    lazy.NotificationScheduler.init(this.notificationManager);
+
     const { loadFromCache, hasCache } = await lazy.NotificationUpdater.init();
     if (loadFromCache) {
       if (
@@ -75,7 +81,8 @@ export const InAppNotifications = {
         lazy.NotificationUpdater.readyToUpdate
       ) {
         await this.updateNotifications(
-          await lazy.OfflineNotifications.getDefaultNotifications()
+          await lazy.OfflineNotifications.getDefaultNotifications(),
+          true
         );
         return;
       }
@@ -87,29 +94,32 @@ export const InAppNotifications = {
    * Update the notifications cache.
    *
    * @param {object[]} notifications
+   * @param {boolean} [skipCleanup=false] - Skip cleanup operations on state fields.
    */
-  async updateNotifications(notifications) {
+  async updateNotifications(notifications, skipCleanup = false) {
     this._jsonFile.data.notifications = notifications;
 
-    const notificationIds = new Set(
-      notifications.map(notification => notification.id)
-    );
-    const defaultNotificationIds =
-      await lazy.OfflineNotifications.getDefaultNotificationIds();
-    const allNotificationIds = notificationIds.union(defaultNotificationIds);
-    const interactedWithSet = new Set(this._jsonFile.data.interactedWith);
-    const stillExistingInteractedWith =
-      interactedWithSet.intersection(allNotificationIds);
-    if (stillExistingInteractedWith.size < interactedWithSet.size) {
-      this._jsonFile.data.interactedWith = Array.from(
-        stillExistingInteractedWith
+    if (!skipCleanup) {
+      const notificationIds = new Set(
+        notifications.map(notification => notification.id)
+      );
+      const defaultNotificationIds =
+        await lazy.OfflineNotifications.getDefaultNotificationIds();
+      const allNotificationIds = notificationIds.union(defaultNotificationIds);
+      const interactedWithSet = new Set(this._jsonFile.data.interactedWith);
+      const stillExistingInteractedWith =
+        interactedWithSet.intersection(allNotificationIds);
+      if (stillExistingInteractedWith.size < interactedWithSet.size) {
+        this._jsonFile.data.interactedWith = Array.from(
+          stillExistingInteractedWith
+        );
+      }
+      this._jsonFile.data.seeds = Object.fromEntries(
+        Object.entries(this._jsonFile.data.seeds).filter(([notificationId]) =>
+          allNotificationIds.has(notificationId)
+        )
       );
     }
-    this._jsonFile.data.seeds = Object.fromEntries(
-      Object.entries(this._jsonFile.data.seeds).filter(([notificationId]) =>
-        allNotificationIds.has(notificationId)
-      )
-    );
     this._updateNotificationManager();
 
     this._jsonFile.saveSoon();
@@ -160,7 +170,15 @@ export const InAppNotifications = {
     switch (topic) {
       case "intl:app-locales-changed":
         // When locales change, the filtered notifications can change.
-        this._updateNotificationManager();
+        // Debounce updating the filtered notifications, in case we change back
+        // in a short moment.
+        if (this._localeChangeDebounce) {
+          lazy.clearTimeout(this._localeChangeDebounce);
+        }
+        this._localeChangeDebounce = lazy.setTimeout(() => {
+          this._localeChangeDebounce = null;
+          this._updateNotificationManager();
+        }, 5000);
         break;
     }
   },
@@ -207,6 +225,10 @@ export const InAppNotifications = {
    * notification with.
    */
   _updateNotificationManager() {
+    // Wait for the debounce before updating notifications.
+    if (this._localeChangeDebounce) {
+      return;
+    }
     this._scheduleNotification();
     this.notificationManager.updatedNotifications(this.getNotifications());
   },

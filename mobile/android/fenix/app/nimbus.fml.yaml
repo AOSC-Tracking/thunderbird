@@ -336,7 +336,7 @@ features:
           download-link: "[Download Link]"
           show-snackbar: true
 
-  SetupChecklist:
+  setup-checklist:
     description: A feature on the home page that allows the user to track onboarding setup progress.
     variables:
       enabled:
@@ -465,6 +465,15 @@ features:
         value:
           enabled: true
 
+  composable-toolbar:
+    description: Use a composable toolbar instead of the View based one.
+    variables:
+      enabled:
+        description: >
+          When the feature is enabled the user will see a new composable toolbar instead the previous View based one.
+        type: Boolean
+        default: false
+
   remote-tab-management:
     description: >
       Features that let users manage tabs on other devices that are
@@ -488,6 +497,13 @@ features:
           set to true.
         type: Boolean
         default: true
+    defaults:
+      - channel: nightly
+        value:
+          disabled: false
+      - channel: developer
+        value:
+          disabled: false
 
   fission:
     description: The feature that controls whether fission is enabled or not in Gecko.
@@ -506,7 +522,7 @@ features:
         description: >
           Suggest domains from the shipped domain list.
         type: Boolean
-        default: true
+        default: false
     defaults:
       - channel: nightly
         value:
@@ -630,6 +646,16 @@ features:
           Whether or not to enable tab strip.
         type: Boolean
         default: false
+    defaults:
+      - channel: developer
+        value:
+          enabled: true
+      - channel: nightly
+        value:
+          enabled: true
+      - channel: beta
+        value:
+          enabled: true
 
   trending-searches:
     description: Enables trending searches.
@@ -679,12 +705,30 @@ features:
         type: Boolean
         default: false
 
+  homepage-as-new-tab:
+    description: Enables homepage as a a new tab.
+    variables:
+      enabled:
+        description: >
+          Whether or not to enable homepage as a new tab
+        type: Boolean
+        default: false
+
   homepage-search-bar:
     description: Enables the homepage search bar.
     variables:
       enabled:
         description: >
           Whether or not to enable the homepage search bar.
+        type: Boolean
+        default: false
+
+  homepage-hide-frecent-top-sites:
+    description: Hides frecent top sites on the homepage.
+    variables:
+      enabled:
+        description: >
+          Whether or not to hide frecent top sites on the homepage.
         type: Boolean
         default: false
 
@@ -713,6 +757,14 @@ features:
         type: Boolean
         default: true
 
+  networkingBannedPorts:
+    description: "Networking (Necko) Banned Ports"
+    variables:
+      bannedPortList:
+        description: A comma-separated list of ports that Firefox will refuse to connect to. These ports will be appended to nsIOService gBadPortList
+        type: String
+        default: ""
+
   pki:
     description: Certificate verification configuration
     variables:
@@ -738,8 +790,8 @@ features:
       postQuantumKeyExchangeEnabled:
         description: >
           Toggles the security.tls.enable_kyber and network.http.http3.enable_kyber preferences.
-        type: Boolean
-        default: false
+        type: Option<Boolean>
+        default: null
 
   javascript:
     description: Enables Javascript Engine (Spidermonkey) features
@@ -761,6 +813,68 @@ features:
         description: The text to show in the CFR
         type: Text
         default: ""
+  remote-search-configuration:
+    description: Feature to use search configurations from remote servers.
+    variables:
+      enabled:
+        description: >
+          Uses search configuration from remote servers .
+        type: Boolean
+        default: true
+  same-document-navigation-overrides-load-type:
+    description: Control whether the same document navigation overrides the load type.
+    variables:
+      enabled:
+        description: >
+          Overrides the loadType when it is a same document navigation
+        type: Boolean
+        default: true
+      force-disable-uri:
+        description: >
+          Disable overriding the loadType during same document navigation on the domain specified by this URI.
+        type: String
+        default: ""
+    defaults:
+      - channel: nightly
+        value:
+          enabled: false
+          force-disable-uri: ""
+      - channel: developer
+        value:
+          enabled: false
+          force-disable-uri: ""
+  doh:
+    description: Feature controlling DNS over HTTPS (DoH).
+    variables:
+      show-ui:
+        description: >
+          When `true`, include DoH settings in the settings UI.
+        type: Boolean
+        default: false
+      autoselect-enabled:
+        description: >
+          Controls the network.android_doh.autoselect_enabled pref and automatically chooses a DoH provider when Default Protection mode is selected.
+        type: Boolean
+        default: false
+
+  private-browsing-lock:
+    description: Allows enabling and disabling the private browsing mode lock via an authentication screen.
+    variables:
+      enabled:
+        description: >
+          Whether or not to enable private browsing mode lock.
+        type: Boolean
+        default: false
+    defaults:
+      - channel: nightly
+        value:
+          enabled: true
+      - channel: beta
+        value:
+          enabled: true
+      - channel: developer
+        value:
+          enabled: true
 
 types:
   objects: {}

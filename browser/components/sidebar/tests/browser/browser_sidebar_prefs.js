@@ -170,7 +170,7 @@ add_task(async function test_flip_revamp_pref() {
   // Open history sidebar
   await toggleSidebarPanel(win, "viewHistorySidebar");
 
-  await SpecialPowers.pushPrefEnv({ set: [["sidebar.verticalTabs", true]] });
+  await SpecialPowers.pushPrefEnv({ set: [[VERTICAL_TABS_PREF, true]] });
   await waitForTabstripOrientation("vertical", win);
   ok(BrowserTestUtils.isVisible(verticalTabs), "Vertical tabs slot is visible");
   ok(
@@ -182,7 +182,7 @@ add_task(async function test_flip_revamp_pref() {
     "Revamped sidebar container is shown initially."
   );
   Assert.equal(
-    Services.prefs.getStringPref("sidebar.visibility"),
+    Services.prefs.getStringPref(SIDEBAR_VISIBILITY_PREF),
     "always-show",
     "Sanity check the visibilty pref when verticalTabs are enabled"
   );
@@ -228,6 +228,28 @@ add_task(async function test_flip_revamp_pref() {
   ok(true, "The old sidebar is hidden and the new sidebar is shown.");
 
   await BrowserTestUtils.closeWindow(win);
+});
+
+/**
+ * Check that panels can stay open when flipping sidebar.revamp
+ */
+add_task(async function test_flip_revamp_pref_with_panel() {
+  await toggleSidebarPanel(window, "viewGenaiChatSidebar");
+  ok(SidebarController.isOpen, "panel open with revamp");
+
+  await SpecialPowers.pushPrefEnv({
+    set: [["sidebar.revamp", false]],
+  });
+
+  ok(SidebarController.isOpen, "panel still open after old");
+
+  await SpecialPowers.pushPrefEnv({
+    set: [["sidebar.revamp", true]],
+  });
+
+  ok(SidebarController.isOpen, "panel still open after new");
+
+  await SidebarController.hide();
 });
 
 add_task(async function test_opening_panel_flips_has_used_pref() {

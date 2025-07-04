@@ -150,8 +150,8 @@ class TabsListBase {
   }
 
   _cleanupDOM() {
-    this.doc
-      .querySelectorAll(".all-tabs-group-button")
+    this.containerNode
+      .querySelectorAll(":scope .all-tabs-group-item")
       .forEach(node => node.remove());
 
     for (let item of this.rows) {
@@ -164,9 +164,14 @@ class TabsListBase {
     if (!this.#domRefreshPending) {
       this.#domRefreshPending = true;
       this.containerNode.ownerGlobal.requestAnimationFrame(() => {
-        this.#domRefreshPending = false;
-        this._cleanupDOM();
-        this._populateDOM();
+        if (this.#domRefreshPending) {
+          this.#domRefreshPending = false;
+          if (this.listenersRegistered) {
+            // Only re-render the menu DOM if the menu is still open.
+            this._cleanupDOM();
+            this._populateDOM();
+          }
+        }
       });
     }
   }
@@ -319,9 +324,12 @@ export class TabsPanel extends TabsListBase {
           break;
         }
         if (event.target.classList.contains("all-tabs-close-button")) {
-          this.gBrowser.removeTab(event.target.tab, {
-            telemetrySource: lazy.TabMetrics.METRIC_SOURCE.TAB_OVERFLOW_MENU,
-          });
+          this.gBrowser.removeTab(
+            event.target.tab,
+            lazy.TabMetrics.userTriggeredContext(
+              lazy.TabMetrics.METRIC_SOURCE.TAB_OVERFLOW_MENU
+            )
+          );
           break;
         }
         if ("tabGroupId" in event.target.dataset) {

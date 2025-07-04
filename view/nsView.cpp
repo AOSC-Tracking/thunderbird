@@ -19,9 +19,7 @@
 #include "nsIWidget.h"
 #include "nsViewManager.h"
 #include "nsIFrame.h"
-#include "nsPresArena.h"
 #include "nsXULPopupManager.h"
-#include "nsIScreen.h"
 #include "nsIWidgetListener.h"
 #include "nsContentUtils.h"  // for nsAutoScriptBlocker
 #include "nsDocShell.h"
@@ -469,7 +467,6 @@ void nsView::RemoveChild(nsView* child) {
 
 struct DefaultWidgetInitData : public widget::InitData {
   DefaultWidgetInitData() : widget::InitData() {
-    mWindowType = WindowType::Child;
     mClipChildren = true;
     mClipSiblings = true;
   }
@@ -836,7 +833,7 @@ bool nsView::WindowResized(nsIWidget* aWidget, int32_t aWidth,
   return false;
 }
 
-#if defined(MOZ_WIDGET_ANDROID)
+#ifdef MOZ_WIDGET_ANDROID
 void nsView::DynamicToolbarMaxHeightChanged(ScreenIntCoord aHeight) {
   MOZ_ASSERT(XRE_IsParentProcess(),
              "Should be only called for the browser parent process");
@@ -881,6 +878,18 @@ void nsView::KeyboardHeightChanged(ScreenIntCoord aHeight) {
 
         aBrowserParent->KeyboardHeightChanged(aHeight);
         return CallState::Stop;
+      });
+}
+
+void nsView::AndroidPipModeChanged(bool aPipMode) {
+  MOZ_ASSERT(XRE_IsParentProcess(),
+             "Should be only called for the browser parent process");
+  MOZ_ASSERT(this == mViewManager->GetRootView(),
+             "Should be called for the root view");
+  CallOnAllRemoteChildren(
+      [aPipMode](dom::BrowserParent* aBrowserParent) -> CallState {
+        aBrowserParent->AndroidPipModeChanged(aPipMode);
+        return CallState::Continue;
       });
 }
 #endif
@@ -943,7 +952,7 @@ void nsView::DidCompositeWindow(mozilla::layers::TransactionId aTransactionId,
 
 void nsView::RequestRepaint() {
   if (PresShell* presShell = mViewManager->GetPresShell()) {
-    presShell->ScheduleViewManagerFlush();
+    presShell->SchedulePaint();
   }
 }
 

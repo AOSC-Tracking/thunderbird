@@ -9,9 +9,11 @@
 #include "mozilla/Encoding.h"
 #include "mozilla/intl/Locale.h"
 #include "mozilla/intl/OSPreferences.h"
+#include "MainThreadUtils.h"
 #include "nsGkAtoms.h"
 #include "nsUConvPropertySearch.h"
 #include "nsUnicharUtils.h"
+#include "MainThreadUtils.h"
 
 #include <mutex>  // for call_once
 
@@ -153,15 +155,12 @@ nsAtom* nsLanguageAtomService::GetLocaleLanguage() {
   return mLocaleLanguage;
 }
 
-nsStaticAtom* nsLanguageAtomService::GetLanguageGroup(nsAtom* aLanguage,
-                                                      bool* aNeedsToCache) {
-  if (aNeedsToCache) {
+nsStaticAtom* nsLanguageAtomService::GetLanguageGroup(nsAtom* aLanguage) {
+  {
     AutoReadLock lock(mLock);
     if (nsStaticAtom* atom = mLangToGroup.Get(aLanguage)) {
       return atom;
     }
-    *aNeedsToCache = true;
-    return nullptr;
   }
 
   AutoWriteLock lock(mLock);

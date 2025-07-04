@@ -30,21 +30,29 @@ class nsMsgBrkMBoxStore final : public nsMsgLocalStoreUtils,
   ~nsMsgBrkMBoxStore();
 
  protected:
+  nsresult InvalidateOngoingWrite(nsIMsgFolder* folder);
   nsresult InternalGetNewMsgOutputStream(nsIMsgFolder* aFolder,
-                                         nsIMsgDBHdr** aNewMsgHdr,
                                          int64_t& filePos,
                                          nsIOutputStream** aResult);
   nsresult AddSubFolders(nsIMsgFolder* parent, nsCOMPtr<nsIFile>& path,
                          bool deep);
   nsresult CreateDirectoryForFolder(nsIFile* path);
-  nsresult GetOutputStream(nsIMsgDBHdr* aHdr,
-                           nsCOMPtr<nsIOutputStream>& outputStream);
   void GetMailboxModProperties(nsIMsgFolder* aFolder, int64_t* aSize,
                                uint32_t* aDate);
-  void SetDBValid(nsIMsgDBHdr* aHdr);
+  void SetDBValid(nsIMsgFolder* folder);
 
-  // A set containing the URI of every folder currently being written to.
-  mozilla::HashMap<nsCString, RefPtr<nsIOutputStream>> m_OutstandingStreams;
+  // We'll track details for ongoing output streams, keyed by folder.
+  // Each folder can only have a single ongoing write.
+  // We track:
+  //  - The stream, so we can ditch it if another write preempts it.
+  //    (shouldn't happen but there are still some possible corner cases).
+  //  - The filePos, so we can issue a storeToken to the caller at finishing
+  //    time.
+  struct StreamDetails {
+    int64_t filePos{0};
+    nsCOMPtr<nsIOutputStream> stream;
+  };
+  mozilla::HashMap<nsCString, StreamDetails> mOngoingWrites;
 };
 
 #endif

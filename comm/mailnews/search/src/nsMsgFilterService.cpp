@@ -177,8 +177,7 @@ NS_IMETHODIMP nsMsgFilterService::OpenFilterList(
       NS_ENSURE_SUCCESS(rv, rv);
       return OpenFilterList(aFilterFile, rootFolder, aMsgWindow,
                             resultFilterList);
-    } else if (rv == NS_MSG_CUSTOM_HEADERS_OVERFLOW && aMsgWindow)
-      ThrowAlertMsg("filterCustomHeaderOverflow", aMsgWindow);
+    }
     else if (rv == NS_MSG_INVALID_CUSTOM_HEADER && aMsgWindow)
       ThrowAlertMsg("invalidCustomHeader", aMsgWindow);
   }
@@ -194,12 +193,6 @@ NS_IMETHODIMP nsMsgFilterService::OpenFilterList(
 
   filterList.forget(resultFilterList);
   return rv;
-}
-
-NS_IMETHODIMP nsMsgFilterService::CloseFilterList(
-    nsIMsgFilterList* filterList) {
-  // NS_ASSERTION(false,"CloseFilterList doesn't do anything yet");
-  return NS_OK;
 }
 
 /* save without deleting */
@@ -230,11 +223,6 @@ NS_IMETHODIMP nsMsgFilterService::SaveFilterList(nsIMsgFilterList* filterList,
     }
   }
   return rv;
-}
-
-NS_IMETHODIMP nsMsgFilterService::CancelFilterList(
-    nsIMsgFilterList* filterList) {
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 nsresult nsMsgFilterService::BackUpFilterFile(nsIFile* aFilterFile,
@@ -840,9 +828,8 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter() {
           nsAutoCString junkScoreStr;
           int32_t junkScore;
           filterAction->GetJunkScore(&junkScore);
-          junkScoreStr.AppendInt(junkScore);
-          rv =
-              curFolder->SetJunkScoreForMessages(m_searchHitHdrs, junkScoreStr);
+          rv = curFolder->SetJunkScoreForMessages(m_searchHitHdrs, junkScore,
+                                                  "filter"_ns, -1);
           BREAK_ACTION_IF_FAILURE(rv, "Setting message flags failed");
         } break;
         case nsMsgFilterAction::Forward: {
@@ -1029,10 +1016,7 @@ nsMsgFilterService::ApplyFiltersToFolders(
 
   RefPtr<nsMsgFilterAfterTheFact> filterExecutor =
       new nsMsgFilterAfterTheFact(aMsgWindow, aFilterList, aFolders, aCallback);
-  if (filterExecutor)
-    return filterExecutor->AdvanceToNextFolder();
-  else
-    return NS_ERROR_OUT_OF_MEMORY;
+  return filterExecutor->AdvanceToNextFolder();
 }
 
 NS_IMETHODIMP nsMsgFilterService::AddCustomAction(
@@ -1286,10 +1270,7 @@ NS_IMETHODIMP nsMsgFilterService::ApplyFilters(
   RefPtr<nsMsgApplyFiltersToMessages> filterExecutor =
       new nsMsgApplyFiltersToMessages(aMsgWindow, filterList, {aFolder},
                                       aMsgHdrList, aFilterType, aCallback);
-
-  if (filterExecutor) return filterExecutor->AdvanceToNextFolder();
-
-  return NS_ERROR_OUT_OF_MEMORY;
+  return filterExecutor->AdvanceToNextFolder();
 }
 
 /* void OnStartCopy (); */

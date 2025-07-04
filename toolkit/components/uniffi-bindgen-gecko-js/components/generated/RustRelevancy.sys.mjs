@@ -8,6 +8,11 @@ import { UniFFITypeError } from "resource://gre/modules/UniFFI.sys.mjs";
 // Objects intended to be used in the unit tests
 export var UnitTestObjs = {};
 
+let lazy = {};
+
+ChromeUtils.defineLazyGetter(lazy, "decoder", () => new TextDecoder());
+ChromeUtils.defineLazyGetter(lazy, "encoder", () => new TextEncoder());
+
 // Write/Read data to/from an ArrayBuffer
 class ArrayBufferDataStream {
     constructor(arrayBuffer) {
@@ -128,11 +133,10 @@ class ArrayBufferDataStream {
 
 
     writeString(value) {
-      const encoder = new TextEncoder();
       // Note: in order to efficiently write this data, we first write the
       // string data, reserving 4 bytes for the size.
       const dest = new Uint8Array(this.dataView.buffer, this.pos + 4);
-      const encodeResult = encoder.encodeInto(value, dest);
+      const encodeResult = lazy.encoder.encodeInto(value, dest);
       if (encodeResult.read != value.length) {
         throw new UniFFIError(
             "writeString: out of space when writing to ArrayBuffer.  Did the computeSize() method returned the wrong result?"
@@ -146,10 +150,9 @@ class ArrayBufferDataStream {
     }
 
     readString() {
-      const decoder = new TextDecoder();
       const size = this.readUint32();
       const source = new Uint8Array(this.dataView.buffer, this.pos, size)
-      const value = decoder.decode(source);
+      const value = lazy.decoder.decode(source);
       this.pos += size;
       return value;
     }
@@ -172,7 +175,7 @@ class ArrayBufferDataStream {
     // UniFFI Pointers are **always** 8 bytes long. That is enforced
     // by the C++ and Rust Scaffolding code.
     readPointerRelevancyStore() {
-        const pointerId = 0; // relevancy:RelevancyStore
+        const pointerId = 1; // relevancy:RelevancyStore
         const res = UniFFIScaffolding.readPointer(pointerId, this.dataView.buffer, this.pos);
         this.pos += 8;
         return res;
@@ -182,7 +185,7 @@ class ArrayBufferDataStream {
     // UniFFI Pointers are **always** 8 bytes long. That is enforced
     // by the C++ and Rust Scaffolding code.
     writePointerRelevancyStore(value) {
-        const pointerId = 0; // relevancy:RelevancyStore
+        const pointerId = 1; // relevancy:RelevancyStore
         UniFFIScaffolding.writePointer(pointerId, value, this.dataView.buffer, this.pos);
         this.pos += 8;
     }
@@ -393,13 +396,11 @@ export class FfiConverterString extends FfiConverter {
     }
 
     static lift(buf) {
-        const decoder = new TextDecoder();
         const utf8Arr = new Uint8Array(buf);
-        return decoder.decode(utf8Arr);
+        return lazy.decoder.decode(utf8Arr);
     }
     static lower(value) {
-        const encoder = new TextEncoder();
-        return encoder.encode(value).buffer;
+        return lazy.encoder.encode(value).buffer;
     }
 
     static write(dataStream, value) {
@@ -411,8 +412,7 @@ export class FfiConverterString extends FfiConverter {
     }
 
     static computeSize(value) {
-        const encoder = new TextEncoder();
-        return 4 + encoder.encode(value).length
+        return 4 + lazy.encoder.encode(value).length
     }
 }
 
@@ -438,7 +438,7 @@ export class RelevancyStore {
      * This is non-blocking since databases and other resources are lazily opened.
      * @returns {RelevancyStore}
      */
-    static init(dbPath,remoteSettingsService = null) {
+    static init(dbPath,remoteSettings) {
         const liftResult = (result) => FfiConverterTypeRelevancyStore.lift(result);
         const liftError = null;
         const functionCall = () => {
@@ -451,17 +451,17 @@ export class RelevancyStore {
                 throw e;
             }
             try {
-                FfiConverterOptionalTypeRemoteSettingsService.checkType(remoteSettingsService)
+                FfiConverterTypeRemoteSettingsService.checkType(remoteSettings)
             } catch (e) {
                 if (e instanceof UniFFITypeError) {
-                    e.addItemDescriptionPart("remoteSettingsService");
+                    e.addItemDescriptionPart("remoteSettings");
                 }
                 throw e;
             }
             return UniFFIScaffolding.callSync(
-                12, // relevancy:uniffi_relevancy_fn_constructor_relevancystore_new
+                16, // relevancy:uniffi_relevancy_fn_constructor_relevancystore_new
                 FfiConverterString.lower(dbPath),
-                FfiConverterOptionalTypeRemoteSettingsService.lower(remoteSettingsService),
+                FfiConverterTypeRemoteSettingsService.lower(remoteSettings),
             )
         }
         return handleRustResult(functionCall(), liftResult, liftError);}
@@ -495,7 +495,7 @@ export class RelevancyStore {
                 throw e;
             }
             return UniFFIScaffolding.callAsyncWrapper(
-                3, // relevancy:uniffi_relevancy_fn_method_relevancystore_bandit_init
+                7, // relevancy:uniffi_relevancy_fn_method_relevancystore_bandit_init
                 FfiConverterTypeRelevancyStore.lower(this),
                 FfiConverterString.lower(bandit),
                 FfiConverterSequencestring.lower(arms),
@@ -539,7 +539,7 @@ export class RelevancyStore {
                 throw e;
             }
             return UniFFIScaffolding.callAsyncWrapper(
-                4, // relevancy:uniffi_relevancy_fn_method_relevancystore_bandit_select
+                8, // relevancy:uniffi_relevancy_fn_method_relevancystore_bandit_select
                 FfiConverterTypeRelevancyStore.lower(this),
                 FfiConverterString.lower(bandit),
                 FfiConverterSequencestring.lower(arms),
@@ -590,34 +590,11 @@ export class RelevancyStore {
                 throw e;
             }
             return UniFFIScaffolding.callAsyncWrapper(
-                5, // relevancy:uniffi_relevancy_fn_method_relevancystore_bandit_update
+                9, // relevancy:uniffi_relevancy_fn_method_relevancystore_bandit_update
                 FfiConverterTypeRelevancyStore.lower(this),
                 FfiConverterString.lower(bandit),
                 FfiConverterString.lower(arm),
                 FfiConverterBool.lower(selected),
-            )
-        }
-        try {
-            return functionCall().then((result) => handleRustResult(result, liftResult, liftError));
-        }  catch (error) {
-            return Promise.reject(error)
-        }
-    }
-
-    /**
-     * Calculate metrics for the validation phase
-     *
-     * This runs after [Self::ingest].  It takes the interest vector that ingest created and
-     * calculates a set of metrics that we can report to glean.
-     * @returns {InterestMetrics}
-     */
-    calculateMetrics() {
-        const liftResult = (result) => FfiConverterTypeInterestMetrics.lift(result);
-        const liftError = (data) => FfiConverterTypeRelevancyApiError.lift(data);
-        const functionCall = () => {
-            return UniFFIScaffolding.callAsyncWrapper(
-                6, // relevancy:uniffi_relevancy_fn_method_relevancystore_calculate_metrics
-                FfiConverterTypeRelevancyStore.lower(this),
             )
         }
         try {
@@ -637,11 +614,30 @@ export class RelevancyStore {
         const liftError = null;
         const functionCall = () => {
             return UniFFIScaffolding.callSync(
-                7, // relevancy:uniffi_relevancy_fn_method_relevancystore_close
+                10, // relevancy:uniffi_relevancy_fn_method_relevancystore_close
                 FfiConverterTypeRelevancyStore.lower(this),
             )
         }
         return handleRustResult(functionCall(), liftResult, liftError);
+    }
+
+    /**
+     * Download the interest data from remote settings if needed
+     */
+    ensureInterestDataPopulated() {
+        const liftResult = (result) => undefined;
+        const liftError = (data) => FfiConverterTypeRelevancyApiError.lift(data);
+        const functionCall = () => {
+            return UniFFIScaffolding.callAsyncWrapper(
+                11, // relevancy:uniffi_relevancy_fn_method_relevancystore_ensure_interest_data_populated
+                FfiConverterTypeRelevancyStore.lower(this),
+            )
+        }
+        try {
+            return functionCall().then((result) => handleRustResult(result, liftResult, liftError));
+        }  catch (error) {
+            return Promise.reject(error)
+        }
     }
 
     /**
@@ -669,7 +665,7 @@ export class RelevancyStore {
                 throw e;
             }
             return UniFFIScaffolding.callAsyncWrapper(
-                8, // relevancy:uniffi_relevancy_fn_method_relevancystore_get_bandit_data
+                12, // relevancy:uniffi_relevancy_fn_method_relevancystore_get_bandit_data
                 FfiConverterTypeRelevancyStore.lower(this),
                 FfiConverterString.lower(bandit),
                 FfiConverterString.lower(arm),
@@ -709,7 +705,7 @@ export class RelevancyStore {
                 throw e;
             }
             return UniFFIScaffolding.callAsyncWrapper(
-                9, // relevancy:uniffi_relevancy_fn_method_relevancystore_ingest
+                13, // relevancy:uniffi_relevancy_fn_method_relevancystore_ingest
                 FfiConverterTypeRelevancyStore.lower(this),
                 FfiConverterSequencestring.lower(topUrlsByFrecency),
             )
@@ -729,7 +725,7 @@ export class RelevancyStore {
         const liftError = null;
         const functionCall = () => {
             return UniFFIScaffolding.callSync(
-                10, // relevancy:uniffi_relevancy_fn_method_relevancystore_interrupt
+                14, // relevancy:uniffi_relevancy_fn_method_relevancystore_interrupt
                 FfiConverterTypeRelevancyStore.lower(this),
             )
         }
@@ -748,7 +744,7 @@ export class RelevancyStore {
         const liftError = (data) => FfiConverterTypeRelevancyApiError.lift(data);
         const functionCall = () => {
             return UniFFIScaffolding.callAsyncWrapper(
-                11, // relevancy:uniffi_relevancy_fn_method_relevancystore_user_interest_vector
+                15, // relevancy:uniffi_relevancy_fn_method_relevancystore_user_interest_vector
                 FfiConverterTypeRelevancyStore.lower(this),
             )
         }
@@ -1598,85 +1594,88 @@ export const Interest = {
     /**
      * INCONCLUSIVE
      */
-    INCONCLUSIVE: 1,
+    INCONCLUSIVE:0,
     /**
      * ANIMALS
      */
-    ANIMALS: 2,
+    ANIMALS:1,
     /**
      * ARTS
      */
-    ARTS: 3,
+    ARTS:2,
     /**
      * AUTOS
      */
-    AUTOS: 4,
+    AUTOS:3,
     /**
      * BUSINESS
      */
-    BUSINESS: 5,
+    BUSINESS:4,
     /**
      * CAREER
      */
-    CAREER: 6,
+    CAREER:5,
     /**
      * EDUCATION
      */
-    EDUCATION: 7,
+    EDUCATION:6,
     /**
      * FASHION
      */
-    FASHION: 8,
+    FASHION:7,
     /**
      * FINANCE
      */
-    FINANCE: 9,
+    FINANCE:8,
     /**
      * FOOD
      */
-    FOOD: 10,
+    FOOD:9,
     /**
      * GOVERNMENT
      */
-    GOVERNMENT: 11,
+    GOVERNMENT:10,
     /**
      * HOBBIES
      */
-    HOBBIES: 12,
+    HOBBIES:12,
     /**
      * HOME
      */
-    HOME: 13,
+    HOME:13,
     /**
      * NEWS
      */
-    NEWS: 14,
+    NEWS:14,
     /**
      * REAL_ESTATE
      */
-    REAL_ESTATE: 15,
+    REAL_ESTATE:15,
     /**
      * SOCIETY
      */
-    SOCIETY: 16,
+    SOCIETY:16,
     /**
      * SPORTS
      */
-    SPORTS: 17,
+    SPORTS:17,
     /**
      * TECH
      */
-    TECH: 18,
+    TECH:18,
     /**
      * TRAVEL
      */
-    TRAVEL: 19,
+    TRAVEL:19,
 };
 
 Object.freeze(Interest);
 // Export the FFIConverter object to make external types work.
 export class FfiConverterTypeInterest extends FfiConverterArrayBuffer {
+    static #validValues = Object.values(Interest);
+
     static read(dataStream) {
+        // Use sequential indices (1-based) for the wire format to match Python bindings
         switch (dataStream.readInt32()) {
             case 1:
                 return Interest.INCONCLUSIVE
@@ -1806,7 +1805,8 @@ export class FfiConverterTypeInterest extends FfiConverterArrayBuffer {
     }
 
     static checkType(value) {
-      if (!Number.isInteger(value) || value < 1 || value > 19) {
+      // Check that the value is a valid enum variant
+      if (!this.#validValues.includes(value)) {
           throw new UniFFITypeError(`${value} is not a valid value for Interest`);
       }
     }
@@ -1871,43 +1871,6 @@ export class FfiConverterTypeRelevancyApiError extends FfiConverterArrayBuffer {
     }
 
     static errorClass = RelevancyApiError;
-}
-
-// Export the FFIConverter object to make external types work.
-export class FfiConverterOptionalTypeRemoteSettingsService extends FfiConverterArrayBuffer {
-    static checkType(value) {
-        if (value !== undefined && value !== null) {
-            FfiConverterTypeRemoteSettingsService.checkType(value)
-        }
-    }
-
-    static read(dataStream) {
-        const code = dataStream.readUint8(0);
-        switch (code) {
-            case 0:
-                return null
-            case 1:
-                return FfiConverterTypeRemoteSettingsService.read(dataStream)
-            default:
-                throw new UniFFIError(`Unexpected code: ${code}`);
-        }
-    }
-
-    static write(dataStream, value) {
-        if (value === null || value === undefined) {
-            dataStream.writeUint8(0);
-            return;
-        }
-        dataStream.writeUint8(1);
-        FfiConverterTypeRemoteSettingsService.write(dataStream, value)
-    }
-
-    static computeSize(value) {
-        if (value === null || value === undefined) {
-            return 1;
-        }
-        return 1 + FfiConverterTypeRemoteSettingsService.computeSize(value)
-    }
 }
 
 // Export the FFIConverter object to make external types work.
@@ -2001,12 +1964,10 @@ export class FfiConverterSequenceTypeInterest extends FfiConverterArrayBuffer {
 import {
   FfiConverterTypeRemoteSettingsService,
   RemoteSettingsService,
-} from "resource://gre/modules/RustRemoteSettings.sys.mjs";
+} from "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustRemoteSettings.sys.mjs";
 
 // Export the FFIConverter object to make external types work.
 export { FfiConverterTypeRemoteSettingsService, RemoteSettingsService };
-
-
 
 
 
@@ -2047,7 +2008,7 @@ export function score(interestVector,contentCategories) {
                 throw e;
             }
             return UniFFIScaffolding.callSync(
-                2, // relevancy:uniffi_relevancy_fn_func_score
+                6, // relevancy:uniffi_relevancy_fn_func_score
                 FfiConverterTypeInterestVector.lower(interestVector),
                 FfiConverterSequenceTypeInterest.lower(contentCategories),
             )

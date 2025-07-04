@@ -267,11 +267,15 @@ this.tabs = class extends ExtensionAPIPersistent {
       let moveListener = event => {
         let nativeTab = event.originalTarget;
         let { previousTabState, currentTabState } = event.detail;
-        if (tabManager.canAccessTab(nativeTab)) {
+        let fromIndex = previousTabState.tabIndex;
+        let toIndex = currentTabState.tabIndex;
+        // TabMove also fires if its tab group changes; we should only fire
+        // event if the position actually moved.
+        if (fromIndex !== toIndex && tabManager.canAccessTab(nativeTab)) {
           fire.async(tabTracker.getId(nativeTab), {
             windowId: windowTracker.getId(nativeTab.ownerGlobal),
-            fromIndex: previousTabState.tabIndex,
-            toIndex: currentTabState.tabIndex,
+            fromIndex,
+            toIndex,
           });
         }
       };
@@ -415,6 +419,8 @@ this.tabs = class extends ExtensionAPIPersistent {
           return;
         }
         let needed = [];
+        let updatedTab = event.originalTarget;
+
         if (event.type == "TabAttrModified") {
           let changed = event.detail.changed;
           if (
@@ -468,8 +474,14 @@ this.tabs = class extends ExtensionAPIPersistent {
           needed.push("discarded");
         } else if (event.type === "TabGrouped") {
           needed.push("groupId");
+          // tab grouping events are fired on the group,
+          // not the tab itself.
+          updatedTab = event.detail;
         } else if (event.type === "TabUngrouped") {
-          if (event.originalTarget.group) {
+          // tab grouping events are fired on the group,
+          // not the tab itself.
+          updatedTab = event.detail;
+          if (updatedTab.group) {
             // If there is still a group, that means that the group changed,
             // so TabGrouped will also fire. Ignore to avoid duplicate events.
             return;
@@ -481,14 +493,14 @@ this.tabs = class extends ExtensionAPIPersistent {
           needed.push("hidden");
         }
 
-        let tab = tabManager.getWrapper(event.originalTarget);
+        let tab = tabManager.getWrapper(updatedTab);
 
         let changeInfo = {};
         for (let prop of needed) {
           changeInfo[prop] = tab[prop];
         }
 
-        fireForTab(tab, changeInfo, event.originalTarget);
+        fireForTab(tab, changeInfo, updatedTab);
       };
 
       let statusListener = ({ browser, status, url }) => {
@@ -800,12 +812,12 @@ this.tabs = class extends ExtensionAPIPersistent {
               }
             }
 
-            // Simple properties
-            const properties = ["index", "pinned"];
-            for (let prop of properties) {
-              if (createProperties[prop] != null) {
-                options[prop] = createProperties[prop];
-              }
+            if (createProperties.index != null) {
+              options.tabIndex = createProperties.index;
+            }
+
+            if (createProperties.pinned != null) {
+              options.pinned = createProperties.pinned;
             }
 
             let active =
@@ -1197,7 +1209,7 @@ this.tabs = class extends ExtensionAPIPersistent {
         },
 
         duplicate(tabId, duplicateProperties) {
-          const { active, index } = duplicateProperties || {};
+          const { active, index: tabIndex } = duplicateProperties || {};
           const inBackground = active === undefined ? false : !active;
 
           // Schema requires tab id.
@@ -1206,7 +1218,7 @@ this.tabs = class extends ExtensionAPIPersistent {
           let gBrowser = nativeTab.ownerGlobal.gBrowser;
           let newTab = gBrowser.duplicateTab(nativeTab, true, {
             inBackground,
-            index,
+            tabIndex,
           });
 
           tabListener.blockTabUntilRestored(newTab);

@@ -304,7 +304,6 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   const uint32_t mMaxAcceptableFBStatusInvals =
       StaticPrefs::webgl_perf_max_acceptable_fb_status_invals();
   bool mWarnOnce_DepthTexCompareFilterable = true;
-  mutable bool mRemapImplReadType_HalfFloatOes = false;
 
   mutable std::optional<bool> mIsSupportedCache_DrawBuffers;
   mutable std::optional<bool> mIsSupportedCache_FragDepth;
@@ -546,6 +545,8 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   Maybe<uvec2> SnapshotInto(GLuint srcFb, const gfx::IntSize& size,
                             const Range<uint8_t>& dest,
                             const Maybe<size_t> destStride = Nothing());
+  already_AddRefed<gfx::SourceSurface> GetBackBufferSnapshot(
+      const bool requireAlphaPremult);
   gl::SwapChain* GetSwapChain(WebGLFramebuffer*, const bool webvr);
   Maybe<layers::SurfaceDescriptor> GetFrontBuffer(WebGLFramebuffer*,
                                                   const bool webvr);

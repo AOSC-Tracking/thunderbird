@@ -30,7 +30,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
   window.MozXULElement.insertFTLIfNeeded("branding/brand.ftl");
   window.MozXULElement.insertFTLIfNeeded("toolkit/about/aboutAddons.ftl");
   window.MozXULElement.insertFTLIfNeeded("messenger/aboutAddonsExtra.ftl");
-  // Needed for webext-perms-description-experiment.
+  // Needed for webext-perms-description-experiment-access.
   window.MozXULElement.insertFTLIfNeeded("messenger/extensionPermissions.ftl");
   UIFontSize.registerWindow(window);
 
@@ -149,7 +149,10 @@ XPCOMUtils.defineLazyPreferenceGetter(
     const list = section.querySelector(".addon-permissions-list");
 
     const item = document.createElement("li");
-    document.l10n.setAttributes(item, "webext-perms-description-experiment");
+    document.l10n.setAttributes(
+      item,
+      "webext-perms-description-experiment-access"
+    );
     item.classList.add("permission-info", "permission-checked");
     list.appendChild(item);
 

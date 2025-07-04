@@ -13,6 +13,7 @@
 #include "mozilla/gfx/CanvasManagerChild.h"
 #include "mozilla/gfx/CanvasShutdownManager.h"
 #include "mozilla/gfx/DrawTargetRecording.h"
+#include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/Tools.h"
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/gfx/Point.h"
@@ -25,7 +26,9 @@
 #include "mozilla/AppShutdown.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Mutex.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "nsIObserverService.h"
+#include "nsICanvasRenderingContextInternal.h"
 #include "RecordedCanvasEventImpl.h"
 
 namespace mozilla {
@@ -81,6 +84,11 @@ class RecorderHelpers final : public CanvasDrawEventRecorder::Helpers {
     return mCanvasChild->SendRestartTranslation();
   }
 
+  already_AddRefed<CanvasChild> GetCanvasChild() const override {
+    RefPtr<CanvasChild> canvasChild(mCanvasChild);
+    return canvasChild.forget();
+  }
+
  private:
   const WeakPtr<CanvasChild> mCanvasChild;
 };
@@ -107,19 +115,21 @@ class SourceSurfaceCanvasRecording final : public gfx::SourceSurface {
 
   ~SourceSurfaceCanvasRecording() {
     ReferencePtr surfaceAlias = this;
+    ReferencePtr exportID = mExportID;
     if (NS_IsMainThread()) {
       ReleaseOnMainThread(std::move(mRecorder), surfaceAlias,
-                          std::move(mRecordedSurface), std::move(mCanvasChild));
+                          std::move(mRecordedSurface), std::move(mCanvasChild),
+                          exportID);
       return;
     }
 
     mRecorder->AddPendingDeletion(
         [recorder = std::move(mRecorder), surfaceAlias,
          aliasedSurface = std::move(mRecordedSurface),
-         canvasChild = std::move(mCanvasChild)]() mutable -> void {
+         canvasChild = std::move(mCanvasChild), exportID]() mutable -> void {
           ReleaseOnMainThread(std::move(recorder), surfaceAlias,
-                              std::move(aliasedSurface),
-                              std::move(canvasChild));
+                              std::move(aliasedSurface), std::move(canvasChild),
+                              exportID);
         });
   }
 
@@ -154,10 +164,15 @@ class SourceSurfaceCanvasRecording final : public gfx::SourceSurface {
     return mRecordedSurface->ExtractSubrect(aRect);
   }
 
-  bool GetSurfaceDescriptor(SurfaceDescriptor& aDesc) const final {
+  bool GetSurfaceDescriptor(SurfaceDescriptor& aDesc) final {
+    static Atomic<uintptr_t> sNextExportID(0);
+    if (!mExportID) {
+      mExportID = gfx::ReferencePtr(++sNextExportID);
+      mRecorder->RecordEvent(RecordedAddExportSurface(mExportID, this));
+    }
     aDesc = SurfaceDescriptorCanvasSurface(
         static_cast<gfx::CanvasManagerChild*>(mCanvasChild->Manager())->Id(),
-        uintptr_t(gfx::ReferencePtr(this)));
+        mCanvasChild->Id(), uintptr_t(mExportID));
     return true;
   }
 
@@ -174,11 +189,15 @@ class SourceSurfaceCanvasRecording final : public gfx::SourceSurface {
   static void ReleaseOnMainThread(RefPtr<CanvasDrawEventRecorder> aRecorder,
                                   ReferencePtr aSurfaceAlias,
                                   RefPtr<gfx::SourceSurface> aAliasedSurface,
-                                  RefPtr<CanvasChild> aCanvasChild) {
+                                  RefPtr<CanvasChild> aCanvasChild,
+                                  ReferencePtr aExportID) {
     MOZ_ASSERT(NS_IsMainThread());
 
     aRecorder->RemoveStoredObject(aSurfaceAlias);
     aRecorder->RecordEvent(RecordedRemoveSurfaceAlias(aSurfaceAlias));
+    if (aExportID) {
+      aRecorder->RecordEvent(RecordedRemoveExportSurface(aExportID));
+    }
     aAliasedSurface = nullptr;
     aCanvasChild = nullptr;
     aRecorder = nullptr;
@@ -191,6 +210,7 @@ class SourceSurfaceCanvasRecording final : public gfx::SourceSurface {
   RefPtr<gfx::DataSourceSurface> mDataSourceSurface;
   bool mDetached = false;
   bool mMayInvalidate = false;
+  ReferencePtr mExportID;
 };
 
 class CanvasDataShmemHolder {
@@ -717,6 +737,52 @@ ipc::IPCResult CanvasChild::RecvNotifyTextureDestruction(
 
   mTextureInfo.erase(aTextureOwnerId);
   return IPC_OK();
+}
+
+already_AddRefed<gfx::SourceSurface> CanvasChild::SnapshotExternalCanvas(
+    gfx::DrawTargetRecording* aTarget,
+    nsICanvasRenderingContextInternal* aCanvas,
+    mozilla::ipc::IProtocol* aActor) {
+  // SnapshotExternalCanvas is only valid to use if using Accelerated Canvas2D
+  // with the pending events queue enabled. This ensures WebGL and AC2D are
+  // running under the same thread, and that events can be paused or resumed
+  // while synchronizing between WebGL and AC2D.
+  if (!gfx::gfxVars::UseAcceleratedCanvas2D() ||
+      !StaticPrefs::gfx_canvas_remote_use_canvas_translator_event_AtStartup()) {
+    return nullptr;
+  }
+
+  gfx::SurfaceFormat format = aCanvas->GetIsOpaque()
+                                  ? gfx::SurfaceFormat::B8G8R8X8
+                                  : gfx::SurfaceFormat::B8G8R8A8;
+  gfx::IntSize size(aCanvas->GetWidth(), aCanvas->GetHeight());
+  // Create a source sourface that will be associated with the snapshot.
+  RefPtr<gfx::SourceSurface> surface =
+      aTarget->CreateExternalSourceSurface(size, format);
+  if (!surface) {
+    return nullptr;
+  }
+
+  // Pause translation until the sync-id identifying the snapshot is received.
+  uint64_t syncId = ++mLastSyncId;
+  mRecorder->RecordEvent(RecordedAwaitTranslationSync(syncId));
+
+  // Flush WebGL to cause any IPDL messages to get sent at this sync point.
+  aCanvas->SyncSnapshot();
+
+  // Once the IPDL message is sent to generate the snapshot, resolve the sync-id
+  // to a surface in the recording stream. The AwaitTranslationSync above will
+  // ensure this event is not translated until the snapshot is generated first.
+  mRecorder->RecordEvent(
+      RecordedResolveExternalSnapshot(syncId, gfx::ReferencePtr(surface)));
+
+  uint32_t managerId = static_cast<gfx::CanvasManagerChild*>(Manager())->Id();
+  ActorId canvasId = aActor->Id();
+
+  // Actually send the request via IPDL to snapshot the external WebGL canvas.
+  SendSnapshotExternalCanvas(syncId, managerId, canvasId);
+
+  return surface.forget();
 }
 
 }  // namespace layers

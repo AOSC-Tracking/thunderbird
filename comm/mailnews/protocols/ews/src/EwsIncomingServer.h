@@ -22,16 +22,26 @@ class EwsIncomingServer : public nsMsgIncomingServer,
 
   EwsIncomingServer();
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(EWS_INCOMING_SERVER_IID)
+  NS_INLINE_DECL_STATIC_IID(EWS_INCOMING_SERVER_IID)
 
  protected:
   virtual ~EwsIncomingServer();
 
-  // Locally creates a folder with the given properties. Intended to be called
-  // by a friend class such as `FolderSyncListener`.
-  nsresult CreateFolderWithDetails(const nsACString& id,
+  /**
+   * Locally creates a folder with the given properties. Intended to be called
+   * by a friend class such as `FolderSyncListener`.
+   */
+  nsresult MaybeCreateFolderWithDetails(const nsACString& id,
+                                        const nsACString& parentId,
+                                        const nsACString& name, uint32_t flags);
+  // Delete the folder with the given id. Intended to be called by a friend
+  // class such as `FolderSyncListener`.
+  nsresult DeleteFolderWithId(const nsACString& id);
+
+  nsresult UpdateFolderWithDetails(const nsACString& id,
                                    const nsACString& parentId,
-                                   const nsACString& name, uint32_t flags);
+                                   const nsACString& name,
+                                   nsIMsgWindow* msgWindow);
 
   // nsIMsgIncomingServer
   NS_IMETHOD GetLocalStoreType(nsACString& aLocalStoreType) override;
@@ -45,13 +55,27 @@ class EwsIncomingServer : public nsMsgIncomingServer,
                          nsIURI** _retval) override;
 
  private:
+  /**
+   * Retrieve the folder associated with the given EWS ID. If no such folder
+   * could be found, `NS_ERROR_FAILURE` is returned.
+   */
   nsresult FindFolderWithId(const nsACString& id, nsIMsgFolder** _retval);
+
+  /**
+   * Synchronize the list of folders for this account, then call the given
+   * callback function.
+   */
+  nsresult SyncFolderList(nsIMsgWindow* aMsgWindow,
+                          std::function<nsresult()> postSyncCallback);
+
+  /**
+   * Synchronize the message list for every folder in the account.
+   */
+  nsresult SyncAllFolders(nsIMsgWindow* aMsgWindow);
 
   RefPtr<msgIOAuth2Module> mOAuth2Module;
 
   friend class FolderSyncListener;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(EwsIncomingServer, EWS_INCOMING_SERVER_IID)
 
 #endif

@@ -5,6 +5,9 @@
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
+const { SearchIntegration } = ChromeUtils.importESModule(
+  "resource:///modules/SearchIntegration.sys.mjs"
+);
 
 add_task(async () => {
   requestLongerTimeout(2);
@@ -67,22 +70,23 @@ add_task(async () => {
 });
 
 add_task(async () => {
-  if (AppConstants.platform != "macosx") {
-    await testCheckboxes(
-      "paneGeneral",
-      "incomingMailCategory",
-      {
-        checkboxID: "newMailNotification",
-        pref: "mail.biff.play_sound",
-        enabledElements: ["#soundType radio"],
-      },
-      {
-        checkboxID: "newMailNotificationAlert",
-        pref: "mail.biff.show_alert",
-        enabledElements: ["#customizeMailAlert"],
-      }
-    );
+  if (AppConstants.platform == "macosx") {
+    return;
   }
+  await testCheckboxes(
+    "paneGeneral",
+    "incomingMailCategory",
+    {
+      checkboxID: "newMailNotification",
+      pref: "mail.biff.play_sound",
+      enabledElements: ["#soundType radio"],
+    },
+    {
+      checkboxID: "newMailNotificationAlert",
+      pref: "mail.biff.show_alert",
+      enabledElements: ["#customizeMailAlert"],
+    }
+  );
 });
 
 add_task(async () => {
@@ -129,7 +133,7 @@ add_task(async () => {
 });
 
 add_task(async () => {
-  await testCheckboxes("paneGeneral", "fontsGroup", {
+  await testCheckboxes("paneGeneral", "readingAndDisplayCategory", {
     checkboxID: "displayGlyph",
     pref: "mail.display_glyph",
   });
@@ -149,10 +153,6 @@ add_task(async () => {
     {
       checkboxID: "showCondensedAddresses",
       pref: "mail.showCondensedAddresses",
-    },
-    {
-      checkboxID: "tableHorizontalScroll",
-      pref: "mail.threadpane.table.horizontal_scroll",
     },
     {
       checkboxID: "darkReader",
@@ -213,20 +213,82 @@ add_task(async () => {
   );
 });
 
-add_task(async () => {
-  // We don't want to wake up the platform search for this test.
-  // if (AppConstants.platform == "macosx") {
-  //   tests.push({
-  //     checkboxID: "searchIntegration",
-  //     pref: "mail.spotlight.enable",
-  //   });
-  // } else if (AppConstants.platform == "win") {
-  //   tests.push({
-  //     checkboxID: "searchIntegration",
-  //     pref: "mail.winsearch.enable",
-  //   });
-  // }
+add_task(async function test_searchIntegrationDisabled() {
+  const { prefsDocument } = await openNewPrefsTab(
+    "paneGeneral",
+    "generalCategory"
+  );
 
+  const checkbox = prefsDocument.getElementById("searchIntegration");
+
+  Assert.ok(checkbox.disabled, "Checkbox should be disabled");
+  Assert.ok(!checkbox.checked, "Checkbox should appear unchecked");
+
+  await closePrefsTab();
+}).skip(!SearchIntegration || !SearchIntegration.osComponentsNotRunning);
+
+add_task(async function test_searchIntegration() {
+  const { prefsDocument, prefsWindow } = await openNewPrefsTab(
+    "paneGeneral",
+    "generalCategory"
+  );
+
+  const checkbox = prefsDocument.getElementById("searchIntegration");
+  checkbox.scrollIntoView({ block: "end", behavior: "instant" });
+
+  Assert.equal(
+    checkbox.checked,
+    SearchIntegration.prefEnabled,
+    "Initial state should match search integration"
+  );
+  const initialState = checkbox.checked;
+
+  EventUtils.synthesizeMouseAtCenter(checkbox, {}, prefsWindow);
+
+  Assert.notEqual(
+    checkbox.checked,
+    initialState,
+    "Checkbox should have toggled value"
+  );
+  Assert.equal(
+    SearchIntegration.prefEnabled,
+    checkbox.checked,
+    "Checkbox state should be mirrored to search integration"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(checkbox, {}, prefsWindow);
+
+  Assert.equal(
+    checkbox.checked,
+    initialState,
+    "Checkbox should have toggled back"
+  );
+  Assert.equal(
+    SearchIntegration.prefEnabled,
+    checkbox.checked,
+    "Checkbox state should again be mirrored to search integration"
+  );
+
+  await closePrefsTab();
+}).skip(!SearchIntegration || SearchIntegration.osComponentsNotRunning);
+
+add_task(async function test_searchIntegrationUnavailable() {
+  const { prefsDocument } = await openNewPrefsTab(
+    "paneGeneral",
+    "generalCategory"
+  );
+
+  Assert.ok(
+    BrowserTestUtils.isHidden(
+      prefsDocument.getElementById("searchIntegration")
+    ),
+    "Search integration should be hidden"
+  );
+
+  await closePrefsTab();
+}).skip(SearchIntegration);
+
+add_task(async () => {
   await testCheckboxes(
     "paneGeneral",
     "allowSmartSize",
@@ -298,22 +360,16 @@ add_task(async function testSystemIntegrationDialog() {
 });
 
 /**
- * Tests the language and appearance dialogs.
+ * Tests the language and fonts dialogs.
  */
-add_task(async function testLanguageAndAppearanceDialogs() {
+add_task(async function testLanguageAndFontsDialogs() {
   const { prefsDocument } = await openNewPrefsTab(
     "paneGeneral",
-    "languageAndAppearanceCategory"
+    "languageAndFontsCategory"
   );
   await promiseSubDialog(
     prefsDocument.getElementById("advancedFonts"),
     "chrome://messenger/content/preferences/fonts.xhtml",
-    () => {},
-    "cancel"
-  );
-  await promiseSubDialog(
-    prefsDocument.getElementById("colors"),
-    "chrome://messenger/content/preferences/colors.xhtml",
     () => {},
     "cancel"
   );
@@ -331,6 +387,10 @@ add_task(async function testLanguageAndAppearanceDialogs() {
  */
 add_task(async function testNewMailAlertDialogs() {
   Services.prefs.setBoolPref("mail.biff.show_alert", true);
+  Services.prefs.setStringPref(
+    "mail.biff.alert.enabled_actions",
+    "mark-as-read"
+  );
   const { prefsDocument } = await openNewPrefsTab(
     "paneGeneral",
     "incomingMailCategory"
@@ -346,8 +406,55 @@ add_task(async function testNewMailAlertDialogs() {
   await promiseSubDialog(
     prefsDocument.getElementById("customizeMailAlert"),
     "chrome://messenger/content/preferences/notifications.xhtml",
-    () => {},
-    "cancel"
+    async dialogWindow => {
+      const dialogDocument = dialogWindow.document;
+      const list = dialogDocument.getElementById("enabledActions");
+      Assert.deepEqual(
+        Array.from(list.children, cb => cb.id),
+        ["mark-as-read", "delete", "mark-as-starred", "mark-as-spam"],
+        "actions checkboxes should all be shown and in order"
+      );
+      Assert.deepEqual(
+        Array.from(list.children, cb => cb.checked),
+        [true, false, false, false],
+        "only the mark-as-read checkbox should be checked"
+      );
+      EventUtils.synthesizeMouseAtCenter(list.children[0], {}, dialogWindow);
+      EventUtils.synthesizeMouseAtCenter(list.children[1], {}, dialogWindow);
+      EventUtils.synthesizeMouseAtCenter(list.children[3], {}, dialogWindow);
+    },
+    "accept"
+  );
+  Assert.equal(
+    Services.prefs.getStringPref("mail.biff.alert.enabled_actions"),
+    "delete,mark-as-spam",
+    "preference should have been updated"
+  );
+  await promiseSubDialog(
+    prefsDocument.getElementById("customizeMailAlert"),
+    "chrome://messenger/content/preferences/notifications.xhtml",
+    async dialogWindow => {
+      const dialogDocument = dialogWindow.document;
+      const list = dialogDocument.getElementById("enabledActions");
+      Assert.deepEqual(
+        Array.from(list.children, cb => cb.id),
+        ["mark-as-read", "delete", "mark-as-starred", "mark-as-spam"],
+        "actions checkboxes should all be shown and in order"
+      );
+      Assert.deepEqual(
+        Array.from(list.children, cb => cb.checked),
+        [false, true, false, true],
+        "the delete and mark-as-spam checkboxes should be checked"
+      );
+      EventUtils.synthesizeMouseAtCenter(list.children[0], {}, dialogWindow);
+      EventUtils.synthesizeMouseAtCenter(list.children[3], {}, dialogWindow);
+    },
+    "accept"
+  );
+  Assert.equal(
+    Services.prefs.getStringPref("mail.biff.alert.enabled_actions"),
+    "mark-as-read,delete",
+    "preference should have been updated"
   );
   await closePrefsTab();
 });
@@ -463,6 +570,13 @@ add_task(async function testReceiptsDialog() {
   const { prefsDocument } = await openNewPrefsTab(
     "paneGeneral",
     "readingAndDisplayCategory"
+  );
+  prefsDocument.getElementById("showReturnReceipts").scrollIntoView({
+    behavior: "instant",
+    block: "center",
+  });
+  await new Promise(resolve =>
+    prefsDocument.ownerGlobal.requestAnimationFrame(resolve)
   );
   await promiseSubDialog(
     prefsDocument.getElementById("showReturnReceipts"),

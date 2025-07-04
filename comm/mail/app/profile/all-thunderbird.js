@@ -161,19 +161,6 @@ pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?loc
   pref("app.update.noWindowAutoRestart.delayMs", 300000);
 #endif
 
-// The Multi Session Install Lockout prevents updates from being installed at
-// startup when they normally would be if there are other instances using the
-// installation. We only do this for a limited amount of time before we go ahead
-// and apply the update anyways.
-// Hopefully, at some point, updating Thunderbird while it is running will not break
-// things and this mechanism can be removed.
-// Note that these prefs are bit dangerous because having different values in
-// different profiles could cause erratic behavior.
-// This feature is also affected by
-// `app.update.multiSessionInstallLockout.timeoutMs`, which is in the branding
-// section.
-pref("app.update.multiSessionInstallLockout.enabled", true);
-
 // URL for "Learn More" for DataCollection
 pref("toolkit.datacollection.infoURL",
      "https://www.mozilla.org/thunderbird/legal/privacy/#telemetry");
@@ -215,6 +202,11 @@ pref("extensions.abuseReport.enabled", false);
 // This is needed on Wayland systems, but can be enabled for other
 // systems for debug purposes as well. See Bug 1905622.
 pref("extensions.openPopupDelayedFullyLoaded.enabled", false);
+
+// Status information used by our IAN system. Default to true, because a false
+// positive is worse then a false negative IAN evaluation.
+pref("extensions.hasExtensionsInstalled", true);
+pref("extensions.hasExperimentsInstalled", true);
 
 // Strict compatibility makes add-ons incompatible by default.
 #ifndef RELEASE_OR_BETA
@@ -267,6 +259,25 @@ pref("extensions.webextOptionalPermissionPrompts", true);
 // Whether to use client certificates stored in OS certificate storage.
 // This does not work for S/MIME. See bug 1726442.
 pref("security.osclientcerts.autoload", false);
+
+// Refer to Firefox file browser/app/profile/firefox.js
+// for meaning of the security.sandbox.content prefs.
+#if defined(XP_WIN) && defined(MOZ_SANDBOX)
+  pref("security.sandbox.content.level", 7);
+  pref("security.sandbox.logging.enabled", false);
+#endif
+#if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
+  pref("security.sandbox.content.level", 3);
+  pref("security.sandbox.content.mac.disconnect-windowserver", true);
+  pref("security.sandbox.logging.enabled", false);
+#endif
+#if defined(XP_LINUX) && defined(MOZ_SANDBOX)
+  pref("security.sandbox.content.level", 5);
+  pref("security.sandbox.socket.process.level", 1);
+  pref("security.sandbox.content.write_path_whitelist", "");
+  pref("security.sandbox.content.read_path_whitelist", "");
+  pref("security.sandbox.content.syscall_whitelist", "");
+#endif
 
 // Symmetric (can be overridden by individual extensions) update preferences.
 // e.g.
@@ -616,6 +627,13 @@ pref("toolbar.customization.usesheet", true);
 #else
 pref("toolbar.customization.usesheet", false);
 #endif
+
+// Comma separated list of allowed hostnames to have the account data at.
+pref("mail.allowed_unc_hosts", "");
+
+// Comma separated list of allowed hostnames detached attachments can
+// be located at.
+pref("mail.allowed_attachment_hostnames", "");
 
 // Start compositions with (empty) attachment pane showing
 pref("mail.compose.show_attachment_pane", false);
@@ -1091,6 +1109,7 @@ pref("devtools.netmonitor.panes-network-details-height", 450);
 pref("devtools.netmonitor.panes-search-width", 550);
 pref("devtools.netmonitor.panes-search-height", 450);
 pref("devtools.netmonitor.filters", "[\"all\"]");
+pref("devtools.netmonitor.requestfilter", "");
 pref("devtools.netmonitor.visibleColumns",
     "[\"status\",\"method\",\"domain\",\"file\",\"initiator\",\"type\",\"transferred\",\"contentSize\",\"waterfall\"]"
 );
@@ -1464,11 +1483,22 @@ pref("mail.dark-reader.enabled", true);
 pref("mail.dark-reader.show-toggle", true);
 
 // Enable the new account setup (starting from the second account)
-#ifdef NIGHTLY_BUILD
 pref("mail.accounthub.enabled", true);
-#else
-pref("mail.accounthub.enabled", false);
-#endif
+
+// Enable address book setup via account hub
+pref("mail.accounthub.addressbook.enabled", false);
 
 // Export to mobile logging level.
 pref("mail.qrexport.loglevel", "Warn");
+
+// New calendar dialog
+pref("calendar.dialogs.new.enabled", false);
+
+// Layout and UI settings.
+// List view style for the thread pane:
+// 0 - Cards view.
+// 1 - Table view.
+pref("mail.threadpane.listview", 0);
+
+// Row count for the cards view, currently bound to a range between 2 and 3.
+pref("mail.threadpane.cardsview.rowcount", 3);

@@ -15,10 +15,9 @@ const AUTH_PASSWORD_REQUIRED = 381;
 const AUTH_REQUIRED = 480;
 const AUTH_FAILED = 481;
 const SERVICE_UNAVAILABLE = 502;
-const NOT_SUPPORTED = 503;
-const XPAT_OK = 221;
-
-const NNTP_ERROR_MESSAGE = -304;
+const HEADER_FOLLOWS = 221;
+const NO_SUCH_NEWSGROUP = 411;
+const NO_ARTICLE_WITH_THAT_NUMBER = 423;
 
 /**
  * A structure to represent a response received from the server. A response can
@@ -36,7 +35,12 @@ const lazy = {};
 ChromeUtils.defineLazyGetter(
   lazy,
   "l10n",
-  () => new Localization(["netwerk/necko.ftl"], true)
+  () => new Localization(["netwerk/necko.ftl", "messenger/news.ftl"], true)
+);
+ChromeUtils.defineLazyGetter(lazy, "messengerBundle", () =>
+  Services.strings.createBundle(
+    "chrome://messenger/locale/messenger.properties"
+  )
 );
 
 /**
@@ -84,6 +88,7 @@ export class NntpClient {
     this.urlListener = null;
     this._msgWindow = null;
     this._newsFolder = null;
+    this._nextAction = null;
   }
 
   /**
@@ -178,15 +183,32 @@ export class NntpClient {
         this._actionAuthUser();
         return;
       case SERVICE_UNAVAILABLE:
-        this._actionError(NNTP_ERROR_MESSAGE, res.statusText);
+        this._actionError(res.status, res.statusText);
         return;
+      case NO_SUCH_NEWSGROUP:
+        this._updateStatus("no-such-newsgroup", {
+          newsgroup: this._newsFolder.prettyName,
+        });
+        // Close the connection without any further error message.
+        this._actionDone(Cr.NS_ERROR_FAILURE);
+        return;
+      case NO_ARTICLE_WITH_THAT_NUMBER:
+        if (this._nextAction == this._actionHeadResponse) {
+          // This appears to be a response from a HEAD request. Do not regard
+          // this as an error, the article will just be skipped.
+          break;
+        }
+      // Otherwise fallthrough to default error handling.
       default:
-        if (res.status == AUTH_FAILED) {
-          this._logger.error(
-            `Got an error id=${res.status}, the server said: ${res.statusText}`
-          );
-        } else if (res.status >= 400 && res.status < 500) {
+        if (
+          res.status != AUTH_FAILED &&
+          res.status >= 400 &&
+          res.status < 500
+        ) {
           if (this._messageId || this._articleNumber) {
+            this._logger.error(
+              `Got an error, the server said: ${res.status} ${res.statusText}`
+            );
             let uri = `about:newserror?r=${res.statusText}`;
 
             if (this._messageId) {
@@ -206,8 +228,11 @@ export class NntpClient {
             // Store the uri to display. The registered uriListener will get
             // notified when we stop running the uri, and can act on this data.
             this.runningUri.seeOtherURI = uri;
+            // Do not display an additional alert dialog.
+            this._actionDone(Cr.NS_ERROR_FAILURE);
+          } else {
+            this._actionError(res.status, res.statusText);
           }
-          this._actionError(NNTP_ERROR_MESSAGE, res.statusText);
           return;
         }
     }
@@ -257,13 +282,12 @@ export class NntpClient {
         break;
     }
     if (errorName && uri) {
-      const bundle = Services.strings.createBundle(
-        "chrome://messenger/locale/messenger.properties"
+      MailServices.mailSession.alertUser(
+        lazy.messengerBundle.formatStringFromName(errorName, [
+          this._server.hostName,
+        ]),
+        this.runningUri
       );
-      const errorMessage = bundle.formatStringFromName(errorName, [
-        this._server.hostName,
-      ]);
-      MailServices.mailSession.alertUser(errorMessage, this.runningUri);
 
       // If we were going to display an article, instead show an error page.
       if (this.runningUri) {
@@ -602,10 +626,6 @@ export class NntpClient {
    * @param {NntpResponse} res - GROUP response received from the server.
    */
   _actionGroupResponse = res => {
-    if (res.status == 411) {
-      this._server.groupNotFound(null, this._currentGroupName, true);
-      return;
-    }
     this._firstGroupCommand(res);
   };
 
@@ -647,12 +667,20 @@ export class NntpClient {
       Number(low),
       Number(high)
     );
-    if (start && end) {
+    if (start && end && end >= start) {
+      this._updateStatus("new-newsgroup-headers", {
+        count: end - start + 1,
+        newsgroup: this._newsFolder.prettyName,
+      });
+      this._newsGroup.addKnownArticles(start, end);
       this._startArticle = start;
       this._endArticle = end;
       this._nextAction = this._actionXOverResponse;
       this._sendCommand(`XOVER ${start}-${end}`);
     } else {
+      this._updateStatus("no-new-messages", {
+        newsgroup: this._newsFolder.prettyName,
+      });
       this._actionDone();
     }
   };
@@ -665,11 +693,11 @@ export class NntpClient {
   _actionXOverResponse(res) {
     if (res.status == 224) {
       this._nextAction = this._actionReadXOver;
-      this._newsGroup.addKnownArticles(this._startArticle, this._endArticle);
       this._actionReadXOver(res);
     } else {
-      // Somehow XOVER is not supported by the server, fallback to use HEAD to
-      // fetch one by one.
+      this._logger.debug(
+        "XOVER not supported by the server. Falling back to using HEAD."
+      );
       this._actionHead();
     }
   }
@@ -710,17 +738,28 @@ export class NntpClient {
   };
 
   /**
+   * A transient action to consume the status line of XHDR response.
+   *
+   * @param {NntpResponse} res - XHDR response received from the server.
+   */
+  _actionXHdrResponse(res) {
+    if (res.status == HEADER_FOLLOWS) {
+      this._nextAction = this._actionReadXHdr;
+      this._actionReadXHdr(res);
+    } else {
+      this._logger.debug(
+        "XHDR not supported by the server. Falling back to using HEAD."
+      );
+      this._actionHead();
+    }
+  }
+
+  /**
    * Handle XHDR response.
    *
    * @param {NntpResponse} res - XOVER response received from the server.
    */
-  _actionXHdrResponse({ status, data }) {
-    if (status == NOT_SUPPORTED) {
-      // Fallback to HEAD request.
-      this._actionHead();
-      return;
-    }
-
+  _actionReadXHdr({ data }) {
     this._lineReader.read(
       data,
       line => {
@@ -735,15 +774,31 @@ export class NntpClient {
    */
   _actionHead = () => {
     if (this._startArticle <= this._endArticle) {
-      this._nextAction = this._actionReadHead;
+      this._nextAction = this._actionHeadResponse;
       this._sendCommand(`HEAD ${this._startArticle}`);
-      this._newsGroup.initHdr(this._startArticle);
-      this._startArticle++;
     } else {
       this._newsGroup.finishProcessingXOver();
       this._actionDone();
     }
   };
+
+  /**
+   * A transient action to consume the status line of HEAD response.
+   *
+   * @param {NntpResponse} res - HEAD response received from the server.
+   */
+  _actionHeadResponse(res) {
+    if (res.status == HEADER_FOLLOWS) {
+      this._newsGroup.initHdr(this._startArticle);
+      this._startArticle++;
+      this._nextAction = this._actionReadHead;
+      this._actionReadHead(res);
+    } else {
+      // The article is no longer available on the server, just skip it.
+      this._startArticle++;
+      this._actionHead(res);
+    }
+  }
 
   /**
    * Handle HEAD response.
@@ -816,7 +871,7 @@ export class NntpClient {
     } else if (status == 240) {
       this._actionDone();
     } else {
-      this._actionError(NNTP_ERROR_MESSAGE, statusText);
+      this._actionError(status, statusText);
     }
   }
 
@@ -905,8 +960,8 @@ export class NntpClient {
    * @param {NntpResponse} res - XPAT response received from the server.
    */
   _actionXPatResponse({ status, statusText, data }) {
-    if (status && status != XPAT_OK) {
-      this._actionError(NNTP_ERROR_MESSAGE, statusText);
+    if (status && status != HEADER_FOLLOWS) {
+      this._actionError(status, statusText);
       return;
     }
     this._lineReader.read(data, this.onData, this._actionXPat);
@@ -968,29 +1023,24 @@ export class NntpClient {
   /**
    * Show an error prompt.
    *
-   * @param {number} errorId - An error name corresponds to an entry of
-   *   news.properties.
-   * @param {string} serverErrorMsg - Error message returned by the server.
+   * @param {number} status - The response code returned by the server.
+   * @param {string} statusText - The meaning of the response as returned by
+   *   the server.
    */
-  _actionError(errorId, serverErrorMsg) {
+  _actionError(status, statusText) {
     this._logger.error(
-      `Got an error id=${errorId}, the server said: ${serverErrorMsg}`
+      `Got an error, the server said: ${status} ${statusText}`
     );
-    const msgWindow = this._msgWindow;
-
-    if (!msgWindow) {
-      this._actionDone(Cr.NS_ERROR_FAILURE);
-      return;
+    if (this._msgWindow) {
+      Services.prompt.alert(
+        this._msgWindow.domWindow,
+        null,
+        lazy.messengerBundle.formatStringFromName("statusMessage", [
+          this._server.prettyName,
+          `${statusText}`,
+        ])
+      );
     }
-    const bundle = Services.strings.createBundle(
-      "chrome://messenger/locale/news.properties"
-    );
-    let errorMsg = bundle.GetStringFromID(errorId);
-    if (serverErrorMsg) {
-      errorMsg += " " + serverErrorMsg;
-    }
-    Services.prompt.alert(msgWindow?.domWindow, null, errorMsg);
-
     this._actionDone(Cr.NS_ERROR_FAILURE);
   }
 
@@ -1011,4 +1061,19 @@ export class NntpClient {
     this._reset();
     this.onIdle?.();
   };
+
+  /**
+   * Show a status message in the status bar.
+   *
+   * @param {string} statusName - A string name in news.ftl.
+   * @param {object} params - Params to format the string.
+   */
+  _updateStatus(statusName, params) {
+    this._msgWindow?.statusFeedback?.showStatusString(
+      lazy.messengerBundle.formatStringFromName("statusMessage", [
+        this._server.prettyName,
+        lazy.l10n.formatValueSync(statusName, params),
+      ])
+    );
+  }
 }

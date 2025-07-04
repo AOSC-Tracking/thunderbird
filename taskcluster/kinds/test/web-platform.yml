@@ -75,14 +75,14 @@ web-platform-tests:
             default: 7200
     variants:
         - no-fission
-        - geckoview-no-fission-ship
+        - geckoview-no-fission-no-ship
         - async-event-dispatching
         - privatebrowsing
         - inc-origin-init
         - privatebrowsing-inc-origin-init
     run-on-projects:
         by-variant:
-            geckoview-no-fission-ship:
+            geckoview-no-fission-no-ship:
                 by-test-platform:
                     android-em-7.0-x86_64(-qr)?/debug-isolated-process: []
                     android-em.*: built-projects
@@ -94,10 +94,13 @@ web-platform-tests:
                     linux1804-64(-qr)?/debug: ['mozilla-central']
                     linux1804-64(-shippable)?(-qr)?/opt: ['mozilla-central']
                     linux1804-64-asan(-qr)?/opt: ['mozilla-central']
+                    linux2404-64/debug: ['mozilla-central']
+                    linux2404-64(-shippable)?/opt: ['mozilla-central']
+                    linux2404-64-asan/opt: ['mozilla-central']
                     default: []
             async-event-dispatching:
                 by-test-platform:
-                    .*/debug: []
+                    .*/opt: []  # try only for now
                     default: []
             privatebrowsing:
                 by-test-platform:
@@ -233,6 +236,8 @@ web-platform-tests-reftest:
             linux.*64-tsan(-qr)?/opt: 16
             linux1804-64(-qr)?/.*: 6
             linux1804-64-asan(-qr)?/.*: 6
+            linux2404-64/.*: 6
+            linux2404-64-asan/.*: 6
             macosx.*-64/debug: 6
             macosx.*-64/opt: 3
             windows.*-32.*/debug: 5
@@ -257,6 +262,9 @@ web-platform-tests-reftest:
                     linux1804-64(-qr)?/.*: ['mozilla-central']
                     linux1804-64-shippable(-qr)?/opt: ['mozilla-central']
                     linux1804-64-asan(-qr)?/opt: ['mozilla-central']
+                    linux2404-64/.*: ['mozilla-central']
+                    linux2404-64-shippable/opt: ['mozilla-central']
+                    linux2404-64-asan/opt: ['mozilla-central']
                     default: []
             no-fission:
                 by-test-platform:
@@ -264,6 +272,9 @@ web-platform-tests-reftest:
                     linux1804-64(-qr)?/.*: ['mozilla-central']
                     linux1804-64-shippable(-qr)?/opt: ['mozilla-central']
                     linux1804-64-asan(-qr)?/opt: ['mozilla-central']
+                    linux2404-64/.*: ['mozilla-central']
+                    linux2404-64-shippable/opt: ['mozilla-central']
+                    linux2404-64-asan/opt: ['mozilla-central']
                     android.*: built-projects
                     default: []
             default:
@@ -308,7 +319,7 @@ web-platform-tests-webgpu:
     # 50% overhead, so let's aim for 15m (20m debug)
     chunks:
         by-test-platform:
-            linux2204.*/debug.*: 17
+            linux2204.*/debug.*: 18
             linux2204.*: 16
             windows.*-64.*/opt.*: 10
             default: 10
@@ -414,7 +425,8 @@ web-platform-tests-webgpu-backlog-long:
     tier: 3
     chunks:
         by-test-platform:
-            windows.*-64.*: 5
+            macosx.*: 5
+            windows.*-64.*: 6
             default: 4
     max-run-time: 5400  # 90m
     variants: []  # We don't need sw or nofis testing.
@@ -459,6 +471,7 @@ web-platform-tests-canvas:
         by-test-platform:
             .*-tsan.*: 2700
             .*-asan.*: 2700
+            .*-ccov.*: 2700
             default: 1800
     variants:
         - no-fission
@@ -471,6 +484,9 @@ web-platform-tests-canvas:
                     linux1804-64(-qr)?/.*: ['mozilla-central']
                     linux1804-64-shippable(-qr)?/opt: ['mozilla-central']
                     linux1804-64-asan(-qr)?/opt: ['mozilla-central']
+                    linux2404-64/.*: ['mozilla-central']
+                    linux2404-64-shippable/opt: ['mozilla-central']
+                    linux2404-64-asan/opt: ['mozilla-central']
                     default: []
             default:
                 by-test-platform:
@@ -544,7 +560,7 @@ web-platform-tests-wdspec:
                     - --test-type=wdspec
     variants:
         - no-fission
-        - geckoview-no-fission-ship
+        - geckoview-no-fission-no-ship
         - headless
         - async-event-dispatching
     run-on-projects:
@@ -558,17 +574,19 @@ web-platform-tests-wdspec:
                     linux1804-64(-qr)?/.*: ['mozilla-central']
                     linux1804-64-shippable(-qr)?/opt: ['mozilla-central']
                     linux1804-64-asan(-qr)?/opt: ['mozilla-central']
+                    linux2404-64/.*: ['mozilla-central']
+                    linux2404-64-shippable/opt: ['mozilla-central']
+                    linux2404-64-asan/opt: ['mozilla-central']
                     android.*: built-projects
                     default: []
-            geckoview-no-fission-ship:
+            geckoview-no-fission-no-ship:
                 by-test-platform:
                     android-em-7.0-x86_64(-qr)?/debug-isolated-process: []
                     android-em.*: built-projects
                     default: []
             async-event-dispatching:
                 by-test-platform:
-                    .*-32.*: []
-                    .*/debug: []
+                    .*/opt: []  # try only for now
                     default: []
             default: built-projects
     tier:
@@ -597,10 +615,14 @@ web-platform-tests-wdspec:
                     - linux32-geckodriver
                     - linux64-minidump-stackwalk
                     - linux64-fix-stacks
-                macosx.*:
+                macosx.*-64.*:
                     - macosx64-geckodriver
                     - macosx64-minidump-stackwalk
                     - macosx64-fix-stacks
+                macosx.*-aarch64.*:
+                    - macosx64-aarch64-geckodriver
+                    - macosx64-aarch64-minidump-stackwalk
+                    - macosx64-aarch64-fix-stacks
                 win.*-32.*:
                     - win32-geckodriver
                     - win32-minidump-stackwalk
@@ -643,6 +665,9 @@ web-platform-tests-crashtest:
                     linux1804-64(-qr)?/.*: ['mozilla-central']
                     linux1804-64-shippable(-qr)?/opt: ['mozilla-central']
                     linux1804-64-asan(-qr)?/opt: ['mozilla-central']
+                    linux2404-64/.*: ['mozilla-central']
+                    linux2404-64-shippable/opt: ['mozilla-central']
+                    linux2404-64-asan/opt: ['mozilla-central']
                     default: []
             no-fission:
                 by-test-platform:
@@ -650,6 +675,9 @@ web-platform-tests-crashtest:
                     linux1804-64(-qr)?/.*: ['mozilla-central']
                     linux1804-64-shippable(-qr)?/opt: ['mozilla-central']
                     linux1804-64-asan(-qr)?/opt: ['mozilla-central']
+                    linux2404-64/.*: ['mozilla-central']
+                    linux2404-64-shippable/opt: ['mozilla-central']
+                    linux2404-64-asan/opt: ['mozilla-central']
                     android.*: built-projects
                     default: []
             default:
@@ -705,12 +733,18 @@ web-platform-tests-print-reftest:
                     linux1804-64(-qr)?/.*: ['mozilla-central']
                     linux1804-64-shippable(-qr)?/opt: ['mozilla-central']
                     linux1804-64-asan(-qr)?/opt: ['mozilla-central']
+                    linux2404-64/.*: ['mozilla-central']
+                    linux2404-64-shippable/opt: ['mozilla-central']
+                    linux2404-64-asan/opt: ['mozilla-central']
                     default: []
             no-fission:
                 by-test-platform:
                     linux1804-64(-qr)?/.*: ['mozilla-central']
                     linux1804-64-shippable(-qr)?/opt: ['mozilla-central']
                     linux1804-64-asan(-qr)?/opt: ['mozilla-central']
+                    linux2404-64/.*: ['mozilla-central']
+                    linux2404-64-shippable/opt: ['mozilla-central']
+                    linux2404-64-asan/opt: ['mozilla-central']
                     android.*: built-projects
                     default: []
             default:
@@ -757,10 +791,14 @@ test-verify-wpt:
                     - linux32-geckodriver
                     - linux64-minidump-stackwalk
                     - linux64-fix-stacks
-                macosx.*:
+                macosx.*-64.*:
                     - macosx64-geckodriver
                     - macosx64-minidump-stackwalk
                     - macosx64-fix-stacks
+                macosx.*-aarch64.*:
+                    - macosx64-aarch64-geckodriver
+                    - macosx64-aarch64-minidump-stackwalk
+                    - macosx64-aarch64-fix-stacks
                 win.*-32.*:
                     - win32-geckodriver
                     - win32-minidump-stackwalk

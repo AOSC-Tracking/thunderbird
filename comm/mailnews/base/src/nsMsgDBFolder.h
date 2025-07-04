@@ -251,6 +251,7 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   static nsrefcnt mInstanceCount;
 
   uint32_t mFlags;
+  uint32_t mUserSortOrder;    // Sort order among sibling folders.
   nsWeakPtr mParent;          // This won't be refcounted for ownership reasons.
   int32_t mNumUnreadMessages; /* count of unread messages (-1 means unknown; -2
                                  means unknown but we already tried to find
@@ -265,6 +266,7 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   nsISupports* mSemaphoreHolder;  // set when the folder is being written to
                                   // Due to ownership issues, this won't be
                                   // AddRef'd.
+  nsAutoCString mSemaphoreLogText;
 
   nsWeakPtr mServer;
 
@@ -341,6 +343,14 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   bool mBayesJunkClassifying;
   // Is the current bayes filtering doing trait classification?
   bool mBayesTraitClassifying;
+
+  nsresult SetJunkScoreForMessage(nsIMsgDBHdr* message,
+                                  nsMsgJunkScore junkScore,
+                                  const nsACString& junkScoreOrigin,
+                                  int32_t junkPercent);
+  nsresult DetermineActionsForJunkChange(bool msgsAreJunk, bool& moveMessages,
+                                         bool& changeReadState,
+                                         nsIMsgFolder** targetFolder);
 };
 
 // This class is a kludge to allow nsMsgKeySet to be used with uint32_t keys

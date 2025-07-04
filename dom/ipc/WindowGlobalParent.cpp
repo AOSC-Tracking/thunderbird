@@ -332,7 +332,7 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvLoadURI(
     return IPC_OK();
   }
 
-  if (net::SchemeIsJavascript(aLoadState->URI())) {
+  if (aLoadState->URI()->SchemeIs("javascript")) {
     return IPC_FAIL(this, "Illegal cross-process javascript: load attempt");
   }
 
@@ -365,7 +365,7 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvInternalLoad(
     return IPC_OK();
   }
 
-  if (net::SchemeIsJavascript(aLoadState->URI())) {
+  if (aLoadState->URI()->SchemeIs("javascript")) {
     return IPC_FAIL(this, "Illegal cross-process javascript: load attempt");
   }
 
@@ -1279,6 +1279,7 @@ nsCString BFCacheStatusToString(uint32_t aFlags) {
   ADD_BFCACHESTATUS_TO_STRING(NOT_ONLY_TOPLEVEL_IN_BCG);
   ADD_BFCACHESTATUS_TO_STRING(BEFOREUNLOAD_LISTENER);
   ADD_BFCACHESTATUS_TO_STRING(ACTIVE_LOCK);
+  ADD_BFCACHESTATUS_TO_STRING(PAGE_LOADING);
 
 #undef ADD_BFCACHESTATUS_TO_STRING
 
@@ -1372,23 +1373,23 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvSetDocumentDomain(
 
 mozilla::ipc::IPCResult WindowGlobalParent::RecvReloadWithHttpsOnlyException() {
   nsresult rv;
-  nsCOMPtr<nsIURI> currentUri = BrowsingContext()->Top()->GetCurrentURI();
+  nsCOMPtr<nsIURI> currentURI = BrowsingContext()->Top()->GetCurrentURI();
 
-  if (!currentUri) {
+  if (!currentURI) {
     return IPC_FAIL(this, "HTTPS-only mode: Failed to get current URI");
   }
 
-  bool isViewSource = currentUri->SchemeIs("view-source");
+  bool isViewSource = currentURI->SchemeIs("view-source");
 
-  nsCOMPtr<nsINestedURI> nestedURI = do_QueryInterface(currentUri);
+  nsCOMPtr<nsINestedURI> nestedURI = do_QueryInterface(currentURI);
   nsCOMPtr<nsIURI> innerURI;
   if (isViewSource) {
     nestedURI->GetInnerURI(getter_AddRefs(innerURI));
   } else {
-    innerURI = currentUri;
+    innerURI = currentURI;
   }
 
-  if (!innerURI->SchemeIs("https") && !innerURI->SchemeIs("http")) {
+  if (!net::SchemeIsHttpOrHttps(innerURI)) {
     return IPC_FAIL(this, "HTTPS-only mode: Illegal state");
   }
 
@@ -1447,12 +1448,12 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvReloadWithHttpsOnlyException() {
 }
 
 IPCResult WindowGlobalParent::RecvGetIdentityCredential(
-    const IdentityCredentialRequestOptions& aOptions,
+    IdentityCredentialRequestOptions&& aOptions,
     const CredentialMediationRequirement& aMediationRequirement,
-    const GetIdentityCredentialResolver& aResolver) {
+    bool aHasUserActivation, const GetIdentityCredentialResolver& aResolver) {
   IdentityCredential::GetCredentialInMainProcess(
-      DocumentPrincipal(), this->BrowsingContext(), aOptions,
-      aMediationRequirement)
+      DocumentPrincipal(), this->BrowsingContext(), std::move(aOptions),
+      aMediationRequirement, aHasUserActivation)
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
           [aResolver](const IPCIdentityCredential& aResult) {
@@ -1564,9 +1565,11 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
         .Add();
   }
 
+  bool finishedPageUseCounters = false;
   if (mPageUseCountersWindow) {
     mPageUseCountersWindow->FinishAccumulatingPageUseCounters();
     mPageUseCountersWindow = nullptr;
+    finishedPageUseCounters = true;
   }
 
   if (GetBrowsingContext()->IsTopContent() &&
@@ -1641,10 +1644,9 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
           BrowsingContext()->IsTopContent()) {
         GetContentBlockingLog()->ReportLog();
 
-        if (mDocumentURI && (net::SchemeIsHTTP(mDocumentURI) ||
-                             net::SchemeIsHTTPS(mDocumentURI))) {
+        if (mDocumentURI && net::SchemeIsHttpOrHttps(mDocumentURI)) {
           GetContentBlockingLog()->ReportCanvasFingerprintingLog(
-              DocumentPrincipal());
+              DocumentPrincipal(), finishedPageUseCounters);
           GetContentBlockingLog()->ReportFontFingerprintingLog(
               DocumentPrincipal());
           GetContentBlockingLog()->ReportEmailTrackingLog(DocumentPrincipal());

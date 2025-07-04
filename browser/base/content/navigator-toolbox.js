@@ -188,7 +188,6 @@ document.addEventListener(
         #urlbar-go-button,
         #reader-mode-button,
         #picture-in-picture-button,
-        #shopping-sidebar-button,
         #urlbar-zoom-button,
         #star-button-box,
         #personal-toolbar-empty-description,
@@ -198,7 +197,8 @@ document.addEventListener(
         #tracking-protection-icon-container,
         #identity-icon-box,
         #identity-permission-box,
-        #translations-button
+        #translations-button,
+        #taskbar-tabs-button
         `);
       if (!element) {
         return;
@@ -230,12 +230,6 @@ document.addEventListener(
         case "picture-in-picture-button":
           if (isLeftClick) {
             PictureInPicture.toggleUrlbar(event);
-          }
-          break;
-
-        case "shopping-sidebar-button":
-          if (isLeftClick) {
-            ShoppingSidebarParent.urlbarButtonClick(event);
           }
           break;
 
@@ -303,7 +297,6 @@ document.addEventListener(
       let element = event.target.closest(`
         #reader-mode-button,
         #picture-in-picture-button,
-        #shopping-sidebar-button,
         #urlbar-zoom-button,
         #star-button-box,
         #personal-toolbar-empty-description,
@@ -333,12 +326,6 @@ document.addEventListener(
         case "picture-in-picture-button":
           if (isLikeLeftClick) {
             PictureInPicture.toggleUrlbar(event);
-          }
-          break;
-
-        case "shopping-sidebar-button":
-          if (isLikeLeftClick) {
-            ShoppingSidebarParent.urlbarButtonClick(event);
           }
           break;
 

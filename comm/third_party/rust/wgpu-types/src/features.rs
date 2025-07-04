@@ -37,25 +37,28 @@ mod webgpu_impl {
     pub const WEBGPU_FEATURE_TEXTURE_COMPRESSION_ASTC: u64 = 1 << 5;
 
     #[doc(hidden)]
-    pub const WEBGPU_FEATURE_TIMESTAMP_QUERY: u64 = 1 << 6;
+    pub const WEBGPU_FEATURE_TEXTURE_COMPRESSION_ASTC_SLICED_3D: u64 = 1 << 6;
 
     #[doc(hidden)]
-    pub const WEBGPU_FEATURE_INDIRECT_FIRST_INSTANCE: u64 = 1 << 7;
+    pub const WEBGPU_FEATURE_TIMESTAMP_QUERY: u64 = 1 << 7;
 
     #[doc(hidden)]
-    pub const WEBGPU_FEATURE_SHADER_F16: u64 = 1 << 8;
+    pub const WEBGPU_FEATURE_INDIRECT_FIRST_INSTANCE: u64 = 1 << 8;
 
     #[doc(hidden)]
-    pub const WEBGPU_FEATURE_RG11B10UFLOAT_RENDERABLE: u64 = 1 << 9;
+    pub const WEBGPU_FEATURE_SHADER_F16: u64 = 1 << 9;
 
     #[doc(hidden)]
-    pub const WEBGPU_FEATURE_BGRA8UNORM_STORAGE: u64 = 1 << 10;
+    pub const WEBGPU_FEATURE_RG11B10UFLOAT_RENDERABLE: u64 = 1 << 10;
 
     #[doc(hidden)]
-    pub const WEBGPU_FEATURE_FLOAT32_FILTERABLE: u64 = 1 << 11;
+    pub const WEBGPU_FEATURE_BGRA8UNORM_STORAGE: u64 = 1 << 11;
 
     #[doc(hidden)]
-    pub const WEBGPU_FEATURE_DUAL_SOURCE_BLENDING: u64 = 1 << 12;
+    pub const WEBGPU_FEATURE_FLOAT32_FILTERABLE: u64 = 1 << 12;
+
+    #[doc(hidden)]
+    pub const WEBGPU_FEATURE_DUAL_SOURCE_BLENDING: u64 = 1 << 13;
 }
 
 macro_rules! bitflags_array_impl {
@@ -920,6 +923,15 @@ bitflags_array! {
         ///
         /// This is a native only feature.
         const CLEAR_TEXTURE = 1 << 23;
+        /// Enables creating shader modules from Metal MSL computer shaders (unsafe).
+        ///
+        /// Metal data is not parsed or interpreted in any way
+        ///
+        /// Supported platforms:
+        /// - Metal
+        ///
+        /// This is a native only feature.
+        const MSL_SHADER_PASSTHROUGH = 1 << 24;
         /// Enables creating shader modules from SPIR-V binary data (unsafe).
         ///
         /// SPIR-V data is not parsed or interpreted in any way; you can use
@@ -933,7 +945,7 @@ bitflags_array! {
         /// This is a native only feature.
         ///
         /// [`wgpu::make_spirv_raw!`]: https://docs.rs/wgpu/latest/wgpu/macro.include_spirv_raw.html
-        const SPIRV_SHADER_PASSTHROUGH = 1 << 24;
+        const SPIRV_SHADER_PASSTHROUGH = 1 << 25;
         /// Enables multiview render passes and `builtin(view_index)` in vertex shaders.
         ///
         /// Supported platforms:
@@ -941,7 +953,7 @@ bitflags_array! {
         /// - OpenGL (web only)
         ///
         /// This is a native only feature.
-        const MULTIVIEW = 1 << 25;
+        const MULTIVIEW = 1 << 26;
         /// Enables using 64-bit types for vertex attributes.
         ///
         /// Requires SHADER_FLOAT64.
@@ -949,7 +961,7 @@ bitflags_array! {
         /// Supported Platforms: N/A
         ///
         /// This is a native only feature.
-        const VERTEX_ATTRIBUTE_64BIT = 1 << 26;
+        const VERTEX_ATTRIBUTE_64BIT = 1 << 27;
         /// Enables image atomic fetch add, and, xor, or, min, and max for R32Uint and R32Sint textures.
         ///
         /// Supported platforms:
@@ -958,7 +970,7 @@ bitflags_array! {
         /// - Metal (with MSL 3.1+)
         ///
         /// This is a native only feature.
-        const TEXTURE_ATOMIC = 1 << 27;
+        const TEXTURE_ATOMIC = 1 << 28;
         /// Allows for creation of textures of format [`TextureFormat::NV12`]
         ///
         /// Supported platforms:
@@ -968,7 +980,7 @@ bitflags_array! {
         /// This is a native only feature.
         ///
         /// [`TextureFormat::NV12`]: super::TextureFormat::NV12
-        const TEXTURE_FORMAT_NV12 = 1 << 28;
+        const TEXTURE_FORMAT_NV12 = 1 << 29;
         /// ***THIS IS EXPERIMENTAL:*** Features enabled by this may have
         /// major bugs in them and are expected to be subject to breaking changes, suggestions
         /// for the API exposed by this should be posted on [the ray-tracing issue](https://github.com/gfx-rs/wgpu/issues/1040)
@@ -980,7 +992,7 @@ bitflags_array! {
         /// - Vulkan
         ///
         /// This is a native-only feature.
-        const EXPERIMENTAL_RAY_TRACING_ACCELERATION_STRUCTURE = 1 << 29;
+        const EXPERIMENTAL_RAY_TRACING_ACCELERATION_STRUCTURE = 1 << 30;
 
         // Shader:
 
@@ -994,7 +1006,7 @@ bitflags_array! {
         /// - Vulkan
         ///
         /// This is a native-only feature.
-        const EXPERIMENTAL_RAY_QUERY = 1 << 30;
+        const EXPERIMENTAL_RAY_QUERY = 1 << 31;
         /// Enables 64-bit floating point types in SPIR-V shaders.
         ///
         /// Note: even when supported by GPU hardware, 64-bit floating point operations are
@@ -1004,14 +1016,14 @@ bitflags_array! {
         /// - Vulkan
         ///
         /// This is a native only feature.
-        const SHADER_F64 = 1 << 31;
+        const SHADER_F64 = 1 << 32;
         /// Allows shaders to use i16. Not currently supported in `naga`, only available through `spirv-passthrough`.
         ///
         /// Supported platforms:
         /// - Vulkan
         ///
         /// This is a native only feature.
-        const SHADER_I16 = 1 << 32;
+        const SHADER_I16 = 1 << 33;
         /// Enables `builtin(primitive_index)` in fragment shaders.
         ///
         /// Note: enables geometry processing for pipelines using the builtin.
@@ -1025,14 +1037,14 @@ bitflags_array! {
         /// - OpenGL (some)
         ///
         /// This is a native only feature.
-        const SHADER_PRIMITIVE_INDEX = 1 << 33;
+        const SHADER_PRIMITIVE_INDEX = 1 << 34;
         /// Allows shaders to use the `early_depth_test` attribute.
         ///
         /// Supported platforms:
         /// - GLES 3.1+
         ///
         /// This is a native only feature.
-        const SHADER_EARLY_DEPTH_TEST = 1 << 34;
+        const SHADER_EARLY_DEPTH_TEST = 1 << 35;
         /// Allows shaders to use i64 and u64.
         ///
         /// Supported platforms:
@@ -1041,7 +1053,7 @@ bitflags_array! {
         /// - Metal (with MSL 2.3+)
         ///
         /// This is a native only feature.
-        const SHADER_INT64 = 1 << 35;
+        const SHADER_INT64 = 1 << 36;
         /// Allows compute and fragment shaders to use the subgroup operation built-ins
         ///
         /// Supported Platforms:
@@ -1050,14 +1062,14 @@ bitflags_array! {
         /// - Metal
         ///
         /// This is a native only feature.
-        const SUBGROUP = 1 << 36;
+        const SUBGROUP = 1 << 37;
         /// Allows vertex shaders to use the subgroup operation built-ins
         ///
         /// Supported Platforms:
         /// - Vulkan
         ///
         /// This is a native only feature.
-        const SUBGROUP_VERTEX = 1 << 37;
+        const SUBGROUP_VERTEX = 1 << 38;
         /// Allows shaders to use the subgroup barrier
         ///
         /// Supported Platforms:
@@ -1065,7 +1077,7 @@ bitflags_array! {
         /// - Metal
         ///
         /// This is a native only feature.
-        const SUBGROUP_BARRIER = 1 << 38;
+        const SUBGROUP_BARRIER = 1 << 39;
         /// Allows the use of pipeline cache objects
         ///
         /// Supported platforms:
@@ -1074,7 +1086,7 @@ bitflags_array! {
         /// Unimplemented Platforms:
         /// - DX12
         /// - Metal
-        const PIPELINE_CACHE = 1 << 39;
+        const PIPELINE_CACHE = 1 << 40;
         /// Allows shaders to use i64 and u64 atomic min and max.
         ///
         /// Supported platforms:
@@ -1083,7 +1095,7 @@ bitflags_array! {
         /// - Metal (with MSL 2.4+)
         ///
         /// This is a native only feature.
-        const SHADER_INT64_ATOMIC_MIN_MAX = 1 << 40;
+        const SHADER_INT64_ATOMIC_MIN_MAX = 1 << 41;
         /// Allows shaders to use all i64 and u64 atomic operations.
         ///
         /// Supported platforms:
@@ -1091,7 +1103,7 @@ bitflags_array! {
         /// - DX12 (with SM 6.6+)
         ///
         /// This is a native only feature.
-        const SHADER_INT64_ATOMIC_ALL_OPS = 1 << 41;
+        const SHADER_INT64_ATOMIC_ALL_OPS = 1 << 42;
         /// Allows using the [VK_GOOGLE_display_timing] Vulkan extension.
         ///
         /// This is used for frame pacing to reduce latency, and is generally only available on Android.
@@ -1107,7 +1119,7 @@ bitflags_array! {
         ///
         /// [VK_GOOGLE_display_timing]: https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_GOOGLE_display_timing.html
         /// [`Surface::as_hal()`]: https://docs.rs/wgpu/latest/wgpu/struct.Surface.html#method.as_hal
-        const VULKAN_GOOGLE_DISPLAY_TIMING = 1 << 42;
+        const VULKAN_GOOGLE_DISPLAY_TIMING = 1 << 43;
 
         /// Allows using the [VK_KHR_external_memory_win32] Vulkan extension.
         ///
@@ -1117,7 +1129,7 @@ bitflags_array! {
         /// This is a native only feature.
         ///
         /// [VK_KHR_external_memory_win32]: https://registry.khronos.org/vulkan/specs/latest/man/html/VK_KHR_external_memory_win32.html
-        const VULKAN_EXTERNAL_MEMORY_WIN32 = 1 << 43;
+        const VULKAN_EXTERNAL_MEMORY_WIN32 = 1 << 44;
 
         /// Enables R64Uint image atomic min and max.
         ///
@@ -1127,7 +1139,7 @@ bitflags_array! {
         /// - Metal (with MSL 3.1+)
         ///
         /// This is a native only feature.
-        const TEXTURE_INT64_ATOMIC = 1 << 44;
+        const TEXTURE_INT64_ATOMIC = 1 << 45;
 
         /// Allows uniform buffers to be bound as binding arrays.
         ///
@@ -1144,7 +1156,7 @@ bitflags_array! {
         /// - Vulkan 1.2+ (or VK_EXT_descriptor_indexing)'s `shaderUniformBufferArrayNonUniformIndexing` feature)
         ///
         /// This is a native only feature.
-        const UNIFORM_BUFFER_BINDING_ARRAYS = 1 << 45;
+        const UNIFORM_BUFFER_BINDING_ARRAYS = 1 << 46;
 
         /// Enables mesh shaders and task shaders in mesh shader pipelines.
         ///
@@ -1156,7 +1168,7 @@ bitflags_array! {
         /// - Metal
         ///
         /// This is a native only feature.
-        const EXPERIMENTAL_MESH_SHADER = 1 << 46;
+        const EXPERIMENTAL_MESH_SHADER = 1 << 47;
 
         /// ***THIS IS EXPERIMENTAL:*** Features enabled by this may have
         /// major bugs in them and are expected to be subject to breaking changes, suggestions
@@ -1171,7 +1183,7 @@ bitflags_array! {
         /// This is a native only feature
         ///
         /// [`AccelerationStructureFlags::ALLOW_RAY_HIT_VERTEX_RETURN`]: super::AccelerationStructureFlags::ALLOW_RAY_HIT_VERTEX_RETURN
-        const EXPERIMENTAL_RAY_HIT_VERTEX_RETURN = 1 << 47;
+        const EXPERIMENTAL_RAY_HIT_VERTEX_RETURN = 1 << 48;
 
         /// Enables multiview in mesh shader pipelines
         ///
@@ -1183,7 +1195,7 @@ bitflags_array! {
         /// - Metal
         ///
         /// This is a native only feature.
-        const EXPERIMENTAL_MESH_SHADER_MULTIVIEW = 1 << 48;
+        const EXPERIMENTAL_MESH_SHADER_MULTIVIEW = 1 << 49;
     }
 
     /// Features that are not guaranteed to be supported.
@@ -1285,12 +1297,32 @@ bitflags_array! {
         /// Support for this feature guarantees availability of [`TextureUsages::COPY_SRC | TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING`] for ASTC formats with Unorm/UnormSrgb channel type.
         /// [`Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`] may enable additional usages.
         ///
+        /// This feature does not guarantee availability of sliced 3d textures for ASTC formats.
+        /// If available, 3d support can be enabled by TEXTURE_COMPRESSION_ASTC_SLICED_3D feature.
+        ///
         /// Supported Platforms:
         /// - Vulkan on Intel
         /// - Mobile (some)
         ///
         /// This is a web and native feature.
         const TEXTURE_COMPRESSION_ASTC = WEBGPU_FEATURE_TEXTURE_COMPRESSION_ASTC;
+
+
+        /// Allows the 3d dimension for textures with ASTC compressed formats.
+        ///
+        /// This feature must be used in combination with TEXTURE_COMPRESSION_ASTC to enable 3D textures with ASTC compression.
+        /// It does not enable the ASTC formats by itself.
+        ///
+        /// Supported Platforms:
+        /// - Vulkan (some)
+        /// - Metal on Apple3+
+        /// - OpenGL/WebGL (some)
+        ///
+        /// Not Supported:
+        /// - DX12
+        ///
+        /// This is a web and native feature.
+        const TEXTURE_COMPRESSION_ASTC_SLICED_3D = WEBGPU_FEATURE_TEXTURE_COMPRESSION_ASTC_SLICED_3D;
 
         /// Enables use of Timestamp Queries. These queries tell the current gpu timestamp when
         /// all work before the query is finished.

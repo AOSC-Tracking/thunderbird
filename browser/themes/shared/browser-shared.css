@@ -86,7 +86,7 @@ body {
   --browser-area-z-index-toolbox: 0;
   --browser-area-z-index-sidebar: 1;
   --browser-area-z-index-tabbox: 2;
-  --browser-area-z-index-sidebar-wrapper: 3;
+  --browser-area-z-index-sidebar-expand-on-hover: 4;
   --browser-area-z-index-sidebar-splitter: 3;
 
   /* on macOS the animation of the toolbox in fullscreen needs the toolbox to be higher */
@@ -437,9 +437,11 @@ body {
   }
 }
 
-/* stylelint-disable-next-line media-query-no-invalid */
-@media not -moz-pref("sidebar.verticalTabs") {
-  #vertical-spacer {
+#vertical-spacer {
+  min-width: 20px;
+
+  /* stylelint-disable-next-line media-query-no-invalid */
+  @media not -moz-pref("sidebar.verticalTabs") {
     display: none;
   }
 }
@@ -527,6 +529,18 @@ toolbarpaletteitem > #personal-bookmarks > #PlacesToolbar,
 #notifications-toolbar {
   min-height: 0;
   flex-direction: column;
+}
+
+.bookmark-item[cutting] {
+  > .toolbarbutton-icon,
+  > .menu-icon {
+    opacity: 0.5;
+  }
+
+  > .toolbarbutton-text,
+  > .menu-text {
+    opacity: 0.7;
+  }
 }
 
 /* Menupopup drop indicators */
@@ -1337,14 +1351,4 @@ panel toolbarseparator {
 
 #PictureInPicturePanelFooter {
   margin: 8px 16px 16px;
-}
-
-/* Shopping sidebar */
-
-shopping-sidebar {
-  border-inline-start: 1px solid var(--chrome-content-separator-color);
-  min-width: 16.92em;
-  max-width: 32.31em;
-  width: 320px;
-  box-sizing: content-box;
 }

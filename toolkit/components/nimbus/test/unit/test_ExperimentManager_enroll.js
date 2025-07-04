@@ -10,8 +10,6 @@ const { ClientID } = ChromeUtils.importESModule(
 const { ClientEnvironment } = ChromeUtils.importESModule(
   "resource://normandy/lib/ClientEnvironment.sys.mjs"
 );
-const { cleanupStorePrefCache } = ExperimentFakes;
-
 const { ExperimentStore } = ChromeUtils.importESModule(
   "resource://nimbus/lib/ExperimentStore.sys.mjs"
 );
@@ -21,34 +19,32 @@ const { NimbusTelemetry } = ChromeUtils.importESModule(
 const { TelemetryEnvironment } = ChromeUtils.importESModule(
   "resource://gre/modules/TelemetryEnvironment.sys.mjs"
 );
-const { TelemetryEvents } = ChromeUtils.importESModule(
-  "resource://normandy/lib/TelemetryEvents.sys.mjs"
-);
-const { RemoteSettingsExperimentLoader } = ChromeUtils.importESModule(
-  "resource://nimbus/lib/RemoteSettingsExperimentLoader.sys.mjs"
-);
 
 const { SYNC_DATA_PREF_BRANCH, SYNC_DEFAULTS_PREF_BRANCH } = ExperimentStore;
 
-/**
- * FOG requires a little setup in order to test it
- */
 add_setup(function test_setup() {
-  // FOG needs a profile directory to put its data in.
-  do_get_profile();
-
-  // FOG needs to be initialized in order for data to flow.
   Services.fog.initializeFOG();
+
+  registerCleanupFunction(
+    NimbusTestUtils.addTestFeatures(
+      new ExperimentFeature("optin", {}),
+      new ExperimentFeature("pink", {}),
+      new ExperimentFeature("force-enrollment", {})
+    )
+  );
 });
+
+function setupTest({ ...args } = {}) {
+  return NimbusTestUtils.setupTest({ ...args, clearTelemetry: true });
+}
 
 /**
  * The normal case: Enrollment of a new experiment
  */
 add_task(async function test_add_to_store() {
-  const manager = ExperimentFakes.manager();
-  const recipe = ExperimentFakes.recipe("foo");
-  await manager.onStartup();
+  const { manager, cleanup } = await setupTest();
 
+  const recipe = NimbusTestUtils.factories.recipe("foo");
   await manager.enroll(recipe, "test_add_to_store");
   const experiment = manager.store.get("foo");
 
@@ -59,16 +55,17 @@ add_task(async function test_add_to_store() {
   );
   Assert.equal(experiment.active, true, "should set .active = true");
 
-  manager.unenroll("foo", "test-cleanup");
+  await manager.unenroll("foo");
 
-  assertEmptyStore(manager.store);
+  await cleanup();
 });
 
 add_task(async function test_add_rollout_to_store() {
-  const manager = ExperimentFakes.manager();
+  const { manager, cleanup } = await NimbusTestUtils.setupTest();
+
   const recipe = {
-    ...ExperimentFakes.recipe("rollout-slug"),
-    branches: [ExperimentFakes.rollout("rollout").branch],
+    ...NimbusTestUtils.factories.recipe("rollout-slug"),
+    branches: [NimbusTestUtils.factories.rollout("rollout").branch],
     isRollout: true,
     active: true,
     bucketConfig: {
@@ -80,8 +77,6 @@ add_task(async function test_add_rollout_to_store() {
     },
   };
 
-  await manager.onStartup();
-
   await manager.enroll(recipe, "test_add_rollout_to_store");
   const experiment = manager.store.get("rollout-slug");
 
@@ -92,25 +87,22 @@ add_task(async function test_add_rollout_to_store() {
   );
   Assert.equal(experiment.isRollout, true, "should have .isRollout");
 
-  manager.unenroll("rollout-slug", "test-cleanup");
+  await manager.unenroll("rollout-slug");
 
-  assertEmptyStore(manager.store);
+  await cleanup();
 });
 
-/**
- * Tests the logic arms (if/else) when enrolling an opt-in recipe
- */
 add_task(async function test_enroll_optin_recipe_branch_selection() {
-  const sandbox = sinon.createSandbox();
-  const manager = ExperimentFakes.manager();
+  const { sandbox, manager, cleanup } = await setupTest();
 
   // stubbing this to return true since we don't want to actually enroll
   // just assert on the call
-  let enrollStub = sandbox.stub(manager, "_enroll").returns(true);
+  sandbox.stub(manager, "_enroll").returns(true);
 
+  await manager.store.init();
   await manager.onStartup();
 
-  const optInRecipe = ExperimentFakes.recipe("opt-in-recipe", {
+  const optInRecipe = NimbusTestUtils.factories.recipe("opt-in-recipe", {
     isFirefoxLabsOptIn: true,
     branches: [
       {
@@ -139,23 +131,26 @@ add_task(async function test_enroll_optin_recipe_branch_selection() {
   await manager.enroll(optInRecipe, "test", {
     branchSlug: optInRecipe.branches[0].slug,
   });
+
   Assert.ok(
-    enrollStub.calledOnceWith(optInRecipe, optInRecipe.branches[0], "test"),
+    manager._enroll.calledOnceWith(
+      optInRecipe,
+      optInRecipe.branches[0].slug,
+      "test"
+    ),
     "should call ._enroll() with the correct arguments"
   );
 
-  assertEmptyStore(manager.store);
+  await cleanup();
 });
 
 add_task(async function test_setExperimentActive_recordEnrollment_called() {
-  const manager = ExperimentFakes.manager();
-  const sandbox = sinon.createSandbox();
+  const { sandbox, manager, cleanup } = await setupTest();
+
   sandbox.spy(NimbusTelemetry, "setExperimentActive");
   sandbox.spy(NimbusTelemetry, "recordEnrollment");
 
-  // Clear any pre-existing data in Glean
-  Services.fog.testResetFOG();
-
+  await manager.store.init();
   await manager.onStartup();
 
   // Ensure there is no experiment active with the id in FOG
@@ -174,7 +169,7 @@ add_task(async function test_setExperimentActive_recordEnrollment_called() {
   );
 
   await manager.enroll(
-    ExperimentFakes.recipe("foo"),
+    NimbusTestUtils.factories.recipe("foo"),
     "test_setExperimentActive_sendEnrollmentTelemetry_called"
   );
   const experiment = manager.store.get("foo");
@@ -213,34 +208,23 @@ add_task(async function test_setExperimentActive_recordEnrollment_called() {
     enrollmentEvents[0].extra.branch,
     "Glean.nimbusEvents.enrollment recorded with correct branch slug"
   );
-  Assert.equal(
-    experiment.experimentType,
-    enrollmentEvents[0].extra.experiment_type,
-    "Glean.nimbusEvents.enrollment recorded with correct experiment type"
-  );
 
-  manager.unenroll("foo", "test-cleanup");
+  await manager.unenroll("foo");
 
-  assertEmptyStore(manager.store);
-  sandbox.restore();
+  await cleanup();
 });
 
 add_task(async function test_setRolloutActive_recordEnrollment_called() {
-  const manager = ExperimentFakes.manager();
-  const sandbox = sinon.createSandbox();
-  const rolloutRecipe = {
-    ...ExperimentFakes.recipe("rollout"),
-    branches: [ExperimentFakes.rollout("rollout").branch],
+  const { sandbox, manager, cleanup } = await setupTest();
+
+  const rolloutRecipe = NimbusTestUtils.factories.recipe("rollout", {
     isRollout: true,
-  };
+  });
   sandbox.spy(TelemetryEnvironment, "setExperimentActive");
-  sandbox.spy(TelemetryEvents, "sendEvent");
   sandbox.spy(NimbusTelemetry, "setExperimentActive");
   sandbox.spy(NimbusTelemetry, "recordEnrollment");
 
-  // Clear any pre-existing data in Glean
-  Services.fog.testResetFOG();
-
+  await manager.store.init();
   await manager.onStartup();
 
   // Test Glean experiment API interaction
@@ -251,11 +235,17 @@ add_task(async function test_setRolloutActive_recordEnrollment_called() {
   );
 
   // Check that there aren't any Glean enrollment events yet
-  var enrollmentEvents = Glean.nimbusEvents.enrollment.testGetValue("events");
   Assert.equal(
+    Glean.nimbusEvents.enrollment.testGetValue("events"),
     undefined,
-    enrollmentEvents,
     "no Glean enrollment events before enrollment"
+  );
+
+  // Check that there aren't any Glean normandy enrollNimbusExperiment events yet
+  Assert.equal(
+    Glean.normandy.enrollNimbusExperiment.testGetValue("events"),
+    undefined,
+    "no Glean normandy enrollment events before enrollment"
   );
 
   let result = await manager.enroll(rolloutRecipe, "test");
@@ -273,30 +263,23 @@ add_task(async function test_setRolloutActive_recordEnrollment_called() {
     "Should call setExperimentActive with the rollout"
   );
   Assert.equal(
-    NimbusTelemetry.setExperimentActive.firstCall.args[0].experimentType,
-    "rollout",
-    "Should have the correct experimentType"
-  );
-  Assert.equal(
     NimbusTelemetry.recordEnrollment.calledWith(enrollment),
     true,
     "should call sendEnrollmentTelemetry after an enrollment"
   );
-  Assert.ok(
-    TelemetryEvents.sendEvent.calledOnce,
-    "Should send out enrollment telemetry"
-  );
-  Assert.ok(
-    TelemetryEvents.sendEvent.calledWith(
-      "enroll",
-      sinon.match.string,
-      enrollment.slug,
+
+  // We expect only one event and that that one event matches the expected enrolled experiment
+  Assert.deepEqual(
+    Glean.normandy.enrollNimbusExperiment
+      .testGetValue("events")
+      .map(ev => ev.extra),
+    [
       {
-        experimentType: "rollout",
+        value: enrollment.slug,
         branch: enrollment.branch.slug,
-      }
-    ),
-    "Should send telemetry with expected values"
+        experimentType: "rollout",
+      },
+    ]
   );
 
   // Test Glean experiment API interaction
@@ -306,31 +289,21 @@ add_task(async function test_setRolloutActive_recordEnrollment_called() {
     "Glean.setExperimentActive called with expected values"
   );
 
-  // Check that the Glean enrollment event was recorded.
-  enrollmentEvents = Glean.nimbusEvents.enrollment.testGetValue("events");
-  // We expect only one event
-  Assert.equal(1, enrollmentEvents.length);
-  // And that one event matches the expected enrolled experiment
-  Assert.equal(
-    enrollment.slug,
-    enrollmentEvents[0].extra.experiment,
-    "Glean.nimbusEvents.enrollment recorded with correct experiment slug"
-  );
-  Assert.equal(
-    enrollment.branch.slug,
-    enrollmentEvents[0].extra.branch,
-    "Glean.nimbusEvents.enrollment recorded with correct branch slug"
-  );
-  Assert.equal(
-    enrollment.experimentType,
-    enrollmentEvents[0].extra.experiment_type,
-    "Glean.nimbusEvents.enrollment recorded with correct experiment type"
+  // We expect only one event and that that one event matches the expected enrolled experiment
+  Assert.deepEqual(
+    Glean.nimbusEvents.enrollment.testGetValue("events").map(ev => ev.extra),
+    [
+      {
+        experiment: enrollment.slug,
+        branch: enrollment.branch.slug,
+        experiment_type: "rollout",
+      },
+    ]
   );
 
-  manager.unenroll("rollout", "test-cleanup");
+  await manager.unenroll("rollout");
 
-  assertEmptyStore(manager.store);
-  sandbox.restore();
+  await cleanup();
 });
 
 // /**
@@ -340,69 +313,71 @@ add_task(async function test_setRolloutActive_recordEnrollment_called() {
 //  */
 
 add_task(async function test_failure_name_conflict() {
-  const manager = ExperimentFakes.manager();
-  const sandbox = sinon.createSandbox();
+  const { sandbox, manager, cleanup } = await setupTest();
+
   sandbox.spy(NimbusTelemetry, "recordEnrollmentFailure");
 
-  // Clear any pre-existing data in Glean
-  Services.fog.testResetFOG();
-
-  await manager.onStartup();
-
   // Check that there aren't any Glean enroll_failed events yet
-  var failureEvents = Glean.nimbusEvents.enrollFailed.testGetValue("events");
   Assert.equal(
-    undefined,
-    failureEvents,
+    Glean.nimbusEvents.enrollFailed.testGetValue("events"),
+    null,
     "no Glean enroll_failed events before failure"
   );
 
+  const experiment = NimbusTestUtils.factories.recipe.withFeatureConfig("foo", {
+    featureId: "testFeature",
+  });
+
   // simulate adding a previouly enrolled experiment
-  await manager.store.addEnrollment(ExperimentFakes.experiment("foo"));
+  await manager.enroll(experiment, "test");
 
   await Assert.rejects(
-    manager.enroll(ExperimentFakes.recipe("foo"), "test_failure_name_conflict"),
+    manager.enroll(experiment, "test_failure_name_conflict"),
     /An experiment with the slug "foo" already exists/,
     "should throw if a conflicting experiment exists"
   );
 
-  Assert.equal(
-    NimbusTelemetry.recordEnrollmentFailure.calledWith("foo", "name-conflict"),
-    true,
-    "should send failure telemetry if a conflicting experiment exists"
+  // Check that the Glean events were recorded.
+  Assert.deepEqual(
+    Glean.nimbusEvents.enrollFailed.testGetValue("events").map(ev => ev.extra),
+    [
+      {
+        experiment: "foo",
+        reason: "name-conflict",
+      },
+    ],
+    "enrollFailed telemetry recorded correctly"
   );
 
-  // Check that the Glean enrollment event was recorded.
-  failureEvents = Glean.nimbusEvents.enrollFailed.testGetValue("events");
-  // We expect only one event
-  Assert.equal(1, failureEvents.length);
-  // And that one event matches the expected enrolled experiment
-  Assert.equal(
-    "foo",
-    failureEvents[0].extra.experiment,
-    "Glean.nimbusEvents.enroll_failed recorded with correct experiment slug"
-  );
-  Assert.equal(
-    "name-conflict",
-    failureEvents[0].extra.reason,
-    "Glean.nimbusEvents.enroll_failed recorded with correct reason"
+  Assert.deepEqual(
+    Glean.nimbusEvents.enrollmentStatus
+      .testGetValue("events")
+      .map(ev => ev.extra),
+    [
+      {
+        slug: "foo",
+        status: "Enrolled",
+        reason: "Qualified",
+        branch: "control",
+      },
+      {
+        slug: "foo",
+        status: "NotEnrolled",
+        reason: "NameConflict",
+      },
+    ],
+    "enrollmentStatus telemetry recorded correctly"
   );
 
-  manager.unenroll("foo", "test-cleanup");
+  await manager.unenroll("foo");
 
-  assertEmptyStore(manager.store);
-  sandbox.restore();
+  await cleanup();
 });
 
 add_task(async function test_failure_group_conflict() {
-  const manager = ExperimentFakes.manager();
-  const sandbox = sinon.createSandbox();
+  const { sandbox, manager, cleanup } = await setupTest();
+
   sandbox.spy(NimbusTelemetry, "recordEnrollmentFailure");
-
-  // Clear any pre-existing data in Glean
-  Services.fog.testResetFOG();
-
-  await manager.onStartup();
 
   // Check that there aren't any Glean enroll_failed events yet
   var failureEvents = Glean.nimbusEvents.enrollFailed.testGetValue("events");
@@ -426,17 +401,16 @@ add_task(async function test_failure_group_conflict() {
   };
 
   // simulate adding an experiment with a conflicting group "pink"
-  await manager.store.addEnrollment(
-    ExperimentFakes.experiment("foo", {
-      branch: existingBranch,
-    })
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe("foo", {
+      branches: [existingBranch],
+    }),
+    "test_failure_group_conflict"
   );
 
-  // ensure .enroll chooses the special branch with the conflict
-  sandbox.stub(manager, "chooseBranch").returns(newBranch);
   Assert.equal(
     await manager.enroll(
-      ExperimentFakes.recipe("bar", { branches: [newBranch] }),
+      NimbusTestUtils.factories.recipe("bar", { branches: [newBranch] }),
       "test_failure_group_conflict"
     ),
     null,
@@ -468,29 +442,23 @@ add_task(async function test_failure_group_conflict() {
     "Glean.nimbusEvents.enroll_failed recorded with correct reason"
   );
 
-  manager.unenroll("foo", "test-cleanup");
+  await manager.unenroll("foo");
 
-  assertEmptyStore(manager.store);
-  sandbox.restore();
+  await cleanup();
 });
 
 add_task(async function test_rollout_failure_group_conflict() {
-  const manager = ExperimentFakes.manager();
-  const sandbox = sinon.createSandbox();
-  const recipe = {
-    ...ExperimentFakes.recipe("rollout-recipe"),
+  const { sandbox, manager, cleanup } = await setupTest();
+
+  sandbox.spy(NimbusTelemetry, "recordEnrollmentFailure");
+
+  const recipe = NimbusTestUtils.factories.recipe("rollout-recipe", {
     isRollout: true,
-  };
+  });
   const conflictingRecipe = {
     ...recipe,
     slug: "conflicting-rollout-recipe",
   };
-  sandbox.spy(NimbusTelemetry, "recordEnrollmentFailure");
-
-  // Clear any pre-existing data in Glean
-  Services.fog.testResetFOG();
-
-  await manager.onStartup();
 
   // Check that there aren't any Glean enroll_failed events yet
   var failureEvents = Glean.nimbusEvents.enrollFailed.testGetValue("events");
@@ -500,7 +468,7 @@ add_task(async function test_rollout_failure_group_conflict() {
     "no Glean enroll_failed events before failure"
   );
 
-  await manager.enroll(recipe);
+  await manager.enroll(recipe, "test_rollout_failure_group_conflict");
 
   Assert.equal(
     await manager.enroll(
@@ -535,24 +503,20 @@ add_task(async function test_rollout_failure_group_conflict() {
     "Glean.nimbusEvents.enroll_failed recorded with correct reason"
   );
 
-  manager.unenroll("rollout-recipe", "test-cleanup");
+  await manager.unenroll("rollout-recipe");
 
-  assertEmptyStore(manager.store);
-  sandbox.restore();
+  await cleanup();
 });
 
 add_task(async function test_rollout_experiment_no_conflict() {
-  const manager = ExperimentFakes.manager();
-  const sandbox = sinon.createSandbox();
-  const experiment = ExperimentFakes.recipe("experiment");
-  const rollout = ExperimentFakes.recipe("rollout", { isRollout: true });
+  const { sandbox, manager, cleanup } = await setupTest();
 
   sandbox.spy(NimbusTelemetry, "recordEnrollmentFailure");
 
-  // Clear any pre-existing data in Glean
-  Services.fog.testResetFOG();
-
-  await manager.onStartup();
+  const experiment = NimbusTestUtils.factories.recipe("experiment");
+  const rollout = NimbusTestUtils.factories.recipe("rollout", {
+    isRollout: true,
+  });
 
   // Check that there aren't any Glean enroll_failed events yet
   var failureEvents = Glean.nimbusEvents.enrollFailed.testGetValue("events");
@@ -562,10 +526,10 @@ add_task(async function test_rollout_experiment_no_conflict() {
     "no Glean enroll_failed events before failure"
   );
 
-  await ExperimentFakes.enrollmentHelper(experiment, {
+  await NimbusTestUtils.enroll(experiment, {
     manager,
   });
-  await ExperimentFakes.enrollmentHelper(rollout, {
+  await NimbusTestUtils.enroll(rollout, {
     manager,
   });
 
@@ -592,27 +556,27 @@ add_task(async function test_rollout_experiment_no_conflict() {
     "no Glean enroll_failed events before failure"
   );
 
-  await ExperimentFakes.cleanupAll([experiment.slug, rollout.slug], {
+  await NimbusTestUtils.cleanupManager([experiment.slug, rollout.slug], {
     manager,
   });
 
-  assertEmptyStore(manager.store);
-  sandbox.restore();
+  await cleanup();
 });
 
 add_task(async function test_sampling_check() {
-  const manager = ExperimentFakes.manager();
-  let recipe = ExperimentFakes.recipe("foo", { bucketConfig: null });
-  const sandbox = sinon.createSandbox();
+  const { sandbox, manager, cleanup } = await setupTest();
+
   sandbox.stub(Sampling, "bucketSample").resolves(true);
   sandbox.replaceGetter(ClientEnvironment, "userId", () => 42);
+
+  let recipe = NimbusTestUtils.factories.recipe("foo", { bucketConfig: null });
 
   Assert.ok(
     !(await manager.isInBucketAllocation(recipe.bucketConfig)),
     "fails for no bucket config"
   );
 
-  recipe = ExperimentFakes.recipe("foo2", {
+  recipe = NimbusTestUtils.factories.recipe("foo2", {
     bucketConfig: { randomizationUnit: "foo" },
   });
 
@@ -621,7 +585,7 @@ add_task(async function test_sampling_check() {
     "fails for unknown randomizationUnit"
   );
 
-  recipe = ExperimentFakes.recipe("foo3");
+  recipe = NimbusTestUtils.factories.recipe("foo3");
 
   const result = await manager.isInBucketAllocation(recipe.bucketConfig);
 
@@ -654,13 +618,11 @@ add_task(async function test_sampling_check() {
     "called with expected total"
   );
 
-  assertEmptyStore(manager.store);
-
-  sandbox.restore();
+  await cleanup();
 });
 
 add_task(async function enroll_in_reference_aw_experiment() {
-  cleanupStorePrefCache();
+  const { manager, cleanup } = await setupTest();
 
   let dir = Services.dirsvc.get("CurWorkD", Ci.nsIFile).path;
   let src = PathUtils.join(
@@ -676,12 +638,10 @@ add_task(async function enroll_in_reference_aw_experiment() {
       { value: { ...content, enabled: true }, featureId: "aboutwelcome" },
     ],
   }));
-  let recipe = ExperimentFakes.recipe("reference-aw", { branches });
+  let recipe = NimbusTestUtils.factories.recipe("reference-aw", { branches });
   // Ensure we get enrolled
   recipe.bucketConfig.count = recipe.bucketConfig.total;
 
-  const manager = ExperimentFakes.manager();
-  await manager.onStartup();
   await manager.enroll(recipe, "enroll_in_reference_aw_experiment");
 
   Assert.ok(manager.store.get("reference-aw"), "Successful onboarding");
@@ -696,16 +656,17 @@ add_task(async function enroll_in_reference_aw_experiment() {
   // in prefs.
   Assert.ok(prefValue.length < 3498, "Make sure we don't bloat the prefs");
 
-  manager.unenroll(recipe.slug, "enroll_in_reference_aw_experiment:cleanup");
+  await manager.unenroll(recipe.slug);
 
-  assertEmptyStore(manager.store);
+  await cleanup();
 });
 
 add_task(async function test_forceEnroll_cleanup() {
-  const manager = ExperimentFakes.manager();
-  const sandbox = sinon.createSandbox();
-  let unenrollStub = sandbox.spy(manager, "unenroll");
-  let existingRecipe = ExperimentFakes.recipe("foo", {
+  const { sandbox, manager, cleanup } = await setupTest();
+
+  sandbox.spy(manager, "_unenroll");
+
+  const existingRecipe = NimbusTestUtils.factories.recipe("foo", {
     branches: [
       {
         slug: "treatment",
@@ -714,7 +675,7 @@ add_task(async function test_forceEnroll_cleanup() {
       },
     ],
   });
-  let forcedRecipe = ExperimentFakes.recipe("bar", {
+  const forcedRecipe = NimbusTestUtils.factories.recipe("bar", {
     branches: [
       {
         slug: "treatment",
@@ -724,70 +685,110 @@ add_task(async function test_forceEnroll_cleanup() {
     ],
   });
 
-  await manager.onStartup();
   await manager.enroll(existingRecipe, "test_forceEnroll_cleanup");
 
   sandbox.spy(NimbusTelemetry, "setExperimentActive");
-  manager.forceEnroll(forcedRecipe, forcedRecipe.branches[0]);
+  await manager.forceEnroll(forcedRecipe, forcedRecipe.branches[0]);
 
-  Assert.ok(unenrollStub.called, "Unenrolled from existing experiment");
-  Assert.equal(
-    unenrollStub.firstCall.args[0],
-    existingRecipe.slug,
-    "Called with existing recipe slug"
+  Assert.deepEqual(
+    Glean.nimbusEvents.enrollmentStatus
+      .testGetValue("events")
+      ?.map(ev => ev.extra),
+    [
+      {
+        slug: "foo",
+        branch: "treatment",
+        reason: "Qualified",
+        status: "Enrolled",
+      },
+      {
+        slug: "foo",
+        branch: "treatment",
+        status: "Disqualified",
+        reason: "ForceEnrollment",
+      },
+      {
+        slug: "optin-bar",
+        branch: "treatment",
+        status: "Enrolled",
+        reason: "OptIn",
+      },
+    ]
+  );
+
+  Assert.ok(
+    manager._unenroll.calledOnceWith(
+      sinon.match({ slug: existingRecipe.slug }),
+      { reason: "force-enrollment" }
+    ),
+    "Unenrolled from existing experiment"
   );
   Assert.ok(
-    NimbusTelemetry.setExperimentActive.calledOnce,
+    NimbusTelemetry.setExperimentActive.calledOnceWith(
+      sinon.match({ slug: "optin-bar" })
+    ),
     "Activated forced experiment"
   );
-  Assert.equal(
-    NimbusTelemetry.setExperimentActive.firstCall.args[0].slug,
-    `optin-${forcedRecipe.slug}`,
-    "Called with forced experiment slug"
-  );
-  Assert.equal(
-    manager.store.getExperimentForFeature("force-enrollment").slug,
-    `optin-${forcedRecipe.slug}`,
+  Assert.ok(
+    manager.store.get("optin-bar")?.active,
     "Enrolled in forced experiment"
   );
 
-  manager.unenroll(`optin-${forcedRecipe.slug}`, "test-cleanup");
+  await manager.unenroll(`optin-bar`);
 
-  assertEmptyStore(manager.store);
-
-  sandbox.restore();
+  await cleanup();
 });
 
 add_task(async function test_rollout_unenroll_conflict() {
-  const manager = ExperimentFakes.manager();
-  const sandbox = sinon.createSandbox();
-  let unenrollStub = sandbox.stub(manager, "unenroll").returns(true);
-  let enrollStub = sandbox.stub(manager, "_enroll").returns(true);
-  let rollout = ExperimentFakes.rollout("rollout_conflict");
+  const { sandbox, manager, cleanup } = await setupTest();
+
+  sandbox.spy(manager, "_unenroll");
+
+  const conflictingRollout = NimbusTestUtils.factories.recipe(
+    "conflicting-rollout",
+    { isRollout: true }
+  );
+
+  const rollout = NimbusTestUtils.factories.recipe("rollout", {
+    isRollout: true,
+  });
 
   // We want to force a conflict
-  sandbox.stub(manager.store, "getRolloutForFeature").returns(rollout);
+  await manager.enroll(conflictingRollout, "rs-loader");
 
-  manager.forceEnroll(rollout, rollout.branch);
+  await manager.forceEnroll(rollout, rollout.branches[0]);
 
-  Assert.ok(unenrollStub.calledOnce, "Should unenroll the conflicting rollout");
   Assert.ok(
-    unenrollStub.calledWith(rollout.slug, "force-enrollment"),
-    "Should call with expected slug"
+    manager._unenroll.calledOnceWith(
+      sinon.match({ slug: conflictingRollout.slug }),
+      { reason: "force-enrollment" }
+    ),
+    "Should unenroll the conflicting rollout"
   );
-  Assert.ok(enrollStub.calledOnce, "Should call enroll as expected");
 
-  manager.unenroll(rollout.slug, "test-cleanup");
-  assertEmptyStore(manager.store);
+  Assert.ok(
+    !manager.store.get(conflictingRollout.slug)?.active,
+    "Conflicting rollout should be inactive"
+  );
+  Assert.ok(
+    manager.store.get(`optin-${rollout.slug}`)?.active,
+    "Rollout should be active"
+  );
 
-  sandbox.restore();
+  await manager.unenroll(`optin-${rollout.slug}`);
+
+  await cleanup();
 });
 
 add_task(async function test_forceEnroll() {
-  const experiment1 = ExperimentFakes.recipe("experiment-1");
-  const experiment2 = ExperimentFakes.recipe("experiment-2");
-  const rollout1 = ExperimentFakes.recipe("rollout-1", { isRollout: true });
-  const rollout2 = ExperimentFakes.recipe("rollout-2", { isRollout: true });
+  const experiment1 = NimbusTestUtils.factories.recipe("experiment-1");
+  const experiment2 = NimbusTestUtils.factories.recipe("experiment-2");
+  const rollout1 = NimbusTestUtils.factories.recipe("rollout-1", {
+    isRollout: true,
+  });
+  const rollout2 = NimbusTestUtils.factories.recipe("rollout-2", {
+    isRollout: true,
+  });
 
   const TEST_CASES = [
     {
@@ -812,15 +813,9 @@ add_task(async function test_forceEnroll() {
     },
   ];
 
-  const loader = ExperimentFakes.rsLoader();
-  const manager = loader.manager;
-
-  sinon
-    .stub(loader.remoteSettingsClients.experiments, "get")
-    .resolves([experiment1, experiment2, rollout1, rollout2]);
-
-  await manager.onStartup();
-  await loader.enable();
+  const { manager, cleanup } = await setupTest({
+    experiments: [experiment1, experiment2, rollout1, rollout2],
+  });
 
   for (const { enroll, expected } of TEST_CASES) {
     for (const recipe of enroll) {
@@ -848,29 +843,27 @@ add_task(async function test_forceEnroll() {
     }
 
     for (const { slug } of expected) {
-      manager.unenroll(`optin-${slug}`);
+      await manager.unenroll(`optin-${slug}`);
     }
   }
 
-  assertEmptyStore(manager.store);
+  await cleanup();
 });
 
 add_task(async function test_featureIds_is_stored() {
   Services.prefs.setStringPref("messaging-system.log", "all");
-  const recipe = ExperimentFakes.recipe("featureIds");
+  const recipe = NimbusTestUtils.factories.recipe("featureIds");
   // Ensure we get enrolled
   recipe.bucketConfig.count = recipe.bucketConfig.total;
-  const store = ExperimentFakes.store();
-  const manager = ExperimentFakes.manager(store);
 
-  await manager.onStartup();
+  const { manager, cleanup } = await setupTest();
 
-  const doExperimentCleanup = await ExperimentFakes.enrollmentHelper(recipe, {
+  const doExperimentCleanup = await NimbusTestUtils.enroll(recipe, {
     manager,
   });
 
   Assert.ok(manager.store.addEnrollment.calledOnce, "experiment is stored");
-  let [enrollment] = manager.store.addEnrollment.firstCall.args;
+  const [enrollment] = manager.store.addEnrollment.firstCall.args;
   Assert.ok("featureIds" in enrollment, "featureIds is stored");
   Assert.deepEqual(
     enrollment.featureIds,
@@ -878,18 +871,15 @@ add_task(async function test_featureIds_is_stored() {
     "Has expected value"
   );
 
-  doExperimentCleanup();
+  await doExperimentCleanup();
 
-  assertEmptyStore(manager.store);
+  await cleanup();
 });
 
 add_task(async function experiment_and_rollout_enroll_and_cleanup() {
-  let store = ExperimentFakes.store();
-  const manager = ExperimentFakes.manager(store);
+  const { manager, cleanup } = await setupTest();
 
-  await manager.onStartup();
-
-  let doRolloutCleanup = await ExperimentFakes.enrollWithFeatureConfig(
+  let doRolloutCleanup = await NimbusTestUtils.enrollWithFeatureConfig(
     {
       featureId: "aboutwelcome",
       value: { enabled: true },
@@ -900,7 +890,7 @@ add_task(async function experiment_and_rollout_enroll_and_cleanup() {
     }
   );
 
-  let doExperimentCleanup = await ExperimentFakes.enrollWithFeatureConfig(
+  let doExperimentCleanup = await NimbusTestUtils.enrollWithFeatureConfig(
     {
       featureId: "aboutwelcome",
       value: { enabled: true },
@@ -917,7 +907,7 @@ add_task(async function experiment_and_rollout_enroll_and_cleanup() {
     )
   );
 
-  doExperimentCleanup();
+  await doExperimentCleanup();
 
   Assert.ok(
     !Services.prefs.getBoolPref(
@@ -931,7 +921,7 @@ add_task(async function experiment_and_rollout_enroll_and_cleanup() {
     )
   );
 
-  doRolloutCleanup();
+  await doRolloutCleanup();
 
   Assert.ok(
     !Services.prefs.getBoolPref(
@@ -946,30 +936,16 @@ add_task(async function experiment_and_rollout_enroll_and_cleanup() {
     )
   );
 
-  assertEmptyStore(manager.store);
+  await cleanup();
 });
 
 add_task(async function test_reEnroll() {
-  const store = ExperimentFakes.store();
-  const manager = ExperimentFakes.manager(store);
+  const { manager, cleanup } = await setupTest();
 
-  await manager.onStartup();
-  await manager.store.ready();
-
-  const experiment = ExperimentFakes.recipe("experiment");
-  experiment.bucketConfig = {
-    ...experiment.bucketConfig,
-    start: 0,
-    count: 1000,
-    total: 1000,
-  };
-  const rollout = ExperimentFakes.recipe("rollout", { isRollout: true });
-  rollout.bucketConfig = {
-    ...rollout.bucketConfig,
-    start: 0,
-    count: 1000,
-    total: 1000,
-  };
+  const experiment = NimbusTestUtils.factories.recipe("experiment");
+  const rollout = NimbusTestUtils.factories.recipe("rollout", {
+    isRollout: true,
+  });
 
   await manager.enroll(experiment, "test");
   Assert.equal(
@@ -985,56 +961,59 @@ add_task(async function test_reEnroll() {
     "Should enroll in rollout"
   );
 
-  manager.unenroll(experiment.slug);
+  await manager.unenroll(experiment.slug);
   Assert.ok(
     !manager.store.getExperimentForFeature("testFeature"),
     "Should unenroll from experiment"
   );
 
-  manager.unenroll(rollout.slug);
+  await manager.unenroll(rollout.slug);
   Assert.ok(
     !manager.store.getRolloutForFeature("testFeature"),
     "Should unenroll from rollout"
   );
 
   await Assert.rejects(
-    manager.enroll(experiment, "test", { reenroll: true }),
+    manager.enroll(experiment, "test", { reenroll: true }, "test"),
     /An experiment with the slug "experiment" already exists/,
     "Should not re-enroll in experiment"
   );
 
-  await manager.enroll(rollout, "test", { reenroll: true });
+  await manager.enroll(rollout, "test", { reenroll: true }, "test");
   Assert.equal(
     manager.store.getRolloutForFeature("testFeature")?.slug,
     rollout.slug,
     "Should re-enroll in rollout"
   );
 
-  manager.unenroll(rollout.slug);
-  assertEmptyStore(store);
+  await manager.unenroll(rollout.slug);
+
+  await cleanup();
 });
 
 add_task(async function test_randomizationUnit() {
   const ENROLL = "cedc1378-b806-4664-8c3e-2090f2f46e00";
   const NOT_ENROLL = "b502506a-416c-40ea-9f96-c6feaf451470";
 
-  const normandyIdBucketing = ExperimentFakes.recipe.bucketConfig;
+  const normandyIdBucketing = {
+    ...NimbusTestUtils.factories.recipe.bucketConfig,
+    count: 100,
+  };
   const groupIdBucketing = {
-    ...ExperimentFakes.recipe.bucketConfig,
+    ...NimbusTestUtils.factories.recipe.bucketConfig,
     randomizationUnit: "group_id",
+    count: 100,
   };
 
   Services.prefs.setStringPref("app.normandy.user_id", ENROLL);
   await ClientID.setProfileGroupID(NOT_ENROLL);
 
-  const manager = ExperimentFakes.manager();
-
   Assert.ok(
-    await manager.isInBucketAllocation(normandyIdBucketing),
+    await ExperimentAPI.manager.isInBucketAllocation(normandyIdBucketing),
     "in bucketing using normandy_id"
   );
   Assert.ok(
-    !(await manager.isInBucketAllocation(groupIdBucketing)),
+    !(await ExperimentAPI.manager.isInBucketAllocation(groupIdBucketing)),
     "not in bucketing using group_id"
   );
 
@@ -1042,97 +1021,78 @@ add_task(async function test_randomizationUnit() {
   await ClientID.setProfileGroupID(ENROLL);
 
   Assert.ok(
-    !(await manager.isInBucketAllocation(normandyIdBucketing)),
+    !(await ExperimentAPI.manager.isInBucketAllocation(normandyIdBucketing)),
     "not in bucketing using normandy_id"
   );
   Assert.ok(
-    await manager.isInBucketAllocation(groupIdBucketing),
+    await ExperimentAPI.manager.isInBucketAllocation(groupIdBucketing),
     "in bucketing using group_id"
   );
 });
 
 add_task(async function test_group_enrollment() {
-  // We need multiple instances of manager to simulate multiple profiles
-  const store1 = ExperimentFakes.store();
-  const manager1 = ExperimentFakes.manager(store1);
-
-  await manager1.onStartup();
-
-  const groupId = "cedc1378-b806-4664-8c3e-2090f2f46e00";
-  const clientId1 = "clientid1";
-  const clientId2 = "clientid2";
-  const branchA = {
-    slug: "branchA",
-    ratio: 1,
-    features: [{ featureId: "pink", value: {} }],
-  };
-  const branchB = {
-    slug: "branchB",
-    ratio: 1,
-    features: [{ featureId: "pink", value: {} }],
-  };
-  const recipe = {
-    ...ExperimentFakes.recipe("group_enroll"),
-    branches: [branchA, branchB],
-    isRollout: false,
-    active: true,
+  const recipe = NimbusTestUtils.factories.recipe("group_enroll", {
     bucketConfig: {
-      namespace: "nimbus-test-utils",
+      ...NimbusTestUtils.factories.recipe.bucketConfig,
       randomizationUnit: "group_id",
-      start: 0,
-      count: 1000,
-      total: 1000,
     },
-  };
+  });
 
-  // set the group ID
-  await ClientID.setProfileGroupID(groupId);
-  // enroll the first clientID in the experiment
-  Services.prefs.setStringPref("app.normandy.user_id", clientId1);
+  await ClientID.setProfileGroupID("cedc1378-b806-4664-8c3e-2090f2f46e00");
 
-  await manager1.enroll(recipe, "test_group_enrollment");
+  for (const clientID of ["clientid1", "clientid2"]) {
+    Services.prefs.setStringPref("app.normandy.user_id", clientID);
+    const { manager, cleanup } = await setupTest();
 
-  const experiment1 = manager1.store.get("group_enroll");
-  let clientId1branch = experiment1.branch;
+    const enrollment = await manager.enroll(recipe, "test");
 
-  // create the second manager && enroll the second clientID
-  const store2 = ExperimentFakes.store();
-  const manager2 = ExperimentFakes.manager(store2);
+    Assert.ok(enrollment.active, "Enrolled in recipe");
+    Assert.equal(
+      enrollment.branch.slug,
+      "treatment",
+      "Should have enrolled in the expected branch"
+    );
 
-  await manager2.onStartup();
+    await manager.unenroll(recipe.slug);
 
-  Services.prefs.setStringPref("app.normandy.user_id", clientId2);
+    await cleanup();
+  }
 
-  await manager2.enroll(recipe, "test_group_enrollment");
-
-  const experiment2 = manager2.store.get("group_enroll");
-  let clientId2branch = experiment2.branch;
-
-  Assert.equal(
-    clientId1branch,
-    clientId2branch,
-    "should have enrolled in the same branch"
-  );
-
-  // Cleanup
-  manager1.unenroll("group_enroll", "test-cleanup");
-  assertEmptyStore(manager1.store);
-
-  manager2.unenroll("group_enroll", "test-cleanup");
-  assertEmptyStore(manager2.store);
+  Services.prefs.clearUserPref("app.normandy.user_id");
 });
 
 add_task(async function test_getSingleOptInRecipe() {
-  const sandbox = sinon.createSandbox();
-  const manager = ExperimentFakes.manager();
   const optInRecipes = [
-    ExperimentFakes.recipe("opt-in-one", { isFirefoxLabsOptIn: true }),
-    ExperimentFakes.recipe("opt-in-two", { isFirefoxLabsOptIn: true }),
+    NimbusTestUtils.factories.recipe("opt-in-one", {
+      isRollout: true,
+      isFirefoxLabsOptIn: true,
+      firefoxLabsTitle: "bogus-title",
+      firefoxLabsDescription: "bogus-title",
+      firefoxLabsDescriptionLinks: {},
+      firefoxLabsGroup: "bogus-group",
+      requiresRestart: false,
+    }),
+    NimbusTestUtils.factories.recipe("opt-in-two", {
+      isRollout: true,
+      isFirefoxLabsOptIn: true,
+      firefoxLabsTitle: "bogus-title",
+      firefoxLabsDescription: "bogus-title",
+      firefoxLabsDescriptionLinks: {},
+      firefoxLabsGroup: "bogus-group",
+      requiresRestart: false,
+    }),
   ];
 
-  manager.optInRecipes = optInRecipes;
+  const { loader, manager, cleanup } = await setupTest({
+    experiments: optInRecipes,
+  });
+  await loader.finishedUpdating();
 
-  sandbox.stub(RemoteSettingsExperimentLoader, "finishedUpdating").resolves();
+  Assert.deepEqual(
+    manager.optInRecipes,
+    optInRecipes,
+    "Should have recorded opt-in recipes"
+  );
 
   Assert.equal(
     await manager.getSingleOptInRecipe(optInRecipes[0].slug),
@@ -1152,91 +1112,135 @@ add_task(async function test_getSingleOptInRecipe() {
     "Should throw when .getSingleOptInRecipe is called without a slug argument"
   );
 
-  sandbox.restore();
-  assertEmptyStore(manager.store);
+  await cleanup();
 });
 
 add_task(async function test_getAllOptInRecipes() {
-  const sandbox = sinon.createSandbox();
-  const manager = ExperimentFakes.manager();
-
-  const optInRecipesWithTargetMatchingAndBucketing = [
-    ExperimentFakes.recipe("opt-in-one", {
-      targeting: "true",
+  const recipes = [
+    NimbusTestUtils.factories.recipe("match-1", {
+      isRollout: true,
       isFirefoxLabsOptIn: true,
+      firefoxLabsTitle: "bogus-title",
+      firefoxLabsDescription: "bogus-desc",
+      firefoxLabsDescriptionLinks: {},
+      firefoxLabsGroup: "bogus-group",
+      requiresRestart: false,
+    }),
+    NimbusTestUtils.factories.recipe("match-2", {
+      isRollout: true,
+      isFirefoxLabsOptIn: true,
+      firefoxLabsTitle: "bogus-title",
+      firefoxLabsDescription: "bogus-desc",
+      firefoxLabsDescriptionLinks: {},
+      firefoxLabsGroup: "bogus-group",
+      requiresRestart: false,
+    }),
+    NimbusTestUtils.factories.recipe("targeting-only-1", {
       bucketConfig: {
-        ...ExperimentFakes.recipe.bucketConfig,
-        count: 1000,
+        ...NimbusTestUtils.factories.recipe.bucketConfig,
+        count: 0,
       },
-    }),
-    ExperimentFakes.recipe("opt-in-two", {
-      targeting: "true",
+      isRollout: true,
       isFirefoxLabsOptIn: true,
+      firefoxLabsTitle: "bogus-title",
+      firefoxLabsDescription: "bogus-desc",
+      firefoxLabsDescriptionLinks: {},
+      firefoxLabsGroup: "bogus-group",
+      requiresRestart: false,
+    }),
+    NimbusTestUtils.factories.recipe("targeting-only-2", {
       bucketConfig: {
-        ...ExperimentFakes.recipe.bucketConfig,
-        count: 1000,
+        ...NimbusTestUtils.factories.recipe.bucketConfig,
+        count: 0,
       },
-    }),
-  ];
-
-  const optInRecipesWithTargetMatchingOnly = [
-    ExperimentFakes.recipe("opt-in-one", {
-      targeting: "true",
+      isRollout: true,
       isFirefoxLabsOptIn: true,
-      bucketConfig: {},
+      firefoxLabsTitle: "bogus-title",
+      firefoxLabsDescription: "bogus-desc",
+      firefoxLabsDescriptionLinks: {},
+      firefoxLabsGroup: "bogus-group",
+      requiresRestart: false,
     }),
-    ExperimentFakes.recipe("opt-in-two", {
-      targeting: "true",
-      isFirefoxLabsOptIn: true,
-      bucketConfig: {},
-    }),
-  ];
-
-  const optInRecipesWithBucketingMatchingOnly = [
-    ExperimentFakes.recipe("opt-in-one", {
+    NimbusTestUtils.factories.recipe("bucketing-only-1", {
       targeting: "false",
+      isRollout: true,
       isFirefoxLabsOptIn: true,
-      bucketConfig: {
-        ...ExperimentFakes.recipe.bucketConfig,
-        count: 1000,
-      },
+      firefoxLabsTitle: "bogus-title",
+      firefoxLabsDescription: "bogus-desc",
+      firefoxLabsDescriptionLinks: {},
+      firefoxLabsGroup: "bogus-group",
+      requiresRestart: false,
     }),
-    ExperimentFakes.recipe("opt-in-two", {
+    NimbusTestUtils.factories.recipe("bucketing-only-2", {
       targeting: "false",
+      isRollout: true,
       isFirefoxLabsOptIn: true,
-      bucketConfig: {
-        ...ExperimentFakes.recipe.bucketConfig,
-        count: 1000,
-      },
+      firefoxLabsTitle: "bogus-title",
+      firefoxLabsDescription: "bogus-desc",
+      firefoxLabsDescriptionLinks: {},
+      firefoxLabsGroup: "bogus-group",
+      requiresRestart: false,
     }),
   ];
+  const { loader, manager, cleanup } = await setupTest({
+    experiments: recipes,
+  });
+  await loader.finishedUpdating();
 
-  sandbox.stub(RemoteSettingsExperimentLoader, "finishedUpdating").resolves();
+  const slugs = await manager
+    .getAllOptInRecipes()
+    .then(recipes => recipes.map(r => r.slug));
 
-  // Happy path, opt in recipes meet targeting and bucketing criteria.
-  manager.optInRecipes = optInRecipesWithTargetMatchingAndBucketing;
   Assert.deepEqual(
-    await manager.getAllOptInRecipes(),
-    optInRecipesWithTargetMatchingAndBucketing,
-    "should return the correct opt in recipes with targeting and bucketing match"
+    slugs.sort(),
+    ["match-1", "match-2"].sort(),
+    "Should only return the matching recipes"
   );
 
-  // Unhappy path, opt in recipes meet only targeting criteria.
-  manager.optInRecipes = optInRecipesWithTargetMatchingOnly;
-  Assert.deepEqual(
-    await manager.getAllOptInRecipes(),
-    [],
-    "should return an empty array for recipes with a targeting match only"
+  await cleanup();
+});
+
+add_task(async function testCoenrolling() {
+  const { manager, cleanup } = await setupTest();
+
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig(
+      "rollout-1",
+      { featureId: "no-feature-firefox-desktop" },
+      { isRollout: true }
+    ),
+    "test"
+  );
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig(
+      "rollout-2",
+      { featureId: "no-feature-firefox-desktop" },
+      { isRollout: true }
+    ),
+    "test"
+  );
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig("experiment-1", {
+      featureId: "no-feature-firefox-desktop",
+    }),
+    "test"
+  );
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig("experiment-2", {
+      featureId: "no-feature-firefox-desktop",
+    }),
+    "test"
   );
 
-  // Unhappy path, opt in recipes meet only bucketing criteria.
-  manager.optInRecipes = optInRecipesWithBucketingMatchingOnly;
-  Assert.deepEqual(
-    await manager.getAllOptInRecipes(),
-    [],
-    "should return an empty array for recipes with a bucketing match only"
-  );
+  Assert.ok(manager.store.get("rollout-1").active, "rollout-1 is active");
+  Assert.ok(manager.store.get("rollout-2").active, "rollout-2 is active");
+  Assert.ok(manager.store.get("experiment-1").active, "experiment-1 is active");
+  Assert.ok(manager.store.get("experiment-2").active, "experiment-2 is active");
 
-  sandbox.restore();
-  assertEmptyStore(manager.store);
+  await manager.unenroll("rollout-1");
+  await manager.unenroll("rollout-2");
+  await manager.unenroll("experiment-1");
+  await manager.unenroll("experiment-2");
+
+  await cleanup();
 });

@@ -8,8 +8,6 @@ var gContentAPI;
 
 ChromeUtils.defineESModuleGetters(this, {
   ProfileAge: "resource://gre/modules/ProfileAge.sys.mjs",
-  TelemetryArchiveTesting:
-    "resource://testing-common/TelemetryArchiveTesting.sys.mjs",
   UpdateUtils: "resource://gre/modules/UpdateUtils.sys.mjs",
   CustomizableUITestUtils:
     "resource://testing-common/CustomizableUITestUtils.sys.mjs",
@@ -671,7 +669,7 @@ var tests = [
         category: "search.engine.default",
         name: "changed",
         extra: {
-          change_source: "uitour",
+          change_reason: "uitour",
           previous_engine_id: defaultEngine.telemetryId,
           new_engine_id: engine.telemetryId,
           new_display_name: engine.name,
@@ -684,33 +682,9 @@ var tests = [
     );
   }),
   taskify(async function test_treatment_tag() {
-    let ac = new TelemetryArchiveTesting.Checker();
-    await ac.promiseInit();
     await gContentAPI.setTreatmentTag("foobar", "baz");
-    // Wait until the treatment telemetry is sent before looking in the archive.
-    await BrowserTestUtils.waitForContentEvent(
-      gTestTab.linkedBrowser,
-      "mozUITourNotification",
-      false,
-      event => event.detail.event === "TreatmentTag:TelemetrySent"
-    );
-    await new Promise(resolve => {
-      gContentAPI.getTreatmentTag("foobar", data => {
-        is(data.value, "baz", "set and retrieved treatmentTag");
-        ac.promiseFindPing("uitour-tag", [
-          [["payload", "tagName"], "foobar"],
-          [["payload", "tagValue"], "baz"],
-        ]).then(
-          found => {
-            ok(found, "Telemetry ping submitted for setTreatmentTag");
-            resolve();
-          },
-          err => {
-            ok(false, "Exception finding uitour telemetry ping: " + err);
-            resolve();
-          }
-        );
-      });
+    await gContentAPI.getTreatmentTag("foobar", data => {
+      is(data.value, "baz", "set and retrieved treatmentTag");
     });
   }),
 

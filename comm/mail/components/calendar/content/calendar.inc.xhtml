@@ -4,8 +4,10 @@
 
 #include calendarDialogRowTemplate.inc.xhtml
 #include calendarDialogDateRowTemplate.inc.xhtml
+#include calendarDialogDescriptionRowTemplate.inc.xhtml
+#include calendarDialogCategoriesTemplate.inc.xhtml
 
-<template id="calendarDialogTemplate">
+<html:template id="calendarDialogTemplate" xmlns="http://www.w3.org/1999/xhtml">
   <div class="titlebar">
     <button
       class="button icon-button icon-only button-flat back-button"
@@ -22,8 +24,49 @@
     >
       <div id="calendarDialogMainSubview" hidden="hidden">
         <calendar-dialog-date-row></calendar-dialog-date-row>
+        <calendar-dialog-row id="locationRow">
+          <img
+            src=""
+            slot="icon"
+            class="icon-location"
+            data-l10n-id="calendar-dialog-location-row-icon" />
+          <div slot="label">
+            <a
+              id="locationLink"
+              class="text-link"
+              href=""
+              hidden="hidden"
+            ></a>
+            <span id="locationText" hidden="hidden"></span>
+          </div>
+        </calendar-dialog-row>
+        <div id="descriptionRow" class="expanding-row">
+          <calendar-dialog-description-row
+            id="expandingDescription"
+          ></calendar-dialog-description-row>
+          <button
+            id="expandDescription"
+            class="button button-flat expand-button icon-button"
+          >
+            <img
+              src=""
+              class="icon-nav-right"
+              data-l10n-id="calendar-dialog-description-expand-icon"
+            />
+          </button>
+        </div>
+        <calendar-dialog-categories></calendar-dialog-categories>
+      </div>
+      <div
+        id="calendarDescriptionSubview"
+        hidden="hidden"
+      >
+        <calendar-dialog-description-row
+          id="expandedDescription"
+          type="full"
+        ></calendar-dialog-description-row>
       </div>
     </calendar-dialog-subview-manager>
   </div>
   <div class="footer"></div>
-</template>
+</html:template>

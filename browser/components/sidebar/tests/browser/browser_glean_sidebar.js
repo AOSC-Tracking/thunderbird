@@ -7,8 +7,7 @@ requestLongerTimeout(10);
 
 const lazy = {};
 
-const TAB_DIRECTION_PREF = "sidebar.verticalTabs";
-const initialTabDirection = Services.prefs.getBoolPref(TAB_DIRECTION_PREF)
+const initialTabDirection = Services.prefs.getBoolPref(VERTICAL_TABS_PREF)
   ? "vertical"
   : "horizontal";
 
@@ -25,9 +24,7 @@ add_setup(async () => {
 });
 
 registerCleanupFunction(() => {
-  while (gBrowser.tabs.length > 1) {
-    BrowserTestUtils.removeTab(gBrowser.tabs[0]);
-  }
+  cleanUpExtraTabs();
 });
 
 function getExpectedVersionString() {
@@ -49,7 +46,7 @@ add_task(async function test_metrics_initialized() {
 add_task(async function test_sidebar_expand() {
   await SidebarController.initializeUIState({ launcherExpanded: false });
   await SpecialPowers.pushPrefEnv({
-    set: [[TAB_DIRECTION_PREF, true]],
+    set: [[VERTICAL_TABS_PREF, true]],
   });
   await waitForTabstripOrientation("vertical");
   // Vertical tabs are expanded by default
@@ -235,30 +232,21 @@ add_task(async function test_extension_sidebar_toggle() {
   Assert.equal(events?.length, 2, "Two events were reported.");
 });
 
-add_task(async function test_review_checker_sidebar_toggle() {
-  const gleanEvent = Glean.shopping.sidebarToggle;
-  await testSidebarToggle("viewReviewCheckerSidebar", gleanEvent);
-  for (const { extra } of gleanEvent.testGetValue()) {
-    Assert.equal(
-      extra.version,
-      getExpectedVersionString(),
-      "Event has the correct sidebar version."
-    );
-  }
-});
-
 add_task(async function test_contextual_manager_toggle() {
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["browser.contextual-password-manager.enabled", true],
-      ["sidebar.revamp", false],
-    ],
+    set: [["browser.contextual-password-manager.enabled", true]],
   });
   await SidebarController.waitUntilStable();
   const gleanEvent = Glean.contextualManager.sidebarToggle;
   await testSidebarToggle("viewCPMSidebar", gleanEvent);
+  await testCustomizeToggle(
+    "viewCPMSidebar",
+    Glean.contextualManager.passwordsEnabled,
+    false // Remove this in bug 1957425
+  );
   await SpecialPowers.popPrefEnv();
   await SidebarController.waitUntilStable();
+  Services.fog.testResetFOG();
 });
 
 add_task(async function test_customize_panel_toggle() {
@@ -365,18 +353,6 @@ add_task(async function test_customize_bookmarks_enabled() {
   );
 });
 
-add_task(async function test_customize_review_checker_enabled() {
-  await SpecialPowers.pushPrefEnv({
-    set: [["browser.shopping.experience2023.integratedSidebar", true]],
-  });
-  await testCustomizeToggle(
-    "viewReviewCheckerSidebar",
-    Glean.sidebarCustomize.shoppingReviewCheckerEnabled
-  );
-  await SpecialPowers.popPrefEnv();
-  await SidebarController.waitUntilStable();
-});
-
 add_task(async function test_customize_extensions_clicked() {
   info("Load an extension.");
   const extension = ExtensionTestUtils.loadExtension({ ...extData });
@@ -448,7 +424,7 @@ async function testCustomizeSetting(
 
 add_task(async function test_customize_sidebar_display() {
   await SpecialPowers.pushPrefEnv({
-    set: [[TAB_DIRECTION_PREF, true]],
+    set: [[VERTICAL_TABS_PREF, true]],
   });
   await waitForTabstripOrientation("vertical");
   await testCustomizeSetting(
@@ -495,7 +471,7 @@ add_task(async function test_customize_firefox_settings_clicked() {
 
 add_task(async function test_sidebar_resize() {
   await SpecialPowers.pushPrefEnv({
-    set: [[TAB_DIRECTION_PREF, true]],
+    set: [[VERTICAL_TABS_PREF, true]],
   });
   await waitForTabstripOrientation("vertical");
   await SidebarController.show("viewHistorySidebar");
@@ -526,7 +502,7 @@ add_task(async function test_sidebar_resize() {
 
 add_task(async function test_sidebar_display_settings() {
   await SpecialPowers.pushPrefEnv({
-    set: [[TAB_DIRECTION_PREF, true]],
+    set: [[VERTICAL_TABS_PREF, true]],
   });
   await waitForTabstripOrientation("vertical");
   await testCustomizeSetting(
@@ -558,9 +534,7 @@ add_task(async function test_sidebar_tabs_layout() {
 });
 
 add_task(async function test_sidebar_position_rtl_ui() {
-  const sandbox = sinon.createSandbox();
-  sandbox.stub(window, "RTL_UI").value(true);
-  await SpecialPowers.pushPrefEnv({ set: [["intl.l10n.pseudo", "bidi"]] });
+  await BrowserTestUtils.enableRtlLocale();
   Services.fog.testResetFOG();
 
   // When RTL is enabled, sidebar is shown on the right by default.
@@ -578,8 +552,7 @@ add_task(async function test_sidebar_position_rtl_ui() {
     "right"
   );
 
-  sandbox.restore();
-  await SpecialPowers.popPrefEnv();
+  await BrowserTestUtils.disableRtlLocale();
   await SidebarController.waitUntilStable();
 });
 
@@ -587,15 +560,13 @@ async function testIconClick(expanded) {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.ml.chat.enabled", true],
-      ["browser.shopping.experience2023.integratedSidebar", true],
-      [TAB_DIRECTION_PREF, true],
+      [VERTICAL_TABS_PREF, true],
     ],
   });
   await waitForTabstripOrientation("vertical");
 
   const { sidebarMain } = SidebarController;
   const gleanEvents = new Map([
-    ["viewReviewCheckerSidebar", Glean.sidebar.shoppingReviewCheckerIconClick],
     ["viewGenaiChatSidebar", Glean.sidebar.chatbotIconClick],
     ["viewTabsSidebar", Glean.sidebar.syncedTabsIconClick],
     ["viewHistorySidebar", Glean.sidebar.historyIconClick],
@@ -682,65 +653,10 @@ async function testIconClick(expanded) {
   Services.fog.testResetFOG();
 }
 
-async function testIconClickReviewChecker(expanded) {
-  const { sidebarMain } = SidebarController;
-
-  await SidebarController.initializeUIState({
-    launcherVisible: true,
-    launcherExpanded: expanded,
-    command: "",
-  });
-  Assert.equal(
-    SidebarController.sidebarMain.expanded,
-    expanded,
-    `The launcher is ${expanded ? "expanded" : "collapsed"}`
-  );
-  Assert.ok(!SidebarController._state.panelOpen, "No panel is open");
-
-  let reviewCheckerButton = sidebarMain.shadowRoot.querySelector(
-    "moz-button[view='viewReviewCheckerSidebar']"
-  );
-  EventUtils.synthesizeMouseAtCenter(reviewCheckerButton, {});
-
-  let event = Glean.sidebar.shoppingReviewCheckerIconClick.testGetValue();
-  Assert.equal(event?.length, 1, "One event was reported.");
-  Assert.deepEqual(
-    event?.[0].extra,
-    { sidebar_open: `${expanded}` },
-    `Event indicates the sidebar was ${expanded ? "expanded" : "collapsed"}.`
-  );
-
-  await SpecialPowers.popPrefEnv();
-  await SidebarController.initializeUIState({
-    launcherExpanded: false,
-    launcherVisible: true,
-    command: "",
-  });
-  Services.fog.testResetFOG();
-}
-
 add_task(async function test_icon_click_collapsed_sidebar() {
   await testIconClick(false);
 });
 
 add_task(async function test_icon_click_expanded_sidebar() {
   await testIconClick(true);
-});
-
-add_task(async function test_review_checker_icon_click_collapsed_sidebar() {
-  await SpecialPowers.pushPrefEnv({
-    set: [["browser.shopping.experience2023.integratedSidebar", true]],
-  });
-  await testIconClickReviewChecker(false);
-  await SpecialPowers.popPrefEnv();
-  await SidebarController.waitUntilStable();
-});
-
-add_task(async function test_review_checker_icon_click_expanded_sidebar() {
-  await SpecialPowers.pushPrefEnv({
-    set: [["browser.shopping.experience2023.integratedSidebar", true]],
-  });
-  await testIconClickReviewChecker(true);
-  await SpecialPowers.popPrefEnv();
-  await SidebarController.waitUntilStable();
 });

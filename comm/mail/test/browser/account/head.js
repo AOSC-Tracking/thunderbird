@@ -13,7 +13,7 @@ const { MailServices } = ChromeUtils.importESModule(
 );
 
 const IMAPServer = {
-  open() {
+  open(username = "john.doe@imap.test") {
     const {
       ImapDaemon,
       ImapMessage,
@@ -31,7 +31,7 @@ const IMAPServer = {
       const handler = new IMAP_RFC3501_handler(daemon);
       mixinExtension(handler, IMAP_RFC2195_extension);
 
-      handler.kUsername = "john.doe@imap.test";
+      handler.kUsername = username;
       handler.kPassword = "abc12345";
       handler.kAuthRequired = true;
       handler.kAuthSchemes = ["PLAIN"];
@@ -51,7 +51,7 @@ const IMAPServer = {
 };
 
 const SMTPServer = {
-  open() {
+  open(username = "john.doe@imap.test") {
     const { SmtpDaemon, SMTP_RFC2821_handler } = ChromeUtils.importESModule(
       "resource://testing-common/mailnews/Smtpd.sys.mjs"
     );
@@ -59,7 +59,7 @@ const SMTPServer = {
     this.daemon = new SmtpDaemon();
     this.server = new nsMailServer(daemon => {
       const handler = new SMTP_RFC2821_handler(daemon);
-      handler.kUsername = "john.doe@imap.test";
+      handler.kUsername = username;
       handler.kPassword = "abc12345";
       handler.kAuthRequired = true;
       handler.kAuthSchemes = ["PLAIN"];
@@ -165,9 +165,10 @@ async function subtest_open_account_hub_dialog() {
 /**
  * Wait for the account hub dialog to be fully opened.
  *
+ * @param {string} [type="email"] - The type of account hub step that should be loaded.
  * @returns {Promise<HTMLDialogElement>}
  */
-async function subtest_wait_for_account_hub_dialog() {
+async function subtest_wait_for_account_hub_dialog(type = "email") {
   await BrowserTestUtils.waitForMutationCondition(
     document.body,
     {
@@ -195,23 +196,35 @@ async function subtest_wait_for_account_hub_dialog() {
   );
   Assert.ok(dialog.open, "Dialog should be open");
 
-  await BrowserTestUtils.waitForMutationCondition(
-    dialog,
-    {
-      childList: true,
-    },
-    () => !!dialog.querySelector("email-auto-form")
-  );
+  switch (type) {
+    case "email":
+      await BrowserTestUtils.waitForMutationCondition(
+        dialog,
+        {
+          childList: true,
+        },
+        () => !!dialog.querySelector("email-auto-form")
+      );
 
-  const emailForm = dialog.querySelector("email-auto-form");
-  Assert.ok(emailForm, "The email element should be available");
-  await BrowserTestUtils.waitForMutationCondition(
-    emailForm,
-    {
-      attributeFilter: ["hidden"],
-    },
-    () => BrowserTestUtils.isVisible(emailForm)
-  );
+      Assert.ok(
+        dialog.querySelector("email-auto-form"),
+        "The email element should be available"
+      );
+      await BrowserTestUtils.waitForMutationCondition(
+        dialog.querySelector("email-auto-form"),
+        {
+          attributeFilter: ["hidden"],
+        },
+        () =>
+          BrowserTestUtils.isVisible(dialog.querySelector("email-auto-form"))
+      );
+      break;
+    case "address-book":
+      // TODO: Create abstract function to extract above code to test the
+      // specific step that need to be loaded, in this case the address-book
+      // step.
+      break;
+  }
 
   return dialog;
 }

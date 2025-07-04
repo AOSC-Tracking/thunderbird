@@ -115,6 +115,14 @@ function AddFeedAccount() {
  *   are "JS", "LDAP", and "CARDDAV".
  */
 function addNewAddressBook(type) {
+  if (
+    Services.prefs.getBoolPref("mail.accounthub.addressbook.enabled", false)
+  ) {
+    // TODO: Directly go to correct address book type in account hub.
+    window.browsingContext.topChromeWindow.openAccountHubABDialog();
+    return;
+  }
+
   window.browsingContext.topChromeWindow.toAddressBook([
     `cmd_createAddressBook${type}`,
   ]);
@@ -199,6 +207,7 @@ async function MsgAccountManager(selectPage, server) {
  */
 function openAccountSetup(isInitialSetup = false) {
   const mail3Pane = Services.wm.getMostRecentWindow("mail:3pane");
+  mail3Pane.focus();
 
   // Only show the Account Hub if this is not the initial setup and there is at
   // least one account set up already.

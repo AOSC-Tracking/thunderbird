@@ -4,7 +4,39 @@ title: Changelog
 permalink: /changelog/
 ---
 
-# 138.0 (In Development)
+# 140.0 (In Development)
+* **feature-downloads**
+  * `DownloadNotification.createOngoingDownloadNotification` will now show the download time remaining instead of the percentage completed in the notification summary. [Bug 1956577](https://bugzilla.mozilla.org/show_bug.cgi?id=1956577).
+  * Added `DateTimeProvider` to provide date and time information. [Bug 1956577](https://bugzilla.mozilla.org/show_bug.cgi?id=1956577).
+  * Added `DownloadEstimator` to estimate download time remaining. [Bug 1956577](https://bugzilla.mozilla.org/show_bug.cgi?id=1956577).
+  * ⚠️ **Breaking change**: Added `downloadEstimator` property to `DownloadJobState`. [Bug 1956577](https://bugzilla.mozilla.org/show_bug.cgi?id=1956577).
+  * ⚠️ **Breaking change**: Added new 'dateTimeProvider' abstract val to `AbstractFetchDownloadService`. [Bug 1956577](https://bugzilla.mozilla.org/show_bug.cgi?id=1956577).
+  * ⚠️ **Breaking change**: Removed Deprecated `Long.toMegabyteOrKilobyteString` in v140. [Bug 1955689](https://bugzilla.mozilla.org/show_bug.cgi?id=1955689).
+* **feature-app-links**
+  * Added `alwaysOpenCheckboxAction` parameter to `AppLinksFeature`, this was moved from `AppLinksInterceptor`.
+  * ⚠️ **Breaking change**: Moved prompt functionality back to `AppLinksFeature`.
+  * ⚠️ **Breaking change**: Removed `interceptLinkClicks` parameter from `AppLinksInterceptor` since no usage sets this to false.
+
+# 139.0
+* **feature-downloads**
+  * ⚠️ **Breaking change**: Added new `fileSizeFormatter` abstract val to `AbstractFetchDownloadService`. [Bug 1956580](https://bugzilla.mozilla.org/show_bug.cgi?id=1956580).
+  * ⚠️ **Breaking change**: Added new `fileSizeFormatter` parameter to `DownloadNotification.createDownloadGroupNotification`. [Bug 1956580](https://bugzilla.mozilla.org/show_bug.cgi?id=1956580).
+    * Changed download notification group to display the size downloaded so far and the total file size, instead of the download percentage completed.
+  * ⚠️ **Breaking change**: Added new `fileSizeFormatter` parameter to `DownloadNotification.createOngoingDownloadNotification`. [Bug 1956580](https://bugzilla.mozilla.org/show_bug.cgi?id=1956580).
+    * Removed the download percentage completed in the notification summary.
+    * Changed the content text to display the size downloaded so far and the total file size, instead of the download percentage completed.
+  * ⚠️ **Breaking change**: Added new `fileSizeFormatter` parameter to `DownloadNotification.getSummaryList`. [Bug 1956580](https://bugzilla.mozilla.org/show_bug.cgi?id=1956580).
+    * Changed download notification group to display the size downloaded so far and the total file size, instead of the download percentage completed.
+  * ⚠️ **Breaking change**: Added new `fileSizeFormatter` parameter to `DownloadNotification.getProgress`. [Bug 1956580](https://bugzilla.mozilla.org/show_bug.cgi?id=1956580).
+    * Changed the function to return the size downloaded so far and the total file size, instead of the download percentage completed.
+  * ⚠️ **Breaking change**: Added new `fileSizeFormatter` parameter to `DownloadNotification.getStatusDescription`. [Bug 1956580](https://bugzilla.mozilla.org/show_bug.cgi?id=1956580).
+    * Changed the return of `DOWNLOADING` status to display the size downloaded so far and the total file size, instead of the download percentage completed.
+* **All components**
+  * ⚠️Increased `compileSdkVersion` to 36 (Android 16)
+* **support-remotesettings**
+  * Added `RemoteSettingsSyncWorker` and `RemoteSettingsSyncScheduler` to schedule periodic sync with remote settings. [Bug 1947538](https://bugzilla.mozilla.org/show_bug.cgi?id=1947538)
+
+# 138.0
 * **support-ktx**
   * ⚠️ **Breaking change**: `Window.setupPersistentInsets()` will only work on Android 13+ to avoid framework insets inconsistencies on lower versions of Android. [Bug 1946404](https://bugzilla.mozilla.org/show_bug.cgi?id=1946404)
   * ⚠️ **Breaking change**: `ImeInsetsSynchronizer` will only work on Android 13+ to avoid framework insets inconsistencies on lower versions of Android. [Bug 1946404](https://bugzilla.mozilla.org/show_bug.cgi?id=1946404)
@@ -22,6 +54,9 @@ permalink: /changelog/
   * Rename `Toolbar.siteSecure` property to `Toolbar.siteInfo`. See [Bug 1920085](https://bugzilla.mozilla.org/show_bug.cgi?id=1920085).
   * Rename `Toolbar.SiteSecurity` enum to `Toolbar.SiteInfo` and adds `LOCAL_PDF` enum value. See [Bug 1920085](https://bugzilla.mozilla.org/show_bug.cgi?id=1920085).
   * Rename `DisplayToolbarViews.securityIndicator` and `DisplayToolbarViews.setOnSiteSecurityClickedListener` to `DisplayToolbarViews.siteInfoIndicator` and `DisplayToolbarViews.setOnSiteInfoClickedListener`. See [Bug 1920085](https://bugzilla.mozilla.org/show_bug.cgi?id=1920085).
+
+* **feature-search**
+  * Adds `SearchEngineSelectorRepository` and `SearchEngineRepository` to `SearchMiddleware` See [Bug 1944964](https://bugzilla.mozilla.org/show_bug.cgi?id=1944964).
 
 * **feature-toolbar**
   * When showing a local PDF, the site security icon will display the `mozac_ic_page_portrait_24` icon. See [Bug 1920085](https://bugzilla.mozilla.org/show_bug.cgi?id=1920085).

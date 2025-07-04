@@ -60,9 +60,9 @@ export class AttachmentInfo {
    *   (usually the filename).
    * @param {string} options.uri - The URI for the message containing the
    *   attachment.
-   * @param {boolean} options.isExternalAttachment - True if the attachment has
+   * @param {boolean} [options.isExternalAttachment] - true if the attachment has
    *   been detached to file or is a link attachment.
-   * @param {object} options.message - The message object associated to this
+   * @param {nsIMsgDBHdr} [options.message] - The message object associated to this
    *   attachment.
    * @param {Function} [options.updateAttachmentsDisplayFn] - An optional callback
    *   function that is called to update the attachment display at appropriate
@@ -164,10 +164,11 @@ export class AttachmentInfo {
   /**
    * Save this attachment to the given path.
    *
-   * @param {string} path - Path to save to.
-   * @param {boolean} [isTmp=false] - Treat it as a temporary file.
+   * Fetch the attachment.
+   *
+   * @returns {ArrayBuffer} the attachment data.
    */
-  async saveToFile(path, isTmp = false) {
+  async fetchAttachment() {
     let url = this.url;
     if (!this.isAllowedURL) {
       throw new Error(`URL not allowed: ${url}`);
@@ -194,14 +195,30 @@ export class AttachmentInfo {
         }
       );
     });
+    return buffer;
+  }
+
+  /**
+   * @param {string} path - Path to save to.
+   * @param {boolean} [isTmp=false] - Treat it as a temporary file.
+   */
+  async saveToFile(path, isTmp = false) {
+    const buffer = await this.fetchAttachment();
     await IOUtils.write(path, new Uint8Array(buffer));
 
     if (!isTmp) {
+      let url = this.url;
+      if (
+        this.contentType == "message/rfc822" ||
+        /[?&]filename=.*\.eml(&|$)/.test(url)
+      ) {
+        url += url.includes("?") ? "&outputformat=raw" : "?outputformat=raw";
+      }
       // Create a download so that saved files show up under... Saved Files.
       const file = await IOUtils.getFile(path);
       lazy.Downloads.createDownload({
         source: {
-          url: sourceURI.spec,
+          url,
         },
         target: file,
         startTime: new Date(),
@@ -213,6 +230,30 @@ export class AttachmentInfo {
         })
         .catch(console.error);
     }
+  }
+
+  /**
+   * Create a temp file in an appropriate non-predictable temp folder.
+   *
+   * @param {string} filename - Preferred filename.
+   * @returns {nsIFile} the created file.
+   */
+  async #setupTempFile(filename) {
+    const tmpPath = PathUtils.join(
+      PathUtils.tempDir,
+      "pid-" + Services.appinfo.processID
+    );
+    await IOUtils.makeDirectory(tmpPath, { permissions: 0o700 });
+    const tempFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+    tempFile.initWithPath(tmpPath);
+
+    tempFile.append(filename);
+    tempFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
+
+    Cc["@mozilla.org/uriloader/external-helper-app-service;1"]
+      .getService(Ci.nsPIExternalAppLauncher)
+      .deleteTemporaryFileOnExit(tempFile);
+    return tempFile;
   }
 
   /**
@@ -282,7 +323,6 @@ export class AttachmentInfo {
     if (this.contentType == "message/rfc822") {
       let tempFile = this.#temporaryFiles.get(this.url);
       if (!tempFile?.exists()) {
-        tempFile = Services.dirsvc.get("TmpD", Ci.nsIFile);
         // Try to use the name of the attachment for the temporary file, so
         // that the name is included in the URI of the message that is
         // opened, and possibly saved as a file later by the user.
@@ -292,8 +332,7 @@ export class AttachmentInfo {
         } else if (!/\.eml$/i.test(sanitizedName)) {
           sanitizedName += ".eml";
         }
-        tempFile.append(sanitizedName);
-        tempFile.createUnique(0, 0o600);
+        tempFile = await this.#setupTempFile(sanitizedName);
         await this.saveToFile(tempFile.path, true);
 
         this.#temporaryFiles.set(this.url, tempFile);
@@ -334,23 +373,7 @@ export class AttachmentInfo {
     const name = lazy.DownloadPaths.sanitize(this.name);
 
     const createTemporaryFileAndOpen = async fileMimeInfo => {
-      const tmpPath = PathUtils.join(
-        Services.dirsvc.get("TmpD", Ci.nsIFile).path,
-        "pid-" + Services.appinfo.processID
-      );
-      await IOUtils.makeDirectory(tmpPath, { permissions: 0o700 });
-      const tempFile = Cc["@mozilla.org/file/local;1"].createInstance(
-        Ci.nsIFile
-      );
-      tempFile.initWithPath(tmpPath);
-
-      tempFile.append(name);
-      tempFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
-      tempFile.remove(false);
-
-      Cc["@mozilla.org/uriloader/external-helper-app-service;1"]
-        .getService(Ci.nsPIExternalAppLauncher)
-        .deleteTemporaryFileOnExit(tempFile);
+      const tempFile = await this.#setupTempFile(name);
 
       await this.saveToFile(tempFile.path, true);
       // Before opening from the temp dir, make the file read-only so that
@@ -568,10 +591,29 @@ export class AttachmentInfo {
     // }
 
     if (/^file:\/\/\/[^A-Za-z]/i.test(this.url)) {
-      // Looks like a non-local (remote UNC) file URL. Don't allow that.
-      return false;
+      // Looks like a non-local (remote UNC) file URL. Don't allow that
+      // unless it's been explicitel allowed for that hostname.
+      const allow = Services.prefs
+        .getStringPref("mail.allowed_attachment_hostnames", "")
+        .split(",")
+        .filter(Boolean)
+        .some(h => new RegExp(`^file:\/+${h}/`, "i").test(this.url));
+      if (!allow) {
+        console.warn(
+          `Attachment blocked for UNC path ${this.url}. To unblock, add the hostname to mail.allowed_attachment_hostnames`
+        );
+        return false;
+      }
+      return true;
     }
-    return /^(http?s|file|data|mailbox|imap|s?news|ews):/i.test(this.url);
+
+    if (this.message && this.message.flags & Ci.nsMsgMessageFlags.FeedMsg) {
+      // Feed enclosures allow only http.
+      return /^https?:/i.test(this.url);
+    }
+
+    // Don't allow http for other cases.
+    return /^(file|data|mailbox|imap|s?news|ews):/i.test(this.url);
   }
 
   /**

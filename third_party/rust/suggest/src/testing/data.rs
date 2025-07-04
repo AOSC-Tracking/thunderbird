@@ -4,7 +4,7 @@
 
 //! Test data that we use in many tests
 
-use crate::{suggestion::FtsMatchInfo, testing::MockIcon, Suggestion};
+use crate::{suggestion::FtsMatchInfo, suggestion::YelpSubjectType, testing::MockIcon, Suggestion};
 use serde_json::json;
 use serde_json::Value as JsonValue;
 
@@ -14,6 +14,7 @@ pub fn los_pollos_amp() -> JsonValue {
         "advertiser": "Los Pollos Hermanos",
         "iab_category": "8 - Food & Drink",
         "keywords": ["lo", "los", "los p", "los pollos", "los pollos h", "los pollos hermanos"],
+        "full_keywords": [("los pollos", 4), ("los pollos hermanos", 2)],
         "title": "Los Pollos Hermanos - Albuquerque",
         "url": "https://www.lph-nm.biz",
         "icon": "los-pollos-favicon",
@@ -59,6 +60,7 @@ pub fn good_place_eats_amp() -> JsonValue {
         "advertiser": "Good Place Eats",
         "iab_category": "8 - Food & Drink",
         "keywords": ["la", "las", "lasa", "lasagna", "lasagna come out tomorrow"],
+        "full_keywords": [("lasagna", 2), ("lasagna come out tomorrow", 2)],
         "title": "Lasagna Come Out Tomorrow",
         "url": "https://www.lasagna.restaurant",
         "icon": "good-place-eats-favicon",
@@ -292,13 +294,16 @@ pub fn burnout_suggestion(is_top_pick: bool) -> Suggestion {
 pub fn ramen_yelp() -> JsonValue {
     json!({
         "subjects": ["ramen", "spicy ramen", "spicy random ramen", "rats", "raven", "raccoon", "012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789", "012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789Z"],
+        "businessSubjects": ["the shop"],
         "preModifiers": ["best", "super best", "same_modifier"],
         "postModifiers": ["delivery", "super delivery", "same_modifier"],
         "locationSigns": [
+            // V1 format also can be used as location sign.
             { "keyword": "in", "needLocation": true },
-            { "keyword": "near", "needLocation": true },
             { "keyword": "near by", "needLocation": false },
-            { "keyword": "near me", "needLocation": false },
+            // V2 format.
+            "near",
+            "near me",
         ],
         "yelpModifiers": ["yelp", "yelp keyword"],
         "icon": "yelp-favicon",
@@ -315,6 +320,7 @@ pub fn ramen_suggestion(title: &str, url: &str) -> Suggestion {
         score: 0.5,
         has_location_sign: true,
         subject_exact_match: true,
+        subject_type: YelpSubjectType::Service,
         location_param: "find_loc".into(),
     }
 }

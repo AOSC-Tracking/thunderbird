@@ -326,7 +326,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aScheme,
       break;
     case ColorID::MozColheader:
     case ColorID::MozColheaderhover:
-    case ColorID::MozEventreerow:
       // Background color of even list rows.
       aColor =
           GetColorFromNSColor(NSColor.controlAlternatingRowBackgroundColors[0]);
@@ -529,6 +528,9 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       break;
     case IntID::FullKeyboardAccess:
       aResult = NSApp.isFullKeyboardAccessEnabled;
+      break;
+    case IntID::NativeMenubar:
+      aResult = 1;
       break;
     default:
       aResult = 0;

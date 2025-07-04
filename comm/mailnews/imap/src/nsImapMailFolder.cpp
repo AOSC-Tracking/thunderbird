@@ -14,14 +14,12 @@
 #include "nsLocalFile.h"
 #include "nsAnonymousTemporaryFile.h"
 #include "nsIUrlListener.h"
-#include "nsCOMPtr.h"
 #include "nsMsgFolderFlags.h"
 #include "nsIImapUrl.h"
 #include "nsImapUtils.h"
 #include "nsMsgUtils.h"
 #include "nsIMsgMailSession.h"
 #include "nsITransactionManager.h"
-#include "nsImapUndoTxn.h"
 #include "../public/nsIImapHostSessionList.h"
 #include "nsIMsgCopyService.h"
 #include "nsImapStringBundle.h"
@@ -37,7 +35,6 @@
 #include "nsImapMoveCoalescer.h"
 #include "nsIPrompt.h"
 #include "nsIDocShell.h"
-#include "nsUnicharUtils.h"
 #include "nsIImapFlagAndUidState.h"
 #include "nsIImapHeaderXferInfo.h"
 #include "nsIMessenger.h"
@@ -49,7 +46,6 @@
 #include "nsIMsgLocalMailFolder.h"
 #include "nsIMsgOfflineImapOperation.h"
 #include "nsImapOfflineSync.h"
-#include "nsIImapMailFolderSink.h"
 #include "nsIImapServerSink.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIImapMockChannel.h"
@@ -63,17 +59,14 @@
 #include "nsIMsgComposeService.h"
 #include "nsIMsgIdentity.h"
 #include "nsIMsgFolderNotificationService.h"
-#include "nsIExternalProtocolService.h"
-#include "nsCExternalHandlerService.h"
 #include "prprf.h"
 #include "nsIMsgFilterCustomAction.h"
 #include "nsStringEnumerator.h"
 #include "nsIMsgStatusFeedback.h"
+#include "nsIMsgThread.h"
 #include "nsMsgLineBuffer.h"
 #include "mozilla/Logging.h"
 #include "mozilla/ScopeExit.h"
-#include "nsIStreamListener.h"
-#include "nsITimer.h"
 #include "nsReadableUtils.h"
 #include "UrlListener.h"
 #include "nsIObserverService.h"
@@ -3505,9 +3498,7 @@ NS_IMETHODIMP nsImapMailFolder::ApplyFilterHit(nsIMsgFilter* filter,
           nsAutoCString junkScoreStr;
           int32_t junkScore;
           filterAction->GetJunkScore(&junkScore);
-          junkScoreStr.AppendInt(junkScore);
-          rv = mDatabase->SetStringProperty(msgKey, "junkscore", junkScoreStr);
-          mDatabase->SetStringProperty(msgKey, "junkscoreorigin", "filter"_ns);
+          SetJunkScoreForMessage(msgHdr, junkScore, "filter"_ns, -1);
 
           // If score is available, set up to store junk status on server.
           if (junkScore == nsIJunkMailPlugin::IS_SPAM_SCORE ||
@@ -4268,7 +4259,8 @@ NS_IMETHODIMP nsImapMailFolder::DownloadMessagesForOffline(
       do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = AcquireSemaphore(static_cast<nsIMsgFolder*>(this));
+  rv = AcquireSemaphore(static_cast<nsIMsgFolder*>(this),
+                        "nsImapMailFolder::DownloadMessagesForOffline"_ns);
   if (NS_FAILED(rv)) {
     ThrowAlertMsg("operationFailedFolderBusy", window);
     return rv;
@@ -4291,7 +4283,8 @@ NS_IMETHODIMP nsImapMailFolder::DownloadAllForOffline(nsIUrlListener* listener,
     GetDatabase();
     m_downloadingFolderForOfflineUse = true;
 
-    rv = AcquireSemaphore(static_cast<nsIMsgFolder*>(this));
+    rv = AcquireSemaphore(static_cast<nsIMsgFolder*>(this),
+                          "nsImapMailFolder::DownloadAllForOffline"_ns);
     if (NS_FAILED(rv)) {
       m_downloadingFolderForOfflineUse = false;
       ThrowAlertMsg("operationFailedFolderBusy", msgWindow);
@@ -4377,7 +4370,8 @@ void nsImapMailFolder::EndOfflineDownload() {
   if (m_tempMessageStream) {
     m_tempMessageStream->Close();
     m_tempMessageStream = nullptr;
-    ReleaseSemaphore(static_cast<nsIMsgFolder*>(this));
+    ReleaseSemaphore(static_cast<nsIMsgFolder*>(this),
+                     "nsImapMailFolder::EndOfflineDownload"_ns);
     if (mDatabase) mDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
   }
   m_offlineHeader = nullptr;
@@ -4956,7 +4950,9 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
     bool hasSemaphore = false;
     // if we have the folder locked, clear it.
     TestSemaphore(static_cast<nsIMsgFolder*>(this), &hasSemaphore);
-    if (hasSemaphore) ReleaseSemaphore(static_cast<nsIMsgFolder*>(this));
+    if (hasSemaphore)
+      ReleaseSemaphore(static_cast<nsIMsgFolder*>(this),
+                       "nsImapMailFolder::OnStopRunningUrl"_ns);
     if (downloadingForOfflineUse) {
       endedOfflineDownload = true;
       EndOfflineDownload();
@@ -4970,7 +4966,8 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
       imapUrl->GetImapAction(&imapAction);
       if (imapAction == nsIImapUrl::nsImapMsgFetch ||
           imapAction == nsIImapUrl::nsImapMsgDownloadForOffline) {
-        ReleaseSemaphore(static_cast<nsIMsgFolder*>(this));
+        ReleaseSemaphore(static_cast<nsIMsgFolder*>(this),
+                         "nsImapMailFolder::OnStopRunningUrl"_ns);
         if (!endedOfflineDownload) EndOfflineDownload();
       }
 
@@ -5191,7 +5188,9 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
             nsCOMPtr<nsIMsgFolder> srcFolder =
                 do_QueryInterface(m_copyState->m_srcSupport);
             if (srcFolder) {
-              copyService->NotifyCompletion(m_copyState->m_srcSupport, this,
+              nsIMsgFolder* arrived = m_copyState->m_arrFolder;
+              copyService->NotifyCompletion(m_copyState->m_srcSupport,
+                                            arrived ? arrived : this,
                                             aExitCode);
             }
             m_copyState = nullptr;
@@ -6211,17 +6210,6 @@ nsresult nsMsgIMAPFolderACL::CreateACLRightsString(nsAString& aRightsString) {
   return rv;
 }
 
-NS_IMETHODIMP nsImapMailFolder::GetFilePath(nsIFile** aPathName) {
-  // this will return a copy of mPath, which is what we want.
-  // this will also initialize mPath using parseURI if it isn't already done
-  return nsMsgDBFolder::GetFilePath(aPathName);
-}
-
-NS_IMETHODIMP nsImapMailFolder::SetFilePath(nsIFile* aPathName) {
-  return nsMsgDBFolder::SetFilePath(
-      aPathName);  // call base class so mPath will get set
-}
-
 nsresult nsImapMailFolder::DisplayStatusMsg(nsIImapUrl* aImapUrl,
                                             const nsAString& msg) {
   nsCOMPtr<nsIImapMockChannel> mockChannel;
@@ -6497,32 +6485,6 @@ nsresult nsImapMailFolder::GetClearedOriginalOp(
   return rv;
 }
 
-nsresult nsImapMailFolder::GetOriginalOp(
-    nsIMsgOfflineImapOperation* op, nsIMsgOfflineImapOperation** originalOp,
-    nsIMsgDatabase** originalDB) {
-  nsCOMPtr<nsIMsgOfflineImapOperation> returnOp;
-  nsCString sourceFolderURI;
-  op->GetSourceFolderURI(sourceFolderURI);
-
-  nsresult rv;
-  nsCOMPtr<nsIMsgFolder> sourceFolder;
-  rv = GetOrCreateFolder(sourceFolderURI, getter_AddRefs(sourceFolder));
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIDBFolderInfo> folderInfo;
-  sourceFolder->GetDBFolderInfoAndDB(getter_AddRefs(folderInfo), originalDB);
-  if (*originalDB) {
-    nsCOMPtr<nsIMsgOfflineOpsDatabase> opsDb =
-        do_QueryInterface(*originalDB, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    nsMsgKey originalKey;
-    op->GetMessageKey(&originalKey);
-    rv =
-        opsDb->GetOfflineOpForKey(originalKey, false, getter_AddRefs(returnOp));
-  }
-  returnOp.forget(originalOp);
-  return rv;
-}
-
 // Helper to synchronously copy a message from one msgStore to another.
 static nsresult CopyStoreMessage(nsIMsgDBHdr* srcHdr, nsIMsgDBHdr* destHdr,
                                  uint64_t& bytesCopied) {
@@ -6544,15 +6506,17 @@ static nsresult CopyStoreMessage(nsIMsgDBHdr* srcHdr, nsIMsgDBHdr* destHdr,
   rv = srcFolder->GetLocalMsgStream(srcHdr, getter_AddRefs(srcStream));
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIOutputStream> destStream;
-  rv = destFolder->GetOfflineStoreOutputStream(destHdr,
-                                               getter_AddRefs(destStream));
+  rv = destStore->GetNewMsgOutputStream(destFolder, getter_AddRefs(destStream));
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = SyncCopyStream(srcStream, destStream, bytesCopied);
   if (NS_SUCCEEDED(rv)) {
-    rv = destStore->FinishNewMessage(destStream, destHdr);
+    nsAutoCString storeToken;
+    rv = destStore->FinishNewMessage(destFolder, destStream, storeToken);
+    NS_ENSURE_SUCCESS(rv, rv);
+    destHdr->SetStoreToken(storeToken);
   } else {
-    destStore->DiscardNewMessage(destStream, destHdr);
+    destStore->DiscardNewMessage(destFolder, destStream);
   }
   return rv;
 }
@@ -7632,6 +7596,7 @@ nsresult nsImapMailFolder::InitCopyState(
 
   m_copyState->m_isCrossServerOp = acrossServers;
   m_copyState->m_srcSupport = srcSupport;
+  m_copyState->m_arrFolder = nullptr;
 
   m_copyState->m_messages = messages.Clone();
   if (!m_copyState->m_isCrossServerOp) {
@@ -7691,12 +7656,23 @@ nsresult nsImapMailFolder::CopyFileToOfflineStore(nsIFile* srcFile,
   NS_ENSURE_SUCCESS(rv, rv);
   fakeHdr->SetUint32Property("pseudoHdr", 1);
 
+  nsCOMPtr<nsIMsgPluggableStore> msgStore;
+  rv = GetMsgStore(getter_AddRefs(msgStore));
+  NS_ENSURE_SUCCESS(rv, rv);
+
   // Should we add this to the offline store?
-  nsCOMPtr<nsIOutputStream> offlineStore;
+  nsCOMPtr<nsIOutputStream> offlineStream;
   if (storeOffline) {
-    rv = GetOfflineStoreOutputStream(fakeHdr, getter_AddRefs(offlineStore));
+    rv = msgStore->GetNewMsgOutputStream(this, getter_AddRefs(offlineStream));
     NS_ENSURE_SUCCESS(rv, rv);
   }
+
+  // Clean up if we exit early.
+  auto outGuard = mozilla::MakeScopeExit([&] {
+    if (offlineStream) {
+      msgStore->DiscardNewMessage(this, offlineStream);
+    }
+  });
 
   // We set an offline kMoveResult because in any case we want to update this
   // msgHdr with one downloaded from the server, with possible additional
@@ -7727,7 +7703,6 @@ nsresult nsImapMailFolder::CopyFileToOfflineStore(nsIFile* srcFile,
         new nsMsgLineStreamBuffer(FILE_IO_BUFFER_SIZE, true, false);
     int64_t fileSize;
     srcFile->GetFileSize(&fileSize);
-    uint32_t bytesWritten;
     rv = NS_OK;
     msgParser->SetState(nsIMsgParseMailMsgState::ParseHeadersState);
     msgParser->SetNewMsgHdr(fakeHdr);
@@ -7739,8 +7714,9 @@ nsresult nsImapMailFolder::CopyFileToOfflineStore(nsIFile* srcFile,
                                                 needMoreData);
       if (newLine) {
         msgParser->ParseAFolderLine(newLine, numBytesInLine);
-        if (offlineStore)
-          rv = offlineStore->Write(newLine, numBytesInLine, &bytesWritten);
+        if (offlineStream) {
+          rv = SyncWriteAll(offlineStream, newLine, numBytesInLine);
+        }
 
         free(newLine);
         NS_ENSURE_SUCCESS(rv, rv);
@@ -7749,21 +7725,25 @@ nsresult nsImapMailFolder::CopyFileToOfflineStore(nsIFile* srcFile,
 
     msgParser->FinishHeader();
     uint32_t resultFlags;
-    if (offlineStore)
+    if (offlineStream) {
       fakeHdr->OrFlags(nsMsgMessageFlags::Offline | nsMsgMessageFlags::Read,
                        &resultFlags);
-    else
+      fakeHdr->SetOfflineMessageSize(fileSize);
+    } else {
       fakeHdr->OrFlags(nsMsgMessageFlags::Read, &resultFlags);
-    if (offlineStore) fakeHdr->SetOfflineMessageSize(fileSize);
+    }
     mDatabase->AddNewHdrToDB(fakeHdr, true /* notify */);
 
     // Call FinishNewMessage before setting pending attributes, as in
     //   maildir it copies from tmp to cur and may change the storeToken
     //   to get a unique filename.
-    if (offlineStore) {
-      nsCOMPtr<nsIMsgPluggableStore> msgStore;
-      GetMsgStore(getter_AddRefs(msgStore));
-      if (msgStore) msgStore->FinishNewMessage(offlineStore, fakeHdr);
+    if (offlineStream) {
+      nsAutoCString storeToken;
+      rv = msgStore->FinishNewMessage(this, offlineStream, storeToken);
+      if (NS_SUCCEEDED(rv)) {
+        fakeHdr->SetStoreToken(storeToken);
+        outGuard.release();
+      }
     }
 
     // We are copying from a file to offline store so set offline flag.
@@ -7776,7 +7756,6 @@ nsresult nsImapMailFolder::CopyFileToOfflineStore(nsIFile* srcFile,
     inputStream->Close();
     inputStream = nullptr;
   }
-  if (offlineStore) offlineStore->Close();
   return rv;
 }
 
@@ -8104,6 +8083,9 @@ NS_IMETHODIMP nsImapMailFolder::RenameClient(nsIMsgWindow* msgWindow,
       msgFolder->MatchOrChangeFilterDestination(
           child, false /*caseInsensitive*/, &changed);
       if (changed) msgFolder->AlertFilterChanged(msgWindow);
+      if (m_copyState) {
+        m_copyState->m_arrFolder = child;
+      }
     }
     unusedDB->SetSummaryValid(true);
     unusedDB->Commit(nsMsgDBCommitType::kLargeCommit);
@@ -8351,18 +8333,18 @@ nsresult nsImapMailFolder::PlaybackCoalescedOperations() {
 
 NS_IMETHODIMP
 nsImapMailFolder::SetJunkScoreForMessages(
-    const nsTArray<RefPtr<nsIMsgDBHdr>>& aMessages,
-    const nsACString& aJunkScore) {
-  nsresult rv = nsMsgDBFolder::SetJunkScoreForMessages(aMessages, aJunkScore);
+    const nsTArray<RefPtr<nsIMsgDBHdr>>& messages, nsMsgJunkScore junkScore,
+    const nsACString& junkScoreOrigin, int32_t junkPercent) {
+  nsresult rv = nsMsgDBFolder::SetJunkScoreForMessages(
+      messages, junkScore, junkScoreOrigin, junkPercent);
   if (NS_SUCCEEDED(rv)) {
     nsAutoCString messageIds;
     nsTArray<nsMsgKey> keys;
-    nsresult rv = BuildIdsAndKeyArray(aMessages, messageIds, keys);
+    nsresult rv = BuildIdsAndKeyArray(messages, messageIds, keys);
     NS_ENSURE_SUCCESS(rv, rv);
-    StoreCustomKeywords(
-        nullptr, aJunkScore.EqualsLiteral("0") ? "NonJunk"_ns : "Junk"_ns,
-        aJunkScore.EqualsLiteral("0") ? "Junk"_ns : "NonJunk"_ns, keys,
-        nullptr);
+    StoreCustomKeywords(nullptr, junkScore == 0 ? "NonJunk"_ns : "Junk"_ns,
+                        junkScore == 0 ? "Junk"_ns : "NonJunk"_ns, keys,
+                        nullptr);
     if (mDatabase) mDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
   }
   return rv;
@@ -8824,10 +8806,8 @@ void nsImapMailFolder::PlaybackTimerCallback(nsITimer* aTimer, void* aClosure) {
   RefPtr<nsImapOfflineSync> offlineSync = new nsImapOfflineSync();
   // Execute the offline operations, in pseudoOffline mode.
   offlineSync->Init(request->MsgWindow, nullptr, request->SrcFolder, true);
-  if (offlineSync) {
-    mozilla::DebugOnly<nsresult> rv = offlineSync->ProcessNextOperation();
-    NS_ASSERTION(NS_SUCCEEDED(rv), "pseudo-offline playback is not successful");
-  }
+  mozilla::DebugOnly<nsresult> rv = offlineSync->ProcessNextOperation();
+  NS_ASSERTION(NS_SUCCEEDED(rv), "pseudo-offline playback is not successful");
 
   // release request struct and timer
   request->SrcFolder->m_pendingPlaybackReq = nullptr;

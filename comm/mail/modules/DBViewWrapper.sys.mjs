@@ -1372,17 +1372,19 @@ DBViewWrapper.prototype = {
    * to be rebuilt. We want to notify our listener so they have a chance to
    * save the selected messages.
    */
-  _aboutToCompactFolder(_aFolder) {
-    // we will have to re-create the view, so nuke the view now.
-    if (this.dbView) {
-      // Save the view's flags that will be restored in
-      // _compactedFolder(aFolder).
-      this.__viewFlags = this.dbView.viewFlags;
-      this.listener.onDestroyingView(true);
-      this.search.dissociateView(this.dbView);
-      this.dbView.close();
-      this.dbView = null;
+  _aboutToCompactFolder(aFolder) {
+    if (aFolder != this.displayedFolder || !this.dbView) {
+      return;
     }
+
+    // Save the view's flags that will be restored in
+    // _compactedFolder(aFolder).
+    this.__viewFlags = this.dbView.viewFlags;
+    // We will have to re-create the view, so nuke the view now.
+    this.listener.onDestroyingView(true);
+    this.search.dissociateView(this.dbView);
+    this.dbView.close();
+    this.dbView = null;
   },
 
   /**
@@ -2088,6 +2090,9 @@ DBViewWrapper.prototype = {
    *   false if the row is a collapsed group or anything else.
    */
   isCollapsedThreadAtIndex(aViewIndex) {
+    if (aViewIndex == nsMsgViewIndex_None) {
+      return false;
+    }
     const flags = this.dbView.getFlagsAt(aViewIndex);
     return (
       flags & Ci.nsMsgMessageFlags.Elided &&
@@ -2104,6 +2109,9 @@ DBViewWrapper.prototype = {
    * @returns {boolean}
    */
   isExpandedGroupedByHeaderAtIndex(aViewIndex) {
+    if (aViewIndex == nsMsgViewIndex_None) {
+      return false;
+    }
     const flags = this.dbView.getFlagsAt(aViewIndex);
     return (
       !(flags & Ci.nsMsgMessageFlags.Elided) &&
