@@ -231,24 +231,6 @@ Enigmail.msg = {
     return EnigmailMsgRead.getUrlFromUriSpec(uriSpec);
   },
 
-  setMainMenuLabel() {
-    const o = ["menu_Enigmail", "appmenu-Enigmail"];
-
-    const m0 = document.getElementById(o[0]);
-    const m1 = document.getElementById(o[1]);
-
-    m1.setAttribute("enigmaillabel", m0.getAttribute("enigmaillabel"));
-
-    for (const menuId of o) {
-      const menu = document.getElementById(menuId);
-
-      if (menu) {
-        const lbl = menu.getAttribute("enigmaillabel");
-        menu.setAttribute("label", lbl);
-      }
-    }
-  },
-
   /**
    * Check that handler for multipart/signed is set to Enigmail.
    * if handler is different, change it and reload message.
@@ -879,12 +861,31 @@ Enigmail.msg = {
     );
   },
 
-  hasInlineQuote(node) {
-    if (node.innerHTML.search(/<blockquote.*-----BEGIN PGP /i) < 0) {
+  /**
+   * @param {Node} mainNode - The node to check.
+   * @returns {boolean} true if an inline quote is found
+   */
+  hasInlineQuote(mainNode) {
+    if (mainNode.innerHTML.search(/<blockquote.*-----BEGIN PGP /i) < 0) {
       return false;
     }
+    const searchQuotedPgp = function (node) {
+      if (
+        node.nodeName.toLowerCase() === "blockquote" &&
+        node.textContent.includes("-----BEGIN PGP ")
+      ) {
+        return true;
+      }
+      if (node.firstChild && searchQuotedPgp(node.firstChild)) {
+        return true;
+      }
 
-    return EnigmailMsgRead.searchQuotedPgp(node);
+      if (node.nextSibling && searchQuotedPgp(node.nextSibling)) {
+        return true;
+      }
+      return false;
+    };
+    return searchQuotedPgp(mainNode);
   },
 
   hasHeadOrTailBesidesInlinePGP(msgText) {
@@ -1288,9 +1289,9 @@ Enigmail.msg = {
     }
   },
 
-  importAttachedSenderKey() {
+  async importAttachedSenderKey() {
     for (const info of Enigmail.msg.attachedSenderEmailKeysIndex) {
-      EnigmailKeyRing.importKeyDataWithConfirmation(
+      await EnigmailKeyRing.importKeyDataWithConfirmation(
         window,
         [info.keyInfo],
         Enigmail.msg.attachedKeys[info.idx],
@@ -1371,7 +1372,7 @@ Enigmail.msg = {
       false
     );
     if (preview && errorMsgObj.value === "") {
-      EnigmailKeyRing.importKeyDataWithConfirmation(
+      await EnigmailKeyRing.importKeyDataWithConfirmation(
         window,
         preview,
         keyData,
@@ -1455,43 +1456,6 @@ Enigmail.msg = {
 
     // Remove the brokenExchangeProgress notification at the end of the process.
     this.removeNotification("brokenExchangeProgress");
-  },
-
-  /**
-   * Hide attachments containing OpenPGP keys.
-   */
-  hidePgpKeys() {
-    const keys = [];
-    for (let i = 0; i < currentAttachments.length; i++) {
-      if (
-        currentAttachments[i].contentType.search(/^application\/pgp-keys/i) ===
-        0
-      ) {
-        keys.push(i);
-      }
-    }
-
-    if (keys.length > 0) {
-      const attachmentList = document.getElementById("attachmentList");
-
-      for (let i = keys.length; i > 0; i--) {
-        currentAttachments.splice(keys[i - 1], 1);
-      }
-
-      if (attachmentList) {
-        // delete all keys from attachment list
-        while (attachmentList.firstChild) {
-          attachmentList.firstChild.remove();
-        }
-
-        // build new attachment list
-
-        const orig = gBuildAttachmentsForCurrentMsg;
-        gBuildAttachmentsForCurrentMsg = false;
-        displayAttachmentsForExpandedView();
-        gBuildAttachmentsForCurrentMsg = orig;
-      }
-    }
   },
 
   // check if the attachment could be encrypted
@@ -1885,7 +1849,7 @@ Enigmail.msg = {
       }
 
       if (preview && errorMsgObj.value === "") {
-        EnigmailKeyRing.importKeyDataWithConfirmation(
+        await EnigmailKeyRing.importKeyDataWithConfirmation(
           window,
           preview,
           data,
@@ -2002,43 +1966,6 @@ Enigmail.msg = {
         this.handleAttachment("openAttachment", attachment);
         event.stopPropagation();
       }
-    }
-  },
-
-  /**
-   * Decrypted and copy/move all selected messages in a target folder.
-   *
-   * @param {nsIMsgFolder} destFolder - Destination folder.
-   * @param {boolean} move - true for move, false for copy.
-   */
-  async decryptToFolder(destFolder, move) {
-    const msgHdrs = gDBView.getSelectedMsgHdrs();
-    if (!msgHdrs || msgHdrs.length === 0) {
-      return;
-    }
-
-    const total = msgHdrs.length;
-    let failures = 0;
-    for (const msgHdr of msgHdrs) {
-      await EnigmailPersistentCrypto.cryptMessage(
-        msgHdr,
-        destFolder.URI,
-        move,
-        false
-      ).catch(() => {
-        failures++;
-      });
-    }
-
-    if (failures) {
-      const info = await document.l10n.formatValue(
-        "decrypt-and-copy-failures-multiple",
-        {
-          failures,
-          total,
-        }
-      );
-      Services.prompt.alert(null, document.title, info);
     }
   },
 

@@ -24,7 +24,7 @@ add_task(function () {
     "virtual",
     rootFolder,
     [trashFolder, deletedFolder],
-    "ANY",
+    "ALL",
     false
   );
   const virtualFolder = wrappedVirtualFolder.virtualFolder;
@@ -45,7 +45,7 @@ add_task(function () {
     "smart",
     rootFolder,
     [trashFolder, deletedFolder],
-    "ANY",
+    "ALL",
     false
   );
   const smartFolder = wrappedSmartFolder.virtualFolder;
@@ -84,6 +84,6 @@ add_task(function () {
   Assert.deepEqual(
     wrappedSmartFolder.searchFolders,
     [trashFolder],
-    "smart virtual folder should still search the trash folder (only)"
+    `smart virtual folder should still search the trash folder (only), but it is searching ${wrappedSmartFolder.searchFolders.map(f => f.name)}`
   );
 });

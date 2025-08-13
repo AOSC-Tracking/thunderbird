@@ -499,22 +499,10 @@ MailGlue.prototype = {
         Cc["@mozilla.org/msgDBView/msgDBViewService;1"]
           .getService(Ci.nsIMsgDBViewService)
           .initializeDBViewStrings();
-        const windows = Services.wm.getEnumerator("mail:3pane");
-        while (windows.hasMoreElements()) {
-          const tabmail = windows.getNext().document.getElementById("tabmail");
-          if (tabmail) {
-            for (const tab of tabmail.tabInfo) {
-              if (tab.mode.name == "mail3PaneTab") {
-                tab.chromeBrowser?.contentWindow.threadTree?.invalidate();
-              }
-            }
-          }
-        }
-        // Refresh the folder tree.
-        const fls = Cc["@mozilla.org/mail/folder-lookup;1"].getService(
-          Ci.nsIFolderLookupService
-        );
-        fls.setPrettyNameFromOriginalAllFolders();
+        // Notify the UI that the strings have changed. It can't listen to
+        // intl:app-locales-changed because the strings must be updated
+        // before the UI is.
+        Services.obs.notifyObservers(null, "folder-strings-changed");
         break;
       }
       case "handle-xul-text-link":
@@ -632,7 +620,7 @@ MailGlue.prototype = {
     ) {
       const buildID = Services.appinfo.appBuildID;
       const today = new Date().getTime();
-      /* eslint-disable no-multi-spaces */
+
       const buildDate = new Date(
         buildID.slice(0, 4), // year
         buildID.slice(4, 6) - 1, // months are zero-based.
@@ -642,7 +630,6 @@ MailGlue.prototype = {
         buildID.slice(12, 14)
       ) // ms
         .getTime();
-      /* eslint-enable no-multi-spaces */
 
       const millisecondsIn24Hours = 86400000;
       const acceptableAge =

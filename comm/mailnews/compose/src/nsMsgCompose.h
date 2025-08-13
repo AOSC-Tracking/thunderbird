@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef _nsMsgCompose_H_
-#define _nsMsgCompose_H_
+#ifndef COMM_MAILNEWS_COMPOSE_SRC_NSMSGCOMPOSE_H_
+#define COMM_MAILNEWS_COMPOSE_SRC_NSMSGCOMPOSE_H_
 
 #include "nsIMsgCompose.h"
 #include "nsCOMArray.h"
@@ -72,7 +72,6 @@ class nsMsgCompose : public nsIMsgCompose, public nsSupportsWeakReference {
  protected:
   nsresult CreateMessage(const nsACString& originalMsgURI, MSG_ComposeType type,
                          nsIMsgCompFields* compFields);
-  void CleanUpRecipients(nsString& recipients);
   nsresult GetABDirAndMailLists(const nsACString& aDirUri,
                                 nsCOMArray<nsIAbDirectory>& aDirArray,
                                 nsTArray<nsMsgMailList>& aMailListArray);
@@ -188,7 +187,6 @@ class QuotingOutputStreamListener : public nsIMsgQuotingOutputStreamListener,
   nsCOMPtr<nsIMsgDBHdr> mOrigMsgHdr;
   nsString mCiteReference;
   nsCOMPtr<nsIMimeConverter> mMimeConverter;
-  int32_t mUnicodeBufferCharacterLength;
   bool mQuoteOriginal;
   nsCString mHtmlToQuote;
 };
@@ -242,4 +240,4 @@ struct nsMsgMailList {
   nsCOMPtr<nsIAbDirectory> mDirectory;
 };
 
-#endif /* _nsMsgCompose_H_ */
+#endif  // COMM_MAILNEWS_COMPOSE_SRC_NSMSGCOMPOSE_H_

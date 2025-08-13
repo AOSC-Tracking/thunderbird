@@ -19,7 +19,6 @@ form {
   --hub-menuitem-color-selected: var(--color-neutral-base);
   --hub-menuitem-background-color-selected: var(--color-primary-default);
   --hub-form-input-line-height: 1em;
-  /* TODO: apply dark mode styling */
 
   grid-row: header / footer;
 
@@ -96,6 +95,10 @@ form {
     border: 1px solid var(--color-neutral-border);
     background-color: var(--hub-input-bg-color);
     font-weight: 200;
+
+    &[type="password"] {
+      padding-inline-end: 9px;
+    }
 
     &::placeholder {
       font-weight: 200;
@@ -427,46 +430,6 @@ div:has(legend) {
   }
 }
 
-#password {
-  &:placeholder-shown ~ .form-toggle-button {
-    display: none;
-  }
-
-  & ~ .form-toggle-button {
-    cursor: pointer;
-    appearance: none;
-    background: transparent;
-    border: none;
-    padding: 0 4px;
-    margin-inline: -30px 6px;
-    min-width: auto;
-    min-height: auto;
-    margin-block: 0;
-    line-height: 0;
-
-    &:hover,
-    &:active {
-      background-color: transparent !important;
-    }
-  }
-
-  & ~ .form-toggle-button .form-icon {
-    -moz-context-properties: fill, stroke;
-    fill: color-mix(in srgb, currentColor 20%, transparent);
-    stroke: currentColor;
-    pointer-events: none;
-    margin-inline: 0;
-  }
-
-  &[type="password"] ~ .form-toggle-button .form-icon {
-    content: var(--icon-hidden);
-  }
-
-  &[type="text"] ~ .form-toggle-button .form-icon {
-    content: var(--icon-eye);
-  }
-}
-
 .input-warning {
   display: none;
 
@@ -765,6 +728,8 @@ div:has(legend) {
       & .title {
         color: var(--color-text-base);
         text-transform: capitalize;
+        margin-block: 0;
+        font-size: 1rem;
       }
 
       & .subtitle {
@@ -841,93 +806,165 @@ div:has(legend) {
 /* Address book styles */
 
 button.account-hub-option-button {
-  display: flex;
-  gap: var(--hub-address-book-option-select-gap);
-  align-items: center;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: var(--hub-address-book-option-select-gap);
+  row-gap: 1px;
   padding: var(--hub-address-book-option-padding);
   margin: 0;
   border: none;
-  font-weight: normal;
   background-color: var(--color-neutral-base);
   width: 100%;
   box-shadow: 0 12px 10px -10px rgba(0, 79, 155, 0.25),
     0 0 5px 0 rgba(23, 95, 182, 0.1);
+  overflow: hidden;
+  flex-shrink: 0;
+
+  &.three-column {
+    grid-template-columns: auto 1fr auto;
+  }
 
   @media (prefers-reduced-motion: no-preference) {
     transition: background-color 220ms ease, box-shadow 220ms ease;
   }
 
-  &:hover:not(disabled),
-  &:hover:active:not(disabled) {
-    background-color: var(--color-primary-soft);
+  &:enabled {
+    &:hover,
+    &:hover:active {
+      background-color: var(--color-primary-soft);
 
-    & .option-icon {
-      background-color: var(--color-primary-pressed);
+      & .option-icon {
+        background-color: var(--color-primary-pressed);
+      }
+    }
+
+    &:hover {
+      box-shadow: 0 25px 10px -20px rgba(0, 79, 155, 0.35),
+        0 0 5px 0 rgba(23, 95, 182, 0.2);
+    }
+
+    &:hover:active {
+      box-shadow: 0 5px 5px -5px rgba(0, 79, 155, 0.35), 0 0 5px 0 rgba(23, 95, 182, 0.2);
     }
   }
 
-  &:hover:not(disabled) {
-    box-shadow: 0 25px 10px -20px rgba(0, 79, 155, 0.35),
-      0 0 5px 0 rgba(23, 95, 182, 0.2);
+  &:disabled {
+    background-color: var(--color-neutral-border);
+
+    & .option-title.account-title,
+    & .option-data.account-data {
+      color: var(--color-text-secondary);
+    }
+
+    & .account-address-book-count {
+      background-color: var(--color-text-secondary);
+    }
+
+    & .mail-lock-icon {
+      stroke: var(--color-text-secondary);
+      fill: color-mix(in srgb, var(--color-text-secondary) 20%, transparent);
+    }
   }
 
-  &:hover:active:not(disabled) {
-    box-shadow: 0 5px 5px -5px rgba(0, 79, 155, 0.35), 0 0 5px 0 rgba(23, 95, 182, 0.2);
-  }
-
-  & .option-icon {
-    padding: 6px;
-    background-color: var(--color-primary-default);
-    box-shadow: 0 3px 4px -2px rgba(25, 81, 143, 0.5),  0 -2px 0 0 rgb(0, 0, 0, 0.25) inset;
-    border-radius: 5px;
+  & img {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    -moz-context-properties: fill, stroke;
+    fill: light-dark(color-mix(in srgb, #feffff 20%, transparent), color-mix(in srgb, #1a202c 20%, transparent));
+    stroke: var(--color-neutral-base);
+    align-self: center;
     line-height: 0;
+
+    .fetching & {
+      stroke: var(--color-primary-default);
+      background-color: transparent !important;
+      box-shadow: none !important;
+    }
+
+    &.address-book-option-icon {
+      padding: 6px;
+      background-color: var(--color-primary-default);
+      box-shadow: 0 3px 4px -2px rgba(25, 81, 143, 0.5), 0 -2px 0 0 rgb(0, 0, 0, 0.25) inset;
+      border-radius: 5px;
+    }
 
     @media (prefers-reduced-motion: no-preference) {
       transition: background-color 220ms ease;
+
+      .fetching & {
+        animation: spinning-animation 1.5s ease infinite;
+      }
     }
 
-    & img {
-      height: 24px;
-      width: 24px;
-      -moz-context-properties: fill, stroke;
-      fill: light-dark(color-mix(in srgb, #feffff 20%, transparent), color-mix(in srgb, #1a202c 20%, transparent));
-      stroke: var(--color-neutral-base);
-    }
-
-    & .sync-icon {
+    &.sync-icon {
       content: var(--icon-sync-lg);
     }
 
-    & .remote-address-book-icon {
+    &.remote-address-book-icon {
       content: var(--icon-address-book-remote-lg);
     }
 
-    & .local-address-book-icon {
+    &.local-address-book-icon {
       content: var(--icon-address-book-new-lg);
     }
 
-    & .ldap-address-book-icon {
+    &.ldap-address-book-icon {
       content: var(--addons-manager-site-permissions);
     }
+
+    &.mail-lock-icon {
+      stroke: var(--color-primary-default);
+      fill: color-mix(in srgb, var(--color-primary-default) 20%, transparent);
+      content: var(--icon-mail-lock-lg);
+    }
   }
 
-  & .option-content {
-    display: flex;
-    flex-direction: column;
-    align-items: start;
-    gap: 1px;
+  & .option-title {
+    grid-column: 2;
+    grid-row: 1;
+    font-size: 1.54rem;
+    color: var(--color-primary-hover);
+    font-weight: 400;
+    text-align: start;
+    text-overflow: ellipsis;
 
-    & .option-title {
-      font-size: 1.54rem;
-      color: var(--color-primary-hover);
-      font-weight: 400;
-    }
-
-    & .option-data {
-      font-size: 1rem;
-      font-weight: 500;
+    &.account-title {
+      font-size: 1.15rem;
       color: var(--color-text-secondary);
-      text-align: start;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
   }
+
+  & .option-data {
+    grid-column: 2;
+    grid-row: 2;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    text-align: start;
+
+    &.account-data {
+      color: var(--color-primary-hover);
+    }
+  }
+
+  & .account-address-book-count {
+    grid-column: 3;
+    grid-row: 1;
+    padding-block: 3px;
+    padding-inline: 6px;
+    font-weight: 700;
+    font-size: 1rem;
+    background-color: var(--color-primary-hover);
+    border-radius: 3px;
+    color: var(--color-primary-soft);
+  }
+}
+
+@keyframes spinning-animation {
+  0% { transform: rotate(0); }
+  100% { transform: rotate(360deg); }
 }

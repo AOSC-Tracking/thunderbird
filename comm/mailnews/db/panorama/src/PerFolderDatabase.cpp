@@ -5,6 +5,7 @@
 #include "PerFolderDatabase.h"
 
 #include "DatabaseCore.h"
+#include "DetachedMsgHdr.h"
 #include "MailNewsTypes.h"
 #include "Message.h"
 #include "MessageDatabase.h"
@@ -44,7 +45,7 @@ void PerFolderDatabase::OnMessageFlagsChanged(Message* message,
 // nsIDBChangeAnnouncer:
 
 NS_IMETHODIMP PerFolderDatabase::AddListener(nsIDBChangeListener* listener) {
-  mListeners.AppendElement(listener);
+  mListeners.AppendElementUnlessExists(listener);
   return NS_OK;
 }
 NS_IMETHODIMP PerFolderDatabase::RemoveListener(nsIDBChangeListener* listener) {
@@ -94,6 +95,9 @@ NS_IMETHODIMP PerFolderDatabase::NotifyAnnouncerGoingAway(void) {
 
 // nsIMsgDatabase:
 
+NS_IMETHODIMP PerFolderDatabase::OpenFromFile(nsIFile* aFolderName) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
 NS_IMETHODIMP PerFolderDatabase::Close(bool aForceCommit) { return NS_OK; }
 NS_IMETHODIMP PerFolderDatabase::Commit(nsMsgDBCommit aCommitType) {
   return NS_OK;
@@ -180,17 +184,67 @@ NS_IMETHODIMP PerFolderDatabase::GetMsgHdrForUID(uint32_t uid,
 }
 NS_IMETHODIMP PerFolderDatabase::CreateNewHdr(nsMsgKey aKey,
                                               nsIMsgDBHdr** aRetVal) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  MOZ_ASSERT(aKey == nsMsgKey_None);
+  RefPtr<DetachedMsgHdr> hdr = new DetachedMsgHdr(mFolderId);
+  hdr.forget(aRetVal);
+  return NS_OK;
 }
 NS_IMETHODIMP PerFolderDatabase::AddNewHdrToDB(nsIMsgDBHdr* newHdr,
                                                bool notify) {
+  NS_ERROR("AddNewHdrToDB() not supported");
   return NS_ERROR_NOT_IMPLEMENTED;
 }
+
+NS_IMETHODIMP PerFolderDatabase::AttachHdr(nsIMsgDBHdr* detachedHdr,
+                                           bool notify, nsIMsgDBHdr** realHdr) {
+  NS_ENSURE_ARG(detachedHdr);
+
+  bool isLive;
+  nsresult rv = detachedHdr->GetIsLive(&isLive);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (isLive) {
+    NS_ERROR("Live nsIMsgDBHdr passed in to AttachHdr()");
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  // We know the concrete implementation.
+  DetachedMsgHdr* d = static_cast<DetachedMsgHdr*>(detachedHdr);
+  nsCOMPtr<nsIMsgDBHdr> live;
+
+  rv = AddMsgHdr(&d->mRaw, notify, getter_AddRefs(live));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Extra stuff to copy that's not covered by RawHdr.
+  if (d->mMessageSize > 0) {
+    rv = live->SetMessageSize(d->mMessageSize);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  // Hackery for legacy code. Really want to ditch this.
+  // It shouldn't be set on detached headers.
+  if (!d->mStoreToken.IsEmpty()) {
+    rv = live->SetStoreToken(d->mStoreToken);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (d->mOfflineMessageSize > 0) {
+    rv = live->SetOfflineMessageSize(d->mOfflineMessageSize);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (d->mLineCount > 0) {
+    rv = live->SetLineCount(d->mLineCount);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  live.forget(realHdr);
+  return NS_OK;
+}
+
 NS_IMETHODIMP PerFolderDatabase::CopyHdrFromExistingHdr(
     nsMsgKey key, nsIMsgDBHdr* existingHdr, bool addHdrToDB,
     nsIMsgDBHdr** aRetVal) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
+
 NS_IMETHODIMP PerFolderDatabase::AddMsgHdr(RawHdr* msg, bool notify,
                                            nsIMsgDBHdr** newHdr) {
   MOZ_ASSERT(newHdr);
@@ -207,6 +261,7 @@ NS_IMETHODIMP PerFolderDatabase::AddMsgHdr(RawHdr* msg, bool notify,
   // anyway, and no data fields).
   RefPtr<Message> newMsg;
   rv = mMessageDatabase->GetMessage(key, getter_AddRefs(newMsg));
+
   newMsg.forget(newHdr);
   return rv;
 }
@@ -258,11 +313,10 @@ NS_IMETHODIMP PerFolderDatabase::ReverseEnumerateMessages(
 NS_IMETHODIMP PerFolderDatabase::EnumerateThreads(
     nsIMsgThreadEnumerator** aEnumerator) {
   nsCOMPtr<mozIStorageStatement> stmt;
-  nsresult rv =
-      DatabaseCore::GetStatement("GetAllMessages"_ns,
-                                 "SELECT "_ns MESSAGE_SQL_FIELDS
-                                 " FROM messages WHERE folderId = :folderId"_ns,
-                                 getter_AddRefs(stmt));
+  nsresult rv = DatabaseCore::GetStatement(
+      "GetMessageThreads"_ns,
+      "SELECT threadId, MAX(date) AS maxDate FROM messages WHERE folderId = :folderId GROUP BY threadId"_ns,
+      getter_AddRefs(stmt));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<mozIStorageStatement> stmtClone;
@@ -272,7 +326,7 @@ NS_IMETHODIMP PerFolderDatabase::EnumerateThreads(
   stmtClone->BindInt64ByName("folderId"_ns, mFolderId);
 
   RefPtr<ThreadEnumerator> enumerator =
-      new ThreadEnumerator(mMessageDatabase, stmtClone);
+      new ThreadEnumerator(mMessageDatabase, stmtClone, mFolderId);
   enumerator.forget(aEnumerator);
   return NS_OK;
 }
@@ -290,7 +344,8 @@ NS_IMETHODIMP PerFolderDatabase::GetThreadContainingMsgHdr(
   NS_ENSURE_ARG_POINTER(thread);
 
   Message* message = (Message*)(msgHdr);
-  NS_ADDREF(*thread = new Thread(message));
+  NS_ADDREF(*thread =
+                new Thread(mMessageDatabase, mFolderId, message->mThreadId));
   return NS_OK;
 }
 NS_IMETHODIMP PerFolderDatabase::MarkNotNew(nsMsgKey aKey,
@@ -478,7 +533,8 @@ NS_IMETHODIMP PerFolderDatabase::GetSummaryValid(bool* summaryValid) {
   return NS_OK;
 }
 NS_IMETHODIMP PerFolderDatabase::SetSummaryValid(bool aSummaryValid) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  // Sure. Okay. Whatever.
+  return NS_OK;
 }
 NS_IMETHODIMP PerFolderDatabase::ListAllOfflineMsgs(
     nsTArray<nsMsgKey>& aRetVal) {
@@ -627,8 +683,9 @@ NS_IMETHODIMP MessageEnumerator::HasMoreElements(bool* aHasNext) {
 }
 
 ThreadEnumerator::ThreadEnumerator(MessageDatabase* messageDatabase,
-                                   mozIStorageStatement* stmt)
-    : mMessageDatabase(messageDatabase), mStmt(stmt) {
+                                   mozIStorageStatement* stmt,
+                                   uint64_t folderId)
+    : mMessageDatabase(messageDatabase), mStmt(stmt), mFolderId(folderId) {
   mStmt->ExecuteStep(&mHasNext);
 }
 
@@ -640,8 +697,11 @@ NS_IMETHODIMP ThreadEnumerator::GetNext(nsIMsgThread** item) {
     return NS_ERROR_FAILURE;
   }
 
-  RefPtr<Message> message = new Message(mMessageDatabase, mStmt);
-  RefPtr<Thread> thread = new Thread(message);
+  uint64_t threadId = mStmt->AsInt64(0);
+  uint64_t maxDate = mStmt->AsDouble(1);
+
+  RefPtr<Thread> thread =
+      new Thread(mMessageDatabase, mFolderId, threadId, maxDate);
   thread.forget(item);
   mStmt->ExecuteStep(&mHasNext);
   return NS_OK;
@@ -899,7 +959,7 @@ NS_IMETHODIMP FolderInfo::GetFolderName(nsACString& aFolderName) {
   return mFolder->GetName(aFolderName);
 }
 NS_IMETHODIMP FolderInfo::SetFolderName(const nsACString& aFolderName) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return mFolderDatabase->UpdateName(mFolder, aFolderName);
 }
 
 }  // namespace mozilla::mailnews

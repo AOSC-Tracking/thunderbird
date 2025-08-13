@@ -116,7 +116,8 @@ if (AppConstants.platform == "win") {
 var ICON_URL_APP = "";
 
 if (AppConstants.MOZ_WIDGET_GTK) {
-  ICON_URL_APP = "moz-icon://dummy.exe?size=16";
+  ICON_URL_APP =
+    'image-set("moz-icon://dummy.exe?size=16&scale=1" 1x, "moz-icon://dummy.exe?size=16&scale=2" 2x, "moz-icon://dummy.exe?size=16&scale=3" 3x)';
 } else {
   ICON_URL_APP = "chrome://messenger/skin/preferences/application.png";
 }
@@ -328,7 +329,7 @@ var gGeneralPane = {
     setTimeout(_delayedPaneLoad, 0, this);
 
     if (AppConstants.MOZ_UPDATER) {
-      gAppUpdater = new appUpdater(); // eslint-disable-line no-global-assign
+      gAppUpdater = new appUpdater();
       const updateDisabled =
         Services.policies && !Services.policies.isAllowed("appUpdate");
 
@@ -554,8 +555,7 @@ var gGeneralPane = {
       soundUrlLocation.label = this.convertURLToLocalFile(
         soundUrlLocation.value
       ).leafName;
-      soundUrlLocation.style.backgroundImage =
-        "url(moz-icon://" + soundUrlLocation.label + "?size=16)";
+      soundUrlLocation.style.backgroundImage = `image-set("moz-icon://${soundUrlLocation.label}?size=16&scale=1" 1x, "moz-icon://${soundUrlLocation.label}?size=16&scale=2" 2x, "moz-icon://${soundUrlLocation.label}?size=16&scale=3" 3x)`;
     }
   },
 
@@ -783,7 +783,7 @@ var gGeneralPane = {
       return;
     }
     // Wait a bit, so the engine iconURI has time to be fetched.
-    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+
     await new Promise(r => setTimeout(r, 500));
 
     // Add new engine to the list, make the added engine the default.
@@ -2316,7 +2316,7 @@ class HandlerRow {
 
     this.node
       .querySelector(".typeIcon")
-      .setAttribute("src", this.handlerInfoWrapper.smallIcon);
+      .setAttribute("srcset", this.handlerInfoWrapper.iconSrcSet);
 
     this.rebuildActionsMenu();
   }
@@ -2975,21 +2975,25 @@ class HandlerInfoWrapper {
   // -----
   // Icons
 
-  get smallIcon() {
-    return this._getIcon(16);
+  get iconSrcSet() {
+    const srcset = [];
+    for (const scale of [1, 2, 3]) {
+      const icon = this._getIcon(16, scale);
+      if (!icon) {
+        return null;
+      }
+      srcset.push(`${icon} ${scale}x`);
+    }
+    return srcset.join(", ");
   }
 
-  get largeIcon() {
-    return this._getIcon(32);
-  }
-
-  _getIcon(aSize) {
+  _getIcon(aSize, aScale = 1) {
     if (this.primaryExtension) {
-      return "moz-icon://goat." + this.primaryExtension + "?size=" + aSize;
+      return `moz-icon://goat.${this.primaryExtension}?size=${aSize}&scale=${aScale}`;
     }
 
     if (this.wrappedHandlerInfo instanceof Ci.nsIMIMEInfo) {
-      return "moz-icon://goat?size=" + aSize + "&contentType=" + this.type;
+      return `moz-icon://goat?size=${aSize}&scale=${aScale}&contentType=${this.type}`;
     }
 
     // FIXME: consider returning some generic icon when we can't get a URL for

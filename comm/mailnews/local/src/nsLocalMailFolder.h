@@ -7,8 +7,8 @@
    Interface for representing Local Mail folders.
 */
 
-#ifndef nsMsgLocalMailFolder_h__
-#define nsMsgLocalMailFolder_h__
+#ifndef COMM_MAILNEWS_LOCAL_SRC_NSLOCALMAILFOLDER_H_
+#define COMM_MAILNEWS_LOCAL_SRC_NSLOCALMAILFOLDER_H_
 
 #include "LineReader.h"
 #include "mozilla/Array.h"
@@ -70,7 +70,7 @@ struct nsLocalMailCopyState {
   bool m_allowUndo;
   bool m_writeFailed;
   bool m_notifyFolderLoaded;
-  nsCString m_newMsgKeywords;
+  nsCString m_newMsgKeywords;  // TODO: Remove. CopyFileMessage() only.
   nsCOMPtr<nsIMsgDBHdr> m_newHdr;
 };
 
@@ -121,10 +121,6 @@ class nsMsgLocalMailFolder : public nsMsgDBFolder,
   NS_IMETHOD RenameSubFolders(nsIMsgWindow* msgWindow,
                               nsIMsgFolder* oldFolder) override;
 
-  NS_IMETHOD GetPrettyName(nsACString& prettyName)
-      override;  // Override of the base, for top-level mail folder
-  NS_IMETHOD SetPrettyName(const nsACString& aName) override;
-
   NS_IMETHOD GetDeletable(bool* deletable) override;
   NS_IMETHOD GetSizeOnDisk(int64_t* size) override;
 
@@ -164,8 +160,6 @@ class nsMsgLocalMailFolder : public nsMsgDBFolder,
   NS_IMETHOD WriteToFolderCacheElem(nsIMsgFolderCacheElement* element) override;
   NS_IMETHOD ReadFromFolderCacheElem(
       nsIMsgFolderCacheElement* element) override;
-
-  NS_IMETHOD GetName(nsACString& aName) override;
 
   // Used when headers_only is TRUE
   NS_IMETHOD DownloadMessagesForOffline(
@@ -260,7 +254,6 @@ class nsMsgLocalMailFolder : public nsMsgDBFolder,
   bool m_parsingFolder;
   nsCOMPtr<nsIUrlListener> mReparseListener;
   nsTArray<nsMsgKey> mSpamKeysToMove;
-  nsresult setSubfolderFlag(const nsACString& aFolderName, uint32_t flags);
 
   // Helper fn used by ParseFolder().
   void FinishUpAfterParseFolder(nsresult status);
@@ -271,4 +264,4 @@ class nsMsgLocalMailFolder : public nsMsgDBFolder,
   bool mDownloadInProgress;
 };
 
-#endif  // nsMsgLocalMailFolder_h__
+#endif  // COMM_MAILNEWS_LOCAL_SRC_NSLOCALMAILFOLDER_H_

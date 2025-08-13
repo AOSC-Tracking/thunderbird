@@ -461,11 +461,7 @@
           // to do anything for that case here.
         } else {
           this._maybeAddParentFolderMenuItem(mode);
-
-          // Sort the list of folders. We give first priority to the sortKey
-          // property if it is available, otherwise a case-insensitive
-          // comparison of names.
-          folders = folders.sort((a, b) => a.compareSortKeys(b));
+          folders = folders.sort(lazy.FolderUtils.compareFolders);
         }
 
         this._addFoldersMenuItems(folders, mode, globalInboxFolder);
@@ -521,7 +517,7 @@
 
         this.childWrapper.appendChild(this._buildSeparator());
         const attributes = {
-          label: `${folder.prettyName} - ${folder.server.prettyName}`,
+          label: `${folder.localizedName} - ${folder.server.prettyName}`,
           ...this._getCssSelectorAttributes(folder),
         };
         this.childWrapper.appendChild(this._buildMenuItem(attributes, folder));
@@ -570,7 +566,7 @@
         const specialFoldersMap = specialFolders.map(folder => {
           return {
             folder,
-            name: folder.prettyName,
+            name: folder.localizedName,
           };
         });
 
@@ -603,7 +599,7 @@
 
         // Make sure the entries are sorted alphabetically.
         specialFoldersMap.sort((a, b) =>
-          lazy.FolderUtils.folderNameCompare(a.label, b.label)
+          a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
         );
 
         // Create entries for each of the recent folders.
@@ -664,7 +660,7 @@
               attributes.label = this.getAttribute("fileHereLabel");
               attributes.accesskey = this.getAttribute("fileHereAccessKey");
             } else {
-              attributes.label = folder.prettyName;
+              attributes.label = folder.localizedName;
               Object.assign(attributes, this._getCssSelectorAttributes(folder));
             }
 
@@ -782,10 +778,10 @@
           folder.server.rootFolder == globalInboxFolder
         ) {
           return this._stringBundle.formatStringFromName("globalInbox", [
-            folder.prettyName,
+            folder.localizedName,
           ]);
         }
-        return folder.prettyName;
+        return folder.localizedName;
       }
 
       /**
@@ -889,21 +885,23 @@
        */
       getDisplayName(folder) {
         if (folder.isServer) {
-          return folder.prettyName;
+          return folder.localizedName;
         }
 
         if (this._displayformat == "verbose") {
           return this._stringBundle.formatStringFromName(
             "verboseFolderFormat",
-            [folder.prettyName, folder.server.prettyName]
+            [folder.localizedName, folder.server.prettyName]
           );
         }
 
         if (this._displayformat == "path") {
-          return lazy.FeedUtils.getFolderPrettyPath(folder) || folder.name;
+          return (
+            lazy.FeedUtils.getFolderPrettyPath(folder) || folder.localizedName
+          );
         }
 
-        return folder.name;
+        return folder.localizedName;
       }
 
       /**

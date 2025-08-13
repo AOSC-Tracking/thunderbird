@@ -28,10 +28,14 @@ add_task(function () {
     cc: generator.makeNamesAndAddresses(1),
   });
   const addedMessage = folder.addMessage(generatedMessage.toMessageString());
+  const folderId = folders.getFolderForMsgFolder(folder).id;
 
   // Check the added message's properties match the input properties.
 
+  Assert.equal(addedMessage.messageKey, 1);
   Assert.equal(addedMessage.folder, folder);
+  Assert.equal(addedMessage.threadId, 1);
+  Assert.equal(addedMessage.threadParent, 0);
   Assert.equal(
     `<${addedMessage.messageId}>`,
     generatedMessage.headers["Message-Id"]
@@ -53,7 +57,9 @@ add_task(function () {
   let stmt = database.connection.createStatement("SELECT * FROM messages");
   stmt.executeStep();
   Assert.equal(stmt.row.id, 1); // This is the first message added.
-  Assert.equal(stmt.row.folderId, 2); // The folder is the second folder added.
+  Assert.equal(stmt.row.folderId, folderId);
+  Assert.equal(stmt.row.threadId, 1);
+  Assert.equal(stmt.row.threadParent, 0);
   Assert.equal(stmt.row.messageId, addedMessage.messageId);
   Assert.equal(stmt.row.date, addedMessage.date);
   Assert.equal(stmt.row.sender, addedMessage.author);

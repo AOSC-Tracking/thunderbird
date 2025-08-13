@@ -480,7 +480,7 @@ export class MsgIncomingServer {
 
   set prettyName(value) {
     this.setStringValue("name", value);
-    this.rootFolder.prettyName = value;
+    this.rootFolder.name = value;
   }
 
   /**
@@ -538,6 +538,9 @@ export class MsgIncomingServer {
         ].createInstance(Ci.nsIMsgFolder);
         this._rootFolder.QueryInterface(Ci.nsIInitableWithFolder);
         this._rootFolder.initWithFolder(root);
+
+        this.createDefaultMailboxes?.();
+        this.setFlagsOnDefaultMailboxes?.();
       } else {
         this._rootFolder = MailServices.folderLookup.getOrCreateFolderForURL(
           this.serverURI
@@ -932,8 +935,10 @@ export class MsgIncomingServer {
       this._spamSettings.logStream = null;
       this._spamSettings = null;
     }
-
-    Services.obs.removeObserver(this, "passwordmgr-storage-changed");
+    if (!this._stoppedObserving) {
+      Services.obs.removeObserver(this, "passwordmgr-storage-changed");
+      this._stoppedObserving = true;
+    }
   }
 
   getFilterList(msgWindow) {

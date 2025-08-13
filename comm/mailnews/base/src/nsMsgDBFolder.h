@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef nsMsgDBFolder_h__
-#define nsMsgDBFolder_h__
+#ifndef COMM_MAILNEWS_BASE_SRC_NSMSGDBFOLDER_H_
+#define COMM_MAILNEWS_BASE_SRC_NSMSGDBFOLDER_H_
 
 #include "mozilla/Attributes.h"
 #include "msgCore.h"
@@ -31,7 +31,7 @@
 #include "mozilla/intl/Collator.h"
 #ifdef MOZ_PANORAMA
 #  include "nsIFolder.h"
-#endif
+#endif  // MOZ_PANORAMA
 
 // We declare strings for folder properties and events.
 // Properties:
@@ -124,7 +124,6 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   nsresult GetMsgPreviewTextFromStream(nsIMsgDBHdr* msgHdr,
                                        nsIInputStream* stream);
   nsresult HandleAutoCompactEvent(nsIMsgWindow* aMsgWindow);
-  static int gIsEnglishApp;
 
  protected:
   virtual ~nsMsgDBFolder();
@@ -203,8 +202,7 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   void ClearProcessingFlags();
 
   nsresult NotifyHdrsNotBeingClassified();
-  static nsresult BuildFolderSortKey(nsIMsgFolder* aFolder,
-                                     nsTArray<uint8_t>& aKey);
+
   /**
    * Produce an array of messages ordered like the input keys.
    */
@@ -298,15 +296,17 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   bool mIsServerIsValid;
   bool mIsServer;
   nsCString mName;
-  nsCString mOriginalName;
   nsCOMPtr<nsIFile> mPath;
   nsCString mBaseMessageURI;  // The uri with the message scheme
+
+  nsString GetLocalizedNameInternal();
+  bool UsesLocalizedName();
+  nsresult GetLocalizedName(nsACString& name);  // UTF-8 convenience version
 
   // static stuff for cross-instance objects like atoms
   static nsrefcnt gInstanceCount;
 
   static nsresult initializeStrings();
-  static nsresult createCollationKeyGenerator();
 
   static nsString kLocalizedInboxName;
   static nsString kLocalizedTrashName;
@@ -319,7 +319,6 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
 
   static nsString kLocalizedBrandShortName;
 
-  static mozilla::UniquePtr<mozilla::intl::Collator> gCollationKeyGenerator;
   static bool gInitializeStringsDone;
 
   // store of keys that have a processing flag set
@@ -375,4 +374,4 @@ class nsMsgKeySetU {
   RefPtr<nsMsgKeySet> hiKeySet;
 };
 
-#endif
+#endif  // COMM_MAILNEWS_BASE_SRC_NSMSGDBFOLDER_H_

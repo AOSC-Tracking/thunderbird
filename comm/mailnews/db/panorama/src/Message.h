@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef Message_h__
-#define Message_h__
+#ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_MESSAGE_H_
+#define COMM_MAILNEWS_DB_PANORAMA_SRC_MESSAGE_H_
 
 #include "mozIStorageStatement.h"
 #include "nsIMsgHdr.h"
@@ -13,8 +13,9 @@ namespace mozilla::mailnews {
 
 class MessageDatabase;
 
-#define MESSAGE_SQL_FIELDS \
-  "id, folderId, messageId, date, sender, recipients, ccList, bccList, subject, flags, tags"_ns
+#define MESSAGE_SQL_FIELDS                                          \
+  "id, folderId, threadId, threadParent, messageId, date, sender, " \
+  "recipients, ccList, bccList, subject, flags, tags"_ns
 
 class Message : public nsIMsgDBHdr {
  public:
@@ -26,6 +27,8 @@ class Message : public nsIMsgDBHdr {
 
   nsMsgKey mId;
   uint64_t mFolderId;
+  uint64_t mThreadId;
+  uint64_t mThreadParent;
   nsAutoCString mMessageId;
   PRTime mDate;
   nsAutoCString mSender;
@@ -45,4 +48,4 @@ class Message : public nsIMsgDBHdr {
 
 }  // namespace mozilla::mailnews
 
-#endif  // Message_h__
+#endif  // COMM_MAILNEWS_DB_PANORAMA_SRC_MESSAGE_H_

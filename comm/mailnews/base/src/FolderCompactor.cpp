@@ -25,6 +25,7 @@
 #include "nsMsgMessageFlags.h"
 #include "nsMsgUtils.h"  // For ParseUint64Str(), MSGS_URL.
 #include "nsString.h"
+#include "nsPrintfCString.h"
 #include "nsThreadUtils.h"  // For NS_NewRunnableFunction().
 #include "nsTStringHasher.h"  // IWYU pragma: keep, for mozilla::DefaultHasher<nsCString>
 #include "mozilla/Components.h"
@@ -590,6 +591,12 @@ NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status) {
   // We're done with the DB now. Close so we can start moving files about.
   mDB->ForceClosed();
   mDB = nullptr;
+
+  // While we were compacting, something else might have opened the database
+  // (Bug 1959858, Bug 1965686).
+  // That'll mean the file is locked (under Windows), and we won't be able
+  // to install the compacted one! So we'll attempt another force close here:
+  mDBService->ForceFolderDBClosed(mFolder);
 
   // If we succeeded thus far, it's time to replace the old DB file with our
   // shiny new one. File renames are the most atomic tool we've got, so we'll

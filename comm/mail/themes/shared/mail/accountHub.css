@@ -379,8 +379,13 @@ header {
 
   &.password-form-body,
   &.email-form-body,
-  &.option-select-body {
+  &.option-select-body,
+  &.remote-ab-form-body {
     max-width: 400px;
+  }
+
+  &.account-select-body {
+    max-width: 500px;
   }
 
   &.sync-accounts-form-body {
@@ -400,8 +405,13 @@ header {
     }
   }
 
-  &.option-select-body {
+  &.option-select-body,
+  &.account-select-body {
     gap: var(--hub-address-book-option-select-gap);
+  }
+
+  &.remote-ab-form-body {
+    gap: var(--hub-address-book-remote-form-gap);
   }
 }
 
@@ -630,6 +640,13 @@ header {
       outline-offset: var(--focus-outline-offset);
     }
   }
+}
+
+.account-hub-form-small-comment {
+  display: inline-block;
+  font-size: 0.77rem;
+  color: var(--color-text-muted);
+  margin-bottom: 1rem;
 }
 
 /* Footer */

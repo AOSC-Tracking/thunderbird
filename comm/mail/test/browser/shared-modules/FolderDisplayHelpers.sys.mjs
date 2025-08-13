@@ -314,8 +314,9 @@ export async function open_folder_in_new_tab(aFolder) {
 
   const tab = mc.openTab("mail3PaneTab", { folderURI: aFolder.URI }, "tab");
   if (
-    tab.chromeBrowser.docShell.isLoadingDocument ||
-    tab.chromeBrowser.currentURI.spec != "about:3pane"
+    !tab.chromeBrowser.webProgress ||
+    tab.chromeBrowser.webProgress.isLoadingDocument ||
+    tab.chromeBrowser.currentURI?.spec != "about:3pane"
   ) {
     await BrowserTestUtils.browserLoaded(tab.chromeBrowser);
   }
@@ -556,7 +557,7 @@ export function assert_number_of_tabs_open(aNumber) {
 export async function assert_tab_titled_from(aTab, aWhat) {
   let text;
   if (aWhat instanceof Ci.nsIMsgFolder) {
-    text = aWhat.prettyName;
+    text = aWhat.localizedName;
   } else if (aWhat instanceof Ci.nsIMsgDBHdr) {
     text = aWhat.mime2DecodedSubject;
   }
@@ -1355,6 +1356,7 @@ export async function wait_for_all_messages_to_load(win = mc) {
  */
 export async function wait_for_message_display_completion(aWin, aLoadDemanded) {
   let win;
+  await TestUtils.waitForTick();
   if (aWin == null || aWin.document.getElementById("tabmail")) {
     win = get_about_message();
   } else {
@@ -1380,7 +1382,7 @@ export async function wait_for_message_display_completion(aWin, aLoadDemanded) {
 
   await TestUtils.waitForCondition(
     () =>
-      !messagePaneBrowser.docShell?.isLoadingDocument &&
+      messagePaneBrowser.webProgress?.isLoadingDocument === false &&
       (!aLoadDemanded || messagePaneBrowser.currentURI?.spec != "about:blank"),
     `Timeout waiting for a message. Current location: ${messagePaneBrowser.currentURI?.spec}`
   );
@@ -1407,7 +1409,7 @@ export async function wait_for_blank_content_pane(win = mc) {
 
   await TestUtils.waitForCondition(
     () =>
-      !messagePaneBrowser.docShell?.isLoadingDocument &&
+      messagePaneBrowser.webProgress?.isLoadingDocument === false &&
       messagePaneBrowser.currentURI?.spec == "about:blank",
     `Timeout waiting for blank content pane. Current location: ${messagePaneBrowser.currentURI?.spec}`
   );
@@ -2242,7 +2244,7 @@ function _non_strict_index_of(aArray, aSearchElement) {
 }
 
 function _prettify_folder_array(aArray) {
-  return aArray.map(folder => folder.prettyName).join(", ");
+  return aArray.map(folder => folder.name).join(", ");
 }
 
 /**

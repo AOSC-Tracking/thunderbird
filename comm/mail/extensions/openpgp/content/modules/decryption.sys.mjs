@@ -4,8 +4,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-/* eslint-disable complexity */
-
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   EnigmailArmor: "chrome://openpgp/content/modules/armor.sys.mjs",
@@ -578,14 +576,11 @@ export var EnigmailDecryption = {
         if (preview && errorMsgObj.value === "") {
           lazy.log.debug(`Found ${preview.length} keys to import.`);
           if (preview.length > 0) {
-            let confirmImport = false;
-            const outParam = {};
-            confirmImport = lazy.EnigmailDialog.confirmPubkeyImport(
+            const acceptance = lazy.EnigmailDialog.confirmPubkeyImport(
               parent,
-              preview,
-              outParam
+              preview
             );
-            if (confirmImport) {
+            if (acceptance) {
               exitCodeObj.value = await lazy.EnigmailKeyRing.importKeyAsync(
                 parent,
                 false,
@@ -596,7 +591,7 @@ export var EnigmailDecryption = {
                 null,
                 false,
                 [],
-                outParam.acceptance
+                acceptance
               );
               statusFlagsObj.value = lazy.EnigmailConstants.IMPORTED_KEY;
             } else {

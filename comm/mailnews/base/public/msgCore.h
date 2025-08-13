@@ -6,8 +6,8 @@
 /* Include files we are going to want available to all files....these files
    include NSPR, memory, and string header files among others */
 
-#ifndef msgCore_h__
-#define msgCore_h__
+#ifndef COMM_MAILNEWS_BASE_PUBLIC_MSGCORE_H_
+#define COMM_MAILNEWS_BASE_PUBLIC_MSGCORE_H_
 
 #include "nscore.h"
 #include "nspr.h"
@@ -43,8 +43,6 @@ class nsIMsgFolder;
 #define MRU_TIME_PROPERTY "MRUTime"
 // Most recently moved to, for recent folders list in move menu
 #define MRM_TIME_PROPERTY "MRMTime"
-
-/* NS_ERROR_MODULE_MAILNEWS is defined in mozilla/xpcom/public/nsError.h */
 
 /*
  * NS_ERROR macros - use these macros to generate error constants
@@ -159,6 +157,7 @@ class nsIMsgFolder;
 
 #define NS_MSG_ERROR_INVALID_FOLDER_NAME NS_MSG_GENERATE_FAILURE(34)
 
+// Mbox message deviates too far from expected size.
 #define NS_MSG_ERROR_UNEXPECTED_SIZE NS_MSG_GENERATE_FAILURE(35)
 
 // Mbox message doesn't start with "From " separator line.
@@ -200,4 +199,4 @@ class nsIMsgFolder;
 /// The number of microseconds in a day. This comes up a lot.
 #define PR_USEC_PER_DAY (PRTime(PR_USEC_PER_SEC) * 60 * 60 * 24)
 
-#endif  // msgCore_h__
+#endif  // COMM_MAILNEWS_BASE_PUBLIC_MSGCORE_H_

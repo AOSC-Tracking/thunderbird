@@ -65,19 +65,22 @@ function test_discoverSubFolders() {
   rootFolder.msgStore.discoverSubFolders(rootFolder, true);
 
   const prefix = rootFolder.URI;
-  Assert.deepEqual(Array.from(rootFolder.descendants, f => f.URI).toSorted(), [
-    `${prefix}/1ad41a64`,
-    `${prefix}/Trash`, // Created automagically.
-    `${prefix}/Unsent%20Messages`, // Created automagically.
-    `${prefix}/file`,
-    `${prefix}/test%20%CF%80`,
-  ]);
+  Assert.deepEqual(
+    Array.from(rootFolder.descendants, f => f.URI).toSorted(),
+    [
+      `${prefix}/1ad41a64`,
+      `${prefix}/Trash`, // Created automagically.
+      `${prefix}/Unsent%20Messages`, // Created automagically.
+      `${prefix}/file`,
+      `${prefix}/test%20%CF%80`,
+    ],
+    "Root folder hierarchy should match expected value."
+  );
 
   const hashedFolder = MailServices.folderLookup.getFolderForURL(
     `${prefix}/1ad41a64`
   );
   Assert.equal(hashedFolder.name, "test τ");
-  Assert.equal(hashedFolder.prettyName, "test τ");
   Assert.equal(hashedFolder.filePath.leafName, "1ad41a64");
   Assert.equal(hashedFolder.summaryFile.leafName, "1ad41a64.msf");
 
@@ -85,7 +88,6 @@ function test_discoverSubFolders() {
     `${prefix}/test%20%CF%80`
   );
   Assert.equal(unhashedFolder.name, "test π");
-  Assert.equal(unhashedFolder.prettyName, "test π");
   Assert.equal(unhashedFolder.filePath.leafName, "test π");
   Assert.equal(unhashedFolder.summaryFile.leafName, "test π.msf");
 }
@@ -141,8 +143,8 @@ async function test_discoverChildFolders() {
   //
   // Note: we use ' => ' instead of '/' as we're not escaping path
   // components so don't want to portray these strings as proper paths!.
-  // "Outbox" and "Trash" are automatically created.
-  const defaultFolders = ["ROOT", "ROOT => Outbox", "ROOT => Trash"];
+  // "Unsent Messages" and "Trash" are automatically created.
+  const defaultFolders = ["ROOT", "ROOT => Unsent Messages", "ROOT => Trash"];
   const testCases = [
     // No children.
     {

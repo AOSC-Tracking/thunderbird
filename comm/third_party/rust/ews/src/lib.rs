@@ -4,6 +4,9 @@
 
 use thiserror::Error;
 
+#[cfg(test)]
+mod test_utils;
+
 mod types;
 
 pub use types::*;
@@ -26,4 +29,7 @@ pub enum Error {
     // relatively low.
     #[error("a fault occurred in the request")]
     RequestFault(Box<soap::Fault>),
+
+    #[error("unknown server version: {0}")]
+    UnknownServerVersion(String),
 }

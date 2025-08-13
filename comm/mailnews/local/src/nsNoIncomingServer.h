@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef __nsNoIncomingServer_h
-#define __nsNoIncomingServer_h
+#ifndef COMM_MAILNEWS_LOCAL_SRC_NSNOINCOMINGSERVER_H_
+#define COMM_MAILNEWS_LOCAL_SRC_NSNOINCOMINGSERVER_H_
 
 #include "nsINoIncomingServer.h"
 #include "nsILocalMailIncomingServer.h"
@@ -23,6 +23,9 @@ class nsNoIncomingServer : public nsMailboxServer,
 
   nsNoIncomingServer();
 
+#ifdef MOZ_PANORAMA
+  nsresult CreateRootFolder() override;
+#endif  // MOZ_PANORAMA
   NS_IMETHOD GetLocalStoreType(nsACString& type) override;
   NS_IMETHOD GetLocalDatabaseType(nsACString& type) override;
   NS_IMETHOD GetCanSearchMessages(bool* canSearchMessages) override;
@@ -34,4 +37,4 @@ class nsNoIncomingServer : public nsMailboxServer,
   virtual ~nsNoIncomingServer();
 };
 
-#endif
+#endif  // COMM_MAILNEWS_LOCAL_SRC_NSNOINCOMINGSERVER_H_

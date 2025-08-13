@@ -63,35 +63,6 @@ int nsImapNamespaceList::GetNumberOfNamespaces() {
   return m_NamespaceList.Length();
 }
 
-nsresult nsImapNamespaceList::InitFromString(const char* nameSpaceString,
-                                             EIMAPNamespaceType nstype) {
-  nsresult rv = NS_OK;
-  if (nameSpaceString) {
-    int numNamespaces = UnserializeNamespaces(nameSpaceString, nullptr, 0);
-    char** prefixes = (char**)PR_CALLOC(numNamespaces * sizeof(char*));
-    if (prefixes) {
-      int len = UnserializeNamespaces(nameSpaceString, prefixes, numNamespaces);
-      for (int i = 0; i < len; i++) {
-        char* thisns = prefixes[i];
-        char delimiter = '/';  // a guess
-        if (PL_strlen(thisns) >= 1) delimiter = thisns[PL_strlen(thisns) - 1];
-        nsImapNamespace* ns =
-            new nsImapNamespace(nstype, thisns, delimiter, true);
-        if (ns) AddNewNamespace(ns);
-        PR_FREEIF(thisns);
-      }
-      PR_Free(prefixes);
-    }
-  }
-
-  return rv;
-}
-
-nsresult nsImapNamespaceList::OutputToString(nsCString& string) {
-  nsresult rv = NS_OK;
-  return rv;
-}
-
 int nsImapNamespaceList::GetNumberOfNamespaces(EIMAPNamespaceType type) {
   int nodeIndex = 0, count = 0;
   for (nodeIndex = m_NamespaceList.Length() - 1; nodeIndex >= 0; nodeIndex--) {
@@ -313,55 +284,28 @@ int nsImapNamespaceList::UnserializeNamespaces(const char* str, char** prefixes,
   return count;
 }
 
-// static
-nsCString nsImapNamespaceList::AllocateCanonicalFolderName(
-    const char* onlineFolderName, char delimiter) {
-  nsCString canonicalPath;
-  if (delimiter) {
-    char* tmp =
-        nsImapUrl::ReplaceCharsInCopiedString(onlineFolderName, delimiter, '/');
-    canonicalPath.Assign(tmp);
-    PR_Free(tmp);
-  } else {
-    canonicalPath.Assign(onlineFolderName);
-  }
-  canonicalPath.ReplaceSubstring("\\/", "/");
-  return canonicalPath;
-}
-
 nsImapNamespace* nsImapNamespaceList::GetNamespaceForFolder(
     const char* hostName, const char* canonicalFolderName, char delimiter) {
   if (!hostName || !canonicalFolderName) return nullptr;
 
   nsImapNamespace* resultNamespace = nullptr;
   nsresult rv;
-  char* convertedFolderName = nsImapNamespaceList::AllocateServerFolderName(
-      canonicalFolderName, delimiter);
-
-  if (convertedFolderName) {
-    nsCOMPtr<nsIImapHostSessionList> hostSessionList =
-        do_GetService(kCImapHostSessionListCID, &rv);
-    if (NS_FAILED(rv)) {
-      PR_FREEIF(convertedFolderName);
-      return nullptr;
-    }
-    hostSessionList->GetNamespaceForMailboxForHost(
-        hostName, convertedFolderName, resultNamespace);
-    PR_Free(convertedFolderName);
-  } else {
-    NS_ASSERTION(false, "couldn't get converted folder name");
+  nsCString folderName;
+  folderName.Assign(canonicalFolderName);
+  if (delimiter) {
+    folderName.ReplaceChar('/', delimiter);
+    // FIXME: Seems this ^^^ would not be correct if name contains delimiter...
   }
 
-  return resultNamespace;
-}
+  nsCOMPtr<nsIImapHostSessionList> hostSessionList =
+      do_GetService(kCImapHostSessionListCID, &rv);
+  if (NS_FAILED(rv)) {
+    return nullptr;
+  }
+  hostSessionList->GetNamespaceForMailboxForHost(hostName, folderName.get(),
+                                                 resultNamespace);
 
-/* static */
-char* nsImapNamespaceList::AllocateServerFolderName(
-    const char* canonicalFolderName, char delimiter) {
-  if (delimiter)
-    return nsImapUrl::ReplaceCharsInCopiedString(canonicalFolderName, '/',
-                                                 delimiter);
-  return NS_xstrdup(canonicalFolderName);
+  return resultNamespace;
 }
 
 /*
@@ -420,22 +364,18 @@ bool nsImapNamespaceList::GetFolderIsNamespace(
   if (!prefix || !*prefix)  // empty namespace prefix
     return false;
 
-  char* convertedFolderName =
-      AllocateServerFolderName(canonicalFolderName, delimiter);
-  if (convertedFolderName) {
-    bool lastCharIsDelimiter = (prefix[strlen(prefix) - 1] == delimiter);
+  nsCString folderName;
+  folderName.Assign(canonicalFolderName);
+  if (delimiter) {
+    folderName.ReplaceChar('/', delimiter);
+  }
 
-    if (lastCharIsDelimiter) {
-      rv = ((strncmp(convertedFolderName, prefix,
-                     strlen(convertedFolderName)) == 0) &&
-            (strlen(convertedFolderName) == strlen(prefix) - 1));
-    } else {
-      rv = (strcmp(convertedFolderName, prefix) == 0);
-    }
-
-    PR_Free(convertedFolderName);
+  bool lastCharIsDelimiter = (prefix[strlen(prefix) - 1] == delimiter);
+  if (lastCharIsDelimiter) {
+    rv = ((strncmp(folderName.get(), prefix, strlen(folderName.get())) == 0) &&
+          (strlen(folderName.get()) == strlen(prefix) - 1));
   } else {
-    NS_ASSERTION(false, "couldn't allocate server folder name");
+    rv = (strcmp(folderName.get(), prefix) == 0);
   }
 
   return rv;
@@ -482,26 +422,26 @@ nsCString nsImapNamespaceList::GenerateFullFolderNameWithDefaultNamespace(
   if (ns) {
     if (nsUsed) *nsUsed = ns;
     const char* prefix = ns->GetPrefix();
-    char* convertedFolderName =
-        AllocateServerFolderName(canonicalFolderName, ns->GetDelimiter());
-    if (convertedFolderName) {
-      char* convertedReturnName = nullptr;
-      if (owner) {
-        convertedReturnName = PR_smprintf(
-            "%s%s%c%s", prefix, owner, ns->GetDelimiter(), convertedFolderName);
-      } else {
-        convertedReturnName = PR_smprintf("%s%s", prefix, convertedFolderName);
-      }
-
-      if (convertedReturnName) {
-        fullFolderName = AllocateCanonicalFolderName(convertedReturnName,
-                                                     ns->GetDelimiter());
-        PR_Free(convertedReturnName);
-      }
-      PR_Free(convertedFolderName);
-    } else {
-      NS_ASSERTION(false, "couldn't allocate server folder name");
+    fullFolderName.Assign(canonicalFolderName);
+    if (ns->GetDelimiter()) {
+      fullFolderName.ReplaceChar('/', ns->GetDelimiter());
     }
+
+    char* convertedReturnName = nullptr;
+    if (owner) {
+      convertedReturnName = PR_smprintf(
+          "%s%s%c%s", prefix, owner, ns->GetDelimiter(), fullFolderName.get());
+    } else {
+      convertedReturnName = PR_smprintf("%s%s", prefix, fullFolderName.get());
+    }
+    fullFolderName.Assign(convertedReturnName);
+    PR_Free(convertedReturnName);
+
+    if (ns->GetDelimiter()) {
+      fullFolderName.ReplaceChar(ns->GetDelimiter(), '/');
+    }
+    fullFolderName.ReplaceSubstring("\\/", "/");
+
   } else {
     // Could not find other users namespace on the given host
     NS_WARNING("couldn't find namespace for given host");

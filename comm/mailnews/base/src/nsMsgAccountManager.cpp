@@ -72,6 +72,7 @@
 #ifdef MOZ_PANORAMA
 #  include "nsIComponentRegistrar.h"
 #  include "DatabaseCore.h"
+#  include "VirtualFolderWrapper.h"
 #endif  // MOZ_PANORAMA
 
 #define PREF_MAIL_ACCOUNTMANAGER_ACCOUNTS "mail.accountmanager.accounts"
@@ -181,6 +182,11 @@ nsresult nsMsgAccountManager::Init() {
     nsCOMPtr<nsIDatabaseCore> unused =
         do_GetService("@mozilla.org/msgDatabase/msgDBService;1", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
+
+    componentRegistrar->RegisterFactory(
+        nsID::GenerateUUID(), "",
+        "@mozilla.org/mailnews/virtual-folder-wrapper;1",
+        new mozilla::mailnews::VirtualFolderWrapperFactory());
   }
 #endif  // MOZ_PANORAMA
 
@@ -551,37 +557,38 @@ nsMsgAccountManager::RemoveIncomingServer(nsIMsgIncomingServer* aServer,
   rv = rootFolder->GetDescendants(allDescendants);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Remove every folder on the account from the folder cache.
-  for (const auto& folder : allDescendants) {
-    nsresult cacherv = RemoveFolderFromCache(folder);
+  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+    // Remove every folder on the account from the folder cache.
+    for (const auto& folder : allDescendants) {
+      nsresult cacherv = RemoveFolderFromCache(folder);
+      if (NS_FAILED(cacherv)) {
+        // Some tests don't use on-disk storage for folders, in which case we'll
+        // fail to remove them from the folder cache because we can't resolve
+        // their path. In all other case, this should be considered an error,
+        // but returning an error would fail said tests, so we log the error
+        // instead, which is the next best thing.
+        nsCString name;
+        folder->GetName(name);
+        NS_WARNING(nsPrintfCString("failed to remove folder %s from cache: %s",
+                                   name.get(),
+                                   mozilla::GetStaticErrorName(cacherv))
+                       .get());
+      }
+    }
+
+    nsresult cacherv = RemoveFolderFromCache(rootFolder);
     if (NS_FAILED(cacherv)) {
-      // Some tests don't use on-disk storage for folders, in which case we'll
-      // fail to remove them from the folder cache because we can't resolve
-      // their path. In all other case, this should be considered an error, but
-      // returning an error would fail said tests, so we log the error instead,
-      // which is the next best thing.
-      nsCString name;
-      folder->GetName(name);
-      NS_WARNING(nsPrintfCString("failed to remove folder %s from cache: %s",
-                                 name.get(),
+      NS_WARNING(nsPrintfCString("failed to remove root folder from cache: %s",
                                  mozilla::GetStaticErrorName(cacherv))
                      .get());
     }
+
+    // Update the on-disk copy of the cache, so we don't end up with unneeded
+    // folders if e.g. Thunderbird crashes or gets SIGKILL'd later on.
+    nsCOMPtr<nsIMsgFolderCache> folderCache;
+    MOZ_TRY(GetFolderCache(getter_AddRefs(folderCache)));
+    MOZ_TRY(folderCache->Flush());
   }
-
-  nsresult cacherv = RemoveFolderFromCache(rootFolder);
-  if (NS_FAILED(cacherv)) {
-    NS_WARNING(nsPrintfCString("failed to remove root folder from cache: %s",
-                               mozilla::GetStaticErrorName(cacherv))
-                   .get());
-  }
-
-  // Update the on-disk copy of the cache, so we don't end up with unneeded
-  // folders if e.g. Thunderbird crashes or gets SIGKILL'd later on.
-  nsCOMPtr<nsIMsgFolderCache> folderCache;
-  MOZ_TRY(GetFolderCache(getter_AddRefs(folderCache)));
-  MOZ_TRY(folderCache->Flush());
-
   // Invalidate the `FindServer()` cache entry for this server. We need to do
   // this after the folders have been removed from the folder cache, because the
   // folders might end up querying the account manager to get a reference on
@@ -637,6 +644,12 @@ nsMsgAccountManager::RemoveIncomingServer(nsIMsgIncomingServer* aServer,
 }
 
 nsresult nsMsgAccountManager::RemoveFolderFromCache(nsIMsgFolder* aFolder) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    MOZ_ASSERT(!m_msgFolderCache);
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
   NS_ENSURE_ARG_POINTER(aFolder);
 
   // Get the file path for the folder. This path is different depending on
@@ -985,6 +998,13 @@ NS_IMETHODIMP nsMsgAccountManager::GetFolderCache(
     nsIMsgFolderCache** aFolderCache) {
   NS_ENSURE_ARG_POINTER(aFolderCache);
 
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    MOZ_ASSERT(!m_msgFolderCache);
+    *aFolderCache = nullptr;
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
   if (m_msgFolderCache) {
     NS_IF_ADDREF(*aFolderCache = m_msgFolderCache);
     return NS_OK;
@@ -1107,13 +1127,16 @@ nsresult nsMsgAccountManager::LoadAccounts() {
   // ignore it.
   if (m_shutdownInProgress || m_haveShutdown) return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIMsgMailSession> mailSession =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
+  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+    // TODO: Reenable this.
+    nsCOMPtr<nsIMsgMailSession> mailSession =
+        do_GetService("@mozilla.org/messenger/services/session;1", &rv);
 
-  if (NS_SUCCEEDED(rv))
-    mailSession->AddFolderListener(
-        this, nsIFolderListener::added | nsIFolderListener::removed |
-                  nsIFolderListener::intPropertyChanged);
+    if (NS_SUCCEEDED(rv))
+      mailSession->AddFolderListener(
+          this, nsIFolderListener::added | nsIFolderListener::removed |
+                    nsIFolderListener::intPropertyChanged);
+  }
 
   // Ensure biff service has started
   nsCOMPtr<nsIMsgBiffManager> biffService =
@@ -1384,19 +1407,12 @@ nsresult nsMsgAccountManager::LoadAccounts() {
             serverPrefBranch->GetCharPref("userName", userName);
             serverPrefBranch->GetCharPref("hostname", hostName);
             serverPrefBranch->GetCharPref("type", type);
-            // Find a server with the same info.
-            nsCOMPtr<nsIMsgAccountManager> accountManager =
-                do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-            if (NS_FAILED(rv)) {
-              continue;
-            }
+
             nsCOMPtr<nsIMsgIncomingServer> server;
-            accountManager->FindServer(userName, hostName, type, 0,
-                                       getter_AddRefs(server));
+            FindServer(userName, hostName, type, 0, getter_AddRefs(server));
             if (server) {
               nsCOMPtr<nsIMsgAccount> replacement;
-              accountManager->FindAccountForServer(server,
-                                                   getter_AddRefs(replacement));
+              FindAccountForServer(server, getter_AddRefs(replacement));
               if (replacement) {
                 nsCString accountKey;
                 replacement->GetKey(accountKey);
@@ -1451,6 +1467,19 @@ nsresult nsMsgAccountManager::LoadAccounts() {
       }
     }
   }
+
+#ifdef MOZ_PANORAMA
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    // At this point, we should have all the folders in the database. We can
+    // finally migrate the virtualFolders.dat file, which we'll only do if the
+    // database didn't exist at the start of the program.
+    nsCOMPtr<nsIDatabaseCore> databaseCore =
+        mozilla::components::DatabaseCore::Service();
+    rv = databaseCore->MigrateVirtualFolders();
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+#endif  // MOZ_PANORAMA
+
   return NS_OK;
 }
 
@@ -1574,9 +1603,11 @@ nsMsgAccountManager::UnloadAccounts() {
                      EmptyCString());
 
   if (m_accountsLoaded) {
-    nsCOMPtr<nsIMsgMailSession> mailSession =
-        do_GetService("@mozilla.org/messenger/services/session;1");
-    if (mailSession) mailSession->RemoveFolderListener(this);
+    if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+      nsCOMPtr<nsIMsgMailSession> mailSession =
+          do_GetService("@mozilla.org/messenger/services/session;1");
+      if (mailSession) mailSession->RemoveFolderListener(this);
+    }
     m_accountsLoaded = false;
   }
 
@@ -1659,10 +1690,6 @@ nsresult nsMsgAccountManager::CleanupOnExit() {
     if (!isImap || (isImap && (!serverRequiresPasswordForAuthentication ||
                                !passwd.IsEmpty() ||
                                authMethod == nsMsgAuthMethod::OAuth2))) {
-      nsCOMPtr<nsIMsgAccountManager> accountManager =
-          do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-      if (NS_FAILED(rv)) continue;
-
       if (isImap && cleanupInboxOnExit) {
         // Find the inbox.
         nsTArray<RefPtr<nsIMsgFolder>> subFolders;
@@ -1690,8 +1717,10 @@ nsresult nsMsgAccountManager::CleanupOnExit() {
               };
 
               rv = folder->Compact(cleanupListener, nullptr);
-              if (NS_SUCCEEDED(rv))
-                accountManager->SetFolderDoingCleanupInbox(folder);
+              if (NS_SUCCEEDED(rv)) {
+                m_folderDoingCleanupInbox = folder;
+                m_cleanupInboxInProgress = true;
+              }
               break;
             }
           }
@@ -1716,8 +1745,10 @@ nsresult nsMsgAccountManager::CleanupOnExit() {
         };
 
         rv = root->EmptyTrash(emptyTrashListener);
-        if (isImap && NS_SUCCEEDED(rv))
-          accountManager->SetFolderDoingEmptyTrash(root);
+        if (isImap && NS_SUCCEEDED(rv)) {
+          m_folderDoingEmptyTrash = root;
+          m_emptyTrashInProgress = true;
+        }
       }
 
       if (!isImap) {
@@ -1728,12 +1759,9 @@ nsresult nsMsgAccountManager::CleanupOnExit() {
 
       // Pause until any possible inbox-compaction and trash-emptying
       // are complete (or time out).
-      bool inProgress = false;
       if (cleanupInboxOnExit) {
         int32_t loopCount = 0;  // used to break out after 5 seconds
-        accountManager->GetCleanupInboxInProgress(&inProgress);
-        while (inProgress && loopCount++ < 5000) {
-          accountManager->GetCleanupInboxInProgress(&inProgress);
+        while (m_cleanupInboxInProgress && loopCount++ < 5000) {
           PR_CEnterMonitor(root);
           PR_CWait(root, PR_MicrosecondsToInterval(1000UL));
           PR_CExitMonitor(root);
@@ -1741,10 +1769,8 @@ nsresult nsMsgAccountManager::CleanupOnExit() {
         }
       }
       if (emptyTrashOnExit) {
-        accountManager->GetEmptyTrashInProgress(&inProgress);
         int32_t loopCount = 0;
-        while (inProgress && loopCount++ < 5000) {
-          accountManager->GetEmptyTrashInProgress(&inProgress);
+        while (m_emptyTrashInProgress && loopCount++ < 5000) {
           PR_CEnterMonitor(root);
           PR_CWait(root, PR_MicrosecondsToInterval(1000UL));
           PR_CExitMonitor(root);
@@ -1786,6 +1812,12 @@ nsMsgAccountManager::BlockShutdown(nsIAsyncShutdownClient* aClient) {
 
 NS_IMETHODIMP
 nsMsgAccountManager::WriteToFolderCache(nsIMsgFolderCache* folderCache) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    MOZ_ASSERT(!m_msgFolderCache);
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
   for (auto iter = m_incomingServers.Iter(); !iter.Done(); iter.Next()) {
     iter.Data()->WriteToFolderCache(folderCache);
   }
@@ -1888,39 +1920,6 @@ nsMsgAccountManager::GetAccount(const nsACString& aKey,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsMsgAccountManager::FindServerIndex(nsIMsgIncomingServer* server,
-                                     int32_t* result) {
-  NS_ENSURE_ARG_POINTER(server);
-  NS_ENSURE_ARG_POINTER(result);
-
-  nsCString key;
-  nsresult rv = server->GetKey(key);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // do this by account because the account list is in order
-  uint32_t i;
-  for (i = 0; i < m_accounts.Length(); ++i) {
-    nsCOMPtr<nsIMsgIncomingServer> server;
-    rv = m_accounts[i]->GetIncomingServer(getter_AddRefs(server));
-    if (!server || NS_FAILED(rv)) continue;
-
-    nsCString serverKey;
-    rv = server->GetKey(serverKey);
-    if (NS_FAILED(rv)) continue;
-
-    // stop when found,
-    // index will be set to the current index
-    if (serverKey.Equals(key)) break;
-  }
-
-  // Even if the search failed, we can return index.
-  // This means that all servers not in the array return an index higher
-  // than all "registered" servers.
-  *result = i;
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgAccountManager::AddIncomingServerListener(
     nsIIncomingServerListener* serverListener) {
   m_incomingServerListeners.AppendObject(serverListener);
@@ -1956,17 +1955,6 @@ NS_IMETHODIMP nsMsgAccountManager::NotifyServerUnloaded(
   for (int32_t i = 0; i < count; i++) {
     nsIIncomingServerListener* listener = m_incomingServerListeners[i];
     listener->OnServerUnloaded(server);
-  }
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAccountManager::NotifyServerChanged(
-    nsIMsgIncomingServer* server) {
-  int32_t count = m_incomingServerListeners.Count();
-  for (int32_t i = 0; i < count; i++) {
-    nsIIncomingServerListener* listener = m_incomingServerListeners[i];
-    listener->OnServerChanged(server);
   }
 
   return NS_OK;
@@ -2380,34 +2368,6 @@ nsMsgAccountManager::CreateLocalMailAccount(nsIMsgAccount** _retval) {
   if (_retval) {
     account.forget(_retval);
   }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgAccountManager::SetFolderDoingEmptyTrash(nsIMsgFolder* folder) {
-  m_folderDoingEmptyTrash = folder;
-  m_emptyTrashInProgress = true;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgAccountManager::GetEmptyTrashInProgress(bool* bVal) {
-  NS_ENSURE_ARG_POINTER(bVal);
-  *bVal = m_emptyTrashInProgress;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgAccountManager::SetFolderDoingCleanupInbox(nsIMsgFolder* folder) {
-  m_folderDoingCleanupInbox = folder;
-  m_cleanupInboxInProgress = true;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgAccountManager::GetCleanupInboxInProgress(bool* bVal) {
-  NS_ENSURE_ARG_POINTER(bVal);
-  *bVal = m_cleanupInboxInProgress;
   return NS_OK;
 }
 
@@ -3002,7 +2962,9 @@ NS_IMETHODIMP nsMsgAccountManager::LoadVirtualFolders() {
 
 NS_IMETHODIMP nsMsgAccountManager::SaveVirtualFolders() {
   AUTO_PROFILER_LABEL("nsMsgAccountManager::SaveVirtualFolders", MAILNEWS);
+
   if (!m_virtualFoldersLoaded) return NS_OK;
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
 
   nsCOMPtr<nsIFile> file;
   GetVirtualFoldersFile(file);
@@ -3122,6 +3084,7 @@ void nsMsgAccountManager::ParseAndVerifyVirtualFolderScope(nsCString& buffer) {
 // This conveniently works to add a single folder as well.
 nsresult nsMsgAccountManager::AddVFListenersForVF(
     nsIMsgFolder* virtualFolder, const nsCString& srchFolderUris) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
   if (srchFolderUris.Equals("*")) {
     return NS_OK;
   }
@@ -3211,6 +3174,7 @@ NS_IMETHODIMP nsMsgAccountManager::GetAllFolders(
 
 NS_IMETHODIMP nsMsgAccountManager::OnFolderAdded(nsIMsgFolder* parent,
                                                  nsIMsgFolder* folder) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
   if (!parent) {
     // This method gets called for folders that aren't connected to anything,
     // such as a junk folder that appears when an IMAP account is created. We
@@ -3376,6 +3340,7 @@ NS_IMETHODIMP nsMsgAccountManager::OnMessageAdded(nsIMsgFolder* parent,
 
 NS_IMETHODIMP nsMsgAccountManager::OnFolderRemoved(nsIMsgFolder* parentFolder,
                                                    nsIMsgFolder* folder) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
   nsresult rv = NS_OK;
   uint32_t folderFlags;
   folder->GetFlags(&folderFlags);
@@ -3476,6 +3441,7 @@ nsMsgAccountManager::OnFolderIntPropertyChanged(nsIMsgFolder* aFolder,
                                                 const nsACString& aProperty,
                                                 int64_t oldValue,
                                                 int64_t newValue) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
   if (aProperty.Equals(kFolderFlag)) {
     if (newValue & nsMsgFolderFlags::Virtual) {
       // This is a virtual folder, let's get out of here.

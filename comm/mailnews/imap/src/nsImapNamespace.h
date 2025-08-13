@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef _nsImapNamespace_H_
-#define _nsImapNamespace_H_
+#ifndef COMM_MAILNEWS_IMAP_SRC_NSIMAPNAMESPACE_H_
+#define COMM_MAILNEWS_IMAP_SRC_NSIMAPNAMESPACE_H_
 
 #include "nsImapCore.h"
 #include "nsTArray.h"
@@ -42,9 +42,6 @@ class nsImapNamespaceList {
 
   static nsImapNamespaceList* CreatensImapNamespaceList();
 
-  nsresult InitFromString(const char* nameSpaceString,
-                          EIMAPNamespaceType nstype);
-  nsresult OutputToString(nsCString& OutputString);
   int UnserializeNamespaces(const char* str, char** prefixes, int len);
   nsresult SerializeNamespaces(char** prefixes, int len,
                                nsCString& serializedNamespace);
@@ -76,12 +73,9 @@ class nsImapNamespaceList {
       EIMAPNamespaceType nsType, nsImapNamespace** nsUsed);
 
  protected:
-  static char* AllocateServerFolderName(const char* canonicalFolderName,
-                                        char delimiter);
-  static nsCString AllocateCanonicalFolderName(const char* onlineFolderName,
-                                               char delimiter);
   nsImapNamespaceList();  // use CreatensImapNamespaceList to create one
 
   nsTArray<nsImapNamespace*> m_NamespaceList;
 };
-#endif
+
+#endif  // COMM_MAILNEWS_IMAP_SRC_NSIMAPNAMESPACE_H_

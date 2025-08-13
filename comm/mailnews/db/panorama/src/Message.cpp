@@ -20,27 +20,35 @@ NS_IMPL_ISUPPORTS(Message, nsIMsgDBHdr)
 
 Message::Message(MessageDatabase* aDatabase, mozIStorageStatement* aStmt)
     : mDatabase(aDatabase) {
+  // The order of these fields is set in MESSAGE_SQL_FIELDS.
   uint32_t len;
   mId = aStmt->AsInt64(0);
   mFolderId = aStmt->AsInt64(1);
-  mMessageId = aStmt->AsSharedUTF8String(2, &len);
-  mDate = aStmt->AsDouble(3);
-  mSender = aStmt->AsSharedUTF8String(4, &len);
-  mRecipients = aStmt->AsSharedUTF8String(5, &len);
-  mCcList = aStmt->AsSharedUTF8String(6, &len);
-  mBccList = aStmt->AsSharedUTF8String(7, &len);
-  mSubject = aStmt->AsSharedUTF8String(8, &len);
-  mFlags = aStmt->AsInt64(9);
-  mTags = aStmt->AsSharedUTF8String(10, &len);
+  mThreadId = aStmt->AsInt64(2);
+  mThreadParent = aStmt->AsInt64(3);
+  mMessageId = aStmt->AsSharedUTF8String(4, &len);
+  mDate = aStmt->AsDouble(5);
+  mSender = aStmt->AsSharedUTF8String(6, &len);
+  mRecipients = aStmt->AsSharedUTF8String(7, &len);
+  mCcList = aStmt->AsSharedUTF8String(8, &len);
+  mBccList = aStmt->AsSharedUTF8String(9, &len);
+  mSubject = aStmt->AsSharedUTF8String(10, &len);
+  mFlags = aStmt->AsInt64(11);
+  mTags = aStmt->AsSharedUTF8String(12, &len);
 }
 
 NS_IMETHODIMP Message::SetStringProperty(const char* propertyName,
                                          const nsACString& propertyValue) {
+  // TODO: save keywords back to the database
   return mDatabase->SetMessageProperty(mId, nsCString(propertyName),
                                        propertyValue);
 }
 NS_IMETHODIMP Message::GetStringProperty(const char* propertyName,
                                          nsACString& propertyValue) {
+  if (!strcmp(propertyName, "keywords")) {
+    propertyValue.Assign(mTags);
+    return NS_OK;
+  }
   return mDatabase->GetMessageProperty(mId, nsCString(propertyName),
                                        propertyValue);
 }
@@ -123,7 +131,8 @@ NS_IMETHODIMP Message::AndFlags(uint32_t aFlags, uint32_t* aOutFlags) {
   return mDatabase->SetMessageFlags(mId, mFlags);
 }
 NS_IMETHODIMP Message::GetThreadId(nsMsgKey* aThreadId) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  *aThreadId = mThreadId;
+  return NS_OK;
 }
 NS_IMETHODIMP Message::SetThreadId(nsMsgKey aThreadId) {
   return NS_ERROR_NOT_IMPLEMENTED;
@@ -136,7 +145,8 @@ NS_IMETHODIMP Message::SetMessageKey(nsMsgKey aMessageKey) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 NS_IMETHODIMP Message::GetThreadParent(nsMsgKey* aThreadParent) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  *aThreadParent = mThreadParent;
+  return NS_OK;
 }
 NS_IMETHODIMP Message::SetThreadParent(nsMsgKey aThreadParent) {
   return NS_ERROR_NOT_IMPLEMENTED;
@@ -147,12 +157,15 @@ NS_IMETHODIMP Message::GetMessageSize(uint32_t* aMessageSize) {
 NS_IMETHODIMP Message::SetMessageSize(uint32_t aMessageSize) {
   return SetUint32Property("messageSize", aMessageSize);
 }
+
 NS_IMETHODIMP Message::GetLineCount(uint32_t* aLineCount) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return GetUint32Property("lineCount", aLineCount);
 }
+
 NS_IMETHODIMP Message::SetLineCount(uint32_t aLineCount) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return SetUint32Property("lineCount", aLineCount);
 }
+
 NS_IMETHODIMP Message::GetStoreToken(nsACString& aStoreToken) {
   return GetStringProperty("storeToken", aStoreToken);
 }
@@ -249,7 +262,9 @@ NS_IMETHODIMP Message::GetRecipientsCollationKey(nsTArray<uint8_t>& _retval) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 NS_IMETHODIMP Message::GetCharset(nsACString& aCharset) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  // TODO: actually implement this.
+  aCharset.Truncate();
+  return NS_OK;
 }
 NS_IMETHODIMP Message::SetCharset(const nsACString& aCharset) {
   return NS_ERROR_NOT_IMPLEMENTED;
@@ -258,20 +273,40 @@ NS_IMETHODIMP Message::GetEffectiveCharset(nsACString& aEffectiveCharset) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 NS_IMETHODIMP Message::GetAccountKey(nsACString& aAccountKey) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
+  nsCOMPtr<nsIFolderDatabase> folderDatabase = database->GetFolders();
+
+  nsCOMPtr<nsIFolder> folder;
+  nsresult rv =
+      folderDatabase->GetFolderById(mFolderId, getter_AddRefs(folder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIFolder> rootFolder = folder->GetRootFolder();
+  nsCString serverKey = rootFolder->GetName();
+  nsCOMPtr<nsIMsgAccountManager> accountManager =
+      components::AccountManager::Service();
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  rv = accountManager->GetIncomingServer(serverKey, getter_AddRefs(server));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIMsgAccount> account;
+  rv = accountManager->FindAccountForServer(server, getter_AddRefs(account));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return account->GetKey(aAccountKey);
 }
 NS_IMETHODIMP Message::SetAccountKey(const nsACString& aAccountKey) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 NS_IMETHODIMP Message::GetFolder(nsIMsgFolder** aFolder) {
-  nsCOMPtr<nsIDatabaseCore> core =
-      do_GetService("@mozilla.org/msgDatabase/msgDBService;1");
-  nsCOMPtr<nsIFolderDatabase> folderDatabase;
-  nsresult rv = core->GetFolders(getter_AddRefs(folderDatabase));
-  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_ARG_POINTER(aFolder);
+
+  nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
+  nsCOMPtr<nsIFolderDatabase> folderDatabase = database->GetFolders();
 
   nsCOMPtr<nsIFolder> folder;
-  rv = folderDatabase->GetFolderById(mFolderId, getter_AddRefs(folder));
+  nsresult rv =
+      folderDatabase->GetFolderById(mFolderId, getter_AddRefs(folder));
   NS_ENSURE_SUCCESS(rv, rv);
 
   return folderDatabase->GetMsgFolderForFolder(folder, aFolder);
@@ -281,6 +316,12 @@ NS_IMETHODIMP Message::GetUidOnServer(uint32_t* aUidOnServer) {
 }
 NS_IMETHODIMP Message::SetUidOnServer(uint32_t aUidOnServer) {
   return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP Message::GetIsLive(bool* isLive) {
+  // By definition, Message is always live and in the database.
+  *isLive = true;
+  return NS_OK;
 }
 
 }  // namespace mozilla::mailnews

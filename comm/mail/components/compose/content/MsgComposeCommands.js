@@ -18,6 +18,7 @@
 /* import-globals-from ComposerCommands.js */
 /* import-globals-from editor.js */
 /* import-globals-from editorUtilities.js */
+/* globals Enigmail */ // From enigmailMsgComposeOverlay.js
 
 /**
  * Commands for the message composition window.
@@ -431,7 +432,7 @@ function InitializeGlobalVariables() {
   gDSNOptionChanged = false;
   gAttachVCardOptionChanged = false;
   gNumUploadingAttachments = 0;
-  // eslint-disable-next-line no-global-assign
+
   msgWindow = Cc["@mozilla.org/messenger/msgwindow;1"].createInstance(
     Ci.nsIMsgWindow
   );
@@ -453,7 +454,7 @@ function ReleaseGlobalVariables() {
   gDisableAttachmentReminder = false;
   _gComposeBundle = null;
   MailServices.mailSession.RemoveMsgWindow(msgWindow);
-  // eslint-disable-next-line no-global-assign
+
   msgWindow = null;
 
   gLastKnownComposeStates = null;
@@ -2214,11 +2215,19 @@ function addAttachCloudMenuItems(aParentMenu) {
       }
       if (!addedFiles.find(f => f.name == upload.name || f.url == upload.url)) {
         const fileItem = document.createXULElement("menuitem");
+        const fileUrl =
+          "list-style-image: image-set('moz-icon://" +
+          upload.name +
+          "?size=16&scale=1' 1x, 'moz-icon://" +
+          upload.name +
+          "?size=16&scale=2' 2x, 'moz-icon://" +
+          upload.name +
+          "?size=16&scale=3' 3x)";
         fileItem.cloudFileUpload = upload;
         fileItem.cloudFileAccount = account;
         fileItem.setAttribute("label", upload.name);
         fileItem.setAttribute("class", "menuitem-iconic");
-        fileItem.setAttribute("image", "moz-icon://" + upload.name);
+        fileItem.setAttribute("style", fileUrl);
         aParentMenu.appendChild(fileItem);
         addedFiles.push({ name: upload.name, url: upload.url });
       }
@@ -5368,6 +5377,7 @@ async function adjustEncryptAfterIdentityChange(prevIdentity) {
     }
 
     await checkEncryptionState();
+    await Enigmail.msg.warnUserOfSenderKeyExpiration();
     return;
   }
 
@@ -5405,6 +5415,7 @@ async function adjustEncryptAfterIdentityChange(prevIdentity) {
   }
 
   await checkEncryptionState();
+  await Enigmail.msg.warnUserOfSenderKeyExpiration();
 }
 
 async function ComposeLoad() {
@@ -8648,7 +8659,6 @@ async function RenameSelectedAttachment() {
   }
 }
 
-/* eslint-disable complexity */
 /**
  * Move selected attachment(s) within the attachment list.
  *
@@ -8898,7 +8908,6 @@ function moveSelectedAttachments(aDirection) {
   // handlers, so we must do it now as the position of selected items has changed.
   updateReorderAttachmentsItems();
 }
-/* eslint-enable complexity */
 
 /**
  * Toggle attachment pane view state: show or hide it.
@@ -10676,8 +10685,7 @@ function moveFocusToNeighbouringArea(event) {
     }
     // Focus is within, so we find the neighbouring area to move focus to.
     const end = i;
-    // @see https://github.com/eslint/eslint/issues/17807
-    // eslint-disable-next-line no-constant-condition
+
     while (true) {
       // Get the next neighbour.
       // NOTE: The focus will loop around.

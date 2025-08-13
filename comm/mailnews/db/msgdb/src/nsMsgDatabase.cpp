@@ -25,6 +25,7 @@
 #include "nsIMsgFolderCacheElement.h"
 #include "MailNewsTypes2.h"
 #include "nsMsgUtils.h"
+#include "nsPrintfCString.h"
 #include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsIPrefService.h"
@@ -1064,10 +1065,12 @@ nsMsgDatabase::~nsMsgDatabase() {
   MOZ_LOG(DBLog, LogLevel::Info,
           ("closing database    %s", m_dbFile->HumanReadablePath().get()));
 
-  nsCOMPtr<nsIMsgDBService> serv(
-      do_GetService("@mozilla.org/msgDatabase/msgDBService;1"));
-  if (serv) {
-    static_cast<nsMsgDBService*>(serv.get())->RemoveFromCache(this);
+  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+    nsCOMPtr<nsIMsgDBService> serv(
+        do_GetService("@mozilla.org/msgDatabase/msgDBService;1"));
+    if (serv) {
+      static_cast<nsMsgDBService*>(serv.get())->RemoveFromCache(this);
+    }
   }
 
   // if the db folder info refers to the mdb db, we must clear it because
@@ -1122,6 +1125,13 @@ nsresult nsMsgDatabase::Open(nsMsgDBService* aDBService, nsIFile* aFolderName,
   return nsMsgDatabase::OpenInternal(aDBService, aFolderName, aCreate,
                                      aLeaveInvalidDB,
                                      true /* open synchronously */);
+}
+
+NS_IMETHODIMP nsMsgDatabase::OpenFromFile(nsIFile* aFolderName) {
+  // This is here to open the database without using the database service.
+  // It is used only for migrating to the new global database.
+  MOZ_ASSERT(Preferences::GetBool("mail.panorama.enabled", false));
+  return nsMsgDatabase::OpenInternal(nullptr, aFolderName, false, false, true);
 }
 
 nsresult nsMsgDatabase::OpenInternal(nsMsgDBService* aDBService,
@@ -1240,7 +1250,7 @@ nsresult nsMsgDatabase::CheckForErrors(nsresult err, bool sync,
       summaryFile->Remove(false);  // blow away the db if it's corrupt.
     }
   }
-  if (sync &&
+  if (aDBService && sync &&
       (NS_SUCCEEDED(err) || err == NS_MSG_ERROR_FOLDER_SUMMARY_MISSING)) {
     aDBService->AddToCache(this);
   }
@@ -1491,38 +1501,39 @@ NS_IMETHODIMP nsMsgDatabase::Commit(nsMsgDBCommit commitType) {
   // commits.
   if (GetEnv()) GetEnv()->ClearErrors();
 
-  nsresult rv;
-  nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  if (NS_SUCCEEDED(rv) && accountManager) {
-    nsCOMPtr<nsIMsgFolderCache> folderCache;
+  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+    nsresult rv;
+    nsCOMPtr<nsIMsgAccountManager> accountManager =
+        do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
+    if (NS_SUCCEEDED(rv) && accountManager) {
+      nsCOMPtr<nsIMsgFolderCache> folderCache;
 
-    rv = accountManager->GetFolderCache(getter_AddRefs(folderCache));
-    if (NS_SUCCEEDED(rv) && folderCache) {
-      nsCOMPtr<nsIMsgFolderCacheElement> cacheElement;
-      nsCString persistentPath;
-      NS_ENSURE_TRUE(m_dbFile, NS_ERROR_NULL_POINTER);
-      rv = m_dbFile->GetPersistentDescriptor(persistentPath);
-      NS_ENSURE_SUCCESS(rv, err);
-      rv = folderCache->GetCacheElement(persistentPath, false,
-                                        getter_AddRefs(cacheElement));
-      if (NS_SUCCEEDED(rv) && cacheElement && m_dbFolderInfo) {
-        int32_t totalMessages, unreadMessages, pendingMessages,
-            pendingUnreadMessages;
+      rv = accountManager->GetFolderCache(getter_AddRefs(folderCache));
+      if (NS_SUCCEEDED(rv) && folderCache) {
+        nsCOMPtr<nsIMsgFolderCacheElement> cacheElement;
+        nsCString persistentPath;
+        NS_ENSURE_TRUE(m_dbFile, NS_ERROR_NULL_POINTER);
+        rv = m_dbFile->GetPersistentDescriptor(persistentPath);
+        NS_ENSURE_SUCCESS(rv, err);
+        rv = folderCache->GetCacheElement(persistentPath, false,
+                                          getter_AddRefs(cacheElement));
+        if (NS_SUCCEEDED(rv) && cacheElement && m_dbFolderInfo) {
+          int32_t totalMessages, unreadMessages, pendingMessages,
+              pendingUnreadMessages;
 
-        m_dbFolderInfo->GetNumMessages(&totalMessages);
-        m_dbFolderInfo->GetNumUnreadMessages(&unreadMessages);
-        m_dbFolderInfo->GetImapUnreadPendingMessages(&pendingUnreadMessages);
-        m_dbFolderInfo->GetImapTotalPendingMessages(&pendingMessages);
-        cacheElement->SetCachedInt32("totalMsgs", totalMessages);
-        cacheElement->SetCachedInt32("totalUnreadMsgs", unreadMessages);
-        cacheElement->SetCachedInt32("pendingMsgs", pendingMessages);
-        cacheElement->SetCachedInt32("pendingUnreadMsgs",
-                                     pendingUnreadMessages);
+          m_dbFolderInfo->GetNumMessages(&totalMessages);
+          m_dbFolderInfo->GetNumUnreadMessages(&unreadMessages);
+          m_dbFolderInfo->GetImapUnreadPendingMessages(&pendingUnreadMessages);
+          m_dbFolderInfo->GetImapTotalPendingMessages(&pendingMessages);
+          cacheElement->SetCachedInt32("totalMsgs", totalMessages);
+          cacheElement->SetCachedInt32("totalUnreadMsgs", unreadMessages);
+          cacheElement->SetCachedInt32("pendingMsgs", pendingMessages);
+          cacheElement->SetCachedInt32("pendingUnreadMsgs",
+                                       pendingUnreadMessages);
+        }
       }
     }
   }
-
   return err;
 }
 
@@ -3127,6 +3138,29 @@ NS_IMETHODIMP nsMsgDatabase::AddNewHdrToDB(nsIMsgDBHdr* newHdr, bool notify) {
   }
   NS_ASSERTION(NS_SUCCEEDED(err), "error creating thread");
   return err;
+}
+
+NS_IMETHODIMP nsMsgDatabase::AttachHdr(nsIMsgDBHdr* detachedHdr, bool notify,
+                                       nsIMsgDBHdr** liveHdr) {
+  // Sanity check.
+  bool isLive;
+  nsresult rv = detachedHdr->GetIsLive(&isLive);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (isLive) {
+    NS_ERROR("Live nsIMsgDBHdr passed in to AttachHdr()");
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  // Attach it to the messages table.
+  rv = AddNewHdrToDB(detachedHdr, notify);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Return the same header that was passed in.
+  // That's OK - once detachedHdr is passed in here, the caller won't be
+  // using it any more, so we can sneakily recycle it.
+  NS_ADDREF(detachedHdr);
+  *liveHdr = detachedHdr;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgDatabase::CopyHdrFromExistingHdr(nsMsgKey key,

@@ -481,7 +481,6 @@ var snapshotFormatters = {
     );
   },
 
-  /* eslint-disable complexity */
   async graphics(data) {
     function localizedMsg(msg) {
       if (typeof msg == "object" && msg.key) {
@@ -890,7 +889,6 @@ var snapshotFormatters = {
       addRow("diagnostics", key, [new Text(value)]);
     }
   },
-  /* eslint-enable complexity */
 
   media(data) {
     function insertBasicInfo(key, value) {
@@ -1073,7 +1071,10 @@ var snapshotFormatters = {
       if (micStatus.value == permission.PERMISSION_STATE_AUTHORIZED) {
         roundtripAudioLatency();
       }
-    } else {
+    } else if (
+      AppConstants.platform != "win" ||
+      !Services.sysinfo.getProperty("hasWinPackageId", false)
+    ) {
       roundtripAudioLatency();
     }
 

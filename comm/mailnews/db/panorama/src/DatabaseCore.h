@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef DatabaseCore_h__
-#define DatabaseCore_h__
+#ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_DATABASECORE_H_
+#define COMM_MAILNEWS_DB_PANORAMA_SRC_DATABASECORE_H_
 
 #include "FolderDatabase.h"
 #include "MessageDatabase.h"
@@ -13,6 +13,7 @@
 #include "mozIStorageStatement.h"
 #include "nsCOMPtr.h"
 #include "nsIDatabaseCore.h"
+#include "nsIFactory.h"
 #include "nsIMsgDatabase.h"
 #include "nsIObserver.h"
 #include "nsTHashMap.h"
@@ -40,11 +41,15 @@ class DatabaseCore : public nsIDatabaseCore,
 
  private:
   friend class FolderDatabase;
+  friend class FolderMigrator;
   friend class MessageDatabase;
   friend class PerFolderDatabase;
 
   static nsresult GetStatement(const nsACString& aName, const nsACString& aSQL,
                                mozIStorageStatement** aStmt);
+  static nsresult CreateSavepoint(const nsACString& name);
+  static nsresult ReleaseSavepoint(const nsACString& name);
+  static nsresult RollbackToSavepoint(const nsACString& name);
 
  private:
   friend class LiveView;
@@ -52,9 +57,11 @@ class DatabaseCore : public nsIDatabaseCore,
   static nsCOMPtr<mozIStorageConnection> sConnection;
 
  private:
+  static bool sDatabaseIsNew;  // If the database was created in this session.
   static nsTHashMap<nsCString, nsCOMPtr<mozIStorageStatement>> sStatements;
 
   static nsresult EnsureConnection();
+  static nsresult CreateNewDatabase();
 
   RefPtr<FolderDatabase> mFolderDatabase;
   RefPtr<MessageDatabase> mMessageDatabase;
@@ -73,4 +80,4 @@ class DatabaseCoreFactory final : public nsIFactory {
 
 }  // namespace mozilla::mailnews
 
-#endif  // DatabaseCore_h__
+#endif  // COMM_MAILNEWS_DB_PANORAMA_SRC_DATABASECORE_H_

@@ -6,7 +6,6 @@
  * Utils for testing interactions with OAuth2 authentication servers.
  */
 
-// eslint-disable-next-line no-shadow
 import { Assert } from "resource://testing-common/Assert.sys.mjs";
 import { BrowserTestUtils } from "resource://testing-common/BrowserTestUtils.sys.mjs";
 import { CommonUtils } from "resource://services-common/utils.sys.mjs";
@@ -65,7 +64,8 @@ export const OAuth2TestUtils = {
     );
     const oAuthBrowser = oAuthWindow.getBrowser();
     if (
-      oAuthBrowser.webProgress?.isLoadingDocument ||
+      !oAuthBrowser.webProgress ||
+      oAuthBrowser.webProgress.isLoadingDocument ||
       oAuthBrowser.currentURI.spec == "about:blank"
     ) {
       await BrowserTestUtils.browserLoaded(oAuthBrowser);

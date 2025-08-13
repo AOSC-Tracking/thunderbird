@@ -22,7 +22,7 @@ import { TestUtils } from "resource://testing-common/TestUtils.sys.mjs";
  */
 export async function open_search_window() {
   const searchPromise = promise_new_window("mailnews:search");
-  EventUtils.synthesizeKey("f", { shiftKey: true, accelKey: true }, mc);
+  EventUtils.synthesizeKey("F", { shiftKey: true, accelKey: true }, mc);
   return searchPromise;
 }
 
@@ -66,9 +66,9 @@ export function assert_search_window_folder_displayed(aWin, aFolder) {
     currentFolder,
     aFolder,
     "The search window's selected folder should have been: " +
-      aFolder.prettyName +
+      aFolder.localizedName +
       ", but is actually: " +
-      currentFolder?.prettyName
+      currentFolder?.localizedName
   );
 }
 

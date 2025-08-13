@@ -676,7 +676,7 @@ function viewLog() {
   window.openDialog(
     "chrome://messenger/content/viewLog.xhtml",
     "FilterLog",
-    "chrome,modal,titlebar,resizable,centerscreen",
+    "chrome,dependent,titlebar,resizable,centerscreen",
     args
   );
 }
@@ -1116,7 +1116,7 @@ function onFindFilter() {
 function resetSearchBox(aFilter) {
   const keyword = gSearchBox.value.toLocaleLowerCase();
   if (keyword && (!aFilter || !filterSearchMatch(aFilter, keyword))) {
-    gSearchBox.reset();
+    gSearchBox.inputEl.value = "";
   }
 }
 

@@ -11,12 +11,11 @@
 #include "mozilla/Components.h"
 #include "mozilla/Logging.h"
 #include "mozilla/ProfilerMarkers.h"
-#include "mozilla/ScopeExit.h"
 #include "nsCOMPtr.h"
 #include "nsIFolder.h"
 #include "nsIMsgAccountManager.h"
-#include "nsIMsgFolderCache.h"
 #include "nsIMsgIncomingServer.h"
+#include "nsMsgFolderFlags.h"
 #include "nsThreadUtils.h"
 
 using mozilla::LazyLogModule;
@@ -44,7 +43,8 @@ nsresult FolderDatabase::Startup() {
   PROFILER_MARKER_UNTYPED("FolderDatabase::LoadFolders", MAILNEWS,
                           MarkerOptions(MarkerTiming::IntervalStart()));
 
-  InternalLoadFolders();
+  nsresult rv = InternalLoadFolders();
+  NS_ENSURE_SUCCESS(rv, rv);
 
   PROFILER_MARKER_UNTYPED("FolderDatabase::LoadFolders", MAILNEWS,
                           MarkerOptions(MarkerTiming::IntervalEnd()));
@@ -409,7 +409,8 @@ NS_IMETHODIMP FolderDatabase::Reconcile(
   nsTArray<nsCString> childNames = aChildNames.Clone();
 
   for (auto child : parent->mChildren.Clone()) {
-    if (!childNames.RemoveElement(child->mName)) {
+    if (!childNames.RemoveElement(child->mName) &&
+        !(child->GetFlags() & nsMsgFolderFlags::Virtual)) {
       DeleteFolder(child);
     }
   }
@@ -442,8 +443,7 @@ FolderDatabase::MoveFolderWithin(nsIFolder* aParent, nsIFolder* aChild,
   if (!aBefore) {
     parent->mChildren.RemoveElement(child);
     parent->mChildren.AppendElement(child);
-    SaveOrdinals(parent->mChildren);
-    return NS_OK;
+    return SaveOrdinals(parent->mChildren);
   }
 
   Folder* before = (Folder*)(aBefore);
@@ -454,8 +454,50 @@ FolderDatabase::MoveFolderWithin(nsIFolder* aParent, nsIFolder* aChild,
 
   parent->mChildren.RemoveElement(child);
   parent->mChildren.InsertElementAt(parent->mChildren.IndexOf(before), child);
-  SaveOrdinals(parent->mChildren);
+  return SaveOrdinals(parent->mChildren);
+}
 
+nsresult FolderDatabase::SaveOrdinals(nsTArray<RefPtr<Folder>>& folders) {
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = DatabaseCore::GetStatement(
+      "UpdateOrdinals"_ns,
+      "UPDATE folders SET ordinal = :ordinal WHERE id = :id"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  uint64_t ordinal = 1;
+  for (auto child : folders) {
+    child->mOrdinal.reset();
+    child->mOrdinal.emplace(ordinal);
+    stmt->BindInt64ByName("ordinal"_ns, ordinal);
+    stmt->BindInt64ByName("id"_ns, child->mId);
+    stmt->Execute();
+    stmt->Reset();
+    ordinal++;
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+FolderDatabase::ResetChildOrder(nsIFolder* aParent) {
+  MOZ_ASSERT(aParent);
+  Folder* parent = (Folder*)(aParent);
+
+  for (RefPtr<Folder> child : parent->mChildren) {
+    child->mOrdinal.reset();
+  }
+  parent->mChildren.Sort(mComparator);
+
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = DatabaseCore::GetStatement(
+      "ResetOrdinals"_ns,
+      "UPDATE folders SET ordinal = NULL WHERE parent = :parent"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  stmt->BindInt64ByName("parent"_ns, aParent->GetId());
+  stmt->Execute();
+  stmt->Reset();
   return NS_OK;
 }
 
@@ -502,31 +544,44 @@ FolderDatabase::MoveFolderTo(nsIFolder* aNewParent, nsIFolder* aChild) {
   mFoldersByPath.Remove(child->GetPath());
 
   child->mParent->mChildren.RemoveElement(child);
+  child->mOrdinal.reset();
   newParent->mChildren.InsertElementSorted(child, mComparator);
   child->mParent = newParent;
-  child->mOrdinal.reset();
 
   mFoldersByPath.InsertOrUpdate(child->GetPath(), child);
 
   return NS_OK;
 }
 
-void FolderDatabase::SaveOrdinals(nsTArray<RefPtr<Folder>>& folders) {
+NS_IMETHODIMP
+FolderDatabase::UpdateName(nsIFolder* aFolder, const nsACString& aNewName) {
+  NS_ENSURE_ARG_POINTER(aFolder);
+
+  Folder* folder = (Folder*)(aFolder);
+  nsCString newName = DatabaseUtils::Normalize(aNewName);
+
   nsCOMPtr<mozIStorageStatement> stmt;
   nsresult rv = DatabaseCore::GetStatement(
-      "UpdateOrdinals"_ns,
-      "UPDATE folders SET ordinal = :ordinal WHERE id = :id"_ns,
+      "UpdateName"_ns, "UPDATE folders SET name = :name WHERE id = :id"_ns,
       getter_AddRefs(stmt));
-  NS_ENSURE_SUCCESS_VOID(rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+  stmt->BindUTF8StringByName("name"_ns, newName);
+  stmt->BindInt64ByName("id"_ns, folder->mId);
 
-  uint64_t ordinal = 1;
-  for (auto f : folders) {
-    stmt->BindInt64ByName("ordinal"_ns, ordinal);
-    stmt->BindInt64ByName("id"_ns, f->mId);
-    stmt->Execute();
-    stmt->Reset();
-    ordinal++;
+  rv = stmt->Execute();
+  stmt->Reset();
+
+  mFoldersByPath.Remove(folder->GetPath());
+  folder->mName = newName;
+  mFoldersByPath.InsertOrUpdate(folder->GetPath(), folder);
+
+  Folder* parent = folder->mParent;
+  if (parent) {
+    parent->mChildren.RemoveElement(folder);
+    parent->mChildren.InsertElementSorted(folder, mComparator);
   }
+
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -534,6 +589,10 @@ FolderDatabase::UpdateFlags(nsIFolder* aFolder, uint64_t aNewFlags) {
   NS_ENSURE_ARG_POINTER(aFolder);
 
   Folder* folder = (Folder*)(aFolder);
+  if (folder->mFlags == aNewFlags) {
+    return NS_OK;
+  }
+
   nsCOMPtr<mozIStorageStatement> stmt;
   nsresult rv = DatabaseCore::GetStatement(
       "UpdateFlags"_ns, "UPDATE folders SET flags = :flags WHERE id = :id"_ns,
@@ -622,6 +681,57 @@ nsresult FolderDatabase::SetFolderProperty(uint64_t id, const nsACString& name,
   stmt->BindUTF8StringByName("name"_ns, DatabaseUtils::Normalize(name));
   stmt->BindInt64ByName("value"_ns, value);
   return stmt->Execute();
+}
+
+nsresult FolderDatabase::GetVirtualFolderFolders(
+    uint64_t virtualFolderId, nsTArray<uint64_t>& searchFolderIds) {
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = DatabaseCore::GetStatement(
+      "GetVirtualFolderFolders"_ns,
+      "SELECT searchFolderId FROM virtualFolder_folders WHERE virtualFolderId = :virtualFolderId"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  stmt->BindInt64ByName("virtualFolderId"_ns, virtualFolderId);
+
+  searchFolderIds.Clear();
+  bool hasResult;
+  while (NS_SUCCEEDED(stmt->ExecuteStep(&hasResult)) && hasResult) {
+    uint64_t searchFolderId = stmt->AsInt64(0);
+    searchFolderIds.AppendElement(searchFolderId);
+  }
+  stmt->Reset();
+
+  return NS_OK;
+}
+
+nsresult FolderDatabase::SetVirtualFolderFolders(
+    uint64_t virtualFolderId, nsTArray<uint64_t>& searchFolderIds) {
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = DatabaseCore::GetStatement(
+      "SetVirtualFolderFolders1"_ns,
+      "DELETE FROM virtualFolder_folders WHERE virtualFolderId = :virtualFolderId"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  stmt->BindInt64ByName("virtualFolderId"_ns, virtualFolderId);
+  rv = stmt->Execute();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = DatabaseCore::GetStatement(
+      "SetVirtualFolderFolders2"_ns,
+      "INSERT INTO virtualFolder_folders (virtualFolderId, searchFolderId) VALUES (:virtualFolderId, :searchFolderId)"_ns,
+      getter_AddRefs(stmt));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  for (auto searchFolderId : searchFolderIds) {
+    stmt->BindInt64ByName("virtualFolderId"_ns, virtualFolderId);
+    stmt->BindInt64ByName("searchFolderId"_ns, searchFolderId);
+    rv = stmt->Execute();
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return NS_OK;
 }
 
 }  // namespace mozilla::mailnews

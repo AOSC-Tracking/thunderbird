@@ -7,8 +7,8 @@
    Interface for representing News folders.
 */
 
-#ifndef nsMsgNewsFolder_h__
-#define nsMsgNewsFolder_h__
+#ifndef COMM_MAILNEWS_NEWS_SRC_NSNEWSFOLDER_H_
+#define COMM_MAILNEWS_NEWS_SRC_NSNEWSFOLDER_H_
 
 #include "nsMsgDBFolder.h"
 #include "nsIFile.h"
@@ -36,7 +36,7 @@ class nsMsgNewsFolder : public nsMsgDBFolder, public nsIMsgNewsFolder {
   NS_IMETHOD Rename(const nsACString& newName,
                     nsIMsgWindow* msgWindow) override;
 
-  NS_IMETHOD GetAbbreviatedName(nsACString& aAbbreviatedName) override;
+  NS_IMETHOD GetAbbreviatedName(nsAString& aAbbreviatedName) override;
 
   NS_IMETHOD GetExpungedBytesCount(int64_t* count);
   NS_IMETHOD GetDeletable(bool* deletable) override;
@@ -84,7 +84,7 @@ class nsMsgNewsFolder : public nsMsgDBFolder, public nsIMsgNewsFolder {
  protected:
   virtual ~nsMsgNewsFolder();
   // helper routine to parse the URI and update member variables
-  nsresult AbbreviatePrettyName(nsACString& prettyName, int32_t fullwords);
+  nsresult AbbreviatePrettyName(nsAString& prettyName, int32_t fullwords);
   nsresult ParseFolder(nsIFile* path);
   nsresult CreateSubFolders(nsIFile* path);
   nsresult AddDirectorySeparator(nsIFile* path);
@@ -130,4 +130,4 @@ class nsMsgNewsFolder : public nsMsgDBFolder, public nsIMsgNewsFolder {
   nsCOMPtr<nsIMsgFilterList> mFilterList;
 };
 
-#endif  // nsMsgNewsFolder_h__
+#endif  // COMM_MAILNEWS_NEWS_SRC_NSNEWSFOLDER_H_

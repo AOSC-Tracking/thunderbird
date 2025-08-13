@@ -47,10 +47,11 @@
 #  include "nsIFolder.h"
 #  include "nsIFolderDatabase.h"
 #endif  // MOZ_PANORAMA
+#include "nsIMsgLocalMailFolder.h"
 
 #define PORT_NOT_SET -1
 
-using mozilla::Preferences;
+using namespace mozilla;
 
 nsMsgIncomingServer::nsMsgIncomingServer()
     : m_hasShutDown(false),
@@ -294,6 +295,11 @@ NS_IMPL_GETSET(nsMsgIncomingServer, BiffState, uint32_t, m_biffState)
 
 NS_IMETHODIMP nsMsgIncomingServer::WriteToFolderCache(
     nsIMsgFolderCache* folderCache) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
   nsresult rv = NS_OK;
   if (m_rootFolder) {
     rv = m_rootFolder->WriteToFolderCache(folderCache, true /* deep */);
@@ -387,17 +393,21 @@ nsMsgIncomingServer::GetServerURI(nsACString& aResult) {
 }
 
 // helper routine to create local folder on disk, if it doesn't exist.
-nsresult nsMsgIncomingServer::CreateLocalFolder(const nsACString& folderName) {
+nsresult nsMsgIncomingServer::CreateLocalFolder(const nsACString& folderName,
+                                                uint32_t flag) {
   nsCOMPtr<nsIMsgFolder> rootFolder;
   nsresult rv = GetRootFolder(getter_AddRefs(rootFolder));
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIMsgFolder> child;
   rootFolder->GetChildNamed(folderName, getter_AddRefs(child));
   if (child) return NS_OK;
-  nsCOMPtr<nsIMsgPluggableStore> msgStore;
-  rv = GetMsgStore(getter_AddRefs(msgStore));
-  NS_ENSURE_SUCCESS(rv, rv);
-  return msgStore->CreateFolder(rootFolder, folderName, getter_AddRefs(child));
+  rootFolder->GetFolderWithFlags(flag, getter_AddRefs(child));
+  if (child) return NS_OK;
+  nsCOMPtr<nsIMsgLocalMailFolder> localRootFolder =
+      do_QueryInterface(rootFolder);
+  NS_ENSURE_TRUE(localRootFolder, NS_ERROR_FAILURE);
+  return localRootFolder->CreateLocalSubfolder(folderName,
+                                               getter_AddRefs(child));
 }
 
 nsresult nsMsgIncomingServer::CreateRootFolder() {
@@ -409,10 +419,8 @@ nsresult nsMsgIncomingServer::CreateRootFolder() {
 
 #ifdef MOZ_PANORAMA
   if (Preferences::GetBool("mail.panorama.enabled", false)) {
-    nsCOMPtr<nsIDatabaseCore> core =
-        mozilla::components::DatabaseCore::Service();
-    nsCOMPtr<nsIFolderDatabase> folders;
-    core->GetFolders(getter_AddRefs(folders));
+    nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
+    nsCOMPtr<nsIFolderDatabase> folders = database->GetFolders();
 
     nsCOMPtr<nsIFolder> root;
     rv = folders->GetFolderByPath(m_serverKey, getter_AddRefs(root));
@@ -430,6 +438,8 @@ nsresult nsMsgIncomingServer::CreateRootFolder() {
     nsCOMPtr<nsIInitableWithFolder> initable = do_QueryInterface(m_rootFolder);
     rv = initable->InitWithFolder(root);
     NS_ENSURE_SUCCESS(rv, rv);
+
+    return NS_OK;
   }
 #endif  // MOZ_PANORAMA
   return GetOrCreateFolder(serverUri, getter_AddRefs(m_rootFolder));
@@ -589,7 +599,7 @@ nsMsgIncomingServer::SetPrettyName(const nsACString& value) {
   SetStringValue("name", value);
   nsCOMPtr<nsIMsgFolder> rootFolder;
   GetRootFolder(getter_AddRefs(rootFolder));
-  if (rootFolder) rootFolder->SetPrettyName(value);
+  if (rootFolder) rootFolder->SetName(value);
   return NS_OK;
 }
 

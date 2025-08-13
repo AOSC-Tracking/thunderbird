@@ -257,3 +257,48 @@ address-book-add-ldap = New LDAP Address Book
 address-book-add-ldap-description = Connect to a remote LDAP address book
 
 account-hub-fetching-sync-accounts = Discovering address books and calendars…
+
+# $addressBooks (Number) - The number of address books that can be synced.
+# $accounts (Number) - The number of accounts.
+account-hub-address-book-sync-option-data =
+  { $addressBooks ->
+    [one] 1 address book
+    *[other] { $addressBooks } address books
+  } from { $accounts ->
+    [one] 1 account available
+    *[other] { $accounts } accounts available
+  }
+
+address-book-sync-existing-description = Retrieving existing accounts…
+
+account-hub-select-address-book-account = Select an account with Address books
+
+# $synced (Number) - The number of address books that are synced.
+# $available (Number) - The number of address books that can be synced.
+# $total (Number) - The total number of address books for this account.
+account-hub-account-address-book-count = { $synced } of { $total }
+    .title = { $synced } synced address books, { $available } available
+
+account-hub-add-local-address-book = Create a Local Address Book
+
+account-hub-local-address-book-label = Address Book Name
+
+account-hub-local-error-text = Please enter an address book name
+
+account-hub-sync-address-books = Sync existing address books
+
+account-hub-new-remote-address-book = New remote Address Book
+
+account-hub-username-label = Username
+
+account-hub-username-warning-icon = Username is required
+
+account-hub-address-book-username-error-text = Please enter a username
+
+account-hub-server-label = URL/Hostname
+
+account-hub-server-tip = Thunderbird will try to automatically detect your hostname
+
+account-hub-server-warning-icon = Invalid URL
+
+account-hub-server-error-text = Please enter a valid URL

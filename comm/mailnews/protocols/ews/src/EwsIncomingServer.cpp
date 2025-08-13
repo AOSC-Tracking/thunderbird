@@ -5,14 +5,16 @@
 #include "EwsIncomingServer.h"
 
 #include "IEwsClient.h"
+#include "nsIMsgFolderNotificationService.h"
 #include "nsIMsgWindow.h"
 #include "nsNetUtil.h"
 #include "nsPrintfCString.h"
 #include "OfflineStorage.h"
 #include "plbase64.h"
 
-#define ID_PROPERTY "ewsId"
 #define SYNC_STATE_PROPERTY "ewsSyncStateToken"
+
+constexpr auto kEwsIdProperty = "ewsId";
 
 class FolderSyncListener : public IEwsFolderCallbacks {
  public:
@@ -43,7 +45,7 @@ NS_IMETHODIMP FolderSyncListener::RecordRootFolder(const nsACString& id) {
   nsresult rv = mServer->GetRootFolder(getter_AddRefs(root));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return root->SetStringProperty(ID_PROPERTY, id);
+  return root->SetStringProperty(kEwsIdProperty, id);
 }
 
 NS_IMETHODIMP FolderSyncListener::Create(const nsACString& id,
@@ -139,7 +141,7 @@ nsresult EwsIncomingServer::MaybeCreateFolderWithDetails(
 
   // Record the EWS ID of the folder so that we can translate between local path
   // and remote ID when needed.
-  rv = newFolder->SetStringProperty(ID_PROPERTY, id);
+  rv = newFolder->SetStringProperty(kEwsIdProperty, id);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // The flags we get from the XPCOM code indicate whether this is a well-known
@@ -147,8 +149,13 @@ nsresult EwsIncomingServer::MaybeCreateFolderWithDetails(
   rv = newFolder->SetFlags(flags);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = newFolder->SetPrettyName(name);
+  rv = newFolder->SetName(name);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  // Notify any consumers listening for updates regarding the folder's creation.
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
+      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
+  if (notifier) notifier->NotifyFolderAdded(newFolder);
 
   rv = parent->NotifyFolderAdded(newFolder);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -173,7 +180,7 @@ nsresult EwsIncomingServer::UpdateFolderWithDetails(const nsACString& id,
   nsAutoCString currentName;
   MOZ_TRY(folder->GetName(currentName));
   nsAutoCString currentParentId;
-  MOZ_TRY(parentFolder->GetStringProperty(ID_PROPERTY, currentParentId));
+  MOZ_TRY(parentFolder->GetStringProperty(kEwsIdProperty, currentParentId));
 
   // If either the parent or the name of the folder changed, then we have to
   // initiate a move of the data for the folder, so we rely on the fact that a
@@ -237,7 +244,7 @@ nsresult EwsIncomingServer::FindFolderWithId(const nsACString& id,
     for (auto folder : foldersToScan) {
       // EWS folder ID is stored as a custom property in the folder store.
       nsCString folderId;
-      rv = folder->GetStringProperty(ID_PROPERTY, folderId);
+      rv = folder->GetStringProperty(kEwsIdProperty, folderId);
 
       if (NS_SUCCEEDED(rv) && folderId.Equals(id)) {
         folder.forget(_retval);
@@ -375,7 +382,7 @@ NS_IMETHODIMP EwsIncomingServer::GetNewMessages(nsIMsgFolder* aFolder,
         // is the case, then the EWS ID will be invalidated and we can no longer
         // sync that folder.
         nsAutoCString originalEwsId;
-        rv = folder->GetStringProperty(ID_PROPERTY, originalEwsId);
+        rv = folder->GetStringProperty(kEwsIdProperty, originalEwsId);
         if (NS_FAILED(rv)) {
           // Assume the original folder moved and return success.
           return NS_OK;

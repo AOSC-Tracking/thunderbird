@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef _NSMSGUTILS_H
-#define _NSMSGUTILS_H
+#ifndef COMM_MAILNEWS_BASE_SRC_NSMSGUTILS_H_
+#define COMM_MAILNEWS_BASE_SRC_NSMSGUTILS_H_
 
 #include "nsString.h"
 #include "msgCore.h"
@@ -110,12 +110,26 @@ nsresult FindFolder(const nsACString& aFolderURI, nsIMsgFolder** aFolder);
 nsresult GetExistingFolder(const nsACString& aFolderURI,
                            nsIMsgFolder** aFolder);
 
-// Get a folder by Uri, creating it if it doesn't already exist.
-// An error is returned if a folder cannot be found or created.
-// Created folders will be 'dangling' folders (ie not connected to a
-// parent).
+// DEPRECATED (Bug 1679333): Use GetExistingFolder or CreateFolder instead.  Get
+// a folder by Uri, creating it if it doesn't already exist.  An error is
+// returned if a folder cannot be found or created.  Created folders will be
+// 'dangling' folders (ie not connected to a parent).
 nsresult GetOrCreateFolder(const nsACString& aFolderURI,
                            nsIMsgFolder** aFolder);
+
+/// Create a new folder with the given name within the given parent.
+///
+/// This function will create a folder within the given parent folder with the
+/// given name. Folders are identified internally using a URI, so the folder
+/// name must be unique as a URI within the parent. This means that not only
+/// must a folder with the given name not exist within the parent, it must also
+/// be the case that the folder URI (which will include the URL encoded path of
+/// the parent and the URL encoded name of the child) must be unique. If a
+/// unique URI cannot be guaranteed, this function will return
+/// `NS_MSG_FOLDER_EXISTS`.
+nsresult CreateFolderAndCache(nsIMsgFolder* parentFolder,
+                              const nsACString& folderName,
+                              nsIMsgFolder** folder);
 
 // Escape lines starting with "From ", ">From ", etc. in a buffer.
 nsresult EscapeFromSpaceLine(nsIOutputStream* ouputStream, char* start,
@@ -235,23 +249,6 @@ int32_t MsgFindCharInSet(const nsCString& aString, const char* aChars,
                          uint32_t aOffset = 0);
 int32_t MsgFindCharInSet(const nsString& aString, const char16_t* aChars,
                          uint32_t aOffset = 0);
-
-/**
- * Alerts the user that the login to the server failed. Asks whether the
- * connection should: retry, cancel, or request a new password.
- *
- * @param aMsgWindow The message window associated with this action (cannot
- *                   be null).
- * @param aHostname  The hostname of the server for which the login failed.
- * @param aResult    The button pressed. 0 for retry, 1 for cancel,
- *                   2 for enter a new password.
- * @return           NS_OK for success, NS_ERROR_* if there was a failure in
- *                   creating the dialog.
- */
-nsresult MsgPromptLoginFailed(nsIMsgWindow* aMsgWindow,
-                              const nsACString& aHostname,
-                              const nsACString& aUsername,
-                              const nsACString& aAccountname, int32_t* aResult);
 
 /**
  * Calculate a PRTime value used to determine if a date is XX
@@ -511,4 +508,4 @@ nsString EncodeFilename(nsACString const& str);
  */
 nsCString DecodeFilename(nsAString const& filename);
 
-#endif
+#endif  // COMM_MAILNEWS_BASE_SRC_NSMSGUTILS_H_

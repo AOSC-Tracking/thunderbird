@@ -8,8 +8,6 @@
  * Common Enigmail crypto-related GUI functionality
  */
 
-/* eslint-enable valid-jsdoc */
-
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
 const lazy = {};
@@ -168,40 +166,6 @@ export var EnigmailFuncs = {
   },
 
   /**
-   * Extract the data fields following a header.
-   * e.g. ContentType: xyz; Aa=b; cc=d
-   *
-   * @param {string} data - Data containing a single header.
-   * @returns {object[][]} and array of arrays containing pairs of aa/b and cc/d
-   */
-  getHeaderData(data) {
-    var a = data.split(/\n/);
-    var res = [];
-    for (let i = 0; i < a.length; i++) {
-      if (a[i].length === 0) {
-        break;
-      }
-      const b = a[i].split(/;/);
-
-      // extract "abc = xyz" tuples
-      for (let j = 0; j < b.length; j++) {
-        const m = b[j].match(/^(\s*)([^=\s;]+)(\s*)(=)(\s*)(.*)(\s*)$/);
-        if (m) {
-          // m[2]: identifier / m[6]: data
-          res[m[2].toLowerCase()] = m[6].replace(/\s*$/, "");
-        }
-      }
-      if (i === 0 && !a[i].includes(";")) {
-        break;
-      }
-      if (i > 0 && a[i].search(/^\s/) < 0) {
-        break;
-      }
-    }
-    return res;
-  },
-
-  /**
    * Get the text for the encrypted subject.
    *
    * @returns {string}
@@ -288,108 +252,6 @@ export var EnigmailFuncs = {
       return 2;
     }
     return 0;
-  },
-
-  /**
-   * Get the nsIMsgAccount associated with a given nsIMsgIdentity
-   *
-   * @param {?nsIMsgIdentity} identity
-   * @returns {?nsIMsgAccount}
-   */
-  getAccountForIdentity(identity) {
-    for (const ac of MailServices.accounts.accounts) {
-      for (const id of ac.identities) {
-        if (id.key === identity.key) {
-          return ac;
-        }
-      }
-    }
-    return null;
-  },
-
-  /**
-   * Get the default identity of the default account.
-   *
-   * @returns {?nsIMsgIdentity}
-   */
-  getDefaultIdentity() {
-    try {
-      let ac;
-      if (MailServices.accounts.defaultAccount) {
-        ac = MailServices.accounts.defaultAccount;
-      } else {
-        for (ac of MailServices.accounts.accounts) {
-          if (
-            ac.incomingServer.type === "imap" ||
-            ac.incomingServer.type === "pop3"
-          ) {
-            break;
-          }
-        }
-      }
-
-      if (ac.defaultIdentity) {
-        return ac.defaultIdentity;
-      }
-      return ac.identities[0];
-    } catch (x) {
-      return null;
-    }
-  },
-
-  /**
-   * Get a list of all own email addresses, taken from all identities
-   * and all reply-to addresses
-   *
-   * @returns {object}
-   */
-  getOwnEmailAddresses() {
-    const ownEmails = {};
-
-    // Determine all sorts of own email addresses
-    for (const id of MailServices.accounts.allIdentities) {
-      if (id.email && id.email.length > 0) {
-        ownEmails[id.email.toLowerCase()] = 1;
-      }
-      if (id.replyTo && id.replyTo.length > 0) {
-        try {
-          const replyEmails = this.stripEmail(id.replyTo)
-            .toLowerCase()
-            .split(/,/);
-          for (const j in replyEmails) {
-            ownEmails[replyEmails[j]] = 1;
-          }
-        } catch (ex) {}
-      }
-    }
-    return ownEmails;
-  },
-
-  /**
-   * Determine the distinct number of non-self recipients of a message.
-   * Only To: and Cc: fields are considered.
-   *
-   * @returns {integer} the number of recipient
-   */
-  getNumberOfRecipients(msgCompField) {
-    const recipients = {},
-      ownEmails = this.getOwnEmailAddresses();
-
-    const allAddr = (
-      this.stripEmail(msgCompField.to) +
-      "," +
-      this.stripEmail(msgCompField.cc)
-    ).toLowerCase();
-    const emails = allAddr.split(/,+/);
-
-    for (let i = 0; i < emails.length; i++) {
-      const r = emails[i];
-      if (r && !(r in ownEmails)) {
-        recipients[r] = 1;
-      }
-    }
-
-    return recipients.length;
   },
 
   /**

@@ -3,7 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <title>Account Hub Address Book Test</title>
+    <link rel="stylesheet" href="chrome://messenger/skin/icons.css"/>
+    <link rel="stylesheet" href="chrome://messenger/skin/accountHub.css"/>
+    <link rel="stylesheet" href="chrome://messenger/skin/accountHubForms.css"/>
+    <link rel="localization" href="messenger/accountcreation/accountHub.ftl" />
+    <link rel="localization" href="messenger/accountcreation/accountSetup.ftl" />
     <script type="module" src="chrome://messenger/content/accountcreation/views/address-book.mjs"></script>
+    <style>
+      [hidden] { display: none; }
+    </style>
   </head>
   <body>
     <template
@@ -155,9 +163,115 @@
       </div>
     </template>
     <template
+      id="accountHubAddressBookOptionSelectTemplate"
+      xmlns="http://www.w3.org/1999/xhtml"
+    >
+        <form
+          id="optionSelectForm"
+          class="account-hub-address-book-form"
+          slot="content"
+        >
+          <div class="hub-body option-select-body">
+            <button
+              id="syncExistingAccounts"
+              class="account-hub-option-button fetching"
+              name="subview"
+              value="accountSelectSubview"
+              disabled="disabled"
+            >
+              <img
+                class="address-book-option-icon sync-icon"
+                data-l10n-id="address-book-sync-existing-icon"
+              />
+              <span
+                class="option-title"
+                data-l10n-id="address-book-sync-existing">
+              </span>
+              <span
+                id="syncExistingAccountsData"
+                class="option-data"
+                data-l10n-id="address-book-sync-existing-description"
+              >
+              </span>
+            </button>
+            <button
+              id="addRemoteAddressBook"
+              class="account-hub-option-button"
+              name="subview"
+              value="remoteAccountSubview"
+            >
+              <img
+                class="address-book-option-icon remote-address-book-icon"
+                data-l10n-id="address-book-add-remote-icon"
+              />
+              <span
+                class="option-title"
+                data-l10n-id="address-book-add-remote">
+              </span>
+              <span
+                class="option-data"
+                data-l10n-id="address-book-add-remote-description"
+              >
+              </span>
+            </button>
+            <button
+              id="newLocalAddressBook"
+              class="account-hub-option-button"
+              name="subview"
+              value="localAddressBookSubview"
+            >
+              <img
+                class="address-book-option-icon local-address-book-icon"
+                data-l10n-id="address-book-add-local-icon"
+              />
+              <span
+                class="option-title"
+                data-l10n-id="address-book-add-local">
+              </span>
+              <span
+                class="option-data"
+                data-l10n-id="address-book-add-local-description"
+              >
+              </span>
+            </button>
+            <button
+              id="newLdapAddressBook"
+              class="account-hub-option-button"
+              name="subview"
+              value="ldapAccountSubview"
+            >
+              <img
+                class="address-book-option-icon ldap-address-book-icon"
+                data-l10n-id="address-book-add-ldap-icon"
+              />
+              <span
+                class="option-title"
+                data-l10n-id="address-book-add-ldap">
+              </span>
+              <span
+                class="option-data"
+                data-l10n-id="address-book-add-ldap-description"
+              >
+              </span>
+            </button>
+          </div>
+        </form>
+    </template>
+    <template
       id="accountHubAddressBookAccountSelectTemplate"
       xmlns="http://www.w3.org/1999/xhtml"
     >
+      <form
+        id="accountSelectForm"
+        class="account-hub-address-book-form"
+        slot="content"
+      >
+        <div
+          id="accountSelectOptions"
+          class="hub-body account-select-body"
+        >
+        </div>
+      </form>
     </template>
     <template
       id="accountHubAddressBookLdapAdvancedFormTemplate"
@@ -165,25 +279,167 @@
     >
     </template>
     <template
-      id="accountHubAddressBookOptionSelectTemplate"
-      xmlns="http://www.w3.org/1999/xhtml"
-    >
-    </template>
-    <template
       id="accountHubAddressBookRemoteAccountFormTemplate"
       xmlns="http://www.w3.org/1999/xhtml"
     >
+      <form
+        id="accountHubRemoteAddressBookForm"
+        class="account-hub-address-book-form"
+        slot="content"
+      >
+        <div class="hub-body remote-ab-form-body">
+          <div class="input-control">
+            <input
+              id="username"
+              type="text"
+              class="input-field animated"
+              placeholder=""
+              required="required"
+              aria-invalid="false"
+              aria-errormessage="usernameErrorMessage"
+            />
+            <label
+              for="username"
+              class="animated"
+              data-l10n-id="account-hub-username-label"
+              data-l10n-attrs="accesskey"
+            ></label>
+            <img
+              src=""
+              data-l10n-id="account-hub-username-warning-icon"
+              alt=""
+              class="form-icon icon-danger input-warning"
+            />
+            <img
+              src=""
+              alt=""
+              class="form-icon icon-success input-success"
+            />
+            <span
+              id="usernameErrorMessage"
+              class="input-error-message"
+              data-l10n-id="account-hub-address-book-username-error-text"
+            ></span>
+          </div>
+          <small
+            id="canDetectHostname"
+            class="account-hub-form-small-comment"
+            data-l10n-id="account-hub-server-tip"
+          ></small>
+          <div class="input-control">
+            <input
+              id="davServer"
+              type="url"
+              class="input-field animated"
+              placeholder=""
+              required="required"
+              aria-invalid="false"
+              aria-errormessage="davServerErrorMessage"
+            />
+            <label
+              for="davServer"
+              class="animated"
+              data-l10n-id="account-hub-server-label"
+              data-l10n-attrs="accesskey"
+            ></label>
+            <img
+              src=""
+              data-l10n-id="account-hub-server-warning-icon"
+              alt=""
+              class="form-icon icon-danger input-warning"
+            />
+            <img
+              src=""
+              alt=""
+              class="form-icon icon-success input-success"
+            />
+            <span
+              id="davServerErrorMessage"
+              class="input-error-message"
+              data-l10n-id="account-hub-server-error-text"
+            ></span>
+          </div>
+        </div>
+        <button type="submit" hidden="hidden"></button>
+      </form>
     </template>
     <template
       id="accountHubAddressBookSyncTemplate"
       xmlns="http://www.w3.org/1999/xhtml"
     >
+      <form
+        id="addressBookSyncForm"
+        class="account-hub-address-book-form"
+        slot="content"
+      >
+        <div class="hub-body sync-accounts-form-body">
+          <div id="addressBooks" class="sync-type-container">
+            <div class="sync-title">
+              <img src="" alt="" class="sync-icon address-book" />
+              <div class="sync-details">
+                <h1
+                  class="title"
+                  data-l10n-id="account-setup-address-books-button"
+                >
+                </h1>
+                <span id="selectedAddressBooks" class="subtitle"></span>
+                <button
+                  id="selectAllAddressBooks"
+                  type="button"
+                  class="button primary-button button-sm select-all"
+                >
+                </button>
+              </div>
+            </div>
+            <div
+              id="addressBookAccountsContainer"
+              class="sync-input-container"
+              role="region"
+              aria-live="polite">
+            </div>
+          </div>
+        </div>
+      </form>
     </template>
-
     <template
       id="accountHubAddressBookLdapAccountFormTemplate"
       xmlns="http://www.w3.org/1999/xhtml"
     >
+    </template>
+    <template
+      id="accountHubAddressBookLocalFormTemplate"
+    >
+      <form id="localAddressBookForm" class="account-hub-address-book-form" slot="content">
+        <div class="hub-body email-form-body">
+          <div class="input-control">
+            <input id="addressBookName"
+              class="input-field animated"
+              aria-invalid="false"
+              aria-errormessage="nameErrorMessage"
+              placeholder=""
+              required="required" />
+            <label for="addressBookName"
+              class="animated"
+              data-l10n-id="account-hub-local-address-book-label"
+              data-l10n-attrs="accesskey">
+            </label>
+            <img id="nameWarning"
+              src=""
+              data-l10n-id="account-setup-email-warning-icon"
+              alt=""
+              class="form-icon icon-danger input-warning" />
+            <img id="nameSuccess"
+              src=""
+              alt=""
+              class="form-icon icon-success input-success" />
+            <span id="nameErrorMessage"
+              class="input-error-message"
+              data-l10n-id="account-hub-local-error-text">
+            </span>
+          </div>
+        </div>
+        <button type="submit" hidden="hidden"></button>
+      </form>
     </template>
     <template
       id="accountHubAddressBookSetup"
@@ -191,16 +447,20 @@
     >
       <address-book-option-select
         id="addressBookOptionSelectSubview"
-        hidden="hidden"
+        class="account-hub-step"
+        title-id="account-hub-add-address-book"
       >
       </address-book-option-select>
       <address-book-account-select
         id="addressBookAccountSelectSubview"
-        hidden="hidden"
-      >
+        class="account-hub-step"
+        title-id="account-hub-select-address-book-account"
+        hidden="hidden">
       </address-book-account-select>
       <address-book-remote-account-form
         id="addressBookRemoteAccountFormSubview"
+        class="account-hub-step"
+        title-id="account-hub-new-remote-address-book"
         hidden="hidden"
       >
       </address-book-remote-account-form>
@@ -214,8 +474,19 @@
         hidden="hidden"
       >
       </address-book-ldap-advanced-form>
-      <address-book-sync id="addressBookSyncSubview" hidden="hidden">
+      <address-book-sync
+        id="addressBookSyncSubview"
+        class="account-hub-step"
+        title-id="account-hub-sync-address-books"
+        hidden="hidden">
       </address-book-sync>
+      <address-book-local-form
+        id="addressBookLocalSubview"
+        class="account-hub-step"
+        title-id="account-hub-add-local-address-book"
+        hidden="hidden"
+      >
+      </address-book-local-form>
 
       <account-hub-footer id="addressBookFooter" class="hub-footer">
       </account-hub-footer>

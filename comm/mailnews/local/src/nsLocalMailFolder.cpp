@@ -62,6 +62,20 @@ using mozilla::Preferences;
 // nsLocal
 /////////////////////////////////////////////////////////////////////////////
 
+/**
+ * The list of expected local default folders and their flags.
+ */
+constexpr std::array<std::pair<nsLiteralCString, unsigned>, 8> kDefaultFolders{
+    std::make_pair("Inbox"_ns, nsMsgFolderFlags::Inbox),
+    std::make_pair("Sent"_ns, nsMsgFolderFlags::SentMail),
+    std::make_pair("Drafts"_ns, nsMsgFolderFlags::Drafts),
+    std::make_pair("Templates"_ns, nsMsgFolderFlags::Templates),
+    std::make_pair("Trash"_ns, nsMsgFolderFlags::Trash),
+    std::make_pair("Unsent Messages"_ns, nsMsgFolderFlags::Queue),
+    std::make_pair("Junk"_ns, nsMsgFolderFlags::Junk),
+    std::make_pair("Archives"_ns, nsMsgFolderFlags::Archive),
+};
+
 nsLocalMailCopyState::nsLocalMailCopyState()
     : m_flags(0),
       m_lastProgressTime(PR_IntervalToMilliseconds(PR_IntervalNow())),
@@ -295,7 +309,7 @@ nsMsgLocalMailFolder::GetSubFolders(nsTArray<RefPtr<nsIMsgFolder>>& folders) {
         rv = localMailServer->CreateDefaultMailboxes();
         if (NS_FAILED(rv) && rv != NS_MSG_FOLDER_EXISTS) return rv;
 
-        // must happen after CreateSubFolders, or the folders won't exist.
+        // must happen after CreateDefaultMailboxes, or the folders won't exist.
         rv = localMailServer->SetFlagsOnDefaultMailboxes();
         if (NS_FAILED(rv)) return rv;
       }
@@ -548,8 +562,6 @@ nsresult nsMsgLocalMailFolder::CreateSubfolderInternal(
     // We need to notify explicitly the flag change because it failed when we
     // did AddSubfolder()
     (*aNewFolder)->OnFlagChange(mFlags);
-    // Set pretty name because empty trash will create a new trash folder.
-    (*aNewFolder)->SetPrettyName(folderName);
     NotifyFolderAdded(*aNewFolder);
   }
 
@@ -805,12 +817,12 @@ NS_IMETHODIMP nsMsgLocalMailFolder::Rename(const nsACString& aNewName,
   if (newFolder) {
     // Because we just renamed the db, w/o setting the pretty name in it,
     // we need to force the pretty name to be correct.
-    // SetPrettyName won't write the name to the db if it doesn't think the
+    // SetName won't write the name to the db if it doesn't think the
     // name has changed. This hack forces the pretty name to get set in the db.
     // We could set the new pretty name on the db before renaming the .msf file,
     // but if the rename failed, it would be out of sync.
-    newFolder->SetPrettyName(EmptyCString());
-    newFolder->SetPrettyName(aNewName);
+    newFolder->SetName(EmptyCString());
+    newFolder->SetName(aNewName);
     bool changed = false;
     MatchOrChangeFilterDestination(newFolder, true /*case-insensitive*/,
                                    &changed);
@@ -859,7 +871,7 @@ NS_IMETHODIMP nsMsgLocalMailFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
     nsCOMPtr<nsIMsgFolder> newFolder;
     AddSubfolder(folderName, getter_AddRefs(newFolder));
     if (newFolder) {
-      newFolder->SetPrettyName(folderName);
+      newFolder->SetName(folderName);
       bool changed = false;
       msgFolder->MatchOrChangeFilterDestination(
           newFolder, true /*case-insensitive*/, &changed);
@@ -868,25 +880,6 @@ NS_IMETHODIMP nsMsgLocalMailFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
     }
   }
   return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgLocalMailFolder::GetPrettyName(nsACString& prettyName) {
-  return nsMsgDBFolder::GetPrettyName(prettyName);
-}
-
-NS_IMETHODIMP nsMsgLocalMailFolder::SetPrettyName(const nsACString& aName) {
-  nsresult rv = nsMsgDBFolder::SetPrettyName(aName);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCString folderName;
-  rv = GetStringProperty("folderName", folderName);
-  return NS_FAILED(rv) || !folderName.Equals(mName)
-             ? SetStringProperty("folderName", mName)
-             : rv;
-}
-
-NS_IMETHODIMP nsMsgLocalMailFolder::GetName(nsACString& aName) {
-  ReadDBFolderInfo(false);
-  return nsMsgDBFolder::GetName(aName);
 }
 
 nsresult nsMsgLocalMailFolder::OpenDatabase() {
@@ -947,17 +940,31 @@ nsMsgLocalMailFolder::GetDBFolderInfoAndDB(nsIDBFolderInfo** folderInfo,
 
 NS_IMETHODIMP nsMsgLocalMailFolder::ReadFromFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   NS_ENSURE_ARG_POINTER(element);
   nsresult rv = nsMsgDBFolder::ReadFromFolderCacheElem(element);
   NS_ENSURE_SUCCESS(rv, rv);
-  return element->GetCachedString("folderName", mName);
+  if (!UsesLocalizedName()) {
+    return element->GetCachedString("folderName", mName);
+  }
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgLocalMailFolder::WriteToFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   NS_ENSURE_ARG_POINTER(element);
   nsMsgDBFolder::WriteToFolderCacheElem(element);
-  return element->SetCachedString("folderName", mName);
+  if (!UsesLocalizedName()) {
+    return element->SetCachedString("folderName", mName);
+  }
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgLocalMailFolder::GetDeletable(bool* deletable) {
@@ -1297,6 +1304,7 @@ nsMsgLocalMailFolder::OnCopyCompleted(nsISupports* srcSupport,
 
   if (mCopyState && !mCopyState->m_newMsgKeywords.IsEmpty() &&
       mCopyState->m_newHdr) {
+    // This is only used by CopyFileMessage().
     AddKeywordsToMessages({&*mCopyState->m_newHdr},
                           mCopyState->m_newMsgKeywords);
   }
@@ -2202,27 +2210,32 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
   // Copy the header to the new database
   if (mCopyState->m_message) {
     //  CopyMessages() goes here, and CopyFileMessages() with metadata to save;
-    nsCOMPtr<nsIMsgDBHdr> newHdr;
     if (!mCopyState->m_parseMsgState) {
       if (mCopyState->m_destDB) {
+        nsCOMPtr<nsIMsgDBHdr> liveHdr;
         if (mCopyState->m_newHdr) {
-          newHdr = mCopyState->m_newHdr;
-          CopyHdrPropertiesWithSkipList(newHdr, mCopyState->m_message,
+          CopyHdrPropertiesWithSkipList(mCopyState->m_newHdr,
+                                        mCopyState->m_message,
                                         "storeToken msgOffset"_ns);
           // We need to copy more than just what UpdateNewMsgHdr does. In fact,
           // I think we want to copy almost every property other than
           // storeToken and msgOffset.
-          mCopyState->m_destDB->AddNewHdrToDB(newHdr, true);
+          rv = mCopyState->m_destDB->AttachHdr(mCopyState->m_newHdr, true,
+                                               getter_AddRefs(liveHdr));
+          if (NS_FAILED(rv)) {
+            liveHdr = nullptr;
+          }
+          mCopyState->m_newHdr = liveHdr;
         } else {
           rv = mCopyState->m_destDB->CopyHdrFromExistingHdr(
               mCopyState->m_curDstKey, mCopyState->m_message, true,
-              getter_AddRefs(newHdr));
+              getter_AddRefs(liveHdr));
         }
         uint32_t newHdrFlags;
-        if (newHdr) {
+        if (liveHdr) {
           // turn off offline flag - it's not valid for local mail folders.
-          newHdr->AndFlags(~nsMsgMessageFlags::Offline, &newHdrFlags);
-          mCopyState->m_destMessages.AppendElement(newHdr);
+          liveHdr->AndFlags(~nsMsgMessageFlags::Offline, &newHdrFlags);
+          mCopyState->m_destMessages.AppendElement(liveHdr);
         }
       }
       // we can do undo with the dest folder db, see bug #198909
@@ -2306,7 +2319,16 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
           newHdr->SetFlags((newFlags & ~carryOver) |
                            ((mCopyState->m_flags) & carryOver));
         }
-        msgDb->AddNewHdrToDB(newHdr, true);
+
+        // Add the new header to the database.
+        {
+          nsCOMPtr<nsIMsgDBHdr> liveHdr;
+          nsresult rv = msgDb->AttachHdr(newHdr, true, getter_AddRefs(liveHdr));
+          NS_ENSURE_SUCCESS(rv, rv);
+          mCopyState->m_newHdr = liveHdr;
+          newHdr = liveHdr;
+        }
+
         if (localUndoTxn) {
           // ** jt - recording the message size for possible undo use; the
           // message size is different for pop3 and imap4 messages
@@ -2324,8 +2346,13 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
                                            // we can't undo w/o the msg db
 
     mCopyState->m_parseMsgState->Clear();
-    if (mCopyState->m_listener)  // CopyFileMessage() only
-      mCopyState->m_listener->SetMessageKey(mCopyState->m_curDstKey);
+    if (mCopyState->m_listener && newHdr) {  // CopyFileMessage() only
+      // Tell the nsIMsgCopyServiceListener about the new key.
+      nsMsgKey newKey;
+      newHdr->GetMessageKey(&newKey);
+      MOZ_ASSERT(newKey != nsMsgKey_None);
+      mCopyState->m_listener->SetMessageKey(newKey);
+    }
   }
 
   if (!multipleCopiesFinished && !mCopyState->m_copyingMultipleMessages) {
@@ -2545,12 +2572,13 @@ NS_IMETHODIMP nsMsgLocalMailFolder::EndMessage(nsMsgKey key) {
   // CopyFileMessage() and CopyMessages() from servers other than mailbox
   if (mCopyState->m_parseMsgState) {
     nsCOMPtr<nsIMsgDatabase> msgDb;
-    nsCOMPtr<nsIMsgDBHdr> newHdr;
+    nsCOMPtr<nsIMsgDBHdr> detachedHdr;
+    nsCOMPtr<nsIMsgDBHdr> liveHdr;
 
     mCopyState->m_parseMsgState->FinishHeader();
 
-    rv = mCopyState->m_parseMsgState->GetNewMsgHdr(getter_AddRefs(newHdr));
-    if (NS_SUCCEEDED(rv) && newHdr) {
+    rv = mCopyState->m_parseMsgState->GetNewMsgHdr(getter_AddRefs(detachedHdr));
+    if (NS_SUCCEEDED(rv)) {
       nsCOMPtr<nsIMsgFolder> srcFolder =
           do_QueryInterface(mCopyState->m_srcSupport, &rv);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -2560,26 +2588,32 @@ NS_IMETHODIMP nsMsgLocalMailFolder::EndMessage(nsMsgKey key) {
         nsCOMPtr<nsIMsgDBHdr> srcMsgHdr;
         srcDB->GetMsgHdrForKey(key, getter_AddRefs(srcMsgHdr));
         if (srcMsgHdr)
-          CopyPropertiesToMsgHdr(newHdr, srcMsgHdr, mCopyState->m_isMove);
+          CopyPropertiesToMsgHdr(detachedHdr, srcMsgHdr, mCopyState->m_isMove);
       }
       rv = GetDatabaseWOReparse(getter_AddRefs(msgDb));
       if (NS_SUCCEEDED(rv) && msgDb) {
-        msgDb->AddNewHdrToDB(newHdr, true);
-        if (localUndoTxn) {
-          // ** jt - recording the message size for possible undo use; the
-          // message size is different for pop3 and imap4 messages
-          uint32_t msgSize;
-          newHdr->GetMessageSize(&msgSize);
-          localUndoTxn->AddDstMsgSize(msgSize);
-        }
-      } else
+        rv = msgDb->AttachHdr(detachedHdr, true, getter_AddRefs(liveHdr));
+      }
+      if (NS_SUCCEEDED(rv) && msgDb && localUndoTxn) {
+        // ** jt - recording the message size for possible undo use; the
+        // message size is different for pop3 and imap4 messages
+        uint32_t msgSize;
+        liveHdr->GetMessageSize(&msgSize);
+        localUndoTxn->AddDstMsgSize(msgSize);
+      } else {
         mCopyState->m_undoMsgTxn = nullptr;  // null out the transaction because
                                              // we can't undo w/o the msg db
+      }
     }
     mCopyState->m_parseMsgState->Clear();
 
-    if (mCopyState->m_listener)  // CopyFileMessage() only
-      mCopyState->m_listener->SetMessageKey(mCopyState->m_curDstKey);
+    if (mCopyState->m_listener && liveHdr) {  // CopyFileMessage() only
+      // Tell the nsIMsgCopyServiceListener about the new key.
+      nsMsgKey newKey;
+      liveHdr->GetMessageKey(&newKey);
+      MOZ_ASSERT(newKey != nsMsgKey_None);
+      mCopyState->m_listener->SetMessageKey(newKey);
+    }
   }
 
   return NS_OK;
@@ -2996,54 +3030,20 @@ nsresult nsMsgLocalMailFolder::DisplayMoveCopyStatusMsg() {
 
 NS_IMETHODIMP
 nsMsgLocalMailFolder::SetFlagsOnDefaultMailboxes(uint32_t flags) {
-  if (flags & nsMsgFolderFlags::Inbox)
-    setSubfolderFlag("Inbox"_ns, nsMsgFolderFlags::Inbox);
+  for (auto&& [folderName, folderFlag] : kDefaultFolders) {
+    if (flags & folderFlag) {
+      nsCOMPtr<nsIMsgFolder> msgFolder;
+      nsresult rv = GetChildNamed(folderName, getter_AddRefs(msgFolder));
+      NS_ENSURE_SUCCESS(rv, rv);
 
-  if (flags & nsMsgFolderFlags::SentMail)
-    setSubfolderFlag("Sent"_ns, nsMsgFolderFlags::SentMail);
-
-  if (flags & nsMsgFolderFlags::Drafts)
-    setSubfolderFlag("Drafts"_ns, nsMsgFolderFlags::Drafts);
-
-  if (flags & nsMsgFolderFlags::Templates)
-    setSubfolderFlag("Templates"_ns, nsMsgFolderFlags::Templates);
-
-  if (flags & nsMsgFolderFlags::Trash)
-    setSubfolderFlag("Trash"_ns, nsMsgFolderFlags::Trash);
-
-  if (flags & nsMsgFolderFlags::Queue)
-    setSubfolderFlag("Unsent Messages"_ns, nsMsgFolderFlags::Queue);
-
-  if (flags & nsMsgFolderFlags::Junk)
-    setSubfolderFlag("Junk"_ns, nsMsgFolderFlags::Junk);
-
-  if (flags & nsMsgFolderFlags::Archive)
-    setSubfolderFlag("Archives"_ns, nsMsgFolderFlags::Archive);
-
+      // Only set the flag if the folder exists.
+      if (msgFolder) {
+        rv = msgFolder->SetFlag(folderFlag);
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+    }
+  }
   return NS_OK;
-}
-
-nsresult nsMsgLocalMailFolder::setSubfolderFlag(const nsACString& aFolderName,
-                                                uint32_t flags) {
-  // FindSubFolder() expects the folder name to be escaped
-  // see bug #192043
-  nsAutoCString escapedFolderName;
-  nsresult rv = NS_MsgEscapeEncodeURLPath(aFolderName, escapedFolderName);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIMsgFolder> msgFolder;
-  rv = FindSubFolder(escapedFolderName, getter_AddRefs(msgFolder));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // we only want to do this if the folder *really* exists,
-  // so check if it has a parent. Otherwise, we'll create the
-  // .msf file when we don't want to.
-  nsCOMPtr<nsIMsgFolder> parent;
-  msgFolder->GetParent(getter_AddRefs(parent));
-  if (!parent) return NS_ERROR_FAILURE;
-
-  rv = msgFolder->SetFlag(flags);
-  NS_ENSURE_SUCCESS(rv, rv);
-  return msgFolder->SetPrettyName(aFolderName);
 }
 
 NS_IMETHODIMP
@@ -3289,7 +3289,7 @@ nsMsgLocalMailFolder::AddMessageBatch(
   if (Preferences::GetBool("mail.panorama.enabled", false)) {
     return AddMessageBatch2(aMessages, aHdrArray);
   }
-#endif
+#endif  // MOZ_PANORAMA
   aHdrArray.ClearAndRetainStorage();
   aHdrArray.SetCapacity(aMessages.Length());
 

@@ -2,15 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef LiveViewFilters_h__
-#define LiveViewFilters_h__
+#ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_LIVEVIEWFILTERS_H_
+#define COMM_MAILNEWS_DB_PANORAMA_SRC_LIVEVIEWFILTERS_H_
 
 #include "Folder.h"
+#include "FolderDatabase.h"
 #include "Message.h"
-#include "MessageDatabase.h"
+#include "mozilla/Components.h"
 #include "mozilla/RefPtr.h"
 #include "mozIStorageStatement.h"
 #include "nsCOMPtr.h"
+#include "nsIDatabaseCore.h"
+#include "nsIFolderDatabase.h"
 #include "nsMsgMessageFlags.h"
 #include "nsString.h"
 #include "nsTString.h"
@@ -25,6 +28,7 @@ class LiveViewFilter {
   virtual nsCString GetSQLClause() { return mSQLClause; }
   virtual void PrepareStatement(mozIStorageStatement* aStmt) {}
   virtual bool Matches(Message& aMessage) { return false; }
+  virtual void Refresh() {}
 
  protected:
   static uint64_t nextUID;
@@ -55,15 +59,46 @@ class MultiFolderFilter final : public LiveViewFilter {
         mSQLClause.Append(", ");
       }
       mSQLClause.AppendInt(aFolders[i]->GetId());
-      mIds.AppendElement(aFolders[i]->GetId());
+      mFolderIds.AppendElement(aFolders[i]->GetId());
     }
     mSQLClause.Append(")");
   }
 
-  bool Matches(Message& aMessage) { return mIds.Contains(aMessage.mFolderId); }
+  bool Matches(Message& aMessage) {
+    return mFolderIds.Contains(aMessage.mFolderId);
+  }
 
  protected:
-  nsTArray<uint64_t> mIds;
+  nsTArray<uint64_t> mFolderIds;
+};
+
+class VirtualFolderFilter final : public LiveViewFilter {
+ public:
+  explicit VirtualFolderFilter(nsIFolder* folder)
+      : mVirtualFolderId(folder->GetId()) {
+    mSQLClause.Assign(
+        "folderId IN (SELECT searchFolderId FROM virtualFolder_folders WHERE "
+        "virtualFolderId = ");
+    mSQLClause.AppendInt(mVirtualFolderId);
+    mSQLClause.Append(")");
+
+    Refresh();
+  }
+
+  void Refresh() {
+    nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
+    nsCOMPtr<nsIFolderDatabase> folders = database->GetFolders();
+    (static_cast<FolderDatabase*>(folders.get()))
+        ->GetVirtualFolderFolders(mVirtualFolderId, mSearchFolderIds);
+  }
+
+  bool Matches(Message& aMessage) {
+    return mSearchFolderIds.Contains(aMessage.mFolderId);
+  }
+
+ protected:
+  uint64_t mVirtualFolderId;
+  nsTArray<uint64_t> mSearchFolderIds;
 };
 
 class TaggedMessagesFilter final : public LiveViewFilter {
@@ -91,4 +126,4 @@ class TaggedMessagesFilter final : public LiveViewFilter {
 
 }  // namespace mozilla::mailnews
 
-#endif  // LiveViewFilters_h__
+#endif  // COMM_MAILNEWS_DB_PANORAMA_SRC_LIVEVIEWFILTERS_H_

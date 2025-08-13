@@ -56,11 +56,11 @@
                  showAccountsFileHere="true"
                  oncommand="setFilterFolder(event.target._folder);"/>
     </menulist>
-    <search-textbox id="searchBox"
-                    class="themeableSearchBox"
-                    oncommand="rebuildFilterList();"
-                    placeholder="&searchBox.emptyText;"
-                    isempty="true"/>
+    <html:input type="search"
+                id="searchBox"
+                class="themeableSearchBox"
+                oninput="rebuildFilterList();"
+                placeholder="&searchBox.emptyText;"/>
   </hbox>
   <separator class="thin"/>
   <hbox id="filterListGrid" flex="1">

@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef FolderComparator_h__
-#define FolderComparator_h__
+#ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_FOLDERCOMPARATOR_H_
+#define COMM_MAILNEWS_DB_PANORAMA_SRC_FOLDERCOMPARATOR_H_
 
 #include "Folder.h"
 #include "mozilla/intl/Collator.h"
@@ -25,14 +25,15 @@ class Folder;
  */
 class FolderComparator {
  public:
-  bool Equals(const RefPtr<Folder>& aA, const RefPtr<Folder>& aB) const;
-  bool LessThan(const RefPtr<Folder>& aA, const RefPtr<Folder>& aB) const;
+  bool Equals(const RefPtr<Folder>& a, const RefPtr<Folder>& b) const;
+  bool LessThan(const RefPtr<Folder>& a, const RefPtr<Folder>& b) const;
 
  private:
   static const Collator* sCollator;
   static const Collator* GetCollator();
+  uint8_t SpecialFlagsOrder(const uint64_t flags) const;
 };
 
 }  // namespace mozilla::mailnews
 
-#endif  // FolderComparator_h__
+#endif  // COMM_MAILNEWS_DB_PANORAMA_SRC_FOLDERCOMPARATOR_H_

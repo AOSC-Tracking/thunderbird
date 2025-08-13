@@ -5,6 +5,7 @@
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   MailServices: "resource:///modules/MailServices.sys.mjs",
+  VirtualFolderHelper: "resource:///modules/VirtualFolderWrapper.sys.mjs",
 });
 
 const messengerBundle = Services.strings.createBundle(
@@ -114,7 +115,7 @@ class SmartMailbox {
     // Remove obsolete tag folders.
     const tags = lazy.MailServices.tags.getAllTags();
     const obsoleteFolders = this.#tagsFolder.subFolders.filter(
-      folder => !tags.some(t => t.tag == folder.prettyName)
+      folder => !tags.some(t => t.tag == folder.name)
     );
     for (const folder of obsoleteFolders) {
       folder.deleteSelf(null);
@@ -191,19 +192,19 @@ class SmartMailbox {
         }
       }
 
-      const folder = this.#rootFolder.createLocalSubfolder(folderType.name);
-      folder.flags |= Ci.nsMsgFolderFlags.Virtual | folderType.flag;
+      const wrapper = lazy.VirtualFolderHelper.createNewVirtualFolder(
+        folderType.name,
+        this.#rootFolder,
+        searchFolders,
+        "ALL",
+        true
+      );
+      const folder = wrapper.virtualFolder;
+      folder.setFlag(folderType.flag);
 
       const msgDatabase = folder.msgDatabase;
       const folderInfo = msgDatabase.dBFolderInfo;
-
-      folderInfo.setCharProperty("searchStr", "ALL");
-      folderInfo.setCharProperty(
-        "searchFolderUri",
-        searchFolders.map(f => f.URI).join("|")
-      );
       folderInfo.setUint32Property("searchFolderFlag", folderType.flag);
-      folderInfo.setBooleanProperty("searchOnline", true);
       msgDatabase.summaryValid = true;
       msgDatabase.close(true);
 
@@ -242,7 +243,7 @@ class SmartMailbox {
     try {
       const folder = this.#tagsFolder.createLocalSubfolder(tag.key);
       folder.flags |= Ci.nsMsgFolderFlags.Virtual;
-      folder.prettyName = tag.tag;
+      folder.name = tag.tag;
       this.#TagFolderURIs.set(tag.key, folder.URI);
 
       const msgDatabase = folder.msgDatabase;

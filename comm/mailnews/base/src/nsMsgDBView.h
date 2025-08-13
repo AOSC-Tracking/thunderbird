@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef _nsMsgDBView_H_
-#define _nsMsgDBView_H_
+#ifndef COMM_MAILNEWS_BASE_SRC_NSMSGDBVIEW_H_
+#define COMM_MAILNEWS_BASE_SRC_NSMSGDBVIEW_H_
 
 #include "nsIMsgDBView.h"
 #include "nsIMsgTagService.h"
@@ -509,11 +509,6 @@ class nsMsgDBView : public nsIMsgDBView,
   bool ServerSupportsFilterAfterTheFact();
 
   nsresult PerformActionsOnJunkMsgs(bool msgsAreJunk);
-  nsresult DetermineActionsForJunkChange(bool msgsAreJunk,
-                                         nsIMsgFolder* srcFolder,
-                                         bool& moveMessages,
-                                         bool& changeReadState,
-                                         nsIMsgFolder** targetFolder);
 
   class nsMsgViewHdrEnumerator final : public nsBaseMsgEnumerator {
    public:
@@ -531,4 +526,4 @@ class nsMsgDBView : public nsIMsgDBView,
   };
 };
 
-#endif
+#endif  // COMM_MAILNEWS_BASE_SRC_NSMSGDBVIEW_H_

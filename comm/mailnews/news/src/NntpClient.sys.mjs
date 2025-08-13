@@ -670,7 +670,7 @@ export class NntpClient {
     if (start && end && end >= start) {
       this._updateStatus("new-newsgroup-headers", {
         count: end - start + 1,
-        newsgroup: this._newsFolder.prettyName,
+        newsgroup: this._newsFolder.localizedName,
       });
       this._newsGroup.addKnownArticles(start, end);
       this._startArticle = start;
@@ -679,7 +679,7 @@ export class NntpClient {
       this._sendCommand(`XOVER ${start}-${end}`);
     } else {
       this._updateStatus("no-new-messages", {
-        newsgroup: this._newsFolder.prettyName,
+        newsgroup: this._newsFolder.localizedName,
       });
       this._actionDone();
     }

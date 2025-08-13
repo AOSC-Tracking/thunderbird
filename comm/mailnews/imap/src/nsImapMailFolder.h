@@ -2,8 +2,9 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-#ifndef nsImapMailFolder_h__
-#define nsImapMailFolder_h__
+
+#ifndef COMM_MAILNEWS_IMAP_SRC_NSIMAPMAILFOLDER_H_
+#define COMM_MAILNEWS_IMAP_SRC_NSIMAPMAILFOLDER_H_
 
 #include "mozilla/Attributes.h"
 #include "nsMsgDBFolder.h"
@@ -238,9 +239,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
   NS_IMETHOD RenameSubFolders(nsIMsgWindow* msgWindow,
                               nsIMsgFolder* oldFolder) override;
   NS_IMETHOD GetNoSelect(bool* aResult) override;
-
-  NS_IMETHOD GetPrettyName(nsACString& prettyName)
-      override;  // Override of the base, for top-level mail folder
 
   NS_IMETHOD UpdateSummaryTotals(bool force) override;
 
@@ -572,4 +570,5 @@ class nsImapMailFolder : public nsMsgDBFolder,
    */
   nsresult GetOfflineMsgFolder(nsMsgKey msgKey, nsIMsgFolder** aMsgFolder);
 };
-#endif
+
+#endif  // COMM_MAILNEWS_IMAP_SRC_NSIMAPMAILFOLDER_H_

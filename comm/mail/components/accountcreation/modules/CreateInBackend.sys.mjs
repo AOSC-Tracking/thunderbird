@@ -12,7 +12,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
-/* eslint-disable complexity */
 /**
  * Takes an |AccountConfig| JS object and creates that account in the
  * Thunderbird backend (which also writes it to prefs).
@@ -262,7 +261,7 @@ async function createAccountInBackend(config) {
     MailServices.accounts.defaultAccount = account;
   }
 
-  verifyLocalFoldersAccount(MailServices.accounts);
+  verifyLocalFoldersAccount();
 
   // save
   MailServices.accounts.saveAccountInfo();
@@ -273,7 +272,6 @@ async function createAccountInBackend(config) {
   }
   return account;
 }
-/* eslint-enable complexity */
 
 async function rememberPassword(server, password) {
   let passwordURI;
@@ -401,13 +399,11 @@ function generateUniqueAccountName(config) {
 /**
  * Check if there already is a "Local Folders". If not, create it.
  * Copied from AccountWizard.js with minor updates.
- *
- * @param {nsIMsgAccountManager} am - MailServices.accounts (FIXME, use directly!)
  */
-function verifyLocalFoldersAccount(am) {
+function verifyLocalFoldersAccount() {
   let localMailServer;
   try {
-    localMailServer = am.localFoldersServer;
+    localMailServer = MailServices.accounts.localFoldersServer;
   } catch (ex) {
     localMailServer = null;
   }
@@ -415,9 +411,9 @@ function verifyLocalFoldersAccount(am) {
   try {
     if (!localMailServer) {
       // creates a copy of the identity you pass in
-      am.createLocalMailAccount();
+      MailServices.accounts.createLocalMailAccount();
       try {
-        localMailServer = am.localFoldersServer;
+        localMailServer = MailServices.accounts.localFoldersServer;
       } catch (ex) {
         lazy.AccountCreationUtils.ddump(
           "Error! we should have found the local mail server " +

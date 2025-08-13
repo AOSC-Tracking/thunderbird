@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef MessageDatabase_h__
-#define MessageDatabase_h__
+#ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_MESSAGEDATABASE_H_
+#define COMM_MAILNEWS_DB_PANORAMA_SRC_MESSAGEDATABASE_H_
 
 #include "MailNewsTypes2.h"
 #include "mozilla/RefPtr.h"
@@ -42,11 +42,21 @@ class MessageDatabase : public nsIMessageDatabase {
   void Shutdown();
 
  private:
+  friend class FolderInfo;
   friend class Message;
   friend class PerFolderDatabase;
-  friend class FolderInfo;
+  friend class Thread;
+  friend class ThreadMessageEnumerator;
 
   nsresult ListAllKeys(uint64_t aFolderId, nsTArray<nsMsgKey>& aKeys);
+  nsresult ListThreadKeys(uint64_t folderId, uint64_t parent, uint64_t threadId,
+                          nsTArray<nsMsgKey>& keys);
+  nsresult GetThreadMaxDate(uint64_t folderId, uint64_t threadId,
+                            uint64_t* maxDate);
+  nsresult CountThreadKeys(uint64_t folderId, uint64_t threadId,
+                           uint64_t* numMessages);
+  nsresult ListThreadChildKeys(uint64_t folderId, uint64_t parent,
+                               nsTArray<nsMsgKey>& keys);
   nsresult GetMessage(nsMsgKey aKey, Message** aMessage);
   nsresult GetMessageForMessageID(uint64_t aFolderId,
                                   const nsACString& aMessageId,
@@ -77,4 +87,4 @@ class MessageDatabase : public nsIMessageDatabase {
 
 }  // namespace mozilla::mailnews
 
-#endif  // MessageDatabase_h__
+#endif  // COMM_MAILNEWS_DB_PANORAMA_SRC_MESSAGEDATABASE_H_

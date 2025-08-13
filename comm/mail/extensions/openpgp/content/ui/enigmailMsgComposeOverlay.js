@@ -59,21 +59,10 @@ Enigmail.msg = {
   processed: null, // contains information for undo of inline signed/encrypt
   timeoutId: null, // TODO: once set, it's never reset
   sendPgpMime: true,
-  //sendMode: null, // the current default for sending a message (0, SIGN, ENCRYPT, or SIGN|ENCRYPT)
-  //sendModeDirty: false, // send mode or final send options changed?
-
-  // processed strings to signal final encrypt/sign/pgpmime state:
-  statusEncryptedStr: "???",
-  statusSignedStr: "???",
-  //statusPGPMimeStr: "???",
-  //statusSMimeStr: "???",
-  //statusInlinePGPStr: "???",
-  statusAttachOwnKey: "???",
 
   sendProcess: false,
   composeBodyReady: false,
   modifiedAttach: null,
-  lastFocusedWindow: null,
   draftSubjectEncrypted: false,
   attachOwnKeyObj: {
     attachedObj: null,
@@ -100,14 +89,6 @@ Enigmail.msg = {
     await OpenPGPAlias.load().catch(console.error);
 
     Enigmail.msg.composeOpen();
-    //Enigmail.msg.processFinalState();
-  },
-
-  isSmimeEnabled() {
-    return (
-      gCurrentIdentity.getUnicharAttribute("signing_cert_name") !== "" ||
-      gCurrentIdentity.getUnicharAttribute("encryption_cert_name") !== ""
-    );
   },
 
   getOriginalMsgUri() {
@@ -392,9 +373,6 @@ Enigmail.msg = {
       UpdateAttachmentBucket(bucketList.hasChildNodes());
     }
 
-    this.warnUserIfSenderKeyExpired();
-
-    //this.processFinalState();
     if (selectedElement) {
       selectedElement.focus();
     }
@@ -574,15 +552,6 @@ Enigmail.msg = {
   },
 
   /**
-   * Determine if Autocrypt is enabled for the account
-   */
-  isAutocryptEnabled() {
-    return false;
-  },
-
-  processFinalState() {},
-
-  /**
    * Check if encryption is possible (have keys for everyone or not).
    *
    * @returns {object} details. Details of invalid keys.
@@ -703,7 +672,7 @@ Enigmail.msg = {
       draftStatus += gSendEncrypted && gEncryptSubject ? "1" : "0";
     }
 
-    this.setAdditionalHeader("X-Enigmail-Draft-Status", draftStatus);
+    gMsgCompose.compFields.setHeader("x-enigmail-draft-status", draftStatus);
   },
 
   getSenderUserId() {
@@ -1119,7 +1088,7 @@ Enigmail.msg = {
       throw new Error("No recipients specified!");
     }
 
-    this.unsetAdditionalHeader("x-enigmail-draft-status");
+    gMsgCompose.compFields.deleteHeader("x-enigmail-draft-status");
 
     const senderKeyId = gCurrentIdentity.getUnicharAttribute("openpgp_key_id");
 
@@ -1512,20 +1481,6 @@ Enigmail.msg = {
     return true;
   },
 
-  /**
-   * Set non-standard message Header.
-   *
-   * @param {string} hdr - Header type (e.g. X-Enigmail-Version)
-   * @param {string} val - Header data (e.g. 1.2.3.4)
-   */
-  setAdditionalHeader(hdr, val) {
-    gMsgCompose.compFields.setHeader(hdr, val);
-  },
-
-  unsetAdditionalHeader(hdr) {
-    gMsgCompose.compFields.deleteHeader(hdr);
-  },
-
   // called just before sending
   modifyCompFields() {
     try {
@@ -1544,13 +1499,6 @@ Enigmail.msg = {
     } catch (ex) {
       console.error(ex);
     }
-  },
-
-  getCurrentIncomingServer() {
-    const currentAccountKey = getCurrentAccountKey();
-    const account = MailServices.accounts.getAccount(currentAccountKey);
-
-    return account.incomingServer; /* returns nsIMsgIncomingServer */
   },
 
   /**
@@ -1636,7 +1584,7 @@ Enigmail.msg = {
     if (keyData) {
       keyData =
         " " + keyData.replace(/(.{72})/g, "$1\r\n ").replace(/\r\n $/, "");
-      this.setAdditionalHeader(
+      gMsgCompose.compFields.setHeader(
         "Autocrypt",
         "addr=" + fromMail + "; keydata=\r\n" + keyData
       );
@@ -2032,17 +1980,6 @@ Enigmail.msg = {
     return 0;
   },
 
-  isSenderKeyExpired() {
-    const senderKeyId = this.getSenderUserId();
-
-    if (senderKeyId) {
-      const key = EnigmailKeyRing.getKeyById(senderKeyId);
-      return key?.expiryTime && Math.round(Date.now() / 1000) > key.expiryTime;
-    }
-
-    return false;
-  },
-
   removeNotificationIfPresent(name) {
     const notif = gComposeNotification.getNotificationWithValue(name);
     if (notif) {
@@ -2050,12 +1987,43 @@ Enigmail.msg = {
     }
   },
 
-  async warnUserThatSenderKeyExpired() {
-    const label = {
-      "l10n-id": "openpgp-selection-status-error",
-      "l10n-args": { key: this.getSenderUserId() },
-    };
-
+  /**
+   * When applicable, warns the user about their key expiring soon, or already
+   * expired.
+   */
+  async warnUserOfSenderKeyExpiration() {
+    this.removeNotificationIfPresent("openpgpSenderKeyExpiry");
+    const senderKeyId = this.getSenderUserId();
+    const key = EnigmailKeyRing.getKeyById(senderKeyId);
+    if (!key?.expiryTime) {
+      // No key, or doesn't expire.
+      return;
+    }
+    let label;
+    const nowInSeconds = Math.floor(Date.now() / 1000);
+    const expiresInDays = Math.floor(
+      (key.expiryTime - nowInSeconds) / (24 * 60 * 60)
+    );
+    if (expiresInDays > 31) {
+      return;
+    }
+    if (nowInSeconds > key.expiryTime) {
+      // Key already expired
+      label = {
+        "l10n-id": "openpgp-selection-status-error",
+        "l10n-args": { key: this.getSenderUserId() },
+      };
+    } else {
+      // Will expire within the next 31 days.
+      const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+      label = {
+        "l10n-id": "openpgp-selection-status-expiring-soon",
+        "l10n-args": {
+          key: this.getSenderUserId(),
+          when: rtf.format(expiresInDays, "day"),
+        },
+      };
+    }
     const buttons = [
       {
         "l10n-id": "settings-context-open-account-settings-item2",
@@ -2071,7 +2039,7 @@ Enigmail.msg = {
     ];
 
     await gComposeNotification.appendNotification(
-      "openpgpSenderKeyExpired",
+      "openpgpSenderKeyExpiry",
       {
         label,
         priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
@@ -2080,76 +2048,34 @@ Enigmail.msg = {
     );
   },
 
-  warnUserIfSenderKeyExpired() {
-    if (!this.isSenderKeyExpired()) {
-      this.removeNotificationIfPresent("openpgpSenderKeyExpired");
-      return;
-    }
-
-    this.warnUserThatSenderKeyExpired();
-  },
-
-  /**
-   * Display a notification to the user at the bottom of the window
-   *
-   * @param {integer} priority - Priority of the message [1 = high (error) ... 3 = low (info)]
-   * @param {string} msgText - Text to be displayed in notification bar
-   * @param {string} messageId - Unique message type identification
-   * @param {string} detailsText - optional text to be displayed by clicking
-   *   on "Details" button. If null or "", then the Detail button will not
-   *   be displayed.
-   */
-  async notifyUser(priority, msgText, messageId, detailsText) {
-    let prio;
-
-    switch (priority) {
-      case 1:
-        prio = gComposeNotification.PRIORITY_CRITICAL_MEDIUM;
-        break;
-      case 3:
-        prio = gComposeNotification.PRIORITY_INFO_MEDIUM;
-        break;
-      default:
-        prio = gComposeNotification.PRIORITY_WARNING_MEDIUM;
-    }
-
-    const buttonArr = [];
-
-    if (detailsText && detailsText.length > 0) {
-      const [accessKey, label] = await document.l10n.formatValues([
-        { id: "msg-compose-details-button-access-key" },
-        { id: "msg-compose-details-button-label" },
-      ]);
-
-      buttonArr.push({
-        accessKey,
-        label,
-        callback() {
-          Services.prompt.alert(window, null, detailsText);
-        },
-      });
-    }
-    await gComposeNotification.appendNotification(
-      messageId,
-      {
-        label: msgText,
-        priority: prio,
-      },
-      buttonArr
-    );
-  },
-
   /**
    * Display a warning message if we are replying to or forwarding
    * a partially decrypted inline-PGP email
    */
   async displayPartialEncryptedWarning() {
-    const [msgLong, msgShort] = await document.l10n.formatValues([
-      { id: "msg-compose-partially-encrypted-inlinePGP" },
-      { id: "msg-compose-partially-encrypted-short" },
-    ]);
-
-    this.notifyUser(1, msgShort, "notifyPartialDecrypt", msgLong);
+    const [msgText, accessKey, label, detailsText] =
+      await document.l10n.formatValues([
+        { id: "msg-compose-partially-encrypted-short" },
+        { id: "msg-compose-details-button-access-key" },
+        { id: "msg-compose-details-button-label" },
+        { id: "msg-compose-partially-encrypted-inlinePGP" },
+      ]);
+    await gComposeNotification.appendNotification(
+      "notifyPartialDecrypt",
+      {
+        label: msgText,
+        priority: gComposeNotification.PRIORITY_CRITICAL_MEDIUM,
+      },
+      [
+        {
+          accessKey,
+          label,
+          callback() {
+            Services.prompt.alert(window, null, detailsText);
+          },
+        },
+      ]
+    );
   },
 
   editorSelectAll() {
@@ -2163,21 +2089,6 @@ Enigmail.msg = {
       return this.editor.outputToString(mimeType, flags);
     }
     return null;
-  },
-
-  async focusChange() {
-    // call original TB function
-    CommandUpdate_MsgCompose();
-
-    var focusedWindow = top.document.commandDispatcher.focusedWindow;
-
-    // we're just setting focus to where it was before
-    if (focusedWindow == Enigmail.msg.lastFocusedWindow) {
-      // skip
-      return;
-    }
-
-    Enigmail.msg.lastFocusedWindow = focusedWindow;
   },
 
   /**

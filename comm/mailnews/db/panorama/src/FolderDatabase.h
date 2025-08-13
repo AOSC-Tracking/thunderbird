@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef FolderDatabase_h__
-#define FolderDatabase_h__
+#ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_FOLDERDATABASE_H_
+#define COMM_MAILNEWS_DB_PANORAMA_SRC_FOLDERDATABASE_H_
 
 #include "DatabaseUtils.h"
 #include "FolderComparator.h"
@@ -35,7 +35,10 @@ class FolderDatabase : public nsIFolderDatabase {
   void Shutdown();
 
  private:
+  friend class DatabaseCore;
   friend class FolderInfo;
+  friend class VirtualFolderFilter;
+  friend class VirtualFolderWrapper;
 
   nsresult GetFolderProperty(uint64_t id, const nsACString& name,
                              nsACString& value);
@@ -45,6 +48,11 @@ class FolderDatabase : public nsIFolderDatabase {
                              const nsACString& value);
   nsresult SetFolderProperty(uint64_t id, const nsACString& name,
                              int64_t value);
+
+  nsresult GetVirtualFolderFolders(uint64_t virtualFolderId,
+                                   nsTArray<uint64_t>& searchFolderIds);
+  nsresult SetVirtualFolderFolders(uint64_t virtualFolderId,
+                                   nsTArray<uint64_t>& searchFolderIds);
 
  private:
   nsTHashMap<uint64_t, RefPtr<Folder>> mFoldersById;
@@ -57,9 +65,9 @@ class FolderDatabase : public nsIFolderDatabase {
                                 nsIFolder** aChild);
   nsresult InternalDeleteFolder(nsIFolder* aFolder);
 
-  void SaveOrdinals(nsTArray<RefPtr<Folder>>& aFolders);
+  nsresult SaveOrdinals(nsTArray<RefPtr<Folder>>& aFolders);
 };
 
 }  // namespace mozilla::mailnews
 
-#endif  // FolderDatabase_h__
+#endif  // COMM_MAILNEWS_DB_PANORAMA_SRC_FOLDERDATABASE_H_

@@ -5,6 +5,7 @@
 EXPORTS += [
     "DatabaseCore.h",
     "DatabaseUtils.h",
+    "DetachedMsgHdr.h",
     "Folder.h",
     "FolderComparator.h",
     "FolderDatabase.h",
@@ -14,11 +15,13 @@ EXPORTS += [
     "MessageDatabase.h",
     "PerFolderDatabase.h",
     "Thread.h",
+    "VirtualFolderWrapper.h",
 ]
 
 SOURCES += [
     "DatabaseCore.cpp",
     "DatabaseUtils.cpp",
+    "DetachedMsgHdr.cpp",
     "Folder.cpp",
     "FolderComparator.cpp",
     "FolderDatabase.cpp",
@@ -27,6 +30,7 @@ SOURCES += [
     "MessageDatabase.cpp",
     "PerFolderDatabase.cpp",
     "Thread.cpp",
+    "VirtualFolderWrapper.cpp",
 ]
 
 FINAL_LIBRARY = "mail"

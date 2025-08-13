@@ -20,6 +20,7 @@ support-files = [
 ["browser_3paneTelemetry.js"]
 
 ["browser_archive.js"]
+tags = ["archive"]
 
 ["browser_browserContext.js"]
 tags = [
@@ -70,11 +71,16 @@ skip-if = ["os == 'mac'"]
 ["browser_findbar.js"]
 
 ["browser_folderPaneContext.js"]
-tags = ["contextmenu"]
+tags = [
+  "contextmenu",
+  "virtualfolders",
+]
 
 ["browser_folderTreeProperties.js"]
+tags = ["virtualfolders"]
 
 ["browser_folderTreeQuirks.js"]
+tags = ["virtualfolders"]
 
 ["browser_getMessages.js"]
 
@@ -96,12 +102,16 @@ tags = ["oauth"]
 skip-if = ["os == 'mac'"]
 
 ["browser_groupedBySortPersistence.js"]
+tags = ["virtualfolders"]
 
 ["browser_interactionTelemetry.js"]
 
 ["browser_mailContext.js"]
 skip-if = ["os == 'mac' && debug"]  # Frequently hangs. Bug 1897093.
-tags = ["contextmenu"]
+tags = [
+  "contextmenu",
+  "virtualfolders"
+]
 
 ["browser_mailContext_compose.js"]
 tags = ["contextmenu"]
@@ -117,6 +127,9 @@ tags = ["contextmenu"]
 tags = ["contextmenu"]
 
 ["browser_mailTabsAndWindows.js"]
+
+["browser_manualSortFolders.js"]
+skip-if = ["headless && os == 'linux'"]  # See bug 1806870.
 
 ["browser_markAsRead.js"]
 
@@ -146,6 +159,7 @@ tags = ["oauth"]
 ["browser_searchMessages.js"]
 
 ["browser_smartFolderDelete.js"]
+tags = ["virtualfolders"]
 
 ["browser_spacesToolbar.js"]
 
@@ -164,14 +178,17 @@ tags = ["spam"]
 skip-if = ["os == 'mac' && debug"]  # Frequently hangs. Bug 1884033.
 
 ["browser_tagsMode.js"]
+tags = ["virtualfolders"]
 
 ["browser_threadHorizontal.js"]
 
 ["browser_threadTreeDeleting.js"]
+tags = ["virtualfolders"]
 
 ["browser_threadTreeQuirks.js"]
 
 ["browser_threadTreeSelection.js"]
+tags = ["virtualfolders"]
 
 ["browser_threadTreeSorting.js"]
 

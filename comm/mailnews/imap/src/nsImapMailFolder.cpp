@@ -451,35 +451,37 @@ nsresult nsImapMailFolder::CreateSubFolders(nsIFile* path) {
     currentFolderDBNameStr = currentFolderNameStr;
     nsAutoString utfLeafName = currentFolderNameStr;
 
-    nsCOMPtr<nsIMsgFolderCacheElement> cacheElement;
-    rv = GetFolderCacheElemFromFile(dbFile, getter_AddRefs(cacheElement));
-    if (NS_SUCCEEDED(rv) && cacheElement) {
-      nsCString onlineFullUtfName;
+    if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+      nsCOMPtr<nsIMsgFolderCacheElement> cacheElement;
+      rv = GetFolderCacheElemFromFile(dbFile, getter_AddRefs(cacheElement));
+      if (NS_SUCCEEDED(rv) && cacheElement) {
+        nsCString onlineFullUtfName;
 
-      uint32_t folderFlags;
-      rv = cacheElement->GetCachedUInt32("flags", &folderFlags);
-      if (NS_SUCCEEDED(rv) &&
-          folderFlags & nsMsgFolderFlags::Virtual)  // ignore virtual folders
-        continue;
-      int32_t hierarchyDelimiter;
-      rv = cacheElement->GetCachedInt32("hierDelim", &hierarchyDelimiter);
-      if (NS_SUCCEEDED(rv) &&
-          hierarchyDelimiter == kOnlineHierarchySeparatorUnknown) {
-        currentFolderPath->Remove(false);
-        continue;  // blow away .msf files for folders with unknown delimiter.
-      }
-      rv = cacheElement->GetCachedString("onlineName", onlineFullUtfName);
-      if (NS_SUCCEEDED(rv) && !onlineFullUtfName.IsEmpty()) {
-        CopyFolderNameToUTF16(onlineFullUtfName, currentFolderNameStr);
-        char delimiter = 0;
-        GetHierarchyDelimiter(&delimiter);
-        int32_t leafPos = currentFolderNameStr.RFindChar(delimiter);
-        if (leafPos > 0) currentFolderNameStr.Cut(0, leafPos + 1);
+        uint32_t folderFlags;
+        rv = cacheElement->GetCachedUInt32("flags", &folderFlags);
+        if (NS_SUCCEEDED(rv) &&
+            folderFlags & nsMsgFolderFlags::Virtual)  // ignore virtual folders
+          continue;
+        int32_t hierarchyDelimiter;
+        rv = cacheElement->GetCachedInt32("hierDelim", &hierarchyDelimiter);
+        if (NS_SUCCEEDED(rv) &&
+            hierarchyDelimiter == kOnlineHierarchySeparatorUnknown) {
+          currentFolderPath->Remove(false);
+          continue;  // blow away .msf files for folders with unknown delimiter.
+        }
+        rv = cacheElement->GetCachedString("onlineName", onlineFullUtfName);
+        if (NS_SUCCEEDED(rv) && !onlineFullUtfName.IsEmpty()) {
+          CopyFolderNameToUTF16(onlineFullUtfName, currentFolderNameStr);
+          char delimiter = 0;
+          GetHierarchyDelimiter(&delimiter);
+          int32_t leafPos = currentFolderNameStr.RFindChar(delimiter);
+          if (leafPos > 0) currentFolderNameStr.Cut(0, leafPos + 1);
 
-        // Take the full online name, and determine the leaf name.
-        CopyUTF8toUTF16(onlineFullUtfName, utfLeafName);
-        leafPos = utfLeafName.RFindChar(delimiter);
-        if (leafPos > 0) utfLeafName.Cut(0, leafPos + 1);
+          // Take the full online name, and determine the leaf name.
+          CopyUTF8toUTF16(onlineFullUtfName, utfLeafName);
+          leafPos = utfLeafName.RFindChar(delimiter);
+          if (leafPos > 0) utfLeafName.Cut(0, leafPos + 1);
+        }
       }
     }
 
@@ -499,7 +501,7 @@ nsresult nsImapMailFolder::CreateSubFolders(nsIFile* path) {
       // use the unicode name as the "pretty" name. Set it so it won't be
       // automatically computed from the URI.
       if (!currentFolderNameStr.IsEmpty())
-        child->SetPrettyName(NS_ConvertUTF16toUTF8(currentFolderNameStr));
+        child->SetName(NS_ConvertUTF16toUTF8(currentFolderNameStr));
       child->SetMsgDatabase(nullptr);
     }
   }
@@ -605,14 +607,12 @@ NS_IMETHODIMP nsImapMailFolder::UpdateFolderWithListener(
   GetInheritedStringProperty("applyIncomingFilters", applyIncomingFilters);
   m_applyIncomingFilters = applyIncomingFilters.EqualsLiteral("true");
 
-  nsCString folderName;
-  GetPrettyName(folderName);
   MOZ_LOG(FILTERLOGMODULE, LogLevel::Debug,
           ("(Imap) nsImapMailFolder::UpdateFolderWithListener() on folder '%s'",
-           folderName.get()));
+           mName.get()));
   if (mFlags & nsMsgFolderFlags::Inbox || m_applyIncomingFilters) {
     MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
-            ("(Imap) Preparing filter run on folder '%s'", folderName.get()));
+            ("(Imap) Preparing filter run on folder '%s'", mName.get()));
 
     if (!m_filterList) {
       rv = GetFilterList(aMsgWindow, getter_AddRefs(m_filterList));
@@ -1021,8 +1021,7 @@ NS_IMETHODIMP nsImapMailFolder::CreateClientSubfolderInfo(
 
       nsString unicodeName;
       rv = CopyFolderNameToUTF16(folderName, unicodeName);
-      if (NS_SUCCEEDED(rv))
-        child->SetPrettyName(NS_ConvertUTF16toUTF8(unicodeName));
+      if (NS_SUCCEEDED(rv)) child->SetName(NS_ConvertUTF16toUTF8(unicodeName));
 
       // store the online name as the mailbox name in the db folder info
       // I don't think anyone uses the mailbox name, so we'll use it
@@ -1722,10 +1721,6 @@ NS_IMETHODIMP nsImapMailFolder::RenameLocal(const nsACString& newName,
   return rv;
 }
 
-NS_IMETHODIMP nsImapMailFolder::GetPrettyName(nsACString& prettyName) {
-  return GetName(prettyName);
-}
-
 NS_IMETHODIMP nsImapMailFolder::UpdateSummaryTotals(bool force) {
   // bug 72871 inserted the mIsServer check for IMAP
   return mIsServer ? NS_OK : nsMsgDBFolder::UpdateSummaryTotals(force);
@@ -1880,6 +1875,10 @@ NS_IMETHODIMP nsImapMailFolder::MarkThreadRead(nsIMsgThread* thread) {
 
 NS_IMETHODIMP nsImapMailFolder::ReadFromFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   nsresult rv = nsMsgDBFolder::ReadFromFolderCacheElem(element);
   int32_t hierarchyDelimiter = kOnlineHierarchySeparatorUnknown;
   nsCString onlineName;
@@ -1912,6 +1911,10 @@ NS_IMETHODIMP nsImapMailFolder::ReadFromFolderCacheElem(
 
 NS_IMETHODIMP nsImapMailFolder::WriteToFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   nsresult rv = nsMsgDBFolder::WriteToFolderCacheElem(element);
   element->SetCachedUInt32("boxFlags", (uint32_t)m_boxFlags);
   element->SetCachedInt32("hierDelim", (int32_t)m_hierarchyDelimiter);
@@ -6283,10 +6286,8 @@ nsImapMailFolder::PercentProgress(nsIImapProtocol* aProtocol,
             // Use the localized (pretty) name and not the the standard imap
             // name. I.e., don't use INBOX but use the local name, e.g.,
             // "Bandeja de entrada".
-            nsAutoCString prettyName;
-            GetPrettyName(prettyName);
-            AutoTArray<nsString, 3> params = {
-                current, expected, NS_ConvertUTF8toUTF16(prettyName)};
+            AutoTArray<nsString, 3> params = {current, expected,
+                                              NS_ConvertUTF8toUTF16(mName)};
 
             nsCOMPtr<nsIStringBundle> bundle;
             nsresult rv = IMAPGetStringBundle(getter_AddRefs(bundle));
@@ -7361,7 +7362,7 @@ nsImapMailFolder::CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
       rv = AddSubfolder(safeFolderName, getter_AddRefs(newMsgFolder));
       NS_ENSURE_SUCCESS(rv, rv);
 
-      newMsgFolder->SetPrettyName(folderName);
+      newMsgFolder->SetName(folderName);
 
       uint32_t flags;
       srcFolder->GetFlags(&flags);
@@ -8061,8 +8062,7 @@ NS_IMETHODIMP nsImapMailFolder::RenameClient(nsIMsgWindow* msgWindow,
     if (!child || NS_FAILED(rv)) return rv;
     nsAutoString unicodeName;
     rv = CopyFolderNameToUTF16(newLeafName, unicodeName);
-    if (NS_SUCCEEDED(rv))
-      child->SetPrettyName(NS_ConvertUTF16toUTF8(unicodeName));
+    if (NS_SUCCEEDED(rv)) child->SetName(NS_ConvertUTF16toUTF8(unicodeName));
     imapFolder = do_QueryInterface(child);
     if (imapFolder) {
       nsAutoCString onlineName(m_onlineFolderName);
@@ -8316,16 +8316,18 @@ bool nsImapMailFolder::ShowPreviewText() {
 nsresult nsImapMailFolder::PlaybackCoalescedOperations() {
   if (m_moveCoalescer) {
     nsTArray<nsMsgKey>* junkKeysToClassify = m_moveCoalescer->GetKeyBucket(0);
-    if (junkKeysToClassify && !junkKeysToClassify->IsEmpty())
+    if (junkKeysToClassify && !junkKeysToClassify->IsEmpty()) {
       StoreCustomKeywords(m_moveCoalescer->GetMsgWindow(), "Junk"_ns,
                           EmptyCString(), *junkKeysToClassify, nullptr);
-    junkKeysToClassify->Clear();
+      junkKeysToClassify->Clear();
+    }
     nsTArray<nsMsgKey>* nonJunkKeysToClassify =
         m_moveCoalescer->GetKeyBucket(1);
-    if (nonJunkKeysToClassify && !nonJunkKeysToClassify->IsEmpty())
+    if (nonJunkKeysToClassify && !nonJunkKeysToClassify->IsEmpty()) {
       StoreCustomKeywords(m_moveCoalescer->GetMsgWindow(), "NonJunk"_ns,
                           EmptyCString(), *nonJunkKeysToClassify, nullptr);
-    nonJunkKeysToClassify->Clear();
+      nonJunkKeysToClassify->Clear();
+    }
     return m_moveCoalescer->PlaybackMoves(ShowPreviewText());
   }
   return NS_OK;  // must not be any coalesced operations

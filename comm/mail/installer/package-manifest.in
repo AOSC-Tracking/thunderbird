@@ -361,7 +361,6 @@
 
 #ifdef MOZ_DXCOMPILER
 @BINPATH@/@MOZ_DXC_DLL_NAME@
-@BINPATH@/@MOZ_DXIL_DLL_NAME@
 #endif
 
 ; Background tasks-specific preferences.  These are in the GRE
@@ -403,6 +402,7 @@
 @RESPATH@/res/locale/layout/MediaDocument.properties
 @RESPATH@/res/locale/layout/xmlparser.properties
 @RESPATH@/res/locale/dom/dom.properties
+@RESPATH@/res/locale/necko/necko.properties
 #ifdef XP_MACOSX
 @RESPATH@/res/MainMenu.nib/
 #endif

@@ -146,11 +146,26 @@ class ProfileMailFolder {
   /** @type {ProfileServer} */
   server;
   /**
-   * The absolute file system path to this folder in the profile.
+   * The absolute file system path to the directory (.sbd) for this folder in
+   * the profile.
    *
    * @type {string}
    */
   path;
+  /**
+   * The absolute file system path to the mail summary file (.msf) for this
+   * folder in the profile.
+   *
+   * @type {string}
+   */
+  summaryFilePath;
+  /**
+   * The absolute file system path to the mail (mbox file or maildir directory)
+   * for this folder in the profile.
+   *
+   * @type {string}
+   */
+  mailFilePath;
 
   /**
    * @param {ProfileServer} server
@@ -169,17 +184,29 @@ class ProfileMailFolder {
    * Adds a child folder to this folder.
    *
    * @param {string} name
+   * @param {object} files
+   * @param {nsIFile} [files.summary] - If given, a file to copy into the
+   *   profile as the folder's summary.
+   * @param {nsIFile} [files.mbox] - If given (and not in a maildir server),
+   *   a file to copy into the profile as the folder's mbox.
    * @returns {ProfileMailFolder}
    */
-  async addMailFolder(name) {
+  async addMailFolder(name, { summary, mbox } = {}) {
     await IOUtils.makeDirectory(this.path);
 
     const folder = new ProfileMailFolder(
       this.server,
       PathUtils.join(this.path, `${name}.sbd`)
     );
+
+    if (summary instanceof Ci.nsIFile) {
+      await IOUtils.copy(summary.path, folder.summaryFilePath);
+    }
+
     if (this.server.isMaildirStore) {
       await IOUtils.makeDirectory(folder.mailFilePath);
+    } else if (mbox instanceof Ci.nsIFile) {
+      await IOUtils.copy(mbox.path, folder.mailFilePath);
     } else {
       await IOUtils.writeUTF8(folder.mailFilePath, "");
     }

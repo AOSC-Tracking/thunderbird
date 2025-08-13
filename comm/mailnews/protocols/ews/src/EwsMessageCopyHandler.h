@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef __COMM_MAILNEWS_PROTOCOLS_EWS_MESSAGE_COPY_HANDLER_H
-#define __COMM_MAILNEWS_PROTOCOLS_EWS_MESSAGE_COPY_HANDLER_H
+#ifndef COMM_MAILNEWS_PROTOCOLS_EWS_SRC_EWSMESSAGECOPYHANDLER_H_
+#define COMM_MAILNEWS_PROTOCOLS_EWS_SRC_EWSMESSAGECOPYHANDLER_H_
 
 #include "IEwsClient.h"
 #include "EwsFolder.h"
@@ -173,6 +173,11 @@ class MessageCopyHandler : public nsICopyMessageListener {
    */
   nsresult OnCreateFinished(nsresult status);
 
+  /**
+   * Records the new database entry created for the current message.
+   */
+  void RecordNewHdr(nsIMsgDBHdr* newHdr);
+
  private:
   /**
    * Triggers the creation of an item for the current message on the EWS server.
@@ -185,6 +190,10 @@ class MessageCopyHandler : public nsICopyMessageListener {
   bool mIsMove;
   bool mIsDraft;
   RefPtr<nsIMsgWindow> mWindow;
+
+  // The new database entries created for the messages, used for notifying
+  // listeners at the end of the copy/move operation.
+  nsTArray<RefPtr<nsIMsgDBHdr>> mDstHdr;
 
   // The source from which to copy/move. This can either be a folder (when
   // copying/moving messages from one folder to another), or a file (when e.g.
@@ -213,4 +222,4 @@ class MessageCopyHandler : public nsICopyMessageListener {
   nsCString mBuffer;
 };
 
-#endif
+#endif  // COMM_MAILNEWS_PROTOCOLS_EWS_SRC_EWSMESSAGECOPYHANDLER_H_

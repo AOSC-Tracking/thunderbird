@@ -3,8 +3,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 mod create_folder;
+mod move_item;
+mod server_version;
 
 use std::{
+    cell::Cell,
     cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
     env,
@@ -12,11 +15,12 @@ use std::{
 
 use base64::prelude::{Engine, BASE64_STANDARD};
 use ews::{
-    create_item::{CreateItem, CreateItemResponseMessage},
+    create_item::CreateItem,
     delete_folder::DeleteFolder,
     delete_item::DeleteItem,
     get_folder::{GetFolder, GetFolderResponseMessage},
     get_item::GetItem,
+    server_version::ExchangeServerVersion,
     soap,
     sync_folder_hierarchy::{self, SyncFolderHierarchy},
     sync_folder_items::{self, SyncFolderItems},
@@ -25,8 +29,9 @@ use ews::{
         ConflictResolution, ItemChange, ItemChangeDescription, ItemChangeInner, UpdateItem, Updates,
     },
     ArrayOfRecipients, BaseFolderId, BaseItemId, BaseShape, DeleteType, ExtendedFieldURI,
-    ExtendedProperty, Folder, FolderId, FolderShape, ItemShape, Message, MessageDisposition,
-    MimeContent, Operation, PathToElement, RealItem, Recipient, ResponseClass, ResponseCode,
+    ExtendedProperty, Folder, FolderId, FolderShape, ItemResponseMessage, ItemShape, Message,
+    MessageDisposition, MimeContent, Operation, PathToElement, RealItem, Recipient, ResponseClass,
+    ResponseCode,
 };
 use fxhash::FxHashMap;
 use itertools::Itertools;
@@ -34,6 +39,7 @@ use mail_parser::MessageParser;
 use moz_http::StatusCode;
 use nserror::nsresult;
 use nsstring::nsCString;
+use server_version::read_server_version;
 use thin_vec::ThinVec;
 use thiserror::Error;
 use url::Url;
@@ -76,12 +82,27 @@ const EWS_ROOT_FOLDER: &str = "msgfolderroot";
 const LOG_NETWORK_PAYLOADS_ENV_VAR: &str = "THUNDERBIRD_LOG_NETWORK_PAYLOADS";
 
 pub(crate) struct XpComEwsClient {
-    pub endpoint: Url,
-    pub credentials: Credentials,
-    pub client: moz_http::Client,
+    endpoint: Url,
+    credentials: Credentials,
+    client: moz_http::Client,
+    server_version: Cell<ExchangeServerVersion>,
 }
 
 impl XpComEwsClient {
+    pub(crate) fn new(
+        endpoint: Url,
+        credentials: Credentials,
+    ) -> Result<XpComEwsClient, XpComEwsError> {
+        let server_version = read_server_version(&endpoint)?;
+
+        Ok(XpComEwsClient {
+            endpoint,
+            credentials,
+            client: moz_http::Client::new(),
+            server_version: Cell::new(server_version),
+        })
+    }
+
     /// Performs a connectivity check to the EWS server.
     ///
     /// Because EWS does not have a dedicated endpoint to test connectivity and
@@ -1174,7 +1195,7 @@ impl XpComEwsClient {
     async fn make_create_item_request(
         &self,
         create_item: CreateItem,
-    ) -> Result<CreateItemResponseMessage, XpComEwsError> {
+    ) -> Result<ItemResponseMessage, XpComEwsError> {
         let response = self.make_operation_request(create_item).await?;
 
         // We have only sent one message, therefore the response should only
@@ -1498,7 +1519,12 @@ impl XpComEwsClient {
         Op: Operation,
     {
         let op_name = op.name();
-        let envelope = soap::Envelope { body: op };
+        let envelope = soap::Envelope {
+            headers: vec![soap::Header::RequestServerVersion {
+                version: self.server_version.get(),
+            }],
+            body: op,
+        };
         let request_body = envelope.as_xml_document()?;
 
         // Loop in case we need to retry the request after a delay.
@@ -1540,7 +1566,27 @@ impl XpComEwsClient {
                 soap::Envelope::from_xml_document(&response_body);
 
             break match op_result {
-                Ok(envelope) => Ok(envelope.body),
+                Ok(envelope) => {
+                    // If the server responded with a version identifier, store
+                    // it so we can use it later.
+                    match envelope
+                        .headers
+                        .into_iter()
+                        // Filter out headers we don't care about.
+                        .filter_map(|hdr| match hdr {
+                            soap::Header::ServerVersionInfo(server_version_info) => {
+                                Some(server_version_info)
+                            }
+                            _ => None,
+                        })
+                        .next()
+                    {
+                        Some(header) => self.update_server_version(header)?,
+                        None => {}
+                    };
+
+                    Ok(envelope.body)
+                }
                 Err(err) => {
                     // Check first to see if the request has been throttled and
                     // needs to be retried.
@@ -1690,8 +1736,11 @@ pub(crate) enum XpComEwsError {
     #[error("an error occurred during HTTP transport")]
     Http(#[from] moz_http::Error),
 
-    #[error("an error occurred while (de)serializing")]
+    #[error("an error occurred while (de)serializing EWS traffic")]
     Ews(#[from] ews::Error),
+
+    #[error("an error occurred while (de)serializing JSON")]
+    JSON(#[from] serde_json::Error),
 
     #[error("request resulted in error with code {code:?} and message {message:?}")]
     ResponseError {
@@ -1850,10 +1899,10 @@ fn validate_get_folder_response_message(
     }
 }
 
-/// Uses the provided `CreateItemResponseMessage` to create, populate and commit
+/// Uses the provided `ItemResponseMessage` to create, populate and commit
 /// an `nsIMsgDBHdr` for a newly created message.
 fn create_and_populate_header_from_create_response(
-    response_message: CreateItemResponseMessage,
+    response_message: ItemResponseMessage,
     content: &[u8],
     callbacks: &IEwsMessageCreateCallbacks,
 ) -> Result<RefPtr<nsIMsgDBHdr>, XpComEwsError> {

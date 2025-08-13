@@ -25,7 +25,7 @@ var gSearchView = null;
 var gSearchTree = null;
 var gSubscribeBundle;
 
-window.addEventListener("DOMContentLoaded", SubscribeOnLoad);
+window.addEventListener("load", SubscribeOnLoad);
 window.addEventListener("unload", SubscribeOnUnload);
 
 document.addEventListener("dialogaccept", subscribeOK);
@@ -396,7 +396,7 @@ function toggleSubscriptionView(toggle) {
 function Search() {
   const searchValue = gNameField.value;
   if (
-    searchValue.length &&
+    searchValue &&
     gSubscribableServer &&
     gSubscribableServer.supportsSubscribeSearch
   ) {

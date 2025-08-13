@@ -136,7 +136,6 @@ function init() {
   initPrefs();
   initMunger();
   initNetworks();
-  initMenus();
   initStatic();
   initHandlers();
 
@@ -182,8 +181,6 @@ function init() {
   importFromFrame("removeUsers");
 
   processStartupScripts();
-
-  createMenus();
 
   client.busy = false;
   updateProgress();
@@ -938,174 +935,6 @@ function getMessagesContext(cx, element) {
     }
 
     element = element.parentNode;
-  }
-
-  return cx;
-}
-
-function getTabContext(cx, element) {
-  if (!cx) {
-    cx = {};
-  }
-  if (!element) {
-    element = document.popupNode;
-  }
-
-  while (element) {
-    if (element.localName == "tab") {
-      cx.__proto__ = getObjectDetails(element.view);
-      return cx;
-    }
-    element = element.parentNode;
-  }
-
-  return cx;
-}
-
-function getUserlistContext(cx) {
-  if (!cx) {
-    cx = {};
-  }
-  cx.__proto__ = getObjectDetails(client.currentObject);
-  if (!cx.channel) {
-    return cx;
-  }
-
-  cx.nicknameList = [];
-
-  // Loop through the selection.
-  for (let item of client.list.selectedItems) {
-    cx.nicknameList.push(getNicknameForUserlistRow(item));
-  }
-
-  cx.userList = [];
-  cx.canonNickList = [];
-
-  for (var i = 0; i < cx.nicknameList.length; ++i) {
-    let user = cx.channel.getUser(cx.nicknameList[i]);
-    cx.userList.push(user);
-    cx.canonNickList.push(user.canonicalName);
-    if (i == 0) {
-      cx.user = user;
-      cx.nickname = user.unicodeName;
-      cx.canonNick = user.canonicalName;
-    }
-  }
-  cx.userCount = cx.userList.length;
-
-  return cx;
-}
-
-function getViewsContext(cx) {
-  function addView(view) {
-    // We only need the view to have messages, so we accept hidden views.
-    if (!("messages" in view)) {
-      return;
-    }
-
-    var url = view.getURL();
-    if (url in urls) {
-      return;
-    }
-
-    var label = view.viewName;
-    if (!getTabForObject(view)) {
-      label = getMsg(MSG_VIEW_HIDDEN, [label]);
-    }
-
-    var types = ["IRCClient", "IRCNetwork", "IRCDCCChat", "IRCDCCFileTransfer"];
-    var typesNetwork = ["IRCNetwork", "IRCChannel", "IRCUser"];
-    var group = String(types.indexOf(view.TYPE));
-    if (typesNetwork.includes(view.TYPE)) {
-      group = "1-" + getObjectDetails(view).network.viewName;
-    }
-
-    var sort = group + "-" + view.viewName;
-    if (view.TYPE == "IRCNetwork") {
-      sort = group;
-    }
-
-    cx.views.push({ url, label, group, sort });
-    urls[url] = true;
-  }
-
-  function sortViews(a, b) {
-    if (a.sort < b.sort) {
-      return -1;
-    }
-    if (a.sort > b.sort) {
-      return 1;
-    }
-    return 0;
-  }
-
-  if (!cx) {
-    cx = {};
-  }
-  cx.__proto__ = getObjectDetails(client.currentObject);
-
-  cx.views = [];
-  var urls = {};
-
-  /* XXX The code here works its way through all the open views *and* any
-   * possibly visible objects in the object model. This is necessary because
-   * occasionally objects get removed from the object model while still
-   * having a view open. See bug 459318 for one such case. Note that we
-   * won't be able to correctly switch to the "lost" view but showing it is
-   * less confusing than not.
-   */
-
-  for (var i in client.viewsArray) {
-    addView(client.viewsArray[i].source);
-  }
-
-  addView(client);
-  for (var n in client.networks) {
-    addView(client.networks[n]);
-    for (var s in client.networks[n].servers) {
-      var server = client.networks[n].servers[s];
-      for (var c in server.channels) {
-        addView(server.channels[c]);
-      }
-      for (var u in server.users) {
-        addView(server.users[u]);
-      }
-    }
-  }
-
-  for (var u in client.dcc.users) {
-    addView(client.dcc.users[u]);
-  }
-  for (var i = 0; i < client.dcc.chats.length; i++) {
-    addView(client.dcc.chats[i]);
-  }
-  for (var i = 0; i < client.dcc.files.length; i++) {
-    addView(client.dcc.files[i]);
-  }
-
-  cx.views.sort(sortViews);
-
-  return cx;
-}
-
-function getFontContext(cx) {
-  if (!cx) {
-    cx = {};
-  }
-  cx.__proto__ = getObjectDetails(client.currentObject);
-  cx.fontSizeDefault = getDefaultFontSize();
-  var view = client;
-
-  if ("prefs" in cx.sourceObject) {
-    cx.fontFamily = view.prefs["font.family"];
-    if (cx.fontFamily.match(/^(default|(sans-)?serif|monospace)$/)) {
-      delete cx.fontFamily;
-    }
-
-    cx.fontSize = view.prefs["font.size"];
-    if (cx.fontSize == 0) {
-      delete cx.fontSize;
-    }
   }
 
   return cx;
@@ -3072,7 +2901,7 @@ function getTabForObject(source, create) {
     tb.setAttribute("onclick", "onTabClick(event, this.id);");
     // This wouldn't be here if there was a supported CSS property for it.
     tb.setAttribute("crop", "center");
-    tb.setAttribute("context", "context:tab");
+    tb.setAttribute("context", "chatZillaContextMenu");
     tb.setAttribute("class", "tab-bottom view-button");
     tb.setAttribute("id", id);
     tb.setAttribute("state", "normal");
@@ -3087,11 +2916,7 @@ function getTabForObject(source, create) {
     browser.setAttribute("flex", "1");
     browser.setAttribute("tooltip", "aHTMLTooltip");
     browser.setAttribute("onclick", "return onMessageViewClick(event)");
-    browser.setAttribute("onmousedown", "return onMessageViewMouseDown(event)");
-    browser.setAttribute(
-      "oncontextmenu",
-      "return onMessageViewContextMenu(event)"
-    );
+    browser.setAttribute("context", "chatZillaContextMenu");
     browser.setAttribute("ondragover", "contentDNDObserver.onDragOver(event);");
     browser.setAttribute("ondrop", "contentDNDObserver.onDrop(event);");
     browser.source = source;

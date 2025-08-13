@@ -647,6 +647,48 @@ nsresult GetOrCreateFolder(const nsACString& aFolderURI,
   return *aFolder ? NS_OK : NS_ERROR_FAILURE;
 }
 
+nsresult CreateFolderAndCache(nsIMsgFolder* parentFolder,
+                              const nsACString& folderName,
+                              nsIMsgFolder** folder) {
+  NS_ENSURE_ARG_POINTER(folder);
+
+  *folder = nullptr;
+
+  nsresult rv;
+  nsCOMPtr<nsIFolderLookupService> fls(do_GetService(NSIFLS_CONTRACTID, &rv));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIMsgFolder> existingFolder;
+  rv = parentFolder->GetChildNamed(folderName, getter_AddRefs(existingFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!existingFolder) {
+    // Check whether there's a child folder with the same URI. This will happen
+    // if the URI representation of the name is in any way different from the
+    // desired name, including hashed names that are used to represent the
+    // folder name on the filesystem. Once we git rid of the URI, we can get rid
+    // of this branch, but as long as we allow the two concepts we have to check
+    // both representations for a conflict. This workaround can be removed once
+    // Bug 1969363 is addressed.
+    nsAutoCString urlEncodedName;
+    NS_MsgEscapeEncodeURLPath(folderName, urlEncodedName);
+    nsAutoCString candidateUri{parentFolder->URI()};
+    candidateUri.Append("/");
+    candidateUri.Append(urlEncodedName);
+    rv = parentFolder->GetChildWithURI(candidateUri, false, true,
+                                       getter_AddRefs(existingFolder));
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  if (existingFolder) {
+    return NS_MSG_FOLDER_EXISTS;
+  }
+
+  rv = fls->CreateFolderAndCache(parentFolder, folderName, folder);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return *folder ? NS_OK : NS_ERROR_FAILURE;
+}
+
 bool IsAFromSpaceLine(char* start, const char* end) {
   bool rv = false;
   while ((start < end) && (*start == '>')) start++;
@@ -824,20 +866,10 @@ nsresult GetOrCreateJunkFolder(const nsACString& aURI,
     bool exists = false;
     if (!isAsyncFolder && folderPath) folderPath->Exists(&exists);
     if (!exists) {
-      // Hack to work around a localization bug with the Junk Folder.
-      // Please see Bug #270261 for more information...
-      nsCString localizedJunkName;
-      msgFolder->GetName(localizedJunkName);
-
-      // force the junk folder name to be Junk so it gets created on disk
-      // correctly...
       msgFolder->SetName("Junk"_ns);
       msgFolder->SetFlag(nsMsgFolderFlags::Junk);
       rv = msgFolder->CreateStorageIfMissing(aListener);
       NS_ENSURE_SUCCESS(rv, rv);
-
-      // now restore the localized folder name...
-      msgFolder->SetName(localizedJunkName);
 
       // XXX TODO
       // JUNK MAIL RELATED
@@ -1416,69 +1448,6 @@ nsresult MsgExamineForProxyAsync(nsIChannel* channel,
   NS_ENSURE_SUCCESS(rv, rv);
 
   return pps->AsyncResolve(channel, 0, listener, nullptr, result);
-}
-
-nsresult MsgPromptLoginFailed(nsIMsgWindow* aMsgWindow,
-                              const nsACString& aHostname,
-                              const nsACString& aUsername,
-                              const nsACString& aAccountname,
-                              int32_t* aResult) {
-  nsCOMPtr<mozIDOMWindowProxy> domWindow;
-  if (aMsgWindow) {
-    aMsgWindow->GetDomWindow(getter_AddRefs(domWindow));
-  }
-
-  nsresult rv;
-  nsCOMPtr<nsIPromptService> dlgService(
-      do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIStringBundleService> bundleSvc =
-      mozilla::components::StringBundle::Service();
-  NS_ENSURE_TRUE(bundleSvc, NS_ERROR_UNEXPECTED);
-
-  nsCOMPtr<nsIStringBundle> bundle;
-  rv = bundleSvc->CreateBundle("chrome://messenger/locale/messenger.properties",
-                               getter_AddRefs(bundle));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsString message;
-  AutoTArray<nsString, 2> formatStrings;
-  CopyUTF8toUTF16(aHostname, *formatStrings.AppendElement());
-  CopyUTF8toUTF16(aUsername, *formatStrings.AppendElement());
-
-  rv = bundle->FormatStringFromName("mailServerLoginFailed2", formatStrings,
-                                    message);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsString title;
-  if (aAccountname.IsEmpty()) {
-    // Account name may be empty e.g. on a SMTP server.
-    rv = bundle->GetStringFromName("mailServerLoginFailedTitle", title);
-  } else {
-    AutoTArray<nsString, 1> formatStrings = {
-        NS_ConvertUTF8toUTF16(aAccountname)};
-    rv = bundle->FormatStringFromName("mailServerLoginFailedTitleWithAccount",
-                                      formatStrings, title);
-  }
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsString button0;
-  rv = bundle->GetStringFromName("mailServerLoginFailedRetryButton", button0);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsString button2;
-  rv = bundle->GetStringFromName("mailServerLoginFailedEnterNewPasswordButton",
-                                 button2);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  bool dummyValue = false;
-  return dlgService->ConfirmEx(
-      domWindow, title.get(), message.get(),
-      (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_0) +
-          (nsIPrompt::BUTTON_TITLE_CANCEL * nsIPrompt::BUTTON_POS_1) +
-          (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_2),
-      button0.get(), nullptr, button2.get(), nullptr, &dummyValue, aResult);
 }
 
 PRTime MsgConvertAgeInDaysToCutoffDate(int32_t ageInDays) {

@@ -339,6 +339,7 @@ var gAccountSetup = {
         document.getElementById("manualConfigArea").hidden = true;
         document.getElementById("manualConfigButton").hidden = true;
         document.getElementById("stopButton").hidden = true;
+        document.getElementById("usernameRow").hidden = true;
 
         reTestButton.hidden = true;
         autoconfigDesc.hidden = true;
@@ -351,6 +352,7 @@ var gAccountSetup = {
         document.getElementById("manualConfigArea").hidden = true;
         document.getElementById("manualConfigButton").hidden = true;
         document.getElementById("stopButton").hidden = false;
+        document.getElementById("usernameRow").hidden = true;
 
         reTestButton.hidden = true;
         autoconfigDesc.hidden = true;
@@ -524,73 +526,6 @@ var gAccountSetup = {
   onInputPassword() {
     this._password = document.getElementById("password").value;
     this.onStartOver();
-
-    // Show the password toggle button only if the field is not empty.
-    const toggleButton = document.getElementById("passwordToggleButton");
-    toggleButton.hidden = !this._password;
-
-    if (!this._password) {
-      // Always reset the field to the proper type.
-      this.hidePassword();
-    }
-  },
-
-  /**
-   * Toggle the type of the password field between password and text to allow
-   * users reading their own password.
-   */
-  passwordToggle(event) {
-    // Prevent the form submission if the user presses Enter.
-    event.preventDefault();
-
-    // The password field is in plain text, change it back to the proper type.
-    if (this._showPassword) {
-      this.hidePassword();
-      return;
-    }
-
-    // Change the password field to plain text to make the text visible.
-    this.showPassword();
-  },
-
-  /**
-   * Convert the password field into a plain text field allowing users and
-   * assistive technologies to read the typed text.
-   */
-  showPassword() {
-    document.getElementById("password").type = "text";
-    document.l10n.setAttributes(
-      document.getElementById("passwordToggleButton"),
-      "account-setup-password-toggle-hide"
-    );
-
-    const toggleImage = document.getElementById("passwordInfo");
-    toggleImage.src = "chrome://messenger/skin/icons/new/compact/eye.svg";
-    toggleImage.classList.add("password-toggled");
-
-    this._showPassword = true;
-  },
-
-  /**
-   * Convert the password field back to its default password type.
-   */
-  hidePassword() {
-    // No need to reset anything if the password was never shown.
-    if (!this._showPassword) {
-      return;
-    }
-
-    document.getElementById("password").type = "password";
-    document.l10n.setAttributes(
-      document.getElementById("passwordToggleButton"),
-      "account-setup-password-toggle-show"
-    );
-
-    const toggleImage = document.getElementById("passwordInfo");
-    toggleImage.src = "chrome://messenger/skin/icons/new/compact/hidden.svg";
-    toggleImage.classList.remove("password-toggled");
-
-    this._showPassword = false;
   },
 
   /**
@@ -681,6 +616,10 @@ var gAccountSetup = {
         // Autodiscover also produced nothing, we make a best effort to guess a
         // valid configuration.
         if (!autodiscoverCall.succeeded) {
+          if (autodiscoverCall.e instanceof ExchangeUsernameException) {
+            this._showExchangeUsername();
+            return;
+          }
           const initialConfig = new AccountConfig();
           this._prefillConfig(initialConfig);
           // `_guessConfig()` will call `foundConfig()` for us if it succeeds.
@@ -773,18 +712,7 @@ var gAccountSetup = {
             errorCallback(e);
           } else if (allErrors && allErrors.some(err => err.code == 401)) {
             // Auth failed.
-            // Ask user for username.
-            this.onStartOver();
-            this.stopLoadingState(); // clears status message
-            document.getElementById("usernameRow").hidden = false;
-
-            this.showErrorNotification(
-              !this._exchangeUsername
-                ? "account-setup-credentials-incomplete"
-                : "account-setup-credentials-wrong"
-            );
-            document.getElementById("manualConfigButton").hidden = false;
-            errorCallback(new CancelledException());
+            errorCallback(new ExchangeUsernameException());
           } else {
             errorCallback(e);
           }
@@ -830,6 +758,19 @@ var gAccountSetup = {
         throw new Error(`Unexpected source: ${config.source}`);
       }
     }
+  },
+
+  _showExchangeUsername() {
+    this.onStartOver();
+    this.stopLoadingState(); // clears status message
+    document.getElementById("usernameRow").hidden = false;
+
+    this.showErrorNotification(
+      !this._exchangeUsername
+        ? "account-setup-credentials-incomplete"
+        : "account-setup-credentials-wrong"
+    );
+    document.getElementById("manualConfigButton").hidden = false;
   },
 
   /**
@@ -2942,6 +2883,8 @@ function serverMatches(a, b) {
     a.auth == b.auth
   );
 }
+
+class ExchangeUsernameException extends Exception {}
 
 /**
  * Warning dialog, warning user about lack of, or inappropriate, encryption.

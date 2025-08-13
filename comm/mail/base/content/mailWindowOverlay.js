@@ -154,8 +154,8 @@ function file_init() {
 const deleteMenuItemCommandHandler = event =>
   goDoCommand(
     event.shiftKey && event.target.dataset.imapDeleted == "false"
-      ? "cmd_shiftDelete"
-      : "cmd_delete"
+      ? "cmd_shiftDeleteMessage"
+      : "cmd_deleteMessage"
   );
 
 /**
@@ -186,12 +186,12 @@ function InitEditMessagesMenu() {
   const numSelected = dbView?.numSelected;
 
   const deleteMenuItem = document.getElementById("menu_delete");
-  deleteMenuItem.setAttribute("command", "cmd_delete");
   if (deleteController?.wrappedJSObject && folderTreeActive) {
     const value = folderIsNewsgroup
       ? "menu-edit-unsubscribe-newsgroup"
       : "menu-edit-delete-folder";
     document.l10n.setAttributes(deleteMenuItem, value);
+    deleteMenuItem.setAttribute("command", "cmd_deleteFolder");
   } else if (deleteController?.wrappedJSObject && numSelected) {
     const areIMAPDeleted = dbView
       ?.getSelectedMsgHdrs()
@@ -209,6 +209,7 @@ function InitEditMessagesMenu() {
     deleteMenuItem.disabled = false;
   } else {
     document.l10n.setAttributes(deleteMenuItem, "text-action-delete");
+    deleteMenuItem.setAttribute("command", "cmd_delete");
   }
 
   // Initialize the Favorite Folder checkbox in the Edit menu.
@@ -240,6 +241,8 @@ function initSearchMessagesMenu() {
     "mailnews.database.global.indexer.enabled"
   );
   document.getElementById("glodaSearchCmd").hidden = !glodaEnabled;
+  document.getElementById("searchMailCmd").disabled =
+    !MailServices.accounts.accounts.length;
 }
 
 function InitGoMessagesMenu() {
@@ -732,7 +735,7 @@ function initMoveToFolderAgainMenu(aMenuItem) {
   const stringName = isMove ? "moveToFolderAgain" : "copyToFolderAgain";
   aMenuItem.label = bundle.getFormattedString(
     stringName,
-    [destMsgFolder.prettyName],
+    [destMsgFolder.localizedName],
     1
   );
   // This gives us moveToFolderAgainAccessKey and copyToFolderAgainAccessKey.
@@ -1141,7 +1144,7 @@ function ConfirmUnsubscribe(folders) {
     folders.length == 1
       ? bundle.getFormattedString(
           "confirmUnsubscribeText",
-          [folders[0].name],
+          [folders[0].localizedName],
           1
         )
       : bundle.getString("confirmUnsubscribeManyText");
@@ -1898,7 +1901,10 @@ function addAttachmentToPopup(
   // Insert the item just before the separator. The separator is the 2nd to
   // last element in the popup.
   item.classList.add("menu-iconic");
-  item.setAttribute("image", getIconForAttachment(attachment));
+  item.setAttribute(
+    "style",
+    "list-style-image: " + getIconForAttachment(attachment)
+  );
 
   const separator = popup.querySelector("menuseparator");
 
@@ -2017,8 +2023,8 @@ function addAttachmentToPopup(
  */
 function getIconForAttachment(attachment) {
   return attachment.isDeleted
-    ? "chrome://messenger/skin/icons/attachment-deleted.svg"
-    : `moz-icon://${attachment.name}?size=16&amp;contentType=${attachment.contentType}`;
+    ? "url(chrome://messenger/skin/icons/attachment-deleted.svg)"
+    : `image-set("moz-icon://${attachment.name}?size=16&contentType=${attachment.contentType}&scale=1" 1x, "moz-icon://${attachment.name}?size=16&contentType=${attachment.contentType}&scale=2" 2x, "moz-icon://${attachment.name}?size=16&contentType=${attachment.contentType}&scale=3" 3x)`;
 }
 
 /**
@@ -2068,5 +2074,65 @@ function composeEmailTo(linkURL, identity) {
     null,
     Services.io.newURI(linkURL),
     identity
+  );
+}
+
+/**
+ * Open the search messages dialog if we have accounts and folders that can be
+ * searched.
+ *
+ * @param {?nsIMsgFolder} folder - The folder that needs to be searched, if
+ *   available.
+ */
+function searchAllMessages(folder) {
+  // Bail out if we don't have any account available.
+  if (!MailServices.accounts.accounts.length) {
+    return;
+  }
+
+  // No folder was passed, detect the currently selected folder.
+  if (!folder) {
+    let tabmail = document.getElementById("tabmail");
+    if (!tabmail) {
+      // We might be in a standalone window so we don't have direct access to
+      // the tabmail element.
+      const mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
+      // There may not be a "main" window if an .eml file was double-clicked.
+      if (!mainWindow) {
+        // Try to get the rootFolder for the default account if available.
+        // Otherwise the dialog will open with a null folder and the user will
+        // need to select the folder from the initial dropdown.
+        openSearchDialog(
+          MailServices.accounts.defaultAccount?.incomingServer?.rootFolder
+        );
+        return;
+      }
+      tabmail = mainWindow.document.getElementById("tabmail");
+    }
+
+    for (const tab of tabmail.tabInfo) {
+      if (tab.mode.name == "mail3PaneTab") {
+        folder = tab.chromeBrowser.contentWindow.gFolder;
+        break;
+      }
+    }
+  }
+
+  // We always open a new search dialog for each search command.
+  openSearchDialog(folder);
+}
+
+/**
+ * Open the search dialog.
+ *
+ * @param {?nsIMsgFolder} folder - The folder that needs to be searched, if
+ *   available.
+ */
+function openSearchDialog(folder) {
+  top.openDialog(
+    "chrome://messenger/content/SearchDialog.xhtml",
+    "_blank",
+    "chrome,resizable,status,centerscreen,dialog=no",
+    { folder }
   );
 }

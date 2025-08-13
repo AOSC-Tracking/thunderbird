@@ -19,6 +19,7 @@ gkrust-shared = { version = "0.1.0", path = "../../../toolkit/library/rust/share
 ews_xpcom = { version = "0.1.0", path = "../ews_xpcom" }
 sys_tray = { version = "0.1.0", path = "../sys_tray" }
 aa-stroke = { git = "https://github.com/FirefoxGraphics/aa-stroke", rev = "a821fa621c2def48e90c82774b4c6563b5a8ea4a" }
+abridged_certs = { path = "../../../security/manager/ssl/abridged_certs" }
 app_services_logger = { path = "../../../services/common/app_services_logger" }
 audio_thread_priority = { version = "0.32" }
 audioipc2-client = { git = "https://github.com/mozilla/audioipc", rev = "e6f44a2bd1e57d11dfc737632a9e849077632330", optional = true }
@@ -44,7 +45,6 @@ dom = { path = "../../../dom/base/rust" }
 dom_fragmentdirectives = { path = "../../../dom/base/fragmentdirectives" }
 encoding_glue = { path = "../../../intl/encoding_glue" }
 etagere = { version = "0.2.13", features = ['ffi'] }
-fallible_collections = { version = "0.4", features = ['rust_1_57'] }
 fluent = { version = "0.16.0", features = ['fluent-pseudo'] }
 fluent-fallback = { version = "0.7.0" }
 fluent-ffi = { path = "../../../intl/l10n/rust/fluent-ffi" }
@@ -65,7 +65,6 @@ kvstore = { path = "../../../toolkit/components/kvstore" }
 l10nregistry = { path = "../../../intl/l10n/rust/l10nregistry-rs" }
 l10nregistry-ffi = { path = "../../../intl/l10n/rust/l10nregistry-ffi" }
 libz-rs-sys = { version = "0.4.1", features = ['custom-prefix'], optional = true }
-lmdb-rkv-sys = { version = "0.11", features = ['mdb_idl_logn_9'] }
 localization-ffi = { path = "../../../intl/l10n/rust/localization-ffi" }
 log = { version = "0.4", features = ['release_max_level_info'] }
 mapped_hyph = { git = "https://github.com/jfkthame/mapped_hyph.git", rev = "eff105f6ad7ec9b79816cfc1985a28e5340ad14b" }
@@ -78,7 +77,7 @@ mozannotation_client = { path = "../../../toolkit/crashreporter/mozannotation_cl
 mozannotation_server = { path = "../../../toolkit/crashreporter/mozannotation_server", optional = true }
 mozglue-static = { path = "../../../mozglue/static/rust" }
 mozurl = { path = "../../../netwerk/base/mozurl" }
-mp4parse_capi = { git = "https://github.com/mozilla/mp4parse-rust", rev = "e64650a686e5c5732395cd059e17cfd3b1e5b63b", features = ['missing-pixi-permitted'] }
+mp4parse_capi = { git = "https://github.com/mozilla/mp4parse-rust", rev = "d3e4d255bd149d341c7e90f5e9fc84e743a8e179", features = ['missing-pixi-permitted'] }
 neqo_glue = { path = "../../../netwerk/socket/neqo_glue" }
 netwerk_helper = { path = "../../../netwerk/base/rust-helper" }
 nserror = { path = "../../../xpcom/rust/nserror" }

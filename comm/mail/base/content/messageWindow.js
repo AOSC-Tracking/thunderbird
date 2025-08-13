@@ -226,7 +226,6 @@ function ShowMenus() {
   }
 }
 
-/* eslint-disable complexity */
 function HideMenus() {
   // TODO: Seems to be a lot of repetitive code.
   // Can we just fold this into an array of element IDs and loop over them?
@@ -444,7 +443,6 @@ function HideMenus() {
     menuFileQuit.parentNode.replaceChild(menuFileClose, menuFileQuit);
   }
 }
-/* eslint-enable complexity */
 
 function OnUnloadMessageWindow() {
   UnloadCommandUpdateHandlers();
@@ -686,7 +684,7 @@ function messageHistoryMenu_init(popup) {
     // virtual folders because 'folder' is the display folder, not the
     // underlying one.
     if (folder != messageBrowser.contentWindow.gFolder) {
-      menuText = folder.prettyName + " - ";
+      menuText = folder.localizedName + " - ";
     }
 
     let subject = "";

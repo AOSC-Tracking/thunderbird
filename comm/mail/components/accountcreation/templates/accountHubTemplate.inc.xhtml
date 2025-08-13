@@ -9,6 +9,7 @@
 #include ./accountHubAddressBookAccountSelectTemplate.inc.xhtml
 #include ./accountHubAddressBookLdapAccountFormTemplate.inc.xhtml
 #include ./accountHubAddressBookLdapAdvancedFormTemplate.inc.xhtml
+#include ./accountHubAddressBookLocalFormTemplate.inc.xhtml
 #include ./accountHubAddressBookOptionSelectTemplate.inc.xhtml
 #include ./accountHubAddressBookRemoteAccountFormTemplate.inc.xhtml
 #include ./accountHubAddressBookSyncTemplate.inc.xhtml
@@ -157,10 +158,16 @@
     title-id="account-hub-add-address-book"
   >
   </address-book-option-select>
-  <address-book-account-select id="addressBookAccountSelectSubview" hidden="hidden">
+  <address-book-account-select
+    id="addressBookAccountSelectSubview"
+    class="account-hub-step"
+    title-id="account-hub-select-address-book-account"
+    hidden="hidden">
   </address-book-account-select>
   <address-book-remote-account-form
     id="addressBookRemoteAccountFormSubview"
+    class="account-hub-step"
+    title-id="account-hub-new-remote-address-book"
     hidden="hidden"
   >
   </address-book-remote-account-form>
@@ -174,8 +181,19 @@
     hidden="hidden"
   >
   </address-book-ldap-advanced-form>
-  <address-book-sync id="addressBookSyncSubview" hidden="hidden">
+  <address-book-sync
+    id="addressBookSyncSubview"
+    class="account-hub-step"
+    title-id="account-hub-sync-address-books"
+    hidden="hidden">
   </address-book-sync>
+  <address-book-local-form
+    id="addressBookLocalSubview"
+    class="account-hub-step"
+    title-id="account-hub-add-local-address-book"
+    hidden="hidden"
+  >
+  </address-book-local-form>
 
   <account-hub-footer id="addressBookFooter" class="hub-footer">
   </account-hub-footer>

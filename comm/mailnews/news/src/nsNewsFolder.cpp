@@ -9,7 +9,6 @@
 #include "prlog.h"
 
 #include "msgCore.h"  // precompiled header...
-#include "nntpCore.h"
 #include "nsIMsgMailNewsUrl.h"
 #include "nsNewsFolder.h"
 #include "nsMsgFolderFlags.h"
@@ -376,26 +375,25 @@ NS_IMETHODIMP nsMsgNewsFolder::Rename(const nsACString& newName,
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::GetAbbreviatedName(
-    nsACString& aAbbreviatedName) {
+NS_IMETHODIMP nsMsgNewsFolder::GetAbbreviatedName(nsAString& aAbbreviatedName) {
   nsresult rv;
 
-  rv = nsMsgDBFolder::GetPrettyName(aAbbreviatedName);
-  if (NS_FAILED(rv)) return rv;
+  rv = nsMsgDBFolder::GetLocalizedName(aAbbreviatedName);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // only do this for newsgroup names, not for newsgroup hosts.
   bool isNewsServer = false;
   rv = GetIsServer(&isNewsServer);
-  if (NS_FAILED(rv)) return rv;
+  NS_ENSURE_SUCCESS(rv, rv);
 
   if (!isNewsServer) {
     nsCOMPtr<nsINntpIncomingServer> nntpServer;
     rv = GetNntpServer(getter_AddRefs(nntpServer));
-    if (NS_FAILED(rv)) return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
 
     bool abbreviate = true;
     rv = nntpServer->GetAbbreviate(&abbreviate);
-    if (NS_FAILED(rv)) return rv;
+    NS_ENSURE_SUCCESS(rv, rv);
 
     if (abbreviate)
       rv = AbbreviatePrettyName(aAbbreviatedName, 1 /* hardcoded for now */);
@@ -415,9 +413,9 @@ NS_IMETHODIMP nsMsgNewsFolder::GetAbbreviatedName(
 // 'a' is the first letter of the part of the word before the
 // dash and 'b' is the first letter of the part of the word after
 // the dash
-nsresult nsMsgNewsFolder::AbbreviatePrettyName(nsACString& prettyName,
+nsresult nsMsgNewsFolder::AbbreviatePrettyName(nsAString& prettyName,
                                                int32_t fullwords) {
-  nsAutoCString name(prettyName);
+  nsAutoString name(prettyName);
   int32_t totalwords = 0;  // total no. of words
 
   // get the total no. of words
@@ -438,7 +436,7 @@ nsresult nsMsgNewsFolder::AbbreviatePrettyName(nsACString& prettyName,
   if (abbrevnum < 1) return NS_OK;  // nothing to abbreviate
 
   // build the ellipsis
-  nsAutoCString out;
+  nsAutoString out;
   out += name[0];
 
   int32_t length = name.Length();
@@ -953,7 +951,8 @@ nsMsgNewsFolder::GetAuthenticationCredentials(nsIMsgWindow* aMsgWindow,
 
   nsresult rv;
   nsCOMPtr<nsIStringBundle> bundle;
-  rv = bundleService->CreateBundle(NEWS_MSGS_URL, getter_AddRefs(bundle));
+  rv = bundleService->CreateBundle("chrome://messenger/locale/news.properties",
+                                   getter_AddRefs(bundle));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsString signonUrl;

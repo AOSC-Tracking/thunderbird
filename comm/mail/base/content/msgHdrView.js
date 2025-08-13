@@ -450,7 +450,7 @@ async function OnLoadMsgHeaderPane() {
 
   getMessagePaneBrowser().addProgressListener(
     messageProgressListener,
-    Ci.nsIWebProgress.NOTIFY_STATE_ALL
+    Ci.nsIWebProgress.NOTIFY_STATE_REQUEST
   );
 
   gHeaderCustomize.init();
@@ -543,7 +543,6 @@ var messageProgressListener = {
     if (previousBodyElement) {
       previousBodyElement.innerHTML = "";
     }
-    ClearAttachmentList();
     gMessageNotificationBar.clearMsgNotifications();
 
     request.listener = this;
@@ -563,8 +562,7 @@ var messageProgressListener = {
       new CustomEvent("MsgLoading", { detail: gMessage, bubbles: true })
     );
 
-    const domWindow = getMessagePaneBrowser().docShell.DOMWindow;
-    domWindow.addEventListener(
+    getMessagePaneBrowser().addEventListener(
       "DOMContentLoaded",
       event => this.onDOMContentLoaded(event),
       { once: true }
@@ -642,7 +640,6 @@ var messageProgressListener = {
     // pref...
     const showAllHeadersPref = Services.prefs.getIntPref("mail.show_headers");
     if (showAllHeadersPref == 2) {
-      // eslint-disable-next-line no-global-assign
       gViewAllHeaders = true;
     } else {
       if (gViewAllHeaders) {
@@ -662,20 +659,17 @@ var messageProgressListener = {
           }
         }
         gDummyHeaderIdIndex = 0;
-        // eslint-disable-next-line no-global-assign
+
         gExpandedHeaderView = {};
         initializeHeaderViewTables();
       }
 
-      // eslint-disable-next-line no-global-assign
       gViewAllHeaders = false;
     }
 
     document.title = "";
-    ClearCurrentHeaders();
     gBuiltExpandedView = false;
     gBuildAttachmentsForCurrentMsg = false;
-    ClearAttachmentList();
     gMessageNotificationBar.clearMsgNotifications();
 
     // Reset the blocked hosts so we can populate it again for this message.
@@ -1449,12 +1443,20 @@ function UpdateExpandedMessageHeaders() {
   updateExpandedView();
 }
 
+/**
+ * Clear global header data in anticipation of a new message to be displayed.
+ */
 function ClearCurrentHeaders() {
-  // eslint-disable-next-line no-global-assign
   currentHeaderData = {};
-  // eslint-disable-next-line no-global-assign
+
   currentAttachments = [];
   currentCharacterSet = "";
+
+  // Get rid of earlier event handlers on #attachmentName.
+  const attachmentName = document.getElementById("attachmentName");
+  attachmentName.replaceWith(attachmentName.cloneNode(true));
+
+  document.getElementById("attachmentList").replaceChildren();
 }
 
 function ShowMessageHeaderPane() {
@@ -2448,16 +2450,6 @@ async function saveLinkAttachmentsToFile(aAttachmentInfoArray) {
       undefined, // aCacheKey,
       undefined // aIsContentWindowPrivate
     );
-  }
-}
-
-function ClearAttachmentList() {
-  // clear selection
-  var list = document.getElementById("attachmentList");
-  list.clearSelection();
-
-  while (list.hasChildNodes()) {
-    list.lastChild.remove();
   }
 }
 
@@ -3638,8 +3630,8 @@ const trashButtonClickHandler = event => {
   if (event.button == 0) {
     goDoCommand(
       event.shiftKey && event.target.dataset.imapDeleted == "false"
-        ? "cmd_shiftDelete"
-        : "cmd_delete"
+        ? "cmd_shiftDeleteMessage"
+        : "cmd_deleteMessage"
     );
   }
 };

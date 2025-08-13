@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef _nsMsgSearchAdapter_H_
-#define _nsMsgSearchAdapter_H_
+#ifndef COMM_MAILNEWS_SEARCH_PUBLIC_NSMSGSEARCHADAPTER_H_
+#define COMM_MAILNEWS_SEARCH_PUBLIC_NSMSGSEARCHADAPTER_H_
 
 #include "nsMsgSearchCore.h"
 #include "nsCOMPtr.h"
@@ -38,21 +38,13 @@ class nsMsgSearchAdapter : public nsIMsgSearchAdapter {
   nsTArray<RefPtr<nsIMsgSearchTerm>>
       m_searchTerms; /* linked list of criteria terms */
 
-  nsString m_defaultCharset = u"UTF-8"_ns;
-
   static nsresult EncodeImap(
       char** ppEncoding, nsTArray<RefPtr<nsIMsgSearchTerm>> const& searchTerms,
-      const char16_t* srcCharset, const char16_t* destCharset,
-      bool reallyDredd = false);
+      const char16_t* srcCharset, const char16_t* destCharset);
 
   static nsresult EncodeImapValue(char* encoding, const char* value,
-                                  bool useQuotes, bool reallyDredd);
+                                  bool useQuotes);
 
-  static char* GetImapCharsetParam(const char16_t* destCharset);
-  static char16_t* EscapeSearchUrl(const char16_t* nntpCommand);
-  static char16_t* EscapeImapSearchProtocol(const char16_t* imapCommand);
-  static char16_t* EscapeQuoteImapSearchProtocol(const char16_t* imapCommand);
-  static char* UnEscapeSearchUrl(const char* commandSpecificData);
   // This stuff lives in the base class because the IMAP search syntax
   // is used by the Dredd SEARCH command as well as IMAP itself
   static const char* m_kImapBefore;
@@ -84,17 +76,8 @@ class nsMsgSearchAdapter : public nsIMsgSearchAdapter {
 
  protected:
   virtual ~nsMsgSearchAdapter();
-  typedef enum _msg_TransformType {
-    kOverwrite, /* "John Doe" -> "John*Doe",   simple contains   */
-    kInsert,    /* "John Doe" -> "John* Doe",  name completion   */
-    kSurround   /* "John Doe" -> "John* *Doe", advanced contains */
-  } msg_TransformType;
 
-  char* TransformSpacesToStars(const char*, msg_TransformType transformType);
-  nsresult OpenNewsResultInUnknownGroup(nsMsgResultElement*);
-
-  static nsresult EncodeImapTerm(nsIMsgSearchTerm*, bool reallyDredd,
-                                 const char16_t* srcCharset,
+  static nsresult EncodeImapTerm(nsIMsgSearchTerm*, const char16_t* srcCharset,
                                  const char16_t* destCharset, char** ppOutTerm);
 };
 
@@ -239,4 +222,4 @@ class nsMsgSearchValidityManager : public nsIMsgSearchValidityManager {
                                     nsMsgSearchAttribValue aSearchAttrib);
 };
 
-#endif
+#endif  // COMM_MAILNEWS_SEARCH_PUBLIC_NSMSGSEARCHADAPTER_H_

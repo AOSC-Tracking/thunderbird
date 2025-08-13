@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef PerFolderDatabase_h__
-#define PerFolderDatabase_h__
+#ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_PERFOLDERDATABASE_H_
+#define COMM_MAILNEWS_DB_PANORAMA_SRC_PERFOLDERDATABASE_H_
 
 #include "FolderDatabase.h"
 #include "MessageDatabase.h"
@@ -79,8 +79,8 @@ class MessageEnumerator : public nsBaseMsgEnumerator {
 
 class ThreadEnumerator : public nsBaseMsgThreadEnumerator {
  public:
-  ThreadEnumerator(MessageDatabase* messageDatabase,
-                   mozIStorageStatement* aStmt);
+  ThreadEnumerator(MessageDatabase* messageDatabase, mozIStorageStatement* stmt,
+                   uint64_t folderId);
 
   // nsIMsgEnumerator support.
   NS_IMETHOD GetNext(nsIMsgThread** item) override;
@@ -93,6 +93,7 @@ class ThreadEnumerator : public nsBaseMsgThreadEnumerator {
 
   MessageDatabase* mMessageDatabase;
   nsCOMPtr<mozIStorageStatement> mStmt;
+  uint64_t mFolderId;
   bool mHasNext = false;
 };
 
@@ -116,4 +117,4 @@ class FolderInfo : public nsIDBFolderInfo {
 
 }  // namespace mozilla::mailnews
 
-#endif  // PerFolderDatabase_h__
+#endif  // COMM_MAILNEWS_DB_PANORAMA_SRC_PERFOLDERDATABASE_H_

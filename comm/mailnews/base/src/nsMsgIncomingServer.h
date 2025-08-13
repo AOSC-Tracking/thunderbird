@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef nsMsgIncomingServer_h__
-#define nsMsgIncomingServer_h__
+#ifndef COMM_MAILNEWS_BASE_SRC_NSMSGINCOMINGSERVER_H_
+#define COMM_MAILNEWS_BASE_SRC_NSMSGINCOMINGSERVER_H_
 
 #include "nsIMsgIncomingServer.h"
 #include "nsIPrefBranch.h"
@@ -64,13 +64,13 @@ class nsMsgIncomingServer : public nsIMsgIncomingServer,
 
   /// Helper routine to create local folder on disk if it doesn't exist
   /// under the account's rootFolder.
-  nsresult CreateLocalFolder(const nsACString& folderName);
+  nsresult CreateLocalFolder(const nsACString& folderName, uint32_t flag);
 
   static nsresult GetDeferredServers(
       nsIMsgIncomingServer* destServer,
       nsTArray<RefPtr<nsIPop3IncomingServer>>& aServers);
 
-  nsresult CreateRootFolder();
+  virtual nsresult CreateRootFolder();
 
   nsresult InternalSetHostName(const nsACString& aHostname,
                                const char* prefName);
@@ -97,4 +97,4 @@ class nsMsgIncomingServer : public nsIMsgIncomingServer,
   bool mPerformingBiff;
 };
 
-#endif  // nsMsgIncomingServer_h__
+#endif  // COMM_MAILNEWS_BASE_SRC_NSMSGINCOMINGSERVER_H_

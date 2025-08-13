@@ -80,9 +80,10 @@
 
 using namespace mozilla;
 
-extern LazyLogModule FILTERLOGMODULE;
+extern LazyLogModule
+    FILTERLOGMODULE;  // "Filters" (defined in nsMsgFilterService.cpp)
 extern LazyLogModule DBLog;
-extern LazyLogModule gCompactLog;  // "compact" (Defined in FolderCompactor).
+extern LazyLogModule gCompactLog;  // "compact" (defined in FolderCompactor.cpp)
 static LazyLogModule gFolderLockLog("FolderLock");
 
 static PRTime gtimeOfLastPurgeCheck;  // variable to know when to check for
@@ -163,12 +164,8 @@ NS_IMPL_ISUPPORTS(nsMsgFolderService, nsIMsgFolderService)
 NS_IMETHODIMP nsMsgFolderService::InitializeFolderStrings() {
   nsMsgDBFolder::initializeStrings();
   nsMsgDBFolder::gInitializeStringsDone = true;
-  nsMsgDBFolder::gIsEnglishApp = -1;
   return NS_OK;
 }
-
-MOZ_RUNINIT mozilla::UniquePtr<mozilla::intl::Collator>
-    nsMsgDBFolder::gCollationKeyGenerator = nullptr;
 
 MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedInboxName;
 MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedTrashName;
@@ -183,10 +180,6 @@ MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedBrandShortName;
 
 nsrefcnt nsMsgDBFolder::mInstanceCount = 0;
 bool nsMsgDBFolder::gInitializeStringsDone = false;
-// This is used in `nonEnglishApp()` to determine localised
-// folders strings.
-// -1: not retrieved yet, 1: English, 0: non-English.
-int nsMsgDBFolder::gIsEnglishApp;
 
 // We define strings for folder properties and events.
 // Properties:
@@ -278,7 +271,6 @@ nsMsgDBFolder::nsMsgDBFolder(void)
       if (appName.Equals("xpcshell")) gInitializeStringsDone = true;
     } while (false);
 
-    createCollationKeyGenerator();
     gtimeOfLastPurgeCheck = 0;
   }
 
@@ -296,9 +288,6 @@ nsMsgDBFolder::~nsMsgDBFolder(void) {
   for (uint32_t i = 0; i < nsMsgProcessingFlags::NumberOfFlags; i++)
     delete mProcessingFlag[i].keys;
 
-  if (--mInstanceCount == 0) {
-    nsMsgDBFolder::gCollationKeyGenerator = nullptr;
-  }
   // shutdown but don't shutdown children.
   Shutdown(false);
 }
@@ -621,6 +610,7 @@ void nsMsgDBFolder::UpdateNewMessages() {
 // could cache the account manager and folder cache.
 nsresult nsMsgDBFolder::GetFolderCacheElemFromFile(
     nsIFile* file, nsIMsgFolderCacheElement** cacheElement) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
   nsresult result;
   NS_ENSURE_ARG_POINTER(file);
   NS_ENSURE_ARG_POINTER(cacheElement);
@@ -646,17 +636,20 @@ nsresult nsMsgDBFolder::ReadDBFolderInfo(bool force) {
   // we might need while we're here
   nsresult result = NS_OK;
 
-  // If we reload the cache we might get stale info, so don't do it.
-  if (!mInitializedFromCache) {
-    // Path is used as a key into the foldercache.
-    nsCOMPtr<nsIFile> dbPath;
-    result = GetFolderCacheKey(getter_AddRefs(dbPath));
-    if (dbPath) {
-      nsCOMPtr<nsIMsgFolderCacheElement> cacheElement;
-      result = GetFolderCacheElemFromFile(dbPath, getter_AddRefs(cacheElement));
-      if (NS_SUCCEEDED(result) && cacheElement) {
-        if (NS_SUCCEEDED(ReadFromFolderCacheElem(cacheElement))) {
-          mInitializedFromCache = true;
+  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+    // If we reload the cache we might get stale info, so don't do it.
+    if (!mInitializedFromCache) {
+      // Path is used as a key into the foldercache.
+      nsCOMPtr<nsIFile> dbPath;
+      result = GetFolderCacheKey(getter_AddRefs(dbPath));
+      if (dbPath) {
+        nsCOMPtr<nsIMsgFolderCacheElement> cacheElement;
+        result =
+            GetFolderCacheElemFromFile(dbPath, getter_AddRefs(cacheElement));
+        if (NS_SUCCEEDED(result) && cacheElement) {
+          if (NS_SUCCEEDED(ReadFromFolderCacheElem(cacheElement))) {
+            mInitializedFromCache = true;
+          }
         }
       }
     }
@@ -679,9 +672,11 @@ nsresult nsMsgDBFolder::ReadDBFolderInfo(bool force) {
         folderInfo->GetNumMessages(&mNumTotalMessages);
         folderInfo->GetNumUnreadMessages(&mNumUnreadMessages);
         folderInfo->GetExpungedBytes(&mExpungedBytes);
-        nsCString utf8Name;
-        folderInfo->GetFolderName(utf8Name);
-        if (!utf8Name.IsEmpty()) mName.Assign(utf8Name);
+        if (!UsesLocalizedName()) {
+          nsCString utf8Name;
+          folderInfo->GetFolderName(utf8Name);
+          if (!utf8Name.IsEmpty()) mName.Assign(utf8Name);
+        }
 
         // These should be put in IMAP folder only.
         // folderInfo->GetImapTotalPendingMessages(&mNumPendingTotalMessages);
@@ -1152,6 +1147,10 @@ NS_IMETHODIMP nsMsgDBFolder::GetFlags(uint32_t* _retval) {
 
 NS_IMETHODIMP nsMsgDBFolder::ReadFromFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   nsresult rv = NS_OK;
 
   element->GetCachedUInt32("flags", &mFlags);
@@ -1185,9 +1184,7 @@ nsresult nsMsgDBFolder::GetFolderCacheKey(nsIFile** aFile) {
 }
 
 nsresult nsMsgDBFolder::FlushToFolderCache() {
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
-    return NS_OK;
-  }
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
 
   nsresult rv;
   nsCOMPtr<nsIMsgAccountManager> accountManager =
@@ -1203,6 +1200,10 @@ nsresult nsMsgDBFolder::FlushToFolderCache() {
 
 NS_IMETHODIMP nsMsgDBFolder::WriteToFolderCache(nsIMsgFolderCache* folderCache,
                                                 bool deep) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   nsresult rv = NS_OK;
 
   if (folderCache) {
@@ -1231,6 +1232,10 @@ NS_IMETHODIMP nsMsgDBFolder::WriteToFolderCache(nsIMsgFolderCache* folderCache,
 
 NS_IMETHODIMP nsMsgDBFolder::WriteToFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
+  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
   nsresult rv = NS_OK;
 
   element->SetCachedUInt32("flags", mFlags);
@@ -2110,7 +2115,7 @@ nsMsgDBFolder::CallFilterPlugins(nsIMsgWindow* aMsgWindow, bool* aFiltersRun) {
   *aFiltersRun = false;
 
   nsCString folderName;
-  GetPrettyName(folderName);
+  GetLocalizedName(folderName);
 
   bool isLocked;
   GetLocked(&isLocked);
@@ -2559,31 +2564,6 @@ nsresult nsMsgDBFolder::initializeStrings() {
   return NS_OK;
 }
 
-nsresult nsMsgDBFolder::createCollationKeyGenerator() {
-  if (!gCollationKeyGenerator) {
-    auto result = mozilla::intl::LocaleService::TryCreateComponent<Collator>();
-    if (result.isErr()) {
-      NS_WARNING("Could not create mozilla::intl::Collation.");
-      return NS_ERROR_FAILURE;
-    }
-
-    gCollationKeyGenerator = result.unwrap();
-
-    // Sort in a case-insensitive way, where "base" letters are considered
-    // equal, e.g: a = á, a = A, a ≠ b.
-    Collator::Options options{};
-    options.sensitivity = Collator::Sensitivity::Base;
-    auto optResult = gCollationKeyGenerator->SetOptions(options);
-
-    if (optResult.isErr()) {
-      NS_WARNING("Could not configure the mozilla::intl::Collation.");
-      gCollationKeyGenerator = nullptr;
-      return NS_ERROR_FAILURE;
-    }
-  }
-  return NS_OK;
-}
-
 NS_IMETHODIMP
 nsMsgDBFolder::Init(const nsACString& uri) {
   MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
@@ -2718,6 +2698,7 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolder(nsIFolder* folder) {
   mIsServer = folder->GetIsServer();
   mIsServerIsValid = true;
   mName = folder->GetName();
+  mFlags = folder->GetFlags();
 
   // Set up the filesystem path. This could probably be improved by using the
   // parent folder's path instead of constructing the whole thing.
@@ -2751,7 +2732,9 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolder(nsIFolder* folder) {
 
   server->GetServerURI(mURI);
   nsCString path = folder->GetPath();
-  mURI.Append(Substring(path, path.FindChar('/')));  // HAX.
+  rv = NS_MsgEscapeEncodeURLPath(path, path);
+  NS_ENSURE_SUCCESS(rv, rv);
+  mURI.Append(Substring(path, path.FindChar('/')));
   mBaseMessageURI = "mailbox-message:"_ns + Substring(mURI, 8);
   mHaveParsedURI = true;
   mInitializedFromCache = true;
@@ -2771,9 +2754,8 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolder(nsIFolder* folder) {
   rv = store->DiscoverChildFolders(this, folderPaths);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIDatabaseCore> core = mozilla::components::DatabaseCore::Service();
-  nsCOMPtr<nsIFolderDatabase> folders;
-  core->GetFolders(getter_AddRefs(folders));
+  nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
+  nsCOMPtr<nsIFolderDatabase> folders = database->GetFolders();
   folders->Reconcile(folder, folderPaths);
 
   // Add the subfolders.
@@ -3039,10 +3021,6 @@ nsMsgDBFolder::GetCanCompact(bool* canCompact) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBFolder::GetPrettyName(nsACString& name) {
-  return GetName(name);
-}
-
 NS_IMETHODIMP nsMsgDBFolder::GetPrettyPath(nsACString& aPath) {
   nsresult rv;
   if (mIsServer) {
@@ -3058,81 +3036,80 @@ NS_IMETHODIMP nsMsgDBFolder::GetPrettyPath(nsACString& aPath) {
     }
   }
   nsCString name;
-  rv = GetPrettyName(name);
+  rv = GetName(name);
   NS_ENSURE_SUCCESS(rv, rv);
   aPath.Append(name);
   return NS_OK;
 }
 
-static bool nonEnglishApp() {
-  if (nsMsgDBFolder::gIsEnglishApp == -1) {
-    nsAutoCString locale;
-    mozilla::intl::LocaleService::GetInstance()->GetAppLocaleAsBCP47(locale);
-    nsMsgDBFolder::gIsEnglishApp =
-        (locale.EqualsLiteral("en") || StringBeginsWith(locale, "en-"_ns)) ? 1
-                                                                           : 0;
+nsString nsMsgDBFolder::GetLocalizedNameInternal() {
+  if (mFlags & nsMsgFolderFlags::Inbox &&
+      mName.LowerCaseEqualsLiteral("inbox")) {
+    return kLocalizedInboxName;
   }
-  return nsMsgDBFolder::gIsEnglishApp ? false : true;
+  if (mFlags & nsMsgFolderFlags::SentMail &&
+      (mName.LowerCaseEqualsLiteral("sent") ||
+       mName.LowerCaseEqualsLiteral("sent mail") ||
+       mName.LowerCaseEqualsLiteral("outbox"))) {
+    return kLocalizedSentName;
+  }
+  if (mFlags & nsMsgFolderFlags::Drafts &&
+      (mName.LowerCaseEqualsLiteral("drafts") ||
+       mName.LowerCaseEqualsLiteral("draft"))) {
+    return kLocalizedDraftsName;
+  }
+  if (mFlags & nsMsgFolderFlags::Templates &&
+      mName.LowerCaseEqualsLiteral("templates")) {
+    return kLocalizedTemplatesName;
+  }
+  if (mFlags & nsMsgFolderFlags::Trash &&
+      (mName.LowerCaseEqualsLiteral("trash") ||
+       mName.LowerCaseEqualsLiteral("bin") ||
+       mName.LowerCaseEqualsLiteral("deleted"))) {
+    return kLocalizedTrashName;
+  }
+  if (mFlags & nsMsgFolderFlags::Queue &&
+      mName.LowerCaseEqualsLiteral("unsent messages")) {
+    return kLocalizedUnsentName;
+  }
+  if (mFlags & nsMsgFolderFlags::Junk &&
+      (mName.LowerCaseEqualsLiteral("junk") ||
+       mName.LowerCaseEqualsLiteral("spam") ||
+       mName.LowerCaseEqualsLiteral("bulk"))) {
+    return kLocalizedJunkName;
+  }
+  if (mFlags & nsMsgFolderFlags::Archive &&
+      (mName.LowerCaseEqualsLiteral("archive") ||
+       mName.LowerCaseEqualsLiteral("archives"))) {
+    return kLocalizedArchivesName;
+  }
+  return u""_ns;
 }
 
-static bool hasTrashName(const nsACString& name) {
-  // Microsoft calls the folder "Deleted". If the application is non-English,
-  // we want to use the localised name instead.
-  return name.LowerCaseEqualsLiteral("trash") ||
-         (name.LowerCaseEqualsLiteral("deleted") && nonEnglishApp());
+bool nsMsgDBFolder::UsesLocalizedName() {
+  return !GetLocalizedNameInternal().IsEmpty();
 }
 
-static bool hasDraftsName(const nsACString& name) {
-  // Some IMAP providers call the folder "Draft". If the application is
-  // non-English, we want to use the localised name instead.
-  return name.LowerCaseEqualsLiteral("drafts") ||
-         (name.LowerCaseEqualsLiteral("draft") && nonEnglishApp());
+NS_IMETHODIMP nsMsgDBFolder::GetLocalizedName(nsAString& name) {
+  name = GetLocalizedNameInternal();
+  if (name.IsEmpty()) {
+    nsAutoCString name8;
+    nsresult rv = GetName(name8);
+    NS_ENSURE_SUCCESS(rv, rv);
+    CopyUTF8toUTF16(name8, name);
+  }
+
+  return NS_OK;
 }
 
-static bool hasSentName(const nsACString& name) {
-  // Some IMAP providers call the folder for sent messages "Outbox". That IMAP
-  // folder is not related to Thunderbird's local folder for queued messages.
-  // If we find such a folder with the 'SentMail' flag, we can safely localize
-  // its name if the application is non-English.
-  return name.LowerCaseEqualsLiteral("sent") ||
-         (name.LowerCaseEqualsLiteral("outbox") && nonEnglishApp());
-}
+nsresult nsMsgDBFolder::GetLocalizedName(nsACString& name) {
+  nsString name16 = GetLocalizedNameInternal();
+  if (name16.IsEmpty()) {
+    return GetName(name);
+  }
 
-NS_IMETHODIMP nsMsgDBFolder::SetPrettyName(const nsACString& name) {
-  nsresult rv;
-  // Keep original name.
-  mOriginalName = name;
-
-  // Set pretty name only if special flag is set and if it the default folder
-  // name
-  if (mFlags & nsMsgFolderFlags::Inbox && name.LowerCaseEqualsLiteral("inbox"))
-    rv = SetName(NS_ConvertUTF16toUTF8(kLocalizedInboxName));
-  else if (mFlags & nsMsgFolderFlags::SentMail && hasSentName(name))
-    rv = SetName(NS_ConvertUTF16toUTF8(kLocalizedSentName));
-  else if (mFlags & nsMsgFolderFlags::Drafts && hasDraftsName(name))
-    rv = SetName(NS_ConvertUTF16toUTF8(kLocalizedDraftsName));
-  else if (mFlags & nsMsgFolderFlags::Templates &&
-           name.LowerCaseEqualsLiteral("templates"))
-    rv = SetName(NS_ConvertUTF16toUTF8(kLocalizedTemplatesName));
-  else if (mFlags & nsMsgFolderFlags::Trash && hasTrashName(name))
-    rv = SetName(NS_ConvertUTF16toUTF8(kLocalizedTrashName));
-  else if (mFlags & nsMsgFolderFlags::Queue &&
-           name.LowerCaseEqualsLiteral("unsent messages"))
-    rv = SetName(NS_ConvertUTF16toUTF8(kLocalizedUnsentName));
-  else if (mFlags & nsMsgFolderFlags::Junk &&
-           name.LowerCaseEqualsLiteral("junk"))
-    rv = SetName(NS_ConvertUTF16toUTF8(kLocalizedJunkName));
-  else if (mFlags & nsMsgFolderFlags::Archive &&
-           name.LowerCaseEqualsLiteral("archives"))
-    rv = SetName(NS_ConvertUTF16toUTF8(kLocalizedArchivesName));
-  else
-    rv = SetName(name);
-  return rv;
-}
-
-NS_IMETHODIMP nsMsgDBFolder::SetPrettyNameFromOriginal(void) {
-  if (mOriginalName.IsEmpty()) return NS_OK;
-  return SetPrettyName(mOriginalName);
+  CopyUTF16toUTF8(name16, name);
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgDBFolder::GetName(nsACString& name) {
@@ -3158,6 +3135,17 @@ NS_IMETHODIMP nsMsgDBFolder::GetName(nsACString& name) {
 NS_IMETHODIMP nsMsgDBFolder::SetName(const nsACString& name) {
   // override the URI-generated name
   if (!mName.Equals(name)) {
+    if (!mIsServer) {
+      nsCOMPtr<nsIMsgDatabase> db;
+      nsCOMPtr<nsIDBFolderInfo> folderInfo;
+      nsresult rv =
+          GetDBFolderInfoAndDB(getter_AddRefs(folderInfo), getter_AddRefs(db));
+      if (NS_SUCCEEDED(rv) && folderInfo) {
+        rv = folderInfo->SetFolderName(name);
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+    }
+
     mName = name;
     // old/new value doesn't matter here
     NotifyPropertyChanged(kName, name, name);
@@ -3166,8 +3154,8 @@ NS_IMETHODIMP nsMsgDBFolder::SetName(const nsACString& name) {
 }
 
 // For default, just return name
-NS_IMETHODIMP nsMsgDBFolder::GetAbbreviatedName(nsACString& aAbbreviatedName) {
-  return GetName(aAbbreviatedName);
+NS_IMETHODIMP nsMsgDBFolder::GetAbbreviatedName(nsAString& aAbbreviatedName) {
+  return GetLocalizedName(aAbbreviatedName);
 }
 
 NS_IMETHODIMP
@@ -3281,12 +3269,14 @@ NS_IMETHODIMP nsMsgDBFolder::PropagateDelete(nsIMsgFolder* folder,
         mSubFolders.RemoveObjectAt(i);
         NotifyFolderRemoved(child);
         break;
-      } else  // setting parent back if we failed
-        child->SetParent(this);
-    } else
+      }
+      // setting parent back if we failed
+      child->SetParent(this);
+    } else {
       rv = child->PropagateDelete(folder, deleteStorage);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
   }
-
   return rv;
 }
 
@@ -3398,10 +3388,8 @@ NS_IMETHODIMP nsMsgDBFolder::AddSubfolder(const nsACString& name,
     // TODO: We shouldn't be here at all. But we are thanks to the fact that
     // various functions call the message store and it calls back.
     // `name` is a hashed name and it shouldn't be.
-    nsCOMPtr<nsIDatabaseCore> core =
-        mozilla::components::DatabaseCore::Service();
-    nsCOMPtr<nsIFolderDatabase> folders;
-    core->GetFolders(getter_AddRefs(folders));
+    nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
+    nsCOMPtr<nsIFolderDatabase> folders = database->GetFolders();
 
     nsCOMPtr<nsIFolder> dbFolder;
     folders->InsertFolder(mDBFolder, actualName, getter_AddRefs(dbFolder));
@@ -3412,30 +3400,17 @@ NS_IMETHODIMP nsMsgDBFolder::AddSubfolder(const nsACString& name,
     nsCOMPtr<nsIInitableWithFolder> initable = do_QueryInterface(folder);
     rv = initable->InitWithFolder(dbFolder);
     NS_ENSURE_SUCCESS(rv, rv);
+
+    folder->SetParent(this);
   } else {
 #endif  // MOZ_PANORAMA
-    // URI should use UTF-8
-    // (see RFC2396 Uniform Resource Identifiers (URI): Generic Syntax)
-    nsAutoCString escapedName;
-    rv = NS_MsgEscapeEncodeURLPath(actualName, escapedName);
-    NS_ENSURE_SUCCESS(rv, rv);
-    nsAutoCString uri(mURI);
-    uri.Append('/');
-    uri += escapedName.get();
-
-    nsCOMPtr<nsIMsgFolder> msgFolder;
-    rv = GetChildWithURI(uri, false /*deep*/, true /*case Insensitive*/,
-                         getter_AddRefs(msgFolder));
-    if (NS_SUCCEEDED(rv) && msgFolder) return NS_MSG_FOLDER_EXISTS;
-
-    rv = GetOrCreateFolder(uri, getter_AddRefs(folder));
+    rv = CreateFolderAndCache(this, actualName, getter_AddRefs(folder));
     NS_ENSURE_SUCCESS(rv, rv);
 #ifdef MOZ_PANORAMA
   }
 #endif  // MOZ_PANORAMA
   MOZ_ASSERT(folder, "there must be a folder");
 
-  folder->SetParent(this);
   mSubFolders.AppendObject(folder);
   folder->SetFlag(flags | nsMsgFolderFlags::Mail);
   folder.forget(child);
@@ -3698,8 +3673,8 @@ NS_IMETHODIMP nsMsgDBFolder::Rename(const nsACString& aNewName,
   if (parentSupport) {
     rv = parentFolder->AddSubfolder(aNewName, getter_AddRefs(newFolder));
     if (newFolder) {
-      newFolder->SetPrettyName(EmptyCString());
-      newFolder->SetPrettyName(aNewName);
+      newFolder->SetName(EmptyCString());
+      newFolder->SetName(aNewName);
       newFolder->SetFlags(mFlags);
       newFolder->SetUserSortOrder(mUserSortOrder);
       bool changed = false;
@@ -3798,7 +3773,9 @@ NS_IMETHODIMP nsMsgDBFolder::UpdateSummaryTotals(bool force) {
       NotifyIntPropertyChanged(kTotalUnreadMessages, oldUnreadMessages,
                                newUnreadMessages);
 
-    FlushToFolderCache();
+    if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+      FlushToFolderCache();
+    }
   }
   return rv;
 }
@@ -4458,6 +4435,12 @@ nsMsgDBFolder::PerformActionsOnJunkMsgs(
     }
     return rv;
   }
+
+  MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
+          ("Determined actions for junk messages. moveMessages: %d, "
+           "changeReadState: %d, targetFolder: %s",
+           moveMessages, changeReadState,
+           targetFolder ? targetFolder->URI().get() : "null"));
 
   // Nothing to do, bail out.
   if (!moveMessages && !changeReadState) {
@@ -5184,42 +5167,6 @@ NS_IMETHODIMP nsMsgDBFolder::GetSortOrder(int32_t* order) {
     *order = static_cast<int32_t>(userSortOrder);
   }
   return NS_OK;
-}
-
-// static Helper function for CompareSortKeys().
-// Builds a collation key for a given folder based on "{sortOrder}{name}"
-nsresult nsMsgDBFolder::BuildFolderSortKey(nsIMsgFolder* aFolder,
-                                           nsTArray<uint8_t>& aKey) {
-  aKey.Clear();
-  int32_t order;
-  nsresult rv = aFolder->GetSortOrder(&order);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsAutoString orderString;
-  orderString.AppendPrintf("%010d", order);
-  nsCString folderName;
-  rv = aFolder->GetName(folderName);
-  NS_ENSURE_SUCCESS(rv, rv);
-  orderString.Append(NS_ConvertUTF8toUTF16(folderName));
-  NS_ENSURE_TRUE(gCollationKeyGenerator, NS_ERROR_NULL_POINTER);
-
-  nsTArrayU8Buffer buffer(aKey);
-
-  auto result = gCollationKeyGenerator->GetSortKey(orderString, buffer);
-  NS_ENSURE_TRUE(result.isOk(), NS_ERROR_FAILURE);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgDBFolder::CompareSortKeys(nsIMsgFolder* aFolder,
-                                             int32_t* compareResult) {
-  nsTArray<uint8_t> sortKey1;
-  nsTArray<uint8_t> sortKey2;
-  nsresult rv = BuildFolderSortKey(this, sortKey1);
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = BuildFolderSortKey(aFolder, sortKey2);
-  NS_ENSURE_SUCCESS(rv, rv);
-  *compareResult = gCollationKeyGenerator->CompareSortKeys(sortKey1, sortKey2);
-  return rv;
 }
 
 NS_IMETHODIMP nsMsgDBFolder::FetchMsgPreviewText(

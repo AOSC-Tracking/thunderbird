@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef LiveView_h__
-#define LiveView_h__
+#ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_LIVEVIEW_H_
+#define COMM_MAILNEWS_DB_PANORAMA_SRC_LIVEVIEW_H_
 
 #include "js/Context.h"
 #include "LiveViewFilters.h"
@@ -52,8 +52,9 @@ class LiveView : public nsILiveView, public MessageListener {
 
   JSObject* CreateJSMessage(uint64_t id, uint64_t folderId,
                             const char* messageId, PRTime date,
-                            const char* sender, const char* subject,
-                            uint64_t flags, const char* tags, JSContext* aCx);
+                            const char* sender, const char* recipients,
+                            const char* subject, uint64_t flags,
+                            const char* tags, JSContext* aCx);
   JSObject* CreateJSMessage(Message* aMessage, JSContext* aCx);
 
   // The one and only listener for this live view, if set.
@@ -65,4 +66,4 @@ class LiveView : public nsILiveView, public MessageListener {
 
 }  // namespace mozilla::mailnews
 
-#endif  // LiveView_h__
+#endif  // COMM_MAILNEWS_DB_PANORAMA_SRC_LIVEVIEW_H_
