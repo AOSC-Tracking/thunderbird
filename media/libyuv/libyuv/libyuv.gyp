@@ -26,6 +26,11 @@
     'clang%': 0,
     # Link-Time Optimizations.
     'use_lto%': 0,
+    # Disable LASX on LoongArch by default (for 2K3000/3B6000M).
+    'loong_lasx%': 0,
+    # Enable LSX on LoongArch by default. Has no effect if loong_lasx is
+    # enabled because LASX implies LSX according to the architecture specs.
+    'loong_lsx%': 1,
     'build_neon': 0,
     'conditions': [
        ['(target_arch == "armv7" or target_arch == "armv7s" or \
