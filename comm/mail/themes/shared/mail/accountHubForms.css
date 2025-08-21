@@ -19,10 +19,12 @@ form {
   --hub-menuitem-color-selected: var(--color-neutral-base);
   --hub-menuitem-background-color-selected: var(--color-primary-default);
   --hub-form-input-line-height: 1em;
+  --hub-form-label-font-size: 1rem;
+  --hub-form-input-block-padding: 12px;
 
   grid-row: header / footer;
 
-  input[type="checkbox"] {
+  input[type="checkbox"]:not(.toggle-checkbox) {
     box-sizing: border-box;
     width: 16px;
     height: 16px;
@@ -39,22 +41,34 @@ form {
         color: var(--color-text-muted);
       }
     }
-  }
 
-  input[type="checkbox"]:checked:enabled {
-    background-color: var(--color-primary-default);
-    border-color: var(--color-primary-hover);
-    -moz-context-properties: fill;
-    fill: var(--color-neutral-base);
-    content: url("chrome://messenger/skin/overrides/check.svg");
+    &:checked {
+      -moz-context-properties: fill;
+      content: url("chrome://messenger/skin/overrides/check.svg");
+      background-color: var(--color-primary-default);
+      border-color: var(--color-primary-hover);
+      fill: var(--color-neutral-base);
+
+      &:disabled {
+        background-color: var(--color-neutral-border);
+        border-color: var(--color-neutral-border);
+        fill: var(--color-text-muted);
+      }
+    }
   }
 
   .checkbox-label {
     color: var(--color-text-base);
   }
 
-  label {
+  .toggle-group .toggle-label {
     font-size: 1rem;
+    font-weight: 500;
+    color: var(--color-primary-hover);
+  }
+
+  label {
+    font-size: var(--hub-form-label-font-size);
     font-weight: 600;
     color: var(--hub-menulist-label-color);
 
@@ -73,28 +87,34 @@ form {
         transition: transform 200ms, color 200ms, font-weight 200ms, background-color 200ms;
       }
     }
-
-    .selected-option {
-      padding-block: 13px;
-      padding-inline: 10px;
-      background: var(--color-neutral-subtle);
-      border: 1px solid var(--color-neutral-border);
-      margin-block-start: 5px;
-      border-radius: 2px;
-      color: var(--hub-select-color);
-    }
   }
 
-  .input-field {
+  .selected-option {
+    padding-block: 13px;
+    padding-inline: 10px;
+    background: var(--color-neutral-subtle);
+    border: 1px solid var(--color-neutral-border);
+    margin-block-start: 5px;
+    border-radius: 2px;
+    color: var(--hub-select-color);
+  }
+
+  .input-textarea {
+    resize: vertical;
+  }
+
+  .input-field,
+  .input-textarea {
     flex: 1;
     font-size: 1.2rem;
     line-height: var(--hub-form-input-line-height);
     margin-inline: 0;
-    padding-block: 12px;
+    padding-block: var(--hub-form-input-block-padding);
     padding-inline: 9px 30px;
     border: 1px solid var(--color-neutral-border);
     background-color: var(--hub-input-bg-color);
     font-weight: 200;
+    max-width: 100%;
 
     &[type="password"] {
       padding-inline-end: 9px;
@@ -293,6 +313,10 @@ div:has(legend) {
   align-items: center;
   position: relative;
 
+  &:has(label.animated) {
+    padding-block-start: calc(var(--hub-form-label-font-size) - var(--hub-form-input-block-padding));
+  }
+
   &:has(.security-warning) {
     flex-wrap: wrap;
   }
@@ -317,8 +341,7 @@ div:has(legend) {
     inset-inline-end: 0;
     padding-inline-end: 10px;
 
-    #incomingPort ~ &,
-    #outgoingPort ~ & {
+    .number-input ~ & {
       padding-inline-end: 30px;
     }
   }
@@ -782,6 +805,14 @@ div:has(legend) {
       color: var(--color-text-base);
       font-weight: 400;
     }
+
+    &:has(input:disabled) {
+      pointer-events: none;
+
+      & span {
+        color: var(--color-text-muted);
+      }
+    }
   }
 }
 
@@ -967,4 +998,9 @@ button.account-hub-option-button {
 @keyframes spinning-animation {
   0% { transform: rotate(0); }
   100% { transform: rotate(360deg); }
+}
+
+#advancedConfigurationLdap,
+#simpleConfigurationLdap {
+  padding-block-end: 9px;
 }

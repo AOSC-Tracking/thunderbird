@@ -8,7 +8,6 @@
 -->
 #include ./accountHubAddressBookAccountSelectTemplate.inc.xhtml
 #include ./accountHubAddressBookLdapAccountFormTemplate.inc.xhtml
-#include ./accountHubAddressBookLdapAdvancedFormTemplate.inc.xhtml
 #include ./accountHubAddressBookLocalFormTemplate.inc.xhtml
 #include ./accountHubAddressBookOptionSelectTemplate.inc.xhtml
 #include ./accountHubAddressBookRemoteAccountFormTemplate.inc.xhtml
@@ -53,14 +52,14 @@
 
   <div class="hub-body">
     <div class="hub-body-grid"></div>
-#ifdef NIGHTLY_BUILD
+#ifdef MOZ_SERVICES_SYNC
     <button
       id="hubSyncButton"
       data-l10n-id="account-hub-sync-button"
       class="button button-flat"
       type="button"
       hidden="hidden"></button>
-#endif
+#endif  // MOZ_SERVICES_SYNC
   </div>
 
   <footer class="hub-footer">
@@ -173,14 +172,11 @@
   </address-book-remote-account-form>
   <address-book-ldap-account-form
     id="addressBookLdapAccountFormSubview"
+    class="account-hub-step"
+    title-id="account-hub-ldap-form"
     hidden="hidden"
   >
   </address-book-ldap-account-form>
-  <address-book-ldap-advanced-form
-    id="addressBookLdapAdvancedFormSubview"
-    hidden="hidden"
-  >
-  </address-book-ldap-advanced-form>
   <address-book-sync
     id="addressBookSyncSubview"
     class="account-hub-step"
@@ -194,7 +190,13 @@
     hidden="hidden"
   >
   </address-book-local-form>
-
+  <email-password-form
+    id="addressBookPasswordSubview"
+    title-id="account-hub-address-book-enter-password"
+    class="account-hub-step"
+    hidden="hidden"
+  >
+  </email-password-form>
   <account-hub-footer id="addressBookFooter" class="hub-footer">
   </account-hub-footer>
 </html:template>

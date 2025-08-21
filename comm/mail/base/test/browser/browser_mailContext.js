@@ -210,7 +210,6 @@ const mailContextData = {
   "mailContext-markAsNotJunk": notExternal,
   "mailContext-recalculateJunkScore": notExternal,
   "mailContext-organize": notExternal,
-  "mailContext-copyMessageUrl": [],
   "mailContext-archive": notExternal,
   "mailContext-decryptToFolder": [
     "multipleMessagesTree",
@@ -220,6 +219,8 @@ const mailContextData = {
     "multipleMessagesTreeXFVF",
   ],
   "mailContext-calendar-convert-menu": singleNotExternal,
+  "mailContext-copyMessageLink": singleNotExternal,
+  "mailContext-copyNewsLink": [],
   "mailContext-threads": [...notSyntheticNotXFVF, ...onePane],
   "mailContext-ignoreThread": notSyntheticNotXFVF,
   "mailContext-ignoreSubthread": notSyntheticNotXFVF,

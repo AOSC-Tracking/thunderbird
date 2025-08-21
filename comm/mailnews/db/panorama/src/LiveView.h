@@ -12,6 +12,7 @@
 #include "mozIStorageStatement.h"
 #include "nsCOMPtr.h"
 #include "nsILiveView.h"
+#include "nsIVariant.h"
 
 namespace mozilla::mailnews {
 
@@ -23,9 +24,9 @@ class LiveView : public nsILiveView, public MessageListener {
   NS_DECL_NSILIVEVIEW
 
   void OnMessageAdded(Message* message) override;
-  void OnMessageRemoved(Message* message) override;
-  void OnMessageFlagsChanged(Message* message, uint64_t oldFlags,
-                             uint64_t newFlags) override;
+  void OnMessageRemoved(Message* message, uint32_t oldFlags) override;
+  void OnMessageFlagsChanged(Message* message, uint32_t oldFlags,
+                             uint32_t newFlags) override;
 
  private:
   virtual ~LiveView() {
@@ -36,11 +37,16 @@ class LiveView : public nsILiveView, public MessageListener {
     if (mSelectStmt) mSelectStmt->Finalize();
   }
 
+  MessageDatabase& MessageDB() const {
+    return *DatabaseCore::sInstance->mMessageDatabase;
+  }
+
   nsCString GetSQLClause();
   void PrepareStatement(mozIStorageStatement* aStatement);
   bool Matches(Message& aMessage);
 
   nsAutoCString mClause;
+  nsTArray<RefPtr<nsIVariant>> mParams;
   LiveViewFilter* mFolderFilter = nullptr;
 
   nsILiveView::SortColumn mSortColumn;

@@ -79,16 +79,16 @@ From JS:
 
 ```js
 const database = Cc["@mozilla.org/mailnews/database-core;1"].getService(Ci.nsIDatabaseCore);
-const folders = database.folders;
-const messages = database.messages;
+const folders = database.folderDB;
+const messages = database.messageDB;
 ```
 
 From C++:
 
 ```c++
 nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
-nsCOMPtr<nsIFolderDatabase> folders = database->GetFolders();
-nsCOMPtr<nsIMessageDatabase> messages = database->GetMessages();
+nsCOMPtr<nsIFolderDatabase> folders = database->GetFolderDB();
+nsCOMPtr<nsIMessageDatabase> messages = database->GetMessageDB();
 ```
 
 If Panorama is enabled, `DatabaseCore` will be started automatically by the initialisation of the
@@ -249,3 +249,18 @@ TODO: talk about folder URIs here.
 
 * [Bug 1679333](https://bugzilla.mozilla.org/show_bug.cgi?id=1679333) - Remove support for dangling
 (unparented) folders
+
+## Things to think about
+
+- How to integrate full-text indexing (of message body)?
+  - How to handle different languages? Proper stemming/tokenisation needs to be language-aware...
+- How to represent messages appearing in multiple folders?
+  - do any protocols support per-folder-per-message flags?
+    i.e. if you set "Read" on a message, do instances of that message in other folders also
+    appear "Read" or do they have their own flags?
+- How to handle add-on API requirements.
+  - Want to attach arbitrary values to messages, folders etc... but don't want the free-for-all
+    of the legacy database.
+  - Ability to register extra message headers to parse and retain in the database
+    (the database only stores data from a few headers, and the data is not verbatim, it's
+    cooked in all kinds of ways).

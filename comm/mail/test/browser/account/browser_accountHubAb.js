@@ -398,6 +398,90 @@ add_task(async function test_address_book_remote_account() {
   );
 });
 
+add_task(async function test_localAddressBookCreation() {
+  const accountHub = await subtest_open_account_hub_dialog("ADDRESS_BOOK");
+  let optionSelect;
+
+  await TestUtils.waitForCondition(() => {
+    optionSelect = accountHub.querySelector("address-book-option-select");
+    return optionSelect?.hasConnected;
+  }, "Address book option select should be connected");
+
+  const localAddressBookButton = optionSelect.querySelector(
+    "#newLocalAddressBook"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(localAddressBookButton, {});
+
+  const localForm = accountHub.querySelector("address-book-local-form form");
+  await TestUtils.waitForCondition(() => {
+    return localForm.getBoundingClientRect().width;
+  }, "New local address book subview should be visible");
+
+  const input = localForm.querySelector("input");
+  EventUtils.synthesizeMouseAtCenter(input, {});
+  input.focus();
+
+  EventUtils.sendString("test");
+
+  const addressBookDirectoryPromise = TestUtils.topicObserved(
+    "addrbook-directory-created"
+  );
+
+  const closeEvent = BrowserTestUtils.waitForEvent(accountHub, "close");
+
+  const tabmail = document.getElementById("tabmail");
+
+  EventUtils.synthesizeMouseAtCenter(
+    accountHub.querySelector("#addressBookFooter #forward"),
+    {}
+  );
+
+  const readyEvent = BrowserTestUtils.waitForEvent(
+    tabmail.currentTabInfo.browser,
+    "about-addressbook-ready",
+    true
+  );
+  // Check existence of address book.
+  const [addressBookDirectory] = await addressBookDirectoryPromise;
+  Assert.equal(
+    addressBookDirectory.dirName,
+    "test",
+    "Address book should be created"
+  );
+
+  await closeEvent;
+  const booksList = await BrowserTestUtils.waitForCondition(() => {
+    return tabmail.currentTabInfo.browser.contentWindow.document.getElementById(
+      "books"
+    );
+  });
+
+  await readyEvent;
+
+  Assert.equal(
+    tabmail.currentTabInfo.mode.type,
+    "addressBookTab",
+    "Should have navigated to address book"
+  );
+
+  const index = booksList.getIndexForUID(addressBookDirectory.UID);
+  Assert.equal(
+    booksList.selectedIndex,
+    index,
+    "Correct address book should be selected"
+  );
+  Assert.equal(
+    tabmail.currentTabInfo.browser.contentDocument.activeElement.id,
+    "searchInput",
+    "Search input should have focus"
+  );
+
+  tabmail.closeOtherTabs(0);
+
+  MailServices.ab.deleteAddressBook(addressBookDirectory.URI);
+});
+
 /**
  * Tests visibility of option select template and the selected address book
  * template, and again when the back button is pressed.
@@ -453,6 +537,19 @@ async function loginToAddressBookAccount() {
     "imap.test",
     "imap"
   );
+  const emailLoginInfo = Cc[
+    "@mozilla.org/login-manager/loginInfo;1"
+  ].createInstance(Ci.nsILoginInfo);
+  emailLoginInfo.init(
+    "imap://imap.test",
+    null,
+    "imap://imap.test",
+    "john.doe@imap.test",
+    "abc12345",
+    "",
+    ""
+  );
+  await Services.logins.addLoginAsync(emailLoginInfo);
 
   const identity = MailServices.accounts.createIdentity();
   identity.email = "john.doe@imap.test";

@@ -3,17 +3,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
+#include "nsLocalMailFolder.h"
+
 #include "nsISeekableStream.h"
 #include "prlog.h"
-
 #include "CopyMessageStreamListener.h"
 #include "FolderCompactor.h"
 #include "HeaderReader.h"
 #include "LineReader.h"
 #include "msgCore.h"  // precompiled header...
-#include "nsLocalMailFolder.h"
 #include "nsMsgLocalFolderHdrs.h"
 #include "nsMsgFolderFlags.h"
 #include "nsMsgMessageFlags.h"
@@ -48,7 +46,9 @@
 #include "nsReadLine.h"
 #include "nsIURIMutator.h"
 #include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/ProfilerMarkers.h"
+#include "mozilla/StaticPrefs_mail.h"
 #include "mozilla/UniquePtr.h"
 #include "StoreIndexer.h"
 #include "nsIPropertyBag2.h"
@@ -57,6 +57,7 @@
 #include <functional>
 
 using mozilla::Preferences;
+using namespace mozilla::StaticPrefs;
 
 //////////////////////////////////////////////////////////////////////////////
 // nsLocal
@@ -131,9 +132,9 @@ NS_IMETHODIMP nsMsgLocalMailFolder::CreateLocalSubfolder(
   nsresult rv = CreateSubfolderInternal(aFolderName, nullptr, aChild);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-  if (notifier) notifier->NotifyFolderAdded(*aChild);
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  notifier->NotifyFolderAdded(*aChild);
 
   return NS_OK;
 }
@@ -242,21 +243,18 @@ void nsMsgLocalMailFolder::FinishUpAfterParseFolder(nsresult status) {
   // then kick off GetNewMessages().
   // Shouldn't have to deal with this here. See Bug 1848476.
   if (NS_SUCCEEDED(status) && mFlags & nsMsgFolderFlags::Inbox) {
-    nsresult rv;
     nsCOMPtr<nsIMsgMailSession> mailSession =
-        do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-    if (NS_SUCCEEDED(rv)) {
-      nsCOMPtr<nsIMsgWindow> msgWindow;
-      mailSession->GetTopmostMsgWindow(getter_AddRefs(msgWindow));
-      if (msgWindow && mDatabase && mCheckForNewMessagesAfterParsing) {
-        mCheckForNewMessagesAfterParsing = false;
-        // TODO: maybe simplify this.
-        // - if parsing succeeded, then db should always be valid, right?
-        bool valid = false;
-        mDatabase->GetSummaryValid(&valid);
-        if (valid) {
-          GetNewMessages(msgWindow, nullptr);
-        }
+        mozilla::components::MailSession::Service();
+    nsCOMPtr<nsIMsgWindow> msgWindow;
+    mailSession->GetTopmostMsgWindow(getter_AddRefs(msgWindow));
+    if (msgWindow && mDatabase && mCheckForNewMessagesAfterParsing) {
+      mCheckForNewMessagesAfterParsing = false;
+      // TODO: maybe simplify this.
+      // - if parsing succeeded, then db should always be valid, right?
+      bool valid = false;
+      mDatabase->GetSummaryValid(&valid);
+      if (valid) {
+        GetNewMessages(msgWindow, nullptr);
       }
     }
   }
@@ -271,7 +269,7 @@ nsMsgLocalMailFolder::GetMsgDatabase(nsIMsgDatabase** aMsgDatabase) {
 
 NS_IMETHODIMP
 nsMsgLocalMailFolder::GetSubFolders(nsTArray<RefPtr<nsIMsgFolder>>& folders) {
-  if (!mInitialized && !Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!mInitialized && !mail_panorama_enabled_AtStartup()) {
     nsCOMPtr<nsIMsgIncomingServer> server;
     nsresult rv = GetServer(getter_AddRefs(server));
     NS_ENSURE_SUCCESS(rv, NS_MSG_INVALID_OR_MISSING_SERVER);
@@ -532,9 +530,9 @@ nsMsgLocalMailFolder::CreateSubfolder(const nsACString& folderName,
       CreateSubfolderInternal(folderName, msgWindow, getter_AddRefs(newFolder));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-  if (notifier) notifier->NotifyFolderAdded(newFolder);
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  notifier->NotifyFolderAdded(newFolder);
 
   return NS_OK;
 }
@@ -712,9 +710,8 @@ NS_IMETHODIMP nsMsgLocalMailFolder::DeleteSelf(nsIMsgWindow* msgWindow) {
   nsCOMPtr<nsIMsgFolder> trashFolder;
   rv = GetTrashFolder(getter_AddRefs(trashFolder));
   if (NS_SUCCEEDED(rv)) {
-    nsCOMPtr<nsIMsgCopyService> copyService(
-        do_GetService("@mozilla.org/messenger/messagecopyservice;1", &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIMsgCopyService> copyService =
+        mozilla::components::Copy::Service();
     rv = copyService->CopyFolder(this, trashFolder, true, nullptr, msgWindow);
   }
   return rv;
@@ -729,19 +726,12 @@ nsresult nsMsgLocalMailFolder::ConfirmFolderDeletion(nsIMsgWindow* aMsgWindow,
   nsCOMPtr<nsIDocShell> docShell;
   aMsgWindow->GetRootDocShell(getter_AddRefs(docShell));
   if (docShell) {
-    bool confirmDeletion = true;
-    nsresult rv;
-    nsCOMPtr<nsIPrefBranch> pPrefBranch(
-        do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
-    pPrefBranch->GetBoolPref("mailnews.confirm.moveFoldersToTrash",
-                             &confirmDeletion);
-    if (confirmDeletion) {
+    if (Preferences::GetBool("mailnews.confirm.moveFoldersToTrash", true)) {
       nsCOMPtr<nsIStringBundleService> bundleService =
           mozilla::components::StringBundle::Service();
       NS_ENSURE_TRUE(bundleService, NS_ERROR_UNEXPECTED);
       nsCOMPtr<nsIStringBundle> bundle;
-      rv = bundleService->CreateBundle(
+      nsresult rv = bundleService->CreateBundle(
           "chrome://messenger/locale/localMsgs.properties",
           getter_AddRefs(bundle));
       NS_ENSURE_SUCCESS(rv, rv);
@@ -845,9 +835,9 @@ NS_IMETHODIMP nsMsgLocalMailFolder::Rename(const nsACString& aNewName,
     SetFilePath(nullptr);
     newFolder->NotifyFolderEvent(kRenameCompleted);
 
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-    if (notifier) notifier->NotifyFolderRenamed(this, newFolder);
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
+    notifier->NotifyFolderRenamed(this, newFolder);
   }
   return rv;
 }
@@ -940,8 +930,8 @@ nsMsgLocalMailFolder::GetDBFolderInfoAndDB(nsIDBFolderInfo** folderInfo,
 
 NS_IMETHODIMP nsMsgLocalMailFolder::ReadFromFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!mail_panorama_enabled_AtStartup());
+  if (mail_panorama_enabled_AtStartup()) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
   NS_ENSURE_ARG_POINTER(element);
@@ -955,8 +945,8 @@ NS_IMETHODIMP nsMsgLocalMailFolder::ReadFromFolderCacheElem(
 
 NS_IMETHODIMP nsMsgLocalMailFolder::WriteToFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!mail_panorama_enabled_AtStartup());
+  if (mail_panorama_enabled_AtStartup()) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
   NS_ENSURE_ARG_POINTER(element);
@@ -1051,15 +1041,13 @@ nsMsgLocalMailFolder::DeleteMessages(
 
   // notify on delete from trash and shift-delete
   if (!isMove && (deleteStorage || isTrashFolder)) {
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-    if (notifier) {
-      if (listener) {
-        listener->OnStartCopy();
-        listener->OnStopCopy(NS_OK);
-      }
-      notifier->NotifyMsgsDeleted(msgHeaders);
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
+    if (listener) {
+      listener->OnStartCopy();
+      listener->OnStopCopy(NS_OK);
     }
+    notifier->NotifyMsgsDeleted(msgHeaders);
   }
 
   if (!deleteStorage && !isTrashFolder) {
@@ -1068,8 +1056,7 @@ nsMsgLocalMailFolder::DeleteMessages(
     rv = GetTrashFolder(getter_AddRefs(trashFolder));
     if (NS_SUCCEEDED(rv)) {
       nsCOMPtr<nsIMsgCopyService> copyService =
-          do_GetService("@mozilla.org/messenger/messagecopyservice;1", &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
+          mozilla::components::Copy::Service();
       // When the copy completes, DeleteMessages() will be called again to
       // perform the actual delete.
       return copyService->CopyMessages(this, msgHeaders, trashFolder, true,
@@ -1316,8 +1303,7 @@ nsMsgLocalMailFolder::OnCopyCompleted(nsISupports* srcSupport,
   delete mCopyState;
   mCopyState = nullptr;
   nsCOMPtr<nsIMsgCopyService> copyService =
-      do_GetService("@mozilla.org/messenger/messagecopyservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::Copy::Service();
   return copyService->NotifyCompletion(
       srcSupport, this, moveCopySucceeded ? NS_OK : NS_ERROR_FAILURE);
 }
@@ -2100,21 +2086,16 @@ bool nsMsgLocalMailFolder::CopyLine(mozilla::Span<const char> line) {
 void nsMsgLocalMailFolder::CopyPropertiesToMsgHdr(nsIMsgDBHdr* destHdr,
                                                   nsIMsgDBHdr* srcHdr,
                                                   bool aIsMove) {
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS_VOID(rv);
-
   nsCString dontPreserve;
 
   // These preferences exist so that extensions can control which properties
   // are preserved in the database when a message is moved or copied. All
   // properties are preserved except those listed in these preferences
   if (aIsMove)
-    prefBranch->GetCharPref("mailnews.database.summary.dontPreserveOnMove",
+    Preferences::GetCString("mailnews.database.summary.dontPreserveOnMove",
                             dontPreserve);
   else
-    prefBranch->GetCharPref("mailnews.database.summary.dontPreserveOnCopy",
+    Preferences::GetCString("mailnews.database.summary.dontPreserveOnCopy",
                             dontPreserve);
 
   CopyHdrPropertiesWithSkipList(destHdr, srcHdr, dontPreserve);
@@ -2372,13 +2353,11 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
     if (multipleCopiesFinished && numHdrs && !mCopyState->m_isFolder) {
       // we need to send this notification before we delete the source messages,
       // because deleting the source messages clears out the src msg db hdr.
-      nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-          do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-      if (notifier) {
-        notifier->NotifyMsgsMoveCopyCompleted(mCopyState->m_isMove,
-                                              mCopyState->m_messages, this,
-                                              mCopyState->m_destMessages);
-      }
+      nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+          mozilla::components::FolderNotification::Service();
+      notifier->NotifyMsgsMoveCopyCompleted(mCopyState->m_isMove,
+                                            mCopyState->m_messages, this,
+                                            mCopyState->m_destMessages);
     }
 
     // Now allow folder or nested folders move of their msgs from Local Folders.
@@ -2421,16 +2400,14 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
     // involves this, yet doesn't have the newHdr initialized, so don't send any
     // notifications in that case.
     if (!numHdrs && newHdr) {
-      nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-          do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-      if (notifier) {
-        notifier->NotifyMsgAdded(newHdr);
-        // We do not appear to trigger classification in this case, so let's
-        // paper over the abyss by just sending the classification notification.
-        notifier->NotifyMsgsClassified({&*newHdr}, false, false);
-        // (We do not add the NotReportedClassified processing flag since we
-        // just reported it!)
-      }
+      nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+          mozilla::components::FolderNotification::Service();
+      notifier->NotifyMsgAdded(newHdr);
+      // We do not appear to trigger classification in this case, so let's
+      // paper over the abyss by just sending the classification notification.
+      notifier->NotifyMsgsClassified({&*newHdr}, false, false);
+      // (We do not add the NotReportedClassified processing flag since we
+      // just reported it!)
     }
   }
   return rv;
@@ -2441,13 +2418,9 @@ static bool gDeleteFromServerOnMove;
 
 bool nsMsgLocalMailFolder::GetDeleteFromServerOnMove() {
   if (!gGotGlobalPrefs) {
-    nsCOMPtr<nsIPrefBranch> pPrefBranch(
-        do_GetService(NS_PREFSERVICE_CONTRACTID));
-    if (pPrefBranch) {
-      pPrefBranch->GetBoolPref("mail.pop3.deleteFromServerOnMove",
-                               &gDeleteFromServerOnMove);
-      gGotGlobalPrefs = true;
-    }
+    gDeleteFromServerOnMove =
+        Preferences::GetBool("mail.pop3.deleteFromServerOnMove");
+    gGotGlobalPrefs = true;
   }
   return gDeleteFromServerOnMove;
 }
@@ -2720,8 +2693,7 @@ nsMsgLocalMailFolder::MarkMsgsOnPop3Server(
   NS_ENSURE_SUCCESS(rv, NS_MSG_INVALID_OR_MISSING_SERVER);
 
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::AccountManager::Service();
 
   // I wonder if we should run through the pop3 accounts and see if any of them
   // have leave on server set. If not, we could short-circuit some of this.
@@ -2900,9 +2872,7 @@ nsMsgLocalMailFolder::GetIncomingServerType(nsACString& aServerType) {
     if (NS_FAILED(rv)) return rv;
 
     nsCOMPtr<nsIMsgAccountManager> accountManager =
-        do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-    if (NS_FAILED(rv)) return rv;
-
+        mozilla::components::AccountManager::Service();
     nsCOMPtr<nsIMsgIncomingServer> server;
     // try "none" first
     rv = NS_MutateURI(url).SetScheme("none"_ns).Finalize(url);
@@ -2997,9 +2967,8 @@ nsresult nsMsgLocalMailFolder::DisplayMoveCopyStatusMsg() {
       if (!msgWindow) {
         // Probably a folder move or copy with no undo txn. use top-most window.
         nsCOMPtr<nsIMsgMailSession> mailSession =
-            do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-        if (NS_SUCCEEDED(rv))
-          mailSession->GetTopmostMsgWindow(getter_AddRefs(msgWindow));
+            mozilla::components::MailSession::Service();
+        mailSession->GetTopmostMsgWindow(getter_AddRefs(msgWindow));
         if (!msgWindow) return NS_OK;  // not a fatal error but no stat display
       }
       msgWindow->GetStatusFeedback(
@@ -3183,9 +3152,7 @@ nsMsgLocalMailFolder::OnMessageClassified(const nsACString& aMsgURI,
 
       if (folder) {
         nsCOMPtr<nsIMsgCopyService> copySvc =
-            do_GetService("@mozilla.org/messenger/messagecopyservice;1", &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
-
+            mozilla::components::Copy::Service();
         rv = copySvc->CopyMessages(
             this, messages, folder, true,
             /*nsIMsgCopyServiceListener* listener*/ nullptr, nullptr,
@@ -3286,7 +3253,7 @@ nsMsgLocalMailFolder::AddMessageBatch(
     nsTArray<RefPtr<nsIMsgDBHdr>>& aHdrArray) {
   AUTO_PROFILER_LABEL("nsMsgLocalMailFolder::AddMessageBatch", MAILNEWS);
 #ifdef MOZ_PANORAMA
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (mail_panorama_enabled_AtStartup()) {
     return AddMessageBatch2(aMessages, aHdrArray);
   }
 #endif  // MOZ_PANORAMA
@@ -3335,9 +3302,8 @@ nsMsgLocalMailFolder::AddMessageBatch(
       // prompt.
       nsCOMPtr<nsIMsgWindow> msgWindow;
       nsCOMPtr<nsIMsgMailSession> mailSession =
-          do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-      if (NS_SUCCEEDED(rv))
-        mailSession->GetTopmostMsgWindow(getter_AddRefs(msgWindow));
+          mozilla::components::MailSession::Service();
+      mailSession->GetTopmostMsgWindow(getter_AddRefs(msgWindow));
 
       rv = newMailParser->Init(rootFolder, this, msgWindow, newHdr, outStream);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -3407,6 +3373,11 @@ nsresult nsMsgLocalMailFolder::AddMessageBatch2(
     // (We're using the old nsIMsgDatabase instead of going directly to
     // panorama, as we want to keep working with legacy code for now).
     RawHdr hdr = ParseMsgHeaders(raw);
+    // Malformed message might have a missing "Date:" header.
+    // Policy here is to fall back to current time.
+    if (hdr.date == 0) {
+      hdr.date = PR_Now();
+    }
     // TODO: Sanity check here? Are there cases where we'd reject a message?
 
     nsCOMPtr<nsIMsgDBHdr> dbHdr;

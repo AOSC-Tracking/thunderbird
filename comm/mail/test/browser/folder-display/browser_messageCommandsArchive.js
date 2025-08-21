@@ -21,12 +21,14 @@ var {
   get_about_message,
   get_special_folder,
   make_display_unthreaded,
-  make_message_sets_in_folders,
   select_click_row,
   select_control_click_row,
   select_shift_click_row,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
+var { make_message_sets_in_folders } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
 );
 var { click_menus_in_sequence } = ChromeUtils.importESModule(
   "resource://testing-common/mail/WindowHelpers.sys.mjs"
@@ -122,13 +124,15 @@ async function yearly_archive(srcFolder, expectedSubfolderName = "") {
   const firstArchiveFolder = MailUtils.getOrCreateFolder(firstArchiveUri);
   const lastArchiveFolder = MailUtils.getOrCreateFolder(lastArchiveUri);
   await be_in_folder(firstArchiveFolder);
-  Assert.ok(
-    win.gDBView.getMsgHdrAt(0).messageId == firstMsgHdrMsgId,
+  Assert.equal(
+    win.gDBView.getMsgHdrAt(0).messageId,
+    firstMsgHdrMsgId,
     `Message should have been archived to ${firstArchiveUri}`
   );
   await be_in_folder(lastArchiveFolder);
-  Assert.ok(
-    win.gDBView.getMsgHdrAt(0).messageId == lastMsgHdrMsgId,
+  Assert.equal(
+    win.gDBView.getMsgHdrAt(0).messageId,
+    lastMsgHdrMsgId,
     `Message should have been archived to ${lastArchiveUri}`
   );
   await empty_folder(firstArchiveFolder);
@@ -182,13 +186,15 @@ async function monthly_archive(srcFolder, expectedSubfolderName = "") {
   const firstArchiveFolder = MailUtils.getOrCreateFolder(firstArchiveUri);
   const lastArchiveFolder = MailUtils.getOrCreateFolder(lastArchiveUri);
   await be_in_folder(firstArchiveFolder);
-  Assert.ok(
-    win.gDBView.getMsgHdrAt(0).messageId == firstMsgHdrMsgId,
+  Assert.equal(
+    win.gDBView.getMsgHdrAt(0).messageId,
+    firstMsgHdrMsgId,
     `Message should have been archived to ${firstArchiveUri}`
   );
   await be_in_folder(lastArchiveFolder);
-  Assert.ok(
-    win.gDBView.getMsgHdrAt(0).messageId == lastMsgHdrMsgId,
+  Assert.equal(
+    win.gDBView.getMsgHdrAt(0).messageId,
+    lastMsgHdrMsgId,
     `Message should have been archived to ${lastArchiveUri}`
   );
   await empty_folder(firstArchiveFolder);

@@ -18,10 +18,8 @@ var {
   "resource://testing-common/mail/ComposeHelpers.sys.mjs"
 );
 var {
-  add_message_sets_to_folders,
   be_in_folder,
   create_folder,
-  create_thread,
   get_special_folder,
   make_display_unthreaded,
   press_delete,
@@ -29,6 +27,9 @@ var {
   select_shift_click_row,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
+var { add_message_sets_to_folders, create_thread } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
 );
 var { MsgHdrToMimeMessage } = ChromeUtils.importESModule(
   "resource:///modules/gloda/MimeMessage.sys.mjs"
@@ -90,8 +91,9 @@ add_task(async function test_forward_inline() {
   // forwarded message header
   const fMsgHdr = await select_click_row(0);
 
-  Assert.ok(
-    fMsgHdr.numReferences > 0,
+  Assert.greater(
+    fMsgHdr.numReferences,
+    0,
     "No References Header in forwarded msg."
   );
   Assert.equal(
@@ -132,12 +134,14 @@ add_task(async function test_forward_as_attachments() {
   // forwarded message header
   const fMsgHdr = await select_click_row(0);
 
-  Assert.ok(
-    fMsgHdr.numReferences > 0,
+  Assert.greater(
+    fMsgHdr.numReferences,
+    0,
     "No References Header in forwarded msg."
   );
-  Assert.ok(
-    fMsgHdr.numReferences > 1,
+  Assert.greater(
+    fMsgHdr.numReferences,
+    1,
     "Only one References Header in forwarded msg."
   );
   Assert.equal(

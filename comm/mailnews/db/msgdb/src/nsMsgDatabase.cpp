@@ -5,13 +5,14 @@
 
 // this file implements the nsMsgDatabase interface using the MDB Interface.
 
+#include "nsMsgDatabase.h"
+
 #include "MailNewsTypes.h"
 #include "nscore.h"
 #include "msgCore.h"
 #include "nsIFile.h"
 #include "nsMailDatabase.h"
 #include "nsDBFolderInfo.h"
-#include "nsIMsgNewsFolder.h"
 #include "nsMsgThread.h"
 #include "nsIMsgSearchTerm.h"
 #include "nsIMdbFactoryFactory.h"
@@ -28,16 +29,16 @@
 #include "nsPrintfCString.h"
 #include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
 #include "nsMsgDatabaseEnumerators.h"
 #include "nsIMemoryReporter.h"
 #include "nsIWeakReferenceUtils.h"
 #include "mozilla/Components.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
 #include "mozilla/intl/LocaleService.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/ProfilerMarkers.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/StaticPrefs_mail.h"
 
 using namespace mozilla::mailnews;
 using namespace mozilla;
@@ -471,9 +472,9 @@ static bool gCorrectThreading = false;
 
 void nsMsgDatabase::GetGlobalPrefs() {
   if (!gGotGlobalPrefs) {
-    GetBoolPref("mail.thread_without_re", &gThreadWithoutRe);
-    GetBoolPref("mail.strict_threading", &gStrictThreading);
-    GetBoolPref("mail.correct_threading", &gCorrectThreading);
+    Preferences::GetBool("mail.thread_without_re", &gThreadWithoutRe);
+    Preferences::GetBool("mail.strict_threading", &gStrictThreading);
+    Preferences::GetBool("mail.correct_threading", &gCorrectThreading);
     gGotGlobalPrefs = true;
   }
 }
@@ -1065,7 +1066,7 @@ nsMsgDatabase::~nsMsgDatabase() {
   MOZ_LOG(DBLog, LogLevel::Info,
           ("closing database    %s", m_dbFile->HumanReadablePath().get()));
 
-  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!StaticPrefs::mail_panorama_enabled_AtStartup()) {
     nsCOMPtr<nsIMsgDBService> serv(
         do_GetService("@mozilla.org/msgDatabase/msgDBService;1"));
     if (serv) {
@@ -1130,7 +1131,7 @@ nsresult nsMsgDatabase::Open(nsMsgDBService* aDBService, nsIFile* aFolderName,
 NS_IMETHODIMP nsMsgDatabase::OpenFromFile(nsIFile* aFolderName) {
   // This is here to open the database without using the database service.
   // It is used only for migrating to the new global database.
-  MOZ_ASSERT(Preferences::GetBool("mail.panorama.enabled", false));
+  MOZ_ASSERT(StaticPrefs::mail_panorama_enabled_AtStartup());
   return nsMsgDatabase::OpenInternal(nullptr, aFolderName, false, false, true);
 }
 
@@ -1501,13 +1502,12 @@ NS_IMETHODIMP nsMsgDatabase::Commit(nsMsgDBCommit commitType) {
   // commits.
   if (GetEnv()) GetEnv()->ClearErrors();
 
-  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!StaticPrefs::mail_panorama_enabled_AtStartup()) {
     nsresult rv;
     nsCOMPtr<nsIMsgAccountManager> accountManager =
-        do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-    if (NS_SUCCEEDED(rv) && accountManager) {
-      nsCOMPtr<nsIMsgFolderCache> folderCache;
-
+        mozilla::components::AccountManager::Service(&rv);
+    nsCOMPtr<nsIMsgFolderCache> folderCache;
+    if (NS_SUCCEEDED(rv)) {
       rv = accountManager->GetFolderCache(getter_AddRefs(folderCache));
       if (NS_SUCCEEDED(rv) && folderCache) {
         nsCOMPtr<nsIMsgFolderCacheElement> cacheElement;
@@ -3231,7 +3231,7 @@ nsresult nsMsgDatabase::RowCellColumnToConstCharPtr(nsIMdbRow* hdrRow,
 nsIMimeConverter* nsMsgDatabase::GetMimeConverter() {
   if (!m_mimeConverter) {
     // apply mime decode
-    m_mimeConverter = do_GetService("@mozilla.org/messenger/mimeconverter;1");
+    m_mimeConverter = mozilla::components::MimeConverter::Service();
   }
   return m_mimeConverter;
 }
@@ -3244,10 +3244,6 @@ nsresult nsMsgDatabase::GetEffectiveCharset(nsIMdbRow* row,
   if (NS_FAILED(rv) || resultCharset.IsEmpty() ||
       resultCharset.EqualsLiteral("us-ascii")) {
     resultCharset.AssignLiteral("UTF-8");
-    nsCOMPtr<nsIMsgNewsFolder> newsfolder(do_QueryInterface(m_folder));
-    if (newsfolder) {
-      newsfolder->GetCharset(resultCharset);
-    }
   }
   return rv;
 }
@@ -4435,30 +4431,6 @@ nsresult nsMsgDatabase::AddNewThread(nsMsgHdr* msgHdr) {
   return err;
 }
 
-nsresult nsMsgDatabase::GetBoolPref(const char* prefName, bool* result) {
-  bool prefValue = false;
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> pPrefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  if (pPrefBranch) {
-    rv = pPrefBranch->GetBoolPref(prefName, &prefValue);
-    *result = prefValue;
-  }
-  return rv;
-}
-
-nsresult nsMsgDatabase::GetIntPref(const char* prefName, int32_t* result) {
-  int32_t prefValue = 0;
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> pPrefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  if (pPrefBranch) {
-    rv = pPrefBranch->GetIntPref(prefName, &prefValue);
-    *result = prefValue;
-  }
-  return rv;
-}
-
 NS_IMETHODIMP nsMsgDatabase::SetAttributeOnPendingHdr(nsIMsgDBHdr* pendingHdr,
                                                       const char* property,
                                                       const char* propertyVal) {
@@ -4532,17 +4504,6 @@ NS_IMETHODIMP nsMsgDatabase::ListAllOfflineDeletes(
     nsTArray<nsMsgKey>& offlineDeletes) {
   // technically, notimplemented, but no one's putting offline ops in anyway.
   return NS_OK;
-}
-NS_IMETHODIMP nsMsgDatabase::GetHighWaterArticleNum(nsMsgKey* key) {
-  if (!m_dbFolderInfo) {
-    return NS_ERROR_NULL_POINTER;
-  }
-
-  return m_dbFolderInfo->GetHighWater(key);
-}
-
-NS_IMETHODIMP nsMsgDatabase::GetLowWaterArticleNum(nsMsgKey* key) {
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 /* attribute nsMsgKey NextPseudoMsgKey */
@@ -5103,7 +5064,7 @@ NS_IMETHODIMP nsMsgDownloadSettings::SetAgeLimitOfMsgsToDownload(
 NS_IMETHODIMP nsMsgDatabase::GetDefaultViewFlags(
     nsMsgViewFlagsTypeValue* aDefaultViewFlags) {
   NS_ENSURE_ARG_POINTER(aDefaultViewFlags);
-  GetIntPref("mailnews.default_view_flags", aDefaultViewFlags);
+  Preferences::GetInt("mailnews.default_view_flags", aDefaultViewFlags);
   if (*aDefaultViewFlags < nsMsgViewFlagsType::kNone ||
       *aDefaultViewFlags >
           (nsMsgViewFlagsType::kThreadedDisplay |
@@ -5117,7 +5078,7 @@ NS_IMETHODIMP nsMsgDatabase::GetDefaultViewFlags(
 NS_IMETHODIMP nsMsgDatabase::GetDefaultSortType(
     nsMsgViewSortTypeValue* aDefaultSortType) {
   NS_ENSURE_ARG_POINTER(aDefaultSortType);
-  GetIntPref("mailnews.default_sort_type", aDefaultSortType);
+  Preferences::GetInt("mailnews.default_sort_type", aDefaultSortType);
   if (*aDefaultSortType < nsMsgViewSortType::byDate ||
       *aDefaultSortType > nsMsgViewSortType::byCorrespondent ||
       *aDefaultSortType == nsMsgViewSortType::byCustom) {
@@ -5129,7 +5090,7 @@ NS_IMETHODIMP nsMsgDatabase::GetDefaultSortType(
 NS_IMETHODIMP nsMsgDatabase::GetDefaultSortOrder(
     nsMsgViewSortOrderValue* aDefaultSortOrder) {
   NS_ENSURE_ARG_POINTER(aDefaultSortOrder);
-  GetIntPref("mailnews.default_sort_order", aDefaultSortOrder);
+  Preferences::GetInt("mailnews.default_sort_order", aDefaultSortOrder);
   if (*aDefaultSortOrder != nsMsgViewSortOrder::descending) {
     *aDefaultSortOrder = nsMsgViewSortOrder::ascending;
   }

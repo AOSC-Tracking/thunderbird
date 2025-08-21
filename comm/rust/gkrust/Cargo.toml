@@ -17,6 +17,7 @@ harness = false
 mozilla-central-workspace-hack = { version = "0.1", features = ['gkrust'], optional = true }
 gkrust-shared = { version = "0.1.0", path = "../../../toolkit/library/rust/shared" }
 ews_xpcom = { version = "0.1.0", path = "../ews_xpcom" }
+mailnews_ui_glue = { version = "0.1.0", path = "../mailnews_ui_glue" }
 sys_tray = { version = "0.1.0", path = "../sys_tray" }
 aa-stroke = { git = "https://github.com/FirefoxGraphics/aa-stroke", rev = "a821fa621c2def48e90c82774b4c6563b5a8ea4a" }
 abridged_certs = { path = "../../../security/manager/ssl/abridged_certs" }
@@ -45,7 +46,7 @@ dom = { path = "../../../dom/base/rust" }
 dom_fragmentdirectives = { path = "../../../dom/base/fragmentdirectives" }
 encoding_glue = { path = "../../../intl/encoding_glue" }
 etagere = { version = "0.2.13", features = ['ffi'] }
-fluent = { version = "0.16.0", features = ['fluent-pseudo'] }
+fluent = { version = "0.17.0", features = ['fluent-pseudo'] }
 fluent-fallback = { version = "0.7.0" }
 fluent-ffi = { path = "../../../intl/l10n/rust/fluent-ffi" }
 fluent-langneg = { version = "0.13", features = ['cldr'] }
@@ -103,6 +104,8 @@ unic-langid-ffi = { path = "../../../intl/locale/rust/unic-langid-ffi" }
 unicode-bidi = { version = "0.3.15" }
 unicode-bidi-ffi = { path = "../../../intl/bidi/rust/unicode-bidi-ffi" }
 url = { version = "2.5.0" }
+urlpattern = { version = "0.3.0" }
+urlpattern_glue = { path = "../../../netwerk/base/urlpattern_glue" }
 webrender_bindings = { path = "../../../gfx/webrender_bindings" }
 wgpu_bindings = { path = "../../../gfx/wgpu_bindings" }
 wpf-gpu-raster = { git = "https://github.com/FirefoxGraphics/wpf-gpu-raster", rev = "99979da091fd58fba8477e7fcdf5ec0727102916" }

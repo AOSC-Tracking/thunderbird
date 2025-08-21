@@ -364,15 +364,6 @@
       return this._childNodes.length;
     }
 
-    /**
-     * Get the preferred height (the height that would allow us to fit
-     * everything without scrollbars) of the attachmentlist's bounding
-     * rectangle. Add 3px to account for item's margin.
-     */
-    get preferredHeight() {
-      return this.scrollHeight + this.getBoundingClientRect().height + 3;
-    }
-
     get _childNodes() {
       return this.querySelectorAll("richlistitem.attachmentItem");
     }
@@ -1010,9 +1001,10 @@
      * Simple email address validation.
      *
      * @param {string} address - An email address.
+     * @returns {boolean} true if valid.
      */
     isValidAddress(address) {
-      return /^[^\s@]+@[^\s@]+$/.test(address);
+      return /^[^\s@]+@[^\s@]+[^.,:;!?-]$/.test(address);
     }
 
     /**
@@ -1664,7 +1656,8 @@
      *
      * @param {HTMLElement} element - The original autocomplete input that
      *   generated the pill.
-     * @param {Array} address - The array containing the recipient's info.
+     * @param {msgIAddressObject[]} address - The array containing the
+     *   recipient's info.
      * @returns {Element} The newly created pill.
      */
     createRecipientPill(element, address) {

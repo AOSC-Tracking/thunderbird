@@ -72,14 +72,15 @@ add_task(async function () {
     "mailbox://nobody@Local%20Folders/Unsent%20Messages"
   );
 
-  Assert.ok(folders.getFolderById(1));
-  Assert.ok(folders.getFolderByPath("server1"));
+  Assert.ok(folderDB.getFolderByPath("server1"));
   Assert.deepEqual(
-    folders.getFolderByPath("server1").children.map(c => c.name),
+    folderDB
+      .getFolderChildren(folderDB.getFolderByPath("server1"))
+      .map(c => folderDB.getFolderName(c)),
     ["Trash", "Unsent Messages"]
   );
 
-  const stmt = database.connection.createStatement(
+  const stmt = database.connectionForTests.createStatement(
     "SELECT name, flags FROM folders ORDER BY name"
   );
   const dbFolders = {};

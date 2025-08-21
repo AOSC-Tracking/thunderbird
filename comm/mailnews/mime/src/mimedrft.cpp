@@ -28,8 +28,6 @@
 #include "plstr.h"
 #include "prprf.h"
 #include "prio.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
 #include "msgCore.h"
 #include "nsIMsgSend.h"
 #include "nsMimeStringResources.h"
@@ -47,9 +45,12 @@
 #include "nsIMIMEService.h"
 #include "nsIMsgAccountManager.h"
 #include "modmimee.h"  // for MimeConverterOutputCallback
+#include "mozilla/Components.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
+#include "mozilla/Preferences.h"
 
+using mozilla::Preferences;
 using namespace mozilla::mailnews;
 
 //
@@ -565,7 +566,7 @@ void MimeGetForwardHeaderDelimiter(nsACString& retString) {
 
   nsString tmpRetString;
   NS_GetLocalizedUnicharPreferenceWithDefault(
-      nullptr, "mailnews.forward_header_originalmessage",
+      "mailnews.forward_header_originalmessage",
       NS_ConvertUTF8toUTF16(defaultValue), tmpRetString);
 
   CopyUTF16toUTF8(tmpRetString, retString);
@@ -946,15 +947,7 @@ static void mime_insert_forwarded_message_headers(
     char* mailcharset) {
   if (!body || !headers) return;
 
-  int32_t show_headers = 0;
-  nsresult res;
-
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &res));
-  if (NS_SUCCEEDED(res))
-    prefBranch->GetIntPref("mail.show_headers", &show_headers);
-
-  switch (show_headers) {
+  switch (Preferences::GetInt("mail.show_headers")) {
     case 0:
       mime_insert_micro_headers(body, headers, composeFormat, mailcharset);
       break;
@@ -1201,18 +1194,13 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
     subj = MimeHeaders_get(mdd->headers, HEADER_SUBJECT, false, false);
     if (forward_inline) {
       if (subj) {
-        nsresult rv;
-        nsCOMPtr<nsIPrefBranch> prefBranch(
-            do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-        if (NS_SUCCEEDED(rv)) {
-          nsAutoCString fwdPrefix;
-          prefBranch->GetCharPref("mail.forward_subject_prefix", fwdPrefix);
-          char* newSubj = PR_smprintf(
-              "%s: %s", !fwdPrefix.IsEmpty() ? fwdPrefix.get() : "Fwd", subj);
-          if (newSubj) {
-            PR_Free(subj);
-            subj = newSubj;
-          }
+        nsAutoCString fwdPrefix;
+        Preferences::GetCString("mail.forward_subject_prefix", fwdPrefix);
+        char* newSubj = PR_smprintf(
+            "%s: %s", !fwdPrefix.IsEmpty() ? fwdPrefix.get() : "Fwd", subj);
+        if (newSubj) {
+          PR_Free(subj);
+          subj = newSubj;
         }
       }
     } else {
@@ -1232,11 +1220,8 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
 
       // Other headers via pref.
       nsCString otherHeaders;
+      Preferences::GetCString("mail.compose.other.header", otherHeaders);
       nsTArray<nsCString> otherHeadersArray;
-      nsresult rv;
-      nsCOMPtr<nsIPrefBranch> pPrefBranch(
-          do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-      pPrefBranch->GetCharPref("mail.compose.other.header", otherHeaders);
       if (!otherHeaders.IsEmpty()) {
         ToLowerCase(otherHeaders);
         ParseString(otherHeaders, ',', otherHeadersArray);
@@ -1330,16 +1315,14 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
     if (identityKey && *identityKey) {
       nsresult rv = NS_OK;
       nsCOMPtr<nsIMsgAccountManager> accountManager =
-          do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-      if (NS_SUCCEEDED(rv) && accountManager) {
-        nsCOMPtr<nsIMsgIdentity> overrulingIdentity;
-        rv = accountManager->GetIdentity(nsDependentCString(identityKey),
-                                         getter_AddRefs(overrulingIdentity));
+          mozilla::components::AccountManager::Service();
+      nsCOMPtr<nsIMsgIdentity> overrulingIdentity;
+      rv = accountManager->GetIdentity(nsDependentCString(identityKey),
+                                       getter_AddRefs(overrulingIdentity));
 
-        if (NS_SUCCEEDED(rv) && overrulingIdentity) {
-          mdd->identity = overrulingIdentity;
-          fields->SetCreatorIdentityKey(identityKey);
-        }
+      if (NS_SUCCEEDED(rv) && overrulingIdentity) {
+        mdd->identity = overrulingIdentity;
+        fields->SetCreatorIdentityKey(identityKey);
       }
     }
 
@@ -2068,9 +2051,6 @@ extern "C" void* mime_bridge_create_draft_stream(
   mdd->options->decompose_file_init_fn = mime_decompose_file_init_fn;
   mdd->options->decompose_file_output_fn = mime_decompose_file_output_fn;
   mdd->options->decompose_file_close_fn = mime_decompose_file_close_fn;
-
-  mdd->options->m_prefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  if (NS_FAILED(rv)) goto FAIL;
 
 #ifdef ENABLE_SMIME
   /* If we're attaching a message (for forwarding) then we must eradicate all

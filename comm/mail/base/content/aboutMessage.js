@@ -46,6 +46,7 @@ const prefersDarkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 var gMessage, gMessageURI;
 var autodetectCharset;
 
+let messageScrolled = 0;
 let reloadTimeout = null;
 function timeoutReload() {
   if (reloadTimeout) {
@@ -205,6 +206,8 @@ window.addEventListener("DOMContentLoaded", event => {
       : "dark-message-mode-toggle-enabled"
   );
   disableDarkReaderToggle.addEventListener("click", e => {
+    const messagePane = getMessagePaneBrowser();
+    messageScrolled = messagePane.contentDocument.documentElement.scrollTop;
     Services.prefs.setBoolPref("mail.dark-reader.enabled", !e.target.checked);
     document.l10n.setAttributes(
       disableDarkReaderToggle,
@@ -212,6 +215,7 @@ window.addEventListener("DOMContentLoaded", event => {
         ? "dark-message-mode-toggle-disabled"
         : "dark-message-mode-toggle-enabled"
     );
+    messagePane.focus();
   });
 });
 
@@ -259,9 +263,6 @@ function displayMessage(uri, viewWrapper) {
     // as the one in the previous line.
     getMessagePaneBrowser().docShellIsActive = false;
     window.msgLoaded = true;
-    window.dispatchEvent(
-      new CustomEvent("messageURIChanged", { bubbles: true, detail: uri })
-    );
     return;
   }
 
@@ -375,21 +376,11 @@ function displayMessage(uri, viewWrapper) {
   const urlListener = {
     OnStartRunningUrl() {},
     OnStopRunningUrl(url) {
-      window.msgLoading = true;
-      window.dispatchEvent(
-        new CustomEvent("messageURIChanged", { bubbles: true, detail: uri })
-      );
       if (url instanceof Ci.nsIMsgMailNewsUrl && url.seeOtherURI) {
         // Show error page if needed.
         HideMessageHeaderPane();
         browser.browsingContext.sandboxFlags = 0;
         MailE10SUtils.loadURI(browser, url.seeOtherURI);
-      }
-      if (flags & Ci.nsMsgMessageFlags.New) {
-        // Close any notification we might have about this message.
-        Cc["@mozilla.org/system-alerts-service;1"]
-          .getService(Ci.nsIAlertsService)
-          .closeAlert(uri);
       }
     },
   };
@@ -462,6 +453,14 @@ var msgObserver = {
       case "MsgLoaded":
         if (prefersDarkQuery.matches) {
           adaptMessageForDarkMode(getMessagePaneBrowser());
+        }
+        // Restore the scroll position of a message if it gets reloaded.
+        if (messageScrolled) {
+          getMessagePaneBrowser().contentDocument.documentElement.scrollTo({
+            top: messageScrolled,
+            behavior: "instant",
+          });
+          messageScrolled = 0;
         }
         break;
       case "change":

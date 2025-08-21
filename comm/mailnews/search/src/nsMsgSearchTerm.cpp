@@ -3,6 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsMsgSearchTerm.h"
+
 #include "msgCore.h"
 #include "prmem.h"
 #include "nsMsgSearchCore.h"
@@ -11,7 +13,6 @@
 #include "nsMsgUtils.h"
 #include "nsIMsgDatabase.h"
 #include "nsIMsgHdr.h"
-#include "nsMsgSearchTerm.h"
 #include "nsMsgSearchScopeTerm.h"
 #include "nsMsgBodyHandler.h"
 #include "nsMsgResultElement.h"
@@ -22,8 +23,6 @@
 #include "nsMsgSearchValue.h"
 #include "nsMsgI18N.h"
 #include "nsIMimeConverter.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefService.h"
 #include "nsIMsgFilterPlugin.h"
 #include "nsUnicharUtils.h"
 #include "nsIAbCard.h"
@@ -34,9 +33,12 @@
 #include "nsIMsgFilterService.h"
 #include "nsIMsgPluggableStore.h"
 #include "nsIAbManager.h"
+#include "mozilla/Components.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/Utf8.h"
 
+using mozilla::Preferences;
 using namespace mozilla::mailnews;
 
 //---------------------------------------------------------------------------
@@ -118,7 +120,6 @@ nsresult NS_MsgGetAttributeFromString(const char* string,
   }
 
   if (!found) {
-    nsresult rv;
     bool goodHdr;
     IsRFC822HeaderFieldName(string, &goodHdr);
     if (!goodHdr) return NS_MSG_INVALID_CUSTOM_HEADER;
@@ -126,16 +127,8 @@ nsresult NS_MsgGetAttributeFromString(const char* string,
     // until 99.
     *attrib = nsMsgSearchAttrib::OtherHeader + 1;
 
-    nsCOMPtr<nsIPrefService> prefService =
-        do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsCOMPtr<nsIPrefBranch> prefBranch;
-    rv = prefService->GetBranch(nullptr, getter_AddRefs(prefBranch));
-    NS_ENSURE_SUCCESS(rv, rv);
-
     nsCString headers;
-    prefBranch->GetCharPref(MAILNEWS_CUSTOM_HEADERS, headers);
+    Preferences::GetCString(MAILNEWS_CUSTOM_HEADERS, headers);
 
     if (!headers.IsEmpty()) {
       nsAutoCString hdrStr(headers);
@@ -866,9 +859,7 @@ nsresult nsMsgSearchTerm::InitializeAddressBook() {
   }
   if (!mDirectory) {
     nsCOMPtr<nsIAbManager> abManager =
-        do_GetService("@mozilla.org/abmanager;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
+        mozilla::components::AbManager::Service();
     rv =
         abManager->GetDirectory(m_value.utf8String, getter_AddRefs(mDirectory));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -913,14 +904,12 @@ nsresult nsMsgSearchTerm::MatchRfc2047String(const nsACString& rfc2047string,
                                              bool* pResult) {
   NS_ENSURE_ARG_POINTER(pResult);
 
-  nsresult rv;
   nsCOMPtr<nsIMimeConverter> mimeConverter =
-      do_GetService("@mozilla.org/messenger/mimeconverter;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::MimeConverter::Service();
   nsAutoString stringToMatch;
-  rv = mimeConverter->DecodeMimeHeader(PromiseFlatCString(rfc2047string).get(),
-                                       charset, charsetOverride, false,
-                                       stringToMatch);
+  nsresult rv = mimeConverter->DecodeMimeHeader(
+      PromiseFlatCString(rfc2047string).get(), charset, charsetOverride, false,
+      stringToMatch);
   NS_ENSURE_SUCCESS(rv, rv);
   if (m_operator == nsMsgSearchOp::IsInAB ||
       m_operator == nsMsgSearchOp::IsntInAB)
@@ -1468,13 +1457,11 @@ nsresult nsMsgSearchTerm::MatchPriority(nsMsgPriorityValue priorityToMatch,
 NS_IMETHODIMP nsMsgSearchTerm::MatchCustom(nsIMsgDBHdr* aHdr, bool* pResult) {
   NS_ENSURE_ARG_POINTER(pResult);
 
-  nsresult rv;
   nsCOMPtr<nsIMsgFilterService> filterService =
-      do_GetService("@mozilla.org/messenger/services/filters;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+      mozilla::components::Filter::Service();
   nsCOMPtr<nsIMsgSearchCustomTerm> customTerm;
-  rv = filterService->GetCustomTerm(m_customId, getter_AddRefs(customTerm));
+  nsresult rv =
+      filterService->GetCustomTerm(m_customId, getter_AddRefs(customTerm));
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (customTerm)

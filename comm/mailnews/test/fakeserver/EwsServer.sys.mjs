@@ -127,11 +127,31 @@ const MOVE_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
     </m:MoveItemResponse>
 ${EWS_SOAP_FOOT}`;
 
+const COPY_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
+    <m:CopyItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                        xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                        xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+      </m:ResponseMessages>
+    </m:CopyItemResponse>
+${EWS_SOAP_FOOT}`;
+
+const MOVE_FOLDER_RESPONSE_BASE = `${EWS_SOAP_HEAD}
+    <m:MoveFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                        xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                        xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+      </m:ResponseMessages>
+    </m:MoveFolderResponse>
+${EWS_SOAP_FOOT}`;
+
 const GET_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
-  <GetItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                   xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-                   xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <m:GetItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
     <m:ResponseMessages>
       <m:GetItemResponseMessage ResponseClass="Success">
         <m:ResponseCode>NoError</m:ResponseCode>
@@ -139,7 +159,7 @@ const GET_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
         </m:Items>
       </m:GetItemResponseMessage>
     </m:ResponseMessages>
-  </GetItemResponse>
+  </m:GetItemResponse>
   ${EWS_SOAP_FOOT}`;
 /**
  * A remote folder to sync from the EWS server. While initiating a test, an
@@ -205,13 +225,21 @@ export class ItemInfo {
   itemSynced;
 
   /**
+   * @type {SyntheticMessage}
+   */
+  syntheticMessage;
+
+  /**
    * Construct a new item within the given parent.
    *
    * @param {string} parentId
+   * @param {SyntheticMessage} [syntheticMessage] - Message data from
+   *   MessageGenerator, if this item is a message.
    */
-  constructor(parentId) {
+  constructor(parentId, syntheticMessage) {
     this.parentId = parentId;
     this.itemSynced = false;
+    this.syntheticMessage = syntheticMessage;
   }
 }
 
@@ -317,11 +345,69 @@ export class EwsServer {
   #lastRequestedVersion;
 
   /**
-   * The version to report in requests.
+   * The content of the last outgoing message sent to this server.
    *
-   * @param {string?} version
+   * @type {?string}
+   * @name EwsServer.lastSentMessage
+   * @private
    */
-  constructor(version) {
+  #lastSentMessage;
+
+  /**
+   * The username that must be supplied on requests to this server if HTTP
+   * basic authentication is used.
+   *
+   * @type {string}
+   * @name EwsServer.username
+   * @private
+   */
+  #username;
+
+  /**
+   * The password that must be supplied on requests to this server if HTTP
+   * basic authentication is used.
+   *
+   * @type {string}
+   * @name EwsServer.password
+   * @private
+   */
+  #password;
+
+  /**
+   * A network proxy to turn this HTTP server into an HTTPS server.
+   *
+   * @type {HttpsProxy}
+   * @name EwsServer.httpsProxy
+   * @private
+   */
+  #httpsProxy;
+
+  /**
+   * Certificate to use for HTTPS requests. See ServerTestUtils.getCertificate.
+   *
+   * @type {nsIX509Cert}
+   * @name EwsServer.tlsCert
+   * @private
+   */
+  #tlsCert;
+
+  /**
+   * @param {object} options
+   * @param {string} [options.hostname]
+   * @param {integer} [options.port]
+   * @param {nsIX509Cert} [options.tlsCert]
+   * @param {string} [options.version]
+   * @param {string} [options.username="user"]
+   * @param {string} [options.password="password"]
+   */
+  constructor({
+    hostname,
+    port,
+    tlsCert,
+    version,
+    username = "user",
+    password = "password",
+  } = {}) {
     this.version = version;
     this.#httpServer = new HttpServer();
     this.#httpServer.registerPathHandler(
@@ -339,6 +425,18 @@ export class EwsServer {
         }
       }
     );
+    if (hostname && port) {
+      // Used by ServerTestUtils to make this server appear at hostname:port.
+      // This doesn't mean the HTTP server is listening on that host and port.
+      this.#httpServer.identity.add(
+        port == 443 ? "http" : "https",
+        hostname,
+        port
+      );
+    }
+    this.#tlsCert = tlsCert;
+    this.#username = username;
+    this.#password = password;
 
     this.#parser = new DOMParser();
     this.#serializer = new XMLSerializer();
@@ -351,6 +449,15 @@ export class EwsServer {
    */
   start() {
     this.#httpServer.start(-1);
+    if (this.#tlsCert) {
+      const { HttpsProxy } = ChromeUtils.importESModule(
+        "resource://testing-common/mailnews/HttpsProxy.sys.mjs"
+      );
+      this.#httpsProxy = new HttpsProxy(
+        this.#httpServer.identity.primaryPort,
+        this.#tlsCert
+      );
+    }
   }
 
   /**
@@ -358,6 +465,7 @@ export class EwsServer {
    */
   stop() {
     this.#httpServer.stop();
+    this.#httpsProxy?.destroy();
   }
 
   /**
@@ -366,7 +474,7 @@ export class EwsServer {
    * @type {number}
    */
   get port() {
-    return this.#httpServer.identity.primaryPort;
+    return this.#httpsProxy?.port ?? this.#httpServer.identity.primaryPort;
   }
 
   /**
@@ -390,6 +498,15 @@ export class EwsServer {
    */
   get lastRequestedVersion() {
     return this.#lastRequestedVersion;
+  }
+
+  /**
+   * The content of the last outgoing message sent to this server.
+   *
+   * @type {?string}
+   */
+  get lastSentMessage() {
+    return this.#lastSentMessage;
   }
 
   /**
@@ -439,8 +556,31 @@ export class EwsServer {
     // Try to read the value of the `Authorization` header.
     if (request.hasHeader("Authorization")) {
       this.#lastAuthorizationValue = request.getHeader("Authorization");
+
+      if (this.#lastAuthorizationValue.startsWith("Basic ")) {
+        const [username, password] = atob(
+          this.#lastAuthorizationValue.substring(6)
+        ).split(":");
+        if (username != this.#username || password != this.#password) {
+          response.setStatusLine("1.1", 401, "Unauthorized");
+          response.setHeader("WWW-Authenticate", `Basic realm="test"`);
+          return;
+        }
+      } else if (this.#lastAuthorizationValue.startsWith("Bearer ")) {
+        const token = this.#lastAuthorizationValue.substring(7);
+        const { OAuth2TestUtils } = ChromeUtils.importESModule(
+          "resource://testing-common/mailnews/OAuth2TestUtils.sys.mjs"
+        );
+        if (!OAuth2TestUtils.validateToken(token, "test_mail")) {
+          response.setStatusLine("1.1", 401, "Unauthorized");
+          response.setHeader("WWW-Authenticate", `Basic realm="test"`);
+          return;
+        }
+      }
     } else {
-      this.#lastAuthorizationValue = "";
+      response.setStatusLine("1.1", 401, "Unauthorized");
+      response.setHeader("WWW-Authenticate", `Basic realm="test"`);
+      return;
     }
 
     // Read the request content and parse it as XML.
@@ -472,6 +612,10 @@ export class EwsServer {
       resBytes = this.#generateCreateFolderResponse(reqDoc);
     } else if (reqDoc.getElementsByTagName("MoveItem").length) {
       resBytes = this.#generateMoveItemResponse(reqDoc);
+    } else if (reqDoc.getElementsByTagName("CopyItem").length) {
+      resBytes = this.#generateCopyItemResponse(reqDoc);
+    } else if (reqDoc.getElementsByTagName("MoveFolder").length) {
+      resBytes = this.#generateMoveFolderResponse(reqDoc);
     } else if (reqDoc.getElementsByTagName("GetItem")) {
       resBytes = this.#generateGetItemResponse(reqDoc);
     } else {
@@ -771,15 +915,19 @@ export class EwsServer {
    *
    * @see
    * {@link https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/createitem-operation-email-message#successful-createitem-response}
-   * @param {XMLDocument} _reqDoc - The parsed document for the request to
+   * @param {XMLDocument} reqDoc - The parsed document for the request to
    * respond to.
    * @returns {string} A serialized XML document.
    */
-  #generateCreateItemResponse(_reqDoc) {
+  #generateCreateItemResponse(reqDoc) {
     const resDoc = this.#parser.parseFromString(
       CREATE_ITEM_RESPONSE_BASE,
       "text/xml"
     );
+
+    const message =
+      reqDoc.getElementsByTagName("t:MimeContent")[0].firstChild.nodeValue;
+    this.#lastSentMessage = atob(message);
 
     this.#setVersion(resDoc);
 
@@ -792,64 +940,78 @@ export class EwsServer {
    * @param {XMLDocument} reqDoc
    */
   #generateMoveItemResponse(reqDoc) {
-    /**
-     * @type {Element}
-     */
-    const destinationFolderId = reqDoc
-      .getElementsByTagName("ToFolderId")[0]
-      .getElementsByTagName("t:FolderId")[0]
-      .getAttribute("Id");
-
-    const itemIds = [
-      ...reqDoc
-        .getElementsByTagName("ItemIds")[0]
-        .getElementsByTagName("t:ItemId"),
-    ].map(e => e.getAttribute("Id"));
-
-    itemIds.forEach(id => {
-      this.addItemToFolder(id, destinationFolderId);
-    });
-
-    const resDoc = this.#parser.parseFromString(
-      MOVE_ITEM_RESPONSE_BASE,
-      "text/xml"
+    const [destinationFolderId, itemIds] = extractMoveObjects(
+      reqDoc,
+      "ItemIds",
+      "t:ItemId"
     );
 
-    this.#setVersion(resDoc);
+    itemIds.forEach(id => {
+      this.addNewItemOrMoveItemToFolder(id, destinationFolderId);
+    });
 
-    const responseMessagesEl =
-      resDoc.getElementsByTagName("m:ResponseMessages")[0];
+    const resDoc = this.#buildGenericMoveResponse(
+      MOVE_ITEM_RESPONSE_BASE,
+      "m:MoveItemResponseMessage",
+      "m:Items",
+      "t:Message",
+      "t:ItemId",
+      itemIds
+    );
 
-    // Response Message XML Structure:
-    //    <m:MoveItemResponseMessage ResponseClass="Success">
-    //      <m:ResponseCode>NoError</m:ResponseCode>
-    //      <m:Items>
-    //        <t:Message>
-    //          <t:ItemId Id="asdf"/>
-    //        </t:Message
-    //      </m:Items>
-    //    </m:MoveItemResponseMessage>
+    return this.#serializer.serializeToString(resDoc);
+  }
+
+  /**
+   * Generate a response to a CopyItem operation.
+   *
+   * @param {XMLDocument} reqDoc
+   */
+  #generateCopyItemResponse(reqDoc) {
+    const [destinationFolderId, itemIds] = extractMoveObjects(
+      reqDoc,
+      "ItemIds",
+      "t:ItemId"
+    );
 
     itemIds.forEach(id => {
-      const responseMessageEl = resDoc.createElement(
-        "m:MoveItemResponseMessage"
-      );
-      responseMessageEl.setAttribute("ResponseClass", "Success");
-
-      const responseCodeEl = resDoc.createElement("m:ResponseCode");
-      responseCodeEl.textContent = "NoError";
-      responseMessageEl.appendChild(responseCodeEl);
-
-      const itemsEl = resDoc.createElement("m:Items");
-      const messageEl = resDoc.createElement("t:Message");
-      const itemIdEl = resDoc.createElement("t:ItemId");
-      itemIdEl.setAttribute("Id", id);
-      messageEl.appendChild(itemIdEl);
-      itemsEl.appendChild(messageEl);
-      responseMessageEl.appendChild(itemsEl);
-
-      responseMessagesEl.appendChild(responseMessageEl);
+      this.addNewItemOrMoveItemToFolder(`${id}_copy`, destinationFolderId);
     });
+
+    const resDoc = this.#buildGenericMoveResponse(
+      COPY_ITEM_RESPONSE_BASE,
+      "m:CopyItemResponseMessage",
+      "m:Items",
+      "t:Message",
+      "t:ItemId",
+      itemIds
+    );
+
+    return this.#serializer.serializeToString(resDoc);
+  }
+
+  /**
+   * Return a response to a `MoveFolder` request.
+   *
+   * @param {XMLDocument} reqDoc
+   */
+  #generateMoveFolderResponse(reqDoc) {
+    const [destinationFolderId, folderIds] = extractMoveObjects(
+      reqDoc,
+      "FolderIds",
+      "t:FolderId"
+    );
+
+    folderIds.forEach(id => this.reparentFolderById(id, destinationFolderId));
+
+    const resDoc = this.#buildGenericMoveResponse(
+      MOVE_FOLDER_RESPONSE_BASE,
+      "m:MoveFolderResponseMessage",
+      "m:Folders",
+      "t:Folder",
+      "t:FolderId",
+      folderIds
+    );
 
     return this.#serializer.serializeToString(resDoc);
   }
@@ -871,20 +1033,56 @@ export class EwsServer {
     const reqItemIds = [...reqDoc.getElementsByTagName("t:ItemId")].map(id =>
       id.getAttribute("Id")
     );
+    const includeContent =
+      reqDoc.getElementsByTagName("t:IncludeMimeContent")[0]?.textContent ==
+      "true";
 
     const itemsEl = resDoc.getElementsByTagName("m:Items")[0];
     reqItemIds.forEach(reqItemId => {
+      const item = this.#itemIdToItemInfo.get(reqItemId);
       const messageEl = resDoc.createElement("t:Message");
       const itemIdEl = resDoc.createElement("t:ItemId");
       itemIdEl.setAttribute("Id", reqItemId);
       const parentFolderIdEl = resDoc.createElement("t:ParentFolderId");
-      parentFolderIdEl.setAttribute(
-        "Id",
-        this.#itemIdToItemInfo.get(reqItemId).parentId
-      );
-
+      parentFolderIdEl.setAttribute("Id", item.parentId);
       messageEl.appendChild(itemIdEl);
       messageEl.appendChild(parentFolderIdEl);
+
+      if (item.syntheticMessage) {
+        const dateEl = resDoc.createElement("t:DateTimeSent");
+        dateEl.textContent = item.syntheticMessage.date.toISOString();
+        messageEl.appendChild(dateEl);
+
+        const senderEl = resDoc.createElement("t:Sender");
+        const mailboxEl = resDoc.createElement("t:Mailbox");
+        const nameEl = resDoc.createElement("t:Name");
+        nameEl.textContent = item.syntheticMessage.fromName;
+        mailboxEl.appendChild(nameEl);
+        const emailAddressEl = resDoc.createElement("t:EmailAddress");
+        emailAddressEl.textContent = item.syntheticMessage.fromAddress;
+        mailboxEl.appendChild(emailAddressEl);
+        senderEl.appendChild(mailboxEl);
+        messageEl.appendChild(senderEl);
+
+        const toEl = resDoc.createElement("t:DisplayTo");
+        toEl.textContent = item.syntheticMessage.toName;
+        messageEl.appendChild(toEl);
+
+        const subjectEl = resDoc.createElement("t:Subject");
+        subjectEl.textContent = item.syntheticMessage.subject;
+        messageEl.appendChild(subjectEl);
+
+        const isReadEl = resDoc.createElement("t:IsRead");
+        isReadEl.textContent = "false";
+        messageEl.appendChild(isReadEl);
+
+        if (includeContent) {
+          const contentEl = resDoc.createElement("t:MimeContent");
+          contentEl.textContent = btoa(item.syntheticMessage.toMessageString());
+          messageEl.appendChild(contentEl);
+        }
+      }
+
       itemsEl.appendChild(messageEl);
     });
 
@@ -951,13 +1149,42 @@ export class EwsServer {
   }
 
   /**
-   * Add an item to a folder.
+   * Add a new item to a folder or move an existing item to a new folder.
+   *
+   * If the given  `itemId` is already on the server, then it is moved
+   * from its current location to the newly specified `folderId`. If the
+   * given `itemId` does not yet exist on the server, it is added to the
+   * specified `folderId`.
    *
    * @param {string} itemId
    * @param {string} folderId
+   * @param {SyntheticMessage} [syntheticMessage] - Message data from
+   *   MessageGenerator, if this item is a message.
    */
-  addItemToFolder(itemId, folderId) {
-    this.#itemIdToItemInfo.set(itemId, new ItemInfo(folderId));
+  addNewItemOrMoveItemToFolder(itemId, folderId, syntheticMessage) {
+    let itemInfo = this.#itemIdToItemInfo.get(itemId);
+    if (itemInfo) {
+      itemInfo.parentId = folderId;
+    } else {
+      itemInfo = new ItemInfo(folderId, syntheticMessage);
+    }
+    this.#itemIdToItemInfo.set(itemId, itemInfo);
+  }
+
+  /**
+   * Add messages to a folder. To be used with MessageGenerator.
+   *
+   * @param {string} folderId
+   * @param {SyntheticMessage[]} messages
+   */
+  addMessages(folderId, messages) {
+    for (const message of messages) {
+      this.addNewItemOrMoveItemToFolder(
+        btoa(message.messageId),
+        folderId,
+        message
+      );
+    }
   }
 
   /**
@@ -968,4 +1195,90 @@ export class EwsServer {
   getContainingFolderId(itemId) {
     return this.#itemIdToItemInfo.get(itemId).parentId;
   }
+
+  /**
+   * Construct a response for the EWS Move[Item,Folder] operations.
+   *
+   * @param {string} responseBase The response document base XML.
+   * @param {string} responseMessageElementName The name of the top level response message element.
+   * @param {string} collectionElementName The name of the element containing the collection of response objects.
+   * @param {string} objectElementName The name of the element containing individual response objects.
+   * @param {string} idElementName The name of the element containing response object ids.
+   * @param {[string]} ids The EWS IDs to place in the document.
+   * @returns {XMLDocument} The response document for the request.
+   */
+  #buildGenericMoveResponse(
+    responseBase,
+    responseMessageElementName,
+    collectionElementName,
+    objectElementName,
+    idElementName,
+    ids
+  ) {
+    const resDoc = this.#parser.parseFromString(responseBase, "text/xml");
+
+    this.#setVersion(resDoc);
+
+    const responseMessagesEl =
+      resDoc.getElementsByTagName("m:ResponseMessages")[0];
+
+    // Response Message XML Structure:
+    //    <[responseMessageElementName] ResponseClass="Success">
+    //      <m:ResponseCode>NoError</m:ResponseCode>
+    //      <[collectionElementName]>
+    //        <[objectElementName]>
+    //          <[idElementName] Id="asdf"/>
+    //        </[objectElementName]>
+    //      </[collectionElementName]>
+    //    </[responseMessageElementName]>
+
+    ids.forEach(id => {
+      const responseMessageEl = resDoc.createElement(
+        responseMessageElementName
+      );
+      responseMessageEl.setAttribute("ResponseClass", "Success");
+
+      const responseCodeEl = resDoc.createElement("m:ResponseCode");
+      responseCodeEl.textContent = "NoError";
+      responseMessageEl.appendChild(responseCodeEl);
+
+      const itemsEl = resDoc.createElement(collectionElementName);
+      const messageEl = resDoc.createElement(objectElementName);
+      const itemIdEl = resDoc.createElement(idElementName);
+      itemIdEl.setAttribute("Id", id);
+      messageEl.appendChild(itemIdEl);
+      itemsEl.appendChild(messageEl);
+      responseMessageEl.appendChild(itemsEl);
+
+      responseMessagesEl.appendChild(responseMessageEl);
+    });
+
+    return resDoc;
+  }
+}
+
+/**
+ * Extract the ids for objects (items or folders) to move from a request.
+ *
+ * @param {XMLDocument} reqDoc The XML request document.
+ * @param {string} collectionElementName The name of the XML element that contains the id collection.
+ * @param {string} objectElementName The name of the XML element that contains each individual object.
+ *
+ * @returns {[string, [string]]} a pair containing the destination folder id in
+ *                               the first element and the list of object IDs to
+ *                               move in the second element.
+ */
+function extractMoveObjects(reqDoc, collectionElementName, objectElementName) {
+  const destinationFolderId = reqDoc
+    .getElementsByTagName("ToFolderId")[0]
+    .getElementsByTagName("t:FolderId")[0]
+    .getAttribute("Id");
+
+  const objectIds = [
+    ...reqDoc
+      .getElementsByTagName(collectionElementName)[0]
+      .getElementsByTagName(objectElementName),
+  ].map(e => e.getAttribute("Id"));
+
+  return [destinationFolderId, objectIds];
 }

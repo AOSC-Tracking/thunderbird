@@ -212,7 +212,6 @@
     --arrowpanel-dimmed: color-mix(in srgb, currentColor 12%, transparent);
     --arrowpanel-dimmed-further: color-mix(in srgb, currentColor 20%, transparent);
     --arrowpanel-dimmed-even-further: color-mix(in srgb, currentColor 27%, transparent);
-    --error-text-color: #c50042;
     --link-color: LinkText;
     --link-color-hover: LinkText;
     --link-color-active: ActiveText;
@@ -241,6 +240,7 @@
   --hub-header-body-gap: 30px;
   --hub-notification-bar-margin-block-start: 15px;
   --hub-header-margin-block-start: 36px;
+  --hub-subheader-margin-block-start: 9px;
   --hub-notification-text-margin-block-start: 9px;
   --hub-footer-margin-block: 18px;
   --hub-config-option-padding-inline: 9px;
@@ -275,6 +275,7 @@
   --hub-header-body-gap: 21px;
   --hub-notification-bar-margin-block-start: 12px;
   --hub-header-margin-block-start: 18px;
+  --hub-subheader-margin-block-start: 6px;
   --hub-notification-text-margin-block-start: 3px;
   --hub-footer-margin-block: 6px;
   --hub-config-option-padding-inline: 6px;
@@ -306,6 +307,7 @@
   --hub-header-body-gap: 39px;
   --hub-notification-bar-margin-block-start: 18px;
   --hub-header-margin-block-start: 39px;
+  --hub-subheader-margin-block-start: 12px;
   --hub-notification-text-margin-block-start: 12px;
   --hub-footer-margin-block: 21px;
   --hub-sync-list-title-gap: 15px;

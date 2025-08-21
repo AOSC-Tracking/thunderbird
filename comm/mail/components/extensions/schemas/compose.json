@@ -90,14 +90,14 @@
             "max_manifest_version": 2,
             "choices": [
               {
-                "$ref": "folders.MailFolderId"
-              },
-              {
                 "$ref": "folders.MailFolder"
               },
               {
                 "type": "string",
                 "enum": [""]
+              },
+              {
+                "$ref": "folders.MailFolderId"
               }
             ],
             "description": "An additional fcc folder which can be selected while composing the message, an empty string if not used. The permission <permission>accountsRead</permission> is required to use this property.",
@@ -221,14 +221,14 @@
             "max_manifest_version": 2,
             "choices": [
               {
-                "$ref": "folders.MailFolderId"
-              },
-              {
                 "$ref": "folders.MailFolder"
               },
               {
                 "type": "string",
                 "enum": [""]
+              },
+              {
+                "$ref": "folders.MailFolderId"
               }
             ],
             "optional": true,
@@ -486,7 +486,7 @@
                 "items": {
                   "$ref": "messages.MessageHeader"
                 },
-                "description": "The saved message(s). The number of saved messages depends on the applied file carbon copy configuration (fcc)."
+                "description": "An array with exactly one element, the saved message."
               }
             }
           }
@@ -987,7 +987,7 @@
                     "items": {
                       "$ref": "messages.MessageHeader"
                     },
-                    "description": "The saved message(s). The number of saved messages depends on the applied file carbon copy configuration (fcc)."
+                    "description": "An array with exactly one element, the saved message."
                   }
                 }
               }

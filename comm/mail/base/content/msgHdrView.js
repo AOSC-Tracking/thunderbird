@@ -521,6 +521,28 @@ var messageProgressListener = {
   ]),
 
   /**
+   * Checks if a channel is for the currently loading message. This could
+   * return false if `displayMessage` is called again before an existing load
+   * completes (possibly before it even begins).
+   *
+   * @param {nsIChannel} channel
+   * @returns {boolean}
+   */
+  _channelIsCurrent(channel) {
+    if (!gMessageURI) {
+      return false;
+    }
+    if (gMessageURI.startsWith("file:")) {
+      // File messages always open in a new about:message, so we don't have to
+      // handle the fact that the channel has a mailbox: URI, not a file: one.
+      return true;
+    }
+    channel.QueryInterface(Ci.nsIChannel);
+    const messageService = MailServices.messageServiceFromURI(gMessageURI);
+    return channel.URI.equals(messageService.getUrlForUri(gMessageURI));
+  },
+
+  /**
    * Step 1: A message has started loading (if the flags include STATE_START).
    *
    * @param {nsIWebProgress} webProgress
@@ -532,7 +554,8 @@ var messageProgressListener = {
   onStateChange(webProgress, request, stateFlags, _status) {
     if (
       !(request instanceof Ci.nsIMailChannel) ||
-      !(stateFlags & Ci.nsIWebProgressListener.STATE_START)
+      !(stateFlags & Ci.nsIWebProgressListener.STATE_START) ||
+      !this._channelIsCurrent(request)
     ) {
       return;
     }
@@ -558,6 +581,10 @@ var messageProgressListener = {
    * @see {nsIMailProgressListener}
    */
   onHeadersComplete(mailChannel) {
+    if (!this._channelIsCurrent(mailChannel)) {
+      return;
+    }
+    window.msgLoading = true;
     window.dispatchEvent(
       new CustomEvent("MsgLoading", { detail: gMessage, bubbles: true })
     );
@@ -573,10 +600,13 @@ var messageProgressListener = {
   /**
    * Step 3: The parser has finished reading the body of the message.
    *
-   * @param {nsIMailChannel} _mailChannel
+   * @param {nsIMailChannel} mailChannel
    * @see {nsIMailProgressListener}
    */
-  onBodyComplete(_mailChannel) {
+  onBodyComplete(mailChannel) {
+    if (!this._channelIsCurrent(mailChannel)) {
+      return;
+    }
     autoMarkAsRead();
   },
 
@@ -587,6 +617,9 @@ var messageProgressListener = {
    * @see {nsIMailProgressListener}
    */
   onAttachmentsComplete(mailChannel) {
+    if (!this._channelIsCurrent(mailChannel)) {
+      return;
+    }
     for (const attachment of mailChannel.attachments) {
       this.handleAttachment(
         attachment.getProperty("contentType"),
@@ -622,6 +655,9 @@ var messageProgressListener = {
     }
 
     const channel = docShell.currentDocumentChannel;
+    if (!this._channelIsCurrent(channel)) {
+      return;
+    }
     channel.QueryInterface(Ci.nsIMailChannel);
     currentCharacterSet = channel.mailCharacterSet;
     channel.openpgpSink = null;
@@ -630,9 +666,27 @@ var messageProgressListener = {
       calImipBar.showImipBar(channel.imipItem, channel.imipMethod);
     }
     this.onEndAllAttachments();
-    const uri = channel.URI.QueryInterface(Ci.nsIMsgMailNewsUrl);
-    this.onEndMsgHeaders(uri);
-    this.onEndMsgDownload(uri);
+
+    // Close any notification we might have about this message.
+    Cc["@mozilla.org/system-alerts-service;1"]
+      .getService(Ci.nsIAlertsService)
+      .closeAlert(gMessageURI);
+
+    window.msgLoading = false;
+    window.msgLoaded = true;
+    window.dispatchEvent(
+      new CustomEvent("MsgLoaded", { detail: gMessage, bubbles: true })
+    );
+    window.dispatchEvent(
+      new CustomEvent("MsgsLoaded", { detail: [gMessage], bubbles: true })
+    );
+
+    if (gFolder) {
+      gMessageNotificationBar.setJunkMsg(gMessage);
+      HandleMDNResponse(channel.mimeHeaders);
+    }
+
+    this.onEndMsgDownload(channel.URI);
   },
 
   onStartHeaders() {
@@ -833,8 +887,10 @@ var messageProgressListener = {
 
     // For content-base urls stored uri encoded, we want to decode for
     // display (and encode for external link open).
+    // Use decodeURIComponent so that url encoded parameters do not get double
+    // encoded later when we encodeURI for opening.
     if ("content-base" in currentHeaderData) {
-      currentHeaderData["content-base"].headerValue = decodeURI(
+      currentHeaderData["content-base"].headerValue = decodeURIComponent(
         currentHeaderData["content-base"].headerValue
       );
     }
@@ -927,7 +983,7 @@ var messageProgressListener = {
    * generates the "msgLoaded" property flag change event.  This best
    * corresponds to the end of the streaming process.
    *
-   * @param {nsIMsgMailNewsUrl} url
+   * @param {nsIURI} url
    */
   async onEndMsgDownload(url) {
     const browser = getMessagePaneBrowser();
@@ -1071,16 +1127,6 @@ var messageProgressListener = {
           adjustImg(img);
         }
       }
-    }
-  },
-
-  /**
-   * @param {nsIMsgMailNewsUrl} url
-   */
-  onEndMsgHeaders(url) {
-    if (!url.errorCode) {
-      // Should not mark a message as read if failed to load.
-      OnMsgLoaded(url);
     }
   },
 };
@@ -2194,9 +2240,10 @@ function toggleAttachmentList(expanded, updateFocus) {
   }
 
   attachmentToggle.checked = expanded;
+  attachmentList.collapsed = !expanded;
+  attachmentView.classList.toggle("list-expanded", expanded);
 
   if (expanded) {
-    attachmentList.collapsed = false;
     if (!attachmentView.collapsed) {
       attachmentSplitter.collapsed = false;
     }
@@ -2207,28 +2254,26 @@ function toggleAttachmentList(expanded, updateFocus) {
 
     attachmentList.setOptimumWidth();
 
-    // By design, attachmentView should not take up more than 1/4 of the message
-    // pane space
-    attachmentView.setAttribute(
-      "height",
-      Math.min(
-        attachmentList.preferredHeight,
-        document.getElementById("messagepanebox").getBoundingClientRect()
-          .height / 4
-      )
+    // Calculate the preferred height (the height that would allow us to fit
+    // everything without scrollbars) of the attachmentView. Add 2px to account
+    // for item's margin.
+    attachmentView.style.setProperty(
+      "--preferred-height",
+      attachmentList.scrollHeight + attachmentBar.scrollHeight + 2 + "px"
     );
 
     if (updateFocus) {
       attachmentList.focus();
     }
   } else {
-    attachmentList.collapsed = true;
     attachmentSplitter.collapsed = true;
     attachmentBar.setAttribute(
       "tooltiptext",
       bundle.getString("expandAttachmentPaneTooltip")
     );
-    attachmentView.removeAttribute("height");
+
+    // This may have been set by the XUL splitter.
+    attachmentView.style.height = null;
 
     if (updateFocus && document.activeElement == attachmentList) {
       // TODO
@@ -2255,7 +2300,7 @@ function OpenAttachmentFromBar(event) {
 /**
  * Handle all the attachments in this message (save them, open them, etc).
  *
- * @param {"open"|"save"|"saveAs"|"detach"|"delete"} action
+ * @param {"open"|"save"|"saveAs"|"detach"|"delete"|"copyUrl"|"openFolder"} action
  */
 function HandleAllAttachments(action) {
   HandleMultipleAttachments(currentAttachments, action);
@@ -2265,7 +2310,7 @@ function HandleAllAttachments(action) {
  * Try to handle all the attachments in this message (save them, open them,
  * etc). If the action fails for whatever reason, catch the error and report it.
  *
- * @param {"open"|"save"|"saveAs"|"detach"|"delete"} action
+ * @param {"open"|"save"|"saveAs"|"detach"|"delete"|"copyUrl"|"openFolder"} action
  */
 function TryHandleAllAttachments(action) {
   try {
@@ -2282,20 +2327,19 @@ function TryHandleAllAttachments(action) {
  * @param {"open"|"save"|"saveAs"|"detach"|"delete"} action
  */
 function HandleSelectedAttachments(action) {
-  const attachmentList = document.getElementById("attachmentList");
-  const selectedAttachments = [];
-  for (const item of attachmentList.selectedItems) {
-    selectedAttachments.push(item.attachment);
-  }
-
-  HandleMultipleAttachments(selectedAttachments, action);
+  HandleMultipleAttachments(
+    [...document.getElementById("attachmentList").selectedItems].map(
+      item => item.attachment
+    ),
+    action
+  );
 }
 
 /**
  * Perform an action on multiple attachments (e.g. open or save)
  *
  * @param {AttachmentInfo[]} attachments - AttachmentInfo objects to work with.
- * @param {"open"|"save"|"saveAs"|"detach"|"delete"} action - Action to take.
+ * @param {"open"|"save"|"saveAs"|"detach"|"delete"|"copyUrl"|"openFolder"} action - Action to take.
  */
 function HandleMultipleAttachments(attachments, action) {
   // Feed message link attachments save handling.
@@ -2307,64 +2351,31 @@ function HandleMultipleAttachments(attachments, action) {
     return;
   }
 
-  // convert our attachment data into some c++ friendly structs
-  var attachmentContentTypeArray = [];
-  var attachmentUrlArray = [];
-  var attachmentDisplayUrlArray = [];
-  var attachmentDisplayNameArray = [];
-  var attachmentMessageUriArray = [];
-
-  // populate these arrays..
-  var actionIndex = 0;
-  for (const attachment of attachments) {
-    // Exclude attachment which are 1) deleted, or 2) detached with missing
-    // external files, unless copying urls.
-    if (!attachment.hasFile && action != "copyUrl") {
-      continue;
-    }
-
-    attachmentContentTypeArray[actionIndex] = attachment.contentType;
-    attachmentUrlArray[actionIndex] = attachment.url;
-    attachmentDisplayUrlArray[actionIndex] = attachment.displayUrl;
-    attachmentDisplayNameArray[actionIndex] = encodeURI(attachment.name);
-    attachmentMessageUriArray[actionIndex] = attachment.uri;
-    ++actionIndex;
-  }
-
-  // The list has been built. Now call our action code...
   switch (action) {
     case "save":
-      top.messenger.saveAllAttachments(
-        attachmentContentTypeArray,
-        attachmentUrlArray,
-        attachmentDisplayNameArray,
-        attachmentMessageUriArray
-      );
+      AttachmentInfo.saveAttachments(attachments, top.browsingContext);
       return;
     case "detach":
       // "detach" on a multiple selection of attachments is so far not really
       // supported. As a workaround, resort to normal detach-"all". See also
       // the comment on 'detaching a multiple selection of attachments' below.
       if (attachments.length == 1) {
-        attachments[0].detach(top.messenger, true);
+        attachments[0].detachFromMessage(top.browsingContext);
       } else {
-        top.messenger.detachAllAttachments(
-          attachmentContentTypeArray,
-          attachmentUrlArray,
-          attachmentDisplayNameArray,
-          attachmentMessageUriArray,
-          true // save
+        AttachmentInfo.detachAttachments(
+          gMessage,
+          attachments,
+          null,
+          top.browsingContext
         );
       }
       return;
     case "delete":
-      top.messenger.detachAllAttachments(
-        attachmentContentTypeArray,
-        attachmentUrlArray,
-        attachmentDisplayNameArray,
-        attachmentMessageUriArray,
-        false // don't save
-      );
+      if (attachments.length == 1) {
+        attachments[0].deleteFromMessage();
+      } else {
+        AttachmentInfo.deleteAttachments(gMessage, attachments, false);
+      }
       return;
     case "open": {
       // XXX hack alert. If we sit in tight loop and open multiple
@@ -2376,7 +2387,7 @@ function HandleMultipleAttachments(attachments, action) {
       // doing the first helper app dialog right away, then waiting a bit
       // before we launch the rest.
       const actionFunction = function (aAttachment) {
-        aAttachment.open(getMessagePaneBrowser().browsingContext);
+        aAttachment.open(top.browsingContext);
       };
 
       for (let i = 0; i < attachments.length; i++) {
@@ -2403,7 +2414,9 @@ function HandleMultipleAttachments(attachments, action) {
     case "copyUrl":
       // Copy external http url(s) to clipboard. The menuitem is hidden unless
       // all selected attachment urls are http.
-      navigator.clipboard.writeText(attachmentDisplayUrlArray.join("\n"));
+      navigator.clipboard.writeText(
+        attachments.map(a => encodeURI(a.name)).join("\n")
+      );
       return;
     case "openFolder":
       for (const attachment of attachments) {
@@ -2523,6 +2536,11 @@ function onShowOtherActionsPopup() {
 
   // Check if the current message is feed or not.
   const isFeed = FeedUtils.isFeedMessage(gMessage);
+
+  document.getElementById("otherActionsCopyMessageLink").hidden = isFeed;
+  document.getElementById("otherActionsCopyNewsLink").hidden =
+    !currentHeaderData.newsgroups;
+
   document.getElementById("otherActionsMessageBodyAs").hidden = isFeed;
   document.getElementById("otherActionsFeedBodyAs").hidden = !isFeed;
 }
@@ -3062,9 +3080,7 @@ const gMessageHeader = {
         }
         menu.setAttribute(
           "value",
-          encodeURI(
-            value.replace(/\s*<([^>]+)>.*/, "$1").replace(/[<>\s]/g, "")
-          )
+          value.replace(/\s*<([^>]+)>.*/, "$1").replace(/[<>\s]/g, "")
         );
       }
     }
@@ -3200,28 +3216,15 @@ const gMessageHeader = {
 
   copyNewsgroupURL(event) {
     const newsgroup = event.currentTarget.parentNode.headerField.textContent;
-    const server = this.newsgroupServer;
-    if (
-      !gFolder?.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false) ||
-      !server
-    ) {
-      // For standalone newsgroup messages, use a URI with no server specified.
-      navigator.clipboard.writeText("news:" + newsgroup);
-      return;
-    }
-
-    let url = "news://" + server.hostName;
-    if (server.port != Ci.nsINntpUrl.DEFAULT_NNTP_PORT) {
-      url += ":" + server.port;
-    }
-    url += "/" + newsgroup;
-
-    try {
-      const uri = Services.io.newURI(url);
-      navigator.clipboard.writeText(decodeURI(uri.spec));
-    } catch (e) {
-      console.error("Invalid URL: " + url);
-    }
+    const server = gFolder?.isSpecialFolder(
+      Ci.nsMsgFolderFlags.Newsgroup,
+      false
+    )
+      ? this.newsgroupServer
+      : null;
+    navigator.clipboard.writeText(
+      MailUtils.constructNewsUriSpec(newsgroup, server)
+    );
   },
 
   /**
@@ -3694,6 +3697,25 @@ function MsgMarkAsFlagged() {
  */
 function convertToEventOrTask(isTask = false) {
   window.top.calendarExtract.extractFromEmail(gMessage, isTask);
+}
+
+/**
+ * Put the 'mid:' URI of the message on the clipboard.
+ */
+function copyMessageLink() {
+  navigator.clipboard.writeText(`mid:${gMessage.messageId}`);
+}
+
+/**
+ * Put the 'news:' URI of the message on the clipboard.
+ */
+function copyNewsLink() {
+  navigator.clipboard.writeText(
+    MailUtils.constructNewsUriSpec(
+      gMessage?.messageId,
+      gMessage?.folder?.server
+    )
+  );
 }
 
 /**
@@ -4244,25 +4266,6 @@ function ClearPendingReadTimer() {
   }
 }
 
-function OnMsgLoaded(aUrl) {
-  window.msgLoaded = true;
-  window.dispatchEvent(
-    new CustomEvent("MsgLoaded", { detail: gMessage, bubbles: true })
-  );
-  window.dispatchEvent(
-    new CustomEvent("MsgsLoaded", { detail: [gMessage], bubbles: true })
-  );
-
-  if (!gFolder) {
-    return;
-  }
-
-  gMessageNotificationBar.setJunkMsg(gMessage);
-
-  // See if MDN was requested but has not been sent.
-  HandleMDNResponse(aUrl);
-}
-
 /**
  * Marks the message as read, optionally after a delay, if the preferences say
  * we should do so.
@@ -4323,18 +4326,12 @@ function autoMarkAsRead() {
 /**
  * This function handles all MDN response generation.
  * For pop the msg uid can be 0 (i.e., 1st msg in a local folder) so no
- * need to check uid here. No one seems to set mimeHeaders to null so
- * no need to check it either.
+ * need to check uid here.
  *
- * @param {nsIMsgMailNewsUrl} url
+ * @param {nsIMimeHeaders} mimeHeaders
  */
-function HandleMDNResponse(url) {
-  const msgFolder = url.folder;
-  if (
-    !msgFolder ||
-    !gMessage ||
-    gFolder.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false)
-  ) {
+function HandleMDNResponse(mimeHeaders) {
+  if (gFolder.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false)) {
     return;
   }
 
@@ -4344,20 +4341,12 @@ function HandleMDNResponse(url) {
     return;
   }
 
-  var mimeHdr;
-
-  try {
-    mimeHdr = url.mimeHeaders;
-  } catch (ex) {
-    return;
-  }
-
   // If we didn't get the message id when we downloaded the message header,
   // we cons up an md5: message id. If we've done that, we'll try to extract
   // the message id out of the mime headers for the whole message.
   const msgId = gMessage.messageId;
   if (msgId.startsWith("md5:") || msgId.startsWith("x-moz-uuid:")) {
-    var mimeMsgId = mimeHdr.extractHeader("Message-Id", false);
+    const mimeMsgId = mimeHeaders.extractHeader("Message-Id", false);
     if (mimeMsgId) {
       gMessage.messageId = mimeMsgId;
     }
@@ -4369,27 +4358,30 @@ function HandleMDNResponse(url) {
     return;
   }
 
-  var DNTHeader = mimeHdr.extractHeader("Disposition-Notification-To", false);
-  var oldDNTHeader = mimeHdr.extractHeader("Return-Receipt-To", false);
+  const DNTHeader = mimeHeaders.extractHeader(
+    "Disposition-Notification-To",
+    false
+  );
+  const oldDNTHeader = mimeHeaders.extractHeader("Return-Receipt-To", false);
   if (!DNTHeader && !oldDNTHeader) {
     return;
   }
 
   // Everything looks good so far, let's generate the MDN response.
-  var mdnGenerator = Cc[
+  const mdnGenerator = Cc[
     "@mozilla.org/messenger-mdn/generator;1"
   ].createInstance(Ci.nsIMsgMdnGenerator);
   const MDN_DISPOSE_TYPE_DISPLAYED = 0;
   const askUser = mdnGenerator.process(
     MDN_DISPOSE_TYPE_DISPLAYED,
     top.msgWindow,
-    msgFolder,
+    gFolder,
     gMessage.messageKey,
-    mimeHdr,
+    mimeHeaders,
     false
   );
   if (askUser) {
-    gMessageNotificationBar.setMDNMsg(mdnGenerator, gMessage, mimeHdr);
+    gMessageNotificationBar.setMDNMsg(mdnGenerator, gMessage, mimeHeaders);
   }
 }
 

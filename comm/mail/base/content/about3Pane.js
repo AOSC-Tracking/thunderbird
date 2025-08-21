@@ -638,6 +638,8 @@ var folderPaneContextMenu = {
 
     this._showMenuItem("folderPaneContext-manageTags", isSmartTagsFolder);
 
+    this._showMenuItem("folderPaneContext-resetSort", isServer);
+
     // If source folder is virtual, allow only "move" within its own server.
     // Don't show "copy" and "again" and don't show "recent" and "favorite".
     // Also, check if this is a top-level smart folder, e.g., virtual "Inbox"
@@ -705,6 +707,7 @@ var folderPaneContextMenu = {
     this._showMenuItem("folderPaneContext-settings", false);
     this._showMenuItem("folderPaneContext-filters", false);
     this._showMenuItem("folderPaneContext-manageTags", false);
+    this._showMenuItem("folderPaneContext-resetSort", false);
 
     // Show only the standard commands that don't require special conditions.
     this._showMenuItem("folderPaneContext-openNewTab", true);
@@ -770,10 +773,7 @@ var folderPaneContextMenu = {
   },
 
   /**
-   * Check if the transfer mode selected from folder context menu is "copy".
-   * If "copy" (!isMove) is selected and the copy is within the same server,
-   * silently change to mode "move".
-   * Do the transfer and return true if moved, false if copied.
+   * Do the folder transfer, move or copy.
    *
    * @param {boolean} isMove
    * @param {nsIMsgFolder} sourceFolder
@@ -781,11 +781,6 @@ var folderPaneContextMenu = {
    * @param {nsIMsgCopyServiceListener} [listener]
    */
   transferFolder(isMove, sourceFolder, targetFolder, listener = null) {
-    if (!isMove && sourceFolder.server == targetFolder.server) {
-      // Don't allow folder copy within the same server; only move allowed.
-      // Can't copy folder intra-server, change to move.
-      isMove = true;
-    }
     // Do the transfer. A slight delay in calling copyFolder() helps the
     // folder-menupopup chain of items get properly closed so the next folder
     // context popup can occur.
@@ -798,7 +793,6 @@ var folderPaneContextMenu = {
         top.msgWindow
       )
     );
-    return isMove;
   },
 
   onCommand(event) {
@@ -902,9 +896,12 @@ var folderPaneContextMenu = {
       case "folderPaneContext-manageTags":
         goDoCommand("cmd_manageTags");
         break;
+      case "folderPaneContext-resetSort":
+        folderPane.clearUserSortOrder(folder);
+        break;
       default: {
         // Handle folder context menu items move to, copy to.
-        let isMove = !!event.target.closest("#folderPaneContext-moveMenu");
+        const isMove = !!event.target.closest("#folderPaneContext-moveMenu");
         const isCopy = !!event.target.closest("#folderPaneContext-copyMenu");
 
         if (!isMove && !isCopy) {
@@ -912,7 +909,7 @@ var folderPaneContextMenu = {
         }
 
         const targetFolder = event.target._folder;
-        isMove = this.transferFolder(isMove, folder, targetFolder);
+        this.transferFolder(isMove, folder, targetFolder);
         // Save in prefs the target folder URI and if this was a move or copy.
         // This is to fill in the next folder or message context menu item
         // "Move|Copy to <TargetFolderName> Again".
@@ -1286,27 +1283,7 @@ var folderPane = {
       },
 
       _recurseSubFolders(parentFolder) {
-        let subFolders;
-        try {
-          subFolders = parentFolder.subFolders;
-        } catch (ex) {
-          console.error(
-            new Error(
-              `Unable to access the subfolders of ${parentFolder.URI}`,
-              { cause: ex }
-            )
-          );
-        }
-        if (!subFolders?.length) {
-          return;
-        }
-
-        for (let i = 0; i < subFolders.length; i++) {
-          const folder = subFolders[i];
-          if (folderPane._isGmailFolder(folder)) {
-            subFolders.splice(i, 1, ...folder.subFolders);
-          }
-        }
+        const subFolders = folderPane._getSubFolders(parentFolder);
 
         subFolders.sort(FolderUtils.compareFolders);
 
@@ -2361,26 +2338,7 @@ var folderPane = {
    *   only some subfolders to the row.
    */
   _addSubFolders(parentFolder, parentRow, modeName, filterFunction) {
-    let subFolders;
-    try {
-      subFolders = parentFolder.subFolders;
-    } catch (ex) {
-      console.error(
-        new Error(`Unable to access the subfolders of ${parentFolder.URI}`, {
-          cause: ex,
-        })
-      );
-    }
-    if (!subFolders?.length) {
-      return;
-    }
-
-    for (let i = 0; i < subFolders.length; i++) {
-      const folder = subFolders[i];
-      if (this._isGmailFolder(folder)) {
-        subFolders.splice(i, 1, ...folder.subFolders);
-      }
-    }
+    const subFolders = this._getSubFolders(parentFolder);
 
     subFolders.sort(FolderUtils.compareFolders);
 
@@ -2533,23 +2491,26 @@ var folderPane = {
   /**
    * Update the list of folders if the current mode rely on specific flags.
    *
-   * @param {nsIMsgFolder} item - The target folder.
+   * @param {nsIMsgFolder} folder - The target folder.
    * @param {nsMsgFolderFlags} oldValue - The old flag value.
    * @param {nsMsgFolderFlags} newValue - The updated flag value.
    */
-  changeFolderFlag(item, oldValue, newValue) {
-    this._forAllActiveModes("changeFolderFlag", item, oldValue, newValue);
-    this._changeRows(item, row => row.setFolderTypeFromFolder(item));
+  changeFolderFlag(folder, oldValue, newValue) {
+    this._forAllActiveModes("changeFolderFlag", folder, oldValue, newValue);
+    this._changeRows(folder, row => {
+      row.setFolderTypeFromFolder(folder);
+      row.updateFolderNames(folder);
+    });
   },
 
   /**
    * Update the list of folders to reflect current properties.
    *
-   * @param {nsIMsgFolder} item - The folder whose data to use.
+   * @param {nsIMsgFolder} folder - The folder whose data to use.
    */
-  updateFolderProperties(item) {
-    this._forAllActiveModes("updateFolderProperties", item);
-    this._changeRows(item, row => row.setFolderPropertiesFromFolder(item));
+  updateFolderProperties(folder) {
+    this._forAllActiveModes("updateFolderProperties", folder);
+    this._changeRows(folder, row => row.setFolderPropertiesFromFolder(folder));
   },
 
   /**
@@ -3021,13 +2982,7 @@ var folderPane = {
     }
 
     for (const [index, folder] of folders.entries()) {
-      event.dataTransfer.mozSetDataAt(
-        folder.server.type == "nntp"
-          ? "text/x-moz-newsfolder"
-          : "text/x-moz-folder",
-        folder,
-        index
-      );
+      event.dataTransfer.mozSetDataAt("text/x-moz-folder", folder, index);
     }
     event.dataTransfer.effectAllowed = folders.some(
       f => f.server.type == "nntp"
@@ -3083,10 +3038,6 @@ var folderPane = {
           return;
         }
         const sameServer = sourceFolder.server == targetFolder.server;
-        // Don't copy within same server.
-        if (sameServer && systemDropEffect == "copy") {
-          return;
-        }
         // Don't allow immediate child to be dropped onto its parent.
         if (targetFolder == sourceFolder.parent) {
           return;
@@ -3163,21 +3114,6 @@ var folderPane = {
         }
       }
       event.dataTransfer.dropEffect = "copy";
-    } else if (types.includes("text/x-moz-newsfolder")) {
-      for (let i = 0; i < event.dataTransfer.mozItemCount; i++) {
-        const folder = event.dataTransfer
-          .mozGetDataAt("text/x-moz-newsfolder", i)
-          .QueryInterface(Ci.nsIMsgFolder);
-        if (
-          targetFolder.isServer ||
-          targetFolder.server.type != "nntp" ||
-          folder == targetFolder ||
-          folder.server != targetFolder.server
-        ) {
-          return;
-        }
-      }
-      event.dataTransfer.dropEffect = "move";
     } else if (
       types.includes("text/x-moz-url-data") ||
       types.includes("text/x-moz-url")
@@ -3346,7 +3282,7 @@ var folderPane = {
       );
     } else if (types.includes("text/x-moz-folder")) {
       const rows = [];
-      let isMove = event.dataTransfer.dropEffect == "move";
+      const isMove = event.dataTransfer.dropEffect == "move";
       if (event.dataTransfer.mozItemCount == 1) {
         // Only one folder was dragged and dropped.
         // If the dropped Y-coordinate is near the center of the targetFolder,
@@ -3398,7 +3334,7 @@ var folderPane = {
           sourceFolder.userSortOrder = Ci.nsIMsgFolder.NO_SORT_VALUE;
           // Start the move. This is done in an asynchronous process, so order
           // them in the listener that will be called when the move is complete.
-          isMove = folderPaneContextMenu.transferFolder(
+          folderPaneContextMenu.transferFolder(
             isMove,
             sourceFolder,
             destinationFolder,
@@ -3438,7 +3374,7 @@ var folderPane = {
             .mozGetDataAt("text/x-moz-folder", i)
             .QueryInterface(Ci.nsIMsgFolder);
 
-          isMove = folderPaneContextMenu.transferFolder(
+          folderPaneContextMenu.transferFolder(
             isMove,
             sourceFolder,
             targetFolder
@@ -3473,20 +3409,6 @@ var folderPane = {
           );
         }
       }
-    } else if (types.includes("text/x-moz-newsfolder")) {
-      const rows = [];
-      for (let i = 0; i < event.dataTransfer.mozItemCount; i++) {
-        const folder = event.dataTransfer
-          .mozGetDataAt("text/x-moz-newsfolder", i)
-          .QueryInterface(Ci.nsIMsgFolder);
-
-        const newsRoot = targetFolder.rootFolder.QueryInterface(
-          Ci.nsIMsgNewsFolder
-        );
-        newsRoot.reorderGroup(folder, targetFolder);
-        rows.push(this.getRowForFolder(folder, row.modeName));
-      }
-      this.swapFolderSelection(rows);
     } else if (
       types.includes("text/x-moz-url-data") ||
       types.includes("text/x-moz-url")
@@ -3656,16 +3578,35 @@ var folderPane = {
     }
     const title = messengerBundle.GetStringFromName("folderProperties");
 
+    // If the main window has been closed by the user, make sure that the
+    // folder properties dialog is removed as well,
+    let folderPropertiesDialog = null;
+    const onMainWindowUnload = () => {
+      folderPropertiesDialog.close();
+    };
+    window.addEventListener("unload", onMainWindowUnload);
+
+    // Save the focus and freeze the about3Pane.
+    const prevFocusedElement = document.activeElement;
+    document.documentElement.setAttribute("inert", "true");
+
     function editFolderCallback(newName, oldName) {
       if (newName != oldName) {
         folder.rename(newName, top.msgWindow);
       }
     }
 
-    window.openDialog(
+    function unloadDialogCallback() {
+      // Unfreeze about3Pane and restore focus.
+      document.documentElement.removeAttribute("inert");
+      prevFocusedElement?.focus();
+      window.removeEventListener("unload", onMainWindowUnload);
+    }
+
+    folderPropertiesDialog = window.openDialog(
       "chrome://messenger/content/folderProps.xhtml",
       "",
-      "chrome,modal,centerscreen",
+      "chrome,dependent,centerscreen",
       {
         folder,
         serverType: folder.server.type,
@@ -3675,6 +3616,7 @@ var folderPane = {
         tabID,
         name: folder.localizedName,
         rebuildSummaryCallback: this.rebuildFolderSummary,
+        unloadCallback: unloadDialogCallback,
       }
     );
   },
@@ -4149,6 +4091,69 @@ var folderPane = {
   },
 
   /**
+   * Find all first level subfolders of a parent folder and skip the Gmail ghost
+   * folder.
+   *
+   * @param {nsIMsgFolder} parentFolder
+   * @returns {nsIMsgFolder[]} - Array of found folders.
+   */
+  _getSubFolders(parentFolder) {
+    let subFolders;
+    try {
+      subFolders = parentFolder.subFolders;
+    } catch (ex) {
+      console.error(
+        new Error(`Unable to access the subfolders of ${parentFolder.URI}`, {
+          cause: ex,
+        })
+      );
+    }
+    if (!subFolders?.length) {
+      return [];
+    }
+
+    for (let i = 0; i < subFolders.length; i++) {
+      const folder = subFolders[i];
+      if (this._isGmailFolder(folder)) {
+        subFolders.splice(i, 1, ...folder.subFolders);
+      }
+    }
+
+    return subFolders;
+  },
+
+  /**
+   * Clear any previously applied custom sort order to all the child folders of
+   * a parent.
+   *
+   * @param {nsIMsgFolder} parentFolder
+   */
+  clearUserSortOrder(parentFolder) {
+    const folders = [];
+    for (const folder of this._getSubFolders(parentFolder)) {
+      if (folder.userSortOrder == Ci.nsIMsgFolder.NO_SORT_VALUE) {
+        continue;
+      }
+
+      folder.userSortOrder = Ci.nsIMsgFolder.NO_SORT_VALUE;
+      folders.push(folder);
+
+      if (folder.hasSubFolders) {
+        this.clearUserSortOrder(folder);
+      }
+    }
+
+    for (const changedFolder of folders) {
+      this.setOrderToRowInAllModes(changedFolder, changedFolder.sortOrder);
+      this.refreshFolderPaneUI(changedFolder);
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("folder-sort-order-restored", { bubbles: true })
+    );
+  },
+
+  /**
    * Set folder sort order to rows for the folder.
    *
    * @param {nsIMsgFolder} folder
@@ -4257,10 +4262,19 @@ var folderPane = {
     folder.userSortOrder = folderOrder; // Update DB.
     folderPane.setOrderToRowInAllModes(folder, folderOrder); // Update row info.
 
+    this.refreshFolderPaneUI(folder);
+  },
+
+  /**
+   * Refresh the folder pane UI to ensure that the recently moved folders are
+   * properly sorted.
+   *
+   * @param {nsIMsgFolder} folder
+   */
+  refreshFolderPaneUI(folder) {
     // Update folder pane UI.
     const movedFolderURI = folder.URI;
-    const modeNames = folderPane.activeModes;
-    for (const name of modeNames) {
+    for (const name of this.activeModes) {
       // Find a parent UI element of folder in this mode.
       // Note that the parent folder on the DB may not be the parent UI element
       // (as is the case with Gmail). So we find the parent UI element by
@@ -4994,6 +5008,21 @@ var threadPane = {
     }
 
     const numSelected = gDBView?.numSelected || 0;
+
+    // Prevent Grouped By Sort header rows and messages from being selected
+    // simultaneously.
+    if (
+      gViewWrapper?.showGroupedBySort &&
+      numSelected > 0 &&
+      threadTree.selectedIndices.length > 1
+    ) {
+      const savedIndex = threadTree.currentIndex;
+      threadTree.selectedIndices
+        .filter(i => gViewWrapper.isExpandedGroupedByHeaderAtIndex(i))
+        .forEach(i => threadTree.toggleSelectionAtIndex(i, false, false));
+      threadTree.currentIndex = savedIndex;
+    }
+
     switch (numSelected) {
       case 0:
         messagePane.displayMessage();
@@ -5011,13 +5040,6 @@ var threadPane = {
         break;
       }
       default:
-        if (gViewWrapper.showGroupedBySort) {
-          const savedIndex = threadTree.currentIndex;
-          threadTree.selectedIndices
-            .filter(i => gViewWrapper.isExpandedGroupedByHeaderAtIndex(i))
-            .forEach(i => threadTree.toggleSelectionAtIndex(i, false, false));
-          threadTree.currentIndex = savedIndex;
-        }
         messagePane.displayMessages(gDBView.getSelectedMsgHdrs());
         break;
     }

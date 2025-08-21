@@ -20,9 +20,10 @@ interface nsIUrlListener;
 interface IEwsFolderCallbacks;
 interface IEwsFolderCreateCallbacks;
 interface IEwsFolderDeleteCallbacks;
+interface IEwsFolderMoveCallbacks;
 interface IEwsFolderUpdateCallbacks;
 interface IEwsMessageCallbacks;
-interface IEwsItemMoveCallbacks;
+interface IEwsItemCopyMoveCallbacks;
 interface IEwsMessageCreateCallbacks;
 interface IEwsMessageDeleteCallbacks;
 interface IEwsMessageFetchCallbacks;
@@ -141,7 +142,25 @@ interface IEwsClient : nsISupports
    * @param destinationFolderId - The EWS ID of the destination folder.
    * @param itemIds - A list of the EWS IDs of the items to be moved.
    */
-  void moveItems(in IEwsItemMoveCallbacks callbacks, in AUTF8String destinationFolderId, in Array<AUTF8String> itemIds);
+  void moveItems(in IEwsItemCopyMoveCallbacks callbacks, in AUTF8String destinationFolderId, in Array<AUTF8String> itemIds);
+
+  /**
+   * Copies items on the Exchange server.
+   *
+   * @param callbacks - Callbacks to indicate the success of failure of the copy operation.
+   * @param destinationFolderId - The EWS ID of the destination folder.
+   * @param itemIds - A list of the EWS IDs of the items to be copied.
+   */
+  void copyItems(in IEwsItemCopyMoveCallbacks callbacks, in AUTF8String destinationFolderId, in Array<AUTF8String> itemIds);
+
+  /**
+   * Moves folders on the Exchange server.
+   *
+   * @param callbacks - Callbacks to indicate the success of failure of the move operation.
+   * @param destinationFolderId - The EWS ID of the destination folder.
+   * @param itemIds - A list of the EWS IDs of the folders to be moved.
+   */
+  void moveFolders(in IEwsFolderMoveCallbacks callbacks, in AUTF8String destinationFolderId, in Array<AUTF8String> folderIds);
 };
 
 [scriptable, uuid(5dacc994-30e0-42f7-94c8-52756638add5)]
@@ -265,6 +284,11 @@ interface IEwsMessageCallbacks : nsISupports
   void updateSyncState(in AUTF8String syncStateToken);
 
   /**
+   * Signals that sync of the current folder is complete.
+   */
+  void onSyncComplete();
+
+  /**
    * Update the read flag for the message with the given EWS ID.
 
    * When a message is marked as read/unread on the EWS server, the EWS server
@@ -329,21 +353,44 @@ interface IEwsMessageCreateCallbacks : nsISupports
 };
 
 [scriptable, uuid(98d7d1a9-d099-4b58-b4f7-6b476c6e4b90)]
-interface IEwsItemMoveCallbacks : nsISupports
+interface IEwsItemCopyMoveCallbacks : nsISupports
 {
   /**
-   * Signal that a remove move operation was successful.
+   * Signal that a remote item copy or move operation was successful.
    *
    * The `syncRequired` parameter indicates whether a full folder sync for the
-   * move destination is required. If `syncRequired` is false, then `newIds`
-   * will contain a list of the newly created EWS IDs in the destination folder
-   * that need to be created and downloaded. The order of `newIds` will
-   * correspond to the order of the EWS IDs provided to `IEwsClient::moveItems`.
+   * copy or move destination is required. If `syncRequired` is false, then
+   * `newIds` will contain a list of the newly created EWS IDs in the
+   * destination folder that need to be created and downloaded. The order of
+   * `newIds` will correspond to the order of the EWS IDs provided to
+   * `IEwsClient::moveItems` or `IEwsClient::copyItems`.
    */
-  void onRemoteMoveSuccessful(in boolean syncRequired, in Array<AUTF8String> newIds);
+  void onRemoteCopyMoveSuccessful(in boolean syncRequired, in Array<AUTF8String> newIds);
 
   /**
-   * Signal that an error occurred during a remove move operation.
+   * Signal that an error occurred during a remote copy or move operation.
+   *
+   * The type of error will be contained in the `err` parameter, and a
+   * description will be provided in the `description` parameter.
+   */
+  void onError(in IEwsClient_Error err, in AUTF8String description);
+};
+
+[scriptable, uuid(2e2beca1-5ea6-4c8d-8805-aeedc011dbb4)]
+interface IEwsFolderMoveCallbacks : nsISupports
+{
+  /**
+   * Signal that a remote folder move operation was successful.
+   *
+   * The `newIds` parameter will contain the list of the new EWS IDs for the
+   * moved folders and will be specified in the same order as the input IDs to
+   * `IEwsClient::moveFolders`.
+   */
+  void onRemoteMoveSuccessful(in Array<AUTF8String> newIds);
+
+
+  /**
+   * Signal that an error occurred during a remote move operation.
    *
    * The type of error will be contained in the `err` parameter, and a
    * description will be provided in the `description` parameter.

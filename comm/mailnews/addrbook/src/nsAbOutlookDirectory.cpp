@@ -4,8 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsAbOutlookDirectory.h"
-#include "nsAbWinHelper.h"
 
+#include "nsAbWinHelper.h"
 #include "nsString.h"
 #include "nsIAbDirectoryQuery.h"
 #include "nsIAbBooleanExpression.h"
@@ -14,16 +14,18 @@
 #include "nsEnumeratorUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsComponentManagerUtils.h"
+#include "mozilla/Components.h"
 #include "mozilla/ErrorNames.h"
 #include "mozilla/Logging.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
+#include "mozilla/Preferences.h"
 #include "nsArrayUtils.h"
 #include "nsMsgUtils.h"
 #include "nsQueryObject.h"
 #include "mozilla/Services.h"
 #include "nsIObserverService.h"
 #include "mozilla/JSONStringWriteFuncs.h"
+
+using mozilla::Preferences;
 
 #define PRINT_TO_CONSOLE 0
 #if PRINT_TO_CONSOLE
@@ -425,9 +427,8 @@ NS_IMETHODIMP nsAbOutlookDirectory::AddCard(nsIAbCard* aCard,
       return NS_ERROR_FAILURE;
     }
     // The UID of the card is the top directory's UID.
-    nsCOMPtr<nsIAbManager> abManager(
-        do_GetService("@mozilla.org/abmanager;1", &retCode));
-    NS_ENSURE_SUCCESS(retCode, retCode);
+    nsCOMPtr<nsIAbManager> abManager =
+        mozilla::components::AbManager::Service();
     retCode = abManager->GetDirectory(dirURI, getter_AddRefs(topDir));
     NS_ENSURE_SUCCESS(retCode, retCode);
     topDir->GetUID(ourUID);
@@ -601,9 +602,7 @@ NS_IMETHODIMP nsAbOutlookDirectory::EditMailListToDatabase(
   nsAutoCString topEntryString;
   int32_t slashPos = uri.RFindChar('/');
   uri.SetLength(slashPos);
-  nsCOMPtr<nsIAbManager> abManager(
-      do_GetService("@mozilla.org/abmanager;1", &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIAbManager> abManager = mozilla::components::AbManager::Service();
   nsCOMPtr<nsIAbDirectory> parent;
   rv = abManager->GetDirectory(uri, getter_AddRefs(parent));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -847,9 +846,8 @@ nsresult nsAbOutlookDirectory::GetCards(nsIMutableArray* aCards,
     // Look up the parent directory (top-level directory) in the
     // AddrBookManager. That relies on the fact that the top-level
     // directory is already in its map before being initialised.
-    nsCOMPtr<nsIAbManager> abManager(
-        do_GetService("@mozilla.org/abmanager;1", &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIAbManager> abManager =
+        mozilla::components::AbManager::Service();
     nsAutoCString dirURI(kOutlookDirectoryScheme);
     dirURI.Append(mParentEntryId);
     nsCOMPtr<nsIAbDirectory> owningDir;
@@ -898,10 +896,6 @@ nsresult nsAbOutlookDirectory::GetNodes(nsIMutableArray* aNodes) {
   }
 
   nsresult rv = NS_OK;
-
-  nsCOMPtr<nsIAbManager> abManager(
-      do_GetService("@mozilla.org/abmanager;1", &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
 
   nsCString topEntryString;
   mDirEntry->ToString(topEntryString);
@@ -1107,17 +1101,10 @@ nsresult nsAbOutlookDirectory::ModifyCardInternal(nsIAbCard* aModifiedCard,
   // name, and when all fails, on the email address.
   aModifiedCard->GetDisplayName(properties[index_DisplayName]);
   if (properties[index_DisplayName].IsEmpty()) {
-    nsresult rv;
-    nsCOMPtr<nsIPrefBranch> prefBranch =
-        do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    int32_t format = Preferences::GetInt(PREF_MAIL_ADDR_BOOK_LASTNAMEFIRST);
 
-    int32_t format;
-    rv = prefBranch->GetIntPref(PREF_MAIL_ADDR_BOOK_LASTNAMEFIRST, &format);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = aModifiedCard->GenerateName(format, nullptr,
-                                     properties[index_DisplayName]);
+    nsresult rv = aModifiedCard->GenerateName(format, nullptr,
+                                              properties[index_DisplayName]);
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (properties[index_DisplayName].IsEmpty()) {

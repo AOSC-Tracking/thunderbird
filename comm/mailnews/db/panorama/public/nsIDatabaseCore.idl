@@ -18,14 +18,14 @@ interface nsIDatabaseCore : nsISupports {
   void startup();
 
   /**
-   * Access to the folders table on the database.
+   * Access to the folders and folder_properties tables on the database.
    */
-  [infallible] readonly attribute nsIFolderDatabase folders;
+  [infallible] readonly attribute nsIFolderDatabase folderDB;
 
   /**
-   * Access to the messages table on the database.
+   * Access to the messages and message_properties tables on the database.
    */
-  [infallible] readonly attribute nsIMessageDatabase messages;
+  [infallible] readonly attribute nsIMessageDatabase messageDB;
 
   /**
    * Migrate the virtualFolders.dat file into the new database. This can only
@@ -45,5 +45,5 @@ interface nsIDatabaseCore : nsISupports {
    * Access to the database for testing purposes only. If you are not a test,
    * you'll get NS_ERROR_NOT_AVAILABLE instead.
    */
-  readonly attribute mozIStorageConnection connection;
+  readonly attribute mozIStorageConnection connectionForTests;
 };

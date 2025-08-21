@@ -236,6 +236,7 @@ export class TreeView extends HTMLElement {
     this.placeholder = this.querySelector(`slot[name="placeholders"]`);
 
     this.addEventListener("scroll", this);
+    this.addEventListener("mousedown", this);
 
     this._height = this.clientHeight;
     this.#resizeObserver = new ResizeObserver(() => {
@@ -306,7 +307,10 @@ export class TreeView extends HTMLElement {
         break;
       }
       case "click": {
-        if (event.button !== 0) {
+        // Bail out on non primary or double clicks.
+        if (event.button !== 0 || event.detail !== 1) {
+          // Ensure the focus is not moved somewhere else.
+          this.ensureCorrectFocus();
           return;
         }
 
@@ -555,6 +559,14 @@ export class TreeView extends HTMLElement {
       }
       case "scroll":
         this._ensureVisibleRowsAreDisplayed(true);
+        break;
+      case "mousedown":
+        // If this happened on the empty space below the tree table, set or
+        // keep the focus there.
+        if (event.target == this) {
+          this.ensureCorrectFocus();
+          event.preventDefault();
+        }
         break;
     }
   }
@@ -1603,7 +1615,7 @@ export class TreeView extends HTMLElement {
    */
   get selectedIndices() {
     const indices = [];
-    const rangeCount = this._selection.getRangeCount();
+    const rangeCount = this._selection?.getRangeCount();
 
     for (let range = 0; range < rangeCount; range++) {
       const min = {};

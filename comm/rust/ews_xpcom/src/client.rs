@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+pub(crate) mod copy_move_operations;
 mod create_folder;
-mod move_item;
 mod server_version;
 
 use std::{
@@ -36,7 +36,8 @@ use ews::{
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use mail_parser::MessageParser;
-use moz_http::StatusCode;
+use mailnews_ui_glue::{handle_auth_failure, AuthErrorOutcome, UserInteractiveServer};
+use moz_http::{Response, StatusCode};
 use nserror::nsresult;
 use nsstring::nsCString;
 use server_version::read_server_version;
@@ -51,7 +52,7 @@ use xpcom::{
         nsMsgKey, IEwsFolderDeleteCallbacks, IEwsFolderUpdateCallbacks, IEwsMessageCallbacks,
         IEwsMessageCreateCallbacks, IEwsMessageDeleteCallbacks, IEwsMessageFetchCallbacks,
     },
-    RefPtr,
+    RefCounted, RefPtr,
 };
 
 use crate::{authentication::credentials::Credentials, cancellable_request::CancellableRequest};
@@ -81,22 +82,39 @@ const EWS_ROOT_FOLDER: &str = "msgfolderroot";
 // specific value.
 const LOG_NETWORK_PAYLOADS_ENV_VAR: &str = "THUNDERBIRD_LOG_NETWORK_PAYLOADS";
 
-pub(crate) struct XpComEwsClient {
+/// The behavior to follow when an operation request results in an
+/// authentication failure.
+enum AuthFailureBehavior {
+    /// Fail immediately without attempting to authenticate again or asking the
+    /// user for new credentials.
+    Silent,
+
+    /// Attempt to authenticate again or ask the user for new credentials.
+    ReAuth,
+}
+
+pub(crate) struct XpComEwsClient<ServerT: RefCounted + 'static> {
     endpoint: Url,
+    server: RefPtr<ServerT>,
     credentials: Credentials,
     client: moz_http::Client,
     server_version: Cell<ExchangeServerVersion>,
 }
 
-impl XpComEwsClient {
+impl<ServerT> XpComEwsClient<ServerT>
+where
+    ServerT: UserInteractiveServer + RefCounted + 'static,
+{
     pub(crate) fn new(
         endpoint: Url,
+        server: RefPtr<ServerT>,
         credentials: Credentials,
-    ) -> Result<XpComEwsClient, XpComEwsError> {
+    ) -> Result<XpComEwsClient<ServerT>, XpComEwsError> {
         let server_version = read_server_version(&endpoint)?;
 
         Ok(XpComEwsClient {
             endpoint,
+            server,
             credentials,
             client: moz_http::Client::new(),
             server_version: Cell::new(server_version),
@@ -120,9 +138,13 @@ impl XpComEwsClient {
             Ok(_) => unsafe {
                 listener.OnStopRunningUrl(uri.coerce(), nserror::NS_OK);
             },
-            Err(err) => unsafe {
-                listener.OnStopRunningUrl(uri.coerce(), err.into());
-            },
+            Err(err) => {
+                log::error!("connectivity check failed with error: {}", err);
+
+                unsafe {
+                    listener.OnStopRunningUrl(uri.coerce(), err.into());
+                }
+            }
         }
     }
 
@@ -138,7 +160,11 @@ impl XpComEwsClient {
             }],
         };
 
-        let res = self.make_operation_request(get_root_folder).await?;
+        let res = self
+            // Make authentication failure silent, since all we want to know is
+            // whether our credentials are valid.
+            .make_operation_request(get_root_folder, AuthFailureBehavior::Silent)
+            .await?;
 
         let response_message_count = res.response_messages.get_folder_response_message.len();
         if response_message_count != 1 {
@@ -221,7 +247,9 @@ impl XpComEwsClient {
                 sync_state: sync_state_token,
             };
 
-            let response = self.make_operation_request(op).await?;
+            let response = self
+                .make_operation_request(op, AuthFailureBehavior::ReAuth)
+                .await?;
             let message = response
                 .response_messages
                 .sync_folder_hierarchy_response_message
@@ -324,7 +352,9 @@ impl XpComEwsClient {
                 sync_scope: None,
             };
 
-            let response = self.make_operation_request(op).await?;
+            let response = self
+                .make_operation_request(op, AuthFailureBehavior::ReAuth)
+                .await?;
             let message = response
                 .response_messages
                 .sync_folder_items_response_message
@@ -496,7 +526,9 @@ impl XpComEwsClient {
                             // sync, and we've missed a new item. So let's try
                             // to gracefully recover from this and add it to the
                             // database.
-                            log::warn!("Cannot find existing item to update with ID {item_id}, creating it instead");
+                            log::warn!(
+                                "Cannot find existing item to update with ID {item_id}, creating it instead"
+                            );
 
                             result = getter_addrefs(|hdr| unsafe {
                                 callbacks.CreateNewHeaderForItem(&*ews_id, hdr)
@@ -559,6 +591,7 @@ impl XpComEwsClient {
             sync_state_token = Some(message.sync_state);
         }
 
+        unsafe { callbacks.OnSyncComplete() }.to_result()?;
         Ok(())
     }
 
@@ -691,7 +724,9 @@ impl XpComEwsClient {
             folder_ids: ids,
         };
 
-        let response = self.make_operation_request(op).await?;
+        let response = self
+            .make_operation_request(op, AuthFailureBehavior::ReAuth)
+            .await?;
 
         let response_messages = response.response_messages.get_folder_response_message;
         validate_response_message_count(&response_messages, DISTINGUISHED_IDS.len())?;
@@ -830,7 +865,9 @@ impl XpComEwsClient {
                 folder_ids: to_fetch,
             };
 
-            let response = self.make_operation_request(op).await?;
+            let response = self
+                .make_operation_request(op, AuthFailureBehavior::ReAuth)
+                .await?;
             let messages = response.response_messages.get_folder_response_message;
 
             let mut fetched = messages
@@ -954,7 +991,9 @@ impl XpComEwsClient {
                 item_ids: batch_ids,
             };
 
-            let response = self.make_operation_request(op).await?;
+            let response = self
+                .make_operation_request(op, AuthFailureBehavior::ReAuth)
+                .await?;
             for response_message in response.response_messages.get_item_response_message {
                 process_response_message_class(
                     "GetItem",
@@ -1196,7 +1235,9 @@ impl XpComEwsClient {
         &self,
         create_item: CreateItem,
     ) -> Result<ItemResponseMessage, XpComEwsError> {
-        let response = self.make_operation_request(create_item).await?;
+        let response = self
+            .make_operation_request(create_item, AuthFailureBehavior::ReAuth)
+            .await?;
 
         // We have only sent one message, therefore the response should only
         // contain one response message.
@@ -1280,7 +1321,9 @@ impl XpComEwsClient {
     /// [`UpdateItem`] https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/updateitem-operation
     async fn make_update_item_request(&self, update_item: UpdateItem) -> Result<(), XpComEwsError> {
         // Make the operation request using the provided parameters.
-        let response = self.make_operation_request(update_item.clone()).await?;
+        let response = self
+            .make_operation_request(update_item.clone(), AuthFailureBehavior::ReAuth)
+            .await?;
 
         // Get all response messages.
         let response_messages = response.response_messages.update_item_response_message;
@@ -1351,7 +1394,9 @@ impl XpComEwsClient {
             suppress_read_receipts: None,
         };
 
-        let response = self.make_operation_request(delete_item).await?;
+        let response = self
+            .make_operation_request(delete_item, AuthFailureBehavior::ReAuth)
+            .await?;
 
         // Make sure we got the amount of response messages matches the amount
         // of messages we requested to have deleted.
@@ -1422,7 +1467,9 @@ impl XpComEwsClient {
             }],
             delete_type: DeleteType::HardDelete,
         };
-        let response = self.make_operation_request(delete_folder).await?;
+        let response = self
+            .make_operation_request(delete_folder, AuthFailureBehavior::ReAuth)
+            .await?;
 
         // We have only sent one message, therefore the response should only
         // contain one response message.
@@ -1493,7 +1540,9 @@ impl XpComEwsClient {
             },
         };
 
-        let response = self.make_operation_request(update_folder).await?;
+        let response = self
+            .make_operation_request(update_folder, AuthFailureBehavior::ReAuth)
+            .await?;
         let response_messages = response.response_messages.update_folder_response_message;
         validate_response_message_count(&response_messages, 1)?;
 
@@ -1514,7 +1563,11 @@ impl XpComEwsClient {
     ///
     /// If the request is throttled, it will be retried after the delay given in
     /// the response.
-    async fn make_operation_request<Op>(&self, op: Op) -> Result<Op::Response, XpComEwsError>
+    async fn make_operation_request<Op>(
+        &self,
+        op: Op,
+        auth_failure_behavior: AuthFailureBehavior,
+    ) -> Result<Op::Response, XpComEwsError>
     where
         Op: Operation,
     {
@@ -1529,41 +1582,31 @@ impl XpComEwsClient {
 
         // Loop in case we need to retry the request after a delay.
         loop {
-            // Fetch the Authorization header value for each request in case of
-            // token expiration between requests.
-            let auth_header_value = self.credentials.to_auth_header_value().await?;
-            // Generate random id for logging purposes.
-            let request_id = Uuid::new_v4();
-            log::info!("Making operation request {request_id}: {op_name}");
+            let response = match self
+                .send_authenticated_request(&request_body, op_name)
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    if matches!(err, XpComEwsError::Authentication)
+                        && matches!(auth_failure_behavior, AuthFailureBehavior::ReAuth)
+                    {
+                        let outcome = handle_auth_failure(self.server.clone())?;
 
-            if env::var(LOG_NETWORK_PAYLOADS_ENV_VAR).is_ok() {
-                // Also log the request body if requested.
-                log::info!("C: {}", String::from_utf8_lossy(&request_body));
-            }
-
-            let response = self
-                .client
-                .post(&self.endpoint)?
-                .header("Authorization", &auth_header_value)
-                .body(request_body.as_slice(), "application/xml")
-                .send()
-                .await?;
-
-            let response_body = response.body();
-            let response_status = response.status()?;
-            log::info!(
-                "Response received for request {request_id} (status {response_status}): {op_name}"
-            );
-
-            if env::var(LOG_NETWORK_PAYLOADS_ENV_VAR).is_ok() {
-                // Also log the response body if requested.
-                log::info!("S: {}", String::from_utf8_lossy(&response_body));
-            }
+                        match outcome {
+                            AuthErrorOutcome::RETRY => continue,
+                            AuthErrorOutcome::ABORT => return Err(err),
+                        }
+                    } else {
+                        return Err(err);
+                    }
+                }
+            };
 
             // Don't immediately propagate in case the error represents a
             // throttled request, which we can address with retry.
             let op_result: Result<soap::Envelope<Op::Response>, _> =
-                soap::Envelope::from_xml_document(&response_body);
+                soap::Envelope::from_xml_document(response.body());
 
             break match op_result {
                 Ok(envelope) => {
@@ -1600,7 +1643,7 @@ impl XpComEwsClient {
                         continue;
                     }
 
-                    log::error!("Request FAILED: {err}");
+                    log::error!("Request FAILED with status {}: {err}", response.status()?);
                     if matches!(err, ews::Error::Deserialize(_)) {
                         // If deserialization failed, the most likely cause is
                         // that our request failed and the response body was not
@@ -1610,9 +1653,68 @@ impl XpComEwsClient {
                         response.error_from_status()?;
                     }
 
+                    // If the response's HTTP status doesn't represent an error,
+                    // derive one from the `ews` error.
                     Err(err.into())
                 }
             };
+        }
+    }
+
+    /// Send an authenticated EWS operation request with the given body.
+    async fn send_authenticated_request(
+        &self,
+        request_body: &[u8],
+        op_name: &str,
+    ) -> Result<Response, XpComEwsError> {
+        // Fetch the Authorization header value for each request in case of
+        // token expiration between requests.
+        let auth_header_value = match self.credentials.to_auth_header_value().await {
+            Ok(value) => value,
+            // The OAuth2 module will return `NS_ERROR_ABORT` if it's failed
+            // to get credentials even after prompting the user again. We
+            // want to catch this so we can properly process it as an
+            // authentication error.
+            Err(err) if err == nserror::NS_ERROR_ABORT => {
+                return Err(XpComEwsError::Authentication);
+            }
+            Err(err) => return Err(err.into()),
+        };
+
+        // Generate random id for logging purposes.
+        let request_id = Uuid::new_v4();
+        log::info!("Making operation request {request_id}: {op_name}");
+
+        if env::var(LOG_NETWORK_PAYLOADS_ENV_VAR).is_ok() {
+            // Also log the request body if requested.
+            log::info!("C: {}", String::from_utf8_lossy(&request_body));
+        }
+
+        let response = self
+            .client
+            .post(&self.endpoint)?
+            .header("Authorization", &auth_header_value)
+            .body(request_body, "text/xml; charset=utf-8")
+            .send()
+            .await?;
+
+        let response_body = response.body();
+        let response_status = response.status()?;
+        log::info!(
+            "Response received for request {request_id} (status {response_status}): {op_name}"
+        );
+
+        if env::var(LOG_NETWORK_PAYLOADS_ENV_VAR).is_ok() {
+            // Also log the response body if requested.
+            log::info!("S: {}", String::from_utf8_lossy(&response_body));
+        }
+
+        // Catch authentication errors quickly so we can react to them
+        // appropriately.
+        if response_status.0 == 401 {
+            Err(XpComEwsError::Authentication)
+        } else {
+            Ok(response)
         }
     }
 }
@@ -1699,17 +1801,12 @@ fn maybe_get_backoff_delay_ms(err: &ews::Error) -> Option<u32> {
     if let ews::Error::RequestFault(fault) = err {
         // We successfully sent a request, but it was rejected for some reason.
         // Whatever the reason, retry if we're provided with a backoff delay.
-        let delay = fault
-            .as_ref()
-            .detail
-            .as_ref()?
-            .message_xml
-            .as_ref()?
-            .back_off_milliseconds?;
+        let message_xml = fault.as_ref().detail.as_ref()?.message_xml.as_ref()?;
 
-        // There's no maximum delay documented, so we clamp the incoming value
-        // just to be on the safe side.
-        Some(u32::try_from(delay).unwrap_or(u32::MAX))
+        match message_xml {
+            ews::MessageXml::ServerBusy(server_busy) => Some(server_busy.back_off_milliseconds),
+            _ => None,
+        }
     } else {
         None
     }
@@ -1754,8 +1851,13 @@ pub(crate) enum XpComEwsError {
     #[error("missing item or folder ID in response from Exchange")]
     MissingIdInResponse,
 
-    #[error("response contained an unexpected number of response messages: expected {expected}, got {actual}")]
+    #[error(
+        "response contained an unexpected number of response messages: expected {expected}, got {actual}"
+    )]
     UnexpectedResponseMessageCount { expected: usize, actual: usize },
+
+    #[error("failed to authenticate")]
+    Authentication,
 }
 
 impl From<XpComEwsError> for nsresult {
@@ -1783,6 +1885,7 @@ where
             }) => {
                 // Authentication failed. Let Thunderbird know so we can
                 // handle it appropriately.
+                log::error!("an authentication error occurred: {err:?}");
                 (EwsClientError::AuthenticationFailed, "")
             }
 

@@ -11,6 +11,7 @@
 #include "nsPrintfCString.h"
 #include "OfflineStorage.h"
 #include "plbase64.h"
+#include "mozilla/Components.h"
 
 #define SYNC_STATE_PROPERTY "ewsSyncStateToken"
 
@@ -74,7 +75,9 @@ NS_IMETHODIMP FolderSyncListener::OnSuccess() { return mDoneCallback(); }
 
 NS_IMETHODIMP FolderSyncListener::OnError(IEwsClient::Error err,
                                           const nsACString& desc) {
-  NS_ERROR("Error occurred while syncing EWS folders");
+  NS_ERROR(nsPrintfCString("Error occurred while syncing EWS folders: %s",
+                           PromiseFlatCString(desc).get())
+               .get());
 
   return NS_OK;
 }
@@ -153,9 +156,9 @@ nsresult EwsIncomingServer::MaybeCreateFolderWithDetails(
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Notify any consumers listening for updates regarding the folder's creation.
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-  if (notifier) notifier->NotifyFolderAdded(newFolder);
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  notifier->NotifyFolderAdded(newFolder);
 
   rv = parent->NotifyFolderAdded(newFolder);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -338,6 +341,22 @@ nsresult EwsIncomingServer::SyncAllFolders(nsIMsgWindow* aMsgWindow) {
   return NS_OK;
 }
 
+NS_IMETHODIMP EwsIncomingServer::GetPassword(nsAString& password) {
+  nsMsgAuthMethodValue authMethod;
+  MOZ_TRY(GetAuthMethod(&authMethod));
+
+  // `nsMsgIncomingServer` doesn't read the password at startup, so we want to
+  // ensure we have read its value from the logins manager at least once. If it
+  // changes, `GetPasswordWithUI` (implemented in `nsMsgIncomingServer` too)
+  // takes care of updating `m_password`.
+  if (m_password.IsEmpty() &&
+      authMethod == nsMsgAuthMethod::passwordCleartext) {
+    MOZ_TRY(GetPasswordWithoutUI());
+  }
+
+  return nsMsgIncomingServer::GetPassword(password);
+}
+
 NS_IMETHODIMP EwsIncomingServer::GetLocalStoreType(
     nsACString& aLocalStoreType) {
   aLocalStoreType.AssignLiteral("ews");
@@ -349,6 +368,13 @@ NS_IMETHODIMP EwsIncomingServer::GetLocalDatabaseType(
     nsACString& aLocalDatabaseType) {
   aLocalDatabaseType.AssignLiteral("mailbox");
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP EwsIncomingServer::GetCanBeDefaultServer(
+    bool* canBeDefaultServer) {
+  NS_ENSURE_ARG_POINTER(canBeDefaultServer);
+  *canBeDefaultServer = true;
   return NS_OK;
 }
 
@@ -444,7 +470,7 @@ NS_IMETHODIMP EwsIncomingServer::GetEwsClient(IEwsClient** ewsClient) {
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Set up the client object with access details.
-  client->Initialize(endpoint, this);
+  rv = client->Initialize(endpoint, this);
   NS_ENSURE_SUCCESS(rv, rv);
 
   client.forget(ewsClient);

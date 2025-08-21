@@ -34,16 +34,16 @@ var { assert_next_nodes, assert_previous_nodes, promise_element } =
     "resource://testing-common/mail/DOMHelpers.sys.mjs"
   );
 var {
-  add_message_to_folder,
   assert_selected_and_displayed,
   be_in_folder,
-  create_message,
   FAKE_SERVER_HOSTNAME,
   get_special_folder,
-
   select_click_row,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
+var { add_message_to_folder, create_message } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
 );
 var { MockFilePicker } = SpecialPowers;
 
@@ -213,8 +213,9 @@ async function promise_attachment_urls(aWin, aNumUrls, aUploads = []) {
       `Footer "${footer.innerHTML}" should start with "Learn more about "`
     );
   } else {
-    Assert.ok(
-      footer.innerHTML == "",
+    Assert.equal(
+      footer.innerHTML,
+      "",
       `Footer should be empty if no serviceUrl is specified.`
     );
   }
@@ -262,8 +263,9 @@ async function promise_attachment_urls(aWin, aNumUrls, aUploads = []) {
 
       for (const [fieldName, id] of Object.entries(expected)) {
         const element = urls[i].querySelector(id);
-        Assert.ok(
-          !!element == !!aUploads[i][fieldName],
+        Assert.equal(
+          !!element,
+          !!aUploads[i][fieldName],
           `The ${fieldName} should have been correctly added.`
         );
         if (aUploads[i][fieldName]) {

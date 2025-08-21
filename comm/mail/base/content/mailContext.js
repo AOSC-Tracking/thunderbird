@@ -10,6 +10,8 @@
 /* globals goDoCommand */ // globalOverlay.js
 /* globals gDBView, gFolder, gViewWrapper, messengerBundle */
 
+/* import-globals-from ../../../mailnews/extensions/newsblog/newsblogOverlay.js */
+
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
@@ -414,7 +416,6 @@ var mailContextMenu = {
 
     checkItem("mailContext-markFlagged", message?.isFlagged);
 
-    setSingleSelection("mailContext-copyMessageUrl", !!isNewsgroup);
     // Disable move if we can't delete message(s) from this folder.
     showItem("mailContext-moveMenu", canMove && !onSpecialItem);
     showItem("mailContext-copyMenu", canCopy && !onSpecialItem);
@@ -432,6 +433,15 @@ var mailContextMenu = {
         !isDummyMessage &&
         calendarDeactivator.isCalendarActivated
     );
+
+    setSingleSelection(
+      "mailContext-copyMessageLink",
+      !onSpecialItem &&
+        numSelectedMessages == 1 &&
+        !isDummyMessage &&
+        !FeedUtils.isFeedMessage(message)
+    );
+    setSingleSelection("mailContext-copyNewsLink", !!isNewsgroup);
 
     const contextDelete = document.getElementById("navContext-delete");
     contextDelete.setAttribute("active", !!areIMAPDeleted);
@@ -660,24 +670,6 @@ var mailContextMenu = {
 
       // Move/copy/archive/convert/delete
       // (Move and Copy sub-menus are handled in the default case.)
-      case "mailContext-copyMessageUrl": {
-        const message = gDBView.hdrForFirstSelectedMessage;
-        const server = message?.folder?.server;
-
-        if (!server) {
-          return;
-        }
-
-        // TODO let backend construct URL and return as attribute
-        let url =
-          server.socketType == Ci.nsMsgSocketType.SSL ? "snews://" : "news://";
-        url += server.hostName + ":" + server.port + "/" + message.messageId;
-
-        Cc["@mozilla.org/widget/clipboardhelper;1"]
-          .getService(Ci.nsIClipboardHelper)
-          .copyString(url);
-        break;
-      }
 
       // Calendar Convert sub-menu
       case "mailContext-calendar-convert-event-menuitem":
@@ -691,6 +683,22 @@ var mailContextMenu = {
           gDBView.hdrForFirstSelectedMessage,
           false
         );
+        break;
+      case "mailContext-copyMessageLink":
+        navigator.clipboard.writeText(
+          `mid:${gDBView.hdrForFirstSelectedMessage?.messageId}`
+        );
+        break;
+      case "mailContext-copyNewsLink":
+        {
+          const message = gDBView.hdrForFirstSelectedMessage;
+          navigator.clipboard.writeText(
+            MailUtils.constructNewsUriSpec(
+              message?.messageId,
+              message?.folder?.server
+            )
+          );
+        }
         break;
 
       // Save/print/download

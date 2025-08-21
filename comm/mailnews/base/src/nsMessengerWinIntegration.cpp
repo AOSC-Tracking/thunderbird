@@ -3,11 +3,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsMessengerWinIntegration.h"
+
 #include <windows.h>
 #include <shellapi.h>
 #include <strsafe.h>
 
 #include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "mozIDOMWindow.h"
 #include "nsCOMArray.h"
@@ -16,12 +19,12 @@
 #include "nsIStringBundle.h"
 #include "nsIMsgWindow.h"
 #include "nsIObserverService.h"
-#include "nsIPrefService.h"
 #include "nsIWidget.h"
 #include "nsIWindowMediator.h"
-#include "nsMessengerWinIntegration.h"
 #include "nsServiceManagerUtils.h"
 #include "nsPIDOMWindow.h"
+
+using namespace mozilla;
 
 #define IDI_MAILBIFF 32576
 #define SHOW_TRAY_ICON_PREF "mail.biff.show_tray_icon"
@@ -39,8 +42,6 @@
 #ifndef NIIF_NOSOUND
 #  define NIIF_NOSOUND 0x00000010
 #endif
-
-using namespace mozilla;
 
 nsMessengerWinIntegration::nsMessengerWinIntegration() {}
 
@@ -114,17 +115,9 @@ LRESULT CALLBACK nsMessengerWinIntegration::IconWindowProc(HWND msgWindow,
   switch (msg) {
     case WM_USER:
       if (msg == WM_USER && lp == WM_LBUTTONDOWN) {
-        nsCOMPtr<nsIPrefBranch> prefBranch =
-            do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-        NS_ENSURE_SUCCESS(rv, FALSE);
-        bool showTrayIcon;
-        rv = prefBranch->GetBoolPref(SHOW_TRAY_ICON_PREF, &showTrayIcon);
-        NS_ENSURE_SUCCESS(rv, FALSE);
-        bool showTrayIconAlways;
-        if (NS_FAILED(prefBranch->GetBoolPref(SHOW_TRAY_ICON_ALWAYS_PREF,
-                                              &showTrayIconAlways))) {
-          showTrayIconAlways = false;
-        }
+        bool showTrayIcon = Preferences::GetBool(SHOW_TRAY_ICON_PREF);
+        bool showTrayIconAlways =
+            Preferences::GetBool(SHOW_TRAY_ICON_ALWAYS_PREF);
         if ((!showTrayIcon || !sUnreadCount) && !showTrayIconAlways) {
           ::Shell_NotifyIconW(NIM_DELETE, &sMailIconData);
           if (auto instance = reinterpret_cast<nsMessengerWinIntegration*>(
@@ -203,7 +196,8 @@ LRESULT CALLBACK nsMessengerWinIntegration::IconWindowProc(HWND msgWindow,
   return ::DefWindowProc(msgWindow, msg, wp, lp);
 }
 
-nsresult nsMessengerWinIntegration::HideWindow(nsIBaseWindow* aWindow) {
+NS_IMETHODIMP
+nsMessengerWinIntegration::HideWindow(nsIBaseWindow* aWindow) {
   NS_ENSURE_ARG(aWindow);
   aWindow->SetVisibility(false);
   sHiddenWindows.AppendElement(aWindow);
@@ -231,6 +225,51 @@ nsresult nsMessengerWinIntegration::HideWindow(nsIBaseWindow* aWindow) {
 NS_IMETHODIMP
 nsMessengerWinIntegration::ShowWindow(mozIDOMWindowProxy* aWindow) {
   activateWindow(aWindow);
+  return NS_OK;
+}
+
+typedef LONG NTSTATUS;
+
+typedef struct _WNF_STATE_NAME {
+  ULONG Data[2];
+} WNF_STATE_NAME, *PWNF_STATE_NAME;
+
+typedef struct _WNF_TYPE_ID {
+  GUID TypeId;
+} WNF_TYPE_ID, *PWNF_TYPE_ID;
+
+typedef ULONG WNF_CHANGE_STAMP, *PWNF_CHANGE_STAMP;
+
+extern "C" NTSTATUS NTAPI NtQueryWnfStateData(
+    _In_ PWNF_STATE_NAME StateName, _In_opt_ PWNF_TYPE_ID TypeId,
+    _In_opt_ const VOID* ExplicitScope, _Out_ PWNF_CHANGE_STAMP ChangeStamp,
+    _Out_writes_bytes_to_opt_(*BufferSize, *BufferSize) PVOID Buffer,
+    _Inout_ PULONG BufferSize);
+
+NS_IMETHODIMP
+nsMessengerWinIntegration::GetIsInDoNotDisturbMode(bool* inDNDMode) {
+  NS_ENSURE_ARG_POINTER(inDNDMode);
+  *inDNDMode = false;
+
+  WNF_STATE_NAME WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED{0xA3BF1C75,
+                                                            0xD83063E};
+
+  WNF_CHANGE_STAMP unused_change_stamp{};
+  DWORD buffer = 0;
+  ULONG buffer_size = sizeof(buffer);
+
+  if (SUCCEEDED(::NtQueryWnfStateData(
+          &WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED, nullptr, nullptr,
+          &unused_change_stamp, &buffer, &buffer_size))) {
+    switch (buffer) {
+      case 0:  // Off
+        break;
+      case 1:  // On (Priority only)
+      case 2:  // On (Alarms only)
+        *inDNDMode = true;
+        break;
+    }
+  }
   return NS_OK;
 }
 
@@ -331,19 +370,10 @@ nsresult nsMessengerWinIntegration::UpdateTrayIcon() {
   rv = CreateIconWindow();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!mPrefBranch) {
-    mPrefBranch = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-
   rv = SetTooltip();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  bool showTrayIconAlways;
-  if (NS_FAILED(mPrefBranch->GetBoolPref(SHOW_TRAY_ICON_ALWAYS_PREF,
-                                         &showTrayIconAlways))) {
-    showTrayIconAlways = false;
-  }
+  bool showTrayIconAlways = Preferences::GetBool(SHOW_TRAY_ICON_ALWAYS_PREF);
   if (sUnreadCount > 0 || showTrayIconAlways) {
     auto idi = IDI_APPLICATION;
     if (sUnreadCount > 0) {
@@ -355,9 +385,7 @@ nsresult nsMessengerWinIntegration::UpdateTrayIcon() {
       // If the tray icon is already shown, just modify it.
       ::Shell_NotifyIconW(NIM_MODIFY, &sMailIconData);
     } else {
-      bool showTrayIcon;
-      rv = mPrefBranch->GetBoolPref(SHOW_TRAY_ICON_PREF, &showTrayIcon);
-      NS_ENSURE_SUCCESS(rv, rv);
+      bool showTrayIcon = Preferences::GetBool(SHOW_TRAY_ICON_PREF);
       if (showTrayIcon) {
         // Show a tray icon only if the pref value is true.
         ::Shell_NotifyIconW(NIM_ADD, &sMailIconData);

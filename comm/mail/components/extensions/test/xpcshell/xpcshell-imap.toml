@@ -7,4 +7,4 @@ tags = [
   "webextensions",
 ]
 
-["include:xpcshell.ini"]
+["include:xpcshell.toml"]

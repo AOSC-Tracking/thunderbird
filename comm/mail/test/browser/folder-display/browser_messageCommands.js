@@ -14,23 +14,27 @@ var { promise_content_tab_load } = ChromeUtils.importESModule(
   "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
 );
 var {
-  add_message_sets_to_folders,
   assert_selected_and_displayed,
   be_in_folder,
   close_popup,
   collapse_all_threads,
   create_folder,
-  create_thread,
   get_about_3pane,
   get_special_folder,
   make_display_threaded,
-  make_message_sets_in_folders,
   press_delete,
   right_click_on_row,
   select_click_row,
   select_shift_click_row,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
+var {
+  add_message_sets_to_folders,
+  create_thread,
+  make_message_sets_in_folders,
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
 );
 var { click_menus_in_sequence } = ChromeUtils.importESModule(
   "resource://testing-common/mail/WindowHelpers.sys.mjs"
@@ -103,8 +107,9 @@ function check_read_status(messages, read) {
   }
 
   for (let i = 0; i < messages.length; i++) {
-    Assert.ok(
-      messages[i].isRead == read,
+    Assert.equal(
+      messages[i].isRead,
+      read,
       "Message marked as " +
         read_str(messages[i].isRead) +
         ", expected " +
@@ -134,15 +139,17 @@ async function check_read_menuitems(index, canMarkRead, canMarkUnread) {
     "#mailContext-markUnread"
   ).disabled;
 
-  Assert.ok(
-    readEnabled == canMarkRead,
+  Assert.equal(
+    readEnabled,
+    canMarkRead,
     "Mark read menu item " +
       (canMarkRead ? "dis" : "en") +
       "abled when it shouldn't be!"
   );
 
-  Assert.ok(
-    unreadEnabled == canMarkUnread,
+  Assert.equal(
+    unreadEnabled,
+    canMarkUnread,
     "Mark unread menu item " +
       (canMarkUnread ? "dis" : "en") +
       "abled when it shouldn't be!"

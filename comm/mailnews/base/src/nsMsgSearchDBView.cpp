@@ -3,8 +3,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
 #include "nsMsgSearchDBView.h"
+
+#include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
+#include "mozilla/ProfilerMarkers.h"
+#include "msgCore.h"
 #include "nsIMsgHdr.h"
 #include "nsIMsgThread.h"
 #include "nsIDBFolderInfo.h"
@@ -13,12 +17,12 @@
 #include "nsTreeColumns.h"
 #include "nsIMsgMessageService.h"
 #include "nsMsgGroupThread.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
 #include "nsMsgMessageFlags.h"
 #include "nsIMsgSearchSession.h"
 #include "nsServiceManagerUtils.h"
 #include "nsIMsgImapMailFolder.h"
+
+using mozilla::Preferences;
 
 static bool gReferenceOnlyThreading;
 
@@ -39,6 +43,7 @@ NS_IMETHODIMP
 nsMsgSearchDBView::Open(nsIMsgFolder* folder, nsMsgViewSortTypeValue sortType,
                         nsMsgViewSortOrderValue sortOrder,
                         nsMsgViewFlagsTypeValue viewFlags) {
+  AUTO_PROFILER_LABEL("nsMsgSearchDBView::Open", MAILNEWS);
   // DBViewWrapper.sys.mjs likes to create search views with a sort order
   // of byNone, in order to have the order be the order the search results
   // are returned. But this doesn't work with threaded view, so make the
@@ -57,10 +62,7 @@ nsMsgSearchDBView::Open(nsIMsgFolder* folder, nsMsgViewSortTypeValue sortType,
     SaveSortInfo(sortType, sortOrder);
   }
 
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-  prefBranch->GetBoolPref("mail.strict_threading", &gReferenceOnlyThreading);
+  Preferences::GetBool("mail.strict_threading", &gReferenceOnlyThreading);
 
   // Our sort is automatically valid because we have no contents at this point!
   m_sortValid = true;
@@ -1060,17 +1062,15 @@ nsresult nsMsgSearchDBView::ProcessNextFolder(nsIMsgWindow* window) {
                  "The source folder and the destination folder are the same");
     if (curFolder != mDestFolder) {
       nsCOMPtr<nsIMsgCopyService> copyService =
-          do_GetService("@mozilla.org/messenger/messagecopyservice;1", &rv);
-      if (NS_SUCCEEDED(rv)) {
-        if (mCommand == nsMsgViewCommandType::moveMessages)
-          rv = copyService->CopyMessages(curFolder, msgs, mDestFolder,
-                                         true /* isMove */, this, window,
-                                         true /*allowUndo*/);
-        else if (mCommand == nsMsgViewCommandType::copyMessages)
-          rv = copyService->CopyMessages(curFolder, msgs, mDestFolder,
-                                         false /* isMove */, this, window,
-                                         true /*allowUndo*/);
-      }
+          mozilla::components::Copy::Service();
+      if (mCommand == nsMsgViewCommandType::moveMessages)
+        rv = copyService->CopyMessages(curFolder, msgs, mDestFolder,
+                                       true /* isMove */, this, window,
+                                       true /*allowUndo*/);
+      else if (mCommand == nsMsgViewCommandType::copyMessages)
+        rv = copyService->CopyMessages(curFolder, msgs, mDestFolder,
+                                       false /* isMove */, this, window,
+                                       true /*allowUndo*/);
     }
   }
 
@@ -1313,7 +1313,7 @@ nsMsgGroupThread* nsMsgSearchDBView::CreateGroupThread(
       m_sortType == nsMsgViewSortType::byReceived) {
     threadSortOrder = m_sortOrder;
   } else {
-    if (mozilla::Preferences::GetInt("mailnews.default_sort_order") ==
+    if (Preferences::GetInt("mailnews.default_sort_order") ==
         nsMsgViewSortOrder::ascending) {
       threadSortOrder = nsMsgViewSortOrder::ascending;
     }

@@ -3,8 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"  // for pre-compiled headers
 #include "nsMsgMailSession.h"
+
+#include "msgCore.h"  // for pre-compiled headers
 #include "nsIMsgMessageService.h"
 #include "nsMsgUtils.h"
 #include "nsIMsgAccountManager.h"
@@ -29,9 +30,12 @@
 #include "mozilla/Services.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
 #include "nsFocusManager.h"
 #include "nsIPromptService.h"
 #include "nsEmbedCID.h"
+
+using mozilla::Preferences;
 
 NS_IMPL_ISUPPORTS(nsMsgMailSession, nsIMsgMailSession, nsIFolderListener)
 
@@ -172,53 +176,45 @@ nsMsgMailSession::RemoveUserFeedbackListener(
 }
 
 NS_IMETHODIMP
-nsMsgMailSession::AlertUser(const nsAString& aMessage,
-                            nsIMsgMailNewsUrl* aUrl) {
-  bool listenersNotified = false;
+nsMsgMailSession::AlertUser(const nsAString& aMessage, nsIURI* aUri,
+                            bool aSilent) {
+  bool handledByListener = false;
   nsTObserverArray<nsCOMPtr<nsIMsgUserFeedbackListener>>::ForwardIterator iter(
       mFeedbackListeners);
   nsCOMPtr<nsIMsgUserFeedbackListener> listener;
 
   while (iter.HasMore()) {
-    bool notified = false;
+    bool handled = false;
     listener = iter.GetNext();
-    listener->OnAlert(aMessage, aUrl, &notified);
-    listenersNotified = listenersNotified || notified;
+    listener->OnAlert(aMessage, aUri, aSilent, &handled);
+
+    // If the alert was handled by at least one listener, we don't want to
+    // notify the user any further.
+    handledByListener = handledByListener || handled;
   }
 
-  // Are alerts disabled by preference?
-  nsCOMPtr<nsIPrefBranch> prefService =
-      do_GetService(NS_PREFSERVICE_CONTRACTID);
-  prefService->GetBoolPref("mail.suppressAlertsForTests", &listenersNotified);
-
-  // If the listeners notified the user, then we don't need to. Also exit if
-  // aUrl is null because we won't have a nsIMsgWindow in that case.
-  if (listenersNotified || !aUrl) return NS_OK;
-
-  // If the url hasn't got a message window, then the error was a generated as a
-  // result of background activity (e.g. autosync, biff, etc), and hence we
-  // shouldn't prompt either.
-  nsCOMPtr<nsIMsgWindow> msgWindow;
-  aUrl->GetMsgWindow(getter_AddRefs(msgWindow));
-
-  if (!msgWindow) return NS_OK;
-
-  nsCOMPtr<mozIDOMWindowProxy> domWindow;
-  msgWindow->GetDomWindow(getter_AddRefs(domWindow));
+  // If the listeners notified the user, then we don't need to. Additionally, if
+  // the alert should be silent (e.g. it was a generated as a result of
+  // background activity like autosync, biff, etc.), or if alerts are disabled
+  // entirely, we also shouldn't notify.
+  if (handledByListener || aSilent ||
+      Preferences::GetBool("mail.suppressAlertsForTests")) {
+    return NS_OK;
+  }
 
   nsresult rv;
   nsCOMPtr<nsIPromptService> dlgService(
       do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  dlgService->Alert(domWindow, nullptr, PromiseFlatString(aMessage).get());
+  dlgService->Alert(nullptr, nullptr, PromiseFlatString(aMessage).get());
 
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMsgMailSession::AlertCertError(nsITransportSecurityInfo* securityInfo,
-                                 nsIMsgMailNewsUrl* url) {
+                                 nsIURI* url) {
   nsTObserverArray<nsCOMPtr<nsIMsgUserFeedbackListener>>::ForwardIterator iter(
       mFeedbackListeners);
   nsCOMPtr<nsIMsgUserFeedbackListener> listener;
@@ -438,9 +434,7 @@ nsresult nsMsgShutdownService::ProcessNextTask() {
     SetStatusText(taskName);
 
     nsCOMPtr<nsIMsgMailSession> mailSession =
-        do_GetService("@mozilla.org/messenger/services/session;1");
-    NS_ENSURE_TRUE(mailSession, NS_ERROR_FAILURE);
-
+        mozilla::components::MailSession::Service();
     nsCOMPtr<nsIMsgWindow> topMsgWindow;
     mailSession->GetTopmostMsgWindow(getter_AddRefs(topMsgWindow));
 
@@ -543,9 +537,7 @@ NS_IMETHODIMP nsMsgShutdownService::Observe(nsISupports* aSubject,
     NS_ENSURE_TRUE(mMsgProgress, NS_ERROR_FAILURE);
 
     nsCOMPtr<nsIMsgMailSession> mailSession =
-        do_GetService("@mozilla.org/messenger/services/session;1");
-    NS_ENSURE_TRUE(mailSession, NS_ERROR_FAILURE);
-
+        mozilla::components::MailSession::Service();
     nsCOMPtr<nsIMsgWindow> topMsgWindow;
     mailSession->GetTopmostMsgWindow(getter_AddRefs(topMsgWindow));
 

@@ -4,6 +4,9 @@
 
 extern crate xpcom;
 
+use ews::copy_item::CopyItem;
+use ews::move_item::MoveItem;
+use mailnews_ui_glue::UserInteractiveServer;
 use nserror::{
     nsresult, NS_ERROR_ALREADY_INITIALIZED, NS_ERROR_INVALID_ARG, NS_ERROR_NOT_INITIALIZED, NS_OK,
 };
@@ -19,9 +22,9 @@ use xpcom::interfaces::nsIIOService;
 use xpcom::{
     interfaces::{
         nsIInputStream, nsIMsgIncomingServer, nsIURI, nsIUrlListener, IEwsFolderCallbacks,
-        IEwsFolderCreateCallbacks, IEwsFolderDeleteCallbacks, IEwsFolderUpdateCallbacks,
-        IEwsItemMoveCallbacks, IEwsMessageCallbacks, IEwsMessageCreateCallbacks,
-        IEwsMessageDeleteCallbacks, IEwsMessageFetchCallbacks,
+        IEwsFolderCreateCallbacks, IEwsFolderDeleteCallbacks, IEwsFolderMoveCallbacks,
+        IEwsFolderUpdateCallbacks, IEwsItemCopyMoveCallbacks, IEwsMessageCallbacks,
+        IEwsMessageCreateCallbacks, IEwsMessageDeleteCallbacks, IEwsMessageFetchCallbacks,
     },
     nsIID, xpcom_method, RefPtr,
 };
@@ -43,6 +46,7 @@ mod xpcom_io;
 #[no_mangle]
 pub unsafe extern "C" fn NS_CreateEwsClient(iid: &nsIID, result: *mut *mut c_void) -> nsresult {
     let instance = XpcomEwsBridge::allocate(InitXpcomEwsBridge {
+        server: OnceCell::default(),
         details: OnceCell::default(),
     });
 
@@ -53,12 +57,14 @@ pub unsafe extern "C" fn NS_CreateEwsClient(iid: &nsIID, result: *mut *mut c_voi
 /// between C++ consumers and an async Rust EWS client.
 #[xpcom::xpcom(implement(IEwsClient), atomic)]
 struct XpcomEwsBridge {
+    server: OnceCell<Box<dyn UserInteractiveServer>>,
     details: OnceCell<EwsConnectionDetails>,
 }
 
 #[derive(Clone)]
 struct EwsConnectionDetails {
     endpoint: Url,
+    server: RefPtr<nsIMsgIncomingServer>,
     credentials: Credentials,
 }
 
@@ -72,10 +78,12 @@ impl XpcomEwsBridge {
         let endpoint = Url::parse(&endpoint.to_utf8()).map_err(|_| NS_ERROR_INVALID_ARG)?;
 
         let credentials = server.get_credentials()?;
+        let server = RefPtr::new(server);
 
         self.details
             .set(EwsConnectionDetails {
                 endpoint,
+                server,
                 credentials,
             })
             .map_err(|_| NS_ERROR_ALREADY_INITIALIZED)?;
@@ -321,10 +329,10 @@ impl XpcomEwsBridge {
         Ok(())
     }
 
-    xpcom_method!(move_items => MoveItems(callbacks: *const IEwsItemMoveCallbacks, destination_folder_id: *const nsACString, item_ids: *const ThinVec<nsCString>));
+    xpcom_method!(move_items => MoveItems(callbacks: *const IEwsItemCopyMoveCallbacks, destination_folder_id: *const nsACString, item_ids: *const ThinVec<nsCString>));
     fn move_items(
         &self,
-        callbacks: &IEwsItemMoveCallbacks,
+        callbacks: &IEwsItemCopyMoveCallbacks,
         destination_folder_id: &nsACString,
         item_ids: &ThinVec<nsCString>,
     ) -> Result<(), nsresult> {
@@ -332,9 +340,53 @@ impl XpcomEwsBridge {
 
         moz_task::spawn_local(
             "move_items",
-            client.move_item(
+            client.copy_move_item::<MoveItem>(
                 destination_folder_id.to_string(),
                 item_ids.iter().map(|id| id.to_string()).collect(),
+                RefPtr::new(callbacks),
+            ),
+        )
+        .detach();
+
+        Ok(())
+    }
+
+    xpcom_method!(copy_items => CopyItems(callbacks: *const IEwsItemCopyMoveCallbacks, destination_folder_id: *const nsACString, item_ids: *const ThinVec<nsCString>));
+    fn copy_items(
+        &self,
+        callbacks: &IEwsItemCopyMoveCallbacks,
+        destination_folder_id: &nsACString,
+        item_ids: &ThinVec<nsCString>,
+    ) -> Result<(), nsresult> {
+        let client = self.try_new_client()?;
+
+        moz_task::spawn_local(
+            "copy_items",
+            client.copy_move_item::<CopyItem>(
+                destination_folder_id.to_string(),
+                item_ids.iter().map(|id| id.to_string()).collect(),
+                RefPtr::new(callbacks),
+            ),
+        )
+        .detach();
+
+        Ok(())
+    }
+
+    xpcom_method!(move_folders => MoveFolders(callbacks: *const IEwsFolderMoveCallbacks, destination_folder_id: *const nsACString, folder_ids: *const ThinVec<nsCString>));
+    fn move_folders(
+        &self,
+        callbacks: &IEwsFolderMoveCallbacks,
+        destination_folder_id: &nsACString,
+        folder_ids: &ThinVec<nsCString>,
+    ) -> Result<(), nsresult> {
+        let client = self.try_new_client()?;
+
+        moz_task::spawn_local(
+            "move_folders",
+            client.move_folder(
+                destination_folder_id.to_string(),
+                folder_ids.iter().map(|id| id.to_string()).collect(),
                 RefPtr::new(callbacks),
             ),
         )
@@ -363,15 +415,16 @@ impl XpcomEwsBridge {
     }
 
     /// Gets a new EWS client if initialized.
-    fn try_new_client(&self) -> Result<XpComEwsClient, nsresult> {
+    fn try_new_client(&self) -> Result<XpComEwsClient<nsIMsgIncomingServer>, nsresult> {
         // We only get a reference out of the cell, but we need ownership in
         // order for the `XpcomEwsClient` to be `Send`, so we're forced to
         // clone.
         let EwsConnectionDetails {
             endpoint,
+            server,
             credentials,
         } = self.details.get().ok_or(NS_ERROR_NOT_INITIALIZED)?.clone();
 
-        Ok(XpComEwsClient::new(endpoint, credentials)?)
+        Ok(XpComEwsClient::new(endpoint, server, credentials)?)
     }
 }

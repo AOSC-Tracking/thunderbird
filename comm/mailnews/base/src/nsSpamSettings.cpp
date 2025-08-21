@@ -15,10 +15,9 @@
 #include "nsImapCore.h"
 #include "nsIImapIncomingServer.h"
 #include "nsAppDirectoryServiceDefs.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
 #include "nsIStringBundle.h"
 #include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
 #include "nsMailDirServiceDefs.h"
 #include "nsDirectoryServiceUtils.h"
@@ -28,6 +27,7 @@
 #include "nsIMsgAccountManager.h"
 #include "mozilla/intl/AppDateTimeFormat.h"
 
+using mozilla::Preferences;
 using namespace mozilla::mailnews;
 
 nsSpamSettings::nsSpamSettings() {
@@ -82,39 +82,22 @@ NS_IMETHODIMP nsSpamSettings::SetMoveTargetMode(int32_t aMoveTargetMode) {
 
 NS_IMETHODIMP nsSpamSettings::GetManualMark(bool* aManualMark) {
   NS_ENSURE_ARG_POINTER(aManualMark);
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-  return prefBranch->GetBoolPref("mail.spam.manualMark", aManualMark);
+  return Preferences::GetBool("mail.spam.manualMark", aManualMark);
 }
 
 NS_IMETHODIMP nsSpamSettings::GetManualMarkMode(int32_t* aManualMarkMode) {
   NS_ENSURE_ARG_POINTER(aManualMarkMode);
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-  return prefBranch->GetIntPref("mail.spam.manualMarkMode", aManualMarkMode);
+  return Preferences::GetInt("mail.spam.manualMarkMode", aManualMarkMode);
 }
 
 NS_IMETHODIMP nsSpamSettings::GetLoggingEnabled(bool* aLoggingEnabled) {
   NS_ENSURE_ARG_POINTER(aLoggingEnabled);
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-  return prefBranch->GetBoolPref("mail.spam.logging.enabled", aLoggingEnabled);
+  return Preferences::GetBool("mail.spam.logging.enabled", aLoggingEnabled);
 }
 
 NS_IMETHODIMP nsSpamSettings::GetMarkAsReadOnSpam(bool* aMarkAsReadOnSpam) {
   NS_ENSURE_ARG_POINTER(aMarkAsReadOnSpam);
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-  return prefBranch->GetBoolPref("mail.spam.markAsReadOnSpam",
-                                 aMarkAsReadOnSpam);
+  return Preferences::GetBool("mail.spam.markAsReadOnSpam", aMarkAsReadOnSpam);
 }
 
 NS_IMPL_GETSET(nsSpamSettings, MoveOnSpam, bool, mMoveOnSpam)
@@ -294,17 +277,12 @@ NS_IMETHODIMP nsSpamSettings::Initialize(nsIMsgIncomingServer* aServer) {
   rv = SetServerFilterTrustFlags(serverFilterTrustFlags);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  if (prefBranch)
-    prefBranch->GetCharPref("mail.trusteddomains", mTrustedMailDomains);
+  Preferences::GetCString("mail.trusteddomains", mTrustedMailDomains);
 
   mWhiteListDirArray.Clear();
   if (!mWhiteListAbURI.IsEmpty()) {
-    nsCOMPtr<nsIAbManager> abManager(
-        do_GetService("@mozilla.org/abmanager;1", &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
-
+    nsCOMPtr<nsIAbManager> abManager =
+        mozilla::components::AbManager::Service();
     nsTArray<nsCString> whiteListArray;
     ParseString(mWhiteListAbURI, ' ', whiteListArray);
 
@@ -337,10 +315,8 @@ NS_IMETHODIMP nsSpamSettings::Initialize(nsIMsgIncomingServer* aServer) {
 
   // collect lists of identity users if needed
   if (mInhibitWhiteListingIdentityDomain || mInhibitWhiteListingIdentityUser) {
-    nsCOMPtr<nsIMsgAccountManager> accountManager(
-        do_GetService("@mozilla.org/messenger/account-manager;1", &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
-
+    nsCOMPtr<nsIMsgAccountManager> accountManager =
+        mozilla::components::AccountManager::Service();
     nsCOMPtr<nsIMsgAccount> account;
     rv = accountManager->FindAccountForServer(aServer, getter_AddRefs(account));
     NS_ENSURE_SUCCESS(rv, rv);

@@ -24,11 +24,13 @@ var {
   be_in_folder,
   get_about_message,
   get_special_folder,
-  make_message_sets_in_folders,
   press_delete,
   select_click_row,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
+var { make_message_sets_in_folders } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
 );
 var { get_notification, wait_for_notification_to_show } =
   ChromeUtils.importESModule(
@@ -89,14 +91,15 @@ add_task(async function test_open_draft_again() {
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, 1000));
 
-  Assert.ok(
-    Services.ww.activeWindow == cwc,
+  Assert.equal(
+    Services.ww.activeWindow,
+    cwc,
     "the original draft composition window should have got focus (again)"
   );
 
   const cwins2 = [...Services.wm.getEnumerator("msgcompose")].length;
 
-  Assert.ok(cwins2 > 0, "No compose window open!");
+  Assert.greater(cwins2, 0, "No compose window open!");
   Assert.equal(cwins, cwins2, "The number of compose windows changed!");
 
   // Type something and save, then check that we only have one draft.

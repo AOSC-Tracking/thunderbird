@@ -9,12 +9,14 @@ pub use common::*;
 pub use operations::*;
 pub mod soap;
 
+pub mod copy_item;
 pub mod create_folder;
 pub mod create_item;
 pub mod delete_folder;
 pub mod delete_item;
 pub mod get_folder;
 pub mod get_item;
+pub mod move_folder;
 pub mod move_item;
 pub mod server_version;
 pub mod sync_folder_hierarchy;

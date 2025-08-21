@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- * Tests that getFolderForMsgFolder and getMsgFolderForFolder work.
+ * Test that getMsgFolderForFolder() works.
  */
 
 add_task(async function testMsgFolders() {
@@ -31,27 +31,39 @@ add_task(async function testMsgFolders() {
     [trashMsgFolder, outboxMsgFolder, alphaMsgFolder, bravoMsgFolder]
   );
 
-  const rootDBFolder = folders.getFolderByPath("server1");
-  const alphaDBFolder = folders.getFolderByPath("server1/alpha");
-  const bravoDBFolder = folders.getFolderByPath("server1/bravo");
-  const outboxDBFolder = folders.getFolderByPath("server1/Unsent Messages");
-  const trashDBFolder = folders.getFolderByPath("server1/Trash");
-  Assert.deepEqual(rootDBFolder.children, [
+  const rootDBFolder = folderDB.getFolderByPath("server1");
+  const alphaDBFolder = folderDB.getFolderByPath("server1/alpha");
+  const bravoDBFolder = folderDB.getFolderByPath("server1/bravo");
+  const outboxDBFolder = folderDB.getFolderByPath("server1/Unsent Messages");
+  const trashDBFolder = folderDB.getFolderByPath("server1/Trash");
+  Assert.deepEqual(folderDB.getFolderChildren(rootDBFolder), [
     trashDBFolder,
     outboxDBFolder,
     alphaDBFolder,
     bravoDBFolder,
   ]);
 
-  Assert.equal(folders.getFolderForMsgFolder(rootMsgFolder), rootDBFolder);
-  Assert.equal(folders.getFolderForMsgFolder(alphaMsgFolder), alphaDBFolder);
-  Assert.equal(folders.getFolderForMsgFolder(bravoMsgFolder), bravoDBFolder);
-  Assert.equal(folders.getFolderForMsgFolder(outboxMsgFolder), outboxDBFolder);
-  Assert.equal(folders.getFolderForMsgFolder(trashMsgFolder), trashDBFolder);
+  Assert.equal(rootMsgFolder.id, rootDBFolder);
+  Assert.equal(alphaMsgFolder.id, alphaDBFolder);
+  Assert.equal(bravoMsgFolder.id, bravoDBFolder);
+  Assert.equal(outboxMsgFolder.id, outboxDBFolder);
+  Assert.equal(trashMsgFolder.id, trashDBFolder);
 
-  Assert.equal(folders.getMsgFolderForFolder(rootDBFolder), rootMsgFolder);
-  Assert.equal(folders.getMsgFolderForFolder(alphaDBFolder), alphaMsgFolder);
-  Assert.equal(folders.getMsgFolderForFolder(bravoDBFolder), bravoMsgFolder);
-  Assert.equal(folders.getMsgFolderForFolder(outboxDBFolder), outboxMsgFolder);
-  Assert.equal(folders.getMsgFolderForFolder(trashDBFolder), trashMsgFolder);
+  Assert.equal(folderDB.getMsgFolderForFolder(rootDBFolder), rootMsgFolder);
+  Assert.equal(folderDB.getMsgFolderForFolder(alphaDBFolder), alphaMsgFolder);
+  Assert.equal(folderDB.getMsgFolderForFolder(bravoDBFolder), bravoMsgFolder);
+  Assert.equal(folderDB.getMsgFolderForFolder(outboxDBFolder), outboxMsgFolder);
+  Assert.equal(folderDB.getMsgFolderForFolder(trashDBFolder), trashMsgFolder);
+
+  Assert.throws(
+    () => folderDB.getMsgFolderForFolder(12345678),
+    /NS_ERROR_/,
+    "should fail for non-existent folder"
+  );
+
+  Assert.throws(
+    () => folderDB.getMsgFolderForFolder(0),
+    /NS_ERROR_/,
+    "should fail for null folder"
+  );
 });

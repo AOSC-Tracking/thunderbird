@@ -11,13 +11,11 @@ var { assert_element_visible, assert_element_not_visible } =
   ChromeUtils.importESModule(
     "resource://testing-common/mail/DOMHelpers.sys.mjs"
   );
-
-var { be_in_folder, inboxFolder } = ChromeUtils.importESModule(
+var { be_in_folder, close_popup } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-
-var { close_popup } = ChromeUtils.importESModule(
-  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+var { inboxFolder } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
 );
 
 var url =
@@ -100,7 +98,11 @@ add_task(async function test_spellcheck_in_content_tabs() {
   );
   await BrowserTestUtils.waitForPopupEvent(browserContext, "shown");
   let suggestions = document.getElementsByClassName("spell-suggestion");
-  Assert.ok(suggestions.length > 0, "What, is zombocom a registered word now?");
+  Assert.greater(
+    suggestions.length,
+    0,
+    "What, is zombocom a registered word now?"
+  );
   const addToDict = document.getElementById(
     "browserContext-spell-add-to-dictionary"
   );
@@ -123,7 +125,7 @@ add_task(async function test_spellcheck_in_content_tabs() {
   );
   await BrowserTestUtils.waitForPopupEvent(browserContext, "shown");
   suggestions = document.getElementsByClassName("spell-suggestion");
-  Assert.ok(suggestions.length == 0, "But I just taught you this word!");
+  Assert.equal(suggestions.length, 0, "But I just taught you this word!");
   await close_popup(window, browserContext);
 });
 

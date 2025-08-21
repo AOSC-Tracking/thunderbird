@@ -3,6 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsMsgAccount.h"
+
 #include "prprf.h"
 #include "plstr.h"
 #include "prmem.h"
@@ -10,15 +12,16 @@
 #include "nsCOMPtr.h"
 #include "nsIMsgFolderNotificationService.h"
 #include "nsPrintfCString.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
-#include "nsMsgAccount.h"
 #include "nsIMsgAccount.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIObserverService.h"
+#include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "nsServiceManagerUtils.h"
 #include "nsMsgUtils.h"
+
+using mozilla::Preferences;
 
 NS_IMPL_ISUPPORTS(nsMsgAccount, nsIMsgAccount)
 
@@ -30,15 +33,13 @@ nsMsgAccount::~nsMsgAccount() {}
 nsresult nsMsgAccount::getPrefService() {
   if (m_prefs) return NS_OK;
 
-  nsresult rv;
   NS_ENSURE_FALSE(m_accountKey.IsEmpty(), NS_ERROR_NOT_INITIALIZED);
-  nsCOMPtr<nsIPrefService> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString accountRoot("mail.account.");
   accountRoot.Append(m_accountKey);
   accountRoot.Append('.');
-  return prefs->GetBranch(accountRoot.get(), getter_AddRefs(m_prefs));
+  return Preferences::GetService()->GetBranch(accountRoot.get(),
+                                              getter_AddRefs(m_prefs));
 }
 
 NS_IMETHODIMP
@@ -81,9 +82,7 @@ nsresult nsMsgAccount::createIncomingServer() {
 
   // get the server from the account manager
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+      mozilla::components::AccountManager::Service();
   nsCOMPtr<nsIMsgIncomingServer> server;
   rv = accountManager->GetIncomingServer(serverKey, getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -131,17 +130,15 @@ nsMsgAccount::SetIncomingServer(nsIMsgIncomingServer* aIncomingServer) {
     rv = aIncomingServer->GetRootFolder(getter_AddRefs(rootFolder));
     NS_ENSURE_SUCCESS(rv, rv);
     nsCOMPtr<nsIFolderListener> mailSession =
-        do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+        mozilla::components::MailSession::Service();
     mailSession->OnFolderAdded(nullptr, rootFolder);
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1", &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
     notifier->NotifyFolderAdded(rootFolder);
 
     nsCOMPtr<nsIMsgAccountManager> accountManager =
-        do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-    if (NS_SUCCEEDED(rv)) accountManager->NotifyServerLoaded(aIncomingServer);
+        mozilla::components::AccountManager::Service();
+    accountManager->NotifyServerLoaded(aIncomingServer);
 
     // Force built-in folders to be created and discovered. Then, notify
     // listeners about them.
@@ -187,8 +184,7 @@ nsresult nsMsgAccount::createIdentities() {
   }
   // get the server from the account manager
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::AccountManager::Service();
 
   char* newStr = identityKey.BeginWriting();
   char* token = NS_strtok(",", &newStr);

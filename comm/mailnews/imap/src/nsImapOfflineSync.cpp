@@ -119,11 +119,7 @@ bool nsImapOfflineSync::AdvanceToNextServer() {
     NS_ASSERTION(!m_currentServer, "this shouldn't be set");
     m_currentServer = nullptr;
     nsCOMPtr<nsIMsgAccountManager> accountManager =
-        do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-    NS_ASSERTION(accountManager && NS_SUCCEEDED(rv),
-                 "couldn't get account mgr");
-    if (!accountManager || NS_FAILED(rv)) return false;
-
+        mozilla::components::AccountManager::Service();
     rv = accountManager->GetAllServers(m_allServers);
     NS_ENSURE_SUCCESS(rv, false);
   }
@@ -396,7 +392,7 @@ void nsImapOfflineSync::ProcessAppendMsgOperation(
     tmpFile->Clone(getter_AddRefs(cloneTmpFile));
     m_curTempFile = cloneTmpFile;
     nsCOMPtr<nsIMsgCopyService> copyService =
-        do_GetService("@mozilla.org/messenger/messagecopyservice;1");
+        mozilla::components::Copy::Service();
 
     // CopyFileMessage returns error async to this->OnStopCopy
     // if copyService is null, let's crash here and now.
@@ -510,11 +506,9 @@ void nsImapOfflineSync::ProcessMoveOperation(nsIMsgOfflineImapOperation* op) {
       }
     }
     nsCOMPtr<nsIMsgCopyService> copyService =
-        do_GetService("@mozilla.org/messenger/messagecopyservice;1", &rv);
-    if (copyService) {
-      copyService->CopyMessages(m_currentFolder, messages, destFolder, true,
-                                this, m_window, false);
-    }
+        mozilla::components::Copy::Service();
+    copyService->CopyMessages(m_currentFolder, messages, destFolder, true, this,
+                              m_window, false);
   }
 }
 
@@ -598,10 +592,9 @@ void nsImapOfflineSync::ProcessCopyOperation(
       if (NS_SUCCEEDED(rv) && mailHdr) messages.AppendElement(mailHdr);
     }
     nsCOMPtr<nsIMsgCopyService> copyService =
-        do_GetService("@mozilla.org/messenger/messagecopyservice;1", &rv);
-    if (copyService)
-      copyService->CopyMessages(m_currentFolder, messages, destFolder, false,
-                                this, m_window, false);
+        mozilla::components::Copy::Service();
+    copyService->CopyMessages(m_currentFolder, messages, destFolder, false,
+                              this, m_window, false);
   }
 }
 

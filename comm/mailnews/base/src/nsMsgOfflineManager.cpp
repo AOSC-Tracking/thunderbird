@@ -143,10 +143,7 @@ nsresult nsMsgOfflineManager::AdvanceToNextState(nsresult exitStatus) {
 }
 
 nsresult nsMsgOfflineManager::SynchronizeOfflineImapChanges() {
-  nsresult rv = NS_OK;
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   return imapService->PlaybackAllOfflineOperations(
       m_window, this, getter_AddRefs(mOfflineImapSync));
 }
@@ -156,8 +153,7 @@ nsresult nsMsgOfflineManager::SendUnsentMessages() {
   nsCOMPtr<nsIMsgSendLater> pMsgSendLater(do_GetService(kMsgSendLaterCID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::AccountManager::Service();
   // now we have to iterate over the identities, finding the *unique* unsent
   // messages folder for each one, determine if they have unsent messages, and
   // if so, add them to the list of identities to send unsent messages from.
@@ -234,11 +230,8 @@ nsresult nsMsgOfflineManager::DownloadOfflineNewsgroups() {
 }
 
 nsresult nsMsgOfflineManager::DownloadMail() {
-  nsresult rv = NS_OK;
   ShowStatus("downloadingMail");
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   return imapService->DownloadAllOffineImapFolders(m_window, this);
   // ### we should do get new mail on pop servers, and download imap messages
   // for offline use.

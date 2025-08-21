@@ -4,12 +4,17 @@
 
 "use strict";
 
-var { be_in_folder, create_folder, make_message_sets_in_folders } =
-  ChromeUtils.importESModule(
-    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
-  );
+var { be_in_folder, create_folder } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
+var { make_message_sets_in_folders } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
+);
 var { MockAlertsService } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/MockAlertsService.sys.mjs"
+);
+var { MockSound } = ChromeUtils.importESModule(
+  "resource://testing-common/MockSound.sys.mjs"
 );
 var { promise_new_window } = ChromeUtils.importESModule(
   "resource://testing-common/mail/WindowHelpers.sys.mjs"
@@ -20,6 +25,9 @@ var { PromiseTestUtils } = ChromeUtils.importESModule(
 
 var { MailConsts } = ChromeUtils.importESModule(
   "resource:///modules/MailConsts.sys.mjs"
+);
+var { MailNotificationManager } = ChromeUtils.importESModule(
+  "resource:///modules/MailNotificationManager.sys.mjs"
 );
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
@@ -42,6 +50,8 @@ var gMsgMinutes = 9000;
 
 add_setup(async function () {
   MockAlertsService.init();
+  MockSound.init();
+  remember_and_set_bool_pref("mail.biff.play_sound", true);
 
   // Ensure we have enabled new mail notifications
   remember_and_set_bool_pref("mail.biff.show_alert", true);
@@ -93,17 +103,15 @@ add_setup(async function () {
     MailServices.accounts.removeAccount(account, false);
 
     // Reset notification manager state.
-    const notificationManager = Cc[
-      "@mozilla.org/mail/notification-manager;1"
-    ].getService(Ci.mozINewMailListener);
-    notificationManager.wrappedJSObject._folderNewestNotifiedTime.clear();
+    MailNotificationManager._folderNewestNotifiedTime.clear();
     Assert.equal(
-      notificationManager.wrappedJSObject._pendingFolders.size,
+      MailNotificationManager._pendingFolders.size,
       0,
       "No pending alerts"
     );
 
     MockAlertsService.cleanup();
+    MockSound.cleanup();
   });
 });
 
@@ -121,6 +129,7 @@ registerCleanupFunction(function () {
 function setupTest() {
   gFolder.markAllMessagesRead(null);
   MockAlertsService.reset();
+  MockSound.reset();
   gFolder.biffState = Ci.nsIMsgFolder.nsMsgBiffState_NoMail;
   gFolder2.biffState = Ci.nsIMsgFolder.nsMsgBiffState_NoMail;
 
@@ -186,6 +195,11 @@ add_task(async function test_new_mail_received_causes_notification() {
   await make_gradually_newer_sets_in_folder([gFolder], [{ count: 1 }]);
   await MockAlertsService.promiseShown();
   Assert.ok(MockAlertsService.alert, "Should have shown a notification");
+  Assert.deepEqual(
+    MockSound.played,
+    [`(event)${Ci.nsISound.EVENT_NEW_MAIL_RECEIVED}`],
+    "should have played the system sound"
+  );
 
   Services.ww.unregisterNotification(observer);
   Assert.ok(!windowOpened, "newmailalert.xhtml should not open.");
@@ -940,6 +954,11 @@ add_task(async function test_revert_to_newmailalert() {
   const alertPromise = promise_new_window("alert:alert");
   await make_gradually_newer_sets_in_folder([gFolder], [{ count: 2 }]);
   const win = await alertPromise;
+  Assert.deepEqual(
+    MockSound.played,
+    [`(event)${Ci.nsISound.EVENT_NEW_MAIL_RECEIVED}`],
+    "should have played the system sound"
+  );
 
   // The alert closes itself.
   await BrowserTestUtils.domWindowClosed(win);

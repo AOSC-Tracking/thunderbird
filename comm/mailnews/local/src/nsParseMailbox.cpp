@@ -28,8 +28,6 @@
 #include "nsMsgSearchCore.h"
 #include "nsMailHeaders.h"
 #include "nsIMsgMailSession.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefService.h"
 #include "nsIMsgComposeService.h"
 #include "nsIMsgCopyService.h"
 #include "nsICryptoHash.h"
@@ -41,6 +39,8 @@
 #include "mozilla/Span.h"
 #include "HeaderReader.h"
 #include "nsIMimeConverter.h"
+#include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
 
 using namespace mozilla;
 
@@ -82,9 +82,6 @@ static nsCString RemoveAngleBrackets(nsACString const& s) {
 //
 // Does not generate missing Message-Id (nsParseMailMessageState uses an
 // md5sum of the header block).
-//
-// Does not strip surrounding '<' and '>' from Message-Id.
-//
 RawHdr ParseMsgHeaders(mozilla::Span<const char> raw) {
   // NOTE: old code aggregates multiple To: and Cc: header occurrences.
   // Turns them into comma-separated lists.
@@ -145,7 +142,9 @@ RawHdr ParseMsgHeaders(mozilla::Span<const char> raw) {
         out.references = hdr.Value(raw);
       }
     } else if (n.LowerCaseEqualsLiteral("message-id")) {
-      out.messageId = RemoveAngleBrackets(hdr.Value(raw));
+      nsAutoCString value(hdr.Value(raw));
+      value.Trim(" \t");  // Trim WSP
+      out.messageId = RemoveAngleBrackets(value);
     } else if (n.LowerCaseEqualsLiteral("newsgroups")) {
       // We _might_ need this for recipients (see below).
       newsgroups = hdr.Value(raw);
@@ -200,7 +199,7 @@ RawHdr ParseMsgHeaders(mozilla::Span<const char> raw) {
   });
 
   nsCOMPtr<nsIMimeConverter> mimeConverter;
-  mimeConverter = do_GetService("@mozilla.org/messenger/mimeconverter;1");
+  mimeConverter = mozilla::components::MimeConverter::Service();
   mimeConverter->DecodeMimeHeaderToUTF8(out.sender, out.charset.get(), true,
                                         true, out.sender);
   mimeConverter->DecodeMimeHeaderToUTF8(out.subject, out.charset.get(), true,
@@ -358,11 +357,7 @@ nsParseMailMessageState::nsParseMailMessageState() {
   // a mail message with the X-Spam-Score header, we'll set the
   // "x-spam-score" property of nsMsgHdr to the value of the header.
   nsCString customDBHeaders;  // not shown in search UI
-  nsCOMPtr<nsIPrefBranch> pPrefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
-  if (!pPrefBranch) {
-    return;
-  }
-  pPrefBranch->GetCharPref("mailnews.customDBHeaders", customDBHeaders);
+  Preferences::GetCString("mailnews.customDBHeaders", customDBHeaders);
   ToLowerCase(customDBHeaders);
   if (customDBHeaders.Find("content-base") == -1)
     customDBHeaders.InsertLiteral("content-base ", 0);
@@ -371,7 +366,7 @@ nsParseMailMessageState::nsParseMailMessageState() {
   // now add customHeaders
   nsCString customHeadersString;  // shown in search UI
   nsTArray<nsCString> customHeadersArray;
-  pPrefBranch->GetCharPref("mailnews.customHeaders", customHeadersString);
+  Preferences::GetCString("mailnews.customHeaders", customHeadersString);
   ToLowerCase(customHeadersString);
   customHeadersString.StripWhitespace();
   ParseString(customHeadersString, ':', customHeadersArray);
@@ -1373,11 +1368,10 @@ void nsParseNewMailState::PublishMsgHeader(nsIMsgWindow* msgWindow) {
         m_newMsgHdr = nullptr;
         rv = m_mailDB->AttachHdr(detachedHdr, true, getter_AddRefs(liveHdr));
         NS_ENSURE_SUCCESS_VOID(rv);
-        nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-            do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-        if (notifier) {
-          notifier->NotifyMsgAdded(liveHdr);
-        }
+        nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+            mozilla::components::FolderNotification::Service();
+        notifier->NotifyMsgAdded(liveHdr);
+
         // Mark the header as not yet reported classified.
         nsMsgKey msgKey;
         liveHdr->GetMessageKey(&msgKey);
@@ -1630,12 +1624,10 @@ NS_IMETHODIMP nsParseNewMailState::ApplyFilterHit(nsIMsgFilter* filter,
               break;
             }
 
-            copyService = do_GetService(
-                "@mozilla.org/messenger/messagecopyservice;1", &rv);
-            if (NS_SUCCEEDED(rv))
-              rv = copyService->CopyMessages(m_downloadFolder, {&*msgHdr},
-                                             dstFolder, false, nullptr,
-                                             msgWindow, false);
+            copyService = mozilla::components::Copy::Service();
+            rv = copyService->CopyMessages(m_downloadFolder, {&*msgHdr},
+                                           dstFolder, false, nullptr, msgWindow,
+                                           false);
 
             if (NS_FAILED(rv)) {
               // XXX: Invoke MSG_LOG_TO_CONSOLE once bug 1135265 lands.
@@ -1836,8 +1828,7 @@ nsresult nsParseNewMailState::ApplyForwardAndReplyFilter(
       NS_ENSURE_SUCCESS(rv, rv);
       {
         nsCOMPtr<nsIMsgComposeService> compService =
-            do_GetService("@mozilla.org/messengercompose;1", &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
+            mozilla::components::Compose::Service();
         rv = compService->ForwardMessage(
             forwardStr, m_msgToForwardOrReply, msgWindow, server,
             nsIMsgComposeService::kForwardAsDefault);
@@ -1864,23 +1855,21 @@ nsresult nsParseNewMailState::ApplyForwardAndReplyFilter(
       rv = m_rootFolder->GetServer(getter_AddRefs(server));
       if (server) {
         nsCOMPtr<nsIMsgComposeService> compService =
-            do_GetService("@mozilla.org/messengercompose;1");
-        if (compService) {
-          rv = compService->ReplyWithTemplate(
-              m_msgToForwardOrReply, m_replyTemplateUri[i], msgWindow, server);
-          if (NS_FAILED(rv)) {
-            NS_WARNING("ReplyWithTemplate failed");
-            MOZ_LOG(FILTERLOGMODULE, LogLevel::Error,
-                    ("(Local) Replying failed"));
-            if (rv == NS_ERROR_ABORT) {
-              (void)m_filter->LogRuleHitFail(
-                  m_ruleAction, m_msgToForwardOrReply, rv,
-                  "filterFailureSendingReplyAborted"_ns);
-            } else {
-              (void)m_filter->LogRuleHitFail(
-                  m_ruleAction, m_msgToForwardOrReply, rv,
-                  "filterFailureSendingReplyError"_ns);
-            }
+            mozilla::components::Compose::Service();
+        rv = compService->ReplyWithTemplate(
+            m_msgToForwardOrReply, m_replyTemplateUri[i], msgWindow, server);
+        if (NS_FAILED(rv)) {
+          NS_WARNING("ReplyWithTemplate failed");
+          MOZ_LOG(FILTERLOGMODULE, LogLevel::Error,
+                  ("(Local) Replying failed"));
+          if (rv == NS_ERROR_ABORT) {
+            (void)m_filter->LogRuleHitFail(
+                m_ruleAction, m_msgToForwardOrReply, rv,
+                "filterFailureSendingReplyAborted"_ns);
+          } else {
+            (void)m_filter->LogRuleHitFail(m_ruleAction, m_msgToForwardOrReply,
+                                           rv,
+                                           "filterFailureSendingReplyError"_ns);
           }
         }
       }
@@ -2099,9 +2088,9 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
       movedMsgIsNew = true;
     }
   }
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-  if (notifier) notifier->NotifyMsgAdded(newHdr);
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  notifier->NotifyMsgAdded(newHdr);
   // mark the header as not yet reported classified
   destIFolder->OrProcessingFlags(msgKey,
                                  nsMsgProcessingFlags::NotReportedClassified);

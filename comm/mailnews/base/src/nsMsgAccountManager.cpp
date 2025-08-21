@@ -7,13 +7,14 @@
  * The account manager service - manages all accounts, servers, and identities
  */
 
+#include "nsMsgAccountManager.h"
+
 #include "nsCOMPtr.h"
 #include "nsISupports.h"
 #include "nsIThread.h"
 #include "nscore.h"
 #include "mozilla/RefPtr.h"
 #include "nsIComponentManager.h"
-#include "nsMsgAccountManager.h"
 #include "prmem.h"
 #include "prcmon.h"
 #include "prthread.h"
@@ -60,8 +61,10 @@
 #include "nsIMsgFilterList.h"
 #include "nsDirectoryServiceUtils.h"
 #include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/ProfilerMarkers.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs_mail.h"
 #include "nsIFileStreams.h"
 #include "nsIOutputStream.h"
 #include "nsISafeOutputStream.h"
@@ -74,6 +77,8 @@
 #  include "DatabaseCore.h"
 #  include "VirtualFolderWrapper.h"
 #endif  // MOZ_PANORAMA
+
+using mozilla::Preferences;
 
 #define PREF_MAIL_ACCOUNTMANAGER_ACCOUNTS "mail.accountmanager.accounts"
 #define PREF_MAIL_ACCOUNTMANAGER_DEFAULTACCOUNT \
@@ -97,8 +102,6 @@ static NS_DEFINE_CID(kMsgAccountCID, NS_MSGACCOUNT_CID);
 
 #define SEARCH_FOLDER_FLAG "searchFolderFlag"
 #define SEARCH_FOLDER_FLAG_LEN (sizeof(SEARCH_FOLDER_FLAG) - 1)
-
-using mozilla::Preferences;
 
 const char* kSearchFolderUriProp = "searchFolderUri";
 
@@ -166,12 +169,11 @@ nsresult nsMsgAccountManager::Init() {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  nsresult rv;
 #ifdef MOZ_PANORAMA
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     // Replace the database service with the Panorama database.
     nsCOMPtr<nsIComponentRegistrar> componentRegistrar;
-    rv = NS_GetComponentRegistrar(getter_AddRefs(componentRegistrar));
+    nsresult rv = NS_GetComponentRegistrar(getter_AddRefs(componentRegistrar));
     NS_ENSURE_SUCCESS(rv, rv);
 
     componentRegistrar->RegisterFactory(
@@ -179,8 +181,11 @@ nsresult nsMsgAccountManager::Init() {
         new mozilla::mailnews::DatabaseCoreFactory());
 
     // Start up the database.
-    nsCOMPtr<nsIDatabaseCore> unused =
+    nsCOMPtr<nsIDatabaseCore> databaseCore =
         do_GetService("@mozilla.org/msgDatabase/msgDBService;1", &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    databaseCore->Startup();
     NS_ENSURE_SUCCESS(rv, rv);
 
     componentRegistrar->RegisterFactory(
@@ -189,9 +194,6 @@ nsresult nsMsgAccountManager::Init() {
         new mozilla::mailnews::VirtualFolderWrapperFactory());
   }
 #endif  // MOZ_PANORAMA
-
-  m_prefs = do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIObserverService> observerService =
       mozilla::services::GetObserverService();
@@ -274,7 +276,7 @@ NS_IMETHODIMP
 nsMsgAccountManager::GetUserNeedsToAuthenticate(bool* aRetval) {
   NS_ENSURE_ARG_POINTER(aRetval);
   if (!m_userAuthenticated)
-    return m_prefs->GetBoolPref("mail.password_protect_local_cache", aRetval);
+    return Preferences::GetBool("mail.password_protect_local_cache", aRetval);
   *aRetval = !m_userAuthenticated;
   return NS_OK;
 }
@@ -314,65 +316,48 @@ NS_IMETHODIMP nsMsgAccountManager::Observe(nsISupports* aSubject,
 
 NS_IMETHODIMP
 nsMsgAccountManager::GetUniqueAccountKey(nsACString& aResult) {
-  int32_t lastKey = 0;
   nsresult rv;
-  nsCOMPtr<nsIPrefService> prefservice(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  if (NS_SUCCEEDED(rv)) {
-    nsCOMPtr<nsIPrefBranch> prefBranch;
-    prefservice->GetBranch("", getter_AddRefs(prefBranch));
+  nsCOMPtr<nsIPrefBranch> prefBranch = Preferences::GetRootBranch();
 
-    rv = prefBranch->GetIntPref("mail.account.lastKey", &lastKey);
-    if (NS_FAILED(rv) || lastKey == 0) {
-      // If lastKey pref does not contain a valid value, loop over existing
-      // pref names mail.account.* .
-      nsCOMPtr<nsIPrefBranch> prefBranchAccount;
-      rv = prefservice->GetBranch("mail.account.",
-                                  getter_AddRefs(prefBranchAccount));
+  int32_t lastKey = Preferences::GetInt("mail.account.lastKey");
+  if (lastKey == 0) {
+    // If lastKey pref does not contain a valid value, loop over existing
+    // pref names mail.account.* .
+    nsCOMPtr<nsIPrefBranch> prefBranchAccount;
+    rv = Preferences::GetService()->GetBranch(
+        "mail.account.", getter_AddRefs(prefBranchAccount));
+    if (NS_SUCCEEDED(rv)) {
+      nsTArray<nsCString> prefList;
+      rv = prefBranchAccount->GetChildList("", prefList);
       if (NS_SUCCEEDED(rv)) {
-        nsTArray<nsCString> prefList;
-        rv = prefBranchAccount->GetChildList("", prefList);
-        if (NS_SUCCEEDED(rv)) {
-          // Pref names are of the format accountX.
-          // Find the maximum value of 'X' used so far.
-          for (auto& prefName : prefList) {
-            if (StringBeginsWith(prefName, nsLiteralCString(ACCOUNT_PREFIX))) {
-              int32_t dotPos = prefName.FindChar('.');
-              if (dotPos != kNotFound) {
-                nsCString keyString(Substring(prefName, strlen(ACCOUNT_PREFIX),
-                                              dotPos - strlen(ACCOUNT_PREFIX)));
-                int32_t thisKey = keyString.ToInteger(&rv);
-                if (NS_SUCCEEDED(rv)) lastKey = std::max(lastKey, thisKey);
-              }
+        // Pref names are of the format accountX.
+        // Find the maximum value of 'X' used so far.
+        for (auto& prefName : prefList) {
+          if (StringBeginsWith(prefName, nsLiteralCString(ACCOUNT_PREFIX))) {
+            int32_t dotPos = prefName.FindChar('.');
+            if (dotPos != kNotFound) {
+              nsCString keyString(Substring(prefName, strlen(ACCOUNT_PREFIX),
+                                            dotPos - strlen(ACCOUNT_PREFIX)));
+              int32_t thisKey = keyString.ToInteger(&rv);
+              if (NS_SUCCEEDED(rv)) lastKey = std::max(lastKey, thisKey);
             }
           }
         }
       }
     }
-
-    // Use next available key and store the value in the pref.
-    aResult.Assign(ACCOUNT_PREFIX);
-    aResult.AppendInt(++lastKey);
-    rv = prefBranch->SetIntPref("mail.account.lastKey", lastKey);
-  } else {
-    // If pref service is not working, try to find a free accountX key
-    // by checking which keys exist.
-    int32_t i = 1;
-    nsCOMPtr<nsIMsgAccount> account;
-
-    do {
-      aResult = ACCOUNT_PREFIX;
-      aResult.AppendInt(i++);
-      GetAccount(aResult, getter_AddRefs(account));
-    } while (account);
   }
+
+  // Use next available key and store the value in the pref.
+  aResult.Assign(ACCOUNT_PREFIX);
+  aResult.AppendInt(++lastKey);
+  rv = prefBranch->SetIntPref("mail.account.lastKey", lastKey);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsMsgAccountManager::GetUniqueServerKey(nsACString& aResult) {
   nsAutoCString prefResult;
-  nsCOMPtr<nsIPrefService> prefService = mozilla::Preferences::GetService();
+  nsCOMPtr<nsIPrefService> prefService = Preferences::GetService();
 
   // Loop over existing pref names mail.server.server(lastKey).type
   nsCOMPtr<nsIPrefBranch> prefBranchServer;
@@ -485,7 +470,7 @@ nsMsgAccountManager::CreateIncomingServer(const nsACString& username,
   rv = createKeyedServer(key, username, hostname, type, _retval);
   if (*_retval) {
     nsCString defaultStore;
-    m_prefs->GetCharPref("mail.serverDefaultStoreContractID", defaultStore);
+    Preferences::GetCString("mail.serverDefaultStoreContractID", defaultStore);
     (*_retval)->SetStringValue("storeContractID", defaultStore);
 
     // From when we first create the account until we have created some folders,
@@ -517,7 +502,7 @@ nsMsgAccountManager::GetIncomingServer(const nsACString& key,
   nsCString serverType;
   nsAutoCString serverPref(serverPrefPrefix);
   serverPref.AppendLiteral(".type");
-  rv = m_prefs->GetCharPref(serverPref.get(), serverType);
+  rv = Preferences::GetCString(serverPref.get(), serverType);
   NS_ENSURE_SUCCESS(rv, NS_ERROR_NOT_INITIALIZED);
 
   //
@@ -525,13 +510,13 @@ nsMsgAccountManager::GetIncomingServer(const nsACString& key,
   serverPref = serverPrefPrefix;
   serverPref.AppendLiteral(".userName");
   nsCString username;
-  rv = m_prefs->GetCharPref(serverPref.get(), username);
+  rv = Preferences::GetCString(serverPref.get(), username);
 
   // .hostname
   serverPref = serverPrefPrefix;
   serverPref.AppendLiteral(".hostname");
   nsCString hostname;
-  rv = m_prefs->GetCharPref(serverPref.get(), hostname);
+  rv = Preferences::GetCString(serverPref.get(), hostname);
   NS_ENSURE_SUCCESS(rv, NS_ERROR_NOT_INITIALIZED);
 
   return createKeyedServer(key, username, hostname, serverType, _retval);
@@ -557,7 +542,7 @@ nsMsgAccountManager::RemoveIncomingServer(nsIMsgIncomingServer* aServer,
   rv = rootFolder->GetDescendants(allDescendants);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     // Remove every folder on the account from the folder cache.
     for (const auto& folder : allDescendants) {
       nsresult cacherv = RemoveFolderFromCache(folder);
@@ -607,22 +592,20 @@ nsMsgAccountManager::RemoveIncomingServer(nsIMsgIncomingServer* aServer,
 
   // Notify any observer about the deletion of every folder in the account.
   nsCOMPtr<nsIMsgFolderNotificationService> notifier =
-      do_GetService("@mozilla.org/messenger/msgnotificationservice;1");
+      mozilla::components::FolderNotification::Service();
   nsCOMPtr<nsIFolderListener> mailSession =
-      do_GetService("@mozilla.org/messenger/services/session;1");
+      mozilla::components::MailSession::Service();
 
   for (const auto& folder : allDescendants) {
     folder->ForceDBClosed();
 
-    if (notifier) notifier->NotifyFolderDeleted(folder);
-    if (mailSession) {
-      nsCOMPtr<nsIMsgFolder> parentFolder;
-      folder->GetParent(getter_AddRefs(parentFolder));
-      mailSession->OnFolderRemoved(parentFolder, folder);
-    }
+    notifier->NotifyFolderDeleted(folder);
+    nsCOMPtr<nsIMsgFolder> parentFolder;
+    folder->GetParent(getter_AddRefs(parentFolder));
+    mailSession->OnFolderRemoved(parentFolder, folder);
   }
-  if (notifier) notifier->NotifyFolderDeleted(rootFolder);
-  if (mailSession) mailSession->OnFolderRemoved(nullptr, rootFolder);
+  notifier->NotifyFolderDeleted(rootFolder);
+  mailSession->OnFolderRemoved(nullptr, rootFolder);
 
   NotifyServerUnloaded(aServer);
   if (aRemoveFiles) {
@@ -644,8 +627,8 @@ nsMsgAccountManager::RemoveIncomingServer(nsIMsgIncomingServer* aServer,
 }
 
 nsresult nsMsgAccountManager::RemoveFolderFromCache(nsIMsgFolder* aFolder) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup());
+  if (mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     MOZ_ASSERT(!m_msgFolderCache);
     return NS_ERROR_NOT_IMPLEMENTED;
   }
@@ -778,8 +761,11 @@ nsMsgAccountManager::RemoveAccount(nsIMsgAccount* aAccount,
     return rv;
   }
 
-  // If it's the default, choose a new default account.
-  if (m_defaultAccount == aAccount) AutosetDefaultAccount();
+  // If it's the default account, clear the corresponding preference.
+  if (m_defaultAccount == aAccount) {
+    m_defaultAccount = nullptr;
+    setDefaultAccountPref(nullptr);
+  }
 
   // XXX - need to figure out if this is the last time this server is
   // being used, and only send notification then.
@@ -837,8 +823,8 @@ nsresult nsMsgAccountManager::OutputAccountsPref() {
     if (index) mAccountKeyList.Append(ACCOUNT_DELIMITER);
     mAccountKeyList.Append(accountKey);
   }
-  return m_prefs->SetCharPref(PREF_MAIL_ACCOUNTMANAGER_ACCOUNTS,
-                              mAccountKeyList);
+  return Preferences::SetCString(PREF_MAIL_ACCOUNTMANAGER_ACCOUNTS,
+                                 mAccountKeyList);
 }
 
 /**
@@ -852,15 +838,27 @@ nsMsgAccountManager::GetDefaultAccount(nsIMsgAccount** aDefaultAccount) {
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!m_defaultAccount) {
+    // Try to determine the currently set default account.
     nsCString defaultKey;
-    rv = m_prefs->GetCharPref(PREF_MAIL_ACCOUNTMANAGER_DEFAULTACCOUNT,
-                              defaultKey);
+    rv = Preferences::GetCString(PREF_MAIL_ACCOUNTMANAGER_DEFAULTACCOUNT,
+                                 defaultKey);
     if (NS_SUCCEEDED(rv)) {
       rv = GetAccount(defaultKey, getter_AddRefs(m_defaultAccount));
       if (NS_SUCCEEDED(rv) && m_defaultAccount) {
         bool canBeDefault = false;
         rv = CheckDefaultAccount(m_defaultAccount, canBeDefault);
         if (NS_FAILED(rv) || !canBeDefault) m_defaultAccount = nullptr;
+      }
+    }
+  }
+
+  if (!m_defaultAccount) {
+    // No valid default account has been set. Try to find the first viable
+    // account and set it as default.
+    for (nsIMsgAccount* account : m_accounts) {
+      rv = SetDefaultAccount(account);
+      if (NS_SUCCEEDED(rv)) {
+        break;
       }
     }
   }
@@ -884,28 +882,6 @@ nsresult nsMsgAccountManager::CheckDefaultAccount(nsIMsgAccount* aAccount,
     rv = server->GetCanBeDefaultServer(&aCanBeDefault);
   }
   return rv;
-}
-
-/**
- * Pick the first account that can be default and make it the default.
- */
-nsresult nsMsgAccountManager::AutosetDefaultAccount() {
-  for (nsIMsgAccount* account : m_accounts) {
-    bool canBeDefault = false;
-    nsresult rv = CheckDefaultAccount(account, canBeDefault);
-    if (NS_SUCCEEDED(rv) && canBeDefault) {
-      return SetDefaultAccount(account);
-    }
-  }
-
-  // No accounts can be the default. Clear it.
-  if (m_defaultAccount) {
-    nsCOMPtr<nsIMsgAccount> oldAccount = m_defaultAccount;
-    m_defaultAccount = nullptr;
-    (void)setDefaultAccountPref(nullptr);
-    (void)notifyDefaultServerChange(oldAccount, nullptr);
-  }
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -977,10 +953,11 @@ nsresult nsMsgAccountManager::setDefaultAccountPref(
     rv = aDefaultAccount->GetKey(key);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = m_prefs->SetCharPref(PREF_MAIL_ACCOUNTMANAGER_DEFAULTACCOUNT, key);
+    rv = Preferences::SetCString(PREF_MAIL_ACCOUNTMANAGER_DEFAULTACCOUNT, key);
     NS_ENSURE_SUCCESS(rv, rv);
-  } else
-    m_prefs->ClearUserPref(PREF_MAIL_ACCOUNTMANAGER_DEFAULTACCOUNT);
+  } else {
+    Preferences::ClearUser(PREF_MAIL_ACCOUNTMANAGER_DEFAULTACCOUNT);
+  }
 
   return NS_OK;
 }
@@ -998,8 +975,8 @@ NS_IMETHODIMP nsMsgAccountManager::GetFolderCache(
     nsIMsgFolderCache** aFolderCache) {
   NS_ENSURE_ARG_POINTER(aFolderCache);
 
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup());
+  if (mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     MOZ_ASSERT(!m_msgFolderCache);
     *aFolderCache = nullptr;
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -1127,15 +1104,13 @@ nsresult nsMsgAccountManager::LoadAccounts() {
   // ignore it.
   if (m_shutdownInProgress || m_haveShutdown) return NS_ERROR_FAILURE;
 
-  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     // TODO: Reenable this.
     nsCOMPtr<nsIMsgMailSession> mailSession =
-        do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-
-    if (NS_SUCCEEDED(rv))
-      mailSession->AddFolderListener(
-          this, nsIFolderListener::added | nsIFolderListener::removed |
-                    nsIFolderListener::intPropertyChanged);
+        mozilla::components::MailSession::Service();
+    mailSession->AddFolderListener(
+        this, nsIFolderListener::added | nsIFolderListener::removed |
+                  nsIFolderListener::intPropertyChanged);
   }
 
   // Ensure biff service has started
@@ -1150,13 +1125,9 @@ nsresult nsMsgAccountManager::LoadAccounts() {
 
   if (NS_SUCCEEDED(rv)) purgeService->Init();
 
-  nsCOMPtr<nsIPrefService> prefservice(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
   // mail.accountmanager.accounts is the main entry point for all accounts
   nsCString accountList;
-  rv = m_prefs->GetCharPref(PREF_MAIL_ACCOUNTMANAGER_ACCOUNTS, accountList);
+  rv = Preferences::GetCString(PREF_MAIL_ACCOUNTMANAGER_ACCOUNTS, accountList);
 
   /**
    * Check to see if we need to add pre-configured accounts.
@@ -1174,6 +1145,7 @@ nsresult nsMsgAccountManager::LoadAccounts() {
    * This pref contains the list of pre-configured accounts that ISP/Vendor
    * wants to add to the existing accounts list.
    */
+  nsCOMPtr<nsIPrefService> prefservice = Preferences::GetService();
   nsCOMPtr<nsIPrefBranch> defaultsPrefBranch;
   rv = prefservice->GetDefaultBranch(MAILNEWS_ROOT_PREF,
                                      getter_AddRefs(defaultsPrefBranch));
@@ -1197,8 +1169,8 @@ nsresult nsMsgAccountManager::LoadAccounts() {
   if ((appendAccountsCurrentVersion <= appendAccountsDefaultVersion)) {
     // Get a list of pre-configured accounts
     nsCString appendAccountList;
-    rv = m_prefs->GetCharPref(PREF_MAIL_ACCOUNTMANAGER_APPEND_ACCOUNTS,
-                              appendAccountList);
+    rv = Preferences::GetCString(PREF_MAIL_ACCOUNTMANAGER_APPEND_ACCOUNTS,
+                                 appendAccountList);
     appendAccountList.StripWhitespace();
 
     // If there are pre-configured accounts, we need to add them to the
@@ -1268,7 +1240,7 @@ nsresult nsMsgAccountManager::LoadAccounts() {
 
     serverKeyPref += ".server";
     nsCString serverKey;
-    rv = m_prefs->GetCharPref(serverKeyPref.get(), serverKey);
+    rv = Preferences::GetCString(serverKeyPref.get(), serverKey);
     if (NS_FAILED(rv)) continue;
 
     nsCOMPtr<nsIMsgAccount> serverAccount;
@@ -1291,10 +1263,8 @@ nsresult nsMsgAccountManager::LoadAccounts() {
         toLeavePref);  // this is the server-specific prefix
     unavailablePref.AppendLiteral(".timeFoundUnavailable");
     toLeavePref.AppendLiteral(".secondsToLeaveUnavailable");
-    int32_t secondsToLeave = 0;
+    int32_t secondsToLeave = Preferences::GetInt(toLeavePref.get());
     int32_t timeUnavailable = 0;
-
-    m_prefs->GetIntPref(toLeavePref.get(), &secondsToLeave);
 
     // force load of accounts (need to find a better way to do this)
     nsTArray<RefPtr<nsIMsgIdentity>> unused;
@@ -1306,17 +1276,17 @@ nsresult nsMsgAccountManager::LoadAccounts() {
     if (secondsToLeave) {    // we need to process timeUnavailable
       if (NS_SUCCEEDED(rv))  // clear the time if server is available
       {
-        m_prefs->ClearUserPref(unavailablePref.get());
+        Preferences::ClearUser(unavailablePref.get());
       }
       // NS_ERROR_NOT_AVAILABLE signifies a server that could not be
       // instantiated, presumably because of an invalid type.
       else if (rv == NS_ERROR_NOT_AVAILABLE) {
-        m_prefs->GetIntPref(unavailablePref.get(), &timeUnavailable);
+        timeUnavailable = Preferences::GetInt(unavailablePref.get());
         if (!timeUnavailable) {  // we need to set it, this must be the first
                                  // time unavailable
           uint32_t nowSeconds;
           PRTime2Seconds(PR_Now(), &nowSeconds);
-          m_prefs->SetIntPref(unavailablePref.get(), nowSeconds);
+          Preferences::SetInt(unavailablePref.get(), nowSeconds);
           deleteAccount = false;
         }
       }
@@ -1377,18 +1347,9 @@ nsresult nsMsgAccountManager::LoadAccounts() {
             nsCString dupAccountServerKey;
             accountPref.Append(dupAccountKey);
             accountPref.AppendLiteral(".server");
-            nsCOMPtr<nsIPrefService> prefservice(
-                do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-            if (NS_FAILED(rv)) {
-              continue;
-            }
-            nsCOMPtr<nsIPrefBranch> prefBranch(
-                do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-            if (NS_FAILED(rv)) {
-              continue;
-            }
+            nsCOMPtr<nsIPrefService> prefservice = Preferences::GetService();
             rv =
-                prefBranch->GetCharPref(accountPref.get(), dupAccountServerKey);
+                Preferences::GetCString(accountPref.get(), dupAccountServerKey);
             if (NS_FAILED(rv)) {
               continue;
             }
@@ -1448,8 +1409,8 @@ nsresult nsMsgAccountManager::LoadAccounts() {
 
   // Make sure we have an account that points at the local folders server
   nsCString localFoldersServerKey;
-  rv = m_prefs->GetCharPref(PREF_MAIL_ACCOUNTMANAGER_LOCALFOLDERSSERVER,
-                            localFoldersServerKey);
+  rv = Preferences::GetCString(PREF_MAIL_ACCOUNTMANAGER_LOCALFOLDERSSERVER,
+                               localFoldersServerKey);
 
   if (!localFoldersServerKey.IsEmpty()) {
     nsCOMPtr<nsIMsgIncomingServer> server;
@@ -1469,7 +1430,7 @@ nsresult nsMsgAccountManager::LoadAccounts() {
   }
 
 #ifdef MOZ_PANORAMA
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     // At this point, we should have all the folders in the database. We can
     // finally migrate the virtualFolders.dat file, which we'll only do if the
     // database didn't exist at the start of the program.
@@ -1508,7 +1469,7 @@ nsMsgAccountManager::ReactivateAccounts() {
 NS_IMETHODIMP
 nsMsgAccountManager::SetSpecialFolders() {
   AUTO_PROFILER_LABEL("nsMsgAccountManager::SetSpecialFolders", MAILNEWS);
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     // Skip this for now.
     return NS_OK;
   }
@@ -1603,10 +1564,10 @@ nsMsgAccountManager::UnloadAccounts() {
                      EmptyCString());
 
   if (m_accountsLoaded) {
-    if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+    if (!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
       nsCOMPtr<nsIMsgMailSession> mailSession =
-          do_GetService("@mozilla.org/messenger/services/session;1");
-      if (mailSession) mailSession->RemoveFolderListener(this);
+          mozilla::components::MailSession::Service();
+      mailSession->RemoveFolderListener(this);
     }
     m_accountsLoaded = false;
   }
@@ -1641,9 +1602,7 @@ nsresult nsMsgAccountManager::CleanupOnExit() {
 
   nsresult rv;
   // If enabled, clear cache on shutdown. This is common to all accounts.
-  bool clearCache = false;
-  m_prefs->GetBoolPref("privacy.clearOnShutdown.cache", &clearCache);
-  if (clearCache) {
+  if (Preferences::GetBool("privacy.clearOnShutdown.cache")) {
     nsCOMPtr<nsICacheStorageService> cacheStorageService =
         do_GetService("@mozilla.org/netwerk/cache-storage-service;1", &rv);
     if (NS_SUCCEEDED(rv)) cacheStorageService->Clear();
@@ -1812,8 +1771,8 @@ nsMsgAccountManager::BlockShutdown(nsIAsyncShutdownClient* aClient) {
 
 NS_IMETHODIMP
 nsMsgAccountManager::WriteToFolderCache(nsIMsgFolderCache* folderCache) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup());
+  if (mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     MOZ_ASSERT(!m_msgFolderCache);
     return NS_ERROR_NOT_IMPLEMENTED;
   }
@@ -1882,7 +1841,7 @@ nsresult nsMsgAccountManager::createKeyedAccount(const nsCString& key,
   }
   mAccountKeyList = newAccountKeyList;
 
-  m_prefs->SetCharPref(PREF_MAIL_ACCOUNTMANAGER_ACCOUNTS, mAccountKeyList);
+  Preferences::SetCString(PREF_MAIL_ACCOUNTMANAGER_ACCOUNTS, mAccountKeyList);
   account.forget(aAccount);
   return NS_OK;
 }
@@ -2249,7 +2208,8 @@ NS_IMETHODIMP nsMsgAccountManager::SetLocalFoldersServer(
   nsresult rv = aServer->GetKey(key);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return m_prefs->SetCharPref(PREF_MAIL_ACCOUNTMANAGER_LOCALFOLDERSSERVER, key);
+  return Preferences::SetCString(PREF_MAIL_ACCOUNTMANAGER_LOCALFOLDERSSERVER,
+                                 key);
 }
 
 NS_IMETHODIMP nsMsgAccountManager::GetLocalFoldersServer(
@@ -2258,7 +2218,7 @@ NS_IMETHODIMP nsMsgAccountManager::GetLocalFoldersServer(
 
   nsCString serverKey;
 
-  nsresult rv = m_prefs->GetCharPref(
+  nsresult rv = Preferences::GetCString(
       PREF_MAIL_ACCOUNTMANAGER_LOCALFOLDERSSERVER, serverKey);
 
   if (NS_SUCCEEDED(rv) && !serverKey.IsEmpty()) {
@@ -2385,9 +2345,7 @@ void nsMsgAccountManager::SetLastServerFound(nsIMsgIncomingServer* server,
 
 NS_IMETHODIMP
 nsMsgAccountManager::SaveAccountInfo() {
-  nsresult rv;
-  nsCOMPtr<nsIPrefService> pref(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIPrefService> pref = Preferences::GetService();
   return pref->SavePrefFile(nullptr);
 }
 
@@ -2468,7 +2426,7 @@ nsresult VirtualFolderChangeListener::Init() {
     nsCString searchTermString;
     dbFolderInfo->GetCharProperty("searchStr", searchTermString);
     nsCOMPtr<nsIMsgFilterService> filterService =
-        do_GetService("@mozilla.org/messenger/services/filters;1", &rv);
+        mozilla::components::Filter::Service();
     nsCOMPtr<nsIMsgFilterList> filterList;
     rv = filterService->GetTempFilterList(m_virtualFolder,
                                           getter_AddRefs(filterList));
@@ -2812,7 +2770,7 @@ nsresult nsMsgAccountManager::GetVirtualFoldersFile(nsCOMPtr<nsIFile>& aFile) {
 
 NS_IMETHODIMP nsMsgAccountManager::LoadVirtualFolders() {
   AUTO_PROFILER_LABEL("nsMsgAccountManager::LoadVirtualFolders", MAILNEWS);
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     // Skip this for now.
     return NS_OK;
   }
@@ -2964,7 +2922,7 @@ NS_IMETHODIMP nsMsgAccountManager::SaveVirtualFolders() {
   AUTO_PROFILER_LABEL("nsMsgAccountManager::SaveVirtualFolders", MAILNEWS);
 
   if (!m_virtualFoldersLoaded) return NS_OK;
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  MOZ_ASSERT(!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup());
 
   nsCOMPtr<nsIFile> file;
   GetVirtualFoldersFile(file);
@@ -3084,7 +3042,7 @@ void nsMsgAccountManager::ParseAndVerifyVirtualFolderScope(nsCString& buffer) {
 // This conveniently works to add a single folder as well.
 nsresult nsMsgAccountManager::AddVFListenersForVF(
     nsIMsgFolder* virtualFolder, const nsCString& srchFolderUris) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  MOZ_ASSERT(!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup());
   if (srchFolderUris.Equals("*")) {
     return NS_OK;
   }
@@ -3174,7 +3132,7 @@ NS_IMETHODIMP nsMsgAccountManager::GetAllFolders(
 
 NS_IMETHODIMP nsMsgAccountManager::OnFolderAdded(nsIMsgFolder* parent,
                                                  nsIMsgFolder* folder) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  MOZ_ASSERT(!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup());
   if (!parent) {
     // This method gets called for folders that aren't connected to anything,
     // such as a junk folder that appears when an IMAP account is created. We
@@ -3340,7 +3298,7 @@ NS_IMETHODIMP nsMsgAccountManager::OnMessageAdded(nsIMsgFolder* parent,
 
 NS_IMETHODIMP nsMsgAccountManager::OnFolderRemoved(nsIMsgFolder* parentFolder,
                                                    nsIMsgFolder* folder) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  MOZ_ASSERT(!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup());
   nsresult rv = NS_OK;
   uint32_t folderFlags;
   folder->GetFlags(&folderFlags);
@@ -3441,7 +3399,7 @@ nsMsgAccountManager::OnFolderIntPropertyChanged(nsIMsgFolder* aFolder,
                                                 const nsACString& aProperty,
                                                 int64_t oldValue,
                                                 int64_t newValue) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  MOZ_ASSERT(!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup());
   if (aProperty.Equals(kFolderFlag)) {
     if (newValue & nsMsgFolderFlags::Virtual) {
       // This is a virtual folder, let's get out of here.

@@ -89,6 +89,9 @@ export class NntpClient {
     this._msgWindow = null;
     this._newsFolder = null;
     this._nextAction = null;
+    this._currentAction = null;
+    this._messageId = null;
+    this._articleNumber = null;
   }
 
   /**
@@ -150,6 +153,13 @@ export class NntpClient {
    */
   _onOpen = () => {
     this._logger.debug("Connected");
+    const timeout = this._server.connectionTimeout;
+    if (timeout > 0) {
+      this._socket.transport.setTimeout(
+        Ci.nsISocketTransport.TIMEOUT_READ_WRITE,
+        timeout
+      );
+    }
     this._socket.ondata = this._onData;
     this._socket.onclose = this._onClose;
     this._inReadingMode = false;
@@ -187,7 +197,7 @@ export class NntpClient {
         return;
       case NO_SUCH_NEWSGROUP:
         this._updateStatus("no-such-newsgroup", {
-          newsgroup: this._newsFolder.prettyName,
+          newsgroup: this._newsFolder.localizedName,
         });
         // Close the connection without any further error message.
         this._actionDone(Cr.NS_ERROR_FAILURE);
@@ -251,6 +261,14 @@ export class NntpClient {
    * @param {TCPSocketErrorEvent} event - The error event.
    */
   _onError = event => {
+    if (event.errorCode == Cr.NS_ERROR_NET_TIMEOUT && !this.runningUri) {
+      // This should be the scheduled timeout, just close the connection
+      // without indicating any error.
+      this._logger.debug("Expected timeout.");
+      this.quit();
+      return;
+    }
+
     this._logger.error(event, event.name, event.message, event.errorCode);
     let errorName;
     let uri;
@@ -282,11 +300,29 @@ export class NntpClient {
         break;
     }
     if (errorName && uri) {
+      // If there's a message window on the URI, then we should alert the user.
+      // Otherwise (i.e. if the getter for `msgWindow` raised
+      // `NS_ERROR_NULL_POINTER`), this is a background operation and we should
+      // tell the mail session to only call the listeners but not alert.
+      let silent = false;
+      try {
+        this.runningUri.msgWindow;
+        silent = false;
+      } catch (ex) {
+        if (
+          !(ex instanceof Ci.nsIException) &&
+          ex.result != Cr.NS_ERROR_NULL_POINTER
+        ) {
+          throw ex;
+        }
+      }
+
       MailServices.mailSession.alertUser(
         lazy.messengerBundle.formatStringFromName(errorName, [
           this._server.hostName,
         ]),
-        this.runningUri
+        this.runningUri,
+        silent
       );
 
       // If we were going to display an article, instead show an error page.
@@ -507,8 +543,8 @@ export class NntpClient {
       this._nextAction = this._actionHandlePost;
       this._sendCommand("POST");
     };
+    this._currentAction = action;
     if (this._server.pushAuth && !this._authenticated) {
-      this._currentAction = action;
       this._actionAuthUser();
     } else {
       action();

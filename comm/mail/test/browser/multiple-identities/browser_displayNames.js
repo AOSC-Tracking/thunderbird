@@ -12,15 +12,12 @@
 var { ensure_card_exists, ensure_no_card_exists } = ChromeUtils.importESModule(
   "resource://testing-common/mail/AddressBookHelpers.sys.mjs"
 );
-var {
-  add_message_to_folder,
-  be_in_folder,
-  create_folder,
-  create_message,
-  get_about_message,
-  select_click_row,
-} = ChromeUtils.importESModule(
-  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+var { be_in_folder, create_folder, get_about_message, select_click_row } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+  );
+var { add_message_to_folder, create_message } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
 );
 
 var { MailServices } = ChromeUtils.importESModule(
@@ -98,8 +95,9 @@ function ensure_single_identity() {
   if (localAccount.identities.length > 1) {
     localAccount.removeIdentity(secondIdentity);
   }
-  Assert.ok(
-    MailServices.accounts.allIdentities.length == 1,
+  Assert.equal(
+    MailServices.accounts.allIdentities.length,
+    1,
     "Expected 1 identity, but got " +
       MailServices.accounts.allIdentities.length +
       " identities"
@@ -110,8 +108,9 @@ function ensure_multiple_identities() {
   if (localAccount.identities.length == 1) {
     localAccount.addIdentity(secondIdentity);
   }
-  Assert.ok(
-    MailServices.accounts.allIdentities.length > 1,
+  Assert.greater(
+    MailServices.accounts.allIdentities.length,
+    1,
     "Expected multiple identities, but got only one identity"
   );
 }

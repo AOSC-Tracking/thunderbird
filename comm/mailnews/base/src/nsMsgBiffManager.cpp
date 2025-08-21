@@ -8,19 +8,17 @@
 #include "nsCOMArray.h"
 #include "mozilla/Logging.h"
 #include "nspr.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
+#include "mozilla/Preferences.h"
 #include "nsIObserverService.h"
 #include "nsServiceManagerUtils.h"
 #include "nsMsgUtils.h"
 #include "nsITimer.h"
+#include "mozilla/Components.h"
 #include "mozilla/Services.h"
 
-#define PREF_BIFF_JITTER "mail.biff.add_interval_jitter"
+using mozilla::Preferences;
 
-#define NS_STATUSBARBIFFMANAGER_CID \
-  {0x7f9a9fb0, 0x4161, 0x11d4, {0x98, 0x76, 0x00, 0xc0, 0x4f, 0xa0, 0xd2, 0xa6}}
-static NS_DEFINE_CID(kStatusBarBiffManagerCID, NS_STATUSBARBIFFMANAGER_CID);
+#define PREF_BIFF_JITTER "mail.biff.add_interval_jitter"
 
 static mozilla::LazyLogModule MsgBiffLogModule("MsgBiff");
 
@@ -55,21 +53,16 @@ NS_IMETHODIMP nsMsgBiffManager::Init() {
   if (mInited) return NS_OK;
 
   mInited = true;
-  nsresult rv;
 
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  if (NS_SUCCEEDED(rv)) accountManager->AddIncomingServerListener(this);
+      mozilla::components::AccountManager::Service();
+  accountManager->AddIncomingServerListener(this);
 
   // in turbo mode on profile change we don't need to do anything below this
   if (mHaveShutdown) {
     mHaveShutdown = false;
     return NS_OK;
   }
-
-  // Ensure status bar biff service has started
-  nsCOMPtr<nsIFolderListener> statusBarBiffService =
-      do_GetService(kStatusBarBiffManagerCID, &rv);
 
   nsCOMPtr<nsIObserverService> observerService =
       mozilla::services::GetObserverService();
@@ -86,10 +79,11 @@ NS_IMETHODIMP nsMsgBiffManager::Shutdown() {
     mBiffTimer = nullptr;
   }
 
-  nsresult rv;
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  if (NS_SUCCEEDED(rv)) accountManager->RemoveIncomingServerListener(this);
+      mozilla::components::AccountManager::Service();
+  // We might be here during XPCOM shutdown garbage collection, so the account
+  // manager may no longer exist.
+  if (accountManager) accountManager->RemoveIncomingServerListener(this);
 
   mHaveShutdown = true;
   mInited = false;
@@ -210,22 +204,18 @@ nsresult nsMsgBiffManager::SetNextBiffTime(nsBiffEntry& biffEntry,
   biffEntry.nextBiffTime = currentTime + chosenTimeInterval;
 
   // Check if we should jitter.
-  nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
-  if (prefs) {
-    bool shouldUseBiffJitter = false;
-    prefs->GetBoolPref(PREF_BIFF_JITTER, &shouldUseBiffJitter);
-    if (shouldUseBiffJitter) {
-      // Calculate a jitter of +/-5% on chosenTimeInterval
-      // - minimum 1 second (to avoid a modulo with 0)
-      // - maximum 30 seconds (to avoid problems when biffInterval is very
-      // large)
-      int64_t jitter = (int64_t)(0.05 * (int64_t)chosenTimeInterval);
-      jitter =
-          std::max<int64_t>(1000000LL, std::min<int64_t>(jitter, 30000000LL));
-      jitter = ((rand() % 2) ? 1 : -1) * (rand() % jitter);
+  bool shouldUseBiffJitter = Preferences::GetBool(PREF_BIFF_JITTER);
+  if (shouldUseBiffJitter) {
+    // Calculate a jitter of +/-5% on chosenTimeInterval
+    // - minimum 1 second (to avoid a modulo with 0)
+    // - maximum 30 seconds (to avoid problems when biffInterval is very
+    // large)
+    int64_t jitter = (int64_t)(0.05 * (int64_t)chosenTimeInterval);
+    jitter =
+        std::max<int64_t>(1000000LL, std::min<int64_t>(jitter, 30000000LL));
+    jitter = ((rand() % 2) ? 1 : -1) * (rand() % jitter);
 
-      biffEntry.nextBiffTime += jitter;
-    }
+    biffEntry.nextBiffTime += jitter;
   }
 
   return NS_OK;

@@ -4,6 +4,8 @@
 
 #include "OfflineStorage.h"
 
+#include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
 #include "msgCore.h"
 #include "nsIChannel.h"
 #include "nsIInputStream.h"
@@ -13,13 +15,14 @@
 #include "nsIMsgFolderNotificationService.h"
 #include "nsIMsgHdr.h"
 #include "nsIMsgPluggableStore.h"
-#include "nsISeekableStream.h"
 #include "nsIStreamConverterService.h"
 #include "nsIStreamListener.h"
 #include "nsMimeTypes.h"
 #include "nsMsgMessageFlags.h"
 #include "nsMsgUtils.h"
 #include "nsNetUtil.h"
+
+using mozilla::Preferences;
 
 NS_IMPL_ISUPPORTS(OfflineMessageReadListener, nsIStreamListener)
 
@@ -203,20 +206,18 @@ nsresult LocalRenameOrReparentFolder(nsIMsgFolder* sourceFolder,
 
   // Notify listeners of the operation. If the folder was both renamed and moved
   // at the same time, we send a notification for each half of that operation.
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-  if (notifier) {
-    nsCOMPtr<nsIMsgFolder> newFolder;
-    MOZ_TRY(newParentFolder->GetChildNamed(name, getter_AddRefs(newFolder)));
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  nsCOMPtr<nsIMsgFolder> newFolder;
+  MOZ_TRY(newParentFolder->GetChildNamed(name, getter_AddRefs(newFolder)));
 
-    if (!name.Equals(currentName)) {
-      notifier->NotifyFolderRenamed(sourceFolder, newFolder);
-    }
+  if (!name.Equals(currentName)) {
+    notifier->NotifyFolderRenamed(sourceFolder, newFolder);
+  }
 
-    if (currentParent != newParentFolder) {
-      notifier->NotifyFolderMoveCopyCompleted(true, sourceFolder,
-                                              newParentFolder);
-    }
+  if (currentParent != newParentFolder) {
+    notifier->NotifyFolderMoveCopyCompleted(true, sourceFolder,
+                                            newParentFolder);
   }
 
   return NS_OK;
@@ -266,9 +267,9 @@ nsresult LocalDeleteMessages(
 
   MOZ_TRY(db->DeleteMessages(msgKeys, nullptr));
 
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-  if (notifier) notifier->NotifyMsgsDeleted(messageHeaders);
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  notifier->NotifyMsgsDeleted(messageHeaders);
 
   return NS_OK;
 }
@@ -402,20 +403,15 @@ nsresult LocalCopyHeaders(nsIMsgDBHdr* sourceHeader,
                           nsIMsgDBHdr* destinationHeader,
                           const nsTArray<nsCString>& excludeProperties,
                           bool isMove) {
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
   // These preferences exist so that extensions can control which properties
   // are preserved in the database when a message is moved or copied. All
   // properties are preserved except those listed in these preferences.
   nsCString dontPreserve;
   if (isMove) {
-    prefBranch->GetCharPref("mailnews.database.summary.dontPreserveOnMove",
+    Preferences::GetCString("mailnews.database.summary.dontPreserveOnMove",
                             dontPreserve);
   } else {
-    prefBranch->GetCharPref("mailnews.database.summary.dontPreserveOnCopy",
+    Preferences::GetCString("mailnews.database.summary.dontPreserveOnCopy",
                             dontPreserve);
   }
 
@@ -468,6 +464,23 @@ nsresult LocalCopyHeaders(nsIMsgDBHdr* sourceHeader,
   // carry over onto the new header (and overwrite any value the parser has
   // found for them).
   destinationHeader->SetFlags((newFlags & ~carryOver) | (oldFlags & carryOver));
+
+  return NS_OK;
+}
+
+nsresult FoldersOnSameServer(nsIMsgFolder* folder1, nsIMsgFolder* folder2,
+                             bool* isSameServer) {
+  NS_ENSURE_ARG_POINTER(isSameServer);
+
+  nsCOMPtr<nsIMsgIncomingServer> server1;
+  nsresult rv = folder1->GetServer(getter_AddRefs(server1));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIMsgIncomingServer> server2;
+  rv = folder2->GetServer(getter_AddRefs(server2));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *isSameServer = server1 == server2;
 
   return NS_OK;
 }

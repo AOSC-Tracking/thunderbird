@@ -39,6 +39,7 @@ const EWS_SCOPES = {
   exchange: "https://outlook.office.com/EWS.AccessAsUser.All",
   extra: "offline_access",
 };
+const TBPRO_SCOPES = "openid profile email offline_access";
 
 /**
  * Map of hostnames to [issuer, scope].
@@ -80,14 +81,15 @@ var kHostnames = new Map([
   ["imap.fastmail.com", ["www.fastmail.com", FASTMAIL_SCOPES]],
   ["pop.fastmail.com", ["www.fastmail.com", FASTMAIL_SCOPES]],
   ["smtp.fastmail.com", ["www.fastmail.com", FASTMAIL_SCOPES]],
-  [
-    "carddav.fastmail.com",
-    ["www.fastmail.com", "https://www.fastmail.com/dev/protocol-carddav"],
-  ],
+  ["carddav.fastmail.com", ["www.fastmail.com", FASTMAIL_SCOPES.carddav]],
+  ["caldav.fastmail.com", ["www.fastmail.com", FASTMAIL_SCOPES.caldav]],
 
   ["imap.comcast.net", ["comcast.net", COMCAST_SCOPES]],
   ["pop.comcast.net", ["comcast.net", COMCAST_SCOPES]],
   ["smtp.comcast.net", ["comcast.net", COMCAST_SCOPES]],
+
+  ["thundermail.com", ["auth.tb.pro", TBPRO_SCOPES]],
+  ["stage-thundermail.com", ["auth-stage.tb.pro", TBPRO_SCOPES]],
 
   // For testing purposes.
   ["mochi.test", ["test.test", "test_scope"]],
@@ -99,6 +101,7 @@ var kHostnames = new Map([
         imap: "test_mail",
         pop3: "test_mail",
         smtp: "test_mail",
+        ews: "test_mail",
         carddav: "test_addressbook",
         caldav: "test_calendar",
       },
@@ -214,6 +217,34 @@ var kIssuers = new Map([
       clientSecret: "fc5d0a314549bb3d059e0cec751fa4bd40a9cc7b",
       authorizationEndpoint: "https://oauth.xfinity.com/oauth/authorize",
       tokenEndpoint: "https://oauth.xfinity.com/oauth/token",
+      usePKCE: true,
+    },
+  ],
+
+  [
+    "auth.tb.pro",
+    {
+      name: "auth.tb.pro",
+      builtIn: true,
+      clientId: "desktop",
+      authorizationEndpoint:
+        "https://auth.tb.pro/realms/tbpro/protocol/openid-connect/auth",
+      tokenEndpoint:
+        "https://auth.tb.pro/realms/tbpro/protocol/openid-connect/token",
+      usePKCE: true,
+    },
+  ],
+
+  [
+    "auth-stage.tb.pro",
+    {
+      name: "auth-stage.tb.pro",
+      builtIn: true,
+      clientId: "desktop",
+      authorizationEndpoint:
+        "https://auth-stage.tb.pro/realms/tbpro/protocol/openid-connect/auth",
+      tokenEndpoint:
+        "https://auth-stage.tb.pro/realms/tbpro/protocol/openid-connect/token",
       usePKCE: true,
     },
   ],

@@ -371,8 +371,6 @@ pref("mail.ui-rdf.version", 0);
 /////////////////////////////////////////////////////////////////
 // Overrides of the core mailnews.js and composer.js prefs
 /////////////////////////////////////////////////////////////////
-pref("mail.showCondensedAddresses", true); // show the friendly display name for people I know
-
 pref("mailnews.attachments.display.start_expanded", false);
 // hidden pref for changing how we present attachments in the message pane
 pref("mail.pane_config.dynamic", 2);
@@ -459,6 +457,9 @@ pref("network.protocol-handler.expose.nntp", true);
 pref("network.protocol-handler.expose.imap", true);
 pref("network.protocol-handler.expose.pop", true);
 pref("network.protocol-handler.expose.mailbox", true);
+// `x-moz-ews` is meant for internal use only, so we shouldn't handle e.g.
+// clickable links with this scheme.
+pref("network.protocol-handler.expose.x-moz-ews", false);
 // Although we allow these to be exposed internally, there are various places
 // (e.g. message pane) where we may divert them out to external applications.
 pref("network.protocol-handler.expose.about", true);
@@ -498,6 +499,9 @@ pref("network.protocol-handler.external.webcal", false);
 pref("network.protocol-handler.external.webcals", false);
 pref("network.protocol-handler.external.moz-cal-handle-itip", false);
 pref("network.protocol-handler.external.smile", false);
+pref("network.protocol-handler.external.ews", false);
+pref("network.protocol-handler.external.ews-message", false);
+pref("network.protocol-handler.external.x-moz-ews", false);
 
 pref("network.hosts.smtp_server",           "mail");
 pref("network.hosts.pop_server",            "mail");
@@ -906,8 +910,8 @@ pref("privacy.webrtc.globalMuteToggles", false);
 // instead of space in the file name.
 pref("mail.save_msg_filename_underscores_for_space", false);
 
-// See bug 1572568 for details. Disallow eval() with system principal.
-pref("security.allow_eval_with_system_principal", false);
+// Necessary until we move off the Matrix JS SDK.
+pref("security.allow_eval_in_parent_process", true);
 
 // Enable FIDO U2F
 pref("security.webauth.u2f", true);
@@ -1382,6 +1386,9 @@ pref("pdfjs.firstRun", true);
 pref("pdfjs.previousHandler.preferredAction", 0);
 pref("pdfjs.previousHandler.alwaysAskBeforeHandling", false);
 
+// Enable signatures in PDF.js viewer in Thunderbird.
+pref("pdfjs.enableSignatureEditor", true);
+
 pref("mail.activity.loglevel", "Warn");
 
 // The number of public recipients before we offer BCC addressing.
@@ -1400,7 +1407,7 @@ pref("print.print_headerright", "");
 // Enable Masonry Layout for AddressBook.
 pref("layout.css.grid-template-masonry-value.enabled", true);
 
-#ifdef NIGHTLY_BUILD
+#ifdef MOZ_SERVICES_SYNC
 // If set to false, FxAccounts and Sync will be unavailable.
 // A restart is mandatory after flipping that preference.
 pref("identity.fxaccounts.enabled", true);
@@ -1424,10 +1431,6 @@ pref("identity.fxaccounts.remote.oauth.uri", "https://oauth.stage.mozaws.net/v1"
 // Token server used by the FxA Sync identity.
 pref("identity.sync.tokenserver.uri", "https://token.stage.mozaws.net/1.0/sync/1.5");
 
-// Adds Firefox/10x.0 to the User-Agent string, because we need it.
-// TODO: Fix this.
-pref("general.useragent.compatMode.firefox", true);
-
 // Enable the sync engines we want, and disable the ones we don't want.
 pref("services.sync.engine.addons", false);
 pref("services.sync.engine.addressbooks", true);
@@ -1437,7 +1440,7 @@ pref("services.sync.engine.creditcards", false);
 pref("services.sync.engine.identities", true);
 pref("services.sync.engine.prefs", false);
 pref("services.sync.engine.servers", true);
-#endif
+#endif  // MOZ_SERVICES_SYNC
 
 // Unified toolbar
 
@@ -1502,3 +1505,6 @@ pref("mail.threadpane.listview", 0);
 
 // Row count for the cards view, currently bound to a range between 2 and 3.
 pref("mail.threadpane.cardsview.rowcount", 3);
+
+// Whether the OS Authentication is enabled or not.
+pref("signon.management.page.os-auth.locked.enabled", false);

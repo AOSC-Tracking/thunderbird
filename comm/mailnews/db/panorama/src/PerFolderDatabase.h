@@ -5,36 +5,31 @@
 #ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_PERFOLDERDATABASE_H_
 #define COMM_MAILNEWS_DB_PANORAMA_SRC_PERFOLDERDATABASE_H_
 
+#include "DatabaseCore.h"
 #include "FolderDatabase.h"
 #include "MessageDatabase.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/WeakPtr.h"
-#include "mozIStorageStatement.h"
 #include "nsCOMPtr.h"
 #include "nsIDBChangeListener.h"
 #include "nsIDBFolderInfo.h"
-#include "nsIFolder.h"
 #include "nsIMsgDatabase.h"
 #include "nsIMsgFolder.h"
 #include "nsIMsgThread.h"
 #include "nsMsgEnumerator.h"
 
-namespace mozilla::mailnews {
+class mozIStorageStatement;
+class nsIDBChangeListener;
 
-class MessageDatabase;
+namespace mozilla::mailnews {
 
 class PerFolderDatabase : public nsIMsgDatabase,
                           public SupportsWeakPtr,
                           public MessageListener {
  public:
-  explicit PerFolderDatabase(FolderDatabase* folderDatabase,
-                             MessageDatabase* messageDatabase,
-                             uint64_t folderId, bool isNewsFolder)
-      : mFolderDatabase(folderDatabase),
-        mMessageDatabase(messageDatabase),
-        mFolderId(folderId),
-        mIsNewsFolder(isNewsFolder) {
-    mMessageDatabase->AddMessageListener(this);
+  explicit PerFolderDatabase(uint64_t folderId, bool isNewsFolder)
+      : mFolderId(folderId), mIsNewsFolder(isNewsFolder) {
+    MessageDB().AddMessageListener(this);
   }
 
   NS_DECL_ISUPPORTS
@@ -43,15 +38,19 @@ class PerFolderDatabase : public nsIMsgDatabase,
 
   // MessageListener functions.
   void OnMessageAdded(Message* message) override;
-  void OnMessageRemoved(Message* message) override;
-  void OnMessageFlagsChanged(Message* message, uint64_t oldFlags,
-                             uint64_t newFlags) override;
+  void OnMessageRemoved(Message* message, uint32_t oldFlags) override;
+  void OnMessageFlagsChanged(Message* message, uint32_t oldFlags,
+                             uint32_t newFlags) override;
+
+  uint64_t FolderId() { return mFolderId; }
 
  private:
   virtual ~PerFolderDatabase() {};
 
-  FolderDatabase* mFolderDatabase;
-  MessageDatabase* mMessageDatabase;
+  MessageDatabase& MessageDB() const {
+    return *DatabaseCore::sInstance->mMessageDatabase;
+  }
+
   uint64_t mFolderId;
   bool mIsNewsFolder;
   nsTArray<nsMsgKey> mNewList;
@@ -60,38 +59,30 @@ class PerFolderDatabase : public nsIMsgDatabase,
 
 class MessageEnumerator : public nsBaseMsgEnumerator {
  public:
-  MessageEnumerator(MessageDatabase* messageDatabase,
-                    mozIStorageStatement* aStmt);
+  explicit MessageEnumerator(mozIStorageStatement* aStmt);
 
   // nsIMsgEnumerator support.
   NS_IMETHOD GetNext(nsIMsgDBHdr** aItem) override;
   NS_IMETHOD HasMoreElements(bool* aResult) override;
 
  private:
-  ~MessageEnumerator() {
-    if (mStmt) mStmt->Finalize();
-  }
+  ~MessageEnumerator();
 
-  MessageDatabase* mMessageDatabase;
   nsCOMPtr<mozIStorageStatement> mStmt;
   bool mHasNext = false;
 };
 
 class ThreadEnumerator : public nsBaseMsgThreadEnumerator {
  public:
-  ThreadEnumerator(MessageDatabase* messageDatabase, mozIStorageStatement* stmt,
-                   uint64_t folderId);
+  ThreadEnumerator(mozIStorageStatement* stmt, uint64_t folderId);
 
   // nsIMsgEnumerator support.
   NS_IMETHOD GetNext(nsIMsgThread** item) override;
   NS_IMETHOD HasMoreElements(bool* hasNext) override;
 
  private:
-  ~ThreadEnumerator() {
-    if (mStmt) mStmt->Finalize();
-  }
+  ~ThreadEnumerator();
 
-  MessageDatabase* mMessageDatabase;
   nsCOMPtr<mozIStorageStatement> mStmt;
   uint64_t mFolderId;
   bool mHasNext = false;
@@ -99,20 +90,24 @@ class ThreadEnumerator : public nsBaseMsgThreadEnumerator {
 
 class FolderInfo : public nsIDBFolderInfo {
  public:
-  explicit FolderInfo(FolderDatabase* folderDatabase,
-                      MessageDatabase* messageDatabase,
-                      PerFolderDatabase* perFolderDatabase, uint64_t folderId);
+  explicit FolderInfo(PerFolderDatabase* perFolderDatabase)
+      : mPerFolderDatabase(perFolderDatabase),
+        mFolderId(perFolderDatabase->FolderId()) {}
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIDBFOLDERINFO
 
  private:
-  virtual ~FolderInfo() {};
+  virtual ~FolderInfo() {}
 
-  FolderDatabase* mFolderDatabase;
-  MessageDatabase* mMessageDatabase;
-  PerFolderDatabase* mPerFolderDatabase;
-  nsCOMPtr<nsIFolder> mFolder;
+  FolderDatabase& FolderDB() const {
+    return *DatabaseCore::sInstance->mFolderDatabase;
+  }
+  MessageDatabase& MessageDB() const {
+    return *DatabaseCore::sInstance->mMessageDatabase;
+  }
+  RefPtr<PerFolderDatabase> mPerFolderDatabase;
+  uint64_t mFolderId;
 };
 
 }  // namespace mozilla::mailnews

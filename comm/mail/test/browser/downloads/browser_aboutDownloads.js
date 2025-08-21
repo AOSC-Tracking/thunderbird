@@ -15,11 +15,13 @@ var {
   close_tab,
   create_folder,
   get_about_message,
-  make_message_sets_in_folders,
   select_click_row,
   switch_tab,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
+var { make_message_sets_in_folders } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
 );
 var { click_menus_in_sequence, wait_for_browser_load } =
   ChromeUtils.importESModule(
@@ -176,7 +178,8 @@ async function save_attachment_files() {
     file.append(attachmentFileNames[i]);
     await select_click_row(i);
     MockFilePicker.setFiles([file]);
-    await new Promise(function (resolve) {
+    const saved = BrowserTestUtils.waitForEvent(window, "attachmentSaved");
+    await new Promise(resolve => {
       MockFilePicker.afterOpenCallback = resolve;
       EventUtils.synthesizeMouseAtCenter(
         aboutMessage.document.getElementById("attachmentSaveAllSingle"),
@@ -184,6 +187,10 @@ async function save_attachment_files() {
         aboutMessage
       );
     });
+    const {
+      detail: { path },
+    } = await saved;
+    Assert.equal(path, file.path, "Should save to expected path");
   }
 }
 

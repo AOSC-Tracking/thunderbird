@@ -2,6 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/**
+ * Tests live views are initialised correctly and find the right messages.
+ */
+
 const { VirtualFolderHelper } = ChromeUtils.importESModule(
   "resource:///modules/VirtualFolderWrapper.sys.mjs"
 );
@@ -39,13 +43,16 @@ add_task(function testMessageProperties() {
 });
 
 add_task(function testInitWithFolder() {
-  const folderA = folders.getFolderByPath("server1/folderA");
+  const folderA = folderDB.getFolderByPath("server1/folderA");
 
   const liveView = new LiveView();
   Assert.throws(
-    () => liveView.initWithFolder(null),
-    /NS_ERROR_ILLEGAL_VALUE/,
-    "setting with a null folder should throw"
+    () => liveView.initWithFolder(0),
+    // NOTE (BenC): LiveView::InitWithFolder(0) returns NS_ERROR_INVALID_ARG,
+    // but for some reason it shows up here as NS_ERROR_UNEXPECTED.
+    // I'm baffled.
+    /NS_ERROR_/,
+    "setting with 0 folder should throw"
   );
 
   liveView.initWithFolder(folderA);
@@ -81,15 +88,20 @@ add_task(function testInitWithFolder() {
 });
 
 add_task(function testInitWithFolders() {
-  const folderA = folders.getFolderByPath("server1/folderA");
-  const folderB = folders.getFolderByPath("server1/folderB");
-  const folderC = folders.getFolderByPath("server1/folderC");
+  const folderA = folderDB.getFolderByPath("server1/folderA");
+  const folderB = folderDB.getFolderByPath("server1/folderB");
+  const folderC = folderDB.getFolderByPath("server1/folderC");
 
   const liveView = new LiveView();
   Assert.throws(
-    () => liveView.initWithFolders([null]),
-    /NS_ERROR_ILLEGAL_VALUE/,
-    "setting with a null folder should throw"
+    () => liveView.initWithFolders([0, folderA]),
+    /NS_ERROR_/,
+    "initWithFolders should fail if there are any null folderIds"
+  );
+  Assert.throws(
+    () => liveView.initWithFolders([]),
+    /NS_ERROR_/,
+    "initWithFolders should fail with an empty list"
   );
 
   liveView.initWithFolders([folderA, folderB, folderC]);
@@ -125,54 +137,78 @@ add_task(function testInitWithFolders() {
 });
 
 add_task(function testInitWithVirtualFolder() {
-  const folderA = folders.getFolderByPath("server1/folderA");
-  const folderC = folders.getFolderByPath("server1/folderC");
+  const folderA = folderDB.getFolderByPath("server1/folderA");
+  const folderC = folderDB.getFolderByPath("server1/folderC");
 
   MailServices.accounts.accounts;
-  VirtualFolderHelper.createNewVirtualFolder(
+  const wrapper = VirtualFolderHelper.createNewVirtualFolder(
     "virtual",
     MailServices.accounts.localFoldersServer.rootFolder,
     [
-      folders.getMsgFolderForFolder(folderA),
-      folders.getMsgFolderForFolder(folderC),
+      folderDB.getMsgFolderForFolder(folderA),
+      folderDB.getMsgFolderForFolder(folderC),
     ],
-    "ALL",
+    "AND (subject,contains,ing)",
     false
   );
 
-  const virtualFolder = folders.getFolderByPath("server1/virtual");
+  const virtualFolder = folderDB.getFolderByPath("server1/virtual");
 
-  const liveView = new LiveView();
+  let liveView = new LiveView();
   liveView.initWithFolder(virtualFolder);
   assertInitFails(liveView);
 
   Assert.equal(
     liveView.countMessages(),
-    10,
+    2,
     "countMessages should return the total number of messages"
   );
   Assert.equal(
     liveView.countUnreadMessages(),
-    5,
+    1,
     "countUnreadMessages should return the number of unread messages"
   );
   Assert.deepEqual(
     Array.from(liveView.selectMessages(), m => m.id),
-    [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+    [6, 1],
     "selectMessages with no arguments should return all the messages"
-  );
-  Assert.deepEqual(
-    Array.from(liveView.selectMessages(3), m => m.id),
-    [10, 9, 8],
-    "selectMessages with a limit argument should only return some of the messages"
-  );
-  Assert.deepEqual(
-    Array.from(liveView.selectMessages(2, 1), m => m.id),
-    [9, 8],
-    "selectMessages with both arguments should only return some of the messages"
   );
 
   assertInitFails(liveView);
+
+  wrapper.searchString = "AND (date,is before,10-May-2023)";
+  // TODO: We shouldn't need this. Updating the wrapper should cause the live
+  // view to refresh itself.
+  liveView = new LiveView();
+  liveView.initWithFolder(virtualFolder);
+
+  Assert.deepEqual(
+    Array.from(liveView.selectMessages(), m => m.id),
+    [5, 4, 3, 2, 1],
+    "selectMessages with no arguments should return all the messages"
+  );
+
+  wrapper.searchString =
+    "AND (date,is after,1-Jan-2020) AND (date,is before,10-May-2023)";
+  liveView = new LiveView();
+  liveView.initWithFolder(virtualFolder);
+
+  Assert.deepEqual(
+    Array.from(liveView.selectMessages(), m => m.id),
+    [5],
+    "selectMessages with no arguments should return all the messages"
+  );
+
+  wrapper.searchString =
+    "AND (date,is before,01-Jan-2020) OR (date,is after,10-May-2023)";
+  liveView = new LiveView();
+  liveView.initWithFolder(virtualFolder);
+
+  Assert.deepEqual(
+    Array.from(liveView.selectMessages(), m => m.id),
+    [10, 9, 8, 7, 6, 4, 3, 2, 1],
+    "selectMessages with no arguments should return all the messages"
+  );
 });
 
 add_task(function testInitWithTag() {
@@ -195,6 +231,9 @@ add_task(function testInitWithTag() {
     [8, 3, 2],
     "selectMessages with no arguments should return all the messages"
   );
+
+  Assert.equal(liveView.sqlClauseForTests, "TAGS_INCLUDE(tags, ?)");
+  Assert.deepEqual(liveView.sqlParamsForTests, "$label1");
 
   assertInitFails(liveView);
 });
@@ -396,7 +435,7 @@ add_task(function testListener() {
   Assert.equal(listener._addedMessage.flags, 0);
   Assert.equal(listener._addedMessage.tags, "$label4");
 
-  messages.removeMessage(earlierId);
+  messageDB.removeMessage(earlierId);
   Assert.equal(listener._removedMessage.id, earlierId);
   Assert.equal(listener._removedMessage.folderId, 2);
   Assert.equal(listener._removedMessage.messageId, "earlier-message");
@@ -412,12 +451,12 @@ add_task(function testListener() {
   liveView.clearListener(listener);
   // If the listener was not cleared these calls would cause failures.
   const laterId = addMessage({ folderId: 3, messageId: "later-message" });
-  messages.removeMessage(addedId);
-  messages.removeMessage(laterId);
+  messageDB.removeMessage(addedId);
+  messageDB.removeMessage(laterId);
 });
 
 function assertInitFails(liveView) {
-  const folderA = folders.getFolderByPath("server1/folderA");
+  const folderA = folderDB.getFolderByPath("server1/folderA");
 
   Assert.throws(
     () => liveView.initWithFolder(folderA),

@@ -23,11 +23,8 @@ var { XPCOMUtils } = ChromeUtils.importESModule(
 );
 
 ChromeUtils.defineESModuleGetters(this, {
-  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
-
   BrowserToolboxLauncher:
     "resource://devtools/client/framework/browser-toolbox/Launcher.sys.mjs",
-
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   MimeParser: "resource:///modules/mimeParser.sys.mjs",
   PluralForm: "resource:///modules/PluralForm.sys.mjs",
@@ -1983,7 +1980,7 @@ function addAttachmentToPopup(
   menuitem = document.createXULElement("menuitem");
   menuitem.attachment = attachment;
   menuitem.addEventListener("command", () =>
-    attachment.detach(messenger, true)
+    attachment.detachFromMessage(aboutMessage.browsingContext)
   );
   menuitem.setAttribute("label", getString("detachLabel"));
   menuitem.setAttribute("accesskey", getString("detachLabelAccesskey"));
@@ -1994,7 +1991,7 @@ function addAttachmentToPopup(
   menuitem = document.createXULElement("menuitem");
   menuitem.attachment = attachment;
   menuitem.addEventListener("command", () =>
-    attachment.detach(messenger, false)
+    attachment.deleteFromMessage(aboutMessage.browsingContext)
   );
   menuitem.setAttribute("label", getString("deleteLabel"));
   menuitem.setAttribute("accesskey", getString("deleteLabelAccesskey"));

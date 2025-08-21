@@ -3,11 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
+#include "nsImapIncomingServer.h"
 
+#include "msgCore.h"
 #include "netCore.h"
 #include "../public/nsIImapHostSessionList.h"
-#include "nsImapIncomingServer.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIMsgIdentity.h"
 #include "nsIImapUrl.h"
@@ -15,8 +15,6 @@
 #include "nsThreadUtils.h"
 #include "nsImapProtocol.h"
 #include "nsCOMPtr.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefService.h"
 #include "nsMsgFolderFlags.h"
 #include "prmem.h"
 #include "plstr.h"
@@ -156,9 +154,7 @@ nsImapIncomingServer::GetConstructedPrettyName(nsACString& retval) {
   nsresult rv;
 
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+      mozilla::components::AccountManager::Service();
   nsCOMPtr<nsIMsgIdentity> identity;
   rv =
       accountManager->GetFirstIdentityForServer(this, getter_AddRefs(identity));
@@ -849,9 +845,7 @@ nsImapIncomingServer::PerformExpand(nsIMsgWindow* aMsgWindow) {
 
   if (!rootMsgFolder) return NS_ERROR_FAILURE;
 
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   nsCOMPtr<nsIThread> thread(do_GetCurrentThread());
   rv = imapService->DiscoverAllFolders(rootMsgFolder, this, aMsgWindow);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -871,9 +865,7 @@ nsImapIncomingServer::VerifyLogon(nsIUrlListener* aUrlListener,
                                   nsIMsgWindow* aMsgWindow, nsIURI** aURL) {
   nsresult rv;
 
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   nsCOMPtr<nsIMsgFolder> rootFolder;
   // this will create the resource if it doesn't exist, but it shouldn't
   // do anything on disk.
@@ -1314,9 +1306,7 @@ NS_IMETHODIMP nsImapIncomingServer::DiscoveryDone() {
     // flag set appropriately.
 
     nsCOMPtr<nsIMsgAccountManager> accountMgr =
-        do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
+        mozilla::components::AccountManager::Service();
     nsCOMPtr<nsIMsgIdentity> identity;
     rv = accountMgr->GetFirstIdentityForServer(this, getter_AddRefs(identity));
     if (NS_SUCCEEDED(rv) && identity) {
@@ -1734,12 +1724,23 @@ nsImapIncomingServer::FEAlert(const nsAString& aAlertString,
 
 nsresult nsImapIncomingServer::AlertUser(const nsAString& aString,
                                          nsIMsgMailNewsUrl* aUrl) {
-  nsresult rv;
   nsCOMPtr<nsIMsgMailSession> mailSession =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::MailSession::Service();
 
-  return mailSession->AlertUser(aString, aUrl);
+  // If there's a message window on the URI, then we should alert the user.
+  // Otherwise (i.e. if the getter for `msgWindow` raised
+  // `NS_ERROR_NULL_POINTER`), this is a background operation and we should tell
+  // the mail session to only call the listeners but not alert.
+  bool silent = false;
+  nsCOMPtr<nsIMsgWindow> dummy;
+  nsresult rv = aUrl->GetMsgWindow(getter_AddRefs(dummy));
+  if (rv == NS_ERROR_NULL_POINTER) {
+    silent = true;
+  } else {
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return mailSession->AlertUser(aString, aUrl, silent);
 }
 
 NS_IMETHODIMP
@@ -1843,7 +1844,7 @@ NS_IMETHODIMP nsImapIncomingServer::FEAlertFromServer(
 NS_IMETHODIMP nsImapIncomingServer::FEAlertCertError(
     nsITransportSecurityInfo* securityInfo, nsIMsgMailNewsUrl* url) {
   nsCOMPtr<nsIMsgMailSession> mailSession =
-      do_GetService("@mozilla.org/messenger/services/session;1");
+      mozilla::components::MailSession::Service();
   mailSession->AlertCertError(securityInfo, url);
   return NS_OK;
 }
@@ -2114,11 +2115,8 @@ NS_IMETHODIMP nsImapIncomingServer::SetUserAuthenticated(
     bool aUserAuthenticated) {
   m_userAuthenticated = aUserAuthenticated;
   if (aUserAuthenticated) {
-    nsresult rv;
     nsCOMPtr<nsIMsgAccountManager> accountManager =
-        do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
+        mozilla::components::AccountManager::Service();
     accountManager->SetUserNeedsToAuthenticate(false);
   }
   return NS_OK;
@@ -2174,14 +2172,9 @@ nsImapIncomingServer::StartPopulatingWithUri(nsIMsgWindow* aMsgWindow,
   rv = GetServerURI(serverUri);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  /*
-      if uri = imap://user@host/foo/bar, the serverUri is imap://user@host
-      to get path from uri, skip over imap://user@host + 1 (for the /)
-  */
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
+  // If uri = imap://user@host/foo/bar, the serverUri is imap://user@host
+  // to get path from uri, skip over imap://user@host + 1 (for the /).
   return imapService->GetListOfFoldersWithPath(
       this, aMsgWindow, Substring(uri, serverUri.Length() + 1));
 }
@@ -2205,9 +2198,7 @@ nsImapIncomingServer::StartPopulating(nsIMsgWindow* aMsgWindow,
   rv = SetShowFullName(false);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   return imapService->GetListOfFoldersOnServer(this, aMsgWindow);
 }
 
@@ -2356,10 +2347,7 @@ NS_IMETHODIMP
 nsImapIncomingServer::SubscribeToFolder(const nsACString& aName, bool subscribe,
                                         nsIURI** aUri) {
   nsresult rv;
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   nsCOMPtr<nsIMsgFolder> rootMsgFolder;
   rv = GetRootFolder(getter_AddRefs(rootMsgFolder));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2531,15 +2519,9 @@ nsImapIncomingServer::GetSupportsDiskSpace(bool* aSupportsDiskSpace) {
       CreateHostSpecificPrefName("default_supports_diskspace", prefName);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIPrefBranch> prefBranch =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  if (NS_SUCCEEDED(rv))
-    rv = prefBranch->GetBoolPref(prefName.get(), aSupportsDiskSpace);
+  *aSupportsDiskSpace = true;
+  Preferences::GetBool(prefName.get(), aSupportsDiskSpace);
 
-  // Couldn't get the default value with the hostname.
-  // Fall back on IMAP default value
-  if (NS_FAILED(rv))  // set default value
-    *aSupportsDiskSpace = true;
   return NS_OK;
 }
 
@@ -2596,15 +2578,9 @@ nsImapIncomingServer::GetOfflineSupportLevel(int32_t* aSupportLevel) {
   rv = CreateHostSpecificPrefName("default_offline_support_level", prefName);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIPrefBranch> prefBranch =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  if (NS_SUCCEEDED(rv))
-    rv = prefBranch->GetIntPref(prefName.get(), aSupportLevel);
+  *aSupportLevel =
+      Preferences::GetInt(prefName.get(), OFFLINE_SUPPORT_LEVEL_REGULAR);
 
-  // Couldn't get the pref value with the hostname.
-  // Fall back on IMAP default value
-  if (NS_FAILED(rv))  // set default value
-    *aSupportLevel = OFFLINE_SUPPORT_LEVEL_REGULAR;
   return NS_OK;
 }
 
@@ -2738,10 +2714,7 @@ nsImapIncomingServer::GetNewMessagesForNonInboxFolders(nsIMsgFolder* aFolder,
     // eventually, the gGotStatusPref should go away, once we work out the kinks
     // from using STATUS.
     if (!gGotStatusPref) {
-      nsCOMPtr<nsIPrefBranch> prefBranch =
-          do_GetService(NS_PREFSERVICE_CONTRACTID);
-      if (prefBranch)
-        prefBranch->GetBoolPref("mail.imap.use_status_for_biff", &gUseStatus);
+      Preferences::GetBool("mail.imap.use_status_for_biff", &gUseStatus);
       gGotStatusPref = true;
     }
     if (gUseStatus && !isOpen) {
@@ -2776,12 +2749,7 @@ NS_IMETHODIMP
 nsImapIncomingServer::GetShowAttachmentsInline(bool* aResult) {
   NS_ENSURE_ARG_POINTER(aResult);
   *aResult = true;  // true per default
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  prefBranch->GetBoolPref("mail.inline_attachments", aResult);
+  Preferences::GetBool("mail.inline_attachments", aResult);
   return NS_OK;  // In case this pref is not set we need to return NS_OK.
 }
 

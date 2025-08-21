@@ -10,6 +10,8 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   LanguageDetector:
     "resource://gre/modules/translations/LanguageDetector.sys.mjs",
+  MailNotificationService:
+    "resource:///modules/MailNotificationService.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   MessageArchiver: "resource:///modules/MessageArchiver.sys.mjs",
   WinUnreadBadge: "resource:///modules/WinUnreadBadge.sys.mjs",
@@ -19,6 +21,8 @@ ChromeUtils.defineLazyGetter(
   "l10n",
   () => new Localization(["messenger/messenger.ftl"], true)
 );
+
+let audioElementWeak;
 
 const availableActions = [
   {
@@ -102,11 +106,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
 );
 
 /**
- * A module that listens to folder change events, and show notifications for new
- * mails if necessary.
+ * A module that listens to folder change events, and shows a notification
+ * and/or plays a sound if necessary.
  */
-export class MailNotificationManager {
-  static get availableActions() {
+export const MailNotificationManager = new (class {
+  QueryInterface = ChromeUtils.generateQI(["nsIObserver", "nsIFolderListener"]);
+
+  get availableActions() {
     for (const action of availableActions) {
       if (!action.title) {
         action.title = lazy.l10n.formatValueSync(action.l10nId);
@@ -114,17 +120,11 @@ export class MailNotificationManager {
     }
     return availableActions;
   }
-  static get enabledActions() {
+  get enabledActions() {
     return lazy.enabledActions;
   }
 
-  QueryInterface = ChromeUtils.generateQI([
-    "nsIObserver",
-    "nsIFolderListener",
-    "mozINewMailListener",
-  ]);
-
-  constructor() {
+  init() {
     this._unreadChatCount = 0;
     this._unreadMailCount = 0;
     // @type {Map<string, number>} - A map of folder URIs and the date of the
@@ -148,20 +148,11 @@ export class MailNotificationManager {
 
     // Ensure that OS integration is defined before we attempt to initialize the
     // system tray icon.
-    try {
-      this._osIntegration = Cc[
-        "@mozilla.org/messenger/osintegration;1"
-      ].getService(Ci.nsIMessengerOSIntegration);
-    } catch (e) {
-      // We don't have OS integration on all platforms, i.e. 32-bit Linux.
-      this._osIntegration = null;
-    }
+    this._osIntegration;
 
     if (["macosx", "win"].includes(AppConstants.platform)) {
       // We don't have indicator for unread count on Linux yet.
-      Cc["@mozilla.org/newMailNotificationService;1"]
-        .getService(Ci.mozINewMailNotificationService)
-        .addListener(this, Ci.mozINewMailNotificationService.count);
+      lazy.MailNotificationService.addListener(this);
 
       Services.obs.addObserver(this, "unread-im-count-changed");
       Services.obs.addObserver(this, "profile-before-change");
@@ -195,6 +186,7 @@ export class MailNotificationManager {
         return;
       case "profile-before-change":
         this._osIntegration?.onExit();
+        audioElementWeak?.deref()?.pause();
         return;
       case "newmailalert-closed":
         // newmailalert.xhtml is closed, try to show the next queued folder.
@@ -225,10 +217,6 @@ export class MailNotificationManager {
    * @see nsIFolderListener
    */
   onFolderIntPropertyChanged(folder, property, oldValue, newValue) {
-    if (!Services.prefs.getBoolPref("mail.biff.show_alert")) {
-      return;
-    }
-
     this._logger.debug(
       `onFolderIntPropertyChanged; property=${property}: ${oldValue} => ${newValue}, folder.URI=${folder.URI}`
     );
@@ -237,12 +225,12 @@ export class MailNotificationManager {
       case "BiffState":
         if (newValue == Ci.nsIMsgFolder.nsMsgBiffState_NewMail) {
           // The folder argument is a root folder.
-          this._fillAlertInfo(folder);
+          this._notifyNewMail(folder);
         }
         break;
       case "NewMailReceived":
         // The folder argument is a real folder.
-        this._fillAlertInfo(folder);
+        this._notifyNewMail(folder);
         break;
     }
   }
@@ -251,7 +239,7 @@ export class MailNotificationManager {
   onFolderEvent() {}
 
   /**
-   * @see mozINewMailNotificationService
+   * @see MailNotificationService
    */
   onCountChanged(count) {
     this._logger.log(`Unread mail count changed to ${count}`);
@@ -259,13 +247,24 @@ export class MailNotificationManager {
     this._updateUnreadCount();
   }
 
+  get _osIntegration() {
+    try {
+      return Cc["@mozilla.org/messenger/osintegration;1"].getService(
+        Ci.nsIMessengerOSIntegration
+      );
+    } catch (e) {
+      // We don't have OS integration on all platforms, i.e. 32-bit Linux.
+      return null;
+    }
+  }
+
   /**
-   * Show an alert according to the changed folder.
+   * Show an alert according to the changed folder and/or play a sound.
    *
    * @param {nsIMsgFolder} changedFolder - The folder that emitted the change
    *   event, can be a root folder or a real folder.
    */
-  async _fillAlertInfo(changedFolder) {
+  async _notifyNewMail(changedFolder) {
     const folder = this._getFirstRealFolderWithNewMail(changedFolder);
     if (!folder) {
       return;
@@ -277,6 +276,79 @@ export class MailNotificationManager {
       return;
     }
 
+    if (Services.prefs.getBoolPref("mail.biff.show_alert")) {
+      this._fillAlertInfo(folder, newMsgKeys, numNewMessages);
+    }
+
+    // If the OS is in Do Not Disturb mode, don't play a sound.
+    if (this._osIntegration?.isInDoNotDisturbMode) {
+      this._logger.debug("The operating system is in do-not-disturb mode");
+      return;
+    }
+
+    const prefBranch = Services.prefs.getBranch(
+      folder.server.type == "rss"
+        ? "mail.feed.play_sound"
+        : "mail.biff.play_sound"
+    );
+    if (prefBranch.getBoolPref("")) {
+      MailNotificationManager.playSound(prefBranch);
+    }
+  }
+
+  /**
+   * Play the user's notification sound. If a sound is already playing, it
+   * will be stopped.
+   *
+   * @param {nsIPrefBranch} prefBranch - The relevant preferences for the
+   *   sound to be played (i.e. `mail.*.play_sound`).
+   */
+  playSound(prefBranch) {
+    // Play the system sound.
+    if (prefBranch.getIntPref(".type") == 0) {
+      Cc["@mozilla.org/sound;1"]
+        .createInstance(Ci.nsISound)
+        .playEventSound(Ci.nsISound.EVENT_NEW_MAIL_RECEIVED);
+      return;
+    }
+
+    // Play a custom sound.
+    const url = prefBranch.getStringPref(".url");
+    if (!url.startsWith("file://")) {
+      return;
+    }
+
+    let audioElement = audioElementWeak?.deref();
+    if (audioElement && audioElement.src != url) {
+      // A sound, that isn't the one we want, is already playing. Stop it.
+      audioElement.pause();
+      audioElement = null;
+    }
+    if (!audioElement) {
+      // Create a new audio element for playing the sound.
+      const win = Services.wm.getMostRecentWindow("mail:3pane");
+      if (!win) {
+        return;
+      }
+      audioElement = new win.Audio();
+      if (Cu.isInAutomation) {
+        audioElement.onended = function () {
+          Services.obs.notifyObservers(
+            audioElement,
+            "notification-audio-ended"
+          );
+        };
+      }
+      audioElement.src = url;
+      audioElementWeak = new WeakRef(audioElement);
+    }
+
+    // Go to the start and play the sound.
+    audioElement.currentTime = 0;
+    audioElement.play();
+  }
+
+  async _fillAlertInfo(folder, newMsgKeys, numNewMessages) {
     this._logger.debug(
       `Filling alert info; folder.URI=${folder.URI}, numNewMessages=${numNewMessages}`
     );
@@ -604,4 +676,4 @@ export class MailNotificationManager {
       Services.wm.getMostRecentWindow("mail:3pane")?.getAttention();
     }
   }
-}
+})();

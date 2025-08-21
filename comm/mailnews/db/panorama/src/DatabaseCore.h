@@ -8,9 +8,8 @@
 #include "FolderDatabase.h"
 #include "MessageDatabase.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/StaticPtr.h"
 #include "mozilla/WeakPtr.h"
-#include "mozIStorageConnection.h"
-#include "mozIStorageStatement.h"
 #include "nsCOMPtr.h"
 #include "nsIDatabaseCore.h"
 #include "nsIFactory.h"
@@ -20,6 +19,9 @@
 
 #define DATABASE_CORE_CID \
   {0xbb308d0b, 0xbb99, 0x4699, {0x89, 0xde, 0x42, 0x82, 0x65, 0x2d, 0x0e, 0x16}}
+
+class mozIStorageConnection;
+class mozIStorageStatement;
 
 namespace mozilla::mailnews {
 
@@ -36,32 +38,39 @@ class DatabaseCore : public nsIDatabaseCore,
   NS_DECL_NSIMSGDBSERVICE
   NS_DECL_NSIOBSERVER
 
+  static already_AddRefed<DatabaseCore> GetInstanceForService();
+
+  FolderDatabase& FolderDB() { return *mFolderDatabase; }
+  MessageDatabase& MessageDB() { return *mMessageDatabase; }
+
  protected:
   virtual ~DatabaseCore() {};
 
  private:
   friend class FolderDatabase;
+  friend class FolderInfo;
   friend class FolderMigrator;
+  friend class LiveView;
+  friend class Message;
   friend class MessageDatabase;
   friend class PerFolderDatabase;
+  friend class Thread;
+  friend class ThreadMessageEnumerator;
+  friend class VirtualFolderWrapper;
+
+  static StaticRefPtr<DatabaseCore> sInstance;
+  static bool sDatabaseIsNew;  // If the database was created in this session.
+  static nsCOMPtr<mozIStorageConnection> sConnection;
+  static nsTHashMap<nsCString, nsCOMPtr<mozIStorageStatement>> sStatements;
+
+  static nsresult EnsureConnection();
+  static nsresult CreateNewDatabase();
 
   static nsresult GetStatement(const nsACString& aName, const nsACString& aSQL,
                                mozIStorageStatement** aStmt);
   static nsresult CreateSavepoint(const nsACString& name);
   static nsresult ReleaseSavepoint(const nsACString& name);
   static nsresult RollbackToSavepoint(const nsACString& name);
-
- private:
-  friend class LiveView;
-
-  static nsCOMPtr<mozIStorageConnection> sConnection;
-
- private:
-  static bool sDatabaseIsNew;  // If the database was created in this session.
-  static nsTHashMap<nsCString, nsCOMPtr<mozIStorageStatement>> sStatements;
-
-  static nsresult EnsureConnection();
-  static nsresult CreateNewDatabase();
 
   RefPtr<FolderDatabase> mFolderDatabase;
   RefPtr<MessageDatabase> mMessageDatabase;

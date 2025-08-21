@@ -3,15 +3,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsNewsDatabase.h"
+
 #include "MailNewsTypes.h"
+#include "mozilla/Preferences.h"
 #include "msgCore.h"
 #include "nsIMsgDBView.h"
 #include "nsIMsgThread.h"
-#include "nsNewsDatabase.h"
 #include "nsMsgKeySet.h"
 #include "nsMsgMessageFlags.h"
 #include "nsCOMPtr.h"
 #include "prlog.h"
+#include "nsIMsgNewsFolder.h"
+
+using mozilla::Preferences;
 
 nsNewsDatabase::nsNewsDatabase() { m_readSet = nullptr; }
 
@@ -79,43 +84,6 @@ nsresult nsNewsDatabase::IsHeaderRead(nsIMsgDBHdr* msgHdr, bool* pRead) {
   return rv;
 }
 
-// return highest article number we've seen.
-NS_IMETHODIMP nsNewsDatabase::GetHighWaterArticleNum(nsMsgKey* key) {
-  NS_ASSERTION(m_dbFolderInfo, "null db folder info");
-  if (!m_dbFolderInfo) return NS_ERROR_FAILURE;
-  return m_dbFolderInfo->GetHighWater(key);
-}
-
-// return the key of the first article number we know about.
-// Since the iterator iterates in id order, we can just grab the
-// messagekey of the first header it returns.
-// ### dmb
-// This will not deal with the situation where we get holes in
-// the headers we know about. Need to figure out how and when
-// to solve that. This could happen if a transfer is interrupted.
-// Do we need to keep track of known arts permanently?
-NS_IMETHODIMP nsNewsDatabase::GetLowWaterArticleNum(nsMsgKey* key) {
-  nsresult rv;
-
-  nsCOMPtr<nsIMsgEnumerator> hdrs;
-  rv = EnumerateMessages(getter_AddRefs(hdrs));
-  if (NS_FAILED(rv)) return rv;
-
-  nsCOMPtr<nsIMsgDBHdr> first;
-  rv = hdrs->GetNext(getter_AddRefs(first));
-  NS_ASSERTION(NS_SUCCEEDED(rv), "nsMsgDBEnumerator broken");
-  if (NS_FAILED(rv)) return rv;
-
-  return first->GetMessageKey(key);
-}
-
-nsresult nsNewsDatabase::ExpireUpTo(nsMsgKey expireKey) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-nsresult nsNewsDatabase::ExpireRange(nsMsgKey startRange, nsMsgKey endRange) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
 NS_IMETHODIMP nsNewsDatabase::GetReadSet(nsMsgKeySet** pSet) {
   if (!pSet) return NS_ERROR_NULL_POINTER;
   *pSet = m_readSet;
@@ -170,24 +138,6 @@ bool nsNewsDatabase::SetHdrReadFlag(nsIMsgDBHdr* msgHdr, bool bRead) {
     }
   }
   return true;
-}
-
-NS_IMETHODIMP nsNewsDatabase::MarkAllRead(nsTArray<nsMsgKey>& aThoseMarked) {
-  nsMsgKey lowWater = nsMsgKey_None, highWater;
-  nsCString knownArts;
-  if (m_dbFolderInfo) {
-    m_dbFolderInfo->GetKnownArtsSet(getter_Copies(knownArts));
-    RefPtr<nsMsgKeySet> knownKeys = nsMsgKeySet::Create(knownArts.get());
-    if (knownKeys) lowWater = knownKeys->GetFirstMember();
-  }
-  if (lowWater == nsMsgKey_None) GetLowWaterArticleNum(&lowWater);
-  GetHighWaterArticleNum(&highWater);
-  if (lowWater > 2) m_readSet->AddRange(1, lowWater - 1);
-  nsresult err = nsMsgDatabase::MarkAllRead(aThoseMarked);
-  if (NS_SUCCEEDED(err) && 1 <= highWater)
-    m_readSet->AddRange(1, highWater);  // mark everything read in newsrc.
-
-  return err;
 }
 
 nsresult nsNewsDatabase::SyncWithReadSet() {
@@ -265,7 +215,7 @@ NS_IMETHODIMP
 nsNewsDatabase::GetDefaultViewFlags(
     nsMsgViewFlagsTypeValue* aDefaultViewFlags) {
   NS_ENSURE_ARG_POINTER(aDefaultViewFlags);
-  GetIntPref("mailnews.default_news_view_flags", aDefaultViewFlags);
+  Preferences::GetInt("mailnews.default_news_view_flags", aDefaultViewFlags);
   if (*aDefaultViewFlags < nsMsgViewFlagsType::kNone ||
       *aDefaultViewFlags >
           (nsMsgViewFlagsType::kThreadedDisplay |
@@ -278,7 +228,7 @@ nsNewsDatabase::GetDefaultViewFlags(
 NS_IMETHODIMP
 nsNewsDatabase::GetDefaultSortType(nsMsgViewSortTypeValue* aDefaultSortType) {
   NS_ENSURE_ARG_POINTER(aDefaultSortType);
-  GetIntPref("mailnews.default_news_sort_type", aDefaultSortType);
+  Preferences::GetInt("mailnews.default_news_sort_type", aDefaultSortType);
   if (*aDefaultSortType < nsMsgViewSortType::byDate ||
       *aDefaultSortType > nsMsgViewSortType::byAccount)
     *aDefaultSortType = nsMsgViewSortType::byThread;
@@ -289,8 +239,27 @@ NS_IMETHODIMP
 nsNewsDatabase::GetDefaultSortOrder(
     nsMsgViewSortOrderValue* aDefaultSortOrder) {
   NS_ENSURE_ARG_POINTER(aDefaultSortOrder);
-  GetIntPref("mailnews.default_news_sort_order", aDefaultSortOrder);
+  Preferences::GetInt("mailnews.default_news_sort_order", aDefaultSortOrder);
   if (*aDefaultSortOrder != nsMsgViewSortOrder::descending)
     *aDefaultSortOrder = nsMsgViewSortOrder::ascending;
   return NS_OK;
+}
+
+nsresult nsNewsDatabase::GetEffectiveCharset(nsIMdbRow* row,
+                                             nsACString& resultCharset) {
+  resultCharset.Truncate();
+  nsresult rv = RowCellColumnToCharPtr(row, m_messageCharSetColumnToken,
+                                       getter_Copies(resultCharset));
+  if (NS_FAILED(rv) || resultCharset.IsEmpty() ||
+      resultCharset.EqualsLiteral("us-ascii")) {
+    if (mCachedCharset.IsEmpty()) {
+      mCachedCharset.AssignLiteral("UTF-8");
+      nsCOMPtr<nsIMsgNewsFolder> newsfolder(do_QueryInterface(m_folder));
+      if (newsfolder) {
+        newsfolder->GetCharset(mCachedCharset);
+      }
+    }
+    resultCharset.Assign(mCachedCharset);
+  }
+  return rv;
 }

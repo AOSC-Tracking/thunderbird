@@ -11,9 +11,11 @@
 #include "mozilla/Components.h"
 #include "mozilla/Logging.h"
 #include "mozilla/RefPtr.h"
+#include "mozStorageHelper.h"
 #include "nsMsgFolderFlags.h"
 #include "nsServiceManagerUtils.h"
 #include "prtime.h"
+#include "xpcpublic.h"
 
 using JS::MutableHandle;
 using JS::NewArrayObject;
@@ -29,42 +31,45 @@ using mozilla::LogLevel;
 
 namespace mozilla::mailnews {
 
-uint64_t LiveViewFilter::nextUID = 1;
-
 LazyLogModule gLiveViewLog("panorama");
 
 NS_IMPL_ISUPPORTS(LiveView, nsILiveView)
 
-NS_IMETHODIMP LiveView::InitWithFolder(nsIFolder* aFolder) {
-  NS_ENSURE_ARG_POINTER(aFolder);
-
+NS_IMETHODIMP LiveView::InitWithFolder(uint64_t folderId) {
+  if (folderId == 0) {
+    NS_WARNING("Can't Init LiveView with 0 folderId");
+    return NS_ERROR_INVALID_ARG;
+  }
   if (mFolderFilter) {
     NS_WARNING("folder filter already set");
     return NS_ERROR_UNEXPECTED;
   }
 
-  if (aFolder->GetFlags() & nsMsgFolderFlags::Virtual) {
-    mFolderFilter = new VirtualFolderFilter(aFolder);
+  // TODO: LiveView should have access to concrete DB classes.
+  nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
+  nsCOMPtr<nsIFolderDatabase> folderDB = database->GetFolderDB();
+  uint32_t folderFlags;
+  MOZ_TRY(folderDB->GetFolderFlags(folderId, &folderFlags));
+
+  if (folderFlags & nsMsgFolderFlags::Virtual) {
+    mFolderFilter = new VirtualFolderFilter(folderId);
   } else {
-    mFolderFilter = new SingleFolderFilter(aFolder);
+    mFolderFilter = new SingleFolderFilter(folderId);
   }
   return NS_OK;
 }
 
-NS_IMETHODIMP LiveView::InitWithFolders(
-    const nsTArray<RefPtr<nsIFolder>>& aFolders) {
-  for (auto folder : aFolders) {
-    if (!folder) {
-      return NS_ERROR_ILLEGAL_VALUE;
-    }
+NS_IMETHODIMP LiveView::InitWithFolders(nsTArray<uint64_t> const& folderIds) {
+  if (folderIds.IsEmpty() || folderIds.Contains((uint64_t)0)) {
+    NS_WARNING("Can't Init LiveView with 0 folderId in list");
+    return NS_ERROR_INVALID_ARG;
   }
-
   if (mFolderFilter) {
     NS_WARNING("folder filter already set");
     return NS_ERROR_UNEXPECTED;
   }
 
-  mFolderFilter = new MultiFolderFilter(aFolders);
+  mFolderFilter = new MultiFolderFilter(folderIds);
   return NS_OK;
 }
 
@@ -128,7 +133,8 @@ NS_IMETHODIMP LiveView::SetSortDescending(bool aSortDescending) {
 nsCString LiveView::GetSQLClause() {
   if (mClause.IsEmpty()) {
     if (mFolderFilter) {
-      mClause.Append(mFolderFilter->GetSQLClause());
+      mClause.Append(mFolderFilter->mSQLClause);
+      mParams.AppendElements(mFolderFilter->mSQLParams);
     }
     if (mClause.IsEmpty()) {
       mClause.Assign("1");
@@ -137,12 +143,31 @@ nsCString LiveView::GetSQLClause() {
   return mClause;
 }
 
+NS_IMETHODIMP LiveView::GetSqlClauseForTests(nsACString& sqlClauseForTests) {
+  if (!xpc::IsInAutomation()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  sqlClauseForTests = GetSQLClause();
+  return NS_OK;
+}
+
+NS_IMETHODIMP LiveView::GetSqlParamsForTests(
+    nsTArray<RefPtr<nsIVariant>>& sqlParamsForTests) {
+  if (!xpc::IsInAutomation()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  sqlParamsForTests = mParams.Clone();
+  return NS_OK;
+}
+
 /**
  * Fill the parameters in an SQL query from the current filters.
  */
-void LiveView::PrepareStatement(mozIStorageStatement* aStatement) {
-  if (mFolderFilter) {
-    mFolderFilter->PrepareStatement(aStatement);
+void LiveView::PrepareStatement(mozIStorageStatement* statement) {
+  for (size_t i = 0; i < mParams.Length(); i++) {
+    statement->BindByIndex(i, mParams[i]);
   }
 }
 
@@ -161,14 +186,17 @@ NS_IMETHODIMP LiveView::CountMessages(uint64_t* aCount) {
     nsAutoCString sql("SELECT COUNT(*) AS count FROM messages WHERE ");
     sql.Append(GetSQLClause());
     MOZ_LOG(gLiveViewLog, LogLevel::Debug, ("LiveView SQL: %s", sql.get()));
-    DatabaseCore::sConnection->CreateStatement(sql, getter_AddRefs(mCountStmt));
+    nsresult rv = DatabaseCore::sConnection->CreateStatement(
+        sql, getter_AddRefs(mCountStmt));
+    NS_ENSURE_SUCCESS(rv, rv);
   }
+  mozStorageStatementScoper scoper(mCountStmt);
 
   PrepareStatement(mCountStmt);
   bool hasResult;
-  mCountStmt->ExecuteStep(&hasResult);
+  nsresult rv = mCountStmt->ExecuteStep(&hasResult);
+  NS_ENSURE_SUCCESS(rv, rv);
   *aCount = mCountStmt->AsInt64(0);
-  mCountStmt->Reset();
   return NS_OK;
 }
 
@@ -179,15 +207,17 @@ NS_IMETHODIMP LiveView::CountUnreadMessages(uint64_t* aCount) {
     sql.Append(" AND ~flags & ");
     sql.AppendInt(nsMsgMessageFlags::Read);
     MOZ_LOG(gLiveViewLog, LogLevel::Debug, ("LiveView SQL: %s", sql.get()));
-    DatabaseCore::sConnection->CreateStatement(
+    nsresult rv = DatabaseCore::sConnection->CreateStatement(
         sql, getter_AddRefs(mCountUnreadStmt));
+    NS_ENSURE_SUCCESS(rv, rv);
   }
+  mozStorageStatementScoper scoper(mCountUnreadStmt);
 
   PrepareStatement(mCountUnreadStmt);
   bool hasResult;
-  mCountUnreadStmt->ExecuteStep(&hasResult);
+  nsresult rv = mCountUnreadStmt->ExecuteStep(&hasResult);
+  NS_ENSURE_SUCCESS(rv, rv);
   *aCount = mCountUnreadStmt->AsInt64(0);
-  mCountUnreadStmt->Reset();
   return NS_OK;
 }
 
@@ -233,10 +263,26 @@ JSObject* LiveView::CreateJSMessage(uint64_t id, uint64_t folderId,
  * Create an object of JS primitives representing a message.
  */
 JSObject* LiveView::CreateJSMessage(Message* aMessage, JSContext* cx) {
-  return CreateJSMessage(
-      aMessage->mId, aMessage->mFolderId, aMessage->mMessageId.get(),
-      aMessage->mDate, aMessage->mSender.get(), aMessage->mRecipients.get(),
-      aMessage->mSubject.get(), aMessage->mFlags, aMessage->mTags.get(), cx);
+  // Yes. This is a bit clunky for now.
+  nsAutoCString messageId;
+  PRTime date;
+  nsAutoCString sender;
+  nsAutoCString recipients;
+  nsAutoCString subject;
+  uint32_t flags;
+  nsAutoCString tags;
+
+  aMessage->GetMessageId(messageId);
+  aMessage->GetDate(&date);
+  aMessage->GetAuthor(sender);
+  aMessage->GetRecipients(recipients);
+  aMessage->GetSubject(subject);
+  aMessage->GetFlags(&flags);
+  aMessage->GetStringProperty("keywords", tags);
+
+  return CreateJSMessage(aMessage->Key(), aMessage->FolderId(), messageId.get(),
+                         date, sender.get(), recipients.get(), subject.get(),
+                         flags, tags.get(), cx);
 }
 
 NS_IMETHODIMP LiveView::SelectMessages(uint64_t aLimit, uint64_t aOffset,
@@ -288,9 +334,11 @@ NS_IMETHODIMP LiveView::SelectMessages(uint64_t aLimit, uint64_t aOffset,
     sql.Append(mSortDescending ? " DESC" : " ASC");
     sql.Append(" LIMIT :limit OFFSET :offset");
     MOZ_LOG(gLiveViewLog, LogLevel::Debug, ("LiveView SQL: %s", sql.get()));
-    DatabaseCore::sConnection->CreateStatement(sql,
-                                               getter_AddRefs(mSelectStmt));
+    nsresult rv = DatabaseCore::sConnection->CreateStatement(
+        sql, getter_AddRefs(mSelectStmt));
+    NS_ENSURE_SUCCESS(rv, rv);
   }
+  mozStorageStatementScoper scoper(mSelectStmt);
 
   PrepareStatement(mSelectStmt);
   mSelectStmt->BindInt64ByName("limit"_ns, aLimit ? aLimit : -1);
@@ -333,7 +381,6 @@ NS_IMETHODIMP LiveView::SelectMessages(uint64_t aLimit, uint64_t aOffset,
   }
   aMessages.set(ObjectValue(*arr));
 
-  mSelectStmt->Reset();
   return NS_OK;
 }
 
@@ -348,7 +395,7 @@ void LiveView::OnMessageAdded(Message* aMessage) {
   mListener->OnMessageAdded(handle);
 }
 
-void LiveView::OnMessageRemoved(Message* aMessage) {
+void LiveView::OnMessageRemoved(Message* aMessage, uint32_t oldFlags) {
   if (!mListener || !mCx || !Matches(*aMessage)) {
     return;
   }
@@ -359,8 +406,8 @@ void LiveView::OnMessageRemoved(Message* aMessage) {
   mListener->OnMessageRemoved(handle);
 }
 
-void LiveView::OnMessageFlagsChanged(Message* message, uint64_t oldFlags,
-                                     uint64_t newFlags) {}
+void LiveView::OnMessageFlagsChanged(Message* message, uint32_t oldFlags,
+                                     uint32_t newFlags) {}
 
 NS_IMETHODIMP LiveView::SetListener(nsILiveViewListener* aListener,
                                     JSContext* aCx) {
@@ -369,9 +416,7 @@ NS_IMETHODIMP LiveView::SetListener(nsILiveViewListener* aListener,
   mCx = aCx;
 
   if (!hadListener && aListener) {
-    nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
-    nsCOMPtr<nsIMessageDatabase> messages = database->GetMessages();
-    messages->AddMessageListener(this);
+    MessageDB().AddMessageListener(this);
   }
   return NS_OK;
 }
@@ -380,9 +425,7 @@ NS_IMETHODIMP LiveView::ClearListener() {
   mListener = nullptr;
   mCx = nullptr;
 
-  nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
-  nsCOMPtr<nsIMessageDatabase> messages = database->GetMessages();
-  messages->RemoveMessageListener(this);
+  MessageDB().RemoveMessageListener(this);
   return NS_OK;
 }
 

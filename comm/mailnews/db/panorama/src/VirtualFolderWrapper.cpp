@@ -5,8 +5,6 @@
 #include "VirtualFolderWrapper.h"
 
 #include "mozilla/Components.h"
-#include "nsIDatabaseCore.h"
-#include "nsIFolder.h"
 #include "nsIMsgFilter.h"
 #include "nsIMsgFilterList.h"
 #include "nsIMsgFilterService.h"
@@ -24,16 +22,8 @@ NS_IMETHODIMP VirtualFolderWrapper::GetVirtualFolder(nsIMsgFolder** msgFolder) {
 }
 
 NS_IMETHODIMP VirtualFolderWrapper::SetVirtualFolder(nsIMsgFolder* msgFolder) {
-  nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
-  nsCOMPtr<nsIFolderDatabase> folders = database->GetFolders();
-  mFolderDatabase = static_cast<FolderDatabase*>(folders.get());
-
   mMsgFolder = msgFolder;
-
-  nsCOMPtr<nsIFolder> folder;
-  mFolderDatabase->GetFolderForMsgFolder(msgFolder, getter_AddRefs(folder));
-  NS_ENSURE_TRUE(folder, NS_ERROR_FAILURE);
-  mVirtualFolderId = folder->GetId();
+  msgFolder->GetId(&mVirtualFolderId);
   return NS_OK;
 }
 
@@ -54,20 +44,25 @@ NS_IMETHODIMP VirtualFolderWrapper::GetSearchFolderURIs(
   return NS_OK;
 }
 
+nsTArray<uint64_t> VirtualFolderWrapper::GetSearchFolderIds() {
+  nsTArray<uint64_t> searchFolderIds;
+  FolderDB().GetVirtualFolderFolders(mVirtualFolderId, searchFolderIds);
+  return searchFolderIds;
+}
+
 NS_IMETHODIMP VirtualFolderWrapper::GetSearchFolders(
     nsTArray<RefPtr<nsIMsgFolder>>& searchFolders) {
   searchFolders.Clear();
 
   nsTArray<uint64_t> searchFolderIds;
-  nsresult rv = mFolderDatabase->GetVirtualFolderFolders(mVirtualFolderId,
-                                                         searchFolderIds);
+  nsresult rv =
+      FolderDB().GetVirtualFolderFolders(mVirtualFolderId, searchFolderIds);
   NS_ENSURE_SUCCESS(rv, rv);
 
   for (auto searchFolderId : searchFolderIds) {
-    nsCOMPtr<nsIFolder> folder;
-    mFolderDatabase->GetFolderById(searchFolderId, getter_AddRefs(folder));
     nsCOMPtr<nsIMsgFolder> msgFolder;
-    mFolderDatabase->GetMsgFolderForFolder(folder, getter_AddRefs(msgFolder));
+    MOZ_TRY(FolderDB().GetMsgFolderForFolder(searchFolderId,
+                                             getter_AddRefs(msgFolder)));
     searchFolders.AppendElement(msgFolder);
   }
 
@@ -79,24 +74,23 @@ NS_IMETHODIMP VirtualFolderWrapper::SetSearchFolders(
   nsTArray<uint64_t> searchFolderIds;
 
   for (auto msgFolder : searchFolders) {
-    nsCOMPtr<nsIFolder> folder;
-    mFolderDatabase->GetFolderForMsgFolder(msgFolder, getter_AddRefs(folder));
-    searchFolderIds.AppendElement(folder->GetId());
+    uint64_t searchFolderId;
+    msgFolder->GetId(&searchFolderId);
+    searchFolderIds.AppendElement(searchFolderId);
   }
 
-  return mFolderDatabase->SetVirtualFolderFolders(mVirtualFolderId,
-                                                  searchFolderIds);
+  return FolderDB().SetVirtualFolderFolders(mVirtualFolderId, searchFolderIds);
 }
 
 NS_IMETHODIMP VirtualFolderWrapper::GetSearchString(nsACString& searchString) {
-  return mFolderDatabase->GetFolderProperty(mVirtualFolderId, "searchStr"_ns,
-                                            searchString);
+  return FolderDB().GetFolderProperty(mVirtualFolderId, "searchStr"_ns,
+                                      searchString);
 }
 
 NS_IMETHODIMP VirtualFolderWrapper::SetSearchString(
     const nsACString& searchString) {
-  return mFolderDatabase->SetFolderProperty(mVirtualFolderId, "searchStr"_ns,
-                                            searchString);
+  return FolderDB().SetFolderProperty(mVirtualFolderId, "searchStr"_ns,
+                                      searchString);
 }
 
 NS_IMETHODIMP VirtualFolderWrapper::GetSearchTermsSession(
@@ -152,13 +146,13 @@ NS_IMETHODIMP VirtualFolderWrapper::SetSearchTerms(
 
 NS_IMETHODIMP VirtualFolderWrapper::GetOnlineSearch(bool* onlineSearch) {
   *onlineSearch = 0;
-  return mFolderDatabase->GetFolderProperty(mVirtualFolderId, "searchOnline"_ns,
-                                            (int64_t*)onlineSearch);
+  return FolderDB().GetFolderProperty(mVirtualFolderId, "searchOnline"_ns,
+                                      (int64_t*)onlineSearch);
 }
 
 NS_IMETHODIMP VirtualFolderWrapper::SetOnlineSearch(bool onlineSearch) {
-  return mFolderDatabase->SetFolderProperty(mVirtualFolderId, "searchOnline"_ns,
-                                            (int64_t)onlineSearch);
+  return FolderDB().SetFolderProperty(mVirtualFolderId, "searchOnline"_ns,
+                                      (int64_t)onlineSearch);
 }
 
 NS_IMETHODIMP VirtualFolderWrapper::CleanUpMessageDatabase() { return NS_OK; }

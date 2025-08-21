@@ -31,9 +31,9 @@ git = "https://github.com/franziskuskiefer/cose-rust"
 rev = "43c22248d136c8b38fe42ea709d08da6355cf04b"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/gfx-rs/wgpu?rev=3a5d0f2747fd43a0c4db8d911be1aca510c9ee82"]
+[source."git+https://github.com/gfx-rs/wgpu?rev=b83c9cfd578837a6163d980130249c245a9c5f8a"]
 git = "https://github.com/gfx-rs/wgpu"
-rev = "3a5d0f2747fd43a0c4db8d911be1aca510c9ee82"
+rev = "b83c9cfd578837a6163d980130249c245a9c5f8a"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/glandium/rust-objc?rev=4de89f5aa9851ceca4d40e7ac1e2759410c04324"]
@@ -61,9 +61,9 @@ git = "https://github.com/jfkthame/mapped_hyph.git"
 rev = "eff105f6ad7ec9b79816cfc1985a28e5340ad14b"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/mozilla/application-services?rev=4d9d334a28f61f1be84c92007aa0e76f04d165f4"]
+[source."git+https://github.com/mozilla/application-services?rev=b5175a2a2458834c9fdc0468d851658b0657f95b"]
 git = "https://github.com/mozilla/application-services"
-rev = "4d9d334a28f61f1be84c92007aa0e76f04d165f4"
+rev = "b5175a2a2458834c9fdc0468d851658b0657f95b"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/mozilla/audioipc?rev=e6f44a2bd1e57d11dfc737632a9e849077632330"]
@@ -91,9 +91,9 @@ git = "https://github.com/mozilla/mp4parse-rust"
 rev = "d3e4d255bd149d341c7e90f5e9fc84e743a8e179"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/mozilla/neqo?tag=v0.13.4"]
+[source."git+https://github.com/mozilla/neqo?tag=v0.14.1"]
 git = "https://github.com/mozilla/neqo"
-tag = "v0.13.4"
+tag = "v0.14.1"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/servo/rust-cssparser?rev=958a3f098acb92ddacdce18a7ef2c4a87ac3326f"]
@@ -106,9 +106,9 @@ git = "https://github.com/servo/unicode-bidi"
 rev = "ca612daf1c08c53abe07327cb3e6ef6e0a760f0c"
 replace-with = "vendored-sources"
 
-[source."git+https://github.com/thunderbird/ews-rs.git?rev=34328251bb99c092e6b4da050cbf06d81ae91dc5"]
+[source."git+https://github.com/thunderbird/ews-rs.git?rev=8806b6d609108a37eeb911753372a4e385159b74"]
 git = "https://github.com/thunderbird/ews-rs.git"
-rev = "34328251bb99c092e6b4da050cbf06d81ae91dc5"
+rev = "8806b6d609108a37eeb911753372a4e385159b74"
 replace-with = "vendored-sources"
 
 [source."git+https://github.com/thunderbird/xml-struct-rs.git?rev=87723b90425d474fd29095d8b710baefd7c9b13a"]

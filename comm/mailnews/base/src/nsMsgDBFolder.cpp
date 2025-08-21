@@ -9,8 +9,6 @@
 #include "nsUnicharUtils.h"
 #include "nsMsgDBFolder.h"
 #include "nsMsgFolderFlags.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefService.h"
 #include "nsNetUtil.h"
 #include "nsIMsgFolderCache.h"
 #include "nsIMsgFolderCacheElement.h"
@@ -63,6 +61,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/ProfilerMarkers.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/StaticPrefs_mail.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Utf8.h"
 #include "nsIPromptService.h"
@@ -71,14 +70,14 @@
 #include "UrlListener.h"
 #include "nsIMsgCopyService.h"
 #ifdef MOZ_PANORAMA
-#  include "nsIDatabaseCore.h"
-#  include "nsIFolderDatabase.h"
+#  include "FolderDatabase.h"
+#  include "DatabaseCore.h"
 #  include "nsIFolderLookupService.h"
 #endif  // MOZ_PANORAMA
 
-#define oneHour 3600000000U
-
 using namespace mozilla;
+
+#define oneHour 3600000000U
 
 extern LazyLogModule
     FILTERLOGMODULE;  // "Filters" (defined in nsMsgFilterService.cpp)
@@ -220,9 +219,6 @@ constexpr nsLiteralCString kNumNewBiffMessages = "NumNewBiffMessages"_ns;
 constexpr nsLiteralCString kRenameCompleted = "RenameCompleted"_ns;
 
 NS_IMPL_ISUPPORTS(nsMsgDBFolder, nsISupportsWeakReference, nsIMsgFolder,
-#ifdef MOZ_PANORAMA
-                  nsIInitableWithFolder,
-#endif  // MOZ_PANORAMA
                   nsIDBChangeListener, nsIUrlListener,
                   nsIJunkMailClassificationListener,
                   nsIMsgTraitClassificationListener)
@@ -319,6 +315,9 @@ NS_IMETHODIMP nsMsgDBFolder::Shutdown(bool shutdownChildren) {
     mHaveParsedURI = false;
     mName.Truncate();
     mSubFolders.Clear();
+#ifdef MOZ_PANORAMA
+    mFolderId = 0;
+#endif  // MOZ_PANORAMA
   }
   return NS_OK;
 }
@@ -610,24 +609,20 @@ void nsMsgDBFolder::UpdateNewMessages() {
 // could cache the account manager and folder cache.
 nsresult nsMsgDBFolder::GetFolderCacheElemFromFile(
     nsIFile* file, nsIMsgFolderCacheElement** cacheElement) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  nsresult result;
+  MOZ_ASSERT(!StaticPrefs::mail_panorama_enabled_AtStartup());
   NS_ENSURE_ARG_POINTER(file);
   NS_ENSURE_ARG_POINTER(cacheElement);
   nsCOMPtr<nsIMsgFolderCache> folderCache;
   nsCOMPtr<nsIMsgAccountManager> accountMgr =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &result);
-  if (NS_SUCCEEDED(result)) {
-    result = accountMgr->GetFolderCache(getter_AddRefs(folderCache));
-    if (NS_SUCCEEDED(result) && folderCache) {
-      nsCString persistentPath;
-      result = file->GetPersistentDescriptor(persistentPath);
-      NS_ENSURE_SUCCESS(result, result);
-      result =
-          folderCache->GetCacheElement(persistentPath, false, cacheElement);
-    }
+      mozilla::components::AccountManager::Service();
+  nsresult rv = accountMgr->GetFolderCache(getter_AddRefs(folderCache));
+  if (NS_SUCCEEDED(rv) && folderCache) {
+    nsCString persistentPath;
+    rv = file->GetPersistentDescriptor(persistentPath);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = folderCache->GetCacheElement(persistentPath, false, cacheElement);
   }
-  return result;
+  return rv;
 }
 
 nsresult nsMsgDBFolder::ReadDBFolderInfo(bool force) {
@@ -636,7 +631,7 @@ nsresult nsMsgDBFolder::ReadDBFolderInfo(bool force) {
   // we might need while we're here
   nsresult result = NS_OK;
 
-  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!StaticPrefs::mail_panorama_enabled_AtStartup()) {
     // If we reload the cache we might get stale info, so don't do it.
     if (!mInitializedFromCache) {
       // Path is used as a key into the foldercache.
@@ -1084,8 +1079,7 @@ NS_IMETHODIMP nsMsgDBFolder::HasMsgOffline(nsMsgKey msgKey, bool* result) {
 }
 
 NS_IMETHODIMP nsMsgDBFolder::DiscardOfflineMsg(nsMsgKey msgKey) {
-  if (!mozilla::Preferences::GetBool(PREF_MAIL_DISCARD_OFFLINE_ON_FAILURE,
-                                     true)) {
+  if (!Preferences::GetBool(PREF_MAIL_DISCARD_OFFLINE_ON_FAILURE, true)) {
     return NS_OK;
   }
 
@@ -1147,8 +1141,8 @@ NS_IMETHODIMP nsMsgDBFolder::GetFlags(uint32_t* _retval) {
 
 NS_IMETHODIMP nsMsgDBFolder::ReadFromFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!StaticPrefs::mail_panorama_enabled_AtStartup());
+  if (StaticPrefs::mail_panorama_enabled_AtStartup()) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
   nsresult rv = NS_OK;
@@ -1166,7 +1160,7 @@ NS_IMETHODIMP nsMsgDBFolder::ReadFromFolderCacheElem(
 }
 
 nsresult nsMsgDBFolder::GetFolderCacheKey(nsIFile** aFile) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  MOZ_ASSERT(!StaticPrefs::mail_panorama_enabled_AtStartup());
   nsresult rv;
   bool isServer = false;
   GetIsServer(&isServer);
@@ -1184,24 +1178,21 @@ nsresult nsMsgDBFolder::GetFolderCacheKey(nsIFile** aFile) {
 }
 
 nsresult nsMsgDBFolder::FlushToFolderCache() {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  MOZ_ASSERT(!StaticPrefs::mail_panorama_enabled_AtStartup());
 
-  nsresult rv;
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  if (NS_SUCCEEDED(rv) && accountManager) {
-    nsCOMPtr<nsIMsgFolderCache> folderCache;
-    rv = accountManager->GetFolderCache(getter_AddRefs(folderCache));
-    if (NS_SUCCEEDED(rv) && folderCache)
-      rv = WriteToFolderCache(folderCache, false);
-  }
+      mozilla::components::AccountManager::Service();
+  nsCOMPtr<nsIMsgFolderCache> folderCache;
+  nsresult rv = accountManager->GetFolderCache(getter_AddRefs(folderCache));
+  if (NS_SUCCEEDED(rv) && folderCache)
+    rv = WriteToFolderCache(folderCache, false);
   return rv;
 }
 
 NS_IMETHODIMP nsMsgDBFolder::WriteToFolderCache(nsIMsgFolderCache* folderCache,
                                                 bool deep) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!StaticPrefs::mail_panorama_enabled_AtStartup());
+  if (StaticPrefs::mail_panorama_enabled_AtStartup()) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
   nsresult rv = NS_OK;
@@ -1232,8 +1223,8 @@ NS_IMETHODIMP nsMsgDBFolder::WriteToFolderCache(nsIMsgFolderCache* folderCache,
 
 NS_IMETHODIMP nsMsgDBFolder::WriteToFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!StaticPrefs::mail_panorama_enabled_AtStartup());
+  if (StaticPrefs::mail_panorama_enabled_AtStartup()) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
   nsresult rv = NS_OK;
@@ -1564,136 +1555,125 @@ class AutoCompactEvent : public mozilla::Runnable {
 };
 
 nsresult nsMsgDBFolder::HandleAutoCompactEvent(nsIMsgWindow* aWindow) {
-  nsresult rv;
-  nsCOMPtr<nsIMsgAccountManager> accountMgr =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-
   MOZ_LOG(gCompactLog, LogLevel::Debug, ("Performing AutoCompactEvent check"));
-  if (NS_SUCCEEDED(rv)) {
-    nsTArray<RefPtr<nsIMsgIncomingServer>> allServers;
-    rv = accountMgr->GetAllServers(allServers);
-    NS_ENSURE_SUCCESS(rv, rv);
-    uint32_t numServers = allServers.Length();
-    if (numServers > 0) {
-      nsTArray<RefPtr<nsIMsgFolder>> folderArray;
-      nsTArray<RefPtr<nsIMsgFolder>> offlineFolderArray;
-      int64_t totalExpungedBytes = 0;
-      int64_t offlineExpungedBytes = 0;
-      int64_t localExpungedBytes = 0;
-      uint32_t serverIndex = 0;
-      do {
-        nsCOMPtr<nsIMsgIncomingServer> server(allServers[serverIndex]);
-        nsCOMPtr<nsIMsgPluggableStore> msgStore;
-        rv = server->GetMsgStore(getter_AddRefs(msgStore));
+
+  nsCOMPtr<nsIMsgAccountManager> accountMgr =
+      mozilla::components::AccountManager::Service();
+  nsTArray<RefPtr<nsIMsgIncomingServer>> allServers;
+  nsresult rv = accountMgr->GetAllServers(allServers);
+  NS_ENSURE_SUCCESS(rv, rv);
+  uint32_t numServers = allServers.Length();
+  if (numServers > 0) {
+    nsTArray<RefPtr<nsIMsgFolder>> folderArray;
+    nsTArray<RefPtr<nsIMsgFolder>> offlineFolderArray;
+    int64_t totalExpungedBytes = 0;
+    int64_t offlineExpungedBytes = 0;
+    int64_t localExpungedBytes = 0;
+    uint32_t serverIndex = 0;
+    do {
+      nsCOMPtr<nsIMsgIncomingServer> server(allServers[serverIndex]);
+      nsCOMPtr<nsIMsgPluggableStore> msgStore;
+      rv = server->GetMsgStore(getter_AddRefs(msgStore));
+      NS_ENSURE_SUCCESS(rv, rv);
+      if (!msgStore) continue;
+      bool supportsCompaction;
+      msgStore->GetSupportsCompaction(&supportsCompaction);
+      if (!supportsCompaction) continue;
+      nsCOMPtr<nsIMsgFolder> rootFolder;
+      rv = server->GetRootFolder(getter_AddRefs(rootFolder));
+      if (NS_SUCCEEDED(rv) && rootFolder) {
+        int32_t offlineSupportLevel;
+        rv = server->GetOfflineSupportLevel(&offlineSupportLevel);
         NS_ENSURE_SUCCESS(rv, rv);
-        if (!msgStore) continue;
-        bool supportsCompaction;
-        msgStore->GetSupportsCompaction(&supportsCompaction);
-        if (!supportsCompaction) continue;
-        nsCOMPtr<nsIMsgFolder> rootFolder;
-        rv = server->GetRootFolder(getter_AddRefs(rootFolder));
-        if (NS_SUCCEEDED(rv) && rootFolder) {
-          int32_t offlineSupportLevel;
-          rv = server->GetOfflineSupportLevel(&offlineSupportLevel);
-          NS_ENSURE_SUCCESS(rv, rv);
-          nsTArray<RefPtr<nsIMsgFolder>> allDescendants;
-          rootFolder->GetDescendants(allDescendants);
-          int64_t expungedBytes = 0;
-          if (offlineSupportLevel > 0) {
-            uint32_t flags;
-            for (auto folder : allDescendants) {
-              expungedBytes = 0;
-              folder->GetFlags(&flags);
-              if (flags & nsMsgFolderFlags::Offline)
-                folder->GetExpungedBytes(&expungedBytes);
-              if (expungedBytes > 0) {
-                offlineFolderArray.AppendElement(folder);
-                offlineExpungedBytes += expungedBytes;
-              }
-            }
-          } else  // pop or local
-          {
-            for (auto folder : allDescendants) {
-              expungedBytes = 0;
+        nsTArray<RefPtr<nsIMsgFolder>> allDescendants;
+        rootFolder->GetDescendants(allDescendants);
+        int64_t expungedBytes = 0;
+        if (offlineSupportLevel > 0) {
+          uint32_t flags;
+          for (auto folder : allDescendants) {
+            expungedBytes = 0;
+            folder->GetFlags(&flags);
+            if (flags & nsMsgFolderFlags::Offline)
               folder->GetExpungedBytes(&expungedBytes);
-              if (expungedBytes > 0) {
-                folderArray.AppendElement(folder);
-                localExpungedBytes += expungedBytes;
-              }
+            if (expungedBytes > 0) {
+              offlineFolderArray.AppendElement(folder);
+              offlineExpungedBytes += expungedBytes;
+            }
+          }
+        } else  // pop or local
+        {
+          for (auto folder : allDescendants) {
+            expungedBytes = 0;
+            folder->GetExpungedBytes(&expungedBytes);
+            if (expungedBytes > 0) {
+              folderArray.AppendElement(folder);
+              localExpungedBytes += expungedBytes;
             }
           }
         }
-      } while (++serverIndex < numServers);
-      totalExpungedBytes = localExpungedBytes + offlineExpungedBytes;
-      int32_t purgeThreshold;
-      rv = GetPurgeThreshold(&purgeThreshold);
-      NS_ENSURE_SUCCESS(rv, rv);
+      }
+    } while (++serverIndex < numServers);
+    totalExpungedBytes = localExpungedBytes + offlineExpungedBytes;
+    int32_t purgeThreshold;
+    rv = GetPurgeThreshold(&purgeThreshold);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    MOZ_LOG(gCompactLog, LogLevel::Info,
+            ("AutoCompactEvent check: totalExpungedBytes=%" PRIi64
+             ", purgeThreshold=%" PRIi64 "",
+             totalExpungedBytes, ((int64_t)purgeThreshold * 1024)));
+
+    if (totalExpungedBytes > ((int64_t)purgeThreshold * 1024)) {
+      bool okToCompact = false;
+      bool askBeforePurge = Preferences::GetBool(PREF_MAIL_PURGE_ASK);
+      if (askBeforePurge && aWindow) {
+        nsCOMPtr<nsIStringBundle> bundle;
+        rv = GetBaseStringBundle(getter_AddRefs(bundle));
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        nsAutoString compactSize;
+        FormatFileSize(totalExpungedBytes, true, compactSize);
+
+        bool neverAsk = false;  // "Do not ask..." - unchecked by default.
+        int32_t buttonPressed = 0;
+
+        nsCOMPtr<nsIWindowWatcher> ww(
+            do_GetService(NS_WINDOWWATCHER_CONTRACTID));
+        nsCOMPtr<nsIWritablePropertyBag2> props(
+            do_CreateInstance("@mozilla.org/hash-property-bag;1"));
+        props->SetPropertyAsAString(u"compactSize"_ns, compactSize);
+        nsCOMPtr<mozIDOMWindowProxy> migrateWizard;
+        rv = ww->OpenWindow(
+            nullptr, "chrome://messenger/content/compactFoldersDialog.xhtml"_ns,
+            "_blank"_ns, "chrome,dialog,modal,centerscreen"_ns, props,
+            getter_AddRefs(migrateWizard));
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        rv = props->GetPropertyAsBool(u"checked"_ns, &neverAsk);
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        rv = props->GetPropertyAsInt32(u"buttonNumClicked"_ns, &buttonPressed);
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        if (buttonPressed == 0) {
+          okToCompact = true;
+          if (neverAsk)  // [X] Remove deletions automatically and do not ask
+            Preferences::SetBool(PREF_MAIL_PURGE_ASK, false);
+        }
+      } else {
+        okToCompact = aWindow || !askBeforePurge;
+      }
 
       MOZ_LOG(gCompactLog, LogLevel::Info,
-              ("AutoCompactEvent check: totalExpungedBytes=%" PRIi64
-               ", purgeThreshold=%" PRIi64 "",
-               totalExpungedBytes, ((int64_t)purgeThreshold * 1024)));
+              ("AutoCompactEvent check: okToCompact=%s",
+               okToCompact ? "true" : " false"));
 
-      if (totalExpungedBytes > ((int64_t)purgeThreshold * 1024)) {
-        bool okToCompact = false;
-        nsCOMPtr<nsIPrefService> pref =
-            do_GetService(NS_PREFSERVICE_CONTRACTID);
-        nsCOMPtr<nsIPrefBranch> branch;
-        pref->GetBranch("", getter_AddRefs(branch));
-
-        bool askBeforePurge;
-        branch->GetBoolPref(PREF_MAIL_PURGE_ASK, &askBeforePurge);
-        if (askBeforePurge && aWindow) {
-          nsCOMPtr<nsIStringBundle> bundle;
-          rv = GetBaseStringBundle(getter_AddRefs(bundle));
-          NS_ENSURE_SUCCESS(rv, rv);
-
-          nsAutoString compactSize;
-          FormatFileSize(totalExpungedBytes, true, compactSize);
-
-          bool neverAsk = false;  // "Do not ask..." - unchecked by default.
-          int32_t buttonPressed = 0;
-
-          nsCOMPtr<nsIWindowWatcher> ww(
-              do_GetService(NS_WINDOWWATCHER_CONTRACTID));
-          nsCOMPtr<nsIWritablePropertyBag2> props(
-              do_CreateInstance("@mozilla.org/hash-property-bag;1"));
-          props->SetPropertyAsAString(u"compactSize"_ns, compactSize);
-          nsCOMPtr<mozIDOMWindowProxy> migrateWizard;
-          rv = ww->OpenWindow(
-              nullptr,
-              "chrome://messenger/content/compactFoldersDialog.xhtml"_ns,
-              "_blank"_ns, "chrome,dialog,modal,centerscreen"_ns, props,
-              getter_AddRefs(migrateWizard));
-          NS_ENSURE_SUCCESS(rv, rv);
-
-          rv = props->GetPropertyAsBool(u"checked"_ns, &neverAsk);
-          NS_ENSURE_SUCCESS(rv, rv);
-
-          rv =
-              props->GetPropertyAsInt32(u"buttonNumClicked"_ns, &buttonPressed);
-          NS_ENSURE_SUCCESS(rv, rv);
-
-          if (buttonPressed == 0) {
-            okToCompact = true;
-            if (neverAsk)  // [X] Remove deletions automatically and do not ask
-              branch->SetBoolPref(PREF_MAIL_PURGE_ASK, false);
+      if (okToCompact) {
+        if (localExpungedBytes > 0 || offlineExpungedBytes > 0) {
+          for (nsIMsgFolder* f : offlineFolderArray) {
+            folderArray.AppendElement(f);
           }
-        } else {
-          okToCompact = aWindow || !askBeforePurge;
-        }
-
-        MOZ_LOG(gCompactLog, LogLevel::Info,
-                ("AutoCompactEvent check: okToCompact=%s",
-                 okToCompact ? "true" : " false"));
-
-        if (okToCompact) {
-          if (localExpungedBytes > 0 || offlineExpungedBytes > 0) {
-            for (nsIMsgFolder* f : offlineFolderArray) {
-              folderArray.AppendElement(f);
-            }
-            rv = AsyncCompactFolders(folderArray, nullptr, aWindow);
-          }
+          rv = AsyncCompactFolders(folderArray, nullptr, aWindow);
         }
       }
     }
@@ -1747,30 +1727,14 @@ nsresult nsMsgDBFolder::AutoCompact(nsIMsgWindow* aWindow) {
 
 nsresult nsMsgDBFolder::GetPromptPurgeThreshold(bool* aPrompt) {
   NS_ENSURE_ARG(aPrompt);
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  if (NS_SUCCEEDED(rv) && prefBranch) {
-    rv = prefBranch->GetBoolPref(PREF_MAIL_PROMPT_PURGE_THRESHOLD, aPrompt);
-    if (NS_FAILED(rv)) {
-      *aPrompt = false;
-      rv = NS_OK;
-    }
-  }
-  return rv;
+  return Preferences::GetBool(PREF_MAIL_PROMPT_PURGE_THRESHOLD, aPrompt);
 }
 
 nsresult nsMsgDBFolder::GetPurgeThreshold(int32_t* aThreshold) {
   NS_ENSURE_ARG(aThreshold);
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  if (NS_SUCCEEDED(rv) && prefBranch) {
-    int32_t thresholdMB = 500;
-    prefBranch->GetIntPref(PREF_MAIL_PURGE_THRESHOLD_MB, &thresholdMB);
-    *aThreshold = thresholdMB * 1024;
-  }
-  return rv;
+  int32_t thresholdMB = Preferences::GetInt(PREF_MAIL_PURGE_THRESHOLD_MB, 500);
+  *aThreshold = thresholdMB * 1024;
+  return NS_OK;
 }
 
 NS_IMETHODIMP  // called on the folder that is renamed or about to be deleted
@@ -1792,9 +1756,7 @@ nsMsgDBFolder::MatchOrChangeFilterDestination(nsIMsgFolder* newFolder,
 
   nsCOMPtr<nsIMsgFilterList> filterList;
   nsCOMPtr<nsIMsgAccountManager> accountMgr =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+      mozilla::components::AccountManager::Service();
   nsTArray<RefPtr<nsIMsgIncomingServer>> allServers;
   rv = accountMgr->GetAllServers(allServers);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1866,7 +1828,7 @@ nsMsgDBFolder::GetStringProperty(const char* propertyName,
   NS_ENSURE_ARG_POINTER(propertyName);
   nsresult rv;
   nsCOMPtr<nsIMsgFolderCacheElement> cacheElement;
-  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!StaticPrefs::mail_panorama_enabled_AtStartup()) {
     nsCOMPtr<nsIFile> dbPath;
     rv = GetFolderCacheKey(getter_AddRefs(dbPath));
     if (dbPath) {
@@ -1921,7 +1883,7 @@ nsMsgDBFolder::SetStringProperty(const char* propertyName,
                                  const nsACString& propertyValue) {
   NS_ENSURE_ARG_POINTER(propertyName);
 
-  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!StaticPrefs::mail_panorama_enabled_AtStartup()) {
     nsCOMPtr<nsIFile> dbPath;
     GetFolderCacheKey(getter_AddRefs(dbPath));
     if (dbPath) {
@@ -1989,14 +1951,13 @@ nsMsgDBFolder::OnMessageClassified(const nsACString& aMsgURI,
     if (!mPostBayesMessagesToFilter.IsEmpty()) {
       // Apply post-bayes filtering.
       nsCOMPtr<nsIMsgFilterService> filterService(
-          do_GetService("@mozilla.org/messenger/services/filters;1", &rv));
-      if (NS_SUCCEEDED(rv))
-        // We use a null nsIMsgWindow because we don't want some sort of ui
-        // appearing in the middle of automatic filtering (plus I really don't
-        // want to propagate that value.)
-        rv = filterService->ApplyFilters(nsMsgFilterType::PostPlugin,
-                                         mPostBayesMessagesToFilter, this,
-                                         nullptr, nullptr);
+          mozilla::components::Filter::Service());
+      // We use a null nsIMsgWindow because we don't want some sort of ui
+      // appearing in the middle of automatic filtering (plus I really don't
+      // want to propagate that value.)
+      rv = filterService->ApplyFilters(nsMsgFilterType::PostPlugin,
+                                       mPostBayesMessagesToFilter, this,
+                                       nullptr, nullptr);
       mPostBayesMessagesToFilter.Clear();
     }
 
@@ -2005,9 +1966,8 @@ nsMsgDBFolder::OnMessageClassified(const nsACString& aMsgURI,
     rv = MsgGetHeadersFromKeys(mDatabase, mClassifiedMsgKeys, hdrs);
     NS_ENSURE_SUCCESS(rv, rv);
     if (!hdrs.IsEmpty()) {
-      nsCOMPtr<nsIMsgFolderNotificationService> notifier(do_GetService(
-          "@mozilla.org/messenger/msgnotificationservice;1", &rv));
-      NS_ENSURE_SUCCESS(rv, rv);
+      nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+          mozilla::components::FolderNotification::Service();
       notifier->NotifyMsgsClassified(hdrs, mBayesJunkClassifying,
                                      mBayesTraitClassifying);
     }
@@ -2461,12 +2421,11 @@ nsresult nsMsgDBFolder::NotifyHdrsNotBeingClassified() {
       // we clear the set by deleting and recreating it.
       delete mProcessingFlag[5].keys;
       mProcessingFlag[5].keys = nsMsgKeySetU::Create();
-      nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-          do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-      if (notifier)
-        notifier->NotifyMsgsClassified(msgHdrsNotBeingClassified,
-                                       // no classification is being performed
-                                       false, false);
+      nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+          mozilla::components::FolderNotification::Service();
+      notifier->NotifyMsgsClassified(msgHdrsNotBeingClassified,
+                                     // no classification is being performed
+                                     false, false);
     }
   }
   return NS_OK;
@@ -2477,8 +2436,7 @@ nsresult nsMsgDBFolder::NotifyHdrsNotBeingClassified() {
 bool nsMsgDBFolder::PromptForMasterPasswordIfNecessary() {
   nsresult rv;
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  NS_ENSURE_SUCCESS(rv, false);
+      mozilla::components::AccountManager::Service();
 
   bool userNeedsToAuthenticate = false;
   // if we're PasswordProtectLocalCache, then we need to find out if the server
@@ -2566,7 +2524,7 @@ nsresult nsMsgDBFolder::initializeStrings() {
 
 NS_IMETHODIMP
 nsMsgDBFolder::Init(const nsACString& uri) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
+  MOZ_ASSERT(!StaticPrefs::mail_panorama_enabled_AtStartup());
   mURI = uri;
   return CreateBaseMessageURI(uri);
 }
@@ -2690,28 +2648,36 @@ NS_IMETHODIMP nsMsgDBFolder::GetServer(nsIMsgIncomingServer** aServer) {
   return *aServer ? NS_OK : NS_ERROR_FAILURE;
 }
 
+NS_IMETHODIMP nsMsgDBFolder::InitWithFolderId(uint64_t folderId) {
 #ifdef MOZ_PANORAMA
-NS_IMETHODIMP nsMsgDBFolder::InitWithFolder(nsIFolder* folder) {
-  MOZ_ASSERT(Preferences::GetBool("mail.panorama.enabled", false));
+  MOZ_ASSERT(StaticPrefs::mail_panorama_enabled_AtStartup());
 
-  mDBFolder = folder;
-  mIsServer = folder->GetIsServer();
+  MOZ_ASSERT(!mFolderId);
+  mFolderId = folderId;
+
+  RefPtr<mozilla::mailnews::DatabaseCore> dbCore =
+      mozilla::mailnews::DatabaseCore::GetInstanceForService();
+  mozilla::mailnews::FolderDatabase& folderDB(dbCore->FolderDB());
+
+  uint64_t parentId;
+  MOZ_TRY_VAR(parentId, folderDB.GetFolderParent(folderId));
+  mIsServer = (parentId == 0);
   mIsServerIsValid = true;
-  mName = folder->GetName();
-  mFlags = folder->GetFlags();
+  MOZ_TRY_VAR(mName, folderDB.GetFolderName(folderId));
+  MOZ_TRY_VAR(mFlags, folderDB.GetFolderFlags(folderId));
 
   // Set up the filesystem path. This could probably be improved by using the
   // parent folder's path instead of constructing the whole thing.
-
   nsresult rv;
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+      mozilla::components::AccountManager::Service();
   nsCOMPtr<nsIMsgIncomingServer> server;
-  nsCOMPtr<nsIFolder> root = folder->GetRootFolder();
-  rv = accountManager->GetIncomingServer(root->GetName(),
-                                         getter_AddRefs(server));
+  uint64_t rootId;
+  MOZ_TRY_VAR(rootId, folderDB.GetFolderRoot(folderId));
+  nsCString rootName;
+  MOZ_TRY_VAR(rootName, folderDB.GetFolderName(rootId));
+
+  rv = accountManager->GetIncomingServer(rootName, getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv, rv);
 
   mServer = do_GetWeakReference(server);
@@ -2719,19 +2685,22 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolder(nsIFolder* folder) {
   rv = server->GetLocalPath(getter_AddRefs(mPath));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsTArray<RefPtr<nsIFolder>> ancestors;
-  folder->GetAncestors(ancestors);
-  for (int i = ancestors.Length() - 2; i >= 0; --i) {
-    mPath->Append(NS_ConvertUTF8toUTF16(ancestors[i]->GetName()) + u".sbd"_ns);
+  nsTArray<uint64_t> ancestorIds;
+  MOZ_TRY_VAR(ancestorIds, folderDB.GetFolderAncestors(folderId));
+  for (int i = ancestorIds.Length() - 2; i >= 0; --i) {
+    nsCString name;
+    MOZ_TRY_VAR(name, folderDB.GetFolderName(ancestorIds[i]));
+    mPath->Append(EncodeFilename(name) + u".sbd"_ns);
   }
-  if (!folder->GetIsServer()) {
-    mPath->Append(NS_ConvertUTF8toUTF16(mName));
+  if (!mIsServer) {
+    mPath->Append(EncodeFilename(mName));
   }
 
   // Set up the URI.
 
   server->GetServerURI(mURI);
-  nsCString path = folder->GetPath();
+  nsCString path;
+  MOZ_TRY_VAR(path, folderDB.GetFolderPath(folderId));
   rv = NS_MsgEscapeEncodeURLPath(path, path);
   NS_ENSURE_SUCCESS(rv, rv);
   mURI.Append(Substring(path, path.FindChar('/')));
@@ -2750,25 +2719,21 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolder(nsIFolder* folder) {
   rv = GetMsgStore(getter_AddRefs(store));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsTArray<nsCString> folderPaths;
-  rv = store->DiscoverChildFolders(this, folderPaths);
+  nsTArray<nsCString> childNames;
+  rv = store->DiscoverChildFolders(this, childNames);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
-  nsCOMPtr<nsIFolderDatabase> folders = database->GetFolders();
-  folders->Reconcile(folder, folderPaths);
+  MOZ_TRY(folderDB.Reconcile(folderId, childNames));
 
   // Add the subfolders.
-
-  nsTArray<RefPtr<nsIFolder>> children;
-  folder->GetChildren(children);
-  for (auto subFolder : children) {
+  nsTArray<uint64_t> subFolderIds;
+  MOZ_TRY_VAR(subFolderIds, folderDB.GetFolderChildren(folderId));
+  for (auto subFolderId : subFolderIds) {
     nsCOMPtr<nsIMsgFolder> msgFolder =
         do_CreateInstance("@mozilla.org/mail/folder;1?name=mailbox", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIInitableWithFolder> initable = do_QueryInterface(msgFolder);
-    rv = initable->InitWithFolder(subFolder);
+    rv = msgFolder->InitWithFolderId(subFolderId);
     NS_ENSURE_SUCCESS(rv, rv);
 
     msgFolder->SetParent(this);
@@ -2776,8 +2741,38 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolder(nsIFolder* folder) {
   }
 
   return NS_OK;
-}
+#else
+  return NS_ERROR_NOT_IMPLEMENTED;
 #endif  // MOZ_PANORAMA
+}
+
+NS_IMETHODIMP nsMsgDBFolder::GetId(uint64_t* id) {
+#ifdef MOZ_PANORAMA
+  MOZ_ASSERT(StaticPrefs::mail_panorama_enabled_AtStartup());
+  *id = mFolderId;
+#else
+  MOZ_ASSERT(false, "panorama-only code");
+  *id = 0;
+#endif
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgDBFolder::GetPath(nsACString& path) {
+#ifdef MOZ_PANORAMA
+  MOZ_ASSERT(StaticPrefs::mail_panorama_enabled_AtStartup());
+
+  RefPtr<mozilla::mailnews::DatabaseCore> dbCore =
+      mozilla::mailnews::DatabaseCore::GetInstanceForService();
+  mozilla::mailnews::FolderDatabase& folderDB(dbCore->FolderDB());
+  MOZ_TRY_VAR(path, folderDB.GetFolderPath(mFolderId));
+
+#else
+  MOZ_ASSERT(false, "panorama-only code");
+  // NOTE: actually, we could implement this, collecting names back
+  // up to the root...
+#endif
+  return NS_OK;
+}
 
 nsresult nsMsgDBFolder::parseURI(bool needServer) {
   nsresult rv;
@@ -2824,8 +2819,7 @@ nsresult nsMsgDBFolder::parseURI(bool needServer) {
     // no parent. do the extra work of asking
     if (!server && needServer) {
       nsCOMPtr<nsIMsgAccountManager> accountManager =
-          do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
+          mozilla::components::AccountManager::Service();
 
       nsCString serverType;
       GetIncomingServerType(serverType);
@@ -3288,13 +3282,13 @@ NS_IMETHODIMP nsMsgDBFolder::RecursiveDelete(bool deleteStorage) {
   // and does not remove _this_ from the parent's list of children.
 
   nsresult rv;
-  if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!StaticPrefs::mail_panorama_enabled_AtStartup()) {
     nsCOMPtr<nsIFile> dbPath;
     // first remove the deleted folder from the folder cache;
     rv = GetFolderCacheKey(getter_AddRefs(dbPath));
     if (NS_SUCCEEDED(rv)) {
       nsCOMPtr<nsIMsgAccountManager> accountMgr =
-          do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
+          mozilla::components::AccountManager::Service();
       nsCOMPtr<nsIMsgFolderCache> folderCache;
       rv = accountMgr->GetFolderCache(getter_AddRefs(folderCache));
       if (NS_SUCCEEDED(rv) && folderCache) {
@@ -3328,9 +3322,9 @@ NS_IMETHODIMP nsMsgDBFolder::RecursiveDelete(bool deleteStorage) {
     // All delete commands use deleteStorage = true, and local moves use false.
     // IMAP moves use true, leaving this here in the hope that bug 439108
     // works out.
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-    if (notifier) notifier->NotifyFolderDeleted(this);
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
+    notifier->NotifyFolderDeleted(this);
     rv = DeleteStorage();
   }
   return rv;
@@ -3384,21 +3378,28 @@ NS_IMETHODIMP nsMsgDBFolder::AddSubfolder(const nsACString& name,
 
   nsCOMPtr<nsIMsgFolder> folder;
 #ifdef MOZ_PANORAMA
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (StaticPrefs::mail_panorama_enabled_AtStartup()) {
     // TODO: We shouldn't be here at all. But we are thanks to the fact that
     // various functions call the message store and it calls back.
     // `name` is a hashed name and it shouldn't be.
-    nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
-    nsCOMPtr<nsIFolderDatabase> folders = database->GetFolders();
+    RefPtr<mozilla::mailnews::DatabaseCore> dbCore =
+        mozilla::mailnews::DatabaseCore::GetInstanceForService();
+    mozilla::mailnews::FolderDatabase& folderDB(dbCore->FolderDB());
 
-    nsCOMPtr<nsIFolder> dbFolder;
-    folders->InsertFolder(mDBFolder, actualName, getter_AddRefs(dbFolder));
+    uint64_t subFolderId;
+    // FolderDatabase might already have an entry? Unclear...
+    MOZ_TRY_VAR(subFolderId,
+                folderDB.GetFolderChildNamed(mFolderId, actualName));
+    if (subFolderId == 0) {
+      rv = folderDB.InsertFolder(mFolderId, actualName, &subFolderId);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
 
+    // Set up the nsIMsgFolder.
     folder = do_CreateInstance("@mozilla.org/mail/folder;1?name=mailbox", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIInitableWithFolder> initable = do_QueryInterface(folder);
-    rv = initable->InitWithFolder(dbFolder);
+    rv = folder->InitWithFolderId(subFolderId);
     NS_ENSURE_SUCCESS(rv, rv);
 
     folder->SetParent(this);
@@ -3773,7 +3774,7 @@ NS_IMETHODIMP nsMsgDBFolder::UpdateSummaryTotals(bool force) {
       NotifyIntPropertyChanged(kTotalUnreadMessages, oldUnreadMessages,
                                newUnreadMessages);
 
-    if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+    if (!StaticPrefs::mail_panorama_enabled_AtStartup()) {
       FlushToFolderCache();
     }
   }
@@ -3792,7 +3793,7 @@ NS_IMETHODIMP nsMsgDBFolder::GetNumUnread(bool deep, int32_t* numUnread) {
   nsresult rv = GetIsServer(&isServer);
   NS_ENSURE_SUCCESS(rv, rv);
 #ifdef MOZ_PANORAMA
-  if (!isServer && Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!isServer && StaticPrefs::mail_panorama_enabled_AtStartup()) {
     nsCOMPtr<nsIMsgDatabase> db;
     nsCOMPtr<nsIDBFolderInfo> folderInfo;
     rv = GetDBFolderInfoAndDB(getter_AddRefs(folderInfo), getter_AddRefs(db));
@@ -3830,7 +3831,7 @@ NS_IMETHODIMP nsMsgDBFolder::GetTotalMessages(bool deep,
   nsresult rv = GetIsServer(&isServer);
   NS_ENSURE_SUCCESS(rv, rv);
 #ifdef MOZ_PANORAMA
-  if (!isServer && Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!isServer && StaticPrefs::mail_panorama_enabled_AtStartup()) {
     nsCOMPtr<nsIMsgDatabase> db;
     nsCOMPtr<nsIDBFolderInfo> folderInfo;
     rv = GetDBFolderInfoAndDB(getter_AddRefs(folderInfo), getter_AddRefs(db));
@@ -4386,8 +4387,8 @@ nsMsgDBFolder::SetJunkScoreForMessages(
     const nsACString& junkScoreOrigin, int32_t junkPercent) {
   GetDatabase();
   if (mDatabase) {
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
     for (auto message : messages) {
       nsMsgKey msgKey;
       (void)message->GetMessageKey(&msgKey);
@@ -4402,10 +4403,8 @@ nsMsgDBFolder::SetJunkScoreForMessages(
         junkPercentStr.AppendInt(junkPercent);
         mDatabase->SetStringProperty(msgKey, "junkpercent", junkPercentStr);
       }
-      if (notifier) {
-        notifier->NotifyMsgPropertyChanged(message, "junkscore", oldJunkscore,
-                                           junkScoreStr);
-      }
+      notifier->NotifyMsgPropertyChanged(message, "junkscore", oldJunkscore,
+                                         junkScoreStr);
     }
   }
   return NS_OK;
@@ -4695,10 +4694,8 @@ nsMsgDBFolder::NotifyPropertyChanged(const nsACString& aProperty,
                    (this, aProperty, aOldValue, aNewValue));
 
   // Notify listeners who listen to every folder
-  nsresult rv;
   nsCOMPtr<nsIFolderListener> folderListenerManager =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::MailSession::Service();
   return folderListenerManager->OnFolderPropertyChanged(this, aProperty,
                                                         aOldValue, aNewValue);
 }
@@ -4715,10 +4712,8 @@ nsMsgDBFolder::NotifyIntPropertyChanged(const nsACString& aProperty,
                    (this, aProperty, aOldValue, aNewValue));
 
   // Notify listeners who listen to every folder
-  nsresult rv;
   nsCOMPtr<nsIFolderListener> folderListenerManager =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::MailSession::Service();
   return folderListenerManager->OnFolderIntPropertyChanged(
       this, aProperty, aOldValue, aNewValue);
 }
@@ -4730,10 +4725,8 @@ nsMsgDBFolder::NotifyBoolPropertyChanged(const nsACString& aProperty,
                    (this, aProperty, aOldValue, aNewValue));
 
   // Notify listeners who listen to every folder
-  nsresult rv;
   nsCOMPtr<nsIFolderListener> folderListenerManager =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::MailSession::Service();
   return folderListenerManager->OnFolderBoolPropertyChanged(
       this, aProperty, aOldValue, aNewValue);
 }
@@ -4747,38 +4740,28 @@ nsMsgDBFolder::NotifyPropertyFlagChanged(nsIMsgDBHdr* aItem,
                    (aItem, aProperty, aOldValue, aNewValue));
 
   // Notify listeners who listen to every folder
-  nsresult rv;
   nsCOMPtr<nsIFolderListener> folderListenerManager =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::MailSession::Service();
   return folderListenerManager->OnFolderPropertyFlagChanged(
       aItem, aProperty, aOldValue, aNewValue);
 }
 
 NS_IMETHODIMP nsMsgDBFolder::NotifyMessageAdded(nsIMsgDBHdr* msg) {
-  // Notify our directly-registered listeners.
   NOTIFY_LISTENERS(OnMessageAdded, (this, msg));
+
   // Notify listeners who listen to every folder
-  nsresult rv;
   nsCOMPtr<nsIFolderListener> folderListenerManager =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = folderListenerManager->OnMessageAdded(this, msg);
-  NS_ENSURE_SUCCESS(rv, rv);
-  return NS_OK;
+      mozilla::components::MailSession::Service();
+  return folderListenerManager->OnMessageAdded(this, msg);
 }
 
 nsresult nsMsgDBFolder::NotifyMessageRemoved(nsIMsgDBHdr* msg) {
-  // Notify our directly-registered listeners.
   NOTIFY_LISTENERS(OnMessageRemoved, (this, msg));
+
   // Notify listeners who listen to every folder
-  nsresult rv;
   nsCOMPtr<nsIFolderListener> folderListenerManager =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = folderListenerManager->OnMessageRemoved(this, msg);
-  NS_ENSURE_SUCCESS(rv, rv);
-  return NS_OK;
+      mozilla::components::MailSession::Service();
+  return folderListenerManager->OnMessageRemoved(this, msg);
 }
 
 NS_IMETHODIMP nsMsgDBFolder::NotifyFolderAdded(nsIMsgFolder* child) {
@@ -4786,10 +4769,8 @@ NS_IMETHODIMP nsMsgDBFolder::NotifyFolderAdded(nsIMsgFolder* child) {
   NOTIFY_LISTENERS(OnFolderAdded, (this, child));
 
   // Notify listeners who listen to every folder
-  nsresult rv;
   nsCOMPtr<nsIFolderListener> folderListenerManager =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::MailSession::Service();
   return folderListenerManager->OnFolderAdded(this, child);
 }
 
@@ -4797,10 +4778,8 @@ nsresult nsMsgDBFolder::NotifyFolderRemoved(nsIMsgFolder* child) {
   NOTIFY_LISTENERS(OnFolderRemoved, (this, child));
 
   // Notify listeners who listen to every folder
-  nsresult rv;
   nsCOMPtr<nsIFolderListener> folderListenerManager =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::MailSession::Service();
   return folderListenerManager->OnFolderRemoved(this, child);
 }
 
@@ -4808,10 +4787,8 @@ nsresult nsMsgDBFolder::NotifyFolderEvent(const nsACString& aEvent) {
   NOTIFY_LISTENERS(OnFolderEvent, (this, aEvent));
 
   // Notify listeners who listen to every folder
-  nsresult rv;
   nsCOMPtr<nsIFolderListener> folderListenerManager =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+      mozilla::components::MailSession::Service();
   return folderListenerManager->OnFolderEvent(this, aEvent);
 }
 
@@ -5062,21 +5039,11 @@ NS_IMETHODIMP nsMsgDBFolder::AlertFilterChanged(nsIMsgWindow* msgWindow) {
 
 nsresult nsMsgDBFolder::GetWarnFilterChanged(bool* aVal) {
   NS_ENSURE_ARG(aVal);
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = prefBranch->GetBoolPref(PREF_MAIL_WARN_FILTER_CHANGED, aVal);
-  if (NS_FAILED(rv)) *aVal = false;
-  return NS_OK;
+  return Preferences::GetBool(PREF_MAIL_WARN_FILTER_CHANGED, aVal);
 }
 
 nsresult nsMsgDBFolder::SetWarnFilterChanged(bool aVal) {
-  nsresult rv = NS_OK;
-  nsCOMPtr<nsIPrefBranch> prefBranch =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  return prefBranch->SetBoolPref(PREF_MAIL_WARN_FILTER_CHANGED, aVal);
+  return Preferences::SetBool(PREF_MAIL_WARN_FILTER_CHANGED, aVal);
 }
 
 NS_IMETHODIMP nsMsgDBFolder::NotifyAboutToCompact() {
@@ -5536,12 +5503,10 @@ NS_IMETHODIMP nsMsgDBFolder::AddKeywordsToMessages(
       if (addCount) {
         NotifyPropertyFlagChanged(message, kKeywords, 0, addCount);
 
-        nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-            do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-        if (notifier) {
-          notifier->NotifyMsgPropertyChanged(message, "keywords", oldKeywords,
-                                             keywords);
-        }
+        nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+            mozilla::components::FolderNotification::Service();
+        notifier->NotifyMsgPropertyChanged(message, "keywords", oldKeywords,
+                                           keywords);
       }
     }
   }
@@ -5586,12 +5551,10 @@ NS_IMETHODIMP nsMsgDBFolder::RemoveKeywordsFromMessages(
       if (removeCount) {
         mDatabase->SetStringPropertyByHdr(message, "keywords", keywords);
         NotifyPropertyFlagChanged(message, kKeywords, removeCount, 0);
-        nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-            do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-        if (notifier) {
-          notifier->NotifyMsgPropertyChanged(message, "keywords", oldKeywords,
-                                             keywords);
-        }
+        nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+            mozilla::components::FolderNotification::Service();
+        notifier->NotifyMsgPropertyChanged(message, "keywords", oldKeywords,
+                                           keywords);
       }
     }
   }

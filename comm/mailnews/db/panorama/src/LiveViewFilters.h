@@ -5,46 +5,45 @@
 #ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_LIVEVIEWFILTERS_H_
 #define COMM_MAILNEWS_DB_PANORAMA_SRC_LIVEVIEWFILTERS_H_
 
-#include "Folder.h"
 #include "FolderDatabase.h"
 #include "Message.h"
 #include "mozilla/Components.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/storage/Variant.h"
 #include "mozIStorageStatement.h"
 #include "nsCOMPtr.h"
-#include "nsIDatabaseCore.h"
-#include "nsIFolderDatabase.h"
+#include "nsIVariant.h"
 #include "nsMsgMessageFlags.h"
 #include "nsString.h"
+#include "nsTArray.h"
 #include "nsTString.h"
+#include "VirtualFolderWrapper.h"
 
 namespace mozilla::mailnews {
 
 class LiveViewFilter {
+  friend class LiveView;
+
  public:
-  LiveViewFilter() : mUID(nextUID++) {}
+  LiveViewFilter() {}
   virtual ~LiveViewFilter() {}
 
-  virtual nsCString GetSQLClause() { return mSQLClause; }
-  virtual void PrepareStatement(mozIStorageStatement* aStmt) {}
   virtual bool Matches(Message& aMessage) { return false; }
   virtual void Refresh() {}
 
  protected:
-  static uint64_t nextUID;
-  uint64_t mUID;
   nsAutoCString mSQLClause;
+  nsTArray<nsCOMPtr<nsIVariant>> mSQLParams;
 };
 
 class SingleFolderFilter final : public LiveViewFilter {
  public:
-  explicit SingleFolderFilter(nsIFolder* aFolder)
-      : mFolderId(aFolder->GetId()) {
+  explicit SingleFolderFilter(uint64_t folderId) : mFolderId(folderId) {
     mSQLClause.Assign("folderId = ");
     mSQLClause.AppendInt(mFolderId);
   }
 
-  bool Matches(Message& aMessage) { return aMessage.mFolderId == mFolderId; }
+  bool Matches(Message& aMessage) { return aMessage.FolderId() == mFolderId; }
 
  protected:
   uint64_t mFolderId;
@@ -52,20 +51,21 @@ class SingleFolderFilter final : public LiveViewFilter {
 
 class MultiFolderFilter final : public LiveViewFilter {
  public:
-  explicit MultiFolderFilter(const nsTArray<RefPtr<nsIFolder>>& aFolders) {
+  explicit MultiFolderFilter(nsTArray<uint64_t> const& folderIds) {
+    mFolderIds.ClearAndRetainStorage();
     mSQLClause.Assign("folderId IN (");
-    for (size_t i = 0; i < aFolders.Length(); i++) {
+    for (size_t i = 0; i < folderIds.Length(); i++) {
       if (i > 0) {
         mSQLClause.Append(", ");
       }
-      mSQLClause.AppendInt(aFolders[i]->GetId());
-      mFolderIds.AppendElement(aFolders[i]->GetId());
+      mSQLClause.AppendInt(folderIds[i]);
+      mFolderIds.AppendElement(folderIds[i]);
     }
     mSQLClause.Append(")");
   }
 
   bool Matches(Message& aMessage) {
-    return mFolderIds.Contains(aMessage.mFolderId);
+    return mFolderIds.Contains(aMessage.FolderId());
   }
 
  protected:
@@ -74,52 +74,35 @@ class MultiFolderFilter final : public LiveViewFilter {
 
 class VirtualFolderFilter final : public LiveViewFilter {
  public:
-  explicit VirtualFolderFilter(nsIFolder* folder)
-      : mVirtualFolderId(folder->GetId()) {
-    mSQLClause.Assign(
-        "folderId IN (SELECT searchFolderId FROM virtualFolder_folders WHERE "
-        "virtualFolderId = ");
-    mSQLClause.AppendInt(mVirtualFolderId);
-    mSQLClause.Append(")");
-
+  explicit VirtualFolderFilter(uint64_t folderId) : mVirtualFolderId(folderId) {
+    mWrapper = new VirtualFolderWrapper(folderId);
     Refresh();
   }
 
-  void Refresh() {
-    nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
-    nsCOMPtr<nsIFolderDatabase> folders = database->GetFolders();
-    (static_cast<FolderDatabase*>(folders.get()))
-        ->GetVirtualFolderFolders(mVirtualFolderId, mSearchFolderIds);
-  }
+  void Refresh();
 
-  bool Matches(Message& aMessage) {
-    return mSearchFolderIds.Contains(aMessage.mFolderId);
+  bool Matches(Message& message) {
+    // TODO: This is incomplete. We haven't matched the message against the
+    // search terms.
+    return mSearchFolderIds.Contains(message.FolderId());
   }
 
  protected:
   uint64_t mVirtualFolderId;
   nsTArray<uint64_t> mSearchFolderIds;
+  RefPtr<VirtualFolderWrapper> mWrapper;
 };
 
 class TaggedMessagesFilter final : public LiveViewFilter {
  public:
   explicit TaggedMessagesFilter(const nsACString& aTag, bool aWanted)
       : mTag(aTag), mWanted(aWanted) {
-    // There could be more than one tag filter, so use a unique parameter name.
-    mParamName.Assign("tag");
-    mParamName.AppendInt(mUID);
-
-    mSQLClause.Assign(aWanted ? "TAGS_INCLUDE(tags, :"
-                              : "TAGS_EXCLUDE(tags, :");
-    mSQLClause.Append(mParamName);
-    mSQLClause.Append(")");
-  }
-  void PrepareStatement(mozIStorageStatement* aStmt) override {
-    aStmt->BindUTF8StringByName(mParamName, mTag);
+    mSQLClause.Assign(aWanted ? "TAGS_INCLUDE(tags, ?)"
+                              : "TAGS_EXCLUDE(tags, ?)");
+    mSQLParams.AppendElement(new mozilla::storage::UTF8TextVariant(mTag));
   }
 
  protected:
-  nsAutoCString mParamName;
   nsAutoCString mTag;
   bool mWanted;
 };

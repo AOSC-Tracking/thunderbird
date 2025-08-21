@@ -3,14 +3,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsNewsFolder.h"
+
 #include "nsIDBFolderInfo.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefService.h"
 #include "prlog.h"
 
 #include "msgCore.h"  // precompiled header...
 #include "nsIMsgMailNewsUrl.h"
-#include "nsNewsFolder.h"
 #include "nsMsgFolderFlags.h"
 #include "MailNewsTypes.h"
 #include "prprf.h"
@@ -43,23 +42,18 @@
 #include "nsILoginInfo.h"
 #include "nsILoginManager.h"
 #include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
 #include "nsIInputStream.h"
 #include "nsIURIMutator.h"
 
-#define kNewsSortOffset 9000
-
-#define NEWS_SCHEME "news:"
-#define SNEWS_SCHEME "snews:"
-
-////////////////////////////////////////////////////////////////////////////////
+using mozilla::Preferences;
 
 nsMsgNewsFolder::nsMsgNewsFolder(void)
     : mExpungedBytes(0),
       mGettingNews(false),
       mInitialized(false),
       m_downloadMessageForOfflineUse(false),
-      mReadSet(nullptr),
-      mSortOrder(kNewsSortOffset) {
+      mReadSet(nullptr) {
   mFolderSize = kSizeUnknown;
 }
 
@@ -154,14 +148,6 @@ nsMsgNewsFolder::AddNewsgroup(const nsACString& name, const nsACString& setStr,
   rv = folder->SetFlag(nsMsgFolderFlags::Newsgroup);
   if (NS_FAILED(rv)) return rv;
 
-  int32_t numExistingGroups = mSubFolders.Count();
-
-  // add kNewsSortOffset (9000) to prevent this problem:  1,10,11,2,3,4,5
-  // We use 9000 instead of 1000 so newsgroups will sort to bottom of flat
-  // folder views
-  rv = folder->SetSortOrder(numExistingGroups + kNewsSortOffset);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   mSubFolders.AppendObject(folder);
   folder->SetParent(this);
   folder.forget(child);
@@ -234,17 +220,11 @@ nsresult nsMsgNewsFolder::GetDatabase() {
 NS_IMETHODIMP
 nsMsgNewsFolder::UpdateFolder(nsIMsgWindow* aWindow) {
   // Get news.get_messages_on_select pref
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  bool getMessagesOnSelect = true;
-  prefBranch->GetBoolPref("news.get_messages_on_select", &getMessagesOnSelect);
 
   // Only if news.get_messages_on_select is true do we get new messages
   // automatically
-  if (getMessagesOnSelect) {
-    rv = GetDatabase();  // want this cached...
+  if (Preferences::GetBool("news.get_messages_on_select", true)) {
+    nsresult rv = GetDatabase();  // want this cached...
     if (NS_SUCCEEDED(rv)) {
       if (mDatabase) {
         nsCOMPtr<nsIMsgRetentionSettings> retentionSettings;
@@ -347,9 +327,9 @@ NS_IMETHODIMP nsMsgNewsFolder::CreateSubfolder(const nsACString& newsgroupName,
     NS_ENSURE_SUCCESS(rv, rv);
 
     NotifyFolderAdded(child);
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-    if (notifier) notifier->NotifyFolderAdded(child);
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
+    notifier->NotifyFolderAdded(child);
   }
   return rv;
 }
@@ -614,9 +594,9 @@ nsMsgNewsFolder::DeleteMessages(nsTArray<RefPtr<nsIMsgDBHdr>> const& msgHdrs,
   NS_ENSURE_ARG_POINTER(aMsgWindow);
 
   if (!isMove) {
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-    if (notifier) notifier->NotifyMsgsDeleted(msgHdrs);
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
+    notifier->NotifyMsgsDeleted(msgHdrs);
   }
 
   rv = GetDatabase();
@@ -1080,55 +1060,6 @@ NS_IMETHODIMP nsMsgNewsFolder::ForgetAuthenticationCredentials() {
   return NS_OK;
 }
 
-// change order of subfolders (newsgroups)
-NS_IMETHODIMP nsMsgNewsFolder::ReorderGroup(nsIMsgFolder* aNewsgroupToMove,
-                                            nsIMsgFolder* aRefNewsgroup) {
-  // if folders are identical do nothing
-  if (aNewsgroupToMove == aRefNewsgroup) return NS_OK;
-
-  nsresult rv = NS_OK;
-
-  // get index for aNewsgroupToMove
-  int32_t indexNewsgroupToMove = mSubFolders.IndexOf(aNewsgroupToMove);
-  if (indexNewsgroupToMove == -1)
-    // aNewsgroupToMove is no subfolder of this folder
-    return NS_ERROR_INVALID_ARG;
-
-  // get index for aRefNewsgroup
-  int32_t indexRefNewsgroup = mSubFolders.IndexOf(aRefNewsgroup);
-  if (indexRefNewsgroup == -1)
-    // aRefNewsgroup is no subfolder of this folder
-    return NS_ERROR_INVALID_ARG;
-
-  // Move NewsgroupToMove to new index and set new sort order.
-
-  nsCOMPtr<nsIMsgFolder> newsgroup = mSubFolders[indexNewsgroupToMove];
-
-  mSubFolders.RemoveObjectAt(indexNewsgroupToMove);
-  mSubFolders.InsertObjectAt(newsgroup, indexRefNewsgroup);
-
-  for (uint32_t i = 0; i < mSubFolders.Length(); i++) {
-    mSubFolders[i]->SetSortOrder(kNewsSortOffset + i);
-    nsAutoCString name;
-    mSubFolders[i]->GetName(name);
-    NotifyFolderRemoved(mSubFolders[i]);
-    NotifyFolderAdded(mSubFolders[i]);
-  }
-
-  // write changes back to file
-  nsCOMPtr<nsINntpIncomingServer> nntpServer;
-  rv = GetNntpServer(getter_AddRefs(nntpServer));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = nntpServer->SetNewsrcHasChanged(true);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = nntpServer->WriteNewsrcFile();
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return rv;
-}
-
 nsresult nsMsgNewsFolder::CreateBaseMessageURI(const nsACString& aURI) {
   return nsCreateNewsBaseMessageURI(aURI, mBaseMessageURI);
 }
@@ -1229,14 +1160,13 @@ NS_IMETHODIMP nsMsgNewsFolder::RemoveMessage(nsMsgKey key) {
                     rv);  // if GetDatabase succeeds, mDatabase will be non-null
 
   // Notify listeners of a delete for a single message
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-  if (notifier) {
-    nsCOMPtr<nsIMsgDBHdr> msgHdr;
-    rv = mDatabase->GetMsgHdrForKey(key, getter_AddRefs(msgHdr));
-    NS_ENSURE_SUCCESS(rv, rv);
-    notifier->NotifyMsgsDeleted({msgHdr.get()});
-  }
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  nsCOMPtr<nsIMsgDBHdr> msgHdr;
+  rv = mDatabase->GetMsgHdrForKey(key, getter_AddRefs(msgHdr));
+  NS_ENSURE_SUCCESS(rv, rv);
+  notifier->NotifyMsgsDeleted({msgHdr.get()});
+
   return mDatabase->DeleteMessage(key, nullptr, false);
 }
 
@@ -1247,15 +1177,12 @@ NS_IMETHODIMP nsMsgNewsFolder::RemoveMessages(
                     rv);  // if GetDatabase succeeds, mDatabase will be non-null
 
   // Notify listeners of a multiple message delete
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-
-  if (notifier) {
-    nsTArray<RefPtr<nsIMsgDBHdr>> msgHdrs;
-    rv = MsgGetHeadersFromKeys(mDatabase, aMsgKeys, msgHdrs);
-    NS_ENSURE_SUCCESS(rv, rv);
-    notifier->NotifyMsgsDeleted(msgHdrs);
-  }
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  nsTArray<RefPtr<nsIMsgDBHdr>> msgHdrs;
+  rv = MsgGetHeadersFromKeys(mDatabase, aMsgKeys, msgHdrs);
+  NS_ENSURE_SUCCESS(rv, rv);
+  notifier->NotifyMsgsDeleted(msgHdrs);
 
   return mDatabase->DeleteMessages(aMsgKeys, nullptr);
 }
@@ -1371,21 +1298,6 @@ NS_IMETHODIMP nsMsgNewsFolder::GetMessageIdForKey(nsMsgKey key,
   return hdr->GetMessageId(result);
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::SetSortOrder(int32_t order) {
-  int32_t oldOrder = mSortOrder;
-  mSortOrder = order;
-
-  NotifyIntPropertyChanged(kSortOrder, oldOrder, order);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgNewsFolder::GetSortOrder(int32_t* order) {
-  NS_ENSURE_ARG_POINTER(order);
-  *order = mSortOrder;
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgNewsFolder::Shutdown(bool shutdownChildren) {
   if (mFilterList) {
     // close the filter log stream
@@ -1457,9 +1369,7 @@ nsMsgNewsFolder::GetFilterList(nsIMsgWindow* aMsgWindow,
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIMsgFilterService> filterService =
-        do_GetService("@mozilla.org/messenger/services/filters;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
+        mozilla::components::Filter::Service();
     rv = filterService->OpenFilterList(filterFile, this, aMsgWindow,
                                        getter_AddRefs(mFilterList));
     NS_ENSURE_SUCCESS(rv, rv);

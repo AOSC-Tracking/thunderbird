@@ -2,12 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsImapMailFolder.h"
+
 #include "msgCore.h"
 #include "CopyMessageStreamListener.h"
 #include "nsIAutoSyncManager.h"
 #include "nsIStringStream.h"
 #include "prmem.h"
-#include "nsImapMailFolder.h"
 #include "nsIDBFolderInfo.h"
 #include "nsIImapService.h"
 #include "nsIFile.h"
@@ -25,8 +26,6 @@
 #include "nsImapStringBundle.h"
 #include "nsIMsgFolderCacheElement.h"
 #include "nsTextFormatter.h"
-#include "nsIPrefBranch.h"
-#include "nsIPrefService.h"
 #include "nsMsgI18N.h"
 #include "nsIMsgFilter.h"
 #include "nsIMsgFilterService.h"
@@ -65,12 +64,20 @@
 #include "nsIMsgStatusFeedback.h"
 #include "nsIMsgThread.h"
 #include "nsMsgLineBuffer.h"
+#include "mozilla/Components.h"
 #include "mozilla/Logging.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/StaticPrefs_mail.h"
 #include "nsReadableUtils.h"
 #include "UrlListener.h"
 #include "nsIObserverService.h"
 #include "nsIPropertyBag2.h"
+
+using mozilla::LazyLogModule;
+using mozilla::LogLevel;
+using mozilla::Preferences;
+using namespace mozilla::StaticPrefs;
 
 #define NS_PARSEMAILMSGSTATE_CID              \
   {/* 2B79AC51-1459-11d3-8097-006008128C4E */ \
@@ -85,8 +92,6 @@ static NS_DEFINE_CID(kParseMailMsgStateCID, NS_PARSEMAILMSGSTATE_CID);
 static NS_DEFINE_CID(kCImapHostSessionList, NS_IIMAPHOSTSESSIONLIST_CID);
 
 #define MAILNEWS_CUSTOM_HEADERS "mailnews.customHeaders"
-
-using namespace mozilla;
 
 extern LazyLogModule gAutoSyncLog;  // defined in nsAutoSyncManager.cpp
 extern LazyLogModule IMAP;          // defined in nsImapProtocol.cpp
@@ -451,7 +456,7 @@ nsresult nsImapMailFolder::CreateSubFolders(nsIFile* path) {
     currentFolderDBNameStr = currentFolderNameStr;
     nsAutoString utfLeafName = currentFolderNameStr;
 
-    if (!Preferences::GetBool("mail.panorama.enabled", false)) {
+    if (!mail_panorama_enabled_AtStartup()) {
       nsCOMPtr<nsIMsgFolderCacheElement> cacheElement;
       rv = GetFolderCacheElemFromFile(dbFile, getter_AddRefs(cacheElement));
       if (NS_SUCCEEDED(rv) && cacheElement) {
@@ -654,7 +659,7 @@ NS_IMETHODIMP nsImapMailFolder::UpdateFolderWithListener(
 
     if (mFlags & nsMsgFolderFlags::Offline) {
       nsCOMPtr<nsIMsgFilterService> filterService =
-          do_GetService("@mozilla.org/messenger/services/filters;1", &rv);
+          mozilla::components::Filter::Service();
       uint32_t filterCount = 0;
       m_filterList->GetFilterCount(&filterCount);
       for (uint32_t index = 0; index < filterCount && !m_filterListRequiresBody;
@@ -767,10 +772,7 @@ NS_IMETHODIMP nsImapMailFolder::UpdateFolderWithListener(
 
   // Don't run select if we can't select the folder...
   if (!m_urlRunning && canOpenThisFolder && !isServer) {
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     // Do a discovery in its own url if needed. Do before SELECT url.
     nsCOMPtr<nsIImapHostSessionList> hostSession =
         do_GetService(kCImapHostSessionList, &rv);
@@ -832,7 +834,6 @@ NS_IMETHODIMP nsImapMailFolder::CreateSubfolder(const nsACString& folderName,
                                                 nsIMsgWindow* msgWindow) {
   if (folderName.IsEmpty()) return NS_MSG_ERROR_INVALID_FOLDER_NAME;
 
-  nsresult rv;
   nsAutoCString trashName;
   GetTrashFolderName(trashName);
   if (folderName.Equals(trashName))  // Trash , a special folder
@@ -847,10 +848,7 @@ NS_IMETHODIMP nsImapMailFolder::CreateSubfolder(const nsACString& folderName,
     return NS_MSG_FOLDER_EXISTS;
   }
 
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   nsCOMPtr<nsIURI> url;
   return imapService->CreateFolder(this, folderName, this, getter_AddRefs(url));
 }
@@ -1040,9 +1038,9 @@ NS_IMETHODIMP nsImapMailFolder::CreateClientSubfolderInfo(
     if (NS_SUCCEEDED(rv) && child) {
       NotifyFolderAdded(child);
       child->NotifyFolderEvent(kFolderCreateCompleted);
-      nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-          do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-      if (notifier) notifier->NotifyFolderAdded(child);
+      nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+          mozilla::components::FolderNotification::Service();
+      notifier->NotifyFolderAdded(child);
     } else {
       NotifyFolderEvent(kFolderCreateFailed);
     }
@@ -1051,10 +1049,7 @@ NS_IMETHODIMP nsImapMailFolder::CreateClientSubfolderInfo(
 }
 
 NS_IMETHODIMP nsImapMailFolder::List() {
-  nsresult rv;
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   return imapService->ListFolder(this, this);
 }
 
@@ -1088,10 +1083,7 @@ NS_IMETHODIMP nsImapMailFolder::CreateStorageIfMissing(
   if (msgParent) {
     nsCString folderName;
     GetName(folderName);
-    nsresult rv;
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     imapService->EnsureFolderExists(msgParent, folderName, nullptr,
                                     urlListener);
   }
@@ -1378,11 +1370,7 @@ NS_IMETHODIMP nsImapMailFolder::MarkPendingRemoval(nsIMsgDBHdr* aHdr,
 
 NS_IMETHODIMP nsImapMailFolder::Expunge(nsIUrlListener* aListener,
                                         nsIMsgWindow* aMsgWindow) {
-  nsresult rv;
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   return imapService->Expunge(this, aListener, aMsgWindow);
 }
 
@@ -1485,9 +1473,7 @@ NS_IMETHODIMP nsImapMailFolder::CompactAll(nsIUrlListener* aListener,
 NS_IMETHODIMP nsImapMailFolder::UpdateStatus(nsIUrlListener* aListener,
                                              nsIMsgWindow* aMsgWindow) {
   nsresult rv;
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
 
   nsCOMPtr<nsIURI> uri;
   rv = imapService->UpdateFolderStatus(this, aListener, getter_AddRefs(uri));
@@ -1527,10 +1513,7 @@ NS_IMETHODIMP nsImapMailFolder::EmptyTrash(nsIUrlListener* aListener) {
       return rv;
     }
 
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     if (aListener)
       rv = imapService->DeleteAllMessages(trashFolder, aListener);
     else {
@@ -1563,9 +1546,9 @@ NS_IMETHODIMP nsImapMailFolder::EmptyTrash(nsIUrlListener* aListener) {
     trashFolder->SetSizeOnDisk(0);
 
     // The trash folder has effectively been deleted.
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-    if (notifier) notifier->NotifyFolderDeleted(trashFolder);
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
+    notifier->NotifyFolderDeleted(trashFolder);
 
     return NS_OK;
   }
@@ -1621,9 +1604,7 @@ NS_IMETHODIMP nsImapMailFolder::Rename(const nsACString& newName,
   GetImapIncomingServer(getter_AddRefs(incomingImapServer));
   if (incomingImapServer) RecursiveCloseActiveConnections(incomingImapServer);
 
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   return imapService->RenameLeaf(this, newName, this, msgWindow);
 }
 
@@ -1875,8 +1856,8 @@ NS_IMETHODIMP nsImapMailFolder::MarkThreadRead(nsIMsgThread* thread) {
 
 NS_IMETHODIMP nsImapMailFolder::ReadFromFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!mail_panorama_enabled_AtStartup());
+  if (mail_panorama_enabled_AtStartup()) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
   nsresult rv = nsMsgDBFolder::ReadFromFolderCacheElem(element);
@@ -1911,8 +1892,8 @@ NS_IMETHODIMP nsImapMailFolder::ReadFromFolderCacheElem(
 
 NS_IMETHODIMP nsImapMailFolder::WriteToFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!mail_panorama_enabled_AtStartup());
+  if (mail_panorama_enabled_AtStartup()) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
   nsresult rv = nsMsgDBFolder::WriteToFolderCacheElem(element);
@@ -2197,9 +2178,9 @@ NS_IMETHODIMP nsImapMailFolder::DeleteMessages(
                               false);  //"remove it immediately" model
           // Notify if this is an actual delete.
           if (!isMove) {
-            nsCOMPtr<nsIMsgFolderNotificationService> notifier(do_GetService(
-                "@mozilla.org/messenger/msgnotificationservice;1"));
-            if (notifier) notifier->NotifyMsgsDeleted(msgHeaders);
+            nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+                mozilla::components::FolderNotification::Service();
+            notifier->NotifyMsgsDeleted(msgHeaders);
           }
           DeleteStoreMessages(msgHeaders);
           database->DeleteMessages(srcKeyArray, nullptr);
@@ -2222,8 +2203,7 @@ NS_IMETHODIMP nsImapMailFolder::DeleteMessages(
 
     rv = QueryInterface(NS_GET_IID(nsIMsgFolder), getter_AddRefs(srcFolder));
     nsCOMPtr<nsIMsgCopyService> copyService =
-        do_GetService("@mozilla.org/messenger/messagecopyservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+        mozilla::components::Copy::Service();
     rv = copyService->CopyMessages(srcFolder, msgHeaders, trashFolder, true,
                                    listener, msgWindow, allowUndo);
   }
@@ -2266,9 +2246,7 @@ nsImapMailFolder::DeleteSelf(nsIMsgWindow* msgWindow) {
   bool deleteNoTrash = TrashOrDescendantOfTrash(this) || !DeleteIsMoveToTrash();
   bool confirmDeletion = true;
 
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   if (!deleteNoTrash) {
     rv = GetTrashFolder(getter_AddRefs(trashFolder));
     // If we can't find the trash folder and we are supposed to move it to the
@@ -2287,11 +2265,8 @@ nsImapMailFolder::DeleteSelf(nsIMsgWindow* msgWindow) {
       if (!serverSupportsDualUseFolders) canHaveSubFoldersOfTrash = false;
     }
     if (!canHaveSubFoldersOfTrash) deleteNoTrash = true;
-    nsCOMPtr<nsIPrefBranch> prefBranch(
-        do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
-    prefBranch->GetBoolPref("mailnews.confirm.moveFoldersToTrash",
-                            &confirmDeletion);
+    confirmDeletion =
+        Preferences::GetBool("mailnews.confirm.moveFoldersToTrash");
   }
 
   // If we are deleting folder immediately, ask user for confirmation.
@@ -2373,14 +2348,8 @@ bool nsImapMailFolder::ShouldCheckAllFolders(
     nsIImapIncomingServer* imapServer) {
   // Check legacy global preference to see if we should check all folders for
   // new messages, or just the inbox and marked ones.
-  bool checkAllFolders = false;
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, false);
-  // This pref might not exist, which is OK.
-  (void)prefBranch->GetBoolPref("mail.check_all_imap_folders_for_new",
-                                &checkAllFolders);
+  bool checkAllFolders =
+      Preferences::GetBool("mail.check_all_imap_folders_for_new");
 
   if (checkAllFolders) return true;
 
@@ -2655,9 +2624,9 @@ NS_IMETHODIMP nsImapMailFolder::UpdateImapMailboxInfo(
     // Notify nsIMsgFolderListeners of a mass delete, but only if we actually
     // have headers
     if (!hdrsToDelete.IsEmpty()) {
-      nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-          do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-      if (notifier) notifier->NotifyMsgsDeleted(hdrsToDelete);
+      nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+          mozilla::components::FolderNotification::Service();
+      notifier->NotifyMsgsDeleted(hdrsToDelete);
     }
     DeleteStoreMessages(hdrsToDelete);
     EnableNotifications(nsIMsgFolder::allMessageCountNotifications, false);
@@ -2965,11 +2934,7 @@ nsresult nsImapMailFolder::NormalEndHeaderParseStream(
   // if this is not the Inbox folder.
   if (mFlags & nsMsgFolderFlags::Inbox || m_applyIncomingFilters) {
     // Use highwater to determine whether to filter?
-    bool filterOnHighwater = false;
-    nsCOMPtr<nsIPrefBranch> prefBranch(
-        do_GetService(NS_PREFSERVICE_CONTRACTID));
-    if (prefBranch)
-      prefBranch->GetBoolPref("mail.imap.filter_on_new", &filterOnHighwater);
+    bool filterOnHighwater = Preferences::GetBool("mail.imap.filter_on_new");
 
     uint32_t msgFlags;
     newMsgHdr->GetFlags(&msgFlags);
@@ -3051,8 +3016,8 @@ nsresult nsImapMailFolder::NormalEndHeaderParseStream(
   }
   // here we need to tweak flags from uid state..
   if (mDatabase && (!m_msgMovedByFilter || ShowDeletedMessages())) {
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
     // Check if this header corresponds to a pseudo header
     // we have from doing a pseudo-offline move and then downloading
     // the real header from the server. In that case, we notify
@@ -3062,12 +3027,12 @@ nsresult nsImapMailFolder::NormalEndHeaderParseStream(
     newMsgHdr->GetMessageId(newMessageId);
     nsMsgKey pseudoKey =
         m_pseudoHdrs.MaybeGet(newMessageId).valueOr(nsMsgKey_None);
-    if (notifier && pseudoKey != nsMsgKey_None) {
+    if (pseudoKey != nsMsgKey_None) {
       notifier->NotifyMsgKeyChanged(pseudoKey, newMsgHdr);
       m_pseudoHdrs.Remove(newMessageId);
     }
     mDatabase->AddNewHdrToDB(newMsgHdr, true);
-    if (notifier) notifier->NotifyMsgAdded(newMsgHdr);
+    notifier->NotifyMsgAdded(newMsgHdr);
     // mark the header as not yet reported classified
     OrProcessingFlags(m_curMsgUid, nsMsgProcessingFlags::NotReportedClassified);
   }
@@ -3234,9 +3199,7 @@ NS_IMETHODIMP nsImapMailFolder::EndCopy(bool copySucceeded) {
     nsCOMPtr<nsIFile> tmpFile;
     m_copyState->m_tmpFile->Clone(getter_AddRefs(tmpFile));
     m_copyState->m_tmpFile = tmpFile;
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
 
     rv =
         QueryInterface(NS_GET_IID(nsIUrlListener), getter_AddRefs(urlListener));
@@ -3539,8 +3502,7 @@ NS_IMETHODIMP nsImapMailFolder::ApplyFilterHit(nsIMsgFilter* filter,
           if (NS_FAILED(rv)) break;
           if (!forwardTo.IsEmpty()) {
             nsCOMPtr<nsIMsgComposeService> compService =
-                do_GetService("@mozilla.org/messengercompose;1", &rv);
-            if (NS_FAILED(rv)) break;
+                mozilla::components::Compose::Service();
             rv = compService->ForwardMessage(
                 NS_ConvertUTF8toUTF16(forwardTo), msgHdr, msgWindow, server,
                 nsIMsgComposeService::kForwardAsDefault);
@@ -3555,21 +3517,19 @@ NS_IMETHODIMP nsImapMailFolder::ApplyFilterHit(nsIMsgFilter* filter,
           if (NS_FAILED(rv)) break;
           if (!replyTemplateUri.IsEmpty()) {
             nsCOMPtr<nsIMsgComposeService> compService =
-                do_GetService("@mozilla.org/messengercompose;1", &rv);
-            if (NS_SUCCEEDED(rv) && compService) {
-              rv = compService->ReplyWithTemplate(msgHdr, replyTemplateUri,
-                                                  msgWindow, server);
-              if (NS_FAILED(rv)) {
-                NS_WARNING("ReplyWithTemplate failed");
-                if (rv == NS_ERROR_ABORT) {
-                  (void)filter->LogRuleHitFail(
-                      filterAction, msgHdr, rv,
-                      "filterFailureSendingReplyAborted"_ns);
-                } else {
-                  (void)filter->LogRuleHitFail(
-                      filterAction, msgHdr, rv,
-                      "filterFailureSendingReplyError"_ns);
-                }
+                mozilla::components::Compose::Service();
+            rv = compService->ReplyWithTemplate(msgHdr, replyTemplateUri,
+                                                msgWindow, server);
+            if (NS_FAILED(rv)) {
+              NS_WARNING("ReplyWithTemplate failed");
+              if (rv == NS_ERROR_ABORT) {
+                (void)filter->LogRuleHitFail(
+                    filterAction, msgHdr, rv,
+                    "filterFailureSendingReplyAborted"_ns);
+              } else {
+                (void)filter->LogRuleHitFail(
+                    filterAction, msgHdr, rv,
+                    "filterFailureSendingReplyError"_ns);
               }
             }
           }
@@ -3635,11 +3595,7 @@ NS_IMETHODIMP nsImapMailFolder::ApplyFilterHit(nsIMsgFilter* filter,
 
 NS_IMETHODIMP nsImapMailFolder::SetImapFlags(const char* uids, int32_t flags,
                                              nsIURI** url) {
-  nsresult rv;
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   return imapService->SetMessageFlags(this, this, url, nsAutoCString(uids),
                                       flags, true);
 }
@@ -3647,10 +3603,7 @@ NS_IMETHODIMP nsImapMailFolder::SetImapFlags(const char* uids, int32_t flags,
 // "this" is the parent folder
 NS_IMETHODIMP nsImapMailFolder::PlaybackOfflineFolderCreate(
     const nsAString& aFolderName, nsIMsgWindow* aWindow, nsIURI** url) {
-  nsresult rv;
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   return imapService->CreateFolder(this, NS_ConvertUTF16toUTF8(aFolderName),
                                    this, url);
 }
@@ -3717,9 +3670,7 @@ nsImapMailFolder::ReplayOfflineMoveCopy(const nsTArray<nsMsgKey>& aMsgKeys,
     // the offline move/copy.
   }
 
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   nsCOMPtr<nsIURI> resultUrl;
   nsAutoCString uids;
   AllocateUidStringFromKeys(aMsgKeys, uids);
@@ -3760,11 +3711,9 @@ NS_IMETHODIMP nsImapMailFolder::HasPseudoActivity(bool* hasPseudo) {
 NS_IMETHODIMP nsImapMailFolder::StoreImapFlags(int32_t flags, bool addFlags,
                                                const nsTArray<nsMsgKey>& keys,
                                                nsIUrlListener* aUrlListener) {
-  nsresult rv;
+  nsresult rv = NS_OK;
   if (!WeAreOffline()) {
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     nsAutoCString msgIds;
     AllocateUidStringFromKeys(keys, msgIds);
     if (addFlags)
@@ -3797,10 +3746,7 @@ NS_IMETHODIMP nsImapMailFolder::StoreImapFlags(int32_t flags, bool addFlags,
 
 NS_IMETHODIMP nsImapMailFolder::LiteSelect(nsIUrlListener* aUrlListener,
                                            nsIMsgWindow* aMsgWindow) {
-  nsresult rv;
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   nsCOMPtr<nsIURI> outUri;
   return imapService->LiteSelectFolder(this, aUrlListener, aMsgWindow,
                                        getter_AddRefs(outUri));
@@ -3890,10 +3836,7 @@ NS_IMETHODIMP nsImapMailFolder::IssueCommandOnMsgs(const nsACString& command,
                                                    const char* uids,
                                                    nsIMsgWindow* aWindow,
                                                    nsIURI** url) {
-  nsresult rv;
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   return imapService->IssueCommandOnMsgs(this, aWindow, command,
                                          nsDependentCString(uids), url);
 }
@@ -3901,11 +3844,7 @@ NS_IMETHODIMP nsImapMailFolder::IssueCommandOnMsgs(const nsACString& command,
 NS_IMETHODIMP nsImapMailFolder::FetchCustomMsgAttribute(
     const nsACString& attribute, const char* uids, nsIMsgWindow* aWindow,
     nsIURI** url) {
-  nsresult rv;
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   return imapService->FetchCustomMsgAttribute(this, aWindow, attribute,
                                               nsDependentCString(uids), url);
 }
@@ -4111,21 +4050,8 @@ NS_IMETHODIMP nsImapMailFolder::GetMsgHdrsToDownload(
     return NS_OK;
   }
 
-  int32_t hdrChunkSize = 200;
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (prefBranch)
-    prefBranch->GetIntPref("mail.imap.hdr_chunk_size", &hdrChunkSize);
-
-  int32_t numKeysToFetch = m_keysToFetch.Length();
-  int32_t startIndex = 0;
-  if (hdrChunkSize > 0 && (int32_t)m_keysToFetch.Length() > hdrChunkSize) {
-    numKeysToFetch = hdrChunkSize;
-    *aMoreToDownload = true;
-    startIndex = m_keysToFetch.Length() - hdrChunkSize;
-  }
+  const int32_t numKeysToFetch = m_keysToFetch.Length();
+  const int32_t startIndex = 0;
   aKeys.AppendElements(&m_keysToFetch[startIndex], numKeysToFetch);
   // Remove these for the incremental header download case, so that
   // we know we don't have to download them again.
@@ -4258,9 +4184,7 @@ NS_IMETHODIMP nsImapMailFolder::DownloadMessagesForOffline(
   nsresult rv = BuildIdsAndKeyArray(messages, messageIds, srcKeyArray);
   if (NS_FAILED(rv) || messageIds.IsEmpty()) return rv;
 
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
 
   rv = AcquireSemaphore(static_cast<nsIMsgFolder*>(this),
                         "nsImapMailFolder::DownloadMessagesForOffline"_ns);
@@ -4293,9 +4217,7 @@ NS_IMETHODIMP nsImapMailFolder::DownloadAllForOffline(nsIUrlListener* listener,
       ThrowAlertMsg("operationFailedFolderBusy", msgWindow);
       return rv;
     }
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
 
     // Selecting the folder with nsIImapUrl::shouldStoreMsgOffline true will
     // cause us to fetch any message bodies we don't have.
@@ -4490,9 +4412,7 @@ nsImapMailFolder::OnlineCopyCompleted(nsIImapProtocol* aProtocol,
     nsCString messageIds;
     rv = imapUrl->GetListOfMessageIds(messageIds);
     if (NS_FAILED(rv)) return rv;
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     return imapService->AddMessageFlags(this, nullptr, messageIds,
                                         kImapMsgDeletedFlag, true);
   }
@@ -4937,14 +4857,11 @@ nsImapMailFolder::OnStartRunningUrl(nsIURI* aUrl) {
 // to handle all the different operations, using a big switch statement.
 NS_IMETHODIMP
 nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
-  nsresult rv;
+  nsresult rv = NS_OK;
   bool endedOfflineDownload = false;
   nsImapAction imapAction = nsIImapUrl::nsImapTest;
   m_urlRunning = false;
   m_updatingFolder = false;
-  nsCOMPtr<nsIMsgMailSession> session =
-      do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
   if (aUrl) {
     nsCOMPtr<nsIImapUrl> imapUrl = do_QueryInterface(aUrl, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -4977,9 +4894,9 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
       // Notify move, copy or delete (online operations)
       // Not sure whether nsImapDeleteMsg is even used, deletes in all three
       // models use nsImapAddMsgFlags.
-      nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-          do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-      if (notifier && m_copyState) {
+      nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+          mozilla::components::FolderNotification::Service();
+      if (m_copyState) {
         if (imapAction == nsIImapUrl::nsImapOnlineMove) {
           notifier->NotifyMsgsMoveCopyCompleted(true, m_copyState->m_messages,
                                                 this, {});
@@ -5036,20 +4953,15 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
                 // flag
                 srcFolder->NotifyFolderEvent(kDeleteOrMoveMsgCompleted);
                 // is there a way to see that we think we have new msgs?
-                nsCOMPtr<nsIPrefBranch> prefBranch(
-                    do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-                if (NS_SUCCEEDED(rv)) {
-                  bool showPreviewText;
-                  prefBranch->GetBoolPref("mail.biff.alert.show_preview",
-                                          &showPreviewText);
-                  // if we're showing preview text, update ourselves if we got a
-                  // new unread message copied so that we can download the new
-                  // headers and have a chance to preview the msg bodies.
-                  if (showPreviewText && m_copyState->m_unreadCount > 0 &&
-                      !(mFlags &
-                        (nsMsgFolderFlags::Trash | nsMsgFolderFlags::Junk))) {
-                    UpdateFolder(msgWindow);
-                  }
+                bool showPreviewText =
+                    Preferences::GetBool("mail.biff.alert.show_preview");
+                // if we're showing preview text, update ourselves if we got a
+                // new unread message copied so that we can download the new
+                // headers and have a chance to preview the msg bodies.
+                if (showPreviewText && m_copyState->m_unreadCount > 0 &&
+                    !(mFlags &
+                      (nsMsgFolderFlags::Trash | nsMsgFolderFlags::Junk))) {
+                  UpdateFolder(msgWindow);
                 }
               } else {
                 srcFolder->EnableNotifications(allMessageCountNotifications,
@@ -6353,9 +6265,9 @@ nsImapMailFolder::CopyNextStreamMessage(bool copySucceeded,
                            mailCopyState->m_isMove);
   } else {
     // Notify of move/copy completion in case we have some source headers
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-    if (notifier && !mailCopyState->m_messages.IsEmpty()) {
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
+    if (!mailCopyState->m_messages.IsEmpty()) {
       notifier->NotifyMsgsMoveCopyCompleted(
           mailCopyState->m_isMove, mailCopyState->m_messages, this, {});
     }
@@ -6799,12 +6711,10 @@ nsresult nsImapMailFolder::CopyMessagesOffline(
   }
 
   if (!msgHdrsCopied.IsEmpty()) {
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-    if (notifier) {
-      notifier->NotifyMsgsMoveCopyCompleted(isMove, msgHdrsCopied, this,
-                                            destMsgHdrs);
-    }
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
+    notifier->NotifyMsgsMoveCopyCompleted(isMove, msgHdrsCopied, this,
+                                          destMsgHdrs);
   }
 
   // NOTE (Bug 1787963):
@@ -6856,21 +6766,16 @@ void nsImapMailFolder::SetPendingAttributes(
   uint32_t supportedUserFlags;
   GetSupportedUserFlags(&supportedUserFlags);
 
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS_VOID(rv);
-
   nsCString dontPreserve;
 
   // These preferences exist so that extensions can control which properties
   // are preserved in the database when a message is moved or copied. All
   // properties are preserved except those listed in these preferences
   if (aIsMove)
-    prefBranch->GetCharPref("mailnews.database.summary.dontPreserveOnMove",
+    Preferences::GetCString("mailnews.database.summary.dontPreserveOnMove",
                             dontPreserve);
   else
-    prefBranch->GetCharPref("mailnews.database.summary.dontPreserveOnCopy",
+    Preferences::GetCString("mailnews.database.summary.dontPreserveOnCopy",
                             dontPreserve);
 
   // We'll add spaces at beginning and end so we can search for space-name-space
@@ -7031,9 +6936,7 @@ nsImapMailFolder::CopyMessages(
       return CopyMessagesOffline(srcFolder, sortedMsgs, isMove, msgWindow,
                                  listener);
 
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
 
     // 3rd parameter: Do not set offline flag.
     SetPendingAttributes(sortedMsgs, isMove, false);
@@ -7154,12 +7057,9 @@ nsImapFolderCopyState::nsImapFolderCopyState(
 nsImapFolderCopyState::~nsImapFolderCopyState() {}
 
 nsresult nsImapFolderCopyState::StartNextCopy() {
-  nsresult rv;
   // Create the destination folder (our OnStopRunningUrl() will be called
   // when done).
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   nsAutoCString folderName;
   m_curSrcFolder->GetName(folderName);
   return imapService->EnsureFolderExists(m_curDestParent, folderName,
@@ -7264,8 +7164,7 @@ nsImapFolderCopyState::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
           }
 
           nsCOMPtr<nsIMsgCopyService> copyService =
-              do_GetService("@mozilla.org/messenger/messagecopyservice;1", &rv);
-          NS_ENSURE_SUCCESS(rv, rv);
+              mozilla::components::Copy::Service();
           rv = copyService->CopyMessages(m_curSrcFolder, msgArray, newMsgFolder,
                                          m_isMoveMessages, this, m_msgWindow,
                                          false /* allowUndo */);
@@ -7395,8 +7294,7 @@ nsImapMailFolder::CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
     } else  // non-virtual folder
     {
       nsCOMPtr<nsIImapService> imapService =
-          do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
+          mozilla::components::Imap::Service();
       nsCOMPtr<nsISupports> srcSupport = do_QueryInterface(srcFolder);
       bool match = false;
       bool confirmed = false;
@@ -7445,9 +7343,7 @@ nsImapMailFolder::CopyFileMessage(nsIFile* file, nsIMsgDBHdr* msgToReplace,
   nsAutoCString messageId;
   nsTArray<RefPtr<nsIMsgDBHdr>> messages;
 
-  nsCOMPtr<nsIImapService> imapService =
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-  if (NS_FAILED(rv)) return OnCopyCompleted(file, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
 
   if (msgToReplace) {
     rv = msgToReplace->GetMessageKey(&key);
@@ -7751,9 +7647,9 @@ nsresult nsImapMailFolder::CopyFileToOfflineStore(nsIFile* srcFile,
     SetPendingAttributes({&*fakeHdr}, false, true);
 
     // Gloda needs this notification to index the fake message.
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-    if (notifier) notifier->NotifyMsgsClassified({&*fakeHdr}, false, false);
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
+    notifier->NotifyMsgsClassified({&*fakeHdr}, false, false);
     inputStream->Close();
     inputStream = nullptr;
   }
@@ -7770,10 +7666,8 @@ nsresult nsImapMailFolder::OnCopyCompleted(nsISupports* srcSupport,
       (void)CopyFileToOfflineStore(srcFile, m_copyState->m_appendUID);
   }
   m_copyState = nullptr;
-  nsresult result;
   nsCOMPtr<nsIMsgCopyService> copyService =
-      do_GetService("@mozilla.org/messenger/messagecopyservice;1", &result);
-  NS_ENSURE_SUCCESS(result, result);
+      mozilla::components::Copy::Service();
   return copyService->NotifyCompletion(srcSupport, this, rv);
 }
 
@@ -7988,9 +7882,7 @@ NS_IMETHODIMP nsImapMailFolder::PerformExpand(nsIMsgWindow* aMsgWindow) {
   NS_ENSURE_SUCCESS(rv, rv);
   rv = imapServer->GetUsingSubscription(&usingSubscription);
   if (NS_SUCCEEDED(rv) && !usingSubscription) {
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     MOZ_LOG(IMAP_DC, mozilla::LogLevel::Debug,
             ("PerformExpand: run discoverchildren url for folder=%s",
              m_onlineFolderName.get()));
@@ -8097,9 +7989,9 @@ NS_IMETHODIMP nsImapMailFolder::RenameClient(nsIMsgWindow* msgWindow,
     // Reset online status now that the folder is renamed.
     nsCOMPtr<nsIMsgImapMailFolder> oldImapFolder = do_QueryInterface(msgFolder);
     if (oldImapFolder) oldImapFolder->SetVerifiedAsOnlineFolder(false);
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-        do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-    if (notifier) notifier->NotifyFolderRenamed(msgFolder, child);
+    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+        mozilla::components::FolderNotification::Service();
+    notifier->NotifyFolderRenamed(msgFolder, child);
 
     // Do not propagate the deletion until after we have (synchronously)
     // notified all listeners about the rename.  This allows them to access
@@ -8286,9 +8178,7 @@ nsImapMailFolder::StoreCustomKeywords(nsIMsgWindow* aMsgWindow,
     return rv;
   }
 
-  nsCOMPtr<nsIImapService> imapService(
-      do_GetService("@mozilla.org/messenger/imapservice;1", &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
   nsAutoCString msgIds;
   AllocateUidStringFromKeys(aKeysToStore, msgIds);
   nsCOMPtr<nsIURI> retUri;
@@ -8306,11 +8196,7 @@ NS_IMETHODIMP nsImapMailFolder::NotifyIfNewMail() {
 }
 
 bool nsImapMailFolder::ShowPreviewText() {
-  bool showPreviewText = false;
-  nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
-  if (prefBranch)
-    prefBranch->GetBoolPref("mail.biff.alert.show_preview", &showPreviewText);
-  return showPreviewText;
+  return Preferences::GetBool("mail.biff.alert.show_preview");
 }
 
 nsresult nsImapMailFolder::PlaybackCoalescedOperations() {
@@ -8575,9 +8461,7 @@ NS_IMETHODIMP nsImapMailFolder::FetchMsgPreviewText(
     nsAutoCString messageIds;
     AllocateImapUidString(keysToFetchFromServer.Elements(), msgCount, nullptr,
                           messageIds);
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     nsCOMPtr<nsIURI> outUri;
     rv = imapService->GetBodyStart(this, aUrlListener, messageIds, 2048,
                                    getter_AddRefs(outUri));
@@ -8620,12 +8504,8 @@ NS_IMETHODIMP nsImapMailFolder::GetCustomIdentity(nsIMsgIdentity** aIdentity) {
   NS_ENSURE_ARG_POINTER(aIdentity);
   if (mFlags & nsMsgFolderFlags::ImapOtherUser) {
     nsresult rv;
-    bool delegateOtherUsersFolders = false;
-    nsCOMPtr<nsIPrefBranch> prefBranch(
-        do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
-    prefBranch->GetBoolPref("mail.imap.delegateOtherUsersFolders",
-                            &delegateOtherUsersFolders);
+    bool delegateOtherUsersFolders =
+        Preferences::GetBool("mail.imap.delegateOtherUsersFolders");
     // if we're automatically delegating other user's folders, we need to
     // cons up an e-mail address for the other user. We do that by
     // taking the other user's name and the current user's domain name,
@@ -8634,8 +8514,7 @@ NS_IMETHODIMP nsImapMailFolder::GetCustomIdentity(nsIMsgIdentity** aIdentity) {
       nsCOMPtr<nsIMsgIncomingServer> server = do_QueryReferent(mServer, &rv);
       NS_ENSURE_SUCCESS(rv, rv);
       nsCOMPtr<nsIMsgAccountManager> accountManager =
-          do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
+          mozilla::components::AccountManager::Service();
       nsCOMPtr<nsIMsgIdentity> ourIdentity;
       nsCOMPtr<nsIMsgIdentity> retIdentity;
       nsCOMPtr<nsIMsgAccount> account;

@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsMsgIncomingServer.h"
+
 #include "nscore.h"
 #include "plstr.h"
 #include "prmem.h"
@@ -36,7 +37,9 @@
 #include "nsIMsgSearchTerm.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "mozilla/Components.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
+#include "mozilla/StaticPrefs_mail.h"
 #include "nsIMsgFilter.h"
 #include "nsIObserverService.h"
 #include "mozilla/Unused.h"
@@ -44,14 +47,13 @@
 #include "nsIArray.h"
 #ifdef MOZ_PANORAMA
 #  include "nsIDatabaseCore.h"
-#  include "nsIFolder.h"
 #  include "nsIFolderDatabase.h"
 #endif  // MOZ_PANORAMA
 #include "nsIMsgLocalMailFolder.h"
 
-#define PORT_NOT_SET -1
-
 using namespace mozilla;
+
+#define PORT_NOT_SET -1
 
 nsMsgIncomingServer::nsMsgIncomingServer()
     : m_hasShutDown(false),
@@ -186,8 +188,7 @@ nsMsgIncomingServer::SetKey(const nsACString& serverKey) {
 
   // in order to actually make use of the key, we need the prefs
   nsresult rv;
-  nsCOMPtr<nsIPrefService> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIPrefService> prefs = Preferences::GetService();
 
   nsAutoCString branchName;
   branchName.AssignLiteral("mail.server.");
@@ -295,8 +296,8 @@ NS_IMPL_GETSET(nsMsgIncomingServer, BiffState, uint32_t, m_biffState)
 
 NS_IMETHODIMP nsMsgIncomingServer::WriteToFolderCache(
     nsIMsgFolderCache* folderCache) {
-  MOZ_ASSERT(!Preferences::GetBool("mail.panorama.enabled", false));
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  MOZ_ASSERT(!StaticPrefs::mail_panorama_enabled_AtStartup());
+  if (StaticPrefs::mail_panorama_enabled_AtStartup()) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
@@ -418,16 +419,16 @@ nsresult nsMsgIncomingServer::CreateRootFolder() {
   NS_ENSURE_SUCCESS(rv, rv);
 
 #ifdef MOZ_PANORAMA
-  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (StaticPrefs::mail_panorama_enabled_AtStartup()) {
     nsCOMPtr<nsIDatabaseCore> database = components::DatabaseCore::Service();
-    nsCOMPtr<nsIFolderDatabase> folders = database->GetFolders();
+    nsCOMPtr<nsIFolderDatabase> folders = database->GetFolderDB();
 
-    nsCOMPtr<nsIFolder> root;
-    rv = folders->GetFolderByPath(m_serverKey, getter_AddRefs(root));
+    // Create root folder in DB if it doesn't already exist.
+    uint64_t rootId;
+    rv = folders->GetFolderChildNamed(0, m_serverKey, &rootId);
     NS_ENSURE_SUCCESS(rv, rv);
-
-    if (!root) {
-      folders->InsertRoot(m_serverKey, getter_AddRefs(root));
+    if (!rootId) {
+      folders->InsertRoot(m_serverKey, &rootId);
       NS_ENSURE_SUCCESS(rv, rv);
     }
 
@@ -435,8 +436,7 @@ nsresult nsMsgIncomingServer::CreateRootFolder() {
         do_CreateInstance("@mozilla.org/mail/folder;1?name=mailbox", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIInitableWithFolder> initable = do_QueryInterface(m_rootFolder);
-    rv = initable->InitWithFolder(root);
+    rv = m_rootFolder->InitWithFolderId(rootId);
     NS_ENSURE_SUCCESS(rv, rv);
 
     return NS_OK;
@@ -1067,9 +1067,7 @@ nsMsgIncomingServer::GetFilterList(nsIMsgWindow* aMsgWindow,
       }
     }
     nsCOMPtr<nsIMsgFilterService> filterService =
-        do_GetService("@mozilla.org/messenger/services/filters;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
+        mozilla::components::Filter::Service();
     rv = filterService->OpenFilterList(mFilterFile, msgFolder, aMsgWindow,
                                        getter_AddRefs(mFilterList));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -1673,7 +1671,7 @@ nsresult nsMsgIncomingServer::ConfigureTemporaryServerSpamFilters(
   if (!file) return NS_OK;
 
   nsCOMPtr<nsIMsgFilterService> filterService =
-      do_GetService("@mozilla.org/messenger/services/filters;1", &rv);
+      mozilla::components::Filter::Service();
   nsCOMPtr<nsIMsgFilterList> serverFilterList;
 
   rv = filterService->OpenFilterList(file, NULL, NULL,
@@ -1768,9 +1766,7 @@ nsresult nsMsgIncomingServer::ConfigureTemporaryReturnReceiptsFilter(
   nsresult rv;
 
   nsCOMPtr<nsIMsgAccountManager> accountMgr =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+      mozilla::components::AccountManager::Service();
   nsCOMPtr<nsIMsgIdentity> identity;
   rv = accountMgr->GetFirstIdentityForServer(this, getter_AddRefs(identity));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1783,10 +1779,8 @@ nsresult nsMsgIncomingServer::ConfigureTemporaryReturnReceiptsFilter(
   identity->GetBoolAttribute("use_custom_prefs", &useCustomPrefs);
   if (useCustomPrefs)
     rv = GetIntValue("incorporate_return_receipt", &incorp);
-  else {
-    nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID));
-    if (prefs) prefs->GetIntPref("mail.incorporate.return_receipt", &incorp);
-  }
+  else
+    Preferences::GetInt("mail.incorporate.return_receipt", &incorp);
 
   bool enable = (incorp == nsIMsgMdnGenerator::eIncorporateSent);
 
@@ -1934,11 +1928,8 @@ nsMsgIncomingServer::GetSpamFilterPlugin(nsIMsgFilterPlugin** aFilterPlugin) {
 nsresult nsMsgIncomingServer::GetDeferredServers(
     nsIMsgIncomingServer* destServer,
     nsTArray<RefPtr<nsIPop3IncomingServer>>& aServers) {
-  nsresult rv;
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+      mozilla::components::AccountManager::Service();
   nsCOMPtr<nsIMsgAccount> thisAccount;
   accountManager->FindAccountForServer(destServer, getter_AddRefs(thisAccount));
   if (thisAccount) {
@@ -1956,29 +1947,27 @@ nsresult nsMsgIncomingServer::GetDeferredServers(
       }
     }
   }
-  return rv;
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgIncomingServer::GetIsDeferredTo(bool* aIsDeferredTo) {
   NS_ENSURE_ARG_POINTER(aIsDeferredTo);
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1");
-  if (accountManager) {
-    nsCOMPtr<nsIMsgAccount> thisAccount;
-    accountManager->FindAccountForServer(this, getter_AddRefs(thisAccount));
-    if (thisAccount) {
-      nsCString accountKey;
-      thisAccount->GetKey(accountKey);
-      nsTArray<RefPtr<nsIMsgIncomingServer>> allServers;
-      accountManager->GetAllServers(allServers);
-      for (auto server : allServers) {
-        if (server) {
-          nsCString deferredToAccount;
-          server->GetStringValue("deferred_to_account", deferredToAccount);
-          if (deferredToAccount.Equals(accountKey)) {
-            *aIsDeferredTo = true;
-            return NS_OK;
-          }
+      mozilla::components::AccountManager::Service();
+  nsCOMPtr<nsIMsgAccount> thisAccount;
+  accountManager->FindAccountForServer(this, getter_AddRefs(thisAccount));
+  if (thisAccount) {
+    nsCString accountKey;
+    thisAccount->GetKey(accountKey);
+    nsTArray<RefPtr<nsIMsgIncomingServer>> allServers;
+    accountManager->GetAllServers(allServers);
+    for (auto server : allServers) {
+      if (server) {
+        nsCString deferredToAccount;
+        server->GetStringValue("deferred_to_account", deferredToAccount);
+        if (deferredToAccount.Equals(accountKey)) {
+          *aIsDeferredTo = true;
+          return NS_OK;
         }
       }
     }

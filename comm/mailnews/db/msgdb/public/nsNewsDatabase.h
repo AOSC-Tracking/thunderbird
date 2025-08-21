@@ -28,14 +28,6 @@ class nsNewsDatabase : public nsMsgDatabase, public nsINewsDatabase {
   // methods to get and set docsets for ids.
   NS_IMETHOD IsRead(nsMsgKey key, bool* pRead) override;
   virtual nsresult IsHeaderRead(nsIMsgDBHdr* msgHdr, bool* pRead) override;
-
-  NS_IMETHOD GetHighWaterArticleNum(nsMsgKey* key) override;
-  NS_IMETHOD GetLowWaterArticleNum(nsMsgKey* key) override;
-  NS_IMETHOD MarkAllRead(nsTArray<nsMsgKey>& thoseMarked) override;
-
-  virtual nsresult ExpireUpTo(nsMsgKey expireKey);
-  virtual nsresult ExpireRange(nsMsgKey startRange, nsMsgKey endRange);
-
   virtual bool SetHdrReadFlag(nsIMsgDBHdr* msgHdr, bool bRead) override;
 
   virtual nsresult AdjustExpungedBytesOnDelete(nsIMsgDBHdr* msgHdr) override;
@@ -48,10 +40,15 @@ class nsNewsDatabase : public nsMsgDatabase, public nsINewsDatabase {
   NS_IMETHOD GetDefaultSortOrder(
       nsMsgViewSortOrderValue* aDefaultSortOrder) override;
 
+  virtual nsresult GetEffectiveCharset(nsIMdbRow* row,
+                                       nsACString& resultCharset) override;
+
  protected:
   virtual ~nsNewsDatabase();
   // this is owned by the nsNewsFolder, which lives longer than the db.
   nsMsgKeySet* m_readSet;
+
+  nsCString mCachedCharset;
 };
 
 #endif  // COMM_MAILNEWS_DB_MSGDB_PUBLIC_NSNEWSDATABASE_H_

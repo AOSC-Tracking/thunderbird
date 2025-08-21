@@ -3,9 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsLocalUndoTxn.h"
+
+#include "mozilla/Components.h"
 #include "msgCore.h"
 #include "nsIMsgHdr.h"
-#include "nsLocalUndoTxn.h"
 #include "nsImapCore.h"
 #include "nsIImapService.h"
 #include "nsIUrlListener.h"
@@ -82,9 +84,7 @@ nsresult nsLocalMoveCopyMsgTxn::UndoImapDeleteFlag(nsIMsgFolder* folder,
                                                    bool deleteFlag) {
   nsresult rv = NS_ERROR_FAILURE;
   if (m_srcIsImap4) {
-    nsCOMPtr<nsIImapService> imapService =
-        do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     nsCOMPtr<nsIUrlListener> urlListener;
     nsCString msgIds;
     uint32_t i, count = keyArray.Length();
@@ -131,9 +131,7 @@ nsLocalMoveCopyMsgTxn::UndoTransaction() {
     NS_ADDREF(mUndoFolderListener);
 
     nsCOMPtr<nsIMsgMailSession> mailSession =
-        do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
+        mozilla::components::MailSession::Service();
     rv = mailSession->AddFolderListener(mUndoFolderListener,
                                         nsIFolderListener::event);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -150,9 +148,7 @@ nsresult nsLocalMoveCopyMsgTxn::UndoTransactionInternal() {
 
   if (mUndoFolderListener) {
     nsCOMPtr<nsIMsgMailSession> mailSession =
-        do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
+        mozilla::components::MailSession::Service();
     rv = mailSession->RemoveFolderListener(mUndoFolderListener);
     NS_ENSURE_SUCCESS(rv, rv);
 

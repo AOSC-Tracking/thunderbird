@@ -168,7 +168,6 @@ pref("mail.imap.expunge_after_delete", false);
 pref("mail.imap.check_deleted_before_expunge", false);
 pref("mail.imap.expunge_option", 0);
 pref("mail.imap.expunge_threshold_number", 20);
-pref("mail.imap.hdr_chunk_size", 200);
 // Should we filter imap messages based on new messages since the previous
 // highest UUID seen instead of unread?
 pref("mail.imap.filter_on_new", true);
@@ -236,8 +235,6 @@ pref("mail.addr_book.mapit_url.5.name", "chrome://messenger-region/locale/region
 pref("mail.addr_book.mapit_url.5.format", "chrome://messenger-region/locale/region.properties");
 pref("mailnews.start_page.url", "chrome://messenger-region/locale/region.properties");
 pref("mail.accountwizard.deferstorage", false);
-// 0: name + email | 1: email only | 2: name only.
-pref("mail.addressDisplayFormat", 0);
 // |false|: Show both name and address, even for people in my addressbook.
 pref("mail.showCondensedAddresses", false);
 #endif
@@ -537,6 +534,9 @@ pref("mail.smtpserver.default.max_cached_connections", 1);
 // this limit. Setting this to zero or less removes any message count per
 // connection limit.
 pref("mail.smtpserver.default.max_messages_per_connection", 10);
+
+// Delay in milliseconds for sending smtp QUIT after each message.
+pref("mail.smtpserver.default.quit_delay_ms", 5000);
 
 pref("mail.smtpservers", "");
 pref("mail.accountmanager.accounts", "");
@@ -925,11 +925,6 @@ pref("mailnews.labels.color.3", "#009900");
 pref("mailnews.labels.color.4", "#3333FF");
 // default: purple
 pref("mailnews.labels.color.5", "#993399");
-
-// Whether the colors from tags should be applied only to the message(s)
-// actually tagged, or also to any collapsed threads which contain tagged
-// messages.
-pref("mailnews.display_reply_tag_colors_for_collapsed_threads", true);
 
 //default null headers
 //example "X-Warn: XReply", list of hdrs separated by ": "

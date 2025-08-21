@@ -49,6 +49,24 @@ interface nsIMsgFolder : nsISupports {
   const nsMsgBiffState nsMsgBiffState_Unknown = 2; // We dunno whether there is new mail.
 
   /**
+   * Panorama folder ID. Not to be used if mail.panorama.enabled is false.
+   */
+  readonly attribute unsigned long long id;
+
+  /**
+   * Panorama folder path. Not to be used if mail.panorama.enabled is false.
+   */
+  readonly attribute AUTF8String path;
+%{C++
+  inline nsCString GetPath() {
+    nsAutoCString path;
+    mozilla::DebugOnly<nsresult> rv = GetPath(path);
+    MOZ_ASSERT(NS_SUCCEEDED(rv));
+    return path;
+  }
+%}
+
+  /**
    * Unique identifier for the folder loosely based on the folder's server and
    * path in the filesystem.
    */
@@ -91,10 +109,19 @@ interface nsIMsgFolder : nsISupports {
    * This method is called by the folder-lookup-service after constructing
    * a folder to initialize its URI. You would not normally
    * call this method directly.
+   * NOTE: If running panorama, use initWithFolderId() instead!
    *
    * @param uri - The URI of the folder.
    */
   void Init(in AUTF8String uri);
+
+  /**
+   * Alternate init function for use under Panorama.
+   * Should be unified with init() once FLS mess is sorted out.
+   * Ultimately there should be no init functions here at all. It
+   * should all be handled at the concrete implementation level.
+   */
+  void initWithFolderId(in unsigned long long folderId);
 
   void startFolderLoading();
   void endFolderLoading();
@@ -352,8 +379,9 @@ interface nsIMsgFolder : nsISupports {
   readonly attribute boolean hasFolderOrSubfolderNewMessages;
 
   /**
-   * return the first new message in the folder
-   *
+   * Return the first new message in the folder.
+   * If there are no new messages, accessing this will throw an
+   * error.
    */
   readonly attribute nsIMsgDBHdr firstNewMessage;
 

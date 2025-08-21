@@ -4,6 +4,10 @@
 
 "use strict";
 
+/**
+ * Test rearanging tabs via drag'n'drop.
+ */
+
 if (
   AppConstants.MOZ_CODE_COVERAGE ||
   AppConstants.ASAN ||
@@ -15,17 +19,12 @@ if (
   requestLongerTimeout(2);
 }
 
-/*
- * Test rearanging tabs via drag'n'drop.
- */
-
 var {
   assert_number_of_tabs_open,
   assert_selected_and_displayed,
   be_in_folder,
   close_popup,
   create_folder,
-  make_message_sets_in_folders,
   open_folder_in_new_window,
   open_selected_message_in_new_tab,
   select_click_row,
@@ -33,6 +32,9 @@ var {
   wait_for_message_display_completion,
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
+var { make_message_sets_in_folders } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
 );
 var {
   drag_n_drop_element,
@@ -91,19 +93,21 @@ add_task(async function test_tab_reorder_tabbar() {
   // Check if every thing is correctly initialized
   assert_number_of_tabs_open(5);
 
-  Assert.ok(
-    tabmail.tabModes.mailMessageTab.tabs[0] == tabmail.tabInfo[1],
+  Assert.equal(
+    tabmail.tabModes.mailMessageTab.tabs[0],
+    tabmail.tabInfo[1],
     " tabMode.tabs and tabInfo out of sync"
   );
 
-  Assert.ok(
-    tabmail.tabModes.mailMessageTab.tabs[1] ==
-      document.getElementById("tabmail").tabInfo[2],
+  Assert.equal(
+    tabmail.tabModes.mailMessageTab.tabs[1],
+    document.getElementById("tabmail").tabInfo[2],
     " tabMode.tabs and tabInfo out of sync"
   );
 
-  Assert.ok(
-    tabmail.tabModes.mailMessageTab.tabs[2] == tabmail.tabInfo[3],
+  Assert.equal(
+    tabmail.tabModes.mailMessageTab.tabs[2],
+    tabmail.tabInfo[3],
     " tabMode.tabs and tabInfo out of sync"
   );
 
@@ -135,25 +139,28 @@ add_task(async function test_tab_reorder_tabbar() {
   await assert_selected_and_displayed(msgHdrsInFolder[0]);
 
   // ... while tab3 moves one up and gets second.
-  Assert.ok(tab3 == tabmail.tabContainer.allTabs[2], "Moving tab3 failed");
+  Assert.equal(tab3, tabmail.tabContainer.allTabs[2], "Moving tab3 failed");
   await switch_tab(2);
   await assert_selected_and_displayed(msgHdrsInFolder[2]);
 
   // we have one "message" tab and three "folder" tabs, thus tabInfo[1-3] and
   // tabMode["message"].tabs[0-2] have to be same, otherwise something went
   // wrong while moving tabs around
-  Assert.ok(
-    tabmail.tabModes.mailMessageTab.tabs[0] == tabmail.tabInfo[1],
+  Assert.equal(
+    tabmail.tabModes.mailMessageTab.tabs[0],
+    tabmail.tabInfo[1],
     " tabMode.tabs and tabInfo out of sync"
   );
 
-  Assert.ok(
-    tabmail.tabModes.mailMessageTab.tabs[1] == tabmail.tabInfo[2],
+  Assert.equal(
+    tabmail.tabModes.mailMessageTab.tabs[1],
+    tabmail.tabInfo[2],
     " tabMode.tabs and tabInfo out of sync"
   );
 
-  Assert.ok(
-    tabmail.tabModes.mailMessageTab.tabs[2] == tabmail.tabInfo[3],
+  Assert.equal(
+    tabmail.tabModes.mailMessageTab.tabs[2],
+    tabmail.tabInfo[3],
     " tabMode.tabs and tabInfo out of sync"
   );
   teardownTest();
@@ -199,12 +206,14 @@ add_task(async function test_tab_reorder_window() {
 
   drag_n_drop_element(tabA, window, tabB, mc2, 0.75, 0.0, tabmail.tabContainer);
 
-  Assert.ok(
-    tabmail.tabContainer.allTabs.length == 1,
+  Assert.equal(
+    tabmail.tabContainer.allTabs.length,
+    1,
     "tab should be removed from the old window"
   );
-  Assert.ok(
-    tabmail2.tabContainer.allTabs.length == 2,
+  Assert.equal(
+    tabmail2.tabContainer.allTabs.length,
+    2,
     "a new tab should have opened in then new window"
   );
   Assert.equal(
@@ -274,12 +283,14 @@ add_task(async function test_tab_reorder_detach() {
   );
   await wait_for_message_display_completion(mc2, true);
 
-  Assert.ok(
-    tabmail.tabContainer.allTabs.length == 1,
+  Assert.equal(
+    tabmail.tabContainer.allTabs.length,
+    1,
     "tab should be removed from the old window"
   );
-  Assert.ok(
-    tabmail2.tabContainer.allTabs.length == 2,
+  Assert.equal(
+    tabmail2.tabContainer.allTabs.length,
+    2,
     "a new tab should have opened in then new window"
   );
   Assert.equal(
@@ -408,6 +419,8 @@ add_task(async function test_tab_recentlyClosed() {
   }
 
   assert_number_of_tabs_open(2);
+
+  await TestUtils.waitForTick();
 
   // ...then open the context menu.
   const menu = await _synthesizeRecentlyClosedMenu();

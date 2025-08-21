@@ -211,8 +211,7 @@ nsresult nsMsgMailViewList::LoadMailViews() {
   file->Exists(&exists);
   if (!exists) {
     nsCOMPtr<nsIMsgMailSession> mailSession =
-        do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+        mozilla::components::MailSession::Service();
     nsCOMPtr<nsIFile> defaultMessagesFile;
     nsCOMPtr<nsIFile> profileDir;
     rv = mailSession->GetDataFilesDir("messenger",
@@ -233,7 +232,7 @@ nsresult nsMsgMailViewList::LoadMailViews() {
   // a data structure we wish to give to our consumers.
 
   nsCOMPtr<nsIMsgFilterService> filterService =
-      do_GetService("@mozilla.org/messenger/services/filters;1", &rv);
+      mozilla::components::Filter::Service();
   nsCOMPtr<nsIMsgFilterList> mfilterList;
 
   rv = filterService->OpenFilterList(file, nullptr, nullptr,

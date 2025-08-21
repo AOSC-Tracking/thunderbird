@@ -3,15 +3,24 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use ews::{create_folder::CreateFolder, BaseFolderId, Folder};
+
+use mailnews_ui_glue::UserInteractiveServer;
+
 use nsstring::nsCString;
-use xpcom::{interfaces::IEwsFolderCreateCallbacks, RefPtr};
+use xpcom::interfaces::IEwsFolderCreateCallbacks;
+use xpcom::{RefCounted, RefPtr};
+
+use crate::client::AuthFailureBehavior;
 
 use super::{
     process_error_with_cb_cpp, process_response_message_class, validate_response_message_count,
     XpComEwsClient, XpComEwsError,
 };
 
-impl XpComEwsClient {
+impl<ServerT> XpComEwsClient<ServerT>
+where
+    ServerT: UserInteractiveServer + RefCounted,
+{
     pub(crate) async fn create_folder(
         self,
         parent_id: String,
@@ -50,7 +59,9 @@ impl XpComEwsClient {
             }],
         };
 
-        let response = self.make_operation_request(op).await?;
+        let response = self
+            .make_operation_request(op, AuthFailureBehavior::ReAuth)
+            .await?;
 
         // Validate the response against our request params and known/assumed
         // constraints on response shape.

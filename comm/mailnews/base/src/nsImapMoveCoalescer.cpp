@@ -3,8 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
 #include "nsImapMoveCoalescer.h"
+
+#include "mozilla/Components.h"
+#include "msgCore.h"
 #include "nsIImapService.h"
 #include "nsIMsgCopyService.h"
 #include "nsIMsgFolder.h"  // TO include biffState enum. Change to bool later...
@@ -97,19 +99,16 @@ nsresult nsImapMoveCoalescer::PlaybackMoves(
     m_sourceFolder->SetNumNewMessages(oldNewMessageCount);
 
     keysToAdd.Clear();
-    nsCOMPtr<nsIMsgCopyService> copySvc =
-        do_GetService("@mozilla.org/messenger/messagecopyservice;1");
-    if (copySvc) {
-      nsCOMPtr<nsIMsgCopyServiceListener> listener;
-      if (m_doNewMailNotification) {
-        nsMoveCoalescerCopyListener* copyListener =
-            new nsMoveCoalescerCopyListener(this, destFolder);
-        if (copyListener) listener = copyListener;
-      }
-      rv = copySvc->CopyMessages(m_sourceFolder, messages, destFolder, true,
-                                 listener, m_msgWindow, false /*allowUndo*/);
-      if (NS_SUCCEEDED(rv)) m_outstandingMoves++;
+    nsCOMPtr<nsIMsgCopyService> copySvc = mozilla::components::Copy::Service();
+    nsCOMPtr<nsIMsgCopyServiceListener> listener;
+    if (m_doNewMailNotification) {
+      nsMoveCoalescerCopyListener* copyListener =
+          new nsMoveCoalescerCopyListener(this, destFolder);
+      if (copyListener) listener = copyListener;
     }
+    rv = copySvc->CopyMessages(m_sourceFolder, messages, destFolder, true,
+                               listener, m_msgWindow, false /*allowUndo*/);
+    if (NS_SUCCEEDED(rv)) m_outstandingMoves++;
   }
   return rv;
 }
@@ -176,8 +175,7 @@ NS_IMETHODIMP nsMoveCoalescerCopyListener::OnStopCopy(nsresult aStatus) {
       m_destFolder->GetFlags(&folderFlags);
       if (!(folderFlags & (nsMsgFolderFlags::Junk | nsMsgFolderFlags::Trash))) {
         nsCOMPtr<nsIImapService> imapService =
-            do_GetService("@mozilla.org/messenger/imapservice;1", &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
+            mozilla::components::Imap::Service();
         nsCOMPtr<nsIURI> url;
         rv = imapService->SelectFolder(m_destFolder, m_coalescer, nullptr,
                                        getter_AddRefs(url));

@@ -6,7 +6,7 @@ const { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
 
-let database, folders, messages;
+let database, folderDB, messageDB;
 
 /**
  * Create and populate a database using data from an external file.
@@ -93,13 +93,13 @@ function loadExistingDB() {
   database = Cc["@mozilla.org/mailnews/database-core;1"].getService(
     Ci.nsIDatabaseCore
   );
-  folders = database.folders;
-  messages = database.messages;
+  folderDB = database.folderDB;
+  messageDB = database.messageDB;
 }
 
 registerCleanupFunction(function () {
-  folders = null;
-  messages = null;
+  folderDB = null;
+  messageDB = null;
   database = null;
 
   // Make sure destructors run, to finalize statements even if the test fails.
@@ -107,14 +107,14 @@ registerCleanupFunction(function () {
 });
 
 function drawTree(root, level = 0) {
-  console.log("  ".repeat(level) + root.name);
-  for (const child of root.children) {
+  console.log("  ".repeat(level) + folderDB.getFolderName(root));
+  for (const child of folderDB.getFolderChildren(root)) {
     drawTree(child, level + 1);
   }
 }
 
 function checkRow(id, expected) {
-  const stmt = database.connection.createStatement(
+  const stmt = database.connectionForTests.createStatement(
     "SELECT id, parent, ordinal, name, flags FROM folders WHERE id = :id"
   );
   stmt.params.id = id;
@@ -129,7 +129,7 @@ function checkRow(id, expected) {
 }
 
 function checkNoRow(id) {
-  const stmt = database.connection.createStatement(
+  const stmt = database.connectionForTests.createStatement(
     "SELECT id, parent, ordinal, name, flags FROM folders WHERE id = :id"
   );
   stmt.params.id = id;
@@ -139,16 +139,16 @@ function checkNoRow(id) {
 }
 
 function checkOrdinals(expected) {
-  const stmt = database.connection.createStatement(
+  const stmt = database.connectionForTests.createStatement(
     "SELECT parent, ordinal FROM folders WHERE id=:id"
   );
   for (const [folder, parent, ordinal] of expected) {
-    stmt.params.id = folder.id;
+    stmt.params.id = folder;
     stmt.executeStep();
     Assert.deepEqual(
       [stmt.row.parent, stmt.row.ordinal],
       [parent, ordinal],
-      `parent and ordinal of ${folder.name}`
+      `parent and ordinal of '${folderDB.getFolderName(folder)}'`
     );
     stmt.reset();
   }
@@ -185,7 +185,7 @@ function addMessage({
   flags = 0,
   tags = "",
 }) {
-  return messages.addMessage(
+  return messageDB.addMessage(
     folderId,
     messageId,
     new Date(date).valueOf() * 1000,

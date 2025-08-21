@@ -16,50 +16,22 @@ add_setup(async function () {
 });
 
 add_task(function testFlags() {
-  const folder = folders.getFolderById(1);
+  const folderId = folderDB.getFolderByPath(
+    "grandparent/parent/child/grandchild"
+  );
 
-  Assert.equal(folder.flags, 0);
+  Assert.equal(folderDB.getFolderFlags(folderId), 0);
   checkFlags(0);
 
-  for (const flag of [FLAG_ONE, FLAG_TWO, FLAG_FOUR, FLAG_EIGHT]) {
-    folders.updateFlags(folder, folder.flags | flag);
-    Assert.equal(folder.flags, flag);
-    checkFlags(flag);
-
-    folders.updateFlags(folder, folder.flags ^ flag);
-    Assert.equal(folder.flags, 0);
-    checkFlags(0);
-
-    folders.updateFlags(folder, folder.flags ^ flag);
-    Assert.equal(folder.flags, flag);
-    checkFlags(flag);
-
-    folders.updateFlags(folder, folder.flags & ~flag);
-    Assert.equal(folder.flags, 0);
-    checkFlags(0);
+  for (let flagBits = 0; flagBits < 16; flagBits++) {
+    folderDB.updateFlags(folderId, flagBits);
+    Assert.equal(folderDB.getFolderFlags(folderId), flagBits);
+    checkFlags(flagBits);
   }
-
-  folders.updateFlags(folder, folder.flags | FLAG_ONE);
-  Assert.equal(folder.flags, FLAG_ONE);
-  folders.updateFlags(folder, folder.flags ^ FLAG_TWO);
-  Assert.equal(folder.flags, FLAG_ONE | FLAG_TWO);
-  folders.updateFlags(folder, folder.flags | FLAG_FOUR);
-  Assert.equal(folder.flags, FLAG_ONE | FLAG_TWO | FLAG_FOUR);
-  folders.updateFlags(folder, folder.flags ^ FLAG_EIGHT);
-  Assert.equal(folder.flags, FLAG_ONE | FLAG_TWO | FLAG_FOUR | FLAG_EIGHT);
-
-  folders.updateFlags(folder, folder.flags ^ FLAG_ONE);
-  Assert.equal(folder.flags, FLAG_TWO | FLAG_FOUR | FLAG_EIGHT);
-  folders.updateFlags(folder, folder.flags & ~FLAG_TWO);
-  Assert.equal(folder.flags, FLAG_FOUR | FLAG_EIGHT);
-  folders.updateFlags(folder, folder.flags ^ FLAG_FOUR);
-  Assert.equal(folder.flags, FLAG_EIGHT);
-  folders.updateFlags(folder, folder.flags & ~FLAG_EIGHT);
-  Assert.equal(folder.flags, 0);
 });
 
 function checkFlags(expected) {
-  const stmt = database.connection.createStatement(
+  const stmt = database.connectionForTests.createStatement(
     "SELECT flags FROM folders WHERE id=:id"
   );
   stmt.params.id = 1;

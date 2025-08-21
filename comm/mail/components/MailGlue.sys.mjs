@@ -21,7 +21,7 @@ ChromeUtils.defineLazyGetter(
   () => new Localization(["calendar/calendar.ftl"], true)
 );
 
-if (AppConstants.NIGHTLY_BUILD) {
+if (AppConstants.MOZ_SERVICES_SYNC) {
   ChromeUtils.defineLazyGetter(
     lazy,
     "WeaveService",
@@ -464,6 +464,10 @@ MailGlue.prototype = {
         // in message databases, causing massive amounts of I/O.
         Services.perms.all;
 
+        // Force early registration of the IMAP protocol handler to avoid
+        // session restore failures.
+        Cc["@mozilla.org/network/protocol;1?name=imap"].getService();
+
         Cc["@mozilla.org/msgFolder/msgFolderService;1"]
           .getService(Ci.nsIMsgFolderService)
           .initializeFolderStrings();
@@ -703,7 +707,7 @@ MailGlue.prototype = {
 
     // Check if Sync is configured
     if (
-      AppConstants.NIGHTLY_BUILD &&
+      AppConstants.MOZ_SERVICES_SYNC &&
       Services.prefs.prefHasUserValue("services.sync.username")
     ) {
       lazy.WeaveService.init();
@@ -788,7 +792,7 @@ MailGlue.prototype = {
         },
       },
       {
-        condition: AppConstants.NIGHTLY_BUILD,
+        condition: AppConstants.MOZ_SERVICES_SYNC,
         task: async () => {
           // Register our sync engines.
           await lazy.WeaveService.whenLoaded();

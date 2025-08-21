@@ -4,8 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsMsgContentPolicy.h"
+
 #include "nsIPermissionManager.h"
-#include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsIMsgWindow.h"
 #include "nsIMsgHdr.h"
@@ -24,16 +24,18 @@
 #include "nsINntpUrl.h"
 #include "nsILoadInfo.h"
 #include "nsSandboxFlags.h"
+#include "mozilla/Components.h"
 #include "mozilla/dom/WindowGlobalParent.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/SyncRunnable.h"
 #include "nsIObserverService.h"
+
+using namespace mozilla;
+using namespace mozilla::mailnews;
 
 static const char kBlockRemoteImages[] =
     "mailnews.message_display.disable_remote_image";
 static const char kTrustedDomains[] = "mail.trusteddomains";
-
-using namespace mozilla;
-using namespace mozilla::mailnews;
 
 // Per message headder flags to keep track of whether the user is allowing
 // remote content for a particular message. if you change or add more values to
@@ -50,12 +52,7 @@ nsMsgContentPolicy::nsMsgContentPolicy() { mBlockRemoteImages = true; }
 
 nsMsgContentPolicy::~nsMsgContentPolicy() {
   // hey, we are going away...clean up after ourself....unregister our observer
-  nsresult rv;
-  nsCOMPtr<nsIPrefBranch> prefInternal =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  if (NS_SUCCEEDED(rv)) {
-    prefInternal->RemoveObserver(kBlockRemoteImages, this);
-  }
+  Preferences::RemoveObserver(this, kBlockRemoteImages);
 }
 
 nsresult nsMsgContentPolicy::Init() {
@@ -63,14 +60,11 @@ nsresult nsMsgContentPolicy::Init() {
 
   // register ourself as an observer on the mail preference to block remote
   // images
-  nsCOMPtr<nsIPrefBranch> prefInternal =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
 
-  prefInternal->AddObserver(kBlockRemoteImages, this, true);
+  Preferences::AddWeakObserver(this, kBlockRemoteImages);
 
-  prefInternal->GetCharPref(kTrustedDomains, mTrustedMailDomains);
-  prefInternal->GetBoolPref(kBlockRemoteImages, &mBlockRemoteImages);
+  Preferences::GetCString(kTrustedDomains, mTrustedMailDomains);
+  Preferences::GetBool(kBlockRemoteImages, &mBlockRemoteImages);
 
   // Grab a handle on the PermissionManager service for managing allowed remote
   // content senders.
@@ -728,10 +722,8 @@ nsMsgContentPolicy::GetMsgComposeForBrowsingContext(
   nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(rootItem, &rv));
   NS_ENSURE_SUCCESS(rv, nullptr);
 
-  nsCOMPtr<nsIMsgComposeService> composeService(
-      do_GetService("@mozilla.org/messengercompose;1", &rv));
-  NS_ENSURE_SUCCESS(rv, nullptr);
-
+  nsCOMPtr<nsIMsgComposeService> composeService =
+      mozilla::components::Compose::Service();
   nsCOMPtr<nsIMsgCompose> msgCompose;
   // Don't bother checking rv, as GetMsgComposeForDocShell returns
   // NS_ERROR_FAILURE for not found.

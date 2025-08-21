@@ -3,8 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
 #include "nsMsgXFVirtualFolderDBView.h"
+
+#include "mozilla/ProfilerMarkers.h"
+#include "mozilla/StaticPrefs_mail.h"
+#include "msgCore.h"
 #include "nsIMsgHdr.h"
 #include "nsIMsgThread.h"
 #include "nsIDBFolderInfo.h"
@@ -30,6 +33,7 @@ nsMsgXFVirtualFolderDBView::Open(nsIMsgFolder* folder,
                                  nsMsgViewSortTypeValue sortType,
                                  nsMsgViewSortOrderValue sortOrder,
                                  nsMsgViewFlagsTypeValue viewFlags) {
+  AUTO_PROFILER_LABEL("nsMsgXFVirtualFolderDBView::Open", MAILNEWS);
   m_viewFolder = folder;
   return nsMsgSearchDBView::Open(folder, sortType, sortOrder, viewFlags);
 }
@@ -39,7 +43,7 @@ void nsMsgXFVirtualFolderDBView::RemovePendingDBListeners() {
   nsCOMPtr<nsIMsgDBService> msgDBService =
       do_GetService("@mozilla.org/msgDatabase/msgDBService;1", &rv);
 
-  if (!mozilla::Preferences::GetBool("mail.panorama.enabled", false)) {
+  if (!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
     // UnregisterPendingListener will return an error when there are no more
     // instances of this object registered as pending listeners.
     while (NS_SUCCEEDED(rv)) rv = msgDBService->UnregisterPendingListener(this);

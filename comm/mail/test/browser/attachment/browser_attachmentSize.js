@@ -16,17 +16,14 @@ var {
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/AttachmentHelpers.sys.mjs"
 );
-var {
-  add_message_to_folder,
-  be_in_folder,
-  create_folder,
-  create_message,
-  get_about_message,
-  msgGen,
-  select_click_row,
-} = ChromeUtils.importESModule(
-  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
-);
+var { be_in_folder, create_folder, get_about_message, select_click_row } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+  );
+const { add_message_to_folder, create_message, msgGen } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
+  );
 
 var { SyntheticPartLeaf, SyntheticPartMultiMixed } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
@@ -283,8 +280,9 @@ function check_attachment_size(index, expectedSize) {
 
   // First, let's check that the attachment size is correct
   const size = node.attachment.size;
-  Assert.ok(
-    Math.abs(size - expectedSize) <= epsilon,
+  Assert.lessOrEqual(
+    Math.abs(size - expectedSize),
+    epsilon,
     `Attachment "${node.attachment.name}" size should be within ${epsilon} ` +
       `of ${expectedSize} (actual: ${size})`
   );
@@ -354,8 +352,9 @@ function check_total_attachment_size(count, expectedSize, exact) {
     }
   }
 
-  Assert.ok(
-    Math.abs(size - expectedSize) <= epsilon * count,
+  Assert.lessOrEqual(
+    Math.abs(size - expectedSize),
+    epsilon * count,
     `Total attachments size should be within ${epsilon * count} ` +
       `of ${expectedSize} (actual: ${size})`
   );

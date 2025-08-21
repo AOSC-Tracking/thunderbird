@@ -5,6 +5,7 @@
 #ifndef COMM_MAILNEWS_DB_PANORAMA_SRC_THREAD_H_
 #define COMM_MAILNEWS_DB_PANORAMA_SRC_THREAD_H_
 
+#include "DatabaseCore.h"
 #include "Message.h"
 #include "MessageDatabase.h"
 #include "mozilla/RefPtr.h"
@@ -15,15 +16,10 @@ namespace mozilla::mailnews {
 
 class Thread : public nsIMsgThread {
  public:
-  explicit Thread(MessageDatabase* messageDatabase, uint64_t folderId,
-                  uint64_t threadId, uint64_t maxDate)
-      : mMessageDatabase(messageDatabase),
-        mFolderId(folderId),
-        mThreadId(threadId),
-        mMaxDate(maxDate) {}
-  explicit Thread(MessageDatabase* messageDatabase, uint64_t folderId,
-                  uint64_t threadId)
-      : Thread(messageDatabase, folderId, threadId, 0) {}
+  explicit Thread(uint64_t folderId, uint64_t threadId, uint64_t maxDate)
+      : mFolderId(folderId), mThreadId(threadId), mMaxDate(maxDate) {}
+  explicit Thread(uint64_t folderId, uint64_t threadId)
+      : Thread(folderId, threadId, 0) {}
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIMSGTHREAD
@@ -31,7 +27,10 @@ class Thread : public nsIMsgThread {
  private:
   virtual ~Thread() {};
 
-  MessageDatabase* mMessageDatabase;
+  MessageDatabase& MessageDB() const {
+    return *DatabaseCore::sInstance->mMessageDatabase;
+  }
+
   uint64_t mFolderId;
   uint64_t mThreadId;
   uint64_t mMaxDate;
@@ -42,9 +41,8 @@ class Thread : public nsIMsgThread {
 
 class ThreadMessageEnumerator : public nsBaseMsgEnumerator {
  public:
-  ThreadMessageEnumerator(MessageDatabase* messageDatabase,
-                          nsTArray<nsMsgKey>& keys)
-      : mMessageDatabase(messageDatabase), mKeys(keys.Clone()) {}
+  explicit ThreadMessageEnumerator(nsTArray<nsMsgKey>& keys)
+      : mKeys(keys.Clone()) {}
 
   // nsIMsgEnumerator support.
   NS_IMETHOD GetNext(nsIMsgDBHdr** aItem) override;
@@ -53,7 +51,10 @@ class ThreadMessageEnumerator : public nsBaseMsgEnumerator {
  private:
   ~ThreadMessageEnumerator() {}
 
-  MessageDatabase* mMessageDatabase;
+  MessageDatabase& MessageDB() const {
+    return *DatabaseCore::sInstance->mMessageDatabase;
+  }
+
   nsTArray<nsMsgKey> mKeys;
   uint64_t mCurrent{0};
 };

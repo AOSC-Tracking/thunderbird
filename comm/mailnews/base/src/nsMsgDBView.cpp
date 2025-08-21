@@ -18,8 +18,6 @@
 #include "nsImapCore.h"
 #include "nsMsgFolderFlags.h"
 #include "nsIMsgLocalMailFolder.h"
-#include "nsIPrefService.h"
-#include "nsIPrefBranch.h"
 #include "nsIPrefLocalizedString.h"
 #include "nsIMsgSearchSession.h"
 #include "nsIMsgCopyService.h"
@@ -44,7 +42,10 @@
 #include "mozilla/intl/AppDateTimeFormat.h"
 #include "nsIMsgMessageService.h"
 #include "nsTHashMap.h"
+#include "mozilla/StaticPrefs_mail.h"
+#include "mozilla/StaticPrefs_mailnews.h"
 
+using mozilla::Preferences;
 using namespace mozilla::mailnews;
 
 MOZ_RUNINIT nsString nsMsgDBView::kHighestPriorityString;
@@ -223,18 +224,13 @@ nsresult nsMsgDBView::AppendKeywordProperties(const nsACString& keywords,
 
 static nsresult GetDisplayNameInAddressBook(const nsACString& emailAddress,
                                             nsAString& displayName) {
-  nsresult rv;
-  nsCOMPtr<nsIAbManager> abManager(
-      do_GetService("@mozilla.org/abmanager;1", &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  nsCOMPtr<nsIAbManager> abManager = mozilla::components::AbManager::Service();
   nsCOMPtr<nsIAbCard> cardForAddress;
   abManager->CardForEmailAddress(emailAddress, getter_AddRefs(cardForAddress));
   if (cardForAddress) {
-    rv = cardForAddress->GetDisplayName(displayName);
+    return cardForAddress->GetDisplayName(displayName);
   }
-
-  return rv;
+  return NS_OK;
 }
 
 /**
@@ -288,7 +284,7 @@ static nsString NoSpoofingSender(const nsString& name,
 static nsString GetSenderFullAddress(const nsString& name,
                                      const nsACString& emailAddress) {
   int32_t addressDisplayFormat =
-      mozilla::Preferences::GetInt("mail.addressDisplayFormat", 0);
+      mozilla::StaticPrefs::mail_addressDisplayFormat();
 
   nsString fullAddress;
   if (addressDisplayFormat == 0) {
@@ -331,10 +327,8 @@ static void GetCachedName(const nsCString& unparsedString,
 static void UpdateCachedName(nsIMsgDBHdr* aHdr, const char* header_field,
                              const nsAString& newName) {
   nsCString newCachedName;
-  nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID));
-  int32_t currentDisplayNameVersion = 0;
-
-  prefs->GetIntPref("mail.displayname.version", &currentDisplayNameVersion);
+  int32_t currentDisplayNameVersion =
+      mozilla::StaticPrefs::mail_displayname_version();
 
   // Save version number.
   newCachedName.AppendInt(currentDisplayNameVersion);
@@ -348,12 +342,10 @@ static void UpdateCachedName(nsIMsgDBHdr* aHdr, const char* header_field,
 
 nsresult nsMsgDBView::FetchAuthor(nsIMsgDBHdr* aHdr, nsAString& aSenderString) {
   nsCString unparsedAuthor;
-  int32_t currentDisplayNameVersion = 0;
-  bool showCondensedAddresses = false;
-  nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID));
-
-  prefs->GetIntPref("mail.displayname.version", &currentDisplayNameVersion);
-  prefs->GetBoolPref("mail.showCondensedAddresses", &showCondensedAddresses);
+  int32_t currentDisplayNameVersion =
+      mozilla::StaticPrefs::mail_displayname_version();
+  bool showCondensedAddresses =
+      mozilla::StaticPrefs::mail_showCondensedAddresses();
 
   aHdr->GetStringProperty("sender_name", unparsedAuthor);
 
@@ -406,12 +398,11 @@ nsresult nsMsgDBView::FetchAuthor(nsIMsgDBHdr* aHdr, nsAString& aSenderString) {
 nsresult nsMsgDBView::FetchAccount(nsIMsgDBHdr* aHdr, nsAString& aAccount) {
   nsCString accountKey;
   nsresult rv = aHdr->GetAccountKey(accountKey);
+  NS_ENSURE_SUCCESS(rv, rv);
 
   // Cache the account manager?
-  nsCOMPtr<nsIMsgAccountManager> accountManager(
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv));
-
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIMsgAccountManager> accountManager =
+      mozilla::components::AccountManager::Service();
   nsCOMPtr<nsIMsgAccount> account;
   nsCOMPtr<nsIMsgIncomingServer> server;
   if (!accountKey.IsEmpty())
@@ -439,12 +430,10 @@ nsresult nsMsgDBView::FetchAccount(nsIMsgDBHdr* aHdr, nsAString& aAccount) {
 nsresult nsMsgDBView::FetchRecipients(nsIMsgDBHdr* aHdr,
                                       nsAString& aRecipientsString) {
   nsCString recipients;
-  int32_t currentDisplayNameVersion = 0;
-  bool showCondensedAddresses = false;
-  nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID));
-
-  prefs->GetIntPref("mail.displayname.version", &currentDisplayNameVersion);
-  prefs->GetBoolPref("mail.showCondensedAddresses", &showCondensedAddresses);
+  int32_t currentDisplayNameVersion =
+      mozilla::StaticPrefs::mail_displayname_version();
+  bool showCondensedAddresses =
+      mozilla::StaticPrefs::mail_showCondensedAddresses();
 
   aHdr->GetStringProperty("recipient_names", recipients);
 
@@ -471,16 +460,9 @@ nsresult nsMsgDBView::FetchRecipients(nsIMsgDBHdr* aHdr,
   ExtractAllAddresses(EncodedHeader(unparsedRecipients, headerCharset.get()),
                       names, UTF16ArrayAdapter<>(emails));
 
-  uint32_t numAddresses = names.Length();
-
-  nsresult rv;
-  nsCOMPtr<nsIAbManager> abManager(
-      do_GetService("@mozilla.org/abmanager;1", &rv));
-
-  NS_ENSURE_SUCCESS(rv, NS_OK);
-
   // Go through each email address in the recipients and compute its
   // display name.
+  uint32_t numAddresses = names.Length();
   for (uint32_t i = 0; i < numAddresses; i++) {
     nsString recipient;
     nsCString& curAddress = emails[i];
@@ -754,10 +736,8 @@ nsresult nsMsgDBView::FetchRowKeywords(nsMsgViewIndex aRow, nsIMsgDBHdr* aHdr,
   nsresult rv = FetchKeywords(aHdr, keywordString);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  bool cascadeKeywordsUp = true;
-  nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID));
-  prefs->GetBoolPref("mailnews.display_reply_tag_colors_for_collapsed_threads",
-                     &cascadeKeywordsUp);
+  bool cascadeKeywordsUp = mozilla::StaticPrefs::
+      mailnews_display_reply_tag_colors_for_collapsed_threads();
 
   if ((m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay) &&
       cascadeKeywordsUp) {
@@ -2073,9 +2053,8 @@ nsMsgDBView::Open(nsIMsgFolder* folder, nsMsgViewSortTypeValue sortType,
 
   nsresult rv;
   nsCOMPtr<nsIMsgAccountManager> accountManager =
-      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
+      mozilla::components::AccountManager::Service();
 
-  NS_ENSURE_SUCCESS(rv, rv);
   bool userNeedsToAuthenticate = false;
   // If we're PasswordProtectLocalCache, then we need to find out if the
   // server is authenticated.
@@ -2144,12 +2123,9 @@ nsMsgDBView::Open(nsIMsgFolder* folder, nsMsgViewSortTypeValue sortType,
 
     GetImapDeleteModel(nullptr);
 
-    nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID));
-    if (prefs) {
-      prefs->GetBoolPref("mailnews.sort_threads_by_root", &mSortThreadsByRoot);
-      if (mIsNews)
-        prefs->GetBoolPref("news.show_size_in_lines", &mShowSizeInLines);
-    }
+    Preferences::GetBool("mailnews.sort_threads_by_root", &mSortThreadsByRoot);
+    if (mIsNews)
+      Preferences::GetBool("news.show_size_in_lines", &mShowSizeInLines);
   }
 
   nsTArray<RefPtr<nsIMsgIdentity>> identities;
@@ -2579,15 +2555,7 @@ bool nsMsgDBView::OperateOnMsgsInCollapsedThreads() {
     if (!selTree) return false;
   }
 
-  nsresult rv = NS_OK;
-  nsCOMPtr<nsIPrefBranch> prefBranch(
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, false);
-
-  bool includeCollapsedMsgs = false;
-  prefBranch->GetBoolPref("mail.operate_on_msgs_in_collapsed_threads",
-                          &includeCollapsedMsgs);
-  return includeCollapsedMsgs;
+  return Preferences::GetBool("mail.operate_on_msgs_in_collapsed_threads");
 }
 
 nsresult nsMsgDBView::GetHeadersFromSelection(
@@ -2655,9 +2623,7 @@ nsresult nsMsgDBView::CopyMessages(nsIMsgWindow* window,
   }
 
   nsCOMPtr<nsIMsgCopyService> copyService =
-      do_GetService("@mozilla.org/messenger/messagecopyservice;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+      mozilla::components::Copy::Service();
   return copyService->CopyMessages(m_folder /* source folder */, hdrs,
                                    destFolder, isMove, nullptr /* listener */,
                                    window, true /* allow Undo */);
@@ -2816,11 +2782,9 @@ nsMsgDBView::ApplyCommandToIndices(nsMsgViewCommandTypeValue command,
     // Provide junk-related batch notifications.
     if (command == nsMsgViewCommandType::junk ||
         command == nsMsgViewCommandType::unjunk) {
-      nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-          do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-      if (notifier) {
-        notifier->NotifyMsgsJunkStatusChanged(messages);
-      }
+      nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+          mozilla::components::FolderNotification::Service();
+      notifier->NotifyMsgsJunkStatusChanged(messages);
     }
   }
 
@@ -3041,12 +3005,10 @@ nsresult nsMsgDBView::SetMsgHdrJunkStatus(nsIJunkMailPlugin* aJunkPlugin,
   db->SetStringProperty(msgKey, "junkscore", msgJunkScore);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier(
-      do_GetService("@mozilla.org/messenger/msgnotificationservice;1"));
-  if (notifier) {
-    notifier->NotifyMsgPropertyChanged(aMsgHdr, "junkscore", junkScoreStr,
-                                       msgJunkScore);
-  }
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  notifier->NotifyMsgPropertyChanged(aMsgHdr, "junkscore", junkScoreStr,
+                                     msgJunkScore);
   return rv;
 }
 
@@ -6247,12 +6209,7 @@ nsMsgDBView::GetMsgToSelectAfterDelete(nsMsgViewIndex* msgToSelectAfterDelete) {
   bool deleteMatchesSort = false;
   if (m_sortOrder == nsMsgViewSortOrder::descending &&
       *msgToSelectAfterDelete) {
-    nsresult rv;
-    nsCOMPtr<nsIPrefBranch> prefBranch(
-        do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
-    prefBranch->GetBoolPref("mail.delete_matches_sort_order",
-                            &deleteMatchesSort);
+    Preferences::GetBool("mail.delete_matches_sort_order", &deleteMatchesSort);
   }
 
   if (mDeleteModel == nsMsgImapDeleteModels::IMAPDelete) {
@@ -6613,12 +6570,11 @@ nsMsgDBView::FindIndexOfMsgHdr(nsIMsgDBHdr* aMsgHdr, bool aExpand,
   return NS_OK;
 }
 
-static void getDateFormatPref(nsIPrefBranch* _prefBranch,
-                              const char* _prefLocalName,
+static void getDateFormatPref(const char* _prefLocalName,
                               nsDateFormatSelectorComm& _format) {
   // Read.
   int32_t nFormatSetting(0);
-  nsresult result = _prefBranch->GetIntPref(_prefLocalName, &nFormatSetting);
+  nsresult result = Preferences::GetInt(_prefLocalName, &nFormatSetting);
   if (NS_SUCCEEDED(result)) {
     // Translate.
     nsDateFormatSelectorComm res;
@@ -6631,22 +6587,13 @@ static void getDateFormatPref(nsIPrefBranch* _prefBranch,
   }
 }
 
-nsresult nsMsgDBView::InitDisplayFormats() {
+void nsMsgDBView::InitDisplayFormats() {
   m_dateFormatsInitialized = true;
 
-  nsresult rv = NS_OK;
-  nsCOMPtr<nsIPrefService> prefs =
-      do_GetService(NS_PREFSERVICE_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIPrefBranch> dateFormatPrefs;
-  rv = prefs->GetBranch("mail.ui.display.dateformat.",
-                        getter_AddRefs(dateFormatPrefs));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  getDateFormatPref(dateFormatPrefs, "default", m_dateFormatDefault);
-  getDateFormatPref(dateFormatPrefs, "thisweek", m_dateFormatThisWeek);
-  getDateFormatPref(dateFormatPrefs, "today", m_dateFormatToday);
-  return rv;
+  getDateFormatPref("mail.ui.display.dateformat.default", m_dateFormatDefault);
+  getDateFormatPref("mail.ui.display.dateformat.thisweek",
+                    m_dateFormatThisWeek);
+  getDateFormatPref("mail.ui.display.dateformat.today", m_dateFormatToday);
 }
 
 void nsMsgDBView::SetMRUTimeForFolder(nsIMsgFolder* folder) {
