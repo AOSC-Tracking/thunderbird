@@ -175,10 +175,6 @@ function init() {
 
   importFromFrame("updateHeader");
   importFromFrame("setHeaderState");
-  importFromFrame("changeCSS");
-  importFromFrame("scrollToElement");
-  importFromFrame("updateMotifSettings");
-  importFromFrame("removeUsers");
 
   processStartupScripts();
 
@@ -1577,6 +1573,83 @@ function updateProgress() {
 
 function updateSecurityIcon() {
   var o = getObjectDetails(client.currentObject);
+  let label;
+  let url;
+  let showCondition = !!o.network;
+  switch (o.TYPE) {
+    case "IRCClient":
+      let k = Object.keys(client.networks).length;
+      let c = client.getConnectionCount();
+      label = client.bundle.getFormattedString("clientNetworks", [k, c]);
+      showCondition = false;
+      break;
+    case "IRCNetwork":
+      label = o.network.viewName;
+      url = o.network.getURL();
+      break;
+    case "IRCChannel":
+      label = o.channel.viewName;
+      url = o.channel.getURL();
+      break;
+    case "IRCUser":
+      label = o.user.viewName;
+      if (o.server && o.server.isConnected) {
+        label = client.bundle.getFormattedString("conversationWith", [label]);
+      }
+      url = o.user.getURL();
+      break;
+    case "IRCDCCChat":
+      label = o.chat.viewName;
+      if (o.chat.state.state == 4) {
+        label = client.bundle.getFormattedString("dccChatConnected", [
+          label,
+          o.chat.remoteIP,
+          o.chat.port,
+        ]);
+      }
+      url = o.chat.getURL();
+      break;
+    default:
+      label = "";
+      break;
+  }
+  let viewStatus = window.document.getElementById("view-status");
+  if (showCondition) {
+    let netstatus;
+    let condition;
+    if (o.network.state == NET_CONNECTING) {
+      netstatus = "netConnecting";
+      condition = "yellow";
+    } else if (o.server && o.server.isConnected) {
+      netstatus = "netConnected";
+      condition = "green";
+    } else {
+      netstatus = "netDisconnected";
+      condition = "red";
+    }
+    viewStatus.setAttribute("condition", condition);
+    if (o.TYPE == "IRCNetwork" || condition != "green") {
+      label = client.bundle.getFormattedString(netstatus, [label]);
+    }
+    if (o.TYPE == "IRCChannel" && o.channel.active) {
+      label = client.bundle.getFormattedString("channelUsers", [
+        label,
+        o.channel.getUsersLength(),
+        o.channel.opCount,
+        o.channel.halfopCount,
+        o.channel.voiceCount,
+      ]);
+    }
+  } else {
+    viewStatus.removeAttribute("condition");
+  }
+  viewStatus.label = label;
+  if (url) {
+    viewStatus.setAttribute("href", url);
+  } else {
+    viewStatus.removeAttribute("href");
+  }
+
   var securityButton = window.document.getElementById("security-button");
   securityButton.label = "";
   securityButton.removeAttribute("level");
@@ -1603,8 +1676,28 @@ function updateSecurityIcon() {
     default:
       securityButton.setAttribute("level", "none");
   }
-  securityButton.label = o.server.hostname;
+  let ary = [o.server.hostname];
+  let id;
+  if (o.server.lag < 0) {
+    id = "networkLagUnknown";
+  } else {
+    id = "networkLagKnown";
+    ary.push(o.server.lag.toFixed(2));
+  }
+  securityButton.label = client.bundle.getFormattedString(id, ary);
   securityButton.setAttribute("tooltiptext", tooltiptext);
+}
+
+function viewContextMenuShowing() {
+  let viewStatus = window.document.getElementById("view-status");
+  return viewStatus.hasAttribute("href");
+}
+
+function viewCopyLink() {
+  let viewStatus = window.document.getElementById("view-status");
+  let clipboard = Cc["@mozilla.org/widget/clipboardhelper;1"]
+                    .getService(Ci.nsIClipboardHelper);
+  clipboard.copyString(viewStatus.getAttribute("href"));
 }
 
 function updateLoggingIcon() {
@@ -1797,7 +1890,7 @@ function updateTitle(obj) {
     return;
   }
 
-  var tstring = MSG_TITLE_UNKNOWN;
+  let tstring = "";
   var o = getObjectDetails(client.currentObject);
   var net = o.network ? o.network.unicodeName : "";
   var nick = "";
@@ -1805,11 +1898,9 @@ function updateTitle(obj) {
 
   switch (client.currentObject.TYPE) {
     case "IRCNetwork":
-      var serv = "",
-        port = "";
       if (client.currentObject.isConnected()) {
-        serv = o.server.hostname;
-        port = o.server.port;
+        let serv = o.server.hostname;
+        let port = o.server.port;
         if (o.server.me) {
           nick = o.server.me.unicodeName;
         }
@@ -1821,9 +1912,6 @@ function updateTitle(obj) {
       break;
 
     case "IRCChannel":
-      var chan = "",
-        mode = "",
-        topic = "";
       if ("me" in o.parent) {
         nick = o.parent.me.unicodeName;
         if (o.parent.me.collectionKey in client.currentObject.users) {
@@ -1843,12 +1931,12 @@ function updateTitle(obj) {
       } else {
         nick = MSG_TITLE_NONICK;
       }
-      chan = o.channel.unicodeName;
-      mode = o.channel.mode.getModeStr();
+      let chan = o.channel.unicodeName;
+      let mode = o.channel.mode.getModeStr();
       if (!mode) {
         mode = MSG_TITLE_NO_MODE;
       }
-      topic = o.channel.topic ? o.channel.topic : MSG_TITLE_NO_TOPIC;
+      let topic = o.channel.topic ? o.channel.topic : MSG_TITLE_NO_TOPIC;
       var re = /\x1f|\x02|\x0f|\x16|\x03([0-9]{1,2}(,[0-9]{1,2})?)?/g;
       topic = topic.replace(re, "");
 
@@ -1872,6 +1960,10 @@ function updateTitle(obj) {
 
     case "IRCClient":
       nick = client.prefs.nickname;
+      tstring = getMsg(MSG_TITLE_CLIENT, [
+        client.version,
+        Services.appinfo.name,
+      ]);
       break;
 
     case "IRCDCCChat":
@@ -1890,18 +1982,6 @@ function updateTitle(obj) {
         tstring = getMsg(MSG_TITLE_DCCFILE_GET, data);
       }
       break;
-  }
-
-  if (0 && !client.uiState.tabstrip) {
-    var actl = [];
-    for (var i in client.activityList) {
-      actl.push(
-        client.activityList[i] == "!" ? Number(i) + 1 + "!" : Number(i) + 1
-      );
-    }
-    if (actl.length > 0) {
-      tstring = getMsg(MSG_TITLE_ACTIVITY, [tstring, actl.join(", ")]);
-    }
   }
 
   document.title = tstring;
@@ -2191,7 +2271,7 @@ function advanceKeyboardFocus(amount) {
   var outlinedElem;
   if (focusableElems[newIndex] == client.input.inputField) {
     outlinedElem = client.input.parentNode.id;
-  } else if (focusableElems[newIndex] == userList) {
+  } else if (focusableElems[newIndex] == client.list) {
     outlinedElem = "user-list-box";
   } else {
     outlinedElem = "browser-box";
@@ -2426,6 +2506,104 @@ function removeColorCodes(msg) {
   return msg;
 }
 
+function changeCSS(cwin, url, id) {
+  if (!cwin) {
+    return;
+  }
+
+  if (!id) {
+    id = "main-css";
+  }
+
+  let doc = cwin.document;
+  let node = doc.getElementById(id);
+
+  if (!node) {
+    node = doc.createElement("link");
+    node.setAttribute("id", id);
+    node.setAttribute("rel", "stylesheet");
+    node.setAttribute("type", "text/css");
+    let head = doc.getElementsByTagName("head")[0];
+    head.appendChild(node);
+  } else if (node.getAttribute("href") == url) {
+    return;
+  }
+
+  node.setAttribute("href", url);
+  cwin.scrollTo(0, doc.body.clientHeight);
+}
+
+function scrollToElement(view, element, position) {
+  /* The following values can be used for element:
+   *   selection       - current selected text.
+   *   [any DOM node]  - anything :)
+   *
+   * The following values can be used for position:
+   *   top             - scroll so it is at the top.
+   *   center          - scroll so it is in the middle.
+   *   bottom          - scroll so it is at the bottom.
+   *   inview          - scroll so it is in view.
+   */
+  let cwin = getContentWindow(view.frame);
+
+  if (element == "selection") {
+    let sel = cwin.getSelection();
+    if (sel) {
+      element = sel.anchorNode;
+    } else {
+      element = null;
+    }
+  }
+
+  if (!element) {
+    return;
+  }
+
+  // Calculate element's position in document.
+  let pos = { top: 0, center: 0, bottom: 0 };
+  // Find first parent with offset data.
+  while (element && !("offsetParent" in element)) {
+    element = element.parentNode;
+  }
+
+  let elt = element;
+  // Calculate total offset data.
+  while (elt) {
+    pos.top += 0 + elt.offsetTop;
+    elt = elt.offsetParent;
+  }
+  pos.center = pos.top + element.offsetHeight / 2;
+  pos.bottom = pos.top + element.offsetHeight;
+
+  // Store the positions to align the element with.
+  let cont = { top: 0, center: cwin.innerHeight / 2, bottom: cwin.innerHeight };
+
+  if (cwin.header && !cwin.header.container.hasAttribute("hidden")) {
+    /* Offset height doesn't include the margins, so we get to do that
+     * ourselves via getComputedStyle(). We're assuming that will return
+     * a px value, which is all but guaranteed.
+     */
+    let headerHeight = cwin.header.container.offsetHeight;
+    let css = getComputedStyle(cwin.header.container, null);
+    headerHeight += parseInt(css.marginTop) + parseInt(css.marginBottom);
+    cont.top += headerHeight;
+    cont.center += headerHeight / 2;
+  }
+
+  // Pick between 'top' and 'bottom' for 'inview' position.
+  if (position == "inview") {
+    if (pos.top - cwin.scrollY < cont.top) {
+      position = "top";
+    } else if (pos.bottom - cwin.scrollY > cont.bottom) {
+      position = "bottom";
+    } else {
+      return;
+    }
+  }
+
+  cwin.scrollTo(0, pos[position] - cont[position]);
+}
+
 client.progressListener = {};
 
 client.progressListener.QueryInterface = ChromeUtils.generateQI([
@@ -2479,12 +2657,18 @@ client.progressListener.onStateChange = function (
     } else {
       var cwin = getContentWindow(frame);
       if (cwin && "initOutputWindow" in cwin) {
-        if (!("_called_initOutputWindow" in cwin)) {
-          cwin._called_initOutputWindow = true;
-          cwin.initOutputWindow(client, frame.source, onMessageViewClick);
-          cwin.changeCSS(frame.source.getFontCSS("data"), "cz-fonts");
+        if (!("initialized" in cwin && cwin.initialized)) {
+          let view = frame.source;
+          changeCSS(cwin, view.prefs["motif.current"]);
+          let doc = cwin.document;
+          let name = "unicodeName" in view ? view.unicodeName : view.name;
+          let splash = doc.getElementById("splash");
+          splash.appendChild(doc.createTextNode(name));
+          let output = doc.getElementById("output");
+          output.appendChild(client.adoptNode(view.messages, doc));
+          cwin.initOutputWindow(client, view, onMessageViewClick);
+          changeCSS(cwin, view.getFontCSS("data"), "cz-fonts");
           scrollDown(frame, true);
-          //dd("initOutputWindow(" + frame.source.getURL() + ")");
         }
       }
       // XXX: For about:blank it won't find initOutputWindow. Cope.
@@ -2504,9 +2688,8 @@ client.progressListener.onStateChange = function (
     frame = getFrameForDOMWindow(webProgress.DOMWindow);
     if (frame) {
       var cwin = getContentWindow(frame);
-      if (cwin && "_called_initOutputWindow" in cwin) {
+      if (cwin && "initialized" in cwin && cwin.initialized) {
         scrollDown(frame, false);
-        //dd("scrollDown(" + frame.source.getURL() + ")");
       }
     }
   }
@@ -3360,9 +3543,8 @@ client.connectToNetwork = function (networkOrName, requireSecurity) {
 
   network.connect(requireSecurity);
 
-  network.updateHeader();
-  client.updateHeader();
   updateTitle();
+  updateSecurityIcon();
 
   return network;
 };
@@ -4214,30 +4396,27 @@ function addHistory(source, obj, mergeData) {
     let nickColumnCount = nickColumns.length;
 
     let lastRowSpan = 0;
-    let sameNick = false;
-    let samePrefix = false;
-    let sameDest = false;
-    let haveSameType = false;
+    let same = false;
     let isAction = false;
     let collapseActions;
-    let needSameType = false;
     // 1 or messages, check for doubles.
     if (nickColumnCount > 0) {
       var lastRow = nickColumns[nickColumnCount - 1].parentNode;
       // What was the span last time?
       lastRowSpan = Number(nickColumns[0].getAttribute("rowspan"));
       // Are we the same user as last time?
-      sameNick =
+      let sameNick =
         lastRow.getAttribute("msg-user") == inobj.getAttribute("msg-user");
       // Do we have the same prefix as last time?
-      samePrefix =
+      let samePrefix =
         lastRow.getAttribute("msg-prefix") == inobj.getAttribute("msg-prefix");
       // Do we have the same destination as last time?
-      sameDest =
+      let sameDest =
         lastRow.getAttribute("msg-dest") == inobj.getAttribute("msg-dest");
       // Is this message the same type as the last one?
-      haveSameType =
+      let sameType =
         lastRow.getAttribute("msg-type") == inobj.getAttribute("msg-type");
+      same = sameNick && samePrefix && sameDest && sameType;
       // Is either of the messages an action? We may not want to collapse
       // depending on the collapseActions pref
       isAction =
@@ -4245,23 +4424,9 @@ function addHistory(source, obj, mergeData) {
         lastRow.getAttribute("msg-type") == "ACTION";
       // Do we collapse actions?
       collapseActions = source.prefs.collapseActions;
-
-      // Does the motif collapse everything, regardless of type?
-      // NOTE: the collapseActions pref can override this for actions
-      needSameType = !(
-        "motifSettings" in source &&
-        source.motifSettings &&
-        "collapsemore" in source.motifSettings
-      );
     }
 
-    if (
-      sameNick &&
-      samePrefix &&
-      sameDest &&
-      (haveSameType || !needSameType) &&
-      (!isAction || collapseActions)
-    ) {
+    if (same && (!isAction || collapseActions)) {
       obj = inobj;
       if (columnInfo.nested) {
         appendTo =
@@ -4879,17 +5044,6 @@ var alertClickerObserver = {
       }
     }
   },
-
-  // Gecko 1.7.* rulez
-  onAlertClickCallback(data) {
-    var tb = document.getElementById(data);
-    if (tb && tb.view) {
-      tb.view.dispatch("set-current-view", { view: tb.view });
-      window.focus();
-    }
-  },
-
-  onAlertFinished(data) {},
 };
 
 // Show the alert for a particular event on a type of object.

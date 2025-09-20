@@ -1,3 +1,3 @@
-20250813171833
-https://hg.mozilla.org/releases/comm-release/rev/f2c3a0ec768ef53ce6eaf0188af4c80d60ae3c84
-https://hg.mozilla.org/releases/mozilla-release/rev/62f1dc9218204d41aabac5efc3cb0a2f193dd2d2
+20250910231831
+https://hg.mozilla.org/releases/comm-release/rev/b167f03c75b737eeb3bb38a962d021d0f34ce180
+https://hg.mozilla.org/releases/mozilla-release/rev/62b30a28e7a4110ced2411d4b81bcb1256839616

@@ -577,6 +577,12 @@ nsresult nsMsgFilterList::LoadTextFilters(
       {
         if (m_curFilter) {
           int32_t nextFilterStartPos = m_unparsedFilterBuffer.RFind("name");
+          if (nextFilterStartPos < 0) {
+            m_curFilter->SetUnparseable(true);
+            m_curFilter->SetEnabled(false);
+            err = NS_ERROR_ABORT;
+            break;
+          }
 
           nsAutoCString nextFilterPart;
           nextFilterPart = Substring(m_unparsedFilterBuffer, nextFilterStartPos,
@@ -592,11 +598,7 @@ nsresult nsMsgFilterList::LoadTextFilters(
           }
           m_unparsedFilterBuffer = nextFilterPart;
         }
-        nsMsgFilter* filter = new nsMsgFilter;
-        if (filter == nullptr) {
-          err = NS_ERROR_OUT_OF_MEMORY;
-          break;
-        }
+        nsMsgFilter* filter = new nsMsgFilter();
         filter->SetFilterList(static_cast<nsIMsgFilterList*>(this));
         nsAutoString unicodeStr;
         if (m_fileVersion == k45Version) {
@@ -918,6 +920,7 @@ nsresult nsMsgFilterList::GetFilterNamed(const nsAString& aName,
 
 nsresult nsMsgFilterList::SetFilterAt(uint32_t filterIndex,
                                       nsIMsgFilter* filter) {
+  NS_ENSURE_ARG(filter);
   m_filters[filterIndex] = filter;
   return NS_OK;
 }
@@ -928,12 +931,14 @@ nsresult nsMsgFilterList::RemoveFilterAt(uint32_t filterIndex) {
 }
 
 nsresult nsMsgFilterList::RemoveFilter(nsIMsgFilter* aFilter) {
+  NS_ENSURE_ARG(aFilter);
   m_filters.RemoveElement(aFilter);
   return NS_OK;
 }
 
 nsresult nsMsgFilterList::InsertFilterAt(uint32_t filterIndex,
                                          nsIMsgFilter* aFilter) {
+  NS_ENSURE_ARG(aFilter);
   if (!m_temporaryList) aFilter->SetFilterList(this);
   m_filters.InsertElementAt(filterIndex, aFilter);
 
@@ -984,6 +989,7 @@ nsresult nsMsgFilterList::MoveFilterAt(uint32_t filterIndex,
 
 nsresult nsMsgFilterList::MoveFilter(nsIMsgFilter* aFilter,
                                      nsMsgFilterMotionValue motion) {
+  NS_ENSURE_ARG(aFilter);
   size_t filterIndex = m_filters.IndexOf(aFilter, 0);
   NS_ENSURE_ARG(filterIndex != m_filters.NoIndex);
 
@@ -1195,4 +1201,26 @@ NS_IMETHODIMP nsMsgFilterList::LogFilterMessage(const nsAString& message,
                "failed to write out end log tag");
   return NS_OK;
 }
+
+NS_IMETHODIMP nsMsgFilterList::DoFiltersNeedMessageBody(
+    nsMsgFilterTypeType filterType, bool* needsBody) {
+  NS_ENSURE_ARG_POINTER(needsBody);
+
+  *needsBody = false;
+  for (auto filter : m_filters) {
+    nsMsgFilterTypeType t;
+    nsresult rv = filter->GetFilterType(&t);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (!(t & filterType)) {
+      continue;
+    }
+    rv = filter->GetNeedsMessageBody(needsBody);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (*needsBody) {
+      return NS_OK;
+    }
+  }
+  return NS_OK;
+}
+
 // ------------ End FilterList methods ------------------

@@ -252,8 +252,14 @@ void ValidateRealName(nsMsgAttachmentData* aAttach, MimeHeaders* aHdrs) {
         do_GetService(NS_MIMESERVICE_CONTRACTID, &rv));
     if (NS_SUCCEEDED(rv)) {
       nsAutoCString fileExtension;
-      rv = mimeFinder->GetPrimaryExtension(contentType, EmptyCString(),
-                                           fileExtension);
+      if (contentType.Equals("text/plain")) {
+        // Short-circuit, since for some reason the other path is absurdly slow
+        // on macOS 14 and it's breaking our tests.
+        fileExtension = "txt";
+      } else {
+        rv = mimeFinder->GetPrimaryExtension(contentType, EmptyCString(),
+                                             fileExtension);
+      }
 
       if (NS_SUCCEEDED(rv) && !fileExtension.IsEmpty()) {
         aAttach->m_realName.Append('.');
@@ -1746,8 +1752,7 @@ extern "C" char* MimeGetStringByID(int32_t stringID) {
 
 extern "C" char* MimeGetStringByName(const char16_t* stringName) {
   nsCOMPtr<nsIStringBundleService> stringBundleService =
-      do_GetService(NS_STRINGBUNDLE_CONTRACTID);
-
+      mozilla::components::StringBundle::Service();
   nsCOMPtr<nsIStringBundle> stringBundle;
   stringBundleService->CreateBundle(MIME_URL, getter_AddRefs(stringBundle));
   if (stringBundle) {

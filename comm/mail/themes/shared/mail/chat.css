@@ -440,30 +440,39 @@ richlistitem:not([selected]) .protoIconDimmed {
   toolbar[mode="text"] & > .toolbarbutton-icon {
     display: flex;
   }
+
+  &[status="available"] {
+    list-style-image: var(--icon-status-online);
+  }
+
+  &[status="idle"] {
+    list-style-image: var(--icon-status-idle);
+  }
+
+  &[status="offline"],
+  &[status="invisible"] {
+    list-style-image: var(--icon-status-offline);
+  }
+
+  &[status="unavailable"],
+  &[status="away"] {
+    list-style-image: var(--icon-status-away);
+  }
 }
 
-#statusTypeIcon[status="available"],
 #statusTypeAvailable,
 #imStatusAvailable {
-  list-style-image: var(--icon-status-online);
+  --menuitem-icon: var(--icon-status-online);
 }
 
-#statusTypeIcon[status="idle"] {
-  list-style-image: var(--icon-status-idle);
-}
-
-#statusTypeIcon[status="offline"],
-#statusTypeIcon[status="invisible"],
 #statusTypeOffline,
 #imStatusOffline {
-  list-style-image: var(--icon-status-offline);
+  --menuitem-icon: var(--icon-status-offline);
 }
 
-#statusTypeIcon[status="unavailable"],
-#statusTypeIcon[status="away"],
 #statusTypeUnavailable,
 #imStatusUnavailable {
-  list-style-image: var(--icon-status-away);
+  --menuitem-icon: var(--icon-status-away);
 }
 
 /* corresponds to im/themes/conversation.css @media all and (min-height: 251px) */
@@ -967,12 +976,15 @@ toolbar[mode="text"] #button-chat {
     width: 14px;
   }
 
-  & .toolbarbutton-menu-dropmarker {
-    appearance: none !important;
-    list-style-image: var(--icon-nav-down-sm);
-    margin-inline: 3px 0;
-    -moz-context-properties: stroke;
-    stroke: currentColor;
+  &[wantdropmarker="true"] {
+    background-image: var(--icon-nav-down-sm);
+    background-repeat: no-repeat;
+    background-position: calc(100% - 6px) center;
+    padding-inline-end: 22px;
+
+    &:-moz-locale-dir(rtl) {
+      background-position-x: 6px;
+    }
   }
 }
 

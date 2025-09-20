@@ -2,38 +2,26 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use ews::Operation;
+use ews::{Operation, OperationResponse};
 use mailnews_ui_glue::UserInteractiveServer;
-use nsstring::{nsACString, nsCString};
+use nsstring::nsCString;
 use thin_vec::ThinVec;
-use xpcom::{RefCounted, RefPtr};
-
-use crate::client::{
-    process_error_with_cb_cpp, AuthFailureBehavior, XpComEwsClient, XpComEwsError,
+use xpcom::{
+    interfaces::{IEwsFallibleOperationListener, IEwsSimpleOperationListener},
+    RefCounted, RefPtr, XpCom,
 };
 
-/// Trait to adapt varying completion reporting interfaces to a common interface.
-pub(super) trait MoveCallbacks<InputDataT> {
-    /// Notification called to signal that a move operation has successfully completed.
-    ///
-    /// The `input_data` parameter will contain the input data to the move
-    /// operation and the `new_ids` parameter will contain a list of updated EWS
-    /// IDs resulting from the operation, if the operation supported the return
-    /// of new IDs, otherwise `new_ids` will be empty.
-    fn on_success(
-        &self,
-        input_data: InputDataT,
-        new_ids: ThinVec<nsCString>,
-    ) -> Result<(), XpComEwsError>;
+use crate::authentication::credentials::AuthenticationProvider;
+use crate::client::{handle_error, response_into_messages, XpComEwsClient, XpComEwsError};
 
-    /// Notification called to signal that a move operation completed with an error.
-    ///
-    /// The error code will be indicated in `error`, and a description (if available)
-    /// will be provided in `description`.
-    fn on_error(&self, error: u8, description: &nsACString);
+/// An EWS operation that copies or moves folders or items.
+pub(crate) trait CopyMoveOperation: Operation + Clone {
+    /// Whether the consumer should sync the folder or account again after this
+    /// operation has completed.
+    fn requires_resync(&self) -> bool;
 }
 
-/// Perform a generic move operation.
+/// Perform a generic copy/move operation.
 ///
 /// A move operation can apply to multiple EWS types, including EWS items
 /// (messages, calendar items, meetings, ...) and EWS folders. This function
@@ -41,8 +29,7 @@ pub(super) trait MoveCallbacks<InputDataT> {
 /// arguments to provide customizations required for specific EWS types.
 ///
 /// The input data type for the EWS operation is represented by the
-/// `OperationDataT` type parameter, and the success/failure callback type is
-/// represented by the `CallbacksT` type parameter.
+/// `OperationDataT` type parameter.
 ///
 /// The EWS client to use for the operation is given by the `client` parameter.
 /// The `destination_folder_id` parameter specifies the destination folder for
@@ -54,54 +41,97 @@ pub(super) trait MoveCallbacks<InputDataT> {
 /// response object to the collection of EWS IDs for the moved objects. The
 /// `callbacks` parameter provides the asynchronous mechanism for signaling
 /// success or failure.
-pub(super) async fn move_generic<ServerT, OperationDataT, CallbacksT>(
+pub(super) async fn move_generic<ServerT, OperationDataT>(
     client: XpComEwsClient<ServerT>,
+    listener: RefPtr<IEwsSimpleOperationListener>,
     destination_folder_id: String,
     ids: Vec<String>,
     operation_builder: fn(&XpComEwsClient<ServerT>, String, Vec<String>) -> OperationDataT,
-    response_to_ids: fn(OperationDataT::Response) -> ThinVec<nsCString>,
-    callbacks: RefPtr<CallbacksT>,
+    response_to_ids: fn(
+        Vec<<OperationDataT::Response as OperationResponse>::Message>,
+    ) -> Vec<String>,
 ) where
-    ServerT: UserInteractiveServer + RefCounted,
-    OperationDataT: Operation + Clone,
-    CallbacksT: MoveCallbacks<OperationDataT> + RefCounted,
+    ServerT: AuthenticationProvider + UserInteractiveServer + RefCounted,
+    OperationDataT: CopyMoveOperation,
 {
-    move_generic_inner(
-        &client,
+    match move_generic_functional(
+        client,
         destination_folder_id,
         ids,
         operation_builder,
         response_to_ids,
-        &*callbacks,
     )
     .await
-    .unwrap_or_else(process_error_with_cb_cpp(move |error, description| {
-        callbacks.on_error(error, &*description);
-    }));
+    {
+        (_, Ok((new_ids, requires_resync))) => unsafe {
+            let converted_new_ids = new_ids
+                .iter()
+                .map(|id| nsCString::from(id))
+                .collect::<ThinVec<nsCString>>();
+            listener.OnOperationSuccess(&converted_new_ids, requires_resync);
+        },
+        (operation_name, Err(err)) => handle_error(
+            operation_name,
+            err,
+            listener.query_interface::<IEwsFallibleOperationListener>(),
+        ),
+    };
 }
 
-async fn move_generic_inner<ServerT, OperationDataT, CallbacksT>(
-    client: &XpComEwsClient<ServerT>,
+/// Perform a generic copy/move operation (functional version).
+///
+/// The EWS client to use for the operation is given by the `client` parameter.
+/// The `destination_folder_id` parameter specifies the destination folder for
+/// the generic move operation, and the `ids` parameter specifies the the
+/// collection of EWS IDs to move. The `operation_builder` function specifies
+/// the mapping from the available input data, including the EWS client, the
+/// destination EWS ID, and the input collection of EWS IDs to be moved, to the
+/// input to the EWS operation. The `response_to_ids` function maps from the EWS
+/// response object to the collection of EWS IDs for the moved objects.
+///
+/// This version is suitable for use when a larger operation requires item
+/// copy or move operations as part of its orchestration.
+pub(super) async fn move_generic_functional<ServerT, OperationDataT>(
+    client: XpComEwsClient<ServerT>,
     destination_folder_id: String,
     ids: Vec<String>,
     operation_builder: fn(&XpComEwsClient<ServerT>, String, Vec<String>) -> OperationDataT,
-    response_to_ids: fn(OperationDataT::Response) -> ThinVec<nsCString>,
-    callbacks: &CallbacksT,
-) -> Result<(), XpComEwsError>
+    response_to_ids: fn(
+        Vec<<OperationDataT::Response as OperationResponse>::Message>,
+    ) -> Vec<String>,
+) -> (&'static str, Result<(Vec<String>, bool), XpComEwsError>)
 where
-    ServerT: UserInteractiveServer + RefCounted,
-    OperationDataT: Operation + Clone,
-    CallbacksT: MoveCallbacks<OperationDataT> + RefCounted,
+    ServerT: AuthenticationProvider + UserInteractiveServer + RefCounted,
+    OperationDataT: CopyMoveOperation,
 {
-    let operation_data = operation_builder(client, destination_folder_id, ids);
+    let operation_data = operation_builder(&client, destination_folder_id, ids);
 
-    let response = client
-        .make_operation_request(operation_data.clone(), AuthFailureBehavior::ReAuth)
+    (
+        operation_data.name(),
+        move_generic_inner(client, operation_data.clone())
+            .await
+            .map(|messages| {
+                let new_ids = response_to_ids(messages);
+                let requires_resync = operation_data.requires_resync();
+                (new_ids, requires_resync)
+            }),
+    )
+}
+
+async fn move_generic_inner<ServerT, OperationDataT>(
+    client: XpComEwsClient<ServerT>,
+    operation_data: OperationDataT,
+) -> Result<
+    Vec<<<OperationDataT as Operation>::Response as OperationResponse>::Message>,
+    XpComEwsError,
+>
+where
+    ServerT: AuthenticationProvider + UserInteractiveServer + RefCounted,
+    OperationDataT: CopyMoveOperation,
+{
+    let resp = client
+        .make_operation_request(operation_data, Default::default())
         .await?;
-
-    let new_ids = response_to_ids(response);
-
-    callbacks.on_success(operation_data, new_ids)?;
-
-    Ok(())
+    let messages = response_into_messages(resp)?;
+    Ok(messages)
 }

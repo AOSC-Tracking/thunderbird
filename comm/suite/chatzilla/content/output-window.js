@@ -17,48 +17,10 @@ var getObjectDetails;
 
 var header = null;
 var headers = {
-  IRCClient: {
-    prefix: "cli-",
-    fields: [
-      "container",
-      "netcount",
-      "version-container",
-      "version",
-      "connectcount",
-    ],
-    update: updateClient,
-  },
-
-  IRCNetwork: {
-    prefix: "net-",
-    fields: ["container", "url-anchor", "status", "lag"],
-    update: updateNetwork,
-  },
-
   IRCChannel: {
     prefix: "ch-",
-    fields: [
-      "container",
-      "url-anchor",
-      "modestr",
-      "usercount",
-      "topicnodes",
-      "topicinput",
-      "topiccancel",
-    ],
+    fields: ["container", "topicnodes", "topicinput", "topiccancel"],
     update: updateChannel,
-  },
-
-  IRCUser: {
-    prefix: "usr-",
-    fields: ["container", "url-anchor", "serverstr", "title", "descnodes"],
-    update: updateUser,
-  },
-
-  IRCDCCChat: {
-    prefix: "dcc-chat-",
-    fields: ["container", "remotestr", "title"],
-    update: updateDCCChat,
   },
 
   IRCDCCFileTransfer: {
@@ -68,14 +30,13 @@ var headers = {
   },
 };
 
-var initOutputWindow = stock_initOutputWindow;
-
-function stock_initOutputWindow(newClient, newView, newClickHandler) {
+var initOutputWindow = function (newClient, newView, newClickHandler) {
   function initHeader() {
     /* it's better if we wait a half a second before poking at these
      * dom nodes. */
-    setHeaderState(view.prefs.displayHeader);
-    updateHeader();
+    if (view.TYPE in headers) {
+      setHeaderState(view.prefs.displayHeader);
+    }
     var div = document.getElementById("messages-outer");
     div.removeAttribute("hidden");
     window.scrollTo(0, window.document.body.clientHeight);
@@ -92,12 +53,6 @@ function stock_initOutputWindow(newClient, newView, newClickHandler) {
   getObjectDetails = mainWindow.getObjectDetails;
   dd = mainWindow.dd;
 
-  changeCSS(view.prefs["motif.current"]);
-  updateMotifSettings();
-
-  var output = document.getElementById("output");
-  output.appendChild(adoptNode(view.messages));
-
   if (view.TYPE in headers) {
     header = cacheNodes(headers[view.TYPE].prefix, headers[view.TYPE].fields);
     // Turn off accessibility announcements: they're useless as all these
@@ -108,14 +63,6 @@ function stock_initOutputWindow(newClient, newView, newClickHandler) {
     header.container.setAttribute("aria-live", "off");
     header.update = headers[view.TYPE].update;
   }
-
-  var name;
-  if ("unicodeName" in view) {
-    name = view.unicodeName;
-  } else {
-    name = view.name;
-  }
-  updateSplash(name);
 
   setTimeout(initHeader, 500);
 
@@ -199,165 +146,17 @@ function cacheNodes(pfx, ary, nodes) {
   return nodes;
 }
 
-function changeCSS(url, id) {
-  if (!id) {
-    id = "main-css";
-  }
-
-  var node = document.getElementById(id);
-
-  if (!node) {
-    node = document.createElement("link");
-    node.setAttribute("id", id);
-    node.setAttribute("rel", "stylesheet");
-    node.setAttribute("type", "text/css");
-    var head = document.getElementsByTagName("head")[0];
-    head.appendChild(node);
-  } else if (node.getAttribute("href") == url) {
-    return;
-  }
-
-  node.setAttribute("href", url);
-  window.scrollTo(0, window.document.body.clientHeight);
-}
-
-function scrollToElement(element, position) {
-  /* The following values can be used for element:
-   *   selection       - current selected text.
-   *   marker          - the activity marker.
-   *   [any DOM node]  - anything :)
-   *
-   * The following values can be used for position:
-   *   top             - scroll so it is at the top.
-   *   center          - scroll so it is in the middle.
-   *   bottom          - scroll so it is at the bottom.
-   *   inview          - scroll so it is in view.
-   */
-  switch (element) {
-    case "selection":
-      var sel = window.getSelection();
-      if (sel) {
-        element = sel.anchorNode;
-      } else {
-        element = null;
-      }
-      break;
-
-    case "marker":
-      if ("getActivityMarker" in view) {
-        element = view.getActivityMarker();
-      } else {
-        element = null;
-      }
-      break;
-  }
-  if (!element) {
-    return;
-  }
-
-  // Calculate element's position in document.
-  var pos = { top: 0, center: 0, bottom: 0 };
-  // Find first parent with offset data.
-  while (element && !("offsetParent" in element)) {
-    element = element.parentNode;
-  }
-  var elt = element;
-  // Calc total offset data.
-  while (elt) {
-    pos.top += 0 + elt.offsetTop;
-    elt = elt.offsetParent;
-  }
-  pos.center = pos.top + element.offsetHeight / 2;
-  pos.bottom = pos.top + element.offsetHeight;
-
-  // Store the positions to align the element with.
-  var cont = {
-    top: 0,
-    center: window.innerHeight / 2,
-    bottom: window.innerHeight,
-  };
-  if (!hasAttribute("container", "hidden")) {
-    /* Offset height doesn't include the margins, so we get to do that
-     * ourselves via getComputedStyle(). We're assuming that will return
-     * a px value, which is all but guaranteed.
-     */
-    var headerHeight = header.container.offsetHeight;
-    var css = getComputedStyle(header.container, null);
-    headerHeight += parseInt(css.marginTop) + parseInt(css.marginBottom);
-    cont.top += headerHeight;
-    cont.center += headerHeight / 2;
-  }
-
-  // Pick between 'top' and 'bottom' for 'inview' position.
-  if (position == "inview") {
-    if (pos.top - window.scrollY < cont.top) {
-      position = "top";
-    } else if (pos.bottom - window.scrollY > cont.bottom) {
-      position = "bottom";
-    } else {
-      return;
-    }
-  }
-
-  window.scrollTo(0, pos[position] - cont[position]);
-}
-
-function updateMotifSettings(existingTimeout) {
-  // Try... catch with a repeat to cope with the style sheet not being loaded
-  const TIMEOUT = 100;
-  try {
-    existingTimeout += TIMEOUT;
-    view.motifSettings = getMotifSettings();
-  } catch (ex) {
-    if (existingTimeout >= 30000) {
-      // Stop after trying for 30 seconds
-      return;
-    }
-    if (ex.name == "NS_ERROR_DOM_INVALID_ACCESS_ERR") {
-      //not ready, try again
-      setTimeout(updateMotifSettings, TIMEOUT, existingTimeout);
-    } // something else, panic!
-    else {
-      dd(ex);
-    }
-  }
-}
-
-function getMotifSettings() {
-  var re = new RegExp("czsettings\\.(\\w*)", "i");
-  var rules = document.getElementById("main-css").sheet.cssRules;
-  var rv = {};
-  var ary;
-  // Copy any settings, which are available in the motif using the
-  // "CZSETTINGS" selector. We only store the regexp match after checking
-  // the rule type because selectorText is not defined on other rule types.
-  for (var i = 0; i < rules.length; i++) {
-    if (
-      rules[i].type == CSSRule.STYLE_RULE &&
-      (ary = rules[i].selectorText.match(re)) != null
-    ) {
-      rv[ary[1]] = true;
-    }
-  }
-  return rv;
-}
-
 function adoptNode(node) {
   return client.adoptNode(node, document);
 }
 
-function setText(field, text, checkCondition) {
+function setText(field, text) {
   if (!header[field].firstChild) {
     header[field].appendChild(document.createTextNode(""));
   }
 
   if (typeof text != "string") {
     text = MSG_UNKNOWN;
-    if (checkCondition) {
-      setAttribute(field, "condition", "red");
-    }
-  } else if (checkCondition) {
-    setAttribute(field, "condition", "green");
   }
 
   header[field].firstChild.data = text;
@@ -398,13 +197,7 @@ function updateHeader() {
   }
 
   for (var id in header) {
-    var value;
-
-    if (id == "url-anchor") {
-      value = view.getURL();
-      setAttribute("url-anchor", "href", value);
-      setText("url-anchor", value);
-    } else if (id in view) {
+    if (id in view) {
       setText(id, view[id]);
     }
   }
@@ -414,74 +207,12 @@ function updateHeader() {
   }
 }
 
-function updateClient() {
-  var n = 0,
-    c = 0;
-  for (name in client.networks) {
-    ++n;
-    if (client.networks[name].isConnected()) {
-      ++c;
-    }
-  }
-
-  setAttribute("version-container", "title", client.userAgent);
-  setText("version", client.version);
-  setText("netcount", String(n));
-  setText("connectcount", String(c));
-}
-
-function updateNetwork() {
-  if (view.state == mainWindow.NET_CONNECTING) {
-    setText("status", MSG_CONNECTING);
-    setAttribute("status", "condition", "yellow");
-    removeAttribute("status", "title");
-    setText("lag", MSG_UNKNOWN);
-  } else if (view.isConnected()) {
-    setText("status", MSG_CONNECTED);
-    setAttribute("status", "condition", "green");
-    setAttribute(
-      "status",
-      "title",
-      getMsg(MSG_CONNECT_VIA, view.primServ.unicodeName)
-    );
-    var lag = view.primServ.lag;
-    if (lag != -1) {
-      setText("lag", getMsg(MSG_FMT_SECONDS, lag.toFixed(2)));
-    } else {
-      setText("lag", MSG_UNKNOWN);
-    }
-  } else {
-    setText("status", MSG_DISCONNECTED);
-    setAttribute("status", "condition", "red");
-    removeAttribute("status", "title");
-    setText("lag", MSG_UNKNOWN);
-  }
-}
-
 function updateChannel() {
   if (header.topicnodes.firstChild) {
     header.topicnodes.firstChild.remove();
   }
 
   if (view.active) {
-    var str = view.mode.getModeStr();
-    if (!str) {
-      str = MSG_NO_MODE;
-    }
-    setText("modestr", str);
-    setAttribute("modestr", "condition", "green");
-
-    setText(
-      "usercount",
-      getMsg(MSG_FMT_USERCOUNT, [
-        view.getUsersLength(),
-        view.opCount,
-        view.halfopCount,
-        view.voiceCount,
-      ])
-    );
-    setAttribute("usercount", "condition", "green");
-
     if (view.topic) {
       var data = getObjectDetails(view);
       data.dontLogURLs = true;
@@ -494,52 +225,8 @@ function updateChannel() {
       setText("topicnodes", MSG_NONE);
     }
   } else {
-    setText("modestr", MSG_UNKNOWN);
-    setAttribute("modestr", "condition", "red");
-    setText("usercount", MSG_UNKNOWN);
-    setAttribute("usercount", "condition", "red");
     setText("topicnodes", MSG_UNKNOWN);
   }
-}
-
-function updateUser() {
-  var source;
-  if (view.name) {
-    source = "<" + view.name + "@" + view.host + ">";
-  } else {
-    source = MSG_UNKNOWN;
-  }
-
-  if (view.parent.isConnected) {
-    setText("serverstr", view.connectionHost, true);
-  } else {
-    setText("serverstr", null, true);
-  }
-
-  setText("title", getMsg(MSG_TITLE_USER, [view.unicodeName, source]));
-
-  if (header.descnodes.firstChild) {
-    header.descnodes.firstChild.remove();
-  }
-
-  if (typeof view.desc != "undefined") {
-    var data = getObjectDetails(view);
-    data.dontLogURLs = true;
-    var nodes = client.munger.munge(view.desc, null, data);
-    header.descnodes.appendChild(adoptNode(nodes));
-  } else {
-    setText("descnodes", "");
-  }
-}
-
-function updateDCCChat() {
-  if (view.state.state == 4) {
-    setText("remotestr", view.remoteIP + ":" + view.port, true);
-  } else {
-    setText("remotestr", null, true);
-  }
-
-  setText("title", getMsg(MSG_TITLE_DCCCHAT, view.user.unicodeName));
 }
 
 function updateDCCFile() {
@@ -557,9 +244,4 @@ function updateDCCFile() {
   );
 
   setAttribute("progressbar", "width", pcent + "%");
-}
-
-function updateSplash(content) {
-  var splash = document.getElementById("splash");
-  splash.appendChild(document.createTextNode(content));
 }

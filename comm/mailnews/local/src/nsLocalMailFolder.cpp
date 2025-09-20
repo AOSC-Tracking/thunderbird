@@ -9,6 +9,7 @@
 #include "prlog.h"
 #include "CopyMessageStreamListener.h"
 #include "FolderCompactor.h"
+#include "FolderPopulation.h"
 #include "HeaderReader.h"
 #include "LineReader.h"
 #include "msgCore.h"  // precompiled header...
@@ -278,6 +279,7 @@ nsMsgLocalMailFolder::GetSubFolders(nsTArray<RefPtr<nsIMsgFolder>>& folders) {
     mInitialized = true;
     rv = server->GetMsgStore(getter_AddRefs(msgStore));
     NS_ENSURE_SUCCESS(rv, rv);
+
     // This should add all existing folders as sub-folders of this folder.
     rv = msgStore->DiscoverSubFolders(this, true);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -2386,12 +2388,6 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
 
         // enable the dest folder
         EnableNotifications(allMessageCountNotifications, true);
-        if (srcFolder && !mCopyState->m_isFolder) {
-          // I'm not too sure of the proper location of this event. It seems to
-          // need to be after the EnableNotifications, or the folder counts can
-          // be incorrect during the kDeleteOrMoveMsgCompleted call.
-          srcFolder->NotifyFolderEvent(kDeleteOrMoveMsgCompleted);
-        }
         (void)OnCopyCompleted(mCopyState->m_srcSupport, true);
       }
     }

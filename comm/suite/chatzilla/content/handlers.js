@@ -546,7 +546,6 @@ function onWindowKeyPress(e) {
   var code = Number(e.keyCode);
   var w;
   var newOfs;
-  var userList = document.getElementById("user-list");
   var elemFocused = document.commandDispatcher.focusedElement;
 
   const isMac = client.platform == "Mac";
@@ -583,7 +582,7 @@ function onWindowKeyPress(e) {
         !e.altKey &&
         !e.metaKey &&
         !e.shiftKey &&
-        elemFocused != userList
+        elemFocused != client.list
       ) {
         w = client.currentFrame;
         newOfs = w.pageYOffset + w.innerHeight * 0.75 * (2 * code - 67);
@@ -840,7 +839,8 @@ function onUserDoubleClick(event) {
     event.altKey ||
     event.ctrlKey ||
     event.metaKey ||
-    event.shiftKey
+    event.shiftKey ||
+    event.target.localName != "listitem"
   ) {
     return;
   }
@@ -900,7 +900,7 @@ client.onFindEnd =
   CIRCDCCChat.prototype.onFindEnd =
   CIRCDCCFileTransfer.prototype.onFindEnd =
     function (e) {
-      this.scrollToElement("selection", "inview");
+      scrollToElement(this, "selection", "inview");
     };
 
 CIRCChannel.prototype._updateConferenceMode = function () {
@@ -1162,8 +1162,6 @@ CIRCNetwork.prototype.on001 =
           // Welcome to history.
           addURLToHistory(this.getURL());
           updateTitle(this);
-          this.updateHeader();
-          client.updateHeader();
           updateSecurityIcon();
           updateStalkExpression(this);
 
@@ -2597,16 +2595,15 @@ CIRCNetwork.prototype.onNick = function (e) {
     );
   }
 
-  this.updateHeader();
   updateStalkExpression(this);
 };
 
 CIRCNetwork.prototype.onPing = function (e) {
-  this.updateHeader(this);
+  updateSecurityIcon();
 };
 
 CIRCNetwork.prototype.onPong = function (e) {
-  this.updateHeader(this);
+  updateSecurityIcon();
 };
 
 CIRCNetwork.prototype.onWallops = function (e) {
@@ -2825,7 +2822,7 @@ CIRCNetwork.prototype.onAway = function (e) {
 
 /* user host changed */
 CIRCNetwork.prototype.onChghost = function (e) {
-  e.user.updateHeader();
+  updateSecurityIcon();
 };
 
 CIRCNetwork.prototype.updateUser = function (e, user) {
@@ -2927,7 +2924,7 @@ client.setActivityMarker =
   CIRCDCCFileTransfer.prototype.setActivityMarker =
     function (state) {
       if (!client.initialized) {
-        return;
+        return null;
       }
 
       // Always clear the activity marker first.
@@ -2939,11 +2936,12 @@ client.setActivityMarker =
       if (state) {
         // Mark the last row.
         var target = this.messages.firstChild.lastChild;
-        if (!target) {
-          return;
+        if (target) {
+          target.classList.add("chatzilla-line-marker");
+          return target;
         }
-        target.classList.add("chatzilla-line-marker");
       }
+      return null;
     };
 
 client.getActivityMarker =
@@ -3237,11 +3235,12 @@ CIRCChannel.prototype.onJoin = function (e) {
     this.addUsers([e.user]);
   }
   this.updateHeader();
+  updateSecurityIcon();
 };
 
 CIRCChannel.prototype.onPart = function (e) {
-  this.removeUsers([e.user]);
   this.updateHeader();
+  updateSecurityIcon();
 
   if (userIsMe(e.user)) {
     var msg = e.reason ? MSG_YOU_LEFT_REASON : MSG_YOU_LEFT;
@@ -3341,8 +3340,8 @@ CIRCChannel.prototype.onKick = function (e) {
     this.removeFromList(e.lamer);
   }
 
-  this.removeUsers([e.lamer]);
   this.updateHeader();
+  updateSecurityIcon();
 };
 
 CIRCChannel.prototype.addUsers = function (updates) {
@@ -3430,6 +3429,7 @@ CIRCChannel.prototype.onChanMode = function (e) {
 
   this.updateHeader();
   updateTitle(this);
+  updateSecurityIcon();
   if (client.currentObject == this) {
     this.updateUserList(true);
   }
@@ -3489,8 +3489,8 @@ CIRCChannel.prototype.onQuit = function (e) {
     this.removeFromList(e.user);
   }
 
-  this.removeUsers([e.user]);
   this.updateHeader();
+  updateSecurityIcon();
 };
 
 CIRCChannel.prototype.doAutoPerform = function () {
@@ -3564,7 +3564,7 @@ CIRCUser.prototype.onNick = function (e) {
     );
   }
 
-  this.updateHeader();
+  updateSecurityIcon();
   var tab = getTabForObject(this);
   if (tab) {
     tab.setAttribute("label", this.unicodeName);
@@ -3882,16 +3882,19 @@ CIRCDCCFileTransfer.prototype.onProgress = function (e) {
       tab.setAttribute("label", this.viewName + " (" + pcent + "%)");
     }
 
-    var change = this.position - this._lastPosition;
-    var speed = change / ((now - this._lastSpeedTime) / 1000); // B/s
-    this._lastSpeedTime = now;
+    // Some time needs to have elapsed to calculate the speed.
+    if ((now - this._lastSpeedTime) > 10) {
+      let change = this.position - this._lastPosition;
+      let speed = change / ((now - this._lastSpeedTime) / 1000); // B/s
+      this._lastSpeedTime = now;
 
-    /* Use an average of the last speed, and this speed, so we get a little
-     * smoothing to it.
-     */
-    this.speed = (this.speed + speed) / 2;
-    this.updateHeader();
-    this._lastPosition = this.position;
+      /* Use an average of the last speed, and this speed, so we get a little
+       * smoothing to it.
+       */
+      this.speed = (this.speed + speed) / 2;
+      this.updateHeader();
+      this._lastPosition = this.position;
+    }
   }
 
   // If it's also been 10s or more since we last displayed a msg...

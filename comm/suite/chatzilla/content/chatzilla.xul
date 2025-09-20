@@ -321,6 +321,14 @@
   </keyset>
 
   <popupset id="chatZillaContextSet">
+    <menupopup id="viewContextMenu"
+               onpopupshowing="return viewContextMenuShowing();">
+      <menuitem id="view-context-copy-link"
+                label="&copyLinkCmd.label;"
+                accesskey="&copyLinkCmd.accesskey;"
+                oncommand="viewCopyLink();"/>
+    </menupopup>
+
     <menupopup id="chatZillaContextMenu"
                onpopupshowing="return cZContextMenuShowing(this, event);"
                onpopuphiding="cZContextMenuHiding(this, event);">
@@ -438,7 +446,7 @@
                 oncommand="cmdHideView(gContextMenu.cx);"/>
       <menuitem id="context-toggle-oas"
                 type="checkbox"
-                oncommand="cmdOpenAtStartup();"/>
+                oncommand="cmdOpenAtStartup(gContextMenu.cx, true);"/>
       <menuseparator id="channel-separator"/>
       <menuitem id="context-channel-leave"
                 oncommand="cmdLeave(gContextMenu.cx);"/>
@@ -490,8 +498,8 @@
           <menuseparator/>
           <menuitem id="openAtStartup"
                     type="checkbox"
-                    oncommand="cmdOpenAtStartup();"/>
-          <menuseparator/>
+                    oncommand="cmdOpenAtStartup(getDefaultContext(event), true);"/>
+          <menuseparator id="openAtStartup-separator"/>
           <menuitem id="leaveChannel"
                     oncommand="cmdLeave(getDefaultContext(event));"/>
           <menuitem id="rejoinChannel"
@@ -882,6 +890,10 @@
                      mode="undetermined"
                      value="0"/>
     </statusbarpanel>
+    <statusbarpanel id="view-status"
+                    class="statusbarpanel-text"
+                    contextmenu="viewContextMenu"
+                    label=""/>
     <statusbarpanel id="security-button"
                     class="statusbarpanel-iconic-text"
                     dir="reverse"

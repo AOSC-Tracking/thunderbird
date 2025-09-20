@@ -55,7 +55,7 @@ hr {
   display: none;
 }
 
-#toolbar-menubar[autohide="true"] {
+#toolbar-menubar[autohide] {
   overflow: hidden;
 
   &[inactive="true"]:not([customizing="true"]) {
@@ -277,7 +277,7 @@ tree > treechildren::-moz-tree-image(primary, dropOn) {
 
 /* toolbar */
 
-toolbar[type="menubar"][autohide="true"] {
+toolbar[type="menubar"][autohide] {
   overflow: hidden;
 
   &[inactive="true"]:not([customizing="true"]) {
@@ -288,7 +288,7 @@ toolbar[type="menubar"][autohide="true"] {
 }
 
 /* Show hidden toolbars in customize mode */
-toolbar[customizing="true"][collapsed="true"] {
+toolbar[customizing="true"][collapsed] {
   visibility: visible;
 }
 
@@ -299,7 +299,7 @@ toolbar[customizing="true"][collapsed="true"] {
   min-height: 24px;
   min-width: 32px;
   margin: 4px 1px;
-  padding: 1px 5px !important;
+  padding: 1px 5px;
   -moz-context-properties: fill, stroke, fill-opacity;
   fill: color-mix(in srgb, var(--toolbarbutton-icon-fill, currentColor) 20%, transparent);
   stroke: var(--toolbarbutton-icon-fill, currentColor);
@@ -351,11 +351,15 @@ toolbar[customizing="true"][collapsed="true"] {
     stroke: currentColor;
   }
 
-  & .toolbarbutton-menu-dropmarker {
-    flex: 0;
-    content: var(--icon-nav-down-sm);
-    -moz-context-properties: stroke;
-    stroke: currentColor;
+  &[wantdropmarker="true"] {
+    background-image: var(--icon-nav-down-sm);
+    background-repeat: no-repeat;
+    background-position: calc(100% - 6px) center;
+    padding-inline-end: 22px;
+
+    &:-moz-locale-dir(rtl) {
+      background-position-x: 6px;
+    }
   }
 
   & > .toolbarbutton-menubutton-button {
@@ -371,7 +375,7 @@ toolbar[customizing="true"][collapsed="true"] {
   :root[uidensity="touch"] &:not([is="toolbarbutton-menu-button"]),
   :root[uidensity="touch"] & > .toolbarbutton-menubutton-button,
   :root[uidensity="touch"] & > .toolbarbutton-menubutton-dropmarker {
-    padding: 5px !important;
+    padding: 5px;
   }
 
   toolbar[mode="full"] &:not([hideWebExtensionLabel="true"]) {
@@ -434,10 +438,6 @@ toolbar[customizing="true"][collapsed="true"] {
     &[disabled="true"] .toolbarbutton-text {
       opacity: 1;
     }
-
-    & > .toolbarbutton-menu-dropmarker {
-      display: none;
-    }
   }
 
   toolbar[brighttext] &:not(:hover,:active,[open]) > .toolbarbutton-menubutton-dropmarker {
@@ -449,6 +449,11 @@ toolbar[customizing="true"][collapsed="true"] {
   }
 }
 
+toolbarbutton[is="toolbarbutton-menu-button"] {
+  align-items: stretch;
+  flex-direction: row;
+}
+
 .toolbarbutton-menubutton-button {
   align-items: center;
   justify-content: center;
@@ -456,11 +461,16 @@ toolbar[customizing="true"][collapsed="true"] {
   min-height: 24px;
   min-width: 32px;
   margin: 4px 1px;
-  padding: 1px 5px !important;
+  padding: 1px 5px;
 
   & > .toolbarbutton-icon {
     padding: 1px;
   }
+}
+
+.toolbarbutton-1:not(.qfb-tag-button),
+.toolbarbutton-menubutton-button {
+  color: inherit;
 }
 
 toolbox[labelalign="end"] .toolbarbutton-1,
@@ -772,6 +782,11 @@ html|ul.addon-installed-list {
                       var(--toolbarseparator-color) calc(100% - 4px),
                       transparent calc(100% - 4px));
     margin-inline: 1px;
+    padding: 0;
+
+    &:before {
+      display: none;
+    }
   }
 }
 
@@ -782,11 +797,6 @@ html|ul.addon-installed-list {
 
 .button-more {
   list-style-image: var(--icon-more);
-}
-
-.toolbarbutton-1:not(.qfb-tag-button),
-.toolbarbutton-menubutton-button {
-  color: inherit !important;
 }
 
 /* Don't show a menupopup in customize mode */
@@ -1361,19 +1371,19 @@ panel[type="arrow"].panel-block-padding::part(content) {
 
 .notification-button {
   margin: 4px;
-  border: 1px solid var(--in-content-button-border);
+  border: 1px solid var(--button-border-color);
   border-radius: 3px;
-  color: var(--in-content-button-color);
-  background-color: var(--in-content-button-background);
+  color: var(--button-text-color);
+  background-color: var(--button-background-color);
 
   &:not([disabled]):hover {
-    color: var(--in-content-button-color-hover);
-    background-color: var(--in-content-button-background-hover);
+    color: var(--button-text-color-hover);
+    background-color: var(--button-background-color-hover);
 
     &:active {
-      border-color: var(--in-content-button-border-active);
-      color: var(--in-content-button-color-active);
-      background-color: var(--in-content-button-background-active);
+      border-color: var(--button-border-color-active);
+      color: var(--button-text-color-active);
+      background-color: var(--button-background-color-active);
     }
   }
 
@@ -1385,6 +1395,7 @@ panel[type="arrow"].panel-block-padding::part(content) {
   &.small-button {
     font-size: inherit;
     font-weight: 400;
+    max-height: 1.8em;
     min-height: 24px;
     margin: 4px;
   }
@@ -1407,35 +1418,35 @@ panel[type="arrow"].panel-block-padding::part(content) {
   }
 
   toolbarbutton&[is="toolbarbutton-menu-button"] {
+    appearance: none;
     align-items: center;
     margin: 4px 6px;
     padding-block: 0;
-    background-color: var(--in-content-button-background);
+    background-color: var(--button-background-color);
 
     & > toolbarbutton {
       margin-block: 0;
       margin-inline: 0 2px;
-      min-height: 22px;
       border-start-start-radius: 2px;
       border-start-end-radius: 2px;
       border-start-end-radius: 0;
       border-end-end-radius: 0;
-      padding: 2px 15px;
+      padding: 0 15px;
       font-weight: inherit;
-      background-color: var(--in-content-button-background);
+      background-color: var(--button-background-color);
       border-width: 0;
-      border-inline-end: 1px solid var(--in-content-button-border);
+      border-inline-end: 1px solid var(--button-border-color);
     }
 
     &:hover,
     & > toolbarbutton:hover {
-      background-color: var(--in-content-button-background-hover);
-      color: var(--in-content-button-color-hover);
+      background-color: var(--button-background-color-hover);
+      color: var(--button-text-color-hover);
 
       &:active {
-        background-color: var(--in-content-button-background-active);
-        color: var(--in-content-button-color-active);
-        border-color: var(--in-content-button-border-active);
+        background-color: var(--button-background-color-active);
+        color: var(--button-text-color-active);
+        border-color: var(--button-border-color-active);
       }
     }
 

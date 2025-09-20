@@ -5,21 +5,26 @@
 #include "EwsFolder.h"
 
 #include "EwsFolderCopyHandler.h"
+#include "EwsListeners.h"
 #include "EwsMessageCopyHandler.h"
 #include "IEwsClient.h"
 #include "IEwsIncomingServer.h"
 
 #include "ErrorList.h"
 #include "FolderCompactor.h"
+#include "FolderPopulation.h"
 #include "MailNewsTypes.h"
+#include "MsgOperationListener.h"
 #include "nsIMsgCopyService.h"
+#include "nsIMsgDBView.h"
 #include "nsIMsgDatabase.h"
+#include "nsIMsgFilterService.h"
 #include "nsIMsgFolderNotificationService.h"
 #include "nsIMsgPluggableStore.h"
+#include "nsISpamSettings.h"
+#include "nsIMsgWindow.h"
 #include "nsString.h"
 #include "nsMsgFolderFlags.h"
-#include "nsIMsgCopyService.h"
-#include "nsIMsgWindow.h"
 #include "nsMsgUtils.h"
 #include "nsNetUtil.h"
 #include "nsPrintfCString.h"
@@ -34,6 +39,37 @@
 
 constexpr auto kEwsIdProperty = "ewsId";
 
+nsresult CreateNewLocalEwsFolder(nsIMsgFolder* parent, const nsACString& ewsId,
+                                 const nsACString& folderName,
+                                 nsIMsgFolder** createdFolder) {
+  nsCOMPtr<nsIMsgPluggableStore> msgStore;
+  nsresult rv = parent->GetMsgStore(getter_AddRefs(msgStore));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Initialize storage and memory for the new folder and register it with
+  // the parent folder.
+  nsCOMPtr<nsIMsgFolder> newFolder;
+  rv = msgStore->CreateFolder(parent, folderName, getter_AddRefs(newFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // We've already verified that there's exactly one EWS ID in `ids`.
+  rv = newFolder->SetStringProperty(kEwsIdProperty, ewsId);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Notify any consumers listening for updates regarding the folder's
+  // creation.
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  notifier->NotifyFolderAdded(newFolder);
+
+  rv = parent->NotifyFolderAdded(newFolder);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  newFolder.forget(createdFolder);
+
+  return NS_OK;
+}
+
 static nsresult GetEwsIdsForMessageHeaders(
     const nsTArray<RefPtr<nsIMsgDBHdr>>& messageHeaders,
     nsTArray<nsCString>& ewsIds) {
@@ -44,7 +80,13 @@ static nsresult GetEwsIdsForMessageHeaders(
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (ewsId.IsEmpty()) {
-      NS_WARNING("Skipping header without EWS ID");
+      nsMsgKey messageKey;
+      rv = header->GetMessageKey(&messageKey);
+      NS_ENSURE_SUCCESS(rv, rv);
+      NS_WARNING(
+          nsPrintfCString("Skipping header without EWS ID. messageKey=%d",
+                          messageKey)
+              .get());
       continue;
     }
 
@@ -64,18 +106,14 @@ static nsresult NotifyMessageCopyServiceComplete(
 
 static nsresult HandleMoveError(nsIMsgFolder* sourceFolder,
                                 nsIMsgFolder* destinationFolder,
-                                IEwsClient::Error error,
-                                const nsACString& description) {
+                                nsresult status) {
   NS_ERROR(nsPrintfCString("EWS same-server move error: %s",
-                           nsPromiseFlatCString(description).get())
+                           mozilla::GetStaticErrorName(status))
                .get());
   sourceFolder->NotifyFolderEvent(kDeleteOrMoveMsgFailed);
 
-  nsresult rv = NotifyMessageCopyServiceComplete(
-      sourceFolder, destinationFolder, nsresult::NS_ERROR_UNEXPECTED);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return NS_OK;
+  return NotifyMessageCopyServiceComplete(sourceFolder, destinationFolder,
+                                          status);
 }
 
 // Return a scope guard that will ensure the copy service is notified of failure
@@ -91,440 +129,18 @@ static nsresult HandleMoveError(nsIMsgFolder* sourceFolder,
   });
 }
 
-class FolderCreateCallbacks : public IEwsFolderCreateCallbacks {
- public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_IEWSFOLDERCREATECALLBACKS
-
-  FolderCreateCallbacks(EwsFolder* parentFolder, const nsACString& folderName)
-      : mParentFolder(parentFolder), mFolderName(folderName) {}
-
- protected:
-  virtual ~FolderCreateCallbacks() = default;
-
- private:
-  RefPtr<EwsFolder> mParentFolder;
-  const nsCString mFolderName;
-};
-
-NS_IMPL_ISUPPORTS(FolderCreateCallbacks, IEwsFolderCreateCallbacks)
-
-NS_IMETHODIMP FolderCreateCallbacks::OnSuccess(const nsACString& id) {
-  nsCOMPtr<nsIMsgPluggableStore> msgStore;
-  nsresult rv = mParentFolder->GetMsgStore(getter_AddRefs(msgStore));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Initialize storage and memory for the new folder and register it with the
-  // parent folder.
-  nsCOMPtr<nsIMsgFolder> newFolder;
-  rv = msgStore->CreateFolder(mParentFolder, mFolderName,
-                              getter_AddRefs(newFolder));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = newFolder->SetStringProperty(kEwsIdProperty, id);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Notify any consumers listening for updates regarding the folder's creation.
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
-      mozilla::components::FolderNotification::Service();
-  notifier->NotifyFolderAdded(newFolder);
-
-  return mParentFolder->NotifyFolderAdded(newFolder);
-}
-
-NS_IMETHODIMP FolderCreateCallbacks::OnError(IEwsClient::Error err,
-                                             const nsACString& desc) {
-  NS_ERROR("Error occurred while creating EWS folder");
-
-  return NS_OK;
-}
-
-class MessageDeletionCallbacks : public IEwsMessageDeleteCallbacks {
- public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_IEWSMESSAGEDELETECALLBACKS
-
-  MessageDeletionCallbacks(EwsFolder* folder,
-                           const nsTArray<RefPtr<nsIMsgDBHdr>>& headers)
-      : mFolder(folder), mHeaders(headers.Clone()) {}
-
- protected:
-  virtual ~MessageDeletionCallbacks() = default;
-
- private:
-  // The folder to delete messages from.
-  RefPtr<EwsFolder> mFolder;
-
-  // The headers of the messages for which deletion has been requested. At this
-  // point, we don't know if all of these messages are stored locally.
-  nsTArray<RefPtr<nsIMsgDBHdr>> mHeaders;
-};
-
-NS_IMPL_ISUPPORTS(MessageDeletionCallbacks, IEwsMessageDeleteCallbacks)
-
-NS_IMETHODIMP MessageDeletionCallbacks::OnRemoteDeleteSuccessful() {
-  return LocalDeleteMessages(mFolder, mHeaders);
-}
-
-NS_IMETHODIMP MessageDeletionCallbacks::OnError(IEwsClient::Error err,
-                                                const nsACString& desc) {
-  NS_ERROR("Error occurred while deleting EWS messages");
-
-  return NS_OK;
-}
-
-class MessageOperationCallbacks : public IEwsMessageCallbacks {
- public:
-  NS_DECL_THREADSAFE_ISUPPORTS
-  NS_DECL_IEWSMESSAGECALLBACKS
-
-  MessageOperationCallbacks(EwsFolder* folder, nsIMsgWindow* window)
-      : mFolder(folder), mWindow(window) {}
-
- protected:
-  virtual ~MessageOperationCallbacks() = default;
-
- private:
-  RefPtr<EwsFolder> mFolder;
-  RefPtr<nsIMsgWindow> mWindow;
-};
-
-NS_IMPL_ISUPPORTS(MessageOperationCallbacks, IEwsMessageCallbacks)
-
-NS_IMETHODIMP MessageOperationCallbacks::SaveNewHeader(nsIMsgDBHdr* hdr) {
-  RefPtr<nsIMsgDatabase> db;
-  nsresult rv = mFolder->GetMsgDatabase(getter_AddRefs(db));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  MOZ_TRY(db->AddNewHdrToDB(hdr, true));
-
-  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
-      mozilla::components::FolderNotification::Service();
-  notifier->NotifyMsgAdded(hdr);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP MessageOperationCallbacks::CommitChanges() {
-  RefPtr<nsIMsgDatabase> db;
-  nsresult rv = mFolder->GetMsgDatabase(getter_AddRefs(db));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return db->Commit(nsMsgDBCommitType::kLargeCommit);
-}
-
-NS_IMETHODIMP MessageOperationCallbacks::CreateNewHeaderForItem(
-    const nsACString& ewsId, nsIMsgDBHdr** _retval) {
-  // Check if a header already exists for this EWS ID. `GetHeaderForItem`
-  // returns `NS_ERROR_NOT_AVAILABLE` when no header exists, so we only want to
-  // move forward with creating one in this case.
-  RefPtr<nsIMsgDBHdr> existingHeader;
-  nsresult rv = GetHeaderForItem(ewsId, getter_AddRefs(existingHeader));
-
-  // If we could retrieve a header for this item, error immediately.
-  if (NS_SUCCEEDED(rv)) {
-    return NS_ERROR_ILLEGAL_VALUE;
+/// Return a guard that will ensure the specified `listener` is notified when
+/// the calling scope exits.
+[[nodiscard]] static auto GuardCopyServiceListener(
+    nsIMsgCopyServiceListener* listener, const nsresult& rv) {
+  if (listener) {
+    listener->OnStartCopy();
   }
-
-  // We already know that `rv` is a failure at this point, so we just need to
-  // check it's not the one failure we want.
-  if (rv != NS_ERROR_NOT_AVAILABLE) {
-    return rv;
-  }
-
-  RefPtr<nsIMsgDatabase> db;
-  MOZ_TRY(mFolder->GetMsgDatabase(getter_AddRefs(db)));
-
-  RefPtr<nsIMsgDBHdr> newHeader;
-  MOZ_TRY(db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(newHeader)));
-
-  MOZ_TRY(newHeader->SetStringProperty(kEwsIdProperty, ewsId));
-
-  newHeader.forget(_retval);
-  return NS_OK;
-}
-
-NS_IMETHODIMP MessageOperationCallbacks::GetHeaderForItem(
-    const nsACString& ewsId, nsIMsgDBHdr** _retval) {
-  RefPtr<nsIMsgDatabase> db;
-  MOZ_TRY(mFolder->GetMsgDatabase(getter_AddRefs(db)));
-
-  RefPtr<nsIMsgDBHdr> existingHeader;
-  MOZ_TRY(db->GetMsgHdrForEwsItemID(ewsId, getter_AddRefs(existingHeader)));
-
-  // Make sure we managed to get a header from the database.
-  if (!existingHeader) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-
-  existingHeader.forget(_retval);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP MessageOperationCallbacks::DeleteHeaderFromDB(
-    const nsACString& ewsId) {
-  // Delete the message headers from the database.
-  RefPtr<nsIMsgDatabase> db;
-  nsresult rv = mFolder->GetMsgDatabase(getter_AddRefs(db));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  RefPtr<nsIMsgDBHdr> existingHeader;
-  rv = db->GetMsgHdrForEwsItemID(ewsId, getter_AddRefs(existingHeader));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!existingHeader) {
-    // If we don't have a header for this message ID, it means we have already
-    // deleted it locally. This can happen in legitimate situations, e.g. when
-    // syncing the message list after deleting a message from Thunderbird (in
-    // which case, the server's sync response will include a `Delete` change for
-    // the message we've just deleted).
-    return NS_OK;
-  }
-
-  return LocalDeleteMessages(mFolder, {existingHeader});
-}
-
-NS_IMETHODIMP MessageOperationCallbacks::MaybeDeleteMessageFromStore(
-    nsIMsgDBHdr* hdr) {
-  NS_ENSURE_ARG_POINTER(hdr);
-
-  uint32_t flags;
-  MOZ_TRY(hdr->GetFlags(&flags));
-
-  if (!(flags & nsMsgMessageFlags::Offline)) {
-    // Bail early if there's nothing to remove.
-    return NS_OK;
-  }
-
-  // Delete the message content from the local store.
-  nsCOMPtr<nsIMsgPluggableStore> store;
-  MOZ_TRY(mFolder->GetMsgStore(getter_AddRefs(store)));
-  MOZ_TRY(store->DeleteMessages({hdr}));
-
-  // Update the flags on the database entry to reflect its content is *not*
-  // stored offline anymore. We don't commit right now, but the expectation is
-  // that the consumer will call `CommitChanges()` once it's done processing the
-  // current change.
-  uint32_t unused;
-  return hdr->AndFlags(~nsMsgMessageFlags::Offline, &unused);
-}
-
-NS_IMETHODIMP MessageOperationCallbacks::UpdateReadStatus(
-    const nsACString& ewsId, bool is_read) {
-  // Get the header for the message with ewsId and update its read flag in the
-  // database.
-  RefPtr<nsIMsgDBHdr> existingHeader;
-  nsresult rv = GetHeaderForItem(ewsId, getter_AddRefs(existingHeader));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return existingHeader->MarkRead(is_read);
-}
-
-NS_IMETHODIMP MessageOperationCallbacks::UpdateSyncState(
-    const nsACString& syncStateToken) {
-  return mFolder->SetStringProperty(SYNC_STATE_PROPERTY, syncStateToken);
-}
-
-NS_IMETHODIMP MessageOperationCallbacks::OnSyncComplete() {
-  mFolder->NotifyFolderEvent(kFolderLoaded);
-  return NS_OK;
-}
-
-NS_IMETHODIMP MessageOperationCallbacks::OnError(IEwsClient::Error err,
-                                                 const nsACString& desc) {
-  NS_ERROR("Error occurred while syncing EWS messages");
-
-  return NS_OK;
-}
-
-class DeleteFolderCallbacks : public IEwsFolderDeleteCallbacks {
- public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_IEWSFOLDERDELETECALLBACKS
-
-  DeleteFolderCallbacks(EwsFolder* folder, nsIMsgWindow* window)
-      : mFolder(folder), mWindow(window) {}
-
- protected:
-  virtual ~DeleteFolderCallbacks() = default;
-
- private:
-  RefPtr<EwsFolder> mFolder;
-  RefPtr<nsIMsgWindow> mWindow;
-};
-
-NS_IMPL_ISUPPORTS(DeleteFolderCallbacks, IEwsFolderDeleteCallbacks)
-
-NS_IMETHODIMP DeleteFolderCallbacks::OnRemoteDeleteFolderSuccessful() {
-  return mFolder->nsMsgDBFolder::DeleteSelf(mWindow);
-}
-
-class FolderUpdateCallbacks : public IEwsFolderUpdateCallbacks {
- public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_IEWSFOLDERUPDATECALLBACKS
-
-  FolderUpdateCallbacks(EwsFolder* folder, nsIMsgWindow* window,
-                        nsAutoCString newName)
-      : mFolder(folder), mWindow(window), mNewName(std::move(newName)) {}
-
- protected:
-  virtual ~FolderUpdateCallbacks() = default;
-
- private:
-  RefPtr<EwsFolder> mFolder;
-  RefPtr<nsIMsgWindow> mWindow;
-  nsAutoCString mNewName;
-};
-
-NS_IMPL_ISUPPORTS(FolderUpdateCallbacks, IEwsFolderUpdateCallbacks)
-
-NS_IMETHODIMP FolderUpdateCallbacks::OnRemoteFolderUpdateSuccessful() {
-  // To rename, we need the current parent.
-  nsCOMPtr<nsIMsgFolder> parentFolder;
-  MOZ_TRY(mFolder->GetParent(getter_AddRefs(parentFolder)));
-
-  return LocalRenameOrReparentFolder(mFolder, parentFolder, mNewName, mWindow);
-}
-
-class ItemCopyMoveCallbacks : public IEwsItemCopyMoveCallbacks {
- public:
-  NS_DECL_ISUPPORTS;
-  NS_DECL_IEWSITEMCOPYMOVECALLBACKS;
-
-  ItemCopyMoveCallbacks(nsCOMPtr<nsIMsgFolder> sourceFolder,
-                        RefPtr<EwsFolder> destinationFolder,
-                        nsTArray<RefPtr<nsIMsgDBHdr>> originalMessages,
-                        nsCOMPtr<nsIMsgWindow> window,
-                        bool deleteSourceItemsWhenComplete);
-
- protected:
-  virtual ~ItemCopyMoveCallbacks() = default;
-
- private:
-  nsCOMPtr<nsIMsgFolder> mSourceFolder;
-  RefPtr<EwsFolder> mDestinationFolder;
-  nsTArray<RefPtr<nsIMsgDBHdr>> mOriginalMessages;
-  nsCOMPtr<nsIMsgWindow> mWindow;
-  bool mDeleteSourceItemsWhenComplete;
-};
-
-NS_IMPL_ISUPPORTS(ItemCopyMoveCallbacks, IEwsItemCopyMoveCallbacks)
-
-ItemCopyMoveCallbacks::ItemCopyMoveCallbacks(
-    nsCOMPtr<nsIMsgFolder> sourceFolder, RefPtr<EwsFolder> destinationFolder,
-    nsTArray<RefPtr<nsIMsgDBHdr>> originalMessages,
-    nsCOMPtr<nsIMsgWindow> window, bool deleteSourceItemsWhenComplete)
-    : mSourceFolder(std::move(sourceFolder)),
-      mDestinationFolder(std::move(destinationFolder)),
-      mOriginalMessages(std::move(originalMessages)),
-      mWindow(std::move(window)),
-      mDeleteSourceItemsWhenComplete(deleteSourceItemsWhenComplete) {}
-
-NS_IMETHODIMP ItemCopyMoveCallbacks::OnRemoteCopyMoveSuccessful(
-    bool syncMessages, const nsTArray<nsCString>& newIds) {
-  nsresult rv;
-  if (syncMessages) {
-    rv = mDestinationFolder->SyncMessages(mWindow);
-    NS_ENSURE_SUCCESS(rv, rv);
-  } else {
-    // The new IDs were returned from the server. In this case, the order of the
-    // new IDs will correspond to the order of the input IDs specified in the
-    // initial request.
-    NS_ENSURE_TRUE(newIds.Length() == mOriginalMessages.Length(),
-                   NS_ERROR_UNEXPECTED);
-
-    /// Copy the messages into the destination folder.
-    nsTArray<RefPtr<nsIMsgDBHdr>> newHeaders;
-    rv = LocalCopyMessages(mSourceFolder, mDestinationFolder, mOriginalMessages,
-                           newHeaders);
-    NS_ENSURE_SUCCESS(rv, rv);
-    NS_ENSURE_TRUE(newHeaders.Length() == newIds.Length(), NS_ERROR_UNEXPECTED);
-
-    // Set the EWS ID property for each of the new headers.
-    for (std::size_t i = 0; i < newIds.Length(); ++i) {
-      newHeaders[i]->SetStringProperty(kEwsIdProperty, newIds[i]);
+  return mozilla::MakeScopeExit([&rv, listener]() {
+    if (listener) {
+      listener->OnStopCopy(rv);
     }
-
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
-        mozilla::components::FolderNotification::Service();
-    notifier->NotifyMsgsMoveCopyCompleted(true, mOriginalMessages,
-                                          mDestinationFolder, newHeaders);
-  }
-
-  // If requested, delete the original items from the source folder.
-  if (mDeleteSourceItemsWhenComplete) {
-    rv = LocalDeleteMessages(mSourceFolder, mOriginalMessages);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    mSourceFolder->NotifyFolderEvent(kDeleteOrMoveMsgCompleted);
-  }
-
-  rv = NotifyMessageCopyServiceComplete(mSourceFolder, mDestinationFolder,
-                                        NS_OK);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP ItemCopyMoveCallbacks::OnError(IEwsClient::Error error,
-                                             const nsACString& description) {
-  return HandleMoveError(mSourceFolder, mDestinationFolder, error, description);
-}
-
-class FolderMoveCallbacks : public IEwsFolderMoveCallbacks {
- public:
-  NS_DECL_IEWSFOLDERMOVECALLBACKS;
-  NS_DECL_ISUPPORTS;
-
-  FolderMoveCallbacks(nsCOMPtr<nsIMsgFolder> sourceFolder,
-                      RefPtr<nsIMsgFolder> destinationFolder,
-                      nsCOMPtr<nsIMsgWindow> window)
-      : mSourceFolder(std::move(sourceFolder)),
-        mDestinationFolder(std::move(destinationFolder)),
-        mWindow(std::move(window)) {}
-
- protected:
-  virtual ~FolderMoveCallbacks() = default;
-
- private:
-  nsCOMPtr<nsIMsgFolder> mSourceFolder;
-  RefPtr<nsIMsgFolder> mDestinationFolder;
-  nsCOMPtr<nsIMsgWindow> mWindow;
-};
-
-NS_IMPL_ISUPPORTS(FolderMoveCallbacks, IEwsFolderMoveCallbacks);
-
-NS_IMETHODIMP FolderMoveCallbacks::OnRemoteMoveSuccessful(
-    const nsTArray<nsCString>& newIds) {
-  NS_ENSURE_TRUE(newIds.Length() == 1, NS_ERROR_UNEXPECTED);
-
-  nsAutoCString name;
-  nsresult rv = mSourceFolder->GetName(name);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  LocalRenameOrReparentFolder(mSourceFolder, mDestinationFolder, name, mWindow);
-
-  nsCOMPtr<nsIMsgFolder> newFolder;
-  rv = mDestinationFolder->GetChildNamed(name, getter_AddRefs(newFolder));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!newFolder) {
-    return NS_ERROR_UNEXPECTED;
-  }
-
-  newFolder->SetStringProperty(kEwsIdProperty, newIds[0]);
-
-  rv = NotifyMessageCopyServiceComplete(mSourceFolder, mDestinationFolder,
-                                        NS_OK);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP FolderMoveCallbacks::OnError(IEwsClient::Error error,
-                                           const nsACString& description) {
-  return HandleMoveError(mSourceFolder, mDestinationFolder, error, description);
+  });
 }
 
 NS_IMPL_ADDREF_INHERITED(EwsFolder, nsMsgDBFolder)
@@ -584,7 +200,7 @@ NS_IMETHODIMP EwsFolder::CreateStorageIfMissing(nsIUrlListener* urlListener) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP EwsFolder::CreateSubfolder(const nsACString& folderName,
+NS_IMETHODIMP EwsFolder::CreateSubfolder(const nsACString& aFolderName,
                                          nsIMsgWindow* msgWindow) {
   nsCString ewsId;
   nsresult rv = GetEwsId(ewsId);
@@ -594,10 +210,19 @@ NS_IMETHODIMP EwsFolder::CreateSubfolder(const nsACString& folderName,
   rv = GetEwsClient(getter_AddRefs(client));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  RefPtr<FolderCreateCallbacks> callbacks =
-      new FolderCreateCallbacks(this, folderName);
+  const auto folderName = nsCString(aFolderName);
 
-  return client->CreateFolder(ewsId, folderName, callbacks);
+  RefPtr<EwsSimpleListener> listener = new EwsSimpleListener(
+      [self = RefPtr(this), folderName](const nsTArray<nsCString>& ids,
+                                        bool useLegacyFallback) {
+        NS_ENSURE_TRUE(ids.Length() == 1, NS_ERROR_UNEXPECTED);
+
+        nsCOMPtr<nsIMsgFolder> newFolder;
+        return CreateNewLocalEwsFolder(self, ids[0], folderName,
+                                       getter_AddRefs(newFolder));
+      });
+
+  return client->CreateFolder(listener, ewsId, folderName);
 }
 
 NS_IMETHODIMP
@@ -629,7 +254,7 @@ NS_IMETHODIMP EwsFolder::GetNewMessages(nsIMsgWindow* aWindow,
   // Sync the message list. We don't need to sync the folder tree, because the
   // only likely consumer of this method is `EwsIncomingServer`, which does this
   // before asking folders to sync their message lists.
-  return SyncMessages(aWindow);
+  return SyncMessages(aWindow, aListener);
 }
 
 NS_IMETHODIMP EwsFolder::GetSubFolders(
@@ -704,7 +329,7 @@ NS_IMETHODIMP EwsFolder::UpdateFolder(nsIMsgWindow* aWindow) {
   // and we already sync it in a couple of occurrences (when getting new
   // messages, performing biff, etc.), it's likely fine to leave this as a
   // future improvement.
-  return SyncMessages(aWindow);
+  return SyncMessages(aWindow, nullptr);
 }
 
 NS_IMETHODIMP EwsFolder::Rename(const nsACString& aNewName,
@@ -738,10 +363,20 @@ NS_IMETHODIMP EwsFolder::Rename(const nsACString& aNewName,
   rv = GetStringProperty(SYNC_STATE_PROPERTY, syncStateToken);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  RefPtr<FolderUpdateCallbacks> ewsFolderListener =
-      new FolderUpdateCallbacks(this, msgWindow, nsAutoCString{aNewName});
+  const nsCOMPtr<nsIMsgWindow> window = msgWindow;
+  const auto newName = nsCString(aNewName);
 
-  return client->UpdateFolder(ewsFolderListener, folderId, aNewName);
+  RefPtr<EwsSimpleListener> listener = new EwsSimpleListener(
+      [self = RefPtr(this), newName, window](const nsTArray<nsCString>& ids,
+                                             bool useLegacyFallback) {
+        nsCOMPtr<nsIMsgFolder> parentFolder;
+        nsresult rv = self->GetParent(getter_AddRefs(parentFolder));
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        return LocalRenameOrReparentFolder(self, parentFolder, newName, window);
+      });
+
+  return client->UpdateFolder(listener, folderId, aNewName);
 }
 
 NS_IMETHODIMP EwsFolder::CopyFileMessage(
@@ -777,14 +412,14 @@ NS_IMETHODIMP EwsFolder::CopyFileMessage(
 }
 
 NS_IMETHODIMP EwsFolder::CopyMessages(
-    nsIMsgFolder* srcFolder, nsTArray<RefPtr<nsIMsgDBHdr>> const& srcHdrs,
-    bool isMove, nsIMsgWindow* msgWindow, nsIMsgCopyServiceListener* listener,
-    bool isFolder, bool allowUndo) {
-  NS_ENSURE_ARG_POINTER(srcFolder);
+    nsIMsgFolder* aSrcFolder, nsTArray<RefPtr<nsIMsgDBHdr>> const& aSrcHdrs,
+    bool aIsMove, nsIMsgWindow* aMsgWindow,
+    nsIMsgCopyServiceListener* aCopyListener, bool aIsFolder, bool aAllowUndo) {
+  NS_ENSURE_ARG_POINTER(aSrcFolder);
 
   nsresult rv = NS_OK;
 
-  auto notifyFailureOnExit = GuardCopyServiceExit(srcFolder, this, rv);
+  auto notifyFailureOnExit = GuardCopyServiceExit(aSrcFolder, this, rv);
 
   nsCOMPtr<IEwsClient> client;
   MOZ_TRY(GetEwsClient(getter_AddRefs(client)));
@@ -799,28 +434,84 @@ NS_IMETHODIMP EwsFolder::CopyMessages(
   }
 
   bool isSameServer = false;
-  rv = FoldersOnSameServer(srcFolder, this, &isSameServer);
+  rv = FoldersOnSameServer(aSrcFolder, this, &isSameServer);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (isSameServer) {
     // Same server copy or move, perform operation remotely.
     nsTArray<nsCString> ewsIds;
-    rv = GetEwsIdsForMessageHeaders(srcHdrs, ewsIds);
+    rv = GetEwsIdsForMessageHeaders(aSrcHdrs, ewsIds);
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsAutoCString destinationFolderId;
     rv = GetEwsId(destinationFolderId);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    const bool deleteSourceItemsWhenComplete = isMove;
-    RefPtr<ItemCopyMoveCallbacks> callbacks{
-        new ItemCopyMoveCallbacks(srcFolder, this, srcHdrs.Clone(), msgWindow,
-                                  deleteSourceItemsWhenComplete)};
+    const nsCOMPtr<nsIMsgWindow> msgWindow = aMsgWindow;
+    const nsCOMPtr<nsIMsgFolder> srcFolder = aSrcFolder;
+    const nsCOMPtr<nsIMsgCopyServiceListener> copyListener = aCopyListener;
 
-    if (isMove) {
-      rv = client->MoveItems(callbacks, destinationFolderId, ewsIds);
+    const RefPtr<EwsSimpleFailibleMessageListener> listener =
+        new EwsSimpleFailibleMessageListener(
+            aSrcHdrs,
+            [self = RefPtr(this), srcFolder, msgWindow, aIsMove, copyListener](
+                const nsTArray<RefPtr<nsIMsgDBHdr>>& srcHdrs,
+                const nsTArray<nsCString>& ids, bool useLegacyFallback) {
+              nsresult rv = NS_OK;
+
+              auto listenerExitGuard =
+                  GuardCopyServiceListener(copyListener, rv);
+
+              if (useLegacyFallback) {
+                rv = self->SyncMessages(msgWindow, nullptr);
+                NS_ENSURE_SUCCESS(rv, rv);
+              } else {
+                // The new IDs were returned from the server. In this case, the
+                // order of the new IDs will correspond to the order of the
+                // input IDs specified in the initial request.
+                NS_ENSURE_TRUE(ids.Length() == srcHdrs.Length(),
+                               NS_ERROR_UNEXPECTED);
+
+                /// Copy the messages into the destination folder.
+                nsTArray<RefPtr<nsIMsgDBHdr>> newHeaders;
+                rv = LocalCopyMessages(srcFolder, self, srcHdrs, newHeaders);
+                NS_ENSURE_SUCCESS(rv, rv);
+                NS_ENSURE_TRUE(newHeaders.Length() == ids.Length(),
+                               NS_ERROR_UNEXPECTED);
+
+                // Set the EWS ID property for each of the new headers.
+                for (std::size_t i = 0; i < ids.Length(); ++i) {
+                  newHeaders[i]->SetStringProperty(kEwsIdProperty, ids[i]);
+                }
+
+                nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+                    mozilla::components::FolderNotification::Service();
+                rv = notifier->NotifyMsgsMoveCopyCompleted(aIsMove, srcHdrs,
+                                                           self, newHeaders);
+                NS_ENSURE_SUCCESS(rv, rv);
+              }
+
+              // If required, delete the original items from the source folder.
+              if (aIsMove) {
+                rv = LocalDeleteMessages(srcFolder, srcHdrs);
+                NS_ENSURE_SUCCESS(rv, rv);
+
+                srcFolder->NotifyFolderEvent(kDeleteOrMoveMsgCompleted);
+              }
+
+              return NotifyMessageCopyServiceComplete(srcFolder, self, NS_OK);
+            },
+            [self = RefPtr(this), srcFolder, copyListener](nsresult status) {
+              if (copyListener) {
+                copyListener->OnStopCopy(status);
+              }
+              return HandleMoveError(srcFolder, self, status);
+            });
+
+    if (aIsMove) {
+      rv = client->MoveItems(listener, destinationFolderId, ewsIds);
     } else {
-      rv = client->CopyItems(callbacks, destinationFolderId, ewsIds);
+      rv = client->CopyItems(listener, destinationFolderId, ewsIds);
     }
     NS_ENSURE_SUCCESS(rv, rv);
   } else {
@@ -830,8 +521,9 @@ NS_IMETHODIMP EwsFolder::CopyMessages(
     nsresult rv = GetEwsId(ewsId);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    RefPtr<MessageCopyHandler> handler = new MessageCopyHandler(
-        srcFolder, this, srcHdrs, isMove, msgWindow, ewsId, client, listener);
+    RefPtr<MessageCopyHandler> handler =
+        new MessageCopyHandler(aSrcFolder, this, aSrcHdrs, aIsMove, aMsgWindow,
+                               ewsId, client, aCopyListener);
 
     // Start the copy for the first message. Once this copy has finished, the
     // `MessageCopyHandler` will automatically start the copy for the next
@@ -850,26 +542,51 @@ NS_IMETHODIMP EwsFolder::CopyMessages(
   return NS_OK;
 }
 
-NS_IMETHODIMP EwsFolder::CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
-                                    nsIMsgWindow* window,
-                                    nsIMsgCopyServiceListener* listener) {
-  NS_ENSURE_ARG_POINTER(srcFolder);
+static nsresult CompleteCopyMoveFolderOperation(
+    nsIMsgFolder* srcFolder, nsIMsgFolder* destinationFolder,
+    nsIMsgCopyServiceListener* copyListener, const nsACString& name,
+    const nsCString& newEwsId) {
+  nsresult rv = NS_OK;
+
+  auto listenerExitGuard = GuardCopyServiceListener(copyListener, rv);
+
+  nsCOMPtr<nsIMsgFolder> newFolder;
+  rv = destinationFolder->GetChildNamed(name, getter_AddRefs(newFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!newFolder) {
+    // Ensure the exit error state is set appropriately for the listener exit
+    // guard.
+    rv = NS_ERROR_UNEXPECTED;
+    return rv;
+  }
+
+  newFolder->SetStringProperty(kEwsIdProperty, newEwsId);
+
+  return NotifyMessageCopyServiceComplete(srcFolder, destinationFolder, NS_OK);
+}
+
+NS_IMETHODIMP EwsFolder::CopyFolder(nsIMsgFolder* aSrcFolder,
+                                    bool aIsMoveFolder,
+                                    nsIMsgWindow* aMsgWindow,
+                                    nsIMsgCopyServiceListener* aCopyListener) {
+  NS_ENSURE_ARG_POINTER(aSrcFolder);
 
   nsresult rv = NS_OK;
 
-  auto notifyFailureOnExit = GuardCopyServiceExit(srcFolder, this, rv);
+  auto notifyFailureOnExit = GuardCopyServiceExit(aSrcFolder, this, rv);
 
   nsCOMPtr<IEwsClient> client;
   MOZ_TRY(GetEwsClient(getter_AddRefs(client)));
 
   bool isSameServer;
-  rv = FoldersOnSameServer(srcFolder, this, &isSameServer);
+  rv = FoldersOnSameServer(aSrcFolder, this, &isSameServer);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (isSameServer && isMoveFolder) {
-    // Same server move.
+  if (isSameServer) {
+    // Same server move or copy.
     nsAutoCString sourceEwsId;
-    rv = srcFolder->GetStringProperty(kEwsIdProperty, sourceEwsId);
+    rv = aSrcFolder->GetStringProperty(kEwsIdProperty, sourceEwsId);
     NS_ENSURE_SUCCESS(rv, rv);
     if (sourceEwsId.IsEmpty()) {
       NS_ERROR("Expected EWS folder for server but folder has no EWS ID.");
@@ -880,14 +597,83 @@ NS_IMETHODIMP EwsFolder::CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
     rv = GetEwsId(destinationEwsId);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    RefPtr<FolderMoveCallbacks> callbacks{
-        new FolderMoveCallbacks(srcFolder, this, window)};
-    client->MoveFolders(callbacks, destinationEwsId, {sourceEwsId});
+    const nsCOMPtr<nsIMsgFolder> srcFolder = aSrcFolder;
+    const nsCOMPtr<nsIMsgWindow> msgWindow = aMsgWindow;
+    const nsCOMPtr<nsIMsgCopyServiceListener> copyListener = aCopyListener;
+
+    RefPtr<EwsSimpleFailibleListener> listener = new EwsSimpleFailibleListener(
+        [self = RefPtr(this), srcFolder, copyListener, msgWindow,
+         aIsMoveFolder](const nsTArray<nsCString>& ids,
+                        bool useLegacyFallback) {
+          NS_ENSURE_TRUE(ids.Length() == 1, NS_ERROR_UNEXPECTED);
+          const auto& newEwsId = ids[0];
+
+          nsAutoCString name;
+          nsresult rv = srcFolder->GetName(name);
+          NS_ENSURE_SUCCESS(rv, rv);
+
+          // For a move, the EWS IDs of any subfolders or items of the moved
+          // folder or subfolder are stable (no known documentation, so this is
+          // through observation), so we can move in local storage to avoid a
+          // sync. When copying, however, new EWS IDs must be created for any
+          // subfolders or items of the copied folder or its subfolders, and we
+          // have no way to obtain the new IDs other than performing a sync of
+          // the folder hierarchy.
+          if (aIsMoveFolder) {
+            rv = LocalRenameOrReparentFolder(srcFolder, self, name, msgWindow);
+            NS_ENSURE_SUCCESS(rv, rv);
+            rv = CompleteCopyMoveFolderOperation(srcFolder, self, copyListener,
+                                                 name, newEwsId);
+            return rv;
+          }
+
+          nsCOMPtr<nsIMsgIncomingServer> server;
+          rv = self->GetServer(getter_AddRefs(server));
+          NS_ENSURE_SUCCESS(rv, rv);
+
+          const nsCOMPtr<IEwsIncomingServer> ewsServer{
+              do_QueryInterface(server, &rv)};
+          NS_ENSURE_SUCCESS(rv, rv);
+
+          // Limiting granularity of the folder hierarchy update to only the
+          // destination folder is not possible due to our current strategy of
+          // managing the EWS sync token at the server level for folder updates,
+          // so we have to sync the entire hierarchy. In addition, for the
+          // copied folder messages to appear, an additional message sync will
+          // be required for the newly copied folder. However, to limit the
+          // complexity of this callback chain, we don't perform that step here,
+          // instead relying on external processes (such as folder
+          // expansion/selection) to perform that operation in the future.
+          // See https://bugzilla.mozilla.org/show_bug.cgi?id=1980963
+          // for the enhancement to improve hierarchy update granularity.
+          const RefPtr<EwsSimpleListener> listener = new EwsSimpleListener{
+              [self, srcFolder, msgWindow, copyListener, newEwsId, name](
+                  const auto& ids, bool resyncRequired) {
+                nsresult rv = NS_OK;
+                rv = CompleteCopyMoveFolderOperation(
+                    srcFolder, self, copyListener, name, newEwsId);
+                return rv;
+              }};
+          return ewsServer->SyncFolderHierarchy(listener, msgWindow);
+        },
+        [self = RefPtr(this), srcFolder, copyListener](nsresult status) {
+          if (copyListener) {
+            copyListener->OnStopCopy(status);
+          }
+
+          return HandleMoveError(srcFolder, self, status);
+        });
+
+    if (aIsMoveFolder) {
+      client->MoveFolders(listener, destinationEwsId, {sourceEwsId});
+    } else {
+      client->CopyFolders(listener, destinationEwsId, {sourceEwsId});
+    }
   } else {
     // Cross-server folder move (or copy). Instantiate a `FolderCopyHandler` for
     // this operation.
     RefPtr<FolderCopyHandler> handler = new FolderCopyHandler(
-        srcFolder, this, isMoveFolder, window, client, listener);
+        aSrcFolder, this, aIsMoveFolder, aMsgWindow, client, aCopyListener);
 
     rv = handler->CopyNextFolder();
     NS_ENSURE_SUCCESS(rv, rv);
@@ -897,39 +683,63 @@ NS_IMETHODIMP EwsFolder::CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
 }
 
 NS_IMETHODIMP EwsFolder::DeleteMessages(
-    nsTArray<RefPtr<nsIMsgDBHdr>> const& msgHeaders, nsIMsgWindow* msgWindow,
-    bool deleteStorage, bool isMove, nsIMsgCopyServiceListener* listener,
-    bool allowUndo) {
+    nsTArray<RefPtr<nsIMsgDBHdr>> const& aMsgHeaders, nsIMsgWindow* aMsgWindow,
+    bool aDeleteStorage, bool aIsMove, nsIMsgCopyServiceListener* aCopyListener,
+    bool aAllowUndo) {
+  using DeleteModel = IEwsIncomingServer::DeleteModel;
+
   nsresult rv;
 
   bool isTrashFolder = mFlags & nsMsgFolderFlags::Trash;
 
+  // Check the delete model to see if this should be a permanent delete.
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  rv = GetServer(getter_AddRefs(server));
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<IEwsIncomingServer> ewsServer{do_QueryInterface(server, &rv)};
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  DeleteModel deleteModel;
+  rv = ewsServer->GetDeleteModel(&deleteModel);
+
   // If we're performing a "hard" delete, or if we're deleting from the trash
   // folder, perform a "real" deletion (i.e. delete the messages from both the
   // storage and the server).
-  if (deleteStorage || isTrashFolder) {
+  if (aDeleteStorage || isTrashFolder ||
+      deleteModel == DeleteModel::PERMANENTLY_DELETE) {
     nsTArray<nsCString> ewsIds;
-    MOZ_TRY(GetEwsIdsForMessageHeaders(msgHeaders, ewsIds));
-    RefPtr<MessageDeletionCallbacks> ewsMsgListener =
-        new MessageDeletionCallbacks(this, msgHeaders);
+    MOZ_TRY(GetEwsIdsForMessageHeaders(aMsgHeaders, ewsIds));
+
+    const nsCOMPtr<nsIMsgCopyServiceListener> copyListener = aCopyListener;
+
+    RefPtr<EwsSimpleMessageListener> listener = new EwsSimpleMessageListener(
+        aMsgHeaders,
+        [self = RefPtr(this), copyListener](
+            const nsTArray<RefPtr<nsIMsgDBHdr>>& srcHdrs,
+            const nsTArray<nsCString>& ids, bool useLegacyFallback) {
+          nsresult rv = NS_OK;
+          auto listenerExitGuard = GuardCopyServiceListener(copyListener, rv);
+          return LocalDeleteMessages(self, srcHdrs);
+        });
 
     nsCOMPtr<IEwsClient> client;
     rv = GetEwsClient(getter_AddRefs(client));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    return client->DeleteMessages(ewsIds, ewsMsgListener);
+    return client->DeleteMessages(listener, ewsIds);
   }
 
-  // We're moving the messages to trash folder. Start by kicking off a copy.
+  // We're moving the messages to trash folder.
   nsCOMPtr<nsIMsgFolder> trashFolder;
-  MOZ_TRY(GetTrashFolder(getter_AddRefs(trashFolder)));
+  rv = GetTrashFolder(getter_AddRefs(trashFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIMsgCopyService> copyService =
-      mozilla::components::Copy::Service();
-  // When the copy completes, DeleteMessages() will be called again (with
-  // `isMove` and `deleteStorage` set to `true`) to perform the actual delete.
-  return copyService->CopyMessages(this, msgHeaders, trashFolder, true,
-                                   listener, msgWindow, allowUndo);
+  if (!trashFolder) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  return trashFolder->CopyMessages(this, aMsgHeaders, true, aMsgWindow,
+                                   aCopyListener, false, false);
 }
 
 NS_IMETHODIMP EwsFolder::DeleteSelf(nsIMsgWindow* aWindow) {
@@ -949,10 +759,15 @@ NS_IMETHODIMP EwsFolder::DeleteSelf(nsIMsgWindow* aWindow) {
   rv = GetEwsId(folderId);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  RefPtr<DeleteFolderCallbacks> ewsFolderListener =
-      new DeleteFolderCallbacks(this, aWindow);
+  nsCOMPtr<nsIMsgWindow> window = aWindow;
 
-  return client->DeleteFolder(ewsFolderListener, folderId);
+  RefPtr<EwsSimpleListener> listener = new EwsSimpleListener(
+      [self = RefPtr(this), window](const nsTArray<nsCString>& ids,
+                                    bool useLegacyFallback) {
+        return self->nsMsgDBFolder::DeleteSelf(window);
+      });
+
+  return client->DeleteFolder(listener, folderId);
 }
 
 NS_IMETHODIMP EwsFolder::GetDeletable(bool* deletable) {
@@ -1055,7 +870,8 @@ nsresult EwsFolder::GetTrashFolder(nsIMsgFolder** result) {
   return NS_OK;
 }
 
-nsresult EwsFolder::SyncMessages(nsIMsgWindow* window) {
+nsresult EwsFolder::SyncMessages(nsIMsgWindow* window,
+                                 nsIUrlListener* urlListener) {
   // EWS provides us an opaque value which specifies the last version of
   // upstream messages we received. Provide that to simplify sync.
   nsCString syncStateToken;
@@ -1068,10 +884,577 @@ nsresult EwsFolder::SyncMessages(nsIMsgWindow* window) {
   nsCString ewsId;
   MOZ_TRY(GetEwsId(ewsId));
 
+  // Define the callbacks for the EWS operation.
+  auto onMessageCreated = [self = RefPtr(this)](const nsACString& ewsId,
+                                                nsIMsgDBHdr** newHdr) {
+    // Check if a header already exists for this EWS ID. `GetHeaderForItem`
+    // returns `NS_ERROR_NOT_AVAILABLE` when no header exists, so we only want
+    // to move forward with creating one in this case.
+    RefPtr<nsIMsgDBHdr> existingHeader;
+    nsresult rv = self->GetHdrForEwsId(ewsId, getter_AddRefs(existingHeader));
+
+    // If we could retrieve a header for this item, error immediately.
+    if (NS_SUCCEEDED(rv)) {
+      return NS_ERROR_ILLEGAL_VALUE;
+    }
+
+    // We already know that `rv` is a failure at this point, so we just need to
+    // check it's not the one failure we want.
+    if (rv != NS_ERROR_NOT_AVAILABLE) {
+      return rv;
+    }
+
+    nsCOMPtr<nsIMsgDatabase> db;
+    rv = self->GetMsgDatabase(getter_AddRefs(db));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIMsgDBHdr> newHeader;
+    rv = db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(newHeader));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = newHeader->SetStringProperty(kEwsIdProperty, ewsId);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    newHeader.forget(newHdr);
+    return NS_OK;
+  };
+
+  auto onMessageDeleted = [self = RefPtr(this)](const nsACString& ewsId) {
+    // Delete the message headers from the database.
+    nsCOMPtr<nsIMsgDatabase> db;
+    nsresult rv = self->GetMsgDatabase(getter_AddRefs(db));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    RefPtr<nsIMsgDBHdr> existingHeader;
+    rv = db->GetMsgHdrForEwsItemID(ewsId, getter_AddRefs(existingHeader));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (!existingHeader) {
+      // If we don't have a header for this message ID, it means we have already
+      // deleted it locally. This can happen in legitimate situations, e.g. when
+      // syncing the message list after deleting a message from Thunderbird (in
+      // which case, the server's sync response will include a `Delete` change
+      // for the message we've just deleted).
+      return NS_OK;
+    }
+
+    return LocalDeleteMessages(self, {existingHeader});
+  };
+
+  auto onMessageUpdated = [self = RefPtr(this)](const nsACString& ewsId,
+                                                nsIMsgDBHdr** hdr) {
+    RefPtr<nsIMsgDBHdr> existingHdr;
+    nsresult rv = self->GetHdrForEwsId(ewsId, getter_AddRefs(existingHdr));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // The message content might have changed (e.g. if a draft was updated), and
+    // there's no way for us to know for sure without re-downloading it. So
+    // let's delete its content from the message store so it can be
+    // re-downloaded later.
+    uint32_t flags;
+    rv = existingHdr->GetFlags(&flags);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (!(flags & nsMsgMessageFlags::Offline)) {
+      // Bail early if there's nothing to remove.
+      return NS_OK;
+    }
+
+    // Delete the message content from the local store.
+    nsCOMPtr<nsIMsgPluggableStore> store;
+    rv = self->GetMsgStore(getter_AddRefs(store));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = store->DeleteMessages({existingHdr});
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Update the flags on the database entry to reflect its content is *not*
+    // stored offline anymore. We don't commit right now, but the expectation is
+    // that the consumer will call `CommitChanges()` once it's done processing
+    // the current change.
+    uint32_t unused;
+    rv = existingHdr->AndFlags(~nsMsgMessageFlags::Offline, &unused);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    existingHdr.forget(hdr);
+
+    return NS_OK;
+  };
+
+  auto onReadStatusChanged = [self = RefPtr(this)](const nsACString& ewsId,
+                                                   bool is_read) {
+    // Get the header for the message with ewsId and update its read flag in the
+    // database.
+    RefPtr<nsIMsgDBHdr> existingHeader;
+    nsresult rv = self->GetHdrForEwsId(ewsId, getter_AddRefs(existingHeader));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return existingHeader->MarkRead(is_read);
+  };
+
+  auto onDetachedHdrPopulated =
+      [self = RefPtr(this)](nsIMsgDBHdr* hdr,
+                            nsTArray<RefPtr<nsIMsgDBHdr>>& newMessages) {
+        nsCOMPtr<nsIMsgDatabase> db;
+        nsresult rv = self->GetMsgDatabase(getter_AddRefs(db));
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        // If New flag is not set, it won't be added to the databases list of
+        // new messages (and so won't be filtered/classified). But we'll treat
+        // read messages as old.
+        uint32_t flags;
+        rv = hdr->GetFlags(&flags);
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        if (!(flags & nsMsgMessageFlags::Read)) {
+          flags |= nsMsgMessageFlags::New;
+          hdr->SetFlags(flags);
+          newMessages.AppendElement(hdr);
+        }
+
+        nsCOMPtr<nsIMsgDBHdr> liveHdr;
+        rv = db->AttachHdr(hdr, true, getter_AddRefs(liveHdr));
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+            mozilla::components::FolderNotification::Service();
+
+        // Remember message for filtering at end of sync operation.
+        notifier->NotifyMsgAdded(liveHdr);
+
+        return NS_OK;
+      };
+
+  auto onExistingHdrChanged = [self = RefPtr(this)]() {
+    RefPtr<nsIMsgDatabase> db;
+    nsresult rv = self->GetMsgDatabase(getter_AddRefs(db));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return db->Commit(nsMsgDBCommitType::kLargeCommit);
+  };
+
+  auto onSyncStateTokenChanged =
+      [self = RefPtr(this)](const nsACString& syncStateToken) {
+        return self->SetStringProperty(SYNC_STATE_PROPERTY, syncStateToken);
+      };
+
+  // This lambda will both be called at the end of `onSyncComplete`, and used as
+  // the listener's `OnOperationFailure` callback.
+  nsCOMPtr<nsIUrlListener> syncUrlListener = urlListener;
+  auto notifyListener = [self = RefPtr(this),
+                         syncUrlListener](nsresult status) {
+    if (syncUrlListener) {
+      nsCOMPtr<nsIURI> folderUri;
+      nsresult rv = FolderUri(self, getter_AddRefs(folderUri));
+      NS_ENSURE_SUCCESS(rv, rv);
+      syncUrlListener->OnStopRunningUrl(folderUri, rv);
+    }
+
+    return NS_OK;
+  };
+
+  auto onSyncComplete = [self = RefPtr(this), notifyListener](
+                            const nsTArray<RefPtr<nsIMsgDBHdr>>& newMessages) {
+    // If some new messages arrived, apply filters to them now.
+    if (!newMessages.IsEmpty()) {
+      self->ApplyFilters(newMessages);
+    }
+    notifyListener(NS_OK);
+    self->NotifyFolderEvent(kFolderLoaded);
+    return NS_OK;
+  };
+
+  RefPtr<EwsMessageSyncListener> listener = new EwsMessageSyncListener(
+      onMessageCreated, onMessageDeleted, onMessageUpdated,
+      onDetachedHdrPopulated, onExistingHdrChanged, onSyncStateTokenChanged,
+      onSyncComplete, onReadStatusChanged, notifyListener);
+
+  if (urlListener) {
+    nsCOMPtr<nsIURI> folderUri;
+    rv = FolderUri(this, getter_AddRefs(folderUri));
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = urlListener->OnStartRunningUrl(folderUri);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
   // Sync the message list for the current folder.
   nsCOMPtr<IEwsClient> client;
   MOZ_TRY(GetEwsClient(getter_AddRefs(client)));
-
-  auto listener = RefPtr(new MessageOperationCallbacks(this, window));
   return client->SyncMessagesForFolder(listener, ewsId, syncStateToken);
+}
+
+nsresult EwsFolder::GetHdrForEwsId(const nsACString& ewsId, nsIMsgDBHdr** hdr) {
+  nsCOMPtr<nsIMsgDatabase> db;
+  nsresult rv = GetMsgDatabase(getter_AddRefs(db));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIMsgDBHdr> existingHdr;
+  rv = db->GetMsgHdrForEwsItemID(ewsId, getter_AddRefs(existingHdr));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Make sure we managed to get a header from the database.
+  if (!existingHdr) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  existingHdr.forget(hdr);
+
+  return NS_OK;
+}
+
+nsresult EwsFolder::ApplyFilters(
+    const nsTArray<RefPtr<nsIMsgDBHdr>>& newMessages) {
+  nsCOMPtr<nsIMsgFilterService> filterService(
+      mozilla::components::Filter::Service());
+
+  nsCOMPtr<nsIMsgFilterList> filterList;
+  nsresult rv = GetFilterList(nullptr, getter_AddRefs(filterList));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Can we run the filters? Or will they require the full message
+  // first?
+  bool incomingFiltersRequireBody;
+  rv = filterList->DoFiltersNeedMessageBody(nsMsgFilterType::Incoming,
+                                            &incomingFiltersRequireBody);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!incomingFiltersRequireBody) {
+    // Once the filtering is complete, `doneFunc` will run.
+    auto doneFunc =
+        [self = RefPtr(this)](
+            nsresult status,
+            const nsTArray<RefPtr<nsIMsgDBHdr>>& newMessages) -> nsresult {
+      self->NotifyFolderEvent(kFiltersApplied);
+      // Now run the spam classification.
+      // This will invoke OnMessageClassified().
+      // TODO:
+      // CallFilterPlugins() should take a
+      // nsIJunkMailClassificationListener param instead of relying on
+      // folder inheritance.
+      bool filtersRun;
+      nsresult rv = self->CallFilterPlugins(nullptr, &filtersRun);
+      NS_ENSURE_SUCCESS(rv, rv);
+      return NS_OK;
+    };
+
+    // Run the filters upon the new messages. Note, by this time, the
+    // messages have already been added to the folders database.
+    // This means we can use ApplyFilters, which handles all the filter
+    // actions - it uses the protocol-agnostic code, as if the filters
+    // had been manually trggered ("run filters now"). This is in
+    // contrast to POP3 and IMAP, which run the filters _before_ adding
+    // the messages to the database, but then have to implement all
+    // their own filter actions.
+    rv = filterService->ApplyFilters(
+        nsMsgFilterType::Inbox, newMessages, this, nullptr /*window*/,
+        new MsgOperationListener(newMessages, doneFunc));
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP EwsFolder::AddSubfolder(const nsACString& folderName,
+                                      nsIMsgFolder** newFolder) {
+  NS_ENSURE_ARG_POINTER(newFolder);
+
+  nsresult rv = nsMsgDBFolder::AddSubfolder(folderName, newFolder);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // When we add a subfolder, we need to make sure the trash folder flags are
+  // configured appropriately for the trash folder preference, if it is set.
+  if (*newFolder) {
+    // Check to see if we have a trash folder path saved in prefs.
+    nsCOMPtr<nsIMsgIncomingServer> server;
+    rv = GetServer(getter_AddRefs(server));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<IEwsIncomingServer> ewsServer{do_QueryInterface(server, &rv)};
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsAutoCString trashFolderPath;
+    rv = ewsServer->GetTrashFolderPath(trashFolderPath);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsAutoCString folderPath;
+    rv = FolderPathInServer(*newFolder, folderPath);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (trashFolderPath.IsEmpty()) {
+      // If we don't have a trash folder preference value set, and this folder
+      // has the trash flag set, set the preference value to this folder's path.
+      uint32_t flags;
+      rv = (*newFolder)->GetFlags(&flags);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      if (flags & nsMsgFolderFlags::Trash) {
+        rv = ewsServer->SetTrashFolderPath(folderPath);
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+    } else if (trashFolderPath.Equals(folderPath)) {
+      // If the new folder path matches the trash folder path, ensure the trash
+      // folder flag is set for that folder.
+      rv = (*newFolder)->SetFlag(nsMsgFolderFlags::Trash);
+      NS_ENSURE_SUCCESS(rv, rv);
+    } else {
+      // The trash folder is set and is not equal to this folder. Clear the
+      // trash folder flag.
+      rv = (*newFolder)->ClearFlag(nsMsgFolderFlags::Trash);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+  }
+
+  return NS_OK;
+}
+
+// This callback is invoked for spam handling, by CallFilterPlugins().
+// Really, CallFilterPlugins should be altered to take a listener rather than
+// relying on the folder implementation... but for now, this implementation
+// is pure cut&paste from nsLocalMailFolder. The IMAP one is similar, but
+// coalleses server move operations.
+//
+// This function is called once per message, then once again with
+// an empty URI to mark the end of the batch.
+// It accumulates the messages to move to the junk folder using the
+// mSpamKeysToMove array, then performs the move at the end of the batch.
+NS_IMETHODIMP EwsFolder::OnMessageClassified(const nsACString& aMsgURI,
+                                             nsMsgJunkStatus aClassification,
+                                             uint32_t aJunkPercent) {
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  nsresult rv = GetServer(getter_AddRefs(server));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsISpamSettings> spamSettings;
+  rv = server->GetSpamSettings(getter_AddRefs(spamSettings));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCString spamFolderURI;
+  rv = spamSettings->GetSpamFolderURI(spamFolderURI);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Empty URI indicates end of batch.
+  if (!aMsgURI.IsEmpty()) {
+    nsCOMPtr<nsIMsgDBHdr> msgHdr;
+    rv = GetMsgDBHdrFromURI(aMsgURI, getter_AddRefs(msgHdr));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsMsgKey msgKey;
+    rv = msgHdr->GetMessageKey(&msgKey);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // check if this message needs junk classification
+    uint32_t processingFlags;
+    GetProcessingFlags(msgKey, &processingFlags);
+
+    if (processingFlags & nsMsgProcessingFlags::ClassifyJunk) {
+      nsMsgDBFolder::OnMessageClassified(aMsgURI, aClassification,
+                                         aJunkPercent);
+
+      if (aClassification == nsIJunkMailPlugin::JUNK) {
+        bool willMoveMessage = false;
+
+        // don't do the move when we are opening up
+        // the junk mail folder or the trash folder
+        // or when manually classifying messages in those folders
+        if (!(mFlags & nsMsgFolderFlags::Junk ||
+              mFlags & nsMsgFolderFlags::Trash)) {
+          bool moveOnSpam = false;
+          rv = spamSettings->GetMoveOnSpam(&moveOnSpam);
+          NS_ENSURE_SUCCESS(rv, rv);
+          if (moveOnSpam) {
+            nsCOMPtr<nsIMsgFolder> folder;
+            rv = FindFolder(spamFolderURI, getter_AddRefs(folder));
+            NS_ENSURE_SUCCESS(rv, rv);
+            if (folder) {
+              rv = folder->SetFlag(nsMsgFolderFlags::Junk);
+              NS_ENSURE_SUCCESS(rv, rv);
+              mSpamKeysToMove.AppendElement(msgKey);
+              willMoveMessage = true;
+            } else {
+              // XXX TODO
+              // JUNK MAIL RELATED
+              // the listener should do
+              // rv = folder->SetFlag(nsMsgFolderFlags::Junk);
+              // NS_ENSURE_SUCCESS(rv,rv);
+              // mSpamKeysToMove.AppendElement(msgKey);
+              // willMoveMessage = true;
+              rv =
+                  GetOrCreateJunkFolder(spamFolderURI, nullptr /* aListener */);
+              NS_ASSERTION(NS_SUCCEEDED(rv), "GetOrCreateJunkFolder failed");
+            }
+          }
+        }
+        rv = spamSettings->LogJunkHit(msgHdr, willMoveMessage);
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+    }
+  } else {
+    // URI is empty, indicating end of batch.
+
+    // Parent will apply post bayes filters.
+    nsMsgDBFolder::OnMessageClassified(EmptyCString(),
+                                       nsIJunkMailPlugin::UNCLASSIFIED, 0);
+    nsTArray<RefPtr<nsIMsgDBHdr>> messages;
+    if (!mSpamKeysToMove.IsEmpty()) {
+      nsCOMPtr<nsIMsgFolder> folder;
+      if (!spamFolderURI.IsEmpty()) {
+        rv = FindFolder(spamFolderURI, getter_AddRefs(folder));
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+      for (uint32_t keyIndex = 0; keyIndex < mSpamKeysToMove.Length();
+           keyIndex++) {
+        // If an upstream filter moved this message, don't move it here.
+        nsMsgKey msgKey = mSpamKeysToMove.ElementAt(keyIndex);
+        nsMsgProcessingFlagType processingFlags;
+        GetProcessingFlags(msgKey, &processingFlags);
+        if (folder && !(processingFlags & nsMsgProcessingFlags::FilterToMove)) {
+          nsCOMPtr<nsIMsgDBHdr> mailHdr;
+          rv = GetMessageHeader(msgKey, getter_AddRefs(mailHdr));
+          if (NS_SUCCEEDED(rv) && mailHdr) messages.AppendElement(mailHdr);
+        } else {
+          // We don't need the processing flag any more.
+          AndProcessingFlags(msgKey, ~nsMsgProcessingFlags::FilterToMove);
+        }
+      }
+
+      if (folder) {
+        nsCOMPtr<nsIMsgCopyService> copySvc =
+            mozilla::components::Copy::Service();
+        rv = copySvc->CopyMessages(
+            this, messages, folder, true,
+            /*nsIMsgCopyServiceListener* listener*/ nullptr, nullptr,
+            false /*allowUndo*/);
+        NS_ASSERTION(NS_SUCCEEDED(rv), "CopyMessages failed");
+        if (NS_FAILED(rv)) {
+          nsAutoCString logMsg(
+              "failed to copy junk messages to junk folder rv = ");
+          logMsg.AppendInt(static_cast<uint32_t>(rv), 16);
+          spamSettings->LogJunkString(logMsg.get());
+        }
+      }
+    }
+    int32_t numNewMessages;
+    GetNumNewMessages(false, &numNewMessages);
+    SetNumNewMessages(numNewMessages - messages.Length());
+    mSpamKeysToMove.Clear();
+    // check if this is the inbox first...
+    if (mFlags & nsMsgFolderFlags::Inbox) PerformBiffNotifications();
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP EwsFolder::HandleViewCommand(
+    int32_t command, const nsTArray<nsMsgKey>& messageKeys,
+    nsIMsgWindow* window, nsIMsgCopyServiceListener* listener) {
+  nsresult rv;
+  if (command == nsMsgViewCommandType::junk ||
+      command == nsMsgViewCommandType::unjunk) {
+    const bool isJunk = command == nsMsgViewCommandType::junk;
+    // Get the EWS IDs for the message keys.
+    nsTArray<RefPtr<nsIMsgDBHdr>> headers;
+    headers.SetCapacity(messageKeys.Length());
+    for (auto&& messageKey : messageKeys) {
+      nsCOMPtr<nsIMsgDBHdr> header;
+      rv = GetMessageHeader(messageKey, getter_AddRefs(header));
+      NS_ENSURE_SUCCESS(rv, rv);
+      headers.AppendElement(header);
+    }
+
+    nsTArray<nsCString> ewsIds;
+    rv = GetEwsIdsForMessageHeaders(headers, ewsIds);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIMsgIncomingServer> server;
+    rv = GetServer(getter_AddRefs(server));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIMsgFolder> rootFolder;
+    rv = server->GetRootFolder(getter_AddRefs(rootFolder));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // According to the documentation at
+    // https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/markasjunk-operation
+    // If an item is marked as junk, it is moved from the source
+    // folder to the junk folder. If an item is marked as not junk, it
+    // is moved from the source folder to the *inbox*.
+    nsCOMPtr<nsIMsgFolder> destinationFolder;
+    if (isJunk) {
+      rv = rootFolder->GetFolderWithFlags(nsMsgFolderFlags::Junk,
+                                          getter_AddRefs(destinationFolder));
+      NS_ENSURE_SUCCESS(rv, rv);
+    } else {
+      rv = rootFolder->GetFolderWithFlags(nsMsgFolderFlags::Inbox,
+                                          getter_AddRefs(destinationFolder));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    nsAutoCString legacyDestinationEwsId;
+    if (destinationFolder) {
+      rv = destinationFolder->GetStringProperty(kEwsIdProperty,
+                                                legacyDestinationEwsId);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    RefPtr<EwsSimpleMessageListener> operationListener =
+        new EwsSimpleMessageListener{
+            headers, [self = RefPtr(this), window = RefPtr(window),
+                      listener = RefPtr(listener), destinationFolder](
+                         const nsTArray<RefPtr<nsIMsgDBHdr>>& headers,
+                         const nsTArray<nsCString>& movedItemIds,
+                         bool useLegacyFallback) {
+              nsresult rv = NS_OK;
+              auto notifyCopyServiceOnExit =
+                  GuardCopyServiceListener(listener, rv);
+
+              if (useLegacyFallback) {
+                // We didn't get new IDs from the operation, so just trigger
+                // a sync on the destination folder.
+                if (destinationFolder) {
+                  // Best we can do is a sync of the supposed destination.
+                  rv = destinationFolder->GetNewMessages(window, nullptr);
+                  NS_ENSURE_SUCCESS(rv, rv);
+                }
+                return NS_OK;
+              }
+
+              if (movedItemIds.Length() != headers.Length()) {
+                // Make sure the copy service listener is appropriately
+                // notified.
+                rv = NS_ERROR_UNEXPECTED;
+                NS_ENSURE_SUCCESS(rv, rv);
+              }
+
+              // Copy the input messages to the destination folder.
+              if (destinationFolder) {
+                nsTArray<RefPtr<nsIMsgDBHdr>> newHeaders;
+                rv = LocalCopyMessages(self, destinationFolder, headers,
+                                       newHeaders);
+                NS_ENSURE_SUCCESS(rv, rv);
+                NS_ENSURE_TRUE(newHeaders.Length() == headers.Length(),
+                               NS_ERROR_UNEXPECTED);
+                for (auto i = 0u; i < movedItemIds.Length(); ++i) {
+                  rv = newHeaders[i]->SetStringProperty(kEwsIdProperty,
+                                                        movedItemIds[i]);
+                  NS_ENSURE_SUCCESS(rv, rv);
+                }
+              }
+
+              // Delete the messages from this folder.
+              rv = LocalDeleteMessages(self, headers);
+              NS_ENSURE_SUCCESS(rv, rv);
+
+              return NS_OK;
+            }};
+
+    nsCOMPtr<IEwsClient> client;
+    rv = GetEwsClient(getter_AddRefs(client));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = client->MarkItemsAsJunk(operationListener, ewsIds, isJunk,
+                                 legacyDestinationEwsId);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return NS_OK;
 }

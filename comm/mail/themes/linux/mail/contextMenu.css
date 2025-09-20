@@ -8,6 +8,12 @@ menupopup {
   & > menuitem:is([type="checkbox"],[type="radio"]) .menu-icon {
     appearance: none;
     display: flex;
+    visibility: hidden;
+  }
+
+  menuitem[checked="true"] > .menu-icon {
+    content: var(--menuitem-icon);
+    visibility: inherit;
   }
 
   &.webextension-menupopup > menu:not([icon], .menu-iconic),

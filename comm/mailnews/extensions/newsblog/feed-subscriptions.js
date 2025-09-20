@@ -1119,7 +1119,7 @@ var FeedSubscriptions = {
     const selectFolderPopup = document.getElementById("selectFolderPopup");
     const selectFolderValue = document.getElementById("selectFolderValue");
 
-    selectFolder.setAttribute("hidden", !aIsFeed);
+    selectFolder.toggleAttribute("hidden", !aIsFeed);
     selectFolder._folder = aFolder;
     selectFolderValue.toggleAttribute("hidden", aIsFeed);
     selectFolderValue.setAttribute("showfilepath", false);
@@ -2120,7 +2120,7 @@ var FeedSubscriptions = {
   // Status routines.
   updateStatusItem(aID, aValue, aErrorCode) {
     let el = document.getElementById(aID);
-    if (el.getAttribute("collapsed")) {
+    if (el.hasAttribute("collapsed")) {
       el.removeAttribute("collapsed");
     }
     if (el.hidden) {
@@ -2138,18 +2138,16 @@ var FeedSubscriptions = {
     }
 
     el = document.getElementById("validationText");
-    if (aErrorCode == FeedUtils.kNewsBlogInvalidFeed) {
-      el.removeAttribute("collapsed");
-    } else {
-      el.setAttribute("collapsed", true);
-    }
+    el.toggleAttribute(
+      "collapsed",
+      aErrorCode == FeedUtils.kNewsBlogInvalidFeed
+    );
 
     el = document.getElementById("addCertException");
-    if (aErrorCode == FeedUtils.kNewsBlogBadCertError) {
-      el.removeAttribute("collapsed");
-    } else {
-      el.setAttribute("collapsed", true);
-    }
+    el.toggleAttribute(
+      "collapsed",
+      aErrorCode == FeedUtils.kNewsBlogBadCertError
+    );
   },
 
   clearStatusInfo() {
@@ -2559,7 +2557,7 @@ var FeedSubscriptions = {
   /**
    * Import feeds opml file Open filepicker function.
    *
-   * @returns {Promise<?[]>} an array [{nsIFile} file, {String} fileUrl] or null.
+   * @returns {Promise<any[]|null>} an array [{nsIFile} file, {String} fileUrl] or null.
    */
   opmlPickOpenFile() {
     const title = FeedUtils.strings.GetStringFromName(

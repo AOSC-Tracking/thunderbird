@@ -50,26 +50,30 @@ add_task(function test_setState() {
     "The sync subview counter should match the number of address book set"
   );
   Assert.equal(
-    abSyncSubview.querySelectorAll("#addressBooks input:checked").length,
+    abSyncSubview.querySelectorAll(
+      "#addressBookAccountsContainer input:checked"
+    ).length,
     3,
     "The number of checked inputs should be the length of the address books"
   );
   Assert.equal(
-    abSyncSubview.querySelectorAll("#addressBooks input:checked:enabled")
-      .length,
+    abSyncSubview.querySelectorAll(
+      "#addressBookAccountsContainer input:checked:enabled"
+    ).length,
     2,
     "The number of enabled checked inputs should be 2"
   );
 
   const addressBookInputs = abSyncSubview.querySelectorAll(
-    "#addressBooks input"
+    "#addressBookAccountsContainer input"
   );
   Assert.ok(
     addressBookInputs[0].id,
     "The address book input should have an ID"
   );
   Assert.equal(
-    abSyncSubview.querySelector("#addressBooks input + span").textContent,
+    abSyncSubview.querySelector("#addressBookAccountsContainer input + span")
+      .textContent,
     addressBooks[0].name,
     "The address book name should match"
   );
@@ -99,14 +103,16 @@ add_task(function test_setState() {
 add_task(function test_resetState() {
   abSyncSubview.setState(addressBooks);
   Assert.equal(
-    abSyncSubview.querySelectorAll("#addressBooks input").length,
+    abSyncSubview.querySelectorAll("#addressBookAccountsContainer input")
+      .length,
     addressBooks.length,
     "The number of inputs should be the length of the address books"
   );
 
   abSyncSubview.resetState();
   Assert.equal(
-    abSyncSubview.querySelectorAll("#addressBooks input").length,
+    abSyncSubview.querySelectorAll("#addressBookAccountsContainer input")
+      .length,
     0,
     "There should be no inputs in the address book sync form"
   );
@@ -133,7 +139,8 @@ add_task(async function test_captureState() {
 
   // Unchecking the first input, which is enabled, should make captureState()
   // only return the one enabled address book.
-  abSyncSubview.querySelector("input").checked = false;
+  abSyncSubview.querySelector("#addressBookAccountsContainer input").checked =
+    false;
   capturedState = abSyncSubview.captureState();
   Assert.equal(
     capturedState.length,
@@ -143,7 +150,7 @@ add_task(async function test_captureState() {
   abSyncSubview.resetState();
 });
 
-add_task(function test_observeAddressBookCounter() {
+add_task(async function test_observeAddressBookCounter() {
   // Updating the subview counter property makes the obvserveAddressBookCounter
   // function run, which should update the count string and the select/deselect
   // button string.
@@ -157,13 +164,6 @@ add_task(function test_observeAddressBookCounter() {
     addressBooks.length,
     "The count string should be updated"
   );
-  Assert.equal(
-    abSyncSubview.l10n.getAttributes(
-      abSyncSubview.querySelector("#selectAllAddressBooks")
-    ).id,
-    "account-hub-deselect-all",
-    "The toggle button should show the deselect-all string"
-  );
 
   // Removing one from the counterObserver should decrease the count string
   // and make the deselect all button show select all.
@@ -175,13 +175,7 @@ add_task(function test_observeAddressBookCounter() {
     addressBooks.length - 1,
     "The count string should be updated"
   );
-  Assert.equal(
-    abSyncSubview.l10n.getAttributes(
-      abSyncSubview.querySelector("#selectAllAddressBooks")
-    ).id,
-    "account-hub-select-all",
-    "The toggle button should show the select-all string"
-  );
+
   abSyncSubview.resetState();
 });
 
@@ -194,17 +188,28 @@ add_task(async function test_inputChangeAndToggleAll() {
       subtree: true,
       childList: true,
     },
-    () => abSyncSubview.querySelectorAll("#addressBooks input").length === 3
+    () =>
+      abSyncSubview.querySelectorAll("#addressBookAccountsContainer input")
+        .length === 3
   );
 
-  const addressBookInput = abSyncSubview.querySelector("#addressBooks input");
-  Assert.ok(addressBookInput.checked, "input should intially be checked");
+  const addressBookInput = abSyncSubview.querySelector(
+    "#addressBookAccountsContainer input"
+  );
+  const selectAllInput = abSyncSubview.querySelector("#selectAllAddressBooks");
+  Assert.ok(selectAllInput.checked, "Select all input should be checked");
+  Assert.ok(
+    !selectAllInput.indeterminate,
+    "Select all input should not be indeterminate"
+  );
+
   const checkEvent = BrowserTestUtils.waitForEvent(
     addressBookInput,
     "change",
     false,
     event => !event.target.checked
   );
+
   EventUtils.synthesizeMouseAtCenter(
     addressBookInput,
     {},
@@ -212,14 +217,22 @@ add_task(async function test_inputChangeAndToggleAll() {
   );
   await checkEvent;
 
-  const selectAllAddressBooks = abSyncSubview.querySelector(
-    "#selectAllAddressBooks"
+  const selectAllAddressBooksLabel = abSyncSubview.querySelector(
+    `[for="selectAllAddressBooks"] span`
   );
+
   Assert.equal(
-    abSyncSubview.l10n.getAttributes(selectAllAddressBooks).id,
+    abSyncSubview.l10n.getAttributes(selectAllAddressBooksLabel).id,
     "account-hub-select-all",
     "Address book select toggle should be select all"
   );
+
+  Assert.ok(!selectAllInput.checked, "Select all input should not be checked");
+  Assert.ok(
+    selectAllInput.indeterminate,
+    "Select all input should be indeterminate"
+  );
+
   Assert.equal(
     abSyncSubview.l10n.getAttributes(
       abSyncSubview.querySelector("#selectedAddressBooks")
@@ -230,24 +243,26 @@ add_task(async function test_inputChangeAndToggleAll() {
 
   // Toggle select all.
   EventUtils.synthesizeMouseAtCenter(
-    selectAllAddressBooks,
+    selectAllAddressBooksLabel,
     {},
     abSyncSubview.ownerGlobal
   );
+
   await BrowserTestUtils.waitForMutationCondition(
-    abSyncSubview.querySelector("#addressBooks"),
+    abSyncSubview.querySelector("#addressBookAccountsContainer"),
     {
       attributes: true,
       subtree: true,
       childList: true,
     },
     () =>
-      abSyncSubview.querySelectorAll("#addressBooks input:checked").length ===
-      addressBooks.length
+      abSyncSubview.querySelectorAll(
+        "#addressBookAccountsContainer input:checked"
+      ).length === addressBooks.length
   );
 
   Assert.equal(
-    abSyncSubview.l10n.getAttributes(selectAllAddressBooks).id,
+    abSyncSubview.l10n.getAttributes(selectAllAddressBooksLabel).id,
     "account-hub-deselect-all",
     "Address book select toggle should be select all"
   );
@@ -256,6 +271,44 @@ add_task(async function test_inputChangeAndToggleAll() {
       abSyncSubview.querySelector("#selectedAddressBooks")
     ).args.count,
     addressBooks.length,
+    "Address books count should update"
+  );
+
+  Assert.ok(selectAllInput.checked, "Select all input should be checked");
+  Assert.ok(
+    !selectAllInput.indeterminate,
+    "Select all input should not be indeterminate"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(
+    selectAllAddressBooksLabel,
+    {},
+    abSyncSubview.ownerGlobal
+  );
+
+  await BrowserTestUtils.waitForMutationCondition(
+    selectAllInput,
+    { attributes: true },
+    () => !selectAllInput.checked
+  );
+
+  Assert.equal(
+    abSyncSubview.l10n.getAttributes(selectAllAddressBooksLabel).id,
+    "account-hub-select-all",
+    "Address book select toggle should be select all"
+  );
+
+  Assert.ok(!selectAllInput.checked, "Select all input should not be checked");
+  Assert.ok(
+    !selectAllInput.indeterminate,
+    "Select all input should not be indeterminate"
+  );
+
+  Assert.equal(
+    abSyncSubview.l10n.getAttributes(
+      abSyncSubview.querySelector("#selectedAddressBooks")
+    ).args.count,
+    0,
     "Address books count should update"
   );
 

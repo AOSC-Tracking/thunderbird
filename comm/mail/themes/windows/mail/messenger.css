@@ -56,9 +56,7 @@ toolbarpaletteitem[place="toolbar"] > toolbarspacer {
 /* ::::: toolbarbutton menu-button ::::: */
 
 toolbarbutton[is="toolbarbutton-menu-button"] {
-  align-items: stretch;
-  flex-direction: row !important;
-  padding: 0 !important;
+  padding: 0;
 }
 
 /* .......... dropmarker .......... */
@@ -71,10 +69,6 @@ toolbarbutton[is="toolbarbutton-menu-button"] {
 
 .toolbarbutton-icon {
   margin-inline-end: 0;
-}
-
-.toolbarbutton-menu-dropmarker {
-  padding-inline-start: 3px;
 }
 
 .sidebar-header .toolbarbutton-text:not([value]) {
@@ -200,10 +194,6 @@ button.notification-button[is="toolbarbutton-menu-button"] {
   margin-inline-end: 12px;
 }
 
-.toolbarbutton-menu-dropmarker {
-  margin-top: 0;
-}
-
 @media (prefers-contrast) {
   :root:not([lwtheme]) #tabmail {
     background-color: ActiveCaption;
@@ -225,7 +215,6 @@ button.notification-button[is="toolbarbutton-menu-button"] {
 
   &[disabled=true] .toolbarbutton-icon,
   &[disabled=true] .toolbarbutton-text,
-  &[disabled=true] .toolbarbutton-menu-dropmarker,
   &[disabled=true] > .toolbarbutton-menubutton-dropmarker {
     opacity: .4;
   }
@@ -327,10 +316,11 @@ treechildren::-moz-tree-row {
 /* Infobar styles */
 
 toolbarbutton.notification-button[is="toolbarbutton-menu-button"] {
-  padding-inline-end: 3px !important;
+  padding-inline-end: 3px;
 
-  & > toolbarbutton {
+  & > .toolbarbutton-menubutton-button {
     appearance: none;
+    min-height: calc(1.8em - 2px);
   }
 }
 

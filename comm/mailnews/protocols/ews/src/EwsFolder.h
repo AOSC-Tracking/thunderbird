@@ -10,6 +10,18 @@
 #include "nsMsgDBFolder.h"
 #include "nscore.h"
 
+/**
+ * Create a new local folder with the given EWS ID and name under the given
+ * parent.
+ */
+nsresult CreateNewLocalEwsFolder(nsIMsgFolder* parent, const nsACString& ewsId,
+                                 const nsACString& folderName,
+                                 nsIMsgFolder** createdFolder);
+
+/**
+ * The EWS implementation for `nsIMsgFolder` which represents a folder in an EWS
+ * account.
+ */
 class EwsFolder : public nsMsgDBFolder {
  public:
   NS_DECL_ISUPPORTS_INHERITED
@@ -66,10 +78,27 @@ class EwsFolder : public nsMsgDBFolder {
   NS_IMETHOD CompactAll(nsIUrlListener* aListener,
                         nsIMsgWindow* aMsgWindow) override;
 
- private:
-  friend class ItemCopyMoveCallbacks;
+  NS_IMETHOD AddSubfolder(const nsACString& name,
+                          nsIMsgFolder** newFolder) override;
 
+  NS_IMETHOD OnMessageClassified(const nsACString& aMsgURI,
+                                 nsMsgJunkStatus aClassification,
+                                 uint32_t aJunkPercent) override;
+
+  NS_IMETHOD HandleViewCommand(nsMsgViewCommandTypeValue command,
+                               const nsTArray<nsMsgKey>& messageKeys,
+                               nsIMsgWindow* window,
+                               nsIMsgCopyServiceListener* listener) override;
+
+ private:
   bool mHasLoadedSubfolders;
+
+  // The OnMessageClassified() implementation uses this to accumulate the
+  // list of messages to move to the junk folder.
+  // OnMessageClassified() is called once per message, then one last time
+  // to indicate the end of the batch. At that point it performs a move
+  // of the accumulated messages.
+  nsTArray<nsMsgKey> mSpamKeysToMove;
 
   /**
    * Generate or retrieve an EWS API client capable of interacting with the EWS
@@ -83,14 +112,26 @@ class EwsFolder : public nsMsgDBFolder {
   nsresult GetEwsId(nsACString& ewsId);
 
   /**
-   * Looks up the trash folder for the current account.
+   * Look up the trash folder for the current account.
    */
   nsresult GetTrashFolder(nsIMsgFolder** result);
 
   /**
    * Synchronize the message list for the current folder.
    */
-  nsresult SyncMessages(nsIMsgWindow* window);
+  nsresult SyncMessages(nsIMsgWindow* window, nsIUrlListener* urlListener);
+
+  /**
+   * Look up the message database entry matching a given EWS ID.
+   *
+   * `NS_ERROR_NOT_AVAILABLE` is returned if no such database entry was found.
+   */
+  nsresult GetHdrForEwsId(const nsACString& ewsId, nsIMsgDBHdr** hdr);
+
+  /**
+   * Apply the current filters to a list of new messages.
+   */
+  nsresult ApplyFilters(const nsTArray<RefPtr<nsIMsgDBHdr>>& newMessages);
 };
 
 #endif  // COMM_MAILNEWS_PROTOCOLS_EWS_SRC_EWSFOLDER_H_

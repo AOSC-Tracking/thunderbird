@@ -40,6 +40,7 @@
 #include "nsIPromptService.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/LoadInfo.h"
+#include "nsNSSComponent.h"
 
 using namespace mozilla;
 using mozilla::net::LoadInfo;
@@ -47,13 +48,6 @@ using mozilla::net::LoadInfo;
 // Despite its name, this contains a folder path, for example INBOX/Trash.
 #define PREF_TRASH_FOLDER_PATH "trash_folder_name"
 #define DEFAULT_TRASH_FOLDER_PATH "Trash"  // XXX Is this a useful default?
-
-#define NS_SUBSCRIBABLESERVER_CID \
-  {0x8510876a, 0x1dd2, 0x11b2, {0x82, 0x53, 0x91, 0xf7, 0x1b, 0x34, 0x8a, 0x25}}
-static NS_DEFINE_CID(kSubscribableServerCID, NS_SUBSCRIBABLESERVER_CID);
-#define NS_IIMAPHOSTSESSIONLIST_CID \
-  {0x479ce8fc, 0xe725, 0x11d2, {0xa5, 0x05, 0x00, 0x60, 0xb0, 0xfc, 0x04, 0xb7}}
-static NS_DEFINE_CID(kCImapHostSessionListCID, NS_IIMAPHOSTSESSIONLIST_CID);
 
 NS_IMPL_ADDREF_INHERITED(nsImapIncomingServer, nsMsgIncomingServer)
 NS_IMPL_RELEASE_INHERITED(nsImapIncomingServer, nsMsgIncomingServer)
@@ -98,7 +92,7 @@ NS_IMETHODIMP nsImapIncomingServer::SetKey(
 
   nsresult rv;
   nsCOMPtr<nsIImapHostSessionList> hostSession =
-      do_GetService(kCImapHostSessionListCID, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCString key(aKey);
@@ -207,7 +201,7 @@ nsImapIncomingServer::SetServerDirectory(const nsACString& serverDirectory) {
   nsresult rv = GetKey(serverKey);
   if (NS_SUCCEEDED(rv)) {
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionListCID, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     if (NS_SUCCEEDED(rv))
       hostSession->SetOnlineDirForHost(
           serverKey.get(), PromiseFlatCString(serverDirectory).get());
@@ -227,7 +221,7 @@ nsImapIncomingServer::SetOverrideNamespaces(bool bVal) {
   if (!serverKey.IsEmpty()) {
     nsresult rv;
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionListCID, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     if (NS_SUCCEEDED(rv))
       hostSession->SetNamespacesOverridableForHost(serverKey.get(), bVal);
   }
@@ -246,7 +240,7 @@ nsImapIncomingServer::SetUsingSubscription(bool bVal) {
   if (!serverKey.IsEmpty()) {
     nsresult rv;
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionListCID, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     if (NS_SUCCEEDED(rv))
       hostSession->SetHostIsUsingSubscription(serverKey.get(), bVal);
   }
@@ -334,7 +328,7 @@ nsImapIncomingServer::SetDeleteModel(int32_t ivalue) {
   nsresult rv = SetIntValue("delete_model", ivalue);
   if (NS_SUCCEEDED(rv)) {
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionListCID, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
     hostSession->SetDeleteIsMoveToTrashForHost(
         m_serverKey.get(), ivalue == nsMsgImapDeleteModels::MoveToTrash);
@@ -735,16 +729,15 @@ nsresult nsImapIncomingServer::CreateProtocolInstance(
   switch (authMethod) {
     case nsMsgAuthMethod::passwordEncrypted:
     case nsMsgAuthMethod::secure:
-    case nsMsgAuthMethod::anything: {
-      nsCOMPtr<nsISupports> dummyUsedToEnsureNSSIsInitialized =
-          do_GetService("@mozilla.org/psm;1", &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
-    } break;
+    case nsMsgAuthMethod::anything:
+      NS_ENSURE_TRUE(EnsureNSSInitializedChromeOrContent(),
+                     NS_ERROR_NOT_AVAILABLE);
+      break;
     default:
       break;
   }
   nsCOMPtr<nsIImapHostSessionList> hostSession =
-      do_GetService(kCImapHostSessionListCID, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
   RefPtr<nsImapProtocol> protocolInstance(new nsImapProtocol());
   rv = protocolInstance->Initialize(hostSession, this);
@@ -850,7 +843,7 @@ nsImapIncomingServer::PerformExpand(nsIMsgWindow* aMsgWindow) {
   rv = imapService->DiscoverAllFolders(rootMsgFolder, this, aMsgWindow);
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIImapHostSessionList> hostSessionList =
-      do_GetService(kCImapHostSessionListCID, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   if (NS_SUCCEEDED(rv)) {
     nsAutoCString serverKey;
     rv = GetKey(serverKey);
@@ -1277,18 +1270,7 @@ NS_IMETHODIMP nsImapIncomingServer::FolderVerifiedOnline(
 /*static*/
 nsresult nsImapIncomingServer::PathFromFolder(nsIMsgFolder* folder,
                                               nsACString& shortPath) {
-  nsresult rv;
-  nsAutoCString folderURI;
-  rv = folder->GetURI(folderURI);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIURI> uri;
-  rv = NS_NewURI(getter_AddRefs(uri), folderURI);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsAutoCString fullfolderPath;
-  uri->GetPathQueryRef(fullfolderPath);
-  MsgUnescapeString(Substring(fullfolderPath, 1),  // Skip leading slash.
-                    nsINetUtil::ESCAPE_URL_PATH, shortPath);
-  return NS_OK;
+  return FolderPathInServer(folder, shortPath);
 }
 
 NS_IMETHODIMP nsImapIncomingServer::DiscoveryDone() {
@@ -2076,7 +2058,7 @@ NS_IMETHODIMP nsImapIncomingServer::SetServerID(const nsACString& aServerID) {
 NS_IMETHODIMP nsImapIncomingServer::CommitNamespaces() {
   nsresult rv;
   nsCOMPtr<nsIImapHostSessionList> hostSession =
-      do_GetService(kCImapHostSessionListCID, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
   return hostSession->CommitNamespacesForHost(this);
 }
@@ -2227,24 +2209,30 @@ nsImapIncomingServer::OnStopRunningUrl(nsIURI* url, nsresult exitCode) {
       case nsIImapUrl::nsImapDiscoverAllBoxesUrl:
         if (NS_SUCCEEDED(exitCode)) DiscoveryDone();
         break;
+      case nsIImapUrl::nsImapSelectFolder:
       case nsIImapUrl::nsImapFolderStatus: {
+        // These occur after doing GetNewMessagesForNonInboxFolders().
         nsCOMPtr<nsIMsgFolder> msgFolder;
         nsCOMPtr<nsIMsgMailNewsUrl> mailUrl = do_QueryInterface(imapUrl);
         mailUrl->GetFolder(getter_AddRefs(msgFolder));
         if (msgFolder) {
+          // These URLs caused the folder DB to be opened, so close it.
+          // Note: If folder is in view in window or tab, closing the db seems
+          // to causes no problem.
+          msgFolder->SetMsgDatabase(nullptr);
+          if (imapAction == nsIImapUrl::nsImapSelectFolder) break;
+          // Below here, only do for folderstatus URL.
           nsCOMPtr<nsIMsgImapMailFolder> imapFolder =
               do_QueryInterface(msgFolder);
           m_foldersToStat.RemoveObject(imapFolder);
-          // This command is used for folders that are not opened.
-          // We need to close after we're done.
-          msgFolder->SetMsgDatabase(nullptr);
         }
-        // if we get an error running the url, it's better
-        // not to chain the next url.
+        // If we get an error running the url, it's better not to run the
+        // remaining URLs in the chain.
         if (NS_FAILED(exitCode) && exitCode != NS_MSG_ERROR_IMAP_COMMAND_FAILED)
           m_foldersToStat.Clear();
-        if (m_foldersToStat.Count() > 0)
+        if (m_foldersToStat.Count() > 0) {
           m_foldersToStat[0]->UpdateStatus(this, nullptr);
+        }
         break;
       }
       default:
@@ -2459,7 +2447,8 @@ nsresult nsImapIncomingServer::EnsureInner() {
 
   if (mInner) return NS_OK;
 
-  mInner = do_CreateInstance(kSubscribableServerCID, &rv);
+  mInner =
+      do_CreateInstance("@mozilla.org/messenger/subscribableserver;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
   return SetIncomingServer(this);
 }
@@ -2676,8 +2665,13 @@ nsImapIncomingServer::GetSearchScope(nsMsgSearchScopeValue* searchScope) {
   return NS_OK;
 }
 
-// This is a recursive function. It gets new messages for current folder
-// first if it is marked, then calls itself recursively for each subfolder.
+// This is a recursive function with initial call for the root folder (root
+// never has messages). It calls itself recursively for all message folders and
+// checks for new messages for every non-special folder if forceAllFolders is
+// true or just folders with ::CheckNew flag set if forceAllFolders is false.
+// Note: forceAllFolders is based on pref
+// mail.server.default.check_all_folders_for_new or on "legacy" pref
+// mail.check_all_imap_folders_for_new. These prefs default to false.
 NS_IMETHODIMP
 nsImapIncomingServer::GetNewMessagesForNonInboxFolders(nsIMsgFolder* aFolder,
                                                        nsIMsgWindow* aWindow,
@@ -2687,8 +2681,8 @@ nsImapIncomingServer::GetNewMessagesForNonInboxFolders(nsIMsgFolder* aFolder,
   static bool gGotStatusPref = false;
   static bool gUseStatus = false;
 
-  bool isServer;
-  (void)aFolder->GetIsServer(&isServer);
+  bool isRootFolder;
+  (void)aFolder->GetIsServer(&isRootFolder);
   // Check this folder for new messages if it is marked to be checked
   // or if we are forced to check all folders
   uint32_t flags = 0;
@@ -2698,7 +2692,7 @@ nsImapIncomingServer::GetNewMessagesForNonInboxFolders(nsIMsgFolder* aFolder,
   NS_ENSURE_SUCCESS(rv, rv);
   bool canOpen;
   imapFolder->GetCanOpenFolder(&canOpen);
-  if (canOpen &&
+  if (!isRootFolder && canOpen &&
       ((forceAllFolders &&
         !(flags & (nsMsgFolderFlags::Inbox | nsMsgFolderFlags::Trash |
                    nsMsgFolderFlags::Junk | nsMsgFolderFlags::Virtual))) ||
@@ -2706,10 +2700,6 @@ nsImapIncomingServer::GetNewMessagesForNonInboxFolders(nsIMsgFolder* aFolder,
     // Get new messages for this folder.
     aFolder->SetGettingNewMessages(true);
     if (performingBiff) imapFolder->SetPerformingBiff(true);
-    bool isOpen = false;
-    if (aFolder) {
-      aFolder->GetDatabaseOpen(&isOpen);
-    }
 
     // eventually, the gGotStatusPref should go away, once we work out the kinks
     // from using STATUS.
@@ -2717,11 +2707,20 @@ nsImapIncomingServer::GetNewMessagesForNonInboxFolders(nsIMsgFolder* aFolder,
       Preferences::GetBool("mail.imap.use_status_for_biff", &gUseStatus);
       gGotStatusPref = true;
     }
-    if (gUseStatus && !isOpen) {
-      if (!isServer && m_foldersToStat.IndexOf(imapFolder) == -1)
+
+    if (gUseStatus) {
+      if (m_foldersToStat.IndexOf(imapFolder) == -1) {
+        // Prepare to do folderstatus URL. If folder not imap SELECTed, this
+        // results in imap STATUS sent. If SELECTed, this result in imap NOOP.
+        // This just adds the folder to the list (just once) to run the URL
+        // sequentially.
         m_foldersToStat.AppendObject(imapFolder);
-    } else
-      aFolder->UpdateFolder(aWindow);
+      }
+    } else {
+      // This ONLY occurs when use_status_for_biff is false.
+      // Do select URL for folder now.
+      imapFolder->UpdateFolderWithListener(aWindow, this);
+    }
   }
 
   // Loop through all subfolders to get new messages for them.
@@ -2732,8 +2731,12 @@ nsImapIncomingServer::GetNewMessagesForNonInboxFolders(nsIMsgFolder* aFolder,
     GetNewMessagesForNonInboxFolders(msgFolder, aWindow, forceAllFolders,
                                      performingBiff);
   }
-  if (isServer && m_foldersToStat.Count() > 0)
+  if (isRootFolder && m_foldersToStat.Count() > 0) {
+    // This occurs only on 1st call (for root folder) when list (which never
+    // contains root folder) is not empty. UpdateStatus() for remaining folders
+    // occurs sequentially in listener onStopRunningUrl().
     m_foldersToStat[0]->UpdateStatus(this, nullptr);
+  }
   return NS_OK;
 }
 
@@ -2771,7 +2774,7 @@ nsImapIncomingServer::GetUriWithNamespacePrefixIfNecessary(
   rv = GetKey(serverKey);
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIImapHostSessionList> hostSessionList =
-      do_GetService(kCImapHostSessionListCID, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   nsImapNamespace* ns = nullptr;
   rv = hostSessionList->GetDefaultNamespaceOfTypeForHost(
       serverKey.get(), (EIMAPNamespaceType)namespaceType, ns);

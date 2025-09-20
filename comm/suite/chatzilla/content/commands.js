@@ -1197,7 +1197,7 @@ function cmdSync(e) {
         if (view.prefs.displayHeader) {
           view.setHeaderState(false);
         }
-        view.changeCSS(view.getFontCSS("data"), "cz-fonts");
+        changeCSS(window, view.getFontCSS("data"), "cz-fonts");
         if (view.prefs.displayHeader) {
           view.setHeaderState(true);
         }
@@ -1212,10 +1212,8 @@ function cmdSync(e) {
 
     case "sync-motif":
       fun = function () {
-        view.changeCSS(view.prefs["motif.current"]);
+        changeCSS(window, view.prefs["motif.current"]);
         updateAppMotif(view.prefs["motif.current"]);
-        // Refresh the motif settings.
-        view.updateMotifSettings();
       };
       break;
 
@@ -1415,6 +1413,7 @@ function cmdNetworks(e) {
 
   wrapper.appendChild(spanb);
   display(wrapper, MT_INFO);
+  updateSecurityIcon();
 }
 
 function cmdEditNetworks(e) {
@@ -1739,7 +1738,7 @@ function cmdRename(e) {
 }
 
 function togglePref(prefName, item, globalPref) {
-  let state = !item.checked;
+  let state = item.hasAttribute("checked");
   if (globalPref) {
     client.prefs[prefName] = state;
     return;
@@ -2514,11 +2513,11 @@ function cmdMarker(e) {
   }
 
   var view = e.sourceObject;
-  if (!("setActivityMarker" in e.sourceObject)) {
+  if (!("setActivityMarker" in view)) {
     return;
   }
 
-  var marker = e.sourceObject.getActivityMarker();
+  let marker = view.getActivityMarker();
   if (e.command.name == "marker" && marker == null) {
     // Marker is not currently set but user wants to scroll to it,
     // so we just call set like normal.
@@ -2527,14 +2526,14 @@ function cmdMarker(e) {
 
   switch (e.command.name) {
     case "marker" /* Scroll to the marker. */:
-      e.sourceObject.scrollToElement("marker", "center");
+      scrollToElement(view, marker, "center");
       break;
     case "marker-set" /* Set (or reset) the marker. */:
-      e.sourceObject.setActivityMarker(true);
-      e.sourceObject.scrollToElement("marker", "center");
+      marker = view.setActivityMarker(true);
+      scrollToElement(view, marker, "center");
       break;
     case "marker-clear" /* Clear the marker. */:
-      e.sourceObject.setActivityMarker(false);
+      view.setActivityMarker(false);
       break;
     default:
       view.display(MSG_ERR_UNKNOWN_COMMAND, e.command.name);
@@ -2930,9 +2929,8 @@ function setAwayMsg(e, reason, type) {
   }
 }
 
-function cmdOpenAtStartup(e) {
-  if (!e) {
-    e = getDefaultContext();
+function cmdOpenAtStartup(e, toggle) {
+  if (toggle) {
     e.toggle = "toggle";
   }
 
@@ -3750,7 +3748,7 @@ function cmdJumpToAnchor(e) {
   }
 
   dispatch("set-current-view", { view: e.channel });
-  e.channel.scrollToElement(row, "center");
+  scrollToElement(e.channel, row, "center");
 }
 
 function cmdIdentify(e) {

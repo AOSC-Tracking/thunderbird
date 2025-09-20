@@ -4,23 +4,11 @@
 
 var ASSERT = function (cond, msg) {
   if (!cond) {
-    Services.prompt.alert(window, client.mainWindow.MSG_ALERT, msg);
+    Services.prompt.alert(window, client.bundle.getString("msg.alert"), msg);
   }
   return cond;
 };
 var client;
-
-// To be able to load static.js, we need a few things defined first:
-function CIRCNetwork() {}
-function CIRCServer() {}
-function CIRCChannel() {}
-function CIRCUser() {}
-function CIRCChanUser() {}
-function CIRCDCCUser() {}
-function CIRCDCCChat() {}
-function CIRCDCCFile() {}
-function CIRCDCCFileTransfer() {}
-function CIRCSTS() {}
 
 // Actual network window itself.
 var gNetworkWindow = {
@@ -118,9 +106,6 @@ var gNetworkWindow = {
   onLoad() {
     client = window.arguments[0];
 
-    // Needed for ASSERT.
-    initMessages();
-
     this.mBundle = document.getElementById("bundle_networks");
     this.mServerList = document.getElementById("serverList");
     this.mNetworkList = document.getElementById("networkList");
@@ -148,7 +133,6 @@ var gNetworkWindow = {
 
     networksSyncFromList(this.networkList);
     window.close();
-    client.updateHeader();
     client.dispatch("networks");
     return true;
   },

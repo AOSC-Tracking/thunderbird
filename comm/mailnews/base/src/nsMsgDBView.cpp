@@ -199,8 +199,7 @@ nsresult nsMsgDBView::AppendKeywordProperties(const nsACString& keywords,
   // Get the top most keyword's CSS selector and append that as a property.
   nsresult rv;
   if (!mTagService) {
-    mTagService = do_GetService("@mozilla.org/messenger/tagservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    mTagService = mozilla::components::Tag::Service();
   }
 
   nsCString topKey;
@@ -718,10 +717,8 @@ nsresult nsMsgDBView::FetchPriority(nsIMsgDBHdr* aHdr,
 nsresult nsMsgDBView::FetchKeywords(nsIMsgDBHdr* aHdr,
                                     nsACString& keywordString) {
   NS_ENSURE_ARG_POINTER(aHdr);
-  nsresult rv = NS_OK;
   if (!mTagService) {
-    mTagService = do_GetService("@mozilla.org/messenger/tagservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    mTagService = mozilla::components::Tag::Service();
   }
   nsCString keywords;
   aHdr->GetStringProperty("keywords", keywords);
@@ -771,8 +768,7 @@ nsresult nsMsgDBView::FetchTags(nsIMsgDBHdr* aHdr, nsAString& aTagString) {
   NS_ENSURE_ARG_POINTER(aHdr);
   nsresult rv = NS_OK;
   if (!mTagService) {
-    mTagService = do_GetService("@mozilla.org/messenger/tagservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    mTagService = mozilla::components::Tag::Service();
   }
 
   nsString tags;
@@ -798,10 +794,8 @@ nsresult nsMsgDBView::FetchTags(nsIMsgDBHdr* aHdr, nsAString& aTagString) {
 
 nsresult nsMsgDBView::FetchTagKeys(nsIMsgDBHdr* aHdr, nsAString& aTagString) {
   NS_ENSURE_ARG_POINTER(aHdr);
-  nsresult rv = NS_OK;
   if (!mTagService) {
-    mTagService = do_GetService("@mozilla.org/messenger/tagservice;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    mTagService = mozilla::components::Tag::Service();
   }
 
   nsString tags;
@@ -2677,9 +2671,6 @@ nsMsgDBView::ApplyCommandToIndices(nsMsgViewCommandTypeValue command,
   if (command == nsMsgViewCommandType::deleteNoTrash)
     return DeleteMessages(msgWindow, selection, true);
 
-  nsTArray<nsMsgKey> imapUids;
-  nsCOMPtr<nsIMsgImapMailFolder> imapFolder = do_QueryInterface(folder);
-  bool thisIsImapFolder = (imapFolder != nullptr);
   nsCOMPtr<nsIJunkMailPlugin> junkPlugin;
 
   // If this is a junk command, get the junk plugin.
@@ -2704,11 +2695,13 @@ nsMsgDBView::ApplyCommandToIndices(nsMsgViewCommandTypeValue command,
   folder->EnableNotifications(nsIMsgFolder::allMessageCountNotifications,
                               false);
 
+  nsTArray<nsMsgKey> messageKeys;
+
   // No sense going through the code that handles messages in collasped threads
   // for mark thread read.
   if (command == nsMsgViewCommandType::markThreadRead) {
     for (nsMsgViewIndex viewIndex : selection) {
-      SetThreadOfMsgReadByIndex(viewIndex, imapUids, true);
+      SetThreadOfMsgReadByIndex(viewIndex, messageKeys, true);
     }
   } else {
     // Turn the selection into an array of msg hdrs. This may include messages
@@ -2716,17 +2709,13 @@ nsMsgDBView::ApplyCommandToIndices(nsMsgViewCommandTypeValue command,
     AutoTArray<RefPtr<nsIMsgDBHdr>, 1> messages;
     rv = GetHeadersFromSelection(selection, messages);
     NS_ENSURE_SUCCESS(rv, rv);
-    uint32_t length = messages.Length();
-
-    if (thisIsImapFolder) {
-      imapUids.SetLength(length);
-    }
-
+    const auto length = messages.Length();
+    messageKeys.SetLength(length);
     for (uint32_t i = 0; i < length; i++) {
-      nsMsgKey msgKey;
       nsCOMPtr<nsIMsgDBHdr> msgHdr(messages[i]);
-      msgHdr->GetMessageKey(&msgKey);
-      if (thisIsImapFolder) imapUids[i] = msgKey;
+      nsMsgKey messageKey;
+      rv = msgHdr->GetMessageKey(&messageKey);
+      messageKeys[i] = messageKey;
 
       switch (command) {
         case nsMsgViewCommandType::junk:
@@ -2790,44 +2779,8 @@ nsMsgDBView::ApplyCommandToIndices(nsMsgViewCommandTypeValue command,
 
   folder->EnableNotifications(nsIMsgFolder::allMessageCountNotifications, true);
 
-  if (thisIsImapFolder) {
-    imapMessageFlagsType flags = kNoImapMsgFlag;
-    bool addFlags = false;
-    nsCOMPtr<nsIMsgWindow> msgWindow(do_QueryReferent(mMsgWindowWeak));
-    switch (command) {
-      case nsMsgViewCommandType::markThreadRead:
-        flags |= kImapMsgSeenFlag;
-        addFlags = true;
-        break;
-      case nsMsgViewCommandType::undeleteMsg:
-        flags = kImapMsgDeletedFlag;
-        addFlags = false;
-        break;
-      case nsMsgViewCommandType::junk:
-        return imapFolder->StoreCustomKeywords(msgWindow, "Junk"_ns,
-                                               "NonJunk"_ns, imapUids, nullptr);
-      case nsMsgViewCommandType::unjunk: {
-        nsCOMPtr<nsIMsgDBHdr> msgHdr;
-        GetHdrForFirstSelectedMessage(getter_AddRefs(msgHdr));
-        uint32_t msgFlags = 0;
-        if (msgHdr) msgHdr->GetFlags(&msgFlags);
-
-        if (msgFlags & nsMsgMessageFlags::IMAPDeleted)
-          imapFolder->StoreImapFlags(kImapMsgDeletedFlag, false, imapUids,
-                                     nullptr);
-
-        return imapFolder->StoreCustomKeywords(msgWindow, "NonJunk"_ns,
-                                               "Junk"_ns, imapUids, nullptr);
-      }
-      default:
-        break;
-    }
-
-    // Can't get here without thisIsImapThreadPane == TRUE.
-    if (flags != kNoImapMsgFlag) {
-      imapFolder->StoreImapFlags(flags, addFlags, imapUids, nullptr);
-    }
-  }
+  // Take folder class specific actions.
+  folder->HandleViewCommand(command, messageKeys, msgWindow, nullptr);
 
   return rv;
 }

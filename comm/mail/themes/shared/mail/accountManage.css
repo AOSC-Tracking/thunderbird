@@ -41,12 +41,12 @@ fieldset {
   --panel-border-color: var(--in-content-box-border-color);
   --panel-border-radius: 2px;
   --panel-background: var(--background-color-box);
-  --panel-color: var(--in-content-text-color);
+  --panel-color: var(--text-color);
   --panel-padding: 3px 0;
 
   & > menuitem {
     appearance: none;
-    color: var(--in-content-text-color);
+    color: var(--text-color);
     padding-block: 0.2em;
     padding-inline: 10px 30px;
 
@@ -87,7 +87,7 @@ fieldset {
   padding-bottom: 0;
 }
 
-.input-container:not([hidden="true"]) {
+.input-container:not([hidden]) {
   display: flex;
   align-items: center;
 
@@ -96,7 +96,7 @@ fieldset {
   }
 }
 
-.input-container-column:not([hidden="true"]) {
+.input-container-column:not([hidden]) {
   display: flex;
   flex-direction: column;
 
@@ -114,9 +114,9 @@ fieldset {
 }
 
 #deleteAccount {
-  --in-content-button-background: light-dark(var(--color-red-60), var(--color-red-50));
-  --in-content-button-background-hover: light-dark(var(--color-red-70), var(--color-red-40));
-  --in-content-button-background-active: light-dark(var(--color-red-80), var(--color-red-30));
+  --button-background-color: light-dark(var(--color-red-60), var(--color-red-50));
+  --button-background-color-hover: light-dark(var(--color-red-70), var(--color-red-40));
+  --button-background-color-active: light-dark(var(--color-red-80), var(--color-red-30));
   color: var(--color-white);
   list-style-image: var(--icon-trash);
   -moz-context-properties: fill, stroke;
@@ -153,7 +153,7 @@ menulist > menupopup {
       border: 1px solid transparent;
 
       &:not([disabled="true"])[_moz-menuactive="true"] {
-        color: var(--in-content-text-color);
+        color: var(--text-color);
         background-color: var(--in-content-item-hover);
       }
 
@@ -325,7 +325,7 @@ richlistitem[default="true"],
   font-size: 1.46em;
   font-weight: 300;
   line-height: 1.3em;
-  color: var(--in-content-text-color);
+  color: var(--text-color);
 
   &::before {
     overflow: hidden;
@@ -577,7 +577,7 @@ richlistitem[default="true"],
   border: 1px solid var(--in-content-box-border-color);
   border-radius: 4px;
   overflow: hidden;
-  background-color: var(--in-content-page-background);
+  background-color: var(--background-color-canvas);
 
   & tabs {
     border-top: none;

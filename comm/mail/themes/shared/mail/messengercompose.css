@@ -93,33 +93,9 @@
 }
 
 #attachmentBucket {
-  grid-area: attachment-list;
+  height: var(--attachmentSplitter-height);
   border-block: 1px solid var(--splitter-color); /* The same color as the splitters */
   padding: 1px;
-}
-
-#attachmentArea > summary {
-  grid-area: attachment-header;
-  padding: 6px;
-  /* Position self for the #newAttachmentIndicator. */
-  position: relative;
-  display: flex;
-  gap: 6px;
-  align-items: baseline;
-
-  :root[lwt-tree] & {
-    background-color: var(--toolbar-bgcolor);
-    color: var(--toolbar-color);
-  }
-
-  &:focus-visible {
-    outline-style: auto;
-    outline-offset: -1px;
-  }
-
-  & > * {
-    flex: 0 0 auto;
-  }
 }
 
 #newAttachmentIndicator {
@@ -372,18 +348,13 @@
                  "contacts contacts-splitter headers-splitter" min-content
                  "contacts contacts-splitter message" minmax(33%, 1fr)
                  "contacts contacts-splitter attachment-splitter" min-content
-                 "contacts contacts-splitter attachment-header" min-content
-                 "contacts contacts-splitter attachment-list" var(--attachment-list-track-size)
+                 "contacts contacts-splitter attachment-area" min-content
                  / minmax(auto, var(--contactsSplitter-width)) min-content minmax(auto, 1fr);
   /* If the splitter is not used, the header and attachment areas will try and
    * grow to their content size. */
   --headersSplitter-height: min-content;
   --attachmentSplitter-height: min-content;
   --contactsSplitter-width: 200px;
-  /* NOTE: We specify the sizing of the attachment list using a variable because
-   * when the attachment area is hidden or the attachment list is closed, we
-   * want to adjust the sizing so that we can ignore the splitter height. */
-  --attachment-list-track-size:  minmax(auto, var(--attachmentSplitter-height));
   /* The parent body uses the -moz-box display, which does not take into account
    * the natural minimum height this element can take due to its grid display.
    * So we need to explicitly set the minimum height so that the body's layout
@@ -392,13 +363,6 @@
   min-height: 0;
   flex: 1;
   overflow: clip;
-
-  /* When the attachment area is hidden, or the visibility of the attachmentBucket
-   * is toggled by the summary element. */
-  &:is(.attachment-area-hidden, .attachment-bucket-closed) {
-    /* We adjust the track sizing so it no longer takes up any grid space. */
-    --attachment-list-track-size: 0;
-  }
 
   &.attachment-bucket-closed #attachmentSplitter {
     /* NOTE: When the bucket is closed, we do not consider it "collapsed" by the
@@ -423,6 +387,39 @@
 
   &.attachment-bucket-closed #attachmentBucket {
     display: none;
+  }
+}
+
+#attachmentSplitter {
+  grid-area: attachment-splitter;
+}
+
+#attachmentArea {
+  grid-area: attachment-area;
+  display: flex;
+  flex-direction: column;
+
+  & > summary {
+    padding: 6px;
+    /* Position self for the #newAttachmentIndicator. */
+    position: relative;
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+
+    :root[lwt-tree] & {
+      background-color: var(--toolbar-bgcolor);
+      color: var(--toolbar-color);
+    }
+
+    &:focus-visible {
+      outline-style: auto;
+      outline-offset: -1px;
+    }
+
+    & > * {
+      flex: 0 0 auto;
+    }
   }
 }
 
@@ -519,15 +516,6 @@
   flex: 0 0 auto;
 }
 
-#attachmentSplitter {
-  grid-area: attachment-splitter;
-}
-
-#attachmentArea {
-  /* Children are grid items. */
-  display: contents;
-}
-
 /* :::: primary toolbar buttons :::: */
 
 #button-send {
@@ -605,7 +593,7 @@
 /* :::: Format toolbar :::: */
 
 #FormatToolbar {
-  &:not([hidden="true"]) {
+  &:not([hidden]) {
     display: flex;
   }
 
@@ -665,30 +653,34 @@ toolbarbutton.formatting-button {
 
   &:not([disabled="true"]) {
     &:hover {
-      background: var(--toolbarbutton-hover-background);
+      background-color: var(--toolbarbutton-hover-background);
       border-color: var(--toolbarbutton-hover-bordercolor);
       box-shadow: var(--toolbarbutton-hover-boxshadow);
     }
 
     &:is([open="true"],[checked="true"],:hover:active) {
-      background: var(--toolbarbutton-checked-background);
+      background-color: var(--toolbarbutton-checked-background);
       border-color: var(--toolbarbutton-active-bordercolor);
       box-shadow: var(--toolbarbutton-active-boxshadow);
     }
 
     &:is([open="true"],:hover:active) {
-      background: var(--toolbarbutton-active-background) !important;
+      background-color: var(--toolbarbutton-active-background) !important;
     }
   }
 
-  & > .toolbarbutton-menu-dropmarker {
-    list-style-image: url("chrome://messenger/skin/messengercompose/format-dropmarker.svg");
-    -moz-context-properties: fill;
-    fill: currentColor;
-    display: inline-flex;
+  &[wantdropmarker="true"] {
+    background-image: var(--icon-nav-down-sm);
+    background-repeat: no-repeat;
+    background-position: calc(100% - 3px) center;
+    padding-inline-end: 18px;
+
+    &:-moz-locale-dir(rtl) {
+      background-position-x: 3px;
+    }
   }
 
-  &[disabled="true"] > :where(.toolbarbutton-icon, .toolbarbutton-menu-dropmarker) {
+  &[disabled="true"] {
     opacity: 0.4;
   }
 }
@@ -1172,7 +1164,7 @@ toolbarbutton.formatting-button {
     pointer-events: none;
   }
 
-  & hbox:not([hidden="true"]) {
+  & hbox:not([hidden]) {
     display: flex;
   }
 
@@ -1314,12 +1306,24 @@ button:is(
   list-style-image: url("chrome://messenger/skin/icons/image.svg");
 }
 
-#AlignPopupButton {
-  list-style-image: url("chrome://messenger/skin/icons/left-align.svg");
-}
-
 #smileButtonMenu {
   list-style-image: url("chrome://messenger/skin/icons/smiley.svg");
+}
+
+#AlignPopupButton {
+  list-style-image: url("chrome://messenger/skin/icons/left-align.svg");
+
+  &[state="center"] {
+    list-style-image: url("chrome://messenger/skin/icons/center-align.svg");
+  }
+
+  &[state="right"] {
+    list-style-image: url("chrome://messenger/skin/icons/right-align.svg");
+  }
+
+  &[state="justify"] {
+    list-style-image: url("chrome://messenger/skin/icons/justify.svg");
+  }
 }
 
 /* ..... align menu ..... */
@@ -1329,24 +1333,20 @@ button:is(
   fill: currentColor;
 }
 
-#AlignLeftItem,
-#AlignPopupButton[state="left"] {
-  list-style-image: url("chrome://messenger/skin/icons/left-align.svg");
+#AlignLeftItem {
+  --menuitem-icon: url("chrome://messenger/skin/icons/left-align.svg");
 }
 
-#AlignCenterItem,
-#AlignPopupButton[state="center"] {
-  list-style-image: url("chrome://messenger/skin/icons/center-align.svg");
+#AlignCenterItem {
+  --menuitem-icon: url("chrome://messenger/skin/icons/center-align.svg");
 }
 
-#AlignRightItem,
-#AlignPopupButton[state="right"] {
-  list-style-image: url("chrome://messenger/skin/icons/right-align.svg");
+#AlignRightItem {
+  --menuitem-icon: url("chrome://messenger/skin/icons/right-align.svg");
 }
 
-#AlignJustifyItem,
-#AlignPopupButton[state="justify"] {
-  list-style-image: url("chrome://messenger/skin/icons/justify.svg");
+#AlignJustifyItem {
+  --menuitem-icon: url("chrome://messenger/skin/icons/justify.svg");
 }
 
 /* ..... insert menu ..... */
@@ -1357,23 +1357,23 @@ button:is(
 }
 
 #InsertLinkItem {
-  list-style-image: url("chrome://global/skin/icons/link.svg");
+  --menuitem-icon: url("chrome://global/skin/icons/link.svg");
 }
 
 #InsertAnchorItem {
-  list-style-image: url("chrome://messenger/skin/icons/anchor.svg");
+  --menuitem-icon: url("chrome://messenger/skin/icons/anchor.svg");
 }
 
 #InsertImageItem {
-  list-style-image: url("chrome://messenger/skin/icons/image.svg");
+  --menuitem-icon: url("chrome://messenger/skin/icons/image.svg");
 }
 
 #InsertHRuleItem {
-  list-style-image: url("chrome://messenger/skin/icons/hline.svg");
+  --menuitem-icon: url("chrome://messenger/skin/icons/hline.svg");
 }
 
 #InsertTableItem {
-  list-style-image: url("chrome://messenger/skin/icons/table.svg");
+  --menuitem-icon: url("chrome://messenger/skin/icons/table.svg");
 }
 
 #findbar-replaceButton {
@@ -1417,7 +1417,7 @@ button:is(
   margin-inline: 0.2em -0.2em;
 }
 
-.statusbar:not([hidden="true"]) {
+.statusbar:not([hidden]) {
   display: flex;
   align-items: center;
   min-width: 0;

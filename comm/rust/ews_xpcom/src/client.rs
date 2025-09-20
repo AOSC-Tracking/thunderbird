@@ -4,10 +4,11 @@
 
 pub(crate) mod copy_move_operations;
 mod create_folder;
+mod mark_as_junk;
 mod server_version;
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
     env,
@@ -20,6 +21,7 @@ use ews::{
     delete_item::DeleteItem,
     get_folder::{GetFolder, GetFolderResponseMessage},
     get_item::GetItem,
+    response::{ResponseClass, ResponseCode, ResponseError},
     server_version::ExchangeServerVersion,
     soap,
     sync_folder_hierarchy::{self, SyncFolderHierarchy},
@@ -30,14 +32,17 @@ use ews::{
     },
     ArrayOfRecipients, BaseFolderId, BaseItemId, BaseShape, DeleteType, ExtendedFieldURI,
     ExtendedProperty, Folder, FolderId, FolderShape, ItemResponseMessage, ItemShape, Message,
-    MessageDisposition, MimeContent, Operation, PathToElement, RealItem, Recipient, ResponseClass,
-    ResponseCode,
+    MessageDisposition, MimeContent, Operation, OperationResponse, PathToElement, RealItem,
+    Recipient,
 };
 use fxhash::FxHashMap;
 use itertools::Itertools;
 use mail_parser::MessageParser;
-use mailnews_ui_glue::{handle_auth_failure, AuthErrorOutcome, UserInteractiveServer};
-use moz_http::{Response, StatusCode};
+use mailnews_ui_glue::{
+    handle_auth_failure, handle_transport_sec_failure, maybe_handle_connection_error,
+    AuthErrorOutcome, UserInteractiveServer,
+};
+use moz_http::Response;
 use nserror::nsresult;
 use nsstring::nsCString;
 use server_version::read_server_version;
@@ -49,16 +54,19 @@ use xpcom::{
     getter_addrefs,
     interfaces::{
         nsIMsgDBHdr, nsIMsgOutgoingListener, nsIStringInputStream, nsIURI, nsIUrlListener,
-        nsMsgKey, IEwsFolderDeleteCallbacks, IEwsFolderUpdateCallbacks, IEwsMessageCallbacks,
-        IEwsMessageCreateCallbacks, IEwsMessageDeleteCallbacks, IEwsMessageFetchCallbacks,
+        nsMsgKey, IEwsFallibleOperationListener, IEwsMessageCreateListener,
+        IEwsMessageFetchListener, IEwsMessageSyncListener, IEwsSimpleOperationListener,
     },
-    RefCounted, RefPtr,
+    RefCounted, RefPtr, XpCom,
 };
 
-use crate::{authentication::credentials::Credentials, cancellable_request::CancellableRequest};
+use crate::{
+    authentication::credentials::{AuthenticationProvider, Credentials},
+    cancellable_request::CancellableRequest,
+};
 use crate::{
     headers::{Mailbox, MessageHeaders},
-    safe_xpcom::{EwsClientError, SafeEwsFolderCallbacks},
+    safe_xpcom::SafeEwsFolderListener,
 };
 
 // Flags to use for setting the `PR_MESSAGE_FLAGS` MAPI property.
@@ -82,28 +90,55 @@ const EWS_ROOT_FOLDER: &str = "msgfolderroot";
 // specific value.
 const LOG_NETWORK_PAYLOADS_ENV_VAR: &str = "THUNDERBIRD_LOG_NETWORK_PAYLOADS";
 
+/// Options to to control the behavior of
+/// [`XpComEwsClient::make_operation_request`].
+#[derive(Debug, Clone, Copy, Default)]
+struct OperationRequestOptions {
+    /// Behavior to follow when an authentication failure arises.
+    auth_failure_behavior: AuthFailureBehavior,
+
+    /// Behavior to follow when a transport security failure arises.
+    transport_sec_failure_behavior: TransportSecFailureBehavior,
+}
+
 /// The behavior to follow when an operation request results in an
 /// authentication failure.
+#[derive(Debug, Clone, Copy, Default)]
 enum AuthFailureBehavior {
+    /// Attempt to authenticate again or ask the user for new credentials.
+    #[default]
+    ReAuth,
+
     /// Fail immediately without attempting to authenticate again or asking the
     /// user for new credentials.
     Silent,
+}
 
-    /// Attempt to authenticate again or ask the user for new credentials.
-    ReAuth,
+/// The behavior to follow when an operation request results in a transport
+/// security failure (e.g. because of an invalid certificate). This specifically
+/// controls the behaviour of `XpComEwsClient::make_operation_request`.
+#[derive(Debug, Clone, Copy, Default)]
+enum TransportSecFailureBehavior {
+    /// Immediately alert the user about the security failure.
+    #[default]
+    Alert,
+
+    /// Don't alert the user and propagate the failure to the consumer (which
+    /// might or might not alert the user).
+    Silent,
 }
 
 pub(crate) struct XpComEwsClient<ServerT: RefCounted + 'static> {
     endpoint: Url,
     server: RefPtr<ServerT>,
-    credentials: Credentials,
+    credentials: RefCell<Credentials>,
     client: moz_http::Client,
     server_version: Cell<ExchangeServerVersion>,
 }
 
 impl<ServerT> XpComEwsClient<ServerT>
 where
-    ServerT: UserInteractiveServer + RefCounted + 'static,
+    ServerT: AuthenticationProvider + UserInteractiveServer + RefCounted + 'static,
 {
     pub(crate) fn new(
         endpoint: Url,
@@ -115,7 +150,7 @@ where
         Ok(XpComEwsClient {
             endpoint,
             server,
-            credentials,
+            credentials: RefCell::new(credentials),
             client: moz_http::Client::new(),
             server_version: Cell::new(server_version),
         })
@@ -160,28 +195,22 @@ where
             }],
         };
 
-        let res = self
+        let response_messages = self
             // Make authentication failure silent, since all we want to know is
             // whether our credentials are valid.
-            .make_operation_request(get_root_folder, AuthFailureBehavior::Silent)
-            .await?;
-
-        let response_message_count = res.response_messages.get_folder_response_message.len();
-        if response_message_count != 1 {
-            return Err(XpComEwsError::Processing {
-                message: format!("expected 1 response message, got {response_message_count}"),
-            });
-        }
+            .make_operation_request(
+                get_root_folder,
+                OperationRequestOptions {
+                    auth_failure_behavior: AuthFailureBehavior::Silent,
+                    ..Default::default()
+                },
+            )
+            .await?
+            .into_response_messages();
 
         // Get the first (and only) response message so we can inspect it.
-        // Unwrapping is fine here, because we've already made sure there's one
-        // message.
-        let message = res
-            .response_messages
-            .get_folder_response_message
-            .into_iter()
-            .next()
-            .unwrap();
+        let response_class = single_response_or_error(response_messages)?;
+        let message = process_response_message_class("GetFolder", response_class)?;
 
         // Any error fetching the root folder is fatal, since it likely means
         // all subsequent request will fail, and that we won't manage to sync
@@ -191,31 +220,39 @@ where
         Ok(())
     }
 
-    /// Performs a [`SyncFolderHierarchy`] operation via EWS.
+    /// Performs a [`SyncFolderHierarchy` operation] via EWS.
     ///
     /// This will fetch a list of remote changes since the specified sync state,
     /// fetch any folder details needed for creating or updating local folders,
     /// and notify the Thunderbird protocol implementation of these changes via
     /// the provided callbacks.
     ///
-    /// [`SyncFolderHierarchy`] https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/syncfolderhierarchy-operation
+    /// [`SyncFolderHierarchy` operation]: https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/syncfolderhierarchy-operation
     pub(crate) async fn sync_folder_hierarchy(
         self,
-        callbacks: SafeEwsFolderCallbacks,
+        listener: SafeEwsFolderListener,
         sync_state_token: Option<String>,
     ) {
         // Call an inner function to perform the operation in order to allow us
         // to handle errors while letting the inner function simply propagate.
-        self.sync_folder_hierarchy_inner(&callbacks, sync_state_token)
+        match self
+            .sync_folder_hierarchy_inner(&listener, sync_state_token)
             .await
-            .unwrap_or_else(process_error_with_cb(move |client_err, desc| {
-                let _ = callbacks.on_error(client_err, &*desc);
-            }));
+        {
+            Ok(_) => {
+                let _ = listener.on_success();
+            }
+            Err(err) => handle_error(
+                "SyncFolderHierarchy",
+                err,
+                listener.into_unsafe_fallible_listener(),
+            ),
+        };
     }
 
     async fn sync_folder_hierarchy_inner(
         self,
-        callbacks: &SafeEwsFolderCallbacks,
+        listener: &SafeEwsFolderListener,
         mut sync_state_token: Option<String>,
     ) -> Result<(), XpComEwsError> {
         // If we have received no sync state, assume that this is the first time
@@ -223,7 +260,7 @@ where
         // folders are "well-known" (e.g., inbox, trash, etc.) so we can flag
         // them.
         let well_known = if sync_state_token.is_none() {
-            Some(self.get_well_known_folder_map(callbacks).await?)
+            Some(self.get_well_known_folder_map(listener).await?)
         } else {
             None
         };
@@ -248,14 +285,11 @@ where
             };
 
             let response = self
-                .make_operation_request(op, AuthFailureBehavior::ReAuth)
-                .await?;
-            let message = response
-                .response_messages
-                .sync_folder_hierarchy_response_message
-                .into_iter()
-                .next()
-                .unwrap();
+                .make_operation_request(op, Default::default())
+                .await?
+                .into_response_messages();
+            let response = single_response_or_error(response)?;
+            let message = process_response_message_class("SyncFolderHierarchy", response)?;
 
             let mut create_ids = Vec::new();
             let mut update_ids = Vec::new();
@@ -286,7 +320,7 @@ where
             }
 
             self.push_sync_state_to_ui(
-                callbacks,
+                listener,
                 create_ids,
                 update_ids,
                 delete_ids,
@@ -304,29 +338,36 @@ where
             sync_state_token = Some(message.sync_state);
         }
 
-        callbacks.on_success()?;
-
         Ok(())
     }
 
     pub(crate) async fn sync_messages_for_folder(
         self,
-        callbacks: RefPtr<IEwsMessageCallbacks>,
+        listener: RefPtr<IEwsMessageSyncListener>,
         folder_id: String,
         sync_state_token: Option<String>,
     ) {
         // Call an inner function to perform the operation in order to allow us
         // to handle errors while letting the inner function simply propagate.
-        self.sync_messages_for_folder_inner(&callbacks, folder_id, sync_state_token)
+
+        match self
+            .sync_messages_for_folder_inner(&listener, folder_id, sync_state_token)
             .await
-            .unwrap_or_else(process_error_with_cb_cpp(move |client_err, desc| unsafe {
-                callbacks.OnError(client_err, &*desc);
-            }));
+        {
+            Ok(_) => unsafe {
+                listener.OnSyncComplete();
+            },
+            Err(err) => handle_error(
+                "SyncFolderItems",
+                err,
+                listener.query_interface::<IEwsFallibleOperationListener>(),
+            ),
+        }
     }
 
     async fn sync_messages_for_folder_inner(
         self,
-        callbacks: &IEwsMessageCallbacks,
+        listener: &IEwsMessageSyncListener,
         folder_id: String,
         mut sync_state_token: Option<String>,
     ) -> Result<(), XpComEwsError> {
@@ -346,21 +387,18 @@ where
                     id: folder_id.clone(),
                     change_key: None,
                 },
-                sync_state: sync_state_token,
+                sync_state: sync_state_token.clone(),
                 ignore: None,
                 max_changes_returned: 100,
                 sync_scope: None,
             };
 
             let response = self
-                .make_operation_request(op, AuthFailureBehavior::ReAuth)
-                .await?;
-            let message = response
-                .response_messages
-                .sync_folder_items_response_message
-                .into_iter()
-                .next()
-                .unwrap();
+                .make_operation_request(op, Default::default())
+                .await?
+                .into_response_messages();
+            let response_class = single_response_or_error(response)?;
+            let message = process_response_message_class("SyncFolderItems", response_class)?;
 
             // We only fetch unique messages, as we ignore the `ChangeKey` and
             // simply fetch the latest version.
@@ -481,7 +519,7 @@ where
                         // header we get back will have its EWS ID already set.
                         let ews_id = nsCString::from(item_id);
                         let result = getter_addrefs(|hdr| unsafe {
-                            callbacks.CreateNewHeaderForItem(&*ews_id, hdr)
+                            listener.OnMessageCreated(&*ews_id, hdr)
                         });
 
                         if let Err(nserror::NS_ERROR_ILLEGAL_VALUE) = result {
@@ -498,7 +536,7 @@ where
                         let header = result?;
                         populate_db_message_header_from_message_headers(&header, msg)?;
 
-                        unsafe { callbacks.SaveNewHeader(&*header) }.to_result()?;
+                        unsafe { listener.OnDetachedHdrPopulated(&*header) }.to_result()?;
                     }
 
                     sync_folder_items::Change::Update { item } => {
@@ -519,20 +557,23 @@ where
 
                         let ews_id = nsCString::from(item_id);
                         let mut result =
-                            getter_addrefs(|p| unsafe { callbacks.GetHeaderForItem(&*ews_id, p) });
+                            getter_addrefs(|p| unsafe { listener.OnMessageUpdated(&*ews_id, p) });
 
+                        let mut hdr_is_detached = false;
                         if let Err(nserror::NS_ERROR_NOT_AVAILABLE) = result {
                             // Something has gone wrong, probably in a previous
                             // sync, and we've missed a new item. So let's try
-                            // to gracefully recover from this and add it to the
-                            // database.
+                            // to gracefully recover from this and create a new
+                            // detached entry.
                             log::warn!(
                                 "Cannot find existing item to update with ID {item_id}, creating it instead"
                             );
 
                             result = getter_addrefs(|hdr| unsafe {
-                                callbacks.CreateNewHeaderForItem(&*ews_id, hdr)
+                                listener.OnMessageCreated(&*ews_id, hdr)
                             });
+
+                            hdr_is_detached = true;
                         }
 
                         let header = result?;
@@ -548,13 +589,16 @@ where
                         // the database entry and commit.
                         populate_db_message_header_from_message_headers(&header, msg)?;
 
-                        // It's possible the message's content itself has
-                        // changed (e.g. if a draft was updated). In which case,
-                        // the easiest approach is deleting the local copy so
-                        // that the new content is downloaded when needed.
-                        unsafe { callbacks.MaybeDeleteMessageFromStore(&*header) }.to_result()?;
-
-                        unsafe { callbacks.CommitChanges() }.to_result()?;
+                        // Persist the database entry. If it's a new one
+                        // (because we've missed the creation event), then we
+                        // need to do this as if we're dealing with the
+                        // still-detached entry from a `Created` change (which
+                        // we kind of are).
+                        if hdr_is_detached {
+                            unsafe { listener.OnDetachedHdrPopulated(&*header) }.to_result()?;
+                        } else {
+                            unsafe { listener.OnExistingHdrChanged() }.to_result()?;
+                        }
                     }
 
                     sync_folder_items::Change::Delete { item_id } => {
@@ -563,7 +607,7 @@ where
 
                         // Delete the messages from the folder's database.
                         let ews_id = nsCString::from(id);
-                        unsafe { callbacks.DeleteHeaderFromDB(&*ews_id) }.to_result()?;
+                        unsafe { listener.OnMessageDeleted(&*ews_id) }.to_result()?;
                     }
 
                     sync_folder_items::Change::ReadFlagChange { item_id, is_read } => {
@@ -572,7 +616,7 @@ where
 
                         // Mark the messages as read in the folder's database.
                         let ews_id = nsCString::from(id);
-                        unsafe { callbacks.UpdateReadStatus(&*ews_id, is_read) }.to_result()?;
+                        unsafe { listener.OnReadStatusChanged(&*ews_id, is_read) }.to_result()?;
                     }
                 }
             }
@@ -580,7 +624,7 @@ where
             // Update sync state after pushing each batch of messages so that,
             // if we're interrupted, we resume from roughly the same place.
             let new_sync_state = nsCString::from(&message.sync_state);
-            unsafe { callbacks.UpdateSyncState(&*new_sync_state) }.to_result()?;
+            unsafe { listener.OnSyncStateTokenChanged(&*new_sync_state) }.to_result()?;
 
             if message.includes_last_item_in_range {
                 // EWS has signaled to us that there are no more changes at this
@@ -591,20 +635,15 @@ where
             sync_state_token = Some(message.sync_state);
         }
 
-        unsafe { callbacks.OnSyncComplete() }.to_result()?;
         Ok(())
     }
 
-    pub(crate) async fn get_message(
-        self,
-        id: String,
-        callbacks: RefPtr<IEwsMessageFetchCallbacks>,
-    ) {
-        unsafe { callbacks.OnFetchStart() };
+    pub(crate) async fn get_message(self, listener: RefPtr<IEwsMessageFetchListener>, id: String) {
+        unsafe { listener.OnFetchStart() };
 
         // Call an inner function to perform the operation in order to allow us
         // to handle errors while letting the inner function simply propagate.
-        let result = self.get_message_inner(id.clone(), &callbacks).await;
+        let result = self.get_message_inner(&listener, id.clone()).await;
 
         let status = match result {
             Ok(_) => nserror::NS_OK,
@@ -615,13 +654,13 @@ where
             }
         };
 
-        unsafe { callbacks.OnFetchStop(status) };
+        unsafe { listener.OnFetchStop(status) };
     }
 
     async fn get_message_inner(
         self,
+        listener: &IEwsMessageFetchListener,
         id: String,
-        callbacks: &IEwsMessageFetchCallbacks,
     ) -> Result<(), XpComEwsError> {
         let items = self.get_items([id], &[], true).await?;
         if items.len() != 1 {
@@ -643,7 +682,7 @@ where
             &raw_mime.content
         } else {
             return Err(XpComEwsError::Processing {
-                message: format!("item has no content"),
+                message: "item has no content".to_string(),
             });
         };
 
@@ -653,7 +692,7 @@ where
             BASE64_STANDARD
                 .decode(raw_mime)
                 .map_err(|_| XpComEwsError::Processing {
-                    message: format!("MIME content for item is not validly base64 encoded"),
+                    message: "MIME content for item is not validly base64 encoded".to_string(),
                 })?;
 
         let len: i32 = mime_content
@@ -677,7 +716,7 @@ where
         let mime_content = nsCString::from(mime_content);
         unsafe { stream.SetByteStringData(&*mime_content) }.to_result()?;
 
-        unsafe { callbacks.OnFetchedDataAvailable(&*stream.coerce(), len as u32) }.to_result()?;
+        unsafe { listener.OnFetchedDataAvailable(stream.coerce(), len as u32) }.to_result()?;
 
         Ok(())
     }
@@ -688,7 +727,7 @@ where
     /// calls and well-known IDs associated with special folders.
     async fn get_well_known_folder_map(
         &self,
-        callbacks: &SafeEwsFolderCallbacks,
+        listener: &SafeEwsFolderListener,
     ) -> Result<FxHashMap<String, &str>, XpComEwsError> {
         const DISTINGUISHED_IDS: &[&str] = &[
             EWS_ROOT_FOLDER,
@@ -698,6 +737,12 @@ where
             "outbox",
             "sentitems",
             "junkemail",
+            // The `archive` distinguished id isn't documented at
+            // https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/distinguishedfolderid
+            // but it does provide the Exchange account's archive folder when
+            // requested, while the other documented `archive*` distinguished
+            // ids result in folder not found errors.
+            "archive",
         ];
 
         // We should always request the root folder first to simplify processing
@@ -724,11 +769,9 @@ where
             folder_ids: ids,
         };
 
-        let response = self
-            .make_operation_request(op, AuthFailureBehavior::ReAuth)
-            .await?;
+        let response = self.make_operation_request(op, Default::default()).await?;
 
-        let response_messages = response.response_messages.get_folder_response_message;
+        let response_messages = response.into_response_messages();
         validate_response_message_count(&response_messages, DISTINGUISHED_IDS.len())?;
 
         // We expect results from EWS to be in the same order as given in the
@@ -741,16 +784,23 @@ where
         // responses. We're okay to unwrap since we request a static number of
         // folders and we've already checked that we have that number of
         // responses.
-        let (_, message) = message_iter.next().unwrap();
+        let (_, response_class) = message_iter.next().unwrap();
+        let message = process_response_message_class("GetFolder", response_class)?;
 
         // Any error fetching the root folder is fatal, since we can't correctly
         // set the parents of any folders it contains without knowing its ID.
         let root_folder_id = validate_get_folder_response_message(&message)?;
-        callbacks.record_root_folder(root_folder_id)?;
+        listener.on_new_root_folder(root_folder_id)?;
 
         // Build the mapping for the remaining folders.
         message_iter
-            .filter_map(|(&distinguished_id, message)| {
+            .filter_map(|(&distinguished_id, response_class)| {
+                let message = match process_response_message_class("GetFolder", response_class) {
+                    Ok(message) => message,
+                    Err(err) => {
+                        return Some(Err(err));
+                    }
+                };
                 match validate_get_folder_response_message(&message) {
                     // Map from EWS folder ID to distinguished ID.
                     Ok(folder_id) => Some(Ok((folder_id.id, distinguished_id))),
@@ -760,10 +810,10 @@ where
                             // Not every Exchange account will have all queried
                             // well-known folders, so we skip any which were not
                             // found.
-                            XpComEwsError::ResponseError {
-                                code: ResponseCode::ErrorFolderNotFound,
+                            XpComEwsError::ResponseError(ResponseError {
+                                response_code: ResponseCode::ErrorFolderNotFound,
                                 ..
-                            } => None,
+                            }) => None,
 
                             // Propagate any other error.
                             _ => Some(Err(err)),
@@ -776,7 +826,7 @@ where
 
     async fn push_sync_state_to_ui(
         &self,
-        callbacks: &SafeEwsFolderCallbacks,
+        listener: &SafeEwsFolderListener,
         create_ids: Vec<String>,
         update_ids: Vec<String>,
         delete_ids: Vec<String>,
@@ -792,11 +842,11 @@ where
                         parent_folder_id,
                         display_name,
                         ..
-                    } => callbacks.create(
+                    } => listener.on_folder_created(
                         folder_id,
                         parent_folder_id,
                         display_name,
-                        &well_known_map,
+                        well_known_map,
                     )?,
                     _ => return Err(nserror::NS_ERROR_FAILURE.into()),
                 }
@@ -812,17 +862,17 @@ where
                         parent_folder_id,
                         display_name,
                         ..
-                    } => callbacks.update(folder_id, parent_folder_id, display_name)?,
+                    } => listener.on_folder_updated(folder_id, parent_folder_id, display_name)?,
                     _ => return Err(nserror::NS_ERROR_FAILURE.into()),
                 }
             }
         }
 
         for id in delete_ids {
-            callbacks.delete(id)?;
+            listener.on_folder_deleted(id)?;
         }
 
-        callbacks.update_sync_state(sync_state)?;
+        listener.on_sync_state_token_changed(sync_state)?;
 
         Ok(())
     }
@@ -865,14 +915,16 @@ where
                 folder_ids: to_fetch,
             };
 
-            let response = self
-                .make_operation_request(op, AuthFailureBehavior::ReAuth)
-                .await?;
-            let messages = response.response_messages.get_folder_response_message;
+            let response = self.make_operation_request(op, Default::default()).await?;
+            let messages = response.into_response_messages();
 
             let mut fetched = messages
                 .into_iter()
-                .filter_map(|message| {
+                .filter_map(|response_class| {
+                    let message = match process_response_message_class("GetFolder", response_class) {
+                        Ok(message) => message,
+                        Err(err) => {return Some(Err(err));}
+                    };
                     if let Err(err) = validate_get_folder_response_message(&message) {
                         return Some(Err(err));
                     }
@@ -965,7 +1017,7 @@ where
             .collect();
 
             let additional_properties: Vec<_> = fields
-                .into_iter()
+                .iter()
                 .map(|&field| PathToElement::FieldURI {
                     field_URI: String::from(field),
                 })
@@ -986,28 +1038,20 @@ where
                     base_shape: BaseShape::IdOnly,
                     additional_properties,
                     include_mime_content: Some(include_mime_content),
-                    ..Default::default()
                 },
                 item_ids: batch_ids,
             };
 
-            let response = self
-                .make_operation_request(op, AuthFailureBehavior::ReAuth)
-                .await?;
-            for response_message in response.response_messages.get_item_response_message {
-                process_response_message_class(
-                    "GetItem",
-                    &response_message.response_class,
-                    &response_message.response_code,
-                    &response_message.message_text,
-                )?;
+            let response = self.make_operation_request(op, Default::default()).await?;
+            for response_message in response.into_response_messages() {
+                let message = process_response_message_class("GetItem", response_message)?;
 
                 // The expected shape of the list of response messages is
                 // underspecified, but EWS always seems to return one message
                 // per requested ID, containing the item corresponding to that
                 // ID. However, it allows for multiple items per message, so we
                 // need to be sure we aren't throwing some away.
-                let items_len = response_message.items.inner.len();
+                let items_len = message.items.inner.len();
                 if items_len != 1 {
                     log::warn!(
                         "GetItemResponseMessage contained {} items, only 1 expected",
@@ -1015,19 +1059,19 @@ where
                     );
                 }
 
-                items.extend(response_message.items.inner.into_iter());
+                items.extend(message.items.inner.into_iter());
             }
         }
 
         Ok(items)
     }
 
-    /// Send a message by performing a [`CreateItem`] operation via EWS.
+    /// Send a message by performing a [`CreateItem` operation] via EWS.
     ///
     /// All headers except for Bcc are expected to be included in the provided
     /// MIME content.
     ///
-    /// [`CreateItem`] https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/createitem-operation-email-message
+    /// [`CreateItem` operation]: https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/createitem-operation-email-message
     pub async fn send_message(
         self,
         mime_content: String,
@@ -1122,30 +1166,31 @@ where
             saved_item_folder_id: None,
         };
 
-        self.make_create_item_request(create_item).await?;
+        self.make_create_item_request(create_item, TransportSecFailureBehavior::Silent)
+            .await?;
 
         Ok(())
     }
 
-    /// Create a message on the server by performing a [`CreateItem`] operation
+    /// Create a message on the server by performing a [`CreateItem` operation]
     /// via EWS.
     ///
     /// All headers are expected to be included in the provided MIME content.
     ///
-    /// [`CreateItem`] https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/createitem-operation-email-message
+    /// [`CreateItem` operation]: https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/createitem-operation-email-message
     pub async fn create_message(
         self,
         folder_id: String,
         is_draft: bool,
         is_read: bool,
         content: Vec<u8>,
-        callbacks: RefPtr<IEwsMessageCreateCallbacks>,
+        listener: RefPtr<IEwsMessageCreateListener>,
     ) {
         // Send the request, using an inner method to more easily handle errors.
         // Use the return value to determine which status we should use when
         // notifying the end of the request.
         let status = match self
-            .create_message_inner(folder_id, is_draft, is_read, content, &callbacks)
+            .create_message_inner(folder_id, is_draft, is_read, content, &listener)
             .await
         {
             Ok(_) => nserror::NS_OK,
@@ -1156,7 +1201,7 @@ where
             }
         };
 
-        if let Err(err) = unsafe { callbacks.OnStopCreate(status) }.to_result() {
+        if let Err(err) = unsafe { listener.OnStopCreate(status) }.to_result() {
             log::error!("aborting copy: an error occurred while stopping the listener: {err}")
         }
     }
@@ -1167,7 +1212,7 @@ where
         is_draft: bool,
         is_read: bool,
         content: Vec<u8>,
-        callbacks: &IEwsMessageCreateCallbacks,
+        listener: &IEwsMessageCreateListener,
     ) -> Result<(), XpComEwsError> {
         // Create a new message from the binary content we got.
         let mut message = Message {
@@ -1215,51 +1260,49 @@ where
             }),
         };
 
-        let response_message = self.make_create_item_request(create_item).await?;
+        let response_message = self
+            .make_create_item_request(create_item, Default::default())
+            .await?;
 
         let hdr =
-            create_and_populate_header_from_create_response(response_message, &content, callbacks)?;
+            create_and_populate_header_from_create_response(response_message, &content, listener)?;
 
         // Let the listeners know of the local key for the newly created message.
         let mut key: nsMsgKey = 0;
         unsafe { hdr.GetMessageKey(&mut key) }.to_result()?;
-        unsafe { callbacks.SetMessageKey(key) }.to_result()?;
+        unsafe { listener.OnNewMessageKey(key) }.to_result()?;
 
         Ok(())
     }
 
-    /// Performs a [`CreateItem`] operation and processes its response.
+    /// Performs a [`CreateItem` operation] and processes its response.
     ///
-    /// [`CreateItem`] https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/createitem-operation-email-message
+    /// [`CreateItem` operation]: https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/createitem-operation-email-message
     async fn make_create_item_request(
         &self,
         create_item: CreateItem,
+        transport_sec_failure_behavior: TransportSecFailureBehavior,
     ) -> Result<ItemResponseMessage, XpComEwsError> {
         let response = self
-            .make_operation_request(create_item, AuthFailureBehavior::ReAuth)
+            .make_operation_request(
+                create_item,
+                OperationRequestOptions {
+                    transport_sec_failure_behavior,
+                    ..Default::default()
+                },
+            )
             .await?;
 
         // We have only sent one message, therefore the response should only
         // contain one response message.
-        let response_messages = response.response_messages.create_item_response_message;
-        validate_response_message_count(&response_messages, 1)?;
-
-        // Get the first (and only) response message, and check if there's a
-        // warning or an error we should handle.
-        let response_message = response_messages.into_iter().next().unwrap();
-        process_response_message_class(
-            "CreateItem",
-            &response_message.response_class,
-            &response_message.response_code,
-            &response_message.message_text,
-        )?;
-
-        Ok(response_message)
+        let response_messages = response.into_response_messages();
+        let response_message = single_response_or_error(response_messages)?;
+        process_response_message_class("CreateItem", response_message)
     }
 
-    /// Mark a message as read or unread by performing an [`UpdateItem`] operation via EWS.
+    /// Mark a message as read or unread by performing an [`UpdateItem` operation] via EWS.
     ///
-    /// [`UpdateItem`] https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/updateitem-operation
+    /// [`UpdateItem` operation]: https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/updateitem-operation
     pub async fn change_read_status(self, message_ids: Vec<String>, is_read: bool) {
         // Send the request, using an inner method to more easily handle errors.
         if let Err(err) = self.change_read_status_inner(message_ids, is_read).await {
@@ -1316,17 +1359,17 @@ where
         Ok(())
     }
 
-    /// Performs an [`UpdateItem`] operation and processes its response.
+    /// Performs an [`UpdateItem` operation] and processes its response.
     ///
-    /// [`UpdateItem`] https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/updateitem-operation
+    /// [`UpdateItem` operation]: https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/updateitem-operation
     async fn make_update_item_request(&self, update_item: UpdateItem) -> Result<(), XpComEwsError> {
         // Make the operation request using the provided parameters.
         let response = self
-            .make_operation_request(update_item.clone(), AuthFailureBehavior::ReAuth)
+            .make_operation_request(update_item.clone(), Default::default())
             .await?;
 
         // Get all response messages.
-        let response_messages = response.response_messages.update_item_response_message;
+        let response_messages = response.into_response_messages();
         validate_response_message_count(&response_messages, update_item.item_changes.len())?;
 
         // Process each response message, checking for errors or warnings.
@@ -1334,17 +1377,9 @@ where
             .into_iter()
             .enumerate()
             .filter_map(|(index, response_message)| {
-                match process_response_message_class(
-                    "UpdateItem",
-                    &response_message.response_class,
-                    &response_message.response_code,
-                    &response_message.message_text,
-                ) {
+                match process_response_message_class("UpdateItem", response_message) {
                     Ok(_) => None,
-                    Err(err) => Some(format!(
-                        "failed to process message #{} ({:?}): {}",
-                        index, response_message, err
-                    )),
+                    Err(err) => Some(format!("failed to process message #{index}: {err}")),
                 }
             })
             .collect();
@@ -1352,7 +1387,7 @@ where
         // If there were errors, return an aggregated error.
         if !errors.is_empty() {
             return Err(XpComEwsError::Processing {
-                message: format!("response contained errors: {:?}", errors),
+                message: format!("response contained errors: {errors:?}"),
             });
         }
 
@@ -1361,23 +1396,24 @@ where
 
     pub async fn delete_messages(
         self,
+        listener: RefPtr<IEwsSimpleOperationListener>,
         ews_ids: ThinVec<nsCString>,
-        callbacks: RefPtr<IEwsMessageDeleteCallbacks>,
     ) {
         // Call an inner function to perform the operation in order to allow us
         // to handle errors while letting the inner function simply propagate.
-        self.delete_messages_inner(ews_ids, &callbacks)
-            .await
-            .unwrap_or_else(process_error_with_cb_cpp(move |client_err, desc| unsafe {
-                callbacks.OnError(client_err, &*desc);
-            }));
+        match self.delete_messages_inner(ews_ids).await {
+            Ok(_) => unsafe {
+                listener.OnOperationSuccess(&ThinVec::new(), false);
+            },
+            Err(err) => handle_error(
+                "DeleteItem",
+                err,
+                listener.query_interface::<IEwsFallibleOperationListener>(),
+            ),
+        };
     }
 
-    async fn delete_messages_inner(
-        self,
-        ews_ids: ThinVec<nsCString>,
-        callbacks: &IEwsMessageDeleteCallbacks,
-    ) -> Result<(), XpComEwsError> {
+    async fn delete_messages_inner(self, ews_ids: ThinVec<nsCString>) -> Result<(), XpComEwsError> {
         let item_ids: Vec<BaseItemId> = ews_ids
             .iter()
             .map(|raw_id| BaseItemId::ItemId {
@@ -1395,26 +1431,24 @@ where
         };
 
         let response = self
-            .make_operation_request(delete_item, AuthFailureBehavior::ReAuth)
+            .make_operation_request(delete_item, Default::default())
             .await?;
 
         // Make sure we got the amount of response messages matches the amount
         // of messages we requested to have deleted.
-        let response_messages = response.response_messages.delete_item_response_message;
+        let response_messages = response.into_response_messages();
         validate_response_message_count(&response_messages, ews_ids.len())?;
 
         // Check every response message for an error.
         response_messages
             .into_iter()
             .zip(ews_ids.iter())
-            .map(|(response_message, ews_id)| {
+            .try_for_each(|(response_message, ews_id)| {
                 if let Err(err) = process_response_message_class(
                     "DeleteItem",
-                    &response_message.response_class,
-                    &response_message.response_code,
-                    &response_message.message_text,
+                    response_message
                 ) {
-                    if matches!(err, XpComEwsError::ResponseError { code: ResponseCode::ErrorItemNotFound, .. }) {
+                    if matches!(err, XpComEwsError::ResponseError( ResponseError { response_code: ResponseCode::ErrorItemNotFound, .. })) {
                         // Something happened in a previous attempt that caused
                         // the message to be deleted on the EWS server but not
                         // in the database. In this case, we don't want to force
@@ -1435,31 +1469,31 @@ where
                 } else {
                     Ok(())
                 }
-            }).collect::<Result<(), _>>()?;
+            })?;
 
-        // Delete the messages from the folder's database.
-        unsafe { callbacks.OnRemoteDeleteSuccessful() }
-            .to_result()
-            .map_err(|err| err.into())
+        Ok(())
     }
 
     pub async fn delete_folder(
         self,
-        callbacks: RefPtr<IEwsFolderDeleteCallbacks>,
+        listener: RefPtr<IEwsSimpleOperationListener>,
         folder_id: String,
     ) {
         // Call an inner function to perform the operation in order to allow us
         // to handle errors while letting the inner function simply propagate.
-        if let Err(err) = self.delete_folder_inner(&callbacks, folder_id).await {
-            log::error!("an error occurred while attempting to delete the folder: {err:?}");
+        match self.delete_folder_inner(folder_id).await {
+            Ok(_) => unsafe {
+                listener.OnOperationSuccess(&ThinVec::new(), false);
+            },
+            Err(err) => handle_error(
+                "DeleteFolder",
+                err,
+                listener.query_interface::<IEwsFallibleOperationListener>(),
+            ),
         }
     }
 
-    async fn delete_folder_inner(
-        self,
-        callbacks: &IEwsFolderDeleteCallbacks,
-        folder_id: String,
-    ) -> Result<(), XpComEwsError> {
+    async fn delete_folder_inner(self, folder_id: String) -> Result<(), XpComEwsError> {
         let delete_folder = DeleteFolder {
             folder_ids: vec![BaseFolderId::FolderId {
                 id: folder_id,
@@ -1468,49 +1502,40 @@ where
             delete_type: DeleteType::HardDelete,
         };
         let response = self
-            .make_operation_request(delete_folder, AuthFailureBehavior::ReAuth)
+            .make_operation_request(delete_folder, Default::default())
             .await?;
 
         // We have only sent one message, therefore the response should only
         // contain one response message.
-        let response_messages = response.response_messages.delete_folder_response_message;
-        validate_response_message_count(&response_messages, 1)?;
+        let response_messages = response.into_response_messages();
+        let response_message = single_response_or_error(response_messages)?;
+        process_response_message_class("DeleteFolder", response_message)?;
 
-        // Get the first (and only) response message, and check if there's a
-        // warning or an error we should handle.
-        let response_message = response_messages.into_iter().next().unwrap();
-        process_response_message_class(
-            "DeleteFolder",
-            &response_message.response_class,
-            &response_message.response_code,
-            &response_message.message_text,
-        )?;
-
-        // Delete the folder from the server's database.
-        unsafe { callbacks.OnRemoteDeleteFolderSuccessful() }
-            .to_result()
-            .map_err(|err| err.into())
+        Ok(())
     }
 
     pub async fn update_folder(
         self,
-        callbacks: RefPtr<IEwsFolderUpdateCallbacks>,
+        listener: RefPtr<IEwsSimpleOperationListener>,
         folder_id: String,
         folder_name: String,
     ) {
         // Call an inner function to perform the operation in order to allow us
         // to handle errors while letting the inner function simply propagate.
-        if let Err(err) = self
-            .update_folder_inner(&callbacks, folder_id, folder_name)
-            .await
-        {
-            log::error!("an error occurred while attempting to delete the folder: {err:?}");
+        match self.update_folder_inner(folder_id, folder_name).await {
+            Ok(_) => unsafe {
+                listener.OnOperationSuccess(&ThinVec::new(), false);
+            },
+            Err(err) => handle_error(
+                "UpdateFolder",
+                err,
+                listener.query_interface::<IEwsFallibleOperationListener>(),
+            ),
         }
     }
 
     async fn update_folder_inner(
         self,
-        callbacks: &IEwsFolderUpdateCallbacks,
         folder_id: String,
         folder_name: String,
     ) -> Result<(), XpComEwsError> {
@@ -1541,32 +1566,24 @@ where
         };
 
         let response = self
-            .make_operation_request(update_folder, AuthFailureBehavior::ReAuth)
+            .make_operation_request(update_folder, Default::default())
             .await?;
-        let response_messages = response.response_messages.update_folder_response_message;
-        validate_response_message_count(&response_messages, 1)?;
+        let response_messages = response.into_response_messages();
+        let response_message = single_response_or_error(response_messages)?;
+        process_response_message_class("UpdateFolder", response_message)?;
 
-        let response_message = response_messages.into_iter().next().unwrap();
-        process_response_message_class(
-            "UpdateFolder",
-            &response_message.response_class,
-            &response_message.response_code,
-            &response_message.message_text,
-        )?;
-
-        unsafe { callbacks.OnRemoteFolderUpdateSuccessful() }
-            .to_result()
-            .map_err(|err| err.into())
+        Ok(())
     }
 
     /// Makes a request to the EWS endpoint to perform an operation.
     ///
-    /// If the request is throttled, it will be retried after the delay given in
-    /// the response.
+    /// If the entire request or first response is throttled, the request will
+    /// be repeatedly retried (after the delay given in the response) until it
+    /// succeeds or some other error occurs.
     async fn make_operation_request<Op>(
         &self,
         op: Op,
-        auth_failure_behavior: AuthFailureBehavior,
+        options: OperationRequestOptions,
     ) -> Result<Op::Response, XpComEwsError>
     where
         Op: Operation,
@@ -1588,18 +1605,64 @@ where
             {
                 Ok(response) => response,
                 Err(err) => {
-                    if matches!(err, XpComEwsError::Authentication)
-                        && matches!(auth_failure_behavior, AuthFailureBehavior::ReAuth)
-                    {
-                        let outcome = handle_auth_failure(self.server.clone())?;
+                    // Handle authentication, network and transport security
+                    // failures early because we know how to process them
+                    // without requiring more data from the response body.
+                    match err {
+                        // If the error is an authentication failure, try to
+                        // authenticate again (by asking the user for new
+                        // credentials if relevant), but only if the consumer
+                        // asked us to.
+                        XpComEwsError::Authentication
+                            if matches!(
+                                options.auth_failure_behavior,
+                                AuthFailureBehavior::ReAuth
+                            ) =>
+                        {
+                            let outcome = handle_auth_failure(self.server.clone())?;
 
-                        match outcome {
-                            AuthErrorOutcome::RETRY => continue,
-                            AuthErrorOutcome::ABORT => return Err(err),
+                            // Refresh the credentials before potentially retrying,
+                            // because they might have changed (e.g. if the user
+                            // entered a new password after being prompted for one),
+                            // and should we emit more requests using this client,
+                            // we should be using up to date credentials.
+                            let credentials = self.server.get_credentials()?;
+                            self.credentials.replace(credentials);
+
+                            match outcome {
+                                AuthErrorOutcome::RETRY => continue,
+                                AuthErrorOutcome::ABORT => return Err(err),
+                            }
                         }
-                    } else {
-                        return Err(err);
-                    }
+
+                        // If the error is a transport security failure (e.g. an
+                        // invalid certificate), handle it here by alerting the
+                        // user, but only if the consumer asked us to.
+                        XpComEwsError::Http(moz_http::Error::TransportSecurityFailure {
+                            status: _,
+                            ref transport_security_info,
+                        }) if matches!(
+                            options.transport_sec_failure_behavior,
+                            TransportSecFailureBehavior::Alert
+                        ) =>
+                        {
+                            handle_transport_sec_failure(
+                                self.server.clone(),
+                                transport_security_info.0.clone(),
+                            )?;
+                            return Err(err);
+                        }
+
+                        // If the error is network-related, optionally alert the
+                        // user (depending on which specific error it is) before
+                        // propagating it.
+                        XpComEwsError::Http(ref http_error) => {
+                            maybe_handle_connection_error(http_error.into(), self.server.clone())?;
+                            return Err(err);
+                        }
+
+                        _ => return Err(err),
+                    };
                 }
             };
 
@@ -1612,7 +1675,7 @@ where
                 Ok(envelope) => {
                     // If the server responded with a version identifier, store
                     // it so we can use it later.
-                    match envelope
+                    if let Some(header) = envelope
                         .headers
                         .into_iter()
                         // Filter out headers we don't care about.
@@ -1624,9 +1687,23 @@ where
                         })
                         .next()
                     {
-                        Some(header) => self.update_server_version(header)?,
-                        None => {}
-                    };
+                        self.update_server_version(header)?;
+                    }
+
+                    // Check if the first response is a back off message, and
+                    // retry if so.
+                    if let Some(ResponseClass::Error(ResponseError {
+                        message_xml: Some(ews::MessageXml::ServerBusy(server_busy)),
+                        ..
+                    })) = envelope.body.response_messages().first()
+                    {
+                        let delay_ms = server_busy.back_off_milliseconds;
+                        log::debug!(
+                            "{op_name} returned busy message, will retry after {delay_ms} milliseconds"
+                        );
+                        xpcom_async::sleep(delay_ms).await?;
+                        continue;
+                    }
 
                     Ok(envelope.body)
                 }
@@ -1636,7 +1713,7 @@ where
                     let backoff_delay_ms = maybe_get_backoff_delay_ms(&err);
                     if let Some(backoff_delay_ms) = backoff_delay_ms {
                         log::debug!(
-                            "request throttled, will retry after {backoff_delay_ms} milliseconds"
+                            "{op_name} request throttled, will retry after {backoff_delay_ms} milliseconds"
                         );
 
                         xpcom_async::sleep(backoff_delay_ms).await?;
@@ -1669,7 +1746,8 @@ where
     ) -> Result<Response, XpComEwsError> {
         // Fetch the Authorization header value for each request in case of
         // token expiration between requests.
-        let auth_header_value = match self.credentials.to_auth_header_value().await {
+        let credentials = self.credentials.borrow().clone();
+        let auth_header_value = match credentials.to_auth_header_value().await {
             Ok(value) => value,
             // The OAuth2 module will return `NS_ERROR_ABORT` if it's failed
             // to get credentials even after prompting the user again. We
@@ -1687,7 +1765,7 @@ where
 
         if env::var(LOG_NETWORK_PAYLOADS_ENV_VAR).is_ok() {
             // Also log the request body if requested.
-            log::info!("C: {}", String::from_utf8_lossy(&request_body));
+            log::info!("C: {}", String::from_utf8_lossy(request_body));
         }
 
         let response = self
@@ -1706,7 +1784,7 @@ where
 
         if env::var(LOG_NETWORK_PAYLOADS_ENV_VAR).is_ok() {
             // Also log the response body if requested.
-            log::info!("S: {}", String::from_utf8_lossy(&response_body));
+            log::info!("S: {}", String::from_utf8_lossy(response_body));
         }
 
         // Catch authentication errors quickly so we can react to them
@@ -1837,13 +1915,10 @@ pub(crate) enum XpComEwsError {
     Ews(#[from] ews::Error),
 
     #[error("an error occurred while (de)serializing JSON")]
-    JSON(#[from] serde_json::Error),
+    Json(#[from] serde_json::Error),
 
-    #[error("request resulted in error with code {code:?} and message {message:?}")]
-    ResponseError {
-        code: ResponseCode,
-        message: Option<String>,
-    },
+    #[error("request resulted in an error: {0:?}")]
+    ResponseError(#[from] ResponseError),
 
     #[error("error in processing response")]
     Processing { message: String },
@@ -1871,98 +1946,36 @@ impl From<XpComEwsError> for nsresult {
     }
 }
 
-/// Returns a function for processing an error and providing it to the provided
-/// error-handling callback. This version allows only safe Rust types as input.
-fn process_error_with_cb<Cb>(handler: Cb) -> impl FnOnce(XpComEwsError)
-where
-    Cb: FnOnce(EwsClientError, &str),
-{
-    |err| {
-        let (client_err, desc) = match err {
-            XpComEwsError::Http(moz_http::Error::StatusCode {
-                status: StatusCode(401),
-                ..
-            }) => {
-                // Authentication failed. Let Thunderbird know so we can
-                // handle it appropriately.
-                log::error!("an authentication error occurred: {err:?}");
-                (EwsClientError::AuthenticationFailed, "")
-            }
+fn handle_error(
+    op_name: &str,
+    err: XpComEwsError,
+    listener: Option<RefPtr<IEwsFallibleOperationListener>>,
+) {
+    log::error!("an error occurred when performing operation {op_name}: {err:?}");
 
-            _ => {
-                log::error!("an unexpected error occurred: {err:?}");
-
-                match err {
-                    XpComEwsError::Http(moz_http::Error::StatusCode { response, .. }) => {
-                        match std::str::from_utf8(response.body()) {
-                            Ok(body) => eprintln!("body in UTF-8: {body}"),
-                            Err(_) => (),
-                        }
-                    }
-
-                    _ => (),
-                }
-
-                (EwsClientError::Unexpected, "an unexpected error occurred")
-            }
-        };
-
-        handler(client_err, desc);
+    if let Some(listener) = listener {
+        match unsafe { listener.OnOperationFailure(err.into()) }.to_result() {
+            Ok(_) => {}
+            Err(err) => log::error!("the error callback returned a failure ({err})"),
+        }
     }
-}
-
-/// Returns a function for processing an error and providing it to the provided
-/// error-handling callback. This version allows unsafe C++ types as input.
-/// This version is provided for compatibility until other callback interface
-/// implementations are given safe Rust wrappers.
-fn process_error_with_cb_cpp<Cb>(handler: Cb) -> impl FnOnce(XpComEwsError)
-where
-    Cb: FnOnce(u8, nsCString),
-{
-    process_error_with_cb(|error, description| {
-        let error_code = error.into();
-        let desc = nsCString::from(description);
-        handler(error_code, desc);
-    })
 }
 
 /// Look at the response class of a response message, and do nothing, warn or
 /// return an error accordingly.
-fn process_response_message_class(
+fn process_response_message_class<T>(
     op_name: &str,
-    response_class: &ResponseClass,
-    response_code: &Option<ResponseCode>,
-    message_text: &Option<String>,
-) -> Result<(), XpComEwsError> {
+    response_class: ResponseClass<T>,
+) -> Result<T, XpComEwsError> {
     match response_class {
-        ResponseClass::Success => Ok(()),
+        ResponseClass::Success(message) => Ok(message),
 
-        ResponseClass::Warning => {
-            let message = if let Some(code) = response_code {
-                if let Some(text) = message_text {
-                    format!("{op_name} operation encountered `{code:?}' warning: {text}")
-                } else {
-                    format!("{op_name} operation encountered `{code:?}' warning")
-                }
-            } else if let Some(text) = message_text {
-                format!("{op_name} operation encountered warning: {text}")
-            } else {
-                format!("{op_name} operation encountered unknown warning")
-            };
-
-            log::warn!("{message}");
-
-            Ok(())
+        ResponseClass::Warning(message) => {
+            log::warn!("{op_name} operation encountered unknown warning");
+            Ok(message)
         }
 
-        ResponseClass::Error => {
-            let code = response_code.unwrap_or_default();
-
-            Err(XpComEwsError::ResponseError {
-                code,
-                message: message_text.clone(),
-            })
-        }
+        ResponseClass::Error(err) => Err(err.to_owned().into()),
     }
 }
 
@@ -1973,13 +1986,6 @@ fn process_response_message_class(
 fn validate_get_folder_response_message(
     message: &GetFolderResponseMessage,
 ) -> Result<FolderId, XpComEwsError> {
-    process_response_message_class(
-        "GetFolder",
-        &message.response_class,
-        &message.response_code,
-        &message.message_text,
-    )?;
-
     if message.folders.inner.len() != 1 {
         return Err(XpComEwsError::Processing {
             message: format!(
@@ -1990,11 +1996,10 @@ fn validate_get_folder_response_message(
     }
 
     // Okay to unwrap as we've verified the length.
-    match message.folders.inner.iter().next().unwrap() {
-        Folder::Folder { folder_id, .. } => folder_id
-            .as_ref()
-            .map(|id| id.clone())
-            .ok_or(XpComEwsError::MissingIdInResponse),
+    match message.folders.inner.first().unwrap() {
+        Folder::Folder { folder_id, .. } => {
+            folder_id.clone().ok_or(XpComEwsError::MissingIdInResponse)
+        }
 
         _ => Err(XpComEwsError::Processing {
             message: String::from("expected folder to be of type Folder"),
@@ -2007,7 +2012,7 @@ fn validate_get_folder_response_message(
 fn create_and_populate_header_from_create_response(
     response_message: ItemResponseMessage,
     content: &[u8],
-    callbacks: &IEwsMessageCreateCallbacks,
+    listener: &IEwsMessageCreateListener,
 ) -> Result<RefPtr<nsIMsgDBHdr>, XpComEwsError> {
     // If we're saving the message (rather than sending it), we must create a
     // new database entry for it and associate it with the message's EWS ID.
@@ -2030,7 +2035,7 @@ fn create_and_populate_header_from_create_response(
 
     // Signal that copying the message to the server has succeeded, which will
     // trigger its content to be streamed to the relevant message store.
-    let hdr = getter_addrefs(|hdr| unsafe { callbacks.OnRemoteCreateSuccessful(&*ews_id, hdr) })?;
+    let hdr = getter_addrefs(|hdr| unsafe { listener.OnRemoteCreateSuccessful(&*ews_id, hdr) })?;
 
     // Parse the message and use its headers to populate the `nsIMsgDBHdr`
     // before committing it to the database. We parse the original content
@@ -2044,13 +2049,13 @@ fn create_and_populate_header_from_create_response(
         })?;
 
     populate_db_message_header_from_message_headers(&hdr, message)?;
-    unsafe { callbacks.CommitHeader(&*hdr) }.to_result()?;
+    unsafe { listener.OnHdrPopulated(&*hdr) }.to_result()?;
 
     Ok(hdr)
 }
 
 fn validate_response_message_count<T>(
-    response_messages: &[T],
+    response_messages: &[ResponseClass<T>],
     expected_len: usize,
 ) -> Result<(), XpComEwsError> {
     if response_messages.len() != expected_len {
@@ -2061,4 +2066,39 @@ fn validate_response_message_count<T>(
     }
 
     Ok(())
+}
+
+/// For responses where we expect a single message, extract that message. Returns
+/// [`XpComEwsError::Processing`] if no messages are available, prints a warning but succesfully
+/// returns the first message if more than one message is available.
+fn single_response_or_error<T>(responses: Vec<T>) -> Result<T, XpComEwsError> {
+    let responses_len = responses.len();
+    let Some(message) = responses.into_iter().next() else {
+        return Err(XpComEwsError::Processing {
+            message: "expected 1 response message, got none".to_string(),
+        });
+    };
+    if responses_len != 1 {
+        log::warn!("expected 1 response message, got {responses_len}");
+    }
+    Ok(message)
+}
+
+/// Convert the response into a vector of its message type, or return the first error
+/// encountered. Warnings are logged but otherwise considered successes.
+fn response_into_messages<OpResponse: OperationResponse>(
+    response: OpResponse,
+) -> Result<Vec<OpResponse::Message>, ResponseError> {
+    response
+        .into_response_messages()
+        .into_iter()
+        .map(|response_class| match response_class {
+            ResponseClass::Success(message) => Ok(message),
+            ResponseClass::Error(err) => Err(err),
+            ResponseClass::Warning(message) => {
+                log::warn!("into_messages found a warning!");
+                Ok(message)
+            }
+        })
+        .collect()
 }

@@ -19,7 +19,10 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-readme = "README.md"
+readme = false
+
+[features]
+interop = []
 
 [lib]
 name = "ews"
@@ -28,6 +31,9 @@ path = "src/lib.rs"
 [dependencies]
 serde_path_to_error = "0.1.11"
 thiserror = "1.0.57"
+
+[dependencies.ews_proc_macros]
+path = "../ews_proc_macros"
 
 [dependencies.log]
 version = "0.4.21"

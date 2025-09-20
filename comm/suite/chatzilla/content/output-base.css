@@ -145,7 +145,7 @@
     border: 1px black solid;
 }
 
-.h-table, #net-url, #ch-url, #dcc-chat-title {
+.h-table, #ch-topicnodes-v {
     width: 100%;
 }
 
@@ -163,16 +163,11 @@
     text-align: center;
 }
 
-#cli-version-container {
-    text-align: center;
-    width: 100%;
-}
-
-#usr-descnodes, #ch-topicnodes {
+#ch-topicnodes {
     line-height: 110%;
 }
 
-#ch-usercount, #ch-modestr, #net-lag, #dcc-file-progress {
+#dcc-file-progress {
     white-space: nowrap;
 }
 
@@ -187,10 +182,6 @@
 .value {
     vertical-align: top;
     padding-right: 1em;
-}
-
-#usr-title, #usr-descnodes {
-    text-align: center;
 }
 
 /******************************************************************************

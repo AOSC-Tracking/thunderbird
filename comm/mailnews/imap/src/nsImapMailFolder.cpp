@@ -79,18 +79,6 @@ using mozilla::LogLevel;
 using mozilla::Preferences;
 using namespace mozilla::StaticPrefs;
 
-#define NS_PARSEMAILMSGSTATE_CID              \
-  {/* 2B79AC51-1459-11d3-8097-006008128C4E */ \
-   0x2b79ac51,                                \
-   0x1459,                                    \
-   0x11d3,                                    \
-   {0x80, 0x97, 0x0, 0x60, 0x8, 0x12, 0x8c, 0x4e}}
-static NS_DEFINE_CID(kParseMailMsgStateCID, NS_PARSEMAILMSGSTATE_CID);
-
-#define NS_IIMAPHOSTSESSIONLIST_CID \
-  {0x479ce8fc, 0xe725, 0x11d2, {0xa5, 0x05, 0x00, 0x60, 0xb0, 0xfc, 0x04, 0xb7}}
-static NS_DEFINE_CID(kCImapHostSessionList, NS_IIMAPHOSTSESSIONLIST_CID);
-
 #define MAILNEWS_CUSTOM_HEADERS "mailnews.customHeaders"
 
 extern LazyLogModule gAutoSyncLog;  // defined in nsAutoSyncManager.cpp
@@ -655,69 +643,12 @@ NS_IMETHODIMP nsImapMailFolder::UpdateFolderWithListener(
 
     // If a body filter is enabled for an offline folder, delay the filter
     // application until after message has been downloaded.
+
     m_filterListRequiresBody = false;
-
     if (mFlags & nsMsgFolderFlags::Offline) {
-      nsCOMPtr<nsIMsgFilterService> filterService =
-          mozilla::components::Filter::Service();
-      uint32_t filterCount = 0;
-      m_filterList->GetFilterCount(&filterCount);
-      for (uint32_t index = 0; index < filterCount && !m_filterListRequiresBody;
-           ++index) {
-        nsCOMPtr<nsIMsgFilter> filter;
-        m_filterList->GetFilterAt(index, getter_AddRefs(filter));
-        if (!filter) continue;
-        nsMsgFilterTypeType filterType;
-        filter->GetFilterType(&filterType);
-        if (!(filterType & nsMsgFilterType::Incoming)) continue;
-        bool enabled = false;
-        filter->GetEnabled(&enabled);
-        if (!enabled) continue;
-        nsTArray<RefPtr<nsIMsgSearchTerm>> searchTerms;
-        filter->GetSearchTerms(searchTerms);
-        for (nsIMsgSearchTerm* term : searchTerms) {
-          nsMsgSearchAttribValue attrib;
-          rv = term->GetAttrib(&attrib);
-          NS_ENSURE_SUCCESS(rv, rv);
-          if (attrib == nsMsgSearchAttrib::Body)
-            m_filterListRequiresBody = true;
-          else if (attrib == nsMsgSearchAttrib::Custom) {
-            nsAutoCString customId;
-            rv = term->GetCustomId(customId);
-            nsCOMPtr<nsIMsgSearchCustomTerm> customTerm;
-            if (NS_SUCCEEDED(rv) && filterService)
-              rv = filterService->GetCustomTerm(customId,
-                                                getter_AddRefs(customTerm));
-            bool needsBody = false;
-            if (NS_SUCCEEDED(rv) && customTerm)
-              rv = customTerm->GetNeedsBody(&needsBody);
-            if (NS_SUCCEEDED(rv) && needsBody) m_filterListRequiresBody = true;
-          }
-          if (m_filterListRequiresBody) {
-            break;
-          }
-        }
-
-        // Also check if filter actions need the body, as this
-        // is supported in custom actions.
-        uint32_t numActions = 0;
-        filter->GetActionCount(&numActions);
-        for (uint32_t actionIndex = 0;
-             actionIndex < numActions && !m_filterListRequiresBody;
-             actionIndex++) {
-          nsCOMPtr<nsIMsgRuleAction> action;
-          rv = filter->GetActionAt(actionIndex, getter_AddRefs(action));
-          if (NS_FAILED(rv) || !action) continue;
-
-          nsCOMPtr<nsIMsgFilterCustomAction> customAction;
-          rv = action->GetCustomAction(getter_AddRefs(customAction));
-          if (NS_FAILED(rv) || !customAction) continue;
-
-          bool needsBody = false;
-          customAction->GetNeedsBody(&needsBody);
-          if (needsBody) m_filterListRequiresBody = true;
-        }
-      }
+      rv = m_filterList->DoFiltersNeedMessageBody(nsMsgFilterType::Incoming,
+                                                  &m_filterListRequiresBody);
+      NS_ENSURE_SUCCESS(rv, rv);
     }
     MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
             ("(Imap) Filters require the message body: %s",
@@ -775,7 +706,7 @@ NS_IMETHODIMP nsImapMailFolder::UpdateFolderWithListener(
     nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     // Do a discovery in its own url if needed. Do before SELECT url.
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionList, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     if (NS_SUCCEEDED(rv) && hostSession) {
       bool foundMailboxesAlready = false;
       nsCString serverKey;
@@ -2743,7 +2674,28 @@ NS_IMETHODIMP nsImapMailFolder::UpdateImapMailboxStatus(
     m_numServerUnseenMessages = numUnread;
     m_numServerTotalMessages = numTotal;
   }
-  if (summaryChanged) SummaryChanged();
+  if (summaryChanged) {
+    SummaryChanged();
+    // Do UpdateFolder() below if folder not selected.
+    bool folderSelected;
+    nsresult rv = aSpec->GetFolderSelected(&folderSelected);
+    NS_ENSURE_SUCCESS(rv, rv);
+    // folderSelected false means folderstatus URL caused imap STATUS to be
+    // sent by an imap connection not imap SELECTed on the URL target folder.
+    // folderSected true means NOOP was sent to the target folder for URL
+    // folderstatus because the target folder is already selected on the
+    // imap connection doing the URL, so UpdateFolder() is not needed.
+    if (!folderSelected) {
+      MOZ_LOG(IMAP, mozilla::LogLevel::Debug,
+              ("%s: folder=%s, do UpdateFolder(), summary change after STATUS",
+               __func__, m_onlineFolderName.get()));
+      UpdateFolder(nullptr);
+    } else {
+      MOZ_LOG(IMAP, mozilla::LogLevel::Debug,
+              ("%s: folder=%s, do NOTHING, summary change after SELECT",
+               __func__, m_onlineFolderName.get()));
+    }
+  }
 
   return NS_OK;
 }
@@ -2812,7 +2764,8 @@ nsresult nsImapMailFolder::SetupHeaderParseStream(
   m_nextMessageByteLength = aSize;
   if (!m_msgParser) {
     nsresult rv;
-    m_msgParser = do_CreateInstance(kParseMailMsgStateCID, &rv);
+    m_msgParser =
+        do_CreateInstance("@mozilla.org/messenger/messagestateparser;1", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
   } else
     m_msgParser->Clear();
@@ -3388,9 +3341,8 @@ NS_IMETHODIMP nsImapMailFolder::ApplyFilterHit(nsIMsgFilter* filter,
                                    getter_AddRefs(dstFolder));
             if (NS_FAILED(rv)) break;
 
-            nsCOMPtr<nsIMsgCopyService> copyService = do_GetService(
-                "@mozilla.org/messenger/messagecopyservice;1", &rv);
-            if (NS_FAILED(rv)) break;
+            nsCOMPtr<nsIMsgCopyService> copyService =
+                mozilla::components::Copy::Service();
             rv = copyService->CopyMessages(this, {&*msgHdr}, dstFolder, false,
                                            nullptr, msgWindow, false);
             if (NS_FAILED(rv)) {
@@ -4267,6 +4219,8 @@ nsImapMailFolder::ParseAdoptedMsgLine(const char* adoptedMessageLine,
     rv = GetMessageHeader(uidOfMessage, getter_AddRefs(m_offlineHeader));
     if (NS_SUCCEEDED(rv) && !m_offlineHeader) rv = NS_ERROR_UNEXPECTED;
     NS_ENSURE_SUCCESS(rv, rv);
+    // StartNewOfflineMessage() sets up m_tempMessageStream and
+    // m_tempMessageStreamBytesWritten.
     rv = StartNewOfflineMessage();
     NS_ENSURE_SUCCESS(rv, rv);
     m_curMsgUid = uidOfMessage;
@@ -4703,7 +4657,7 @@ nsImapMailFolder::NotifyMessageDeleted(const char* onlineFolderName,
 bool nsImapMailFolder::ShowDeletedMessages() {
   nsresult rv;
   nsCOMPtr<nsIImapHostSessionList> hostSession =
-      do_GetService(kCImapHostSessionList, &rv);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
   NS_ENSURE_SUCCESS(rv, false);
 
   bool showDeleted = false;
@@ -4717,7 +4671,7 @@ bool nsImapMailFolder::ShowDeletedMessages() {
 bool nsImapMailFolder::DeleteIsMoveToTrash() {
   nsresult err;
   nsCOMPtr<nsIImapHostSessionList> hostSession =
-      do_GetService(kCImapHostSessionList, &err);
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &err);
   NS_ENSURE_SUCCESS(err, true);
   bool rv = true;
 
@@ -5097,9 +5051,8 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
         case nsIImapUrl::nsImapMoveFolderHierarchy:
           if (m_copyState)  // delete folder gets here, but w/o an m_copyState
           {
-            nsCOMPtr<nsIMsgCopyService> copyService = do_GetService(
-                "@mozilla.org/messenger/messagecopyservice;1", &rv);
-            NS_ENSURE_SUCCESS(rv, rv);
+            nsCOMPtr<nsIMsgCopyService> copyService =
+                mozilla::components::Copy::Service();
             nsCOMPtr<nsIMsgFolder> srcFolder =
                 do_QueryInterface(m_copyState->m_srcSupport);
             if (srcFolder) {
@@ -7726,7 +7679,7 @@ NS_IMETHODIMP nsImapMailFolder::GetIsNamespace(bool* aResult) {
     GetHierarchyDelimiter(&hierarchyDelimiter);
 
     nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService(kCImapHostSessionList, &rv);
+        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
     m_namespace = nsImapNamespaceList::GetNamespaceForFolder(
         serverKey.get(), onlineName.get(), hierarchyDelimiter);
@@ -8845,6 +8798,52 @@ NS_IMETHODIMP nsImapMailFolder::GetLocalMsgStream(nsIMsgDBHdr* hdr,
 
 NS_IMETHODIMP nsImapMailFolder::GetIncomingServerType(nsACString& serverType) {
   serverType.AssignLiteral("imap");
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsImapMailFolder::HandleViewCommand(
+    nsMsgViewCommandTypeValue command, const nsTArray<nsMsgKey>& messageKeys,
+    nsIMsgWindow* window, nsIMsgCopyServiceListener* listener) {
+  imapMessageFlagsType flags = kNoImapMsgFlag;
+  bool addFlags = false;
+  switch (command) {
+    case nsMsgViewCommandType::markThreadRead:
+      flags |= kImapMsgSeenFlag;
+      addFlags = true;
+      break;
+    case nsMsgViewCommandType::undeleteMsg:
+      flags = kImapMsgDeletedFlag;
+      addFlags = false;
+      break;
+    case nsMsgViewCommandType::junk:
+      return StoreCustomKeywords(window, "Junk"_ns, "NonJunk"_ns, messageKeys,
+                                 nullptr);
+    case nsMsgViewCommandType::unjunk: {
+      uint32_t msgFlags = 0;
+      if (!messageKeys.IsEmpty()) {
+        nsCOMPtr<nsIMsgDBHdr> msgHdr;
+        MOZ_TRY(GetMessageHeader(messageKeys[0], getter_AddRefs(msgHdr)));
+        if (msgHdr) {
+          msgHdr->GetFlags(&msgFlags);
+        }
+      }
+
+      if (msgFlags & nsMsgMessageFlags::IMAPDeleted) {
+        StoreImapFlags(kImapMsgDeletedFlag, false, messageKeys, nullptr);
+      }
+
+      return StoreCustomKeywords(window, "NonJunk"_ns, "Junk"_ns, messageKeys,
+                                 nullptr);
+    }
+    default:
+      break;
+  }
+
+  // Can't get here without thisIsImapThreadPane == TRUE.
+  if (flags != kNoImapMsgFlag) {
+    StoreImapFlags(flags, addFlags, messageKeys, nullptr);
+  }
+
   return NS_OK;
 }
 

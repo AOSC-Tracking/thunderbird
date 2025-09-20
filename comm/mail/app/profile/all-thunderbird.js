@@ -279,6 +279,12 @@ pref("security.osclientcerts.autoload", false);
   pref("security.sandbox.content.syscall_whitelist", "");
 #endif
 
+// about:neterror
+pref("security.certerrors.permanentOverride", true);
+pref("security.certerrors.mitm.priming.enabled", false);
+pref("security.certerrors.mitm.auto_enable_enterprise_roots", true);
+pref("security.certerrors.felt-privacy-v1", false);
+
 // Symmetric (can be overridden by individual extensions) update preferences.
 // e.g.
 //  extensions.{GUID}.update.enabled
@@ -975,10 +981,6 @@ pref("devtools.browsertoolbox.scope", "everything");
 // This preference will enable watching top-level targets from the server side.
 pref("devtools.target-switching.server.enabled", true);
 
-// In DevTools, create a target for each frame (i.e. not only for top-level document and
-// remote frames).
-pref("devtools.every-frame-target.enabled", true);
-
 // Controls the hability to debug popups from the same DevTools
 // of the original tab the popups are coming from
 pref("devtools.popups.debug", false);
@@ -1233,8 +1235,8 @@ pref("devtools.browserconsole.input.editorWidth", 0);
 // Display an onboarding UI for the Editor mode.
 pref("devtools.webconsole.input.editorOnboarding", true);
 
-// Enable message grouping in the console, true by default
-pref("devtools.webconsole.groupWarningMessages", true);
+// Enable grouping/repeating similar messages in the console, true by default
+pref("devtools.webconsole.groupSimilarMessages", true);
 
 // Enable network monitoring the browser toolbox console/browser console.
 pref("devtools.browserconsole.enableNetworkMonitoring", false);
