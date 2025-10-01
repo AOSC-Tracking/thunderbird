@@ -437,7 +437,7 @@ static bool get_egl_gl_status(EGLDisplay dpy,
   PFNGLGETSTRING glGetString =
       cast<PFNGLGETSTRING>(eglGetProcAddress("glGetString"));
 
-#if defined(__arm__) || defined(__aarch64__)
+#if defined(__arm__) || defined(__aarch64__) || (defined(__riscv) && __riscv_xlen == 64)
   bool useGles = true;
 #else
   bool useGles = false;
