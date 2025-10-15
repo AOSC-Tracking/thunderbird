@@ -100,6 +100,7 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
+  TaskbarProgress: "resource:///modules/TaskbarProgress.sys.mjs",
 });
 
 /**
@@ -643,12 +644,18 @@ var stateListener = {
     // identity/signature switch. This can only be done once the message
     // body has already been assembled with the signature we need to switch.
     if (gMsgCompose.identity != gCurrentIdentity) {
+      const editor = GetCurrentEditor();
+      editor.enableUndo(false);
+
       const identityList = document.getElementById("msgIdentity");
       identityList.selectedItem = identityList.getElementsByAttribute(
         "identitykey",
         gMsgCompose.identity.key
       )[0];
       LoadIdentity(false);
+
+      editor.enableUndo(true);
+      editor.resetModificationCount();
     }
     if (gMsgCompose.composeHTML) {
       loadHTMLMsgPrefs();
@@ -850,13 +857,38 @@ var gSendListener = {
       prefetchCert: true,
       location,
     };
-    window.openDialog(
+    const dialog = window.openDialog(
       "chrome://pippki/content/exceptionDialog.xhtml",
       "",
       "chrome,centerscreen,dependent",
       params
     );
-    // params.exceptionAdded will be set if the user added an exception.
+    function onWindowClosed(win) {
+      if (win != dialog) {
+        return;
+      }
+      Services.obs.removeObserver(onWindowClosed, "domwindowclosed");
+      if (!params.exceptionAdded) {
+        return;
+      }
+      const server = MailServices.outgoingServer.getServerByKey(
+        gCurrentIdentity.smtpServerKey
+      );
+      if (!server) {
+        return;
+      }
+      let port = server.serverURI.port;
+      if (port == -1) {
+        port = Services.io.getDefaultPort(server.serverURI.scheme);
+      }
+      Glean.mail.certificateExceptionAdded.record({
+        error_category: secInfo.errorCodeString,
+        protocol: server.type,
+        port,
+        ui: "compose-send-listener",
+      });
+    }
+    Services.obs.addObserver(onWindowClosed, "domwindowclosed");
   },
 };
 
@@ -879,6 +911,11 @@ var progressListener = {
       progressMeter.hidden = true;
       progressMeter.value = 0;
       document.getElementById("statusText").textContent = "";
+      // Clear taskbar/dock progress.
+      lazy.TaskbarProgress.showProgress(
+        window,
+        Ci.nsITaskbarProgress.STATE_NO_PROGRESS
+      );
       Services.obs.notifyObservers(
         { composeWindow: window },
         "mail:composeSendProgressStop"
@@ -904,9 +941,26 @@ var progressListener = {
 
       // Advance progress meter.
       document.getElementById("compose-progressmeter").value = percent;
+
+      // Taskbar/dock progress. Don't show progress for messages smaller than
+      // the send chunk size.
+      if (aMaxTotalProgress > 65536) {
+        lazy.TaskbarProgress.showProgress(
+          window,
+          Ci.nsITaskbarProgress.STATE_NORMAL,
+          aCurTotalProgress,
+          aMaxTotalProgress
+        );
+      }
     } else {
       // Progress meter should be barber-pole in this case.
       document.getElementById("compose-progressmeter").removeAttribute("value");
+
+      // Just clear taskbar/dock progress.
+      lazy.TaskbarProgress.showProgress(
+        window,
+        Ci.nsITaskbarProgress.STATE_NO_PROGRESS
+      );
     }
   },
 
@@ -3171,7 +3225,7 @@ function ComposeFieldsReady() {
   updateEditableFields(false);
   gLoadingComplete = true;
 
-  // Set up observers to recheck limit and encyption on recipients change.
+  // Set up observers to recheck limit and encryption on recipients change.
   observeRecipientsChange();
 
   // Perform the initial checks.
@@ -3180,7 +3234,7 @@ function ComposeFieldsReady() {
 }
 
 /**
- * Set up observers to recheck limit and encyption on recipients change.
+ * Set up observers to recheck limit and encryption on recipients change.
  */
 function observeRecipientsChange() {
   // Observe childList changes of `To` and `Cc` address rows to check if we need
@@ -3275,7 +3329,7 @@ function manageAttachmentNotification(force = false) {
   // not having keywords.
   let removeNotification = attachmentNotificationSupressed();
 
-  // If not supressed, we need to look at the state of keywords.
+  // If not suppressed, we need to look at the state of keywords.
   if (!removeNotification) {
     if (attachmentWorker.lastMessage) {
       // We know the state of keywords, so process them.
@@ -3641,7 +3695,7 @@ var gCheckEncryptionStateNeedsRestart = false;
  * checkEncryptionState() (and all related async calls) is complete,
  * which means all automatic adjustments to the global encryption state
  * are done, and the automated test code may proceed to compare the
- * state to our exptectations.
+ * state to our expectations.
  * We want that event to be sent after modifications were made to the
  * composer window itself, such as sender identity and recipients.
  * However, we want to ignore calls to checkEncryptionState() that
@@ -3671,7 +3725,7 @@ var gWasCESTriggeredByComposerChange = false;
  * @param {string} [trigger] - A string that gives information about
  *   the reason why this function is being called.
  *   This parameter is intended to help with automated testing.
- *   If the trigger string starts with "openpgp-" then no completition
+ *   If the trigger string starts with "openpgp-" then no completion
  *   event will be dispatched. This allows the automated test code to
  *   wait for events that are directly related to properties of the
  *   composer window, only.
@@ -5546,7 +5600,7 @@ async function ComposeLoad() {
 
   ToolbarIconColor.init();
 
-  // initialize the customizeDone method on the customizeable toolbar
+  // initialize the customizeDone method on the customizable toolbar
   var toolbox = document.getElementById("compose-toolbox");
   toolbox.customizeDone = function (aEvent) {
     MailToolboxCustomizeDone(aEvent, "CustomizeComposeToolbar");
@@ -6178,7 +6232,7 @@ async function GenericSendMessage(msgType) {
           false
         );
         // Opening a dialog as dependent doesn't wait until it's closed again,
-        // so we have to do that explicitily.
+        // so we have to do that explicitly.
         if (spellCheckDialog.document.readyState != "complete") {
           await new Promise(resolve =>
             spellCheckDialog.addEventListener("load", resolve, { once: true })
@@ -6424,11 +6478,7 @@ async function CompleteGenericSendMessage(msgType) {
     }
 
     if (gSelectedTechnologyIsPGP) {
-      let pgpSuccess = false;
-      try {
-        pgpSuccess = await Enigmail.msg.onSendOpenPGP(msgType);
-      } catch (ex) {}
-      if (!pgpSuccess) {
+      if (!(await Enigmail.msg.onSendOpenPGP(msgType))) {
         Enigmail.msg.resetUpdatedFields();
         return;
       }
@@ -9541,8 +9591,6 @@ function LoadIdentity(startup) {
   const start = range.startOffset;
   const startNode = range.startContainer;
 
-  editor.enableUndo(false);
-
   // Handle non-startup changing of identity.
   if (prevIdentity && idKey != prevIdentity.key) {
     let changedRecipients = false;
@@ -9730,8 +9778,7 @@ function LoadIdentity(startup) {
     );
   }
 
-  editor.enableUndo(true);
-  editor.resetModificationCount();
+  // Restore the caret position following a potential signature switch.
   selection.collapse(startNode, start);
 
   // Try to focus the first available address row. If there are none, focus the
@@ -10191,7 +10238,7 @@ var envelopeDragObserver = {
     // image, so we always default to clickable link.
     // We can later explore adding some UI choice to allow controlling the
     // outcome of this drop action, but users can still copy and paste the image
-    // in the editor to cirumvent this potential issue.
+    // in the editor to circumvent this potential issue.
     const editor = GetCurrentEditor();
     const attachments = this.getValidAttachments(event);
 

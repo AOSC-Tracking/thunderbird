@@ -81,18 +81,29 @@ export class ConfigVerifier {
         secInfo = url.failedSecInfo;
       }
 
-      this.informUserOfCertError(secInfo, url.asciiHostPort);
+      this.informUserOfCertError(secInfo, url);
     } else if (this.alter) {
       // Try other variations.
       this.server.closeCachedConnections();
-      this.tryNextLogon(url);
+      try {
+        this.tryNextLogon(url);
+      } catch (e) {
+        this._log.error("Logon for alternative FAILED!", e);
+        this._failed(url);
+      }
     } else {
       // Logon failed, and we aren't supposed to try other variations.
       this._failed(url);
     }
   }
 
-  tryNextLogon(aPreviousUrl) {
+  /**
+   * Try next logon variation.
+   *
+   * @param {nsIURI} url - The URL being processed.
+   * @throws {Error} in some cases where verifyLogon fails.
+   */
+  tryNextLogon(url) {
     this._log.debug("Trying next logon variation");
     // check if we tried full email address as username
     if (this.config.incoming.username != this.config.identity.emailAddress) {
@@ -156,7 +167,7 @@ export class ConfigVerifier {
 
     // Tried all variations we can. Give up.
     this._log.debug("Have tried all variations. Giving up.");
-    this._failed(aPreviousUrl);
+    this._failed(url);
   }
 
   /**
@@ -213,15 +224,17 @@ export class ConfigVerifier {
    * Allow them to add an exception for it.
    *
    * @param {nsITransportSecurityInfo} secInfo
-   * @param {string} location - "host:port" that had the problem.
+   * @param {nsIURI} location - URI that had the problem.
    */
   async informUserOfCertError(secInfo, location) {
-    this._log.debug(`Informing user about cert error for ${location}`);
+    this._log.debug(
+      `Informing user about cert error for ${location.asciiHostPort}`
+    );
     const params = {
       exceptionAdded: false,
       securityInfo: secInfo,
       prefetchCert: true,
-      location,
+      location: location.asciiHostPort,
     };
 
     const deferred = Promise.withResolvers();
@@ -243,14 +256,22 @@ export class ConfigVerifier {
     await deferred.promise;
 
     if (!params.exceptionAdded) {
-      this._log.debug(`Did not accept exception for ${location}`);
+      this._log.debug(`Did not accept exception for ${location.asciiHostPort}`);
       this.cleanup();
       const errorMsg = AccountCreationUtils.getStringBundle(
         "chrome://messenger/locale/accountCreationModel.properties"
       ).GetStringFromName("cannot_login.error");
       this.errorCallback(new Error(errorMsg));
     } else {
-      this._log.debug(`Accept exception for ${location} - will retry logon.`);
+      this._log.debug(
+        `Accept exception for ${location.asciiHostPort} - will retry logon.`
+      );
+      Glean.mail.certificateExceptionAdded.record({
+        error_category: secInfo.errorCodeString,
+        protocol: this.server.type,
+        port: this.server.port,
+        ui: "config-verifier",
+      });
       // Retry the logon now that we've added the cert exception.
       this.verifyLogon();
     }

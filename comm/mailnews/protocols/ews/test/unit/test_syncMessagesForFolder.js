@@ -66,7 +66,16 @@ add_setup(async () => {
   client = Cc["@mozilla.org/messenger/ews-client;1"].createInstance(
     Ci.IEwsClient
   );
-  client.initialize(incomingServer.getStringValue("ews_url"), incomingServer);
+  client.initialize(
+    incomingServer.getStringValue("ews_url"),
+    incomingServer,
+    false,
+    "",
+    "",
+    "",
+    "",
+    ""
+  );
 
   registerCleanupFunction(() => {
     // We need to stop the mock server, but the client has no additional
@@ -375,6 +384,12 @@ add_task(async function testSyncChangesWithRealFolder() {
   Assert.ok(originalGreeting, "the message content should contain a greeting");
   const originalStoreToken = originalMessage.storeToken;
   Assert.ok(originalStoreToken, "the message should have been stored");
+  const originalMsgSize = originalMessage.messageSize;
+  Assert.equal(
+    messages[4].toMessageString().length,
+    originalMsgSize,
+    "the right size should have been stored for the message"
+  );
 
   // Change a message, move a message, delete a message, mark a message read.
 
@@ -456,6 +471,60 @@ add_task(async function testSyncChangesWithRealFolder() {
   await TestUtils.waitForCondition(
     () => incomingServer.rootFolder.getTotalMessages(true) == 0,
     "waiting for messages to be deleted"
+  );
+});
+
+/**
+ * Test that the recipients of a new message are correctly persisted.
+ */
+add_task(async function testSyncRecipients() {
+  // Create a new folder for our test on the server.
+  const folderName = "recipientsSync";
+  ewsServer.appendRemoteFolder(
+    new RemoteFolder(folderName, "root", folderName, null)
+  );
+
+  // Create a fake message with multiple recipients and a CC'd recipient.
+  const msgGen = new MessageGenerator();
+  const msg = msgGen.makeMessage({
+    from: ["Tinderbox", "tinderbox@foo.invalid"],
+    to: [
+      ["Tinderbox", "tinderbox@foo.invalid"],
+      ["Alice", "alice@foo.invalid"],
+    ],
+    cc: [["Bob", "bob@foo.invalid"]],
+    subject: "Hello world",
+  });
+
+  ewsServer.addMessages(folderName, [msg]);
+
+  // Sync and wait for the message to show up.
+  const rootFolder = incomingServer.rootFolder;
+  incomingServer.getNewMessages(rootFolder, null, null);
+
+  const folder = await TestUtils.waitForCondition(
+    () => rootFolder.getChildNamed(folderName),
+    "waiting for folder to exist"
+  );
+  await TestUtils.waitForCondition(
+    () => folder.getTotalMessages(false) == 1,
+    "waiting for the message to exist"
+  );
+
+  // Retrieve the message and check that the recipients that are persisted are
+  // correct.
+  const message = [...folder.messages][0];
+
+  Assert.equal(
+    message.recipients,
+    '"Tinderbox" <tinderbox@foo.invalid>, "Alice" <alice@foo.invalid>',
+    "the recipients property on the message should match the ones in the message"
+  );
+
+  Assert.equal(
+    message.ccList,
+    '"Bob" <bob@foo.invalid>',
+    "the ccList property on the message should match the ones in the message"
   );
 });
 

@@ -20,10 +20,16 @@ const { MessageGenerator } = ChromeUtils.importESModule(
 const { MockAlertsService } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/MockAlertsService.sys.mjs"
 );
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
+);
 const { ServerTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/ServerTestUtils.sys.mjs"
 );
 const { createServers, getCertificate, serverDefs } = ServerTestUtils;
+
+let viewCertificateChecked = false;
+let openSettingsChecked = false;
 
 const certOverrideService = Cc[
   "@mozilla.org/security/certoverride;1"
@@ -60,6 +66,7 @@ add_task(async function testDomainMismatch() {
     "mitm.test.test",
     "not valid for",
     "The certificate belongs to a different site",
+    "SSL_ERROR_BAD_CERT_DOMAIN",
     "valid"
   );
 });
@@ -71,6 +78,7 @@ add_task(async function testExpired() {
     "expired.test.test",
     `expired on ${formatter.format(new Date(Date.UTC(2010, 0, 6)))}`,
     "The certificate is not currently valid",
+    "SEC_ERROR_EXPIRED_CERTIFICATE",
     "expired"
   );
 });
@@ -82,6 +90,7 @@ add_task(async function testNotYetValid() {
     "notyetvalid.test.test",
     `not be valid until ${formatter.format(new Date(Date.UTC(2090, 0, 5)))}`,
     "The certificate is not currently valid",
+    "MOZILLA_PKIX_ERROR_NOT_YET_VALID_CERTIFICATE",
     "notyetvalid"
   );
 });
@@ -92,6 +101,7 @@ add_task(async function testSelfSigned() {
     "selfsigned.test.test",
     "does not come from a trusted source",
     "The certificate is not trusted",
+    "MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT",
     "selfsigned"
   );
 });
@@ -101,6 +111,7 @@ async function subtest(
   hostname,
   expectedAlertText,
   expectedDialogText,
+  expectedErrorCategory,
   expectedCert
 ) {
   const [imapServer, pop3Server, ewsServer] =
@@ -164,6 +175,7 @@ async function subtest(
     },
     expectedAlertText,
     expectedDialogText,
+    expectedErrorCategory,
     expectedCert
   );
   const ewsInbox = ewsRootFolder.getFolderWithFlags(Ci.nsMsgFolderFlags.Inbox);
@@ -202,6 +214,7 @@ async function subtest(
       },
       expectedAlertText,
       expectedDialogText,
+      expectedErrorCategory,
       expectedCert
     );
   }
@@ -218,6 +231,7 @@ async function subtest(
       },
       expectedAlertText,
       expectedDialogText,
+      expectedErrorCategory,
       expectedCert
     );
   }
@@ -232,8 +246,10 @@ async function subsubtest(
   testCallback,
   expectedAlertText,
   expectedDialogText,
+  expectedErrorCategory,
   expectedCert
 ) {
+  Services.fog.testResetFOG();
   const server = folder.server;
   info(`getting messages for ${server.type}`);
 
@@ -265,19 +281,24 @@ async function subsubtest(
           "the exception dialog should state the problem"
         );
 
-        const viewButton = win.document.getElementById("viewCertButton");
-        const tabPromise = BrowserTestUtils.waitForEvent(
-          tabmail.tabContainer,
-          "TabOpen"
-        );
-        viewButton.click();
-        const {
-          detail: { tabInfo },
-        } = await tabPromise;
-        await BrowserTestUtils.browserLoaded(tabInfo.browser, false, url =>
-          url.startsWith("about:certificate?cert=")
-        );
-        tabmail.closeTab(tabInfo);
+        if (!viewCertificateChecked) {
+          const viewButton = win.document.getElementById("viewCertButton");
+          const tabPromise = BrowserTestUtils.waitForEvent(
+            tabmail.tabContainer,
+            "TabOpen"
+          );
+          viewButton.click();
+          const {
+            detail: { tabInfo },
+          } = await tabPromise;
+          await BrowserTestUtils.browserLoaded(tabInfo.browser, false, url =>
+            url.startsWith("about:certificate?cert=")
+          );
+          tabmail.closeTab(tabInfo);
+
+          // This does the same thing every time.
+          viewCertificateChecked = true;
+        }
 
         EventUtils.synthesizeMouseAtCenter(
           win.document.querySelector("dialog").getButton("extra1"),
@@ -287,6 +308,8 @@ async function subsubtest(
       },
     }
   );
+
+  // Run the callback and wait for a notification.
 
   await testCallback();
 
@@ -312,74 +335,130 @@ async function subsubtest(
     "the alert text should state the problem"
   );
 
+  // Check that the server's row in the folder tree has a warning icon.
+
+  const folderRow = about3Pane.folderPane.getRowForFolder(
+    folder.rootFolder,
+    "all"
+  );
+  Assert.ok(
+    folderRow.classList.contains("tls-error"),
+    "folder row should have the tls-error class"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(folderRow.statusIcon),
+    "warning icon should be visible"
+  );
+  await about3Pane.document.l10n.translateFragment(folderRow);
+  Assert.stringContains(
+    folderRow.statusIcon.title,
+    expectedAlertText,
+    "warning icon's tooltip should state the problem"
+  );
+
+  if (!openSettingsChecked) {
+    // Click on the warning icon, and wait for the Account Settings tab to open and load.
+    const tabPromise = BrowserTestUtils.waitForEvent(
+      tabmail.tabContainer,
+      "TabOpen"
+    );
+    folderRow.statusIcon.click();
+    const {
+      detail: { tabInfo },
+    } = await tabPromise;
+    await BrowserTestUtils.browserLoaded(
+      tabInfo.browser,
+      false,
+      "about:accountsettings"
+    );
+    await TestUtils.waitForTick();
+
+    // Check the right page in the tab is shown.
+    const accountTree =
+      tabInfo.browser.contentDocument.getElementById("accounttree");
+    const accountKey = MailServices.accounts.findAccountForServer(server).key;
+    Assert.equal(
+      accountTree.selectedRow.id,
+      `${accountKey}/am-server.xhtml`,
+      "server settings tab should be open"
+    );
+    tabmail.closeTab(tabInfo);
+
+    // This does the same thing every time.
+    openSettingsChecked = true;
+  }
+
   // There could be multiple alerts for the same problem. These are swallowed
   // while the first alert is open, but we should wait a while for them.
   await promiseServerIdle(server);
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, 1000));
 
-  let updatePromise;
-  if (expectedCert) {
-    updatePromise = new Promise(resolve => {
-      const folderListener = {
-        onFolderEvent(aEventFolder, aEvent) {
-          if (aEvent == "FolderLoaded" && folder.URI == aEventFolder.URI) {
-            MailServices.mailSession.RemoveFolderListener(folderListener);
-            resolve();
-          }
-        },
-      };
-      MailServices.mailSession.AddFolderListener(
-        folderListener,
-        Ci.nsIFolderListener.event
-      );
-    });
-  }
+  // Click on the notification to bring up the exception dialog.
 
   MockAlertsService.listener.observe(null, "alertclickcallback", alert.cookie);
   MockAlertsService.listener.observe(null, "alertfinished", alert.cookie);
   MockAlertsService.reset();
 
   await dialogPromise;
+  await TestUtils.waitForTick(); // Ensure Telemetry callback runs.
   await SimpleTest.promiseFocus(window);
 
-  if (expectedCert) {
-    // Check the certificate exception was created.
-    const isTemporary = {};
-    Assert.ok(
-      certOverrideService.hasMatchingOverride(
-        server.hostName,
-        server.port,
-        {},
-        await getCertificate(expectedCert),
-        isTemporary
-      ),
-      `certificate exception should exist for ${server.hostName}:${server.port}`
+  // Check the certificate exception was created.
+
+  const isTemporary = {};
+  Assert.ok(
+    certOverrideService.hasMatchingOverride(
+      server.hostName,
+      server.port,
+      {},
+      await getCertificate(expectedCert),
+      isTemporary
+    ),
+    `certificate exception should exist for ${server.hostName}:${server.port}`
+  );
+  // The checkbox in the dialog was checked, so this exception is permanent.
+  Assert.ok(!isTemporary.value, "certificate exception should be permanent");
+
+  const telemetryEvents = Glean.mail.certificateExceptionAdded.testGetValue();
+  Assert.equal(telemetryEvents.length, 1);
+  Assert.deepEqual(telemetryEvents[0].extra, {
+    error_category: expectedErrorCategory,
+    protocol: server.type,
+    port: server.port,
+    ui: "certificate-error-notification",
+  });
+
+  // Now that we have an exception, connect to the server again.
+
+  if (folder.isServer) {
+    // If folder is the root folder (EWS), we don't have an inbox yet, so
+    // this is an additional operation to fetch it. Do that now.
+    server.performExpand(null);
+    await TestUtils.waitForCondition(
+      () => folder.getFolderWithFlags(Ci.nsMsgFolderFlags.Inbox),
+      "waiting for folders to sync"
     );
-    // The checkbox in the dialog was checked, so this exception is permanent.
-    Assert.ok(!isTemporary.value, "certificate exception should be permanent");
-
-    if (folder.isServer) {
-      // If folder is the root folder (EWS), we don't have an inbox yet, so
-      // this is an additional operation to fetch it. Do that now.
-      server.performExpand(null);
-      await TestUtils.waitForCondition(
-        () => folder.getFolderWithFlags(Ci.nsMsgFolderFlags.Inbox),
-        "waiting for folders to sync"
-      );
-    } else {
-      // Force update of inbox.
-      folder.updateFolder(null);
-      folder.getNewMessages(null, null);
-      await updatePromise;
-
-      await TestUtils.waitForCondition(
-        () => folder.getNumUnread(false) - folder.numPendingUnread == 10,
-        `waiting for new ${server.type} messages to be received`
-      );
-      folder.markAllMessagesRead(window.msgWindow);
-    }
+  } else {
+    // Force update of inbox.
+    folder.getNewMessages(null, null);
+    await TestUtils.waitForCondition(
+      () => folder.getNumUnread(false) - folder.numPendingUnread == 10,
+      `waiting for new ${server.type} messages to be received`
+    );
+    folder.markAllMessagesRead(window.msgWindow);
   }
+
+  // Check that the folder tree row no longer has a warning icon.
+
+  Assert.ok(
+    !folderRow.classList.contains("tls-error"),
+    "folder row should not have the tls-error class"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(folderRow.statusIcon),
+    "warning icon should be hidden"
+  );
 
   await promiseServerIdle(server);
   server.closeCachedConnections();

@@ -607,6 +607,16 @@ var messageProgressListener = {
     if (!this._channelIsCurrent(mailChannel)) {
       return;
     }
+
+    if (
+      mailChannel.URI instanceof Ci.nsIMsgMailNewsUrl &&
+      mailChannel.URI.errorCode
+    ) {
+      // This appears to be an NNTP message that couldn't be successfully
+      // retrieved from the server.
+      return;
+    }
+
     autoMarkAsRead();
   },
 
@@ -1627,32 +1637,28 @@ function outputEmailAddresses(headerEntry, emailAddresses) {
 /**
  * Return true if possible attachments in the currently loaded message can be
  * deleted/detached.
+ * This is a message level check. Individual attachments need to be checked
+ * separately (for whether they are already deleted or detached).
+ *
+ * @returns {boolean} true if delete/detach is possible.
  */
 function CanDetachAttachments() {
-  var canDetach =
+  let canDetach =
     gFolder && // We can't detach from loaded eml files yet.
     !gFolder.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, false) &&
     (!gFolder.isSpecialFolder(Ci.nsMsgFolderFlags.ImapBox, false) ||
       MailOfflineMgr.isOnline());
   if (canDetach && "content-type" in currentHeaderData) {
-    canDetach = !ContentTypeIsSMIME(
-      currentHeaderData["content-type"].headerValue
-    );
+    const contentType = currentHeaderData["content-type"].headerValue;
+    // Don't allow for S/MIME messages.
+    // S/MIME is application/pkcs7-mime and application/pkcs7-signature
+    // - also match application/x-pkcs7-mime and application/x-pkcs7-signature.
+    canDetach = !/application\/(x-)?pkcs7-(mime|signature)/.test(contentType);
   }
   if (canDetach) {
     canDetach = Enigmail.hdrView.enigCanDetachAttachments();
   }
-
   return canDetach;
-}
-
-/**
- * Return true if the content type is an S/MIME one.
- */
-function ContentTypeIsSMIME(contentType) {
-  // S/MIME is application/pkcs7-mime and application/pkcs7-signature
-  // - also match application/x-pkcs7-mime and application/x-pkcs7-signature.
-  return /application\/(x-)?pkcs7-(mime|signature)/.test(contentType);
 }
 
 function onShowAttachmentToolbarContextMenu() {
@@ -1830,15 +1836,14 @@ var AttachmentListController = {
   },
 
   doCommand(command) {
-    // If the user invoked a key short cut then it is possible that we got here
+    // If the user invoked a key shortcut then it is possible that we got here
     // for a command which is really disabled. kick out if the command should
     // be disabled.
     if (!this.isCommandEnabled(command)) {
       return;
     }
 
-    var attachmentList = document.getElementById("attachmentList");
-
+    const attachmentList = document.getElementById("attachmentList");
     switch (command) {
       case "cmd_selectAll":
         attachmentList.selectAll();
@@ -2351,11 +2356,24 @@ function HandleMultipleAttachments(attachments, action) {
     return;
   }
 
+  if (!attachments.every(attachment => attachment.isAllowedURL)) {
+    return;
+  }
+
+  const canDetach =
+    CanDetachAttachments() &&
+    attachments.every(
+      attachment => attachment.hasFile && !attachment.isExternalAttachment
+    );
+
   switch (action) {
     case "save":
       AttachmentInfo.saveAttachments(attachments, top.browsingContext);
       return;
     case "detach":
+      if (!canDetach) {
+        return;
+      }
       // "detach" on a multiple selection of attachments is so far not really
       // supported. As a workaround, resort to normal detach-"all". See also
       // the comment on 'detaching a multiple selection of attachments' below.
@@ -2371,6 +2389,9 @@ function HandleMultipleAttachments(attachments, action) {
       }
       return;
     case "delete":
+      if (!canDetach) {
+        return;
+      }
       if (attachments.length == 1) {
         attachments[0].deleteFromMessage();
       } else {
@@ -3075,7 +3096,7 @@ const gMessageHeader = {
         value = value.replace(/.*(<mailto:[^>]+>).*/, "$1");
         if (menu.dataset.headerName == "list-post") {
           // See https://datatracker.ietf.org/doc/html/rfc2369#section-3.4
-          // The list many not allow posting, e.g. an announcments list.
+          // The list many not allow posting, e.g. an announcements list.
           menu.disabled = value.includes("NO");
         }
         menu.setAttribute(
@@ -3533,7 +3554,8 @@ function UpdateReplyButtons() {
     if (FeedUtils.isFeedMessage(gMessage)) {
       replyToSenderButton.hidden = true;
     } else if (smartReplyButton) {
-      replyToSenderButton.hidden = buttonToShow == "reply";
+      replyToSenderButton.hidden =
+        buttonToShow == "reply" || buttonToShow == "followup";
     } else {
       replyToSenderButton.hidden = false;
     }

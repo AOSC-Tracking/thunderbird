@@ -79,7 +79,7 @@ pref("mailnews.headers.showArchivedAt", false);
 pref("mailnews.messageid.openInNewWindow", false);
 
 // hidden pref for url which will be used to open  message-ids
-// in browser (%mid ist replaced with the message-id)
+// in browser (%mid is replaced with the message-id)
 pref("mailnews.messageid_browser.url", "https://groups.google.com/search?q=messageid%3A%mid");
 
 // hidden pref for whether or not to warn when deleting filters. Default YES
@@ -792,7 +792,6 @@ pref("mail.spellcheck.inline", true);
 pref("mail.phishing.detection.enabled", true);
 pref("mail.warn_on_send_accel_key", true);
 pref("mail.enable_autocomplete", true);
-pref("mailnews.global_html_domains.version", 1);
 
 /////////////////////////////////////////////////////////////////
 // Privacy Controls for Handling Remote Content
@@ -1103,6 +1102,8 @@ pref("mail.imap.qos", 0);
 // PgpMime Addon
 pref("mail.pgpmime.addon_url", "https://addons.mozilla.org/addon/enigmail/");
 
+pref("mail.certificate-check.loglevel", "Warn");
+
 pref("mail.asyncprompter.loglevel", "Warn");
 
 pref("mail.mailstoreconverter.loglevel", "Warn");
@@ -1132,3 +1133,6 @@ pref("mail.imap.use_disk_cache2", true);
 // Enable support for Microsoft Exchange via Exchange Web Services.
 pref("experimental.mail.ews.enabled", true);
 #endif
+
+// Enable users to override OAuth provider details for EWS accounts.
+pref("experimental.mail.ews.overrideOAuth.enabled", false);

@@ -21,18 +21,15 @@
               command="agenda_edit_event_command"/>
     <menu id="agenda-context-menu-convert-menu"
           class="no-icon-menupopup"
-          label="&calendar.context.convertmenu.label;"
-          accesskey="&calendar.context.convertmenu.accesskey.calendar;">
+          data-l10n-id="calendar-context-convert-menu">
       <menupopup id="agenda-context-menu-convert-menupopup"
                  class="no-icon-menupopup">
         <menuitem id="agenda-context-menu-convert-message-menuitem"
-                  label="&calendar.context.convertmenu.message.label;"
-                  accesskey="&calendar.context.convertmenu.message.accesskey;"
+                  data-l10n-id="calendar-context-convert-to-message"
                   oncommand="calendarMailButtonDNDObserver.onDropItems([TodayPane.agenda.selectedItem])"/>
         <menuitem id="agenda-context-menu-convert-task-menuitem"
                   class="event-only"
-                  label="&calendar.context.convertmenu.task.label;"
-                  accesskey="&calendar.context.convertmenu.task.accesskey;"
+                  data-l10n-id="calendar-context-convert-to-task"
                   oncommand="calendarTaskButtonDNDObserver.onDropItems([TodayPane.agenda.selectedItem])"/>
       </menupopup>
     </menu>
@@ -41,18 +38,16 @@
               key="calendar-delete-item-key"
               command="agenda_delete_event_command"/>
     <menu id="calendar-today-pane-menu-attendance-menu"
-          label="&calendar.context.attendance.menu.label;"
-          accesskey="&calendar.context.attendance.menu.accesskey;"
+          data-l10n-id="calendar-context-attendance-menu"
           oncommand="setContextPartstat(event.target, [TodayPane.agenda.selectedItem])"
           observes="calendar_attendance_command">
       <menupopup id="agenda-context-menu-attendance-menupopup">
         <label id="agenda-context-attendance-thisoccurrence-label"
                class="calendar-context-heading-label"
                scope="this-occurrence"
-               value="&calendar.context.attendance.occurrence.label;"/>
+               data-l10n-id="calendar-context-attendance-occurrence"/>
         <menu id="agenda-context-menu-attendance-accepted-menu"
-              label="&calendar.context.attendance.occ.accepted.label;"
-              accesskey="&calendar.context.attendance.occ.accepted.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-accepted"
               value="ACCEPTED"
               name="agenda-context-attendance"
               scope="this-occurrence">
@@ -60,21 +55,18 @@
                      class="no-icon-menupopup">
             <menuitem id="agenda-context-menu-attend-accept-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="ACCEPTED"
                       respmode="AUTO"/>
             <menuitem id="agenda-context-menu-attend-accept-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="ACCEPTED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="agenda-context-menu-attendance-tentative-menu"
-              label="&calendar.context.attendance.occ.tentative.label;"
-              accesskey="&calendar.context.attendance.occ.tentative.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-tentative"
               value="TENTATIVE"
               name="agenda-context-attendance"
               scope="this-occurrence">
@@ -82,21 +74,18 @@
                      class="no-icon-menupopup">
             <menuitem id="agenda-context-menu-attend-tentative-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="TENTATIVE"
                       respmode="AUTO"/>
             <menuitem id="agenda-context-menu-attend-tentative-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="TENTATIVE"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="agenda-context-menu-attendance-declined-menu"
-              label="&calendar.context.attendance.occ.declined.label;"
-              accesskey="&calendar.context.attendance.occ.declined.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-declined"
               value="DECLINED"
               name="agenda-context-attendance"
               scope="this-occurrence">
@@ -104,35 +93,32 @@
                      class="no-icon-menupopup">
             <menuitem id="agenda-context-menu-attend-declined-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="DECLINED"
                       respmode="AUTO"/>
             <menuitem id="agenda-context-menu-attend-declined-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="DECLINED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menuitem id="agenda-context-menu-attendance-delegated-menu"
-                  label="&calendar.context.attendance.occ.delegated.label;"
+                  data-l10n-id="calendar-context-attendance-occ-delegated"
                   name="agenda-context-attendance"
                   scope="this-occurrence"
                   value="DELEGATED"/>
         <menuitem id="agenda-context-menu-attendance-needsaction-menu"
-                  label="&calendar.context.attendance.occ.needsaction.label;"
+                  data-l10n-id="calendar-context-attendance-occ-needs-action"
                   name="agenda-context-attendance"
                   scope="this-occurrence"
                   value="NEEDS-ACTION"/>
         <label id="agenda-context-attendance-alloccurrence-label"
                class="calendar-context-heading-label"
                scope="all-occurrences"
-               value="&calendar.context.attendance.all2.label;"/>
+               data-l10n-id="calendar-context-attendance-all-series"/>
         <menu id="agenda-context-menu-attendance-accepted-all-menu"
-              label="&calendar.context.attendance.all.accepted.label;"
-              accesskey="&calendar.context.attendance.all.accepted.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-accepted"
               value="ACCEPTED"
               name="agenda-context-attendance-all"
               scope="all-occurrences">
@@ -140,21 +126,18 @@
                      class="no-icon-menupopup">
             <menuitem id="agenda-context-menu-attend-accept-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="ACCEPTED"
                       respmode="AUTO"/>
             <menuitem id="agenda-context-menu-attend-accept-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="ACCEPTED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="agenda-context-menu-attendance-tentative-all-menu"
-              label="&calendar.context.attendance.all.tentative.label;"
-              accesskey="&calendar.context.attendance.all.tentative.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-tentative"
               value="TENTATIVE"
               name="agenda-context-attendance-all"
               scope="all-occurrences">
@@ -162,21 +145,18 @@
                      class="no-icon-menupopup">
             <menuitem id="agenda-context-menu-attend-tentative-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="TENTATIVE"
                       respmode="AUTO"/>
             <menuitem id="agenda-context-menu-attend-tentative-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="TENTATIVE"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="agenda-context-menu-attendance-decline-all-menu"
-              label="&calendar.context.attendance.all.declined.label;"
-              accesskey="&calendar.context.attendance.all.declined.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-declined"
               value="DECLINED"
               name="agenda-context-attendance-all"
               scope="all-occurrences">
@@ -184,25 +164,23 @@
                      class="no-icon-menupopup">
             <menuitem id="agenda-context-menu-attend-declined-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="DECLINED"
                       respmode="AUTO"/>
             <menuitem id="agenda-context-menu-attend-declined-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="DECLINED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menuitem id="agenda-context-menu-attendance-delegated-all-menu"
-                  label="&calendar.context.attendance.all.delegated.label;"
+                  data-l10n-id="calendar-context-attendance-all-delegated"
                   name="agenda-context-attendance-delegated-all"
                   scope="all-occurrences"
                   value="DELEGATED"/>
         <menuitem id="agenda-context-menu-attendance-needsaction-all-menu"
-                  label="&calendar.context.attendance.all.needsaction.label;"
+                  data-l10n-id="calendar-context-attendance-all-needs-action"
                   name="agenda-context-attendance-needaction-all"
                   scope="all-occurrences"
                   value="NEEDS-ACTION"/>
@@ -215,42 +193,30 @@
              class="no-icon-menupopup">
     <menuitem id="list-calendars-context-togglevisible"
               class="needs-calendar"
-              accesskeyshow="&calendar.context.showcalendar.accesskey;"
-              accesskeyhide="&calendar.context.hidecalendar.accesskey;"
               oncommand="toggleCalendarVisible(document.getElementById('list-calendars-context-menu').contextCalendar);"/>
     <menuitem id="list-calendars-context-showonly"
               class="needs-calendar"
-              accesskey="&calendar.context.showonly.accesskey;"
               oncommand="showOnlyCalendar(document.getElementById('list-calendars-context-menu').contextCalendar);"/>
     <menuitem id="list-calendars-context-showall"
-              label="&calendar.context.showall.label;"
-              accesskey="&calendar.context.showall.accesskey;"
+              data-l10n-id="calendar-context-showall"
               oncommand="showAllCalendars();"/>
     <menuseparator id="list-calendars-context-showops-menuseparator"/>
     <menuitem id="list-calendars-context-new"
-              label="&calendar.context.newserver.label;"
-              accesskey="&calendar.context.newserver.accesskey;"
+              data-l10n-id="calendar-context-new-server"
               command="calendar_new_calendar_command"/>
     <menuitem id="list-calendars-context-delete"
               class="needs-calendar"
-              labeldelete="&calendar.context.deleteserver2.label;"
-              labelremove="&calendar.context.removeserver.label;"
-              labelunsubscribe="&calendar.context.unsubscribeserver.label;"
-              accesskeydelete="&calendar.context.deleteserver2.accesskey;"
-              accesskeyremove="&calendar.context.removeserver.accesskey;"
-              accesskeyunsubscribe="&calendar.context.unsubscribeserver.accesskey;"
+              data-l10n-id="calendar-context-remove-server"
               command="calendar_delete_calendar_command"/>
     <menuseparator id="list-calendars-context-itemops-menuseparator"
                    class="needs-calendar"/>
     <menuitem id="list-calendars-context-export"
               class="needs-calendar"
-              label="&calendar.context.export.label;"
-              accesskey="&calendar.context.export.accesskey;"
+              data-l10n-id="calendar-context-export"
               oncommand="exportEntireCalendar(document.getElementById('list-calendars-context-menu').contextCalendar);"/>
     <menuitem id="list-calendars-context-publish"
               class="needs-calendar"
-              label="&calendar.context.publish.label;"
-              accesskey="&calendar.context.publish.accesskey;"
+              data-l10n-id="calendar-context-publish"
               command="calendar_publish_selected_calendar_command"/>
     <menuseparator id="list-calendars-context-export-menuseparator"
               class="needs-calendar"/>
@@ -262,8 +228,7 @@
                    class="needs-calendar"/>
     <menuitem id="list-calendars-context-edit"
               class="needs-calendar"
-              label="&calendar.context.properties.label;"
-              accesskey="&calendar.context.properties.accesskey;"
+              data-l10n-id="calendar-context-properties"
               command="calendar_edit_calendar_command"/>
   </menupopup>
 
@@ -301,23 +266,19 @@
               command="cmd_paste"/>
     <menuseparator id="calendar-item-context-separator-cutcopypaste"/>
     <menu id="calendar-item-context-menu-convert-menu"
-          label="&calendar.context.convertmenu.label;"
-          accesskey="&calendar.context.convertmenu.accesskey.calendar;">
+          data-l10n-id="calendar-context-convert-menu">
       <menupopup id="calendar-item-context-menu-convert-menupopup"
                  class="no-icon-menupopup">
         <menuitem id="calendar-view-context-menu-convert-message-menuitem"
-                  label="&calendar.context.convertmenu.message.label;"
-                  accesskey="&calendar.context.convertmenu.message.accesskey;"
+                  data-l10n-id="calendar-context-convert-to-message"
                   oncommand="calendarMailButtonDNDObserver.onDropItems(currentView().getSelectedItems())"/>
         <menuitem id="calendar-item-context-menu-convert-event-menuitem"
                   class="todo-only"
-                  label="&calendar.context.convertmenu.event.label;"
-                  accesskey="&calendar.context.convertmenu.event.accesskey;"
+                  data-l10n-id="calendar-context-convert-to-event"
                   oncommand="calendarCalendarButtonDNDObserver.onDropItems(currentView().getSelectedItems())"/>
         <menuitem id="calendar-item-context-menu-convert-task-menuitem"
                   class="event-only"
-                  label="&calendar.context.convertmenu.task.label;"
-                  accesskey="&calendar.context.convertmenu.task.accesskey;"
+                  data-l10n-id="calendar-context-convert-to-task"
                   oncommand="calendarTaskButtonDNDObserver.onDropItems(currentView().getSelectedItems())"/>
       </menupopup>
     </menu>
@@ -328,18 +289,16 @@
               key="calendar-delete-item-key"
               command="calendar_delete_event_command"/>
     <menu id="calendar-item-context-menu-attendance-menu"
-          label="&calendar.context.attendance.menu.label;"
-          accesskey="&calendar.context.attendance.menu.accesskey;"
+          data-l10n-id="calendar-context-attendance-menu"
           oncommand="setContextPartstat(event.target, currentView().getSelectedItems())"
           observes="calendar_attendance_command">
       <menupopup id="calendar-item-context-menu-attendance-menupopup">
         <label id="calendar-item-context-attendance-thisoccurrence-label"
               class="calendar-context-heading-label"
               scope="this-occurrence"
-              value="&calendar.context.attendance.occurrence.label;"/>
+              data-l10n-id="calendar-context-attendance-occurrence"/>
         <menu id="calendar-item-context-menu-attendance-accepted-menu"
-              label="&calendar.context.attendance.occ.accepted.label;"
-              accesskey="&calendar.context.attendance.occ.accepted.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-accepted"
               value="ACCEPTED"
               name="calendar-item-context-attendance"
               scope="this-occurrence">
@@ -347,21 +306,18 @@
                      class="no-icon-menupopup">
             <menuitem id="calendar-item-context-menu-attend-accept-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="ACCEPTED"
                       respmode="AUTO"/>
             <menuitem id="calendar-item-context-menu-attend-accept-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="ACCEPTED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="calendar-item-context-menu-attendance-tentative-menu"
-              label="&calendar.context.attendance.occ.tentative.label;"
-              accesskey="&calendar.context.attendance.occ.tentative.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-tentative"
               value="TENTATIVE"
               name="calendar-item-context-attendance"
               scope="this-occurrence">
@@ -369,21 +325,18 @@
                      class="no-icon-menupopup">
             <menuitem id="calendar-item-context-menu-attend-tentative-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="TENTATIVE"
                       respmode="AUTO"/>
             <menuitem id="calendar-item-context-menu-attend-tentative-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="TENTATIVE"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="calendar-item-context-menu-attendance-declined-menu"
-              label="&calendar.context.attendance.occ.declined.label;"
-              accesskey="&calendar.context.attendance.occ.declined.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-declined"
               value="DECLINED"
               name="calendar-item-context-attendance"
               scope="this-occurrence">
@@ -391,35 +344,32 @@
                      class="no-icon-menupopup">
             <menuitem id="calendar-item-context-menu-attend-declined-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="DECLINED"
                       respmode="AUTO"/>
             <menuitem id="calendar-item-context-menu-attend-declined-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="DECLINED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menuitem id="calendar-item-context-menu-attendance-delegated-menu"
-                  label="&calendar.context.attendance.occ.delegated.label;"
+                  data-l10n-id="calendar-context-attendance-occ-delegated"
                   name="calendar-item-context-attendance"
                   scope="this-occurrence"
                   value="DELEGATED"/>
         <menuitem id="calendar-item-context-menu-attendance-needsaction-menu"
-                  label="&calendar.context.attendance.occ.needsaction.label;"
+                  data-l10n-id="calendar-context-attendance-occ-needs-action"
                   name="calendar-item-context-attendance"
                   scope="this-occurrence"
                   value="NEEDS-ACTION"/>
         <label id="calendar-item-context-attendance-alloccurrence-label"
               class="calendar-context-heading-label"
               scope="all-occurrences"
-              value="&calendar.context.attendance.all2.label;"/>
+              data-l10n-id="calendar-context-attendance-all-series"/>
         <menu id="calendar-item-context-menu-attendance-accepted-all-menu"
-              label="&calendar.context.attendance.all.accepted.label;"
-              accesskey="&calendar.context.attendance.all.accepted.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-accepted"
               value="ACCEPTED"
               name="calendar-item-context-attendance-all"
               scope="all-occurrences">
@@ -427,21 +377,18 @@
                      class="no-icon-menupopup">
             <menuitem id="calendar-item-context-menu-attend-accept-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="ACCEPTED"
                       respmode="AUTO"/>
             <menuitem id="calendar-item-context-menu-attend-accept-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="ACCEPTED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="calendar-item-context-menu-attendance-tentative-all-menu"
-              label="&calendar.context.attendance.all.tentative.label;"
-              accesskey="&calendar.context.attendance.all.tentative.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-tentative"
               value="TENTATIVE"
               name="calendar-item-context-attendance-all"
               scope="all-occurrences">
@@ -449,21 +396,18 @@
                      class="no-icon-menupopup">
             <menuitem id="calendar-item-context-menu-attend-tentative-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="TENTATIVE"
                       respmode="AUTO"/>
             <menuitem id="calendar-item-context-menu-attend-tentative-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="TENTATIVE"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="calendar-item-context-menu-attendance-decline-all-menu"
-              label="&calendar.context.attendance.all.declined.label;"
-              accesskey="&calendar.context.attendance.all.declined.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-declined"
               value="DECLINED"
               name="calendar-item-context-attendance-all"
               scope="all-occurrences">
@@ -471,25 +415,23 @@
                      class="no-icon-menupopup">
             <menuitem id="calendar-item-context-menu-attend-declined-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="DECLINED"
                       respmode="AUTO"/>
             <menuitem id="calendar-item-context-menu-attend-declined-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="DECLINED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menuitem id="calendar-item-context-menu-attendance-delegated-all-menu"
-                  label="&calendar.context.attendance.all.delegated.label;"
+                  data-l10n-id="calendar-context-attendance-all-delegated"
                   name="calendar-item-context-attendance-delegated-all"
                   scope="all-occurrences"
                   value="DELEGATED"/>
         <menuitem id="calendar-item-context-menu-attendance-needsaction-all-menu"
-                  label="&calendar.context.attendance.all.needsaction.label;"
+                  data-l10n-id="calendar-context-attendance-all-needs-action"
                   name="calendar-item-context-attendance-needaction-all"
                   scope="all-occurrences"
                   value="NEEDS-ACTION"/>
@@ -564,38 +506,31 @@
               command="cmd_paste"/>
     <menuseparator id="calendar-menuseparator-beforemarkcompleted"/>
     <menuitem id="calendar-context-markcompleted"
-              label="&calendar.context.markcompleted.label;"
-              accesskey="&calendar.context.markcompleted.accesskey;"
+              data-l10n-id="calendar-task-mark-completed"
               command="calendar_toggle_completed_command"/>
     <menu id="task-context-menu-progress"
-          label="&calendar.context.progress.label;"
-          accesskey="&calendar.context.progress.accesskey;"
+          data-l10n-id="calendar-context-progress"
           command="calendar_general-progress_command">
       <menupopup is="calendar-task-progress-menupopup"/>
     </menu>
     <menu id="task-context-menu-priority"
-          label="&calendar.context.priority.label;"
-          accesskey="&calendar.context.priority.accesskey;"
+          data-l10n-id="calendar-task-change-priority"
           command="calendar_general-priority_command">
       <menupopup is="calendar-task-priority-menupopup"/>
     </menu>
     <menu id="task-context-menu-postpone"
-          label="&calendar.context.postpone.label;"
-          accesskey="&calendar.context.postpone.accesskey;"
+          data-l10n-id="calendar-context-postpone"
           command="calendar_general-postpone_command">
       <menupopup id="task-context-postpone-menupopup"
                  class="no-icon-menupopup">
         <menuitem id="task-context-postpone-1hour"
-                  label="&calendar.context.postpone.1hour.label;"
-                  accesskey="&calendar.context.postpone.1hour.accesskey;"
+                  data-l10n-id="calendar-context-postpone-1hour"
                   command="calendar_postpone-1hour_command"/>
         <menuitem id="task-context-postpone-1day"
-                  label="&calendar.context.postpone.1day.label;"
-                  accesskey="&calendar.context.postpone.1day.accesskey;"
+                  data-l10n-id="calendar-context-postpone-1day"
                   command="calendar_postpone-1day_command"/>
         <menuitem id="task-context-postpone-1week"
-                  label="&calendar.context.postpone.1week.label;"
-                  accesskey="&calendar.context.postpone.1week.accesskey;"
+                  data-l10n-id="calendar-context-postpone-1week"
                   command="calendar_postpone-1week_command"/>
       </menupopup>
     </menu>
@@ -607,17 +542,14 @@
     </menu>
     <menuseparator id="task-context-menu-separator-conversion"/>
     <menu id="task-context-menu-convert"
-          label="&calendar.context.convertmenu.label;"
-          accesskey="&calendar.context.convertmenu.accesskey.calendar;">
+          data-l10n-id="calendar-context-convert-menu">
       <menupopup id="task-context-convert-menupopup"
                  class="no-icon-menupopup">
         <menuitem id="calendar-context-converttomessage"
-                  label="&calendar.context.convertmenu.message.label;"
-                  accesskey="&calendar.context.convertmenu.message.accesskey;"
+                  data-l10n-id="calendar-context-convert-to-message"
                   oncommand="tasksToMail()"/>
         <menuitem id="calendar-context-converttoevent"
-                  label="&calendar.context.convertmenu.event.label;"
-                  accesskey="&calendar.context.convertmenu.event.accesskey;"
+                  data-l10n-id="calendar-context-convert-to-event"
                   oncommand="tasksToEvents()"/>
       </menupopup>
     </menu>
@@ -626,18 +558,16 @@
               data-l10n-id="calendar-context-delete-task"
               command="calendar_delete_todo_command"/>
     <menu id="task-context-menu-attendance-menu"
-          label="&calendar.context.attendance.menu.label;"
-          accesskey="&calendar.context.attendance.menu.accesskey;"
+          data-l10n-id="calendar-context-attendance-menu"
           oncommand="setContextPartstat(event.target, getSelectedTasks())"
           observes="calendar_attendance_command">
       <menupopup id="task-context-menu-attendance-menupopup">
         <label id="task-context-attendance-thisoccurrence-label"
               class="calendar-context-heading-label"
               scope="this-occurrence"
-              value="&calendar.context.attendance.occurrence.label;"/>
+              data-l10n-id="calendar-context-attendance-occurrence"/>
         <menu id="task-context-menu-attendance-accepted-menu"
-              label="&calendar.context.attendance.occ.accepted.label;"
-              accesskey="&calendar.context.attendance.occ.accepted.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-accepted"
               value="ACCEPTED"
               name="task-context-attendance"
               scope="this-occurrence">
@@ -645,21 +575,18 @@
                      class="no-icon-menupopup">
             <menuitem id="task-context-menu-attend-accept-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="ACCEPTED"
                       respmode="AUTO"/>
             <menuitem id="task-context-menu-attend-accept-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="ACCEPTED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="task-context-menu-attendance-tentative-menu"
-              label="&calendar.context.attendance.occ.tentative.label;"
-              accesskey="&calendar.context.attendance.occ.tentative.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-tentative"
               value="TENTATIVE"
               name="task-context-attendance"
               scope="this-occurrence">
@@ -667,21 +594,18 @@
                      class="no-icon-menupopup">
             <menuitem id="task-context-menu-attend-tentative-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="TENTATIVE"
                       respmode="AUTO"/>
             <menuitem id="task-context-menu-attend-tentative-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="TENTATIVE"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="task-context-menu-attendance-declined-menu"
-              label="&calendar.context.attendance.occ.declined.label;"
-              accesskey="&calendar.context.attendance.occ.declined.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-declined"
               value="DECLINED"
               name="task-context-attendance"
               scope="this-occurrence">
@@ -689,21 +613,18 @@
                      class="no-icon-menupopup">
             <menuitem id="task-context-menu-attend-declined-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="DECLINED"
                       respmode="AUTO"/>
             <menuitem id="task-context-menu-attend-declined-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="DECLINED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="task-context-menu-attendance-inprogress-menu"
-              label="&calendar.context.attendance.occ.inprogress.label;"
-              accesskey="&calendar.context.attendance.occ.inprogress.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-in-progress"
               value="IN-PROGRESS"
               name="task-context-attendance"
               scope="this-occurrence">
@@ -711,21 +632,18 @@
                      class="no-icon-menupopup">
             <menuitem id="task-context-menu-attend-inprogress-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="IN-PROGRESS"
                       respmode="AUTO"/>
             <menuitem id="task-context-menu-attend-inprogress-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="IN-PROGRESS"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="task-context-menu-attendance-completed-menu"
-              label="&calendar.context.attendance.occ.completed.label;"
-              accesskey="&calendar.context.attendance.occ.completed.accesskey;"
+              data-l10n-id="calendar-context-attendance-occ-completed"
               value="COMPLETED"
               name="task-context-attendance"
               scope="this-occurrence">
@@ -733,35 +651,32 @@
                      class="no-icon-menupopup">
             <menuitem id="task-context-menu-attend-completed-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="COMPLETED"
                       respmode="AUTO"/>
             <menuitem id="task-context-menu-attend-completed-dontsend-menuitem"
                       scope="this-occurrence"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="COMPLETED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menuitem id="task-context-menu-attendance-delegated-menu"
-                  label="&calendar.context.attendance.occ.delegated.label;"
+                  data-l10n-id="calendar-context-attendance-occ-delegated"
                   name="task-context-attendance"
                   scope="this-occurrence"
                   value="DELEGATED"/>
         <menuitem id="task-context-menu-attendance-needsaction-menu"
-                  label="&calendar.context.attendance.occ.needsaction.label;"
+                  data-l10n-id="calendar-context-attendance-occ-needs-action"
                   name="task-context-attendance"
                   scope="this-occurrence"
                   value="NEEDS-ACTION"/>
         <label id="task-context-attendance-alloccurrence-label"
               class="calendar-context-heading-label"
               scope="all-occurrences"
-              value="&calendar.context.attendance.all2.label;"/>
+              data-l10n-id="calendar-context-attendance-all-series"/>
         <menu id="task-context-menu-attendance-accepted-all-menu"
-              label="&calendar.context.attendance.all.accepted.label;"
-              accesskey="&calendar.context.attendance.all.accepted.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-accepted"
               value="ACCEPTED"
               name="task-context-attendance-all"
               scope="all-occurrences">
@@ -769,21 +684,18 @@
                      class="no-icon-menupopup">
             <menuitem id="task-context-menu-attend-accept-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="ACCEPTED"
                       respmode="AUTO"/>
             <menuitem id="task-context-menu-attend-accept-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="ACCEPTED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="task-context-menu-attendance-tentative-all-menu"
-              label="&calendar.context.attendance.all.tentative.label;"
-              accesskey="&calendar.context.attendance.all.tentative.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-tentative"
               value="TENTATIVE"
               name="task-context-attendance-all"
               scope="all-occurrences">
@@ -791,21 +703,18 @@
                      class="no-icon-menupopup">
             <menuitem id="task-context-menu-attend-tentative-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="TENTATIVE"
                       respmode="AUTO"/>
             <menuitem id="task-context-menu-attend-tentative-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="TENTATIVE"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="task-context-menu-attendance-decline-all-menu"
-              label="&calendar.context.attendance.all.declined.label;"
-              accesskey="&calendar.context.attendance.all.declined.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-declined"
               value="DECLINED"
               name="task-context-attendance-all"
               scope="all-occurrences">
@@ -813,21 +722,18 @@
                      class="no-icon-menupopup">
             <menuitem id="task-context-menu-attend-declined-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="DECLINED"
                       respmode="AUTO"/>
             <menuitem id="task-context-menu-attend-declined-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="DECLINED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="task-context-menu-attendance-inprogress-all-menu"
-              label="&calendar.context.attendance.all.inprogress.label;"
-              accesskey="&calendar.context.attendance.all.inprogress.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-in-progress"
               value="IN-PROGRESS"
               name="task-context-attendance-all"
               scope="all-occurrences">
@@ -835,21 +741,18 @@
                      class="no-icon-menupopup">
             <menuitem id="task-context-menu-attend-inprogress-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="IN-PROGRESS"
                       respmode="AUTO"/>
             <menuitem id="task-context-menu-attend-inprogress-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="IN-PROGRESS"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menu id="task-context-menu-attendance-completed-all-menu"
-              label="&calendar.context.attendance.all.completed.label;"
-              accesskey="&calendar.context.attendance.all.completed.accesskey;"
+              data-l10n-id="calendar-context-attendance-all-completed"
               value="COMPLETED"
               name="task-context-attendance-all"
               scope="all-occurrences">
@@ -857,25 +760,23 @@
                      class="no-icon-menupopup">
             <menuitem id="task-context-menu-attend-completed-all-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.send.label;"
-                      accesskey="&calendar.context.attendance.send.accesskey;"
+                      data-l10n-id="calendar-context-attendance-send"
                       respvalue="COMPLETED"
                       respmode="AUTO"/>
             <menuitem id="task-context-menu-attend-completed-all-dontsend-menuitem"
                       scope="all-occurrences"
-                      label="&calendar.context.attendance.dontsend.label;"
-                      accesskey="&calendar.context.attendance.dontsend.accesskey;"
+                      data-l10n-id="calendar-context-attendance-dontsend"
                       respvalue="COMPLETED"
                       respmode="NONE"/>
           </menupopup>
         </menu>
         <menuitem id="task-context-menu-attendance-delegated-all-menu"
-                  label="&calendar.context.attendance.all.delegated.label;"
+                  data-l10n-id="calendar-context-attendance-all-delegated"
                   name="task-context-attendance-delegated-all"
                   scope="all-occurrences"
                   value="DELEGATED"/>
         <menuitem id="task-context-menu-attendance-needsaction-all-menu"
-                  label="&calendar.context.attendance.all.delegated.label;"
+                  data-l10n-id="calendar-context-attendance-all-needs-action"
                   name="task-context-attendance-needaction-all"
                   scope="all-occurrences"
                   value="NEEDS-ACTION"/>
@@ -883,58 +784,49 @@
     </menu>
     <menuseparator id="task-context-menu-separator-filter"/>
     <menu id="task-context-menu-filter-todaypane"
-          label="&calendar.tasks.view.filtertasks.label;"
-          accesskey="&calendar.tasks.view.filtertasks.accesskey;">
+          data-l10n-id="calendar-tasks-view-filtertasks">
       <menupopup id="task-context-menu-filter-todaypane-popup"
                  oncommand="TodayPane.updateCalendarToDoUnifinder(event.target.getAttribute('value'))">
         <menuitem id="task-context-menu-filter-todaypane-current"
                   name="filtergrouptodaypane"
                   value="throughcurrent"
                   type="radio"
-                  label="&calendar.task.filter.current.label;"
-                  accesskey="&calendar.task.filter.current.accesskey;"/>
+                  data-l10n-id="calendar-task-filter-current"/>
         <menuitem id="task-context-menu-filter-todaypane-today"
                   name="filtergrouptodaypane"
                   value="throughtoday"
                   type="radio"
-                  label="&calendar.task.filter.today.label;"
-                  accesskey="&calendar.task.filter.today.accesskey;"/>
+                  data-l10n-id="calendar-task-filter-today"/>
         <menuitem id="task-context-menu-filter-todaypane-next7days"
                   name="filtergrouptodaypane"
                   value="throughsevendays"
                   type="radio"
-                  label="&calendar.task.filter.next7days.label;"
-                  accesskey="&calendar.task.filter.next7days.accesskey;"/>
+                  data-l10n-id="calendar-task-filter-next7days"/>
         <menuitem id="task-context-menu-filter-todaypane-notstarted"
                   name="filtergrouptodaypane"
                   value="notstarted"
                   type="radio"
-                  label="&calendar.task.filter.notstarted.label;"
-                  accesskey="&calendar.task.filter.notstarted.accesskey;"/>
+                  data-l10n-id="calendar-task-filter-notstarted"/>
         <menuitem id="task-context-menu-filter-todaypane-overdue"
                   name="filtergrouptodaypane"
                   value="overdue"
                   type="radio"
-                  label="&calendar.task.filter.overdue.label;"
-                  accesskey="&calendar.task.filter.overdue.accesskey;"/>
+                  data-l10n-id="calendar-task-filter-overdue"/>
         <menuitem id="task-context-menu-filter-todaypane-completed"
                   name="filtergrouptodaypane"
                   type="radio"
                   value="completed"
-                  label="&calendar.task.filter.completed.label;"
-                  accesskey="&calendar.task.filter.completed.accesskey;"/>
+                  data-l10n-id="calendar-task-filter-completed"/>
         <menuitem id="task-context-menu-filter-todaypane-open"
                   name="filtergrouptodaypane"
                   type="radio"
                   value="open"
-                  label="&calendar.task.filter.open.label;"
-                  accesskey="&calendar.task.filter.open.accesskey;"/>
+                  data-l10n-id="calendar-task-filter-open"/>
         <menuitem id="task-context-menu-filter-todaypane-all"
                   name="filtergrouptodaypane"
                   value="all"
                   type="radio"
-                  label="&calendar.task.filter.all.label;"
-                  accesskey="&calendar.task.filter.all.accesskey;"/>
+                  data-l10n-id="calendar-task-filter-all"/>
       </menupopup>
     </menu>
   </menupopup>
@@ -943,8 +835,7 @@
   <menupopup id="taskview-link-context-menu"
              class="no-icon-menupopup">
     <menuitem id="taskview-link-context-menu-copy"
-              label="&calendar.copylink.label;"
-              accesskey="&calendar.copylink.accesskey;"
+              data-l10n-id="calendar-copylink"
               oncommand="taskViewCopyLink(this.parentNode.triggerNode)"/>
   </menupopup>
 

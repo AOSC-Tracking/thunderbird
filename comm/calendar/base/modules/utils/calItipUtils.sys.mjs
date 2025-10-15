@@ -243,16 +243,15 @@ export var itip = {
    */
   getCompleteText(aStatus, aOperationType) {
     let text = "";
-    const cIOL = Ci.calIOperationListener;
     if (Components.isSuccessCode(aStatus)) {
       switch (aOperationType) {
-        case cIOL.ADD:
+        case Ci.calIOperationListener.ADD:
           text = lazy.cal.l10n.getLtnString("imipAddedItemToCal2");
           break;
-        case cIOL.MODIFY:
+        case Ci.calIOperationListener.MODIFY:
           text = lazy.cal.l10n.getLtnString("imipUpdatedItem2");
           break;
-        case cIOL.DELETE:
+        case Ci.calIOperationListener.DELETE:
           text = lazy.cal.l10n.getLtnString("imipCanceledItem2");
           break;
       }
@@ -302,7 +301,7 @@ export var itip = {
    * This returns a JS object with the following structure:
    *
    * {
-   *    label: "This is a desciptive text about the itip item",
+   *    label: "This is a descriptive text about the itip item",
    *    showItems: ["imipXXXButton", ...],
    *    hideItems: ["imipXXXButton_Option", ...]
    * }
@@ -596,7 +595,7 @@ export var itip = {
   },
 
   /**
-   * Executes an action from a calandar message.
+   * Executes an action from a calendar message.
    *
    * @param {nsIWindow} aWindow - The current window
    * @param {string} aParticipantStatus - A partstat string as per RfC 5545

@@ -9,20 +9,99 @@
 #include "EwsListeners.h"
 #include "IEwsClient.h"
 #include "nsIMsgFolderNotificationService.h"
+#include "nsIMsgStatusFeedback.h"
 #include "nsIMsgWindow.h"
+#include "nsIProgressEventSink.h"
 #include "nsMsgFolderFlags.h"
 #include "nsMsgUtils.h"
 #include "nsNetUtil.h"
 #include "nsPrintfCString.h"
 #include "OfflineStorage.h"
-#include "plbase64.h"
 #include "mozilla/Components.h"
+#include "mozilla/intl/Localization.h"
+
+using namespace mozilla;
 
 static constexpr auto kDeleteModelPreferenceName = "delete_model";
 static constexpr auto kTrashFolderPreferenceName = "trash_folder_path";
 
 constexpr auto kSyncStateTokenProperty = "ewsSyncStateToken";
 constexpr auto kEwsIdProperty = "ewsId";
+
+namespace {
+
+class EwsBiffUrlListener : public nsIUrlListener {
+ public:
+  static nsresult ForFolders(RefPtr<EwsIncomingServer> server,
+                             nsTArray<RefPtr<nsIMsgFolder>> folders,
+                             EwsBiffUrlListener** newListener) {
+    NS_ENSURE_ARG_POINTER(newListener);
+    nsresult rv = NS_OK;
+    nsTArray<nsCString> uris(folders.Length());
+    for (auto&& folder : folders) {
+      nsAutoCString folderUri;
+      rv = folder->GetURI(folderUri);
+      NS_ENSURE_SUCCESS(rv, rv);
+      uris.AppendElement(std::move(folderUri));
+    }
+
+    RefPtr<EwsBiffUrlListener> listener =
+        new EwsBiffUrlListener(std::move(server), std::move(uris));
+    listener.forget(newListener);
+    return NS_OK;
+  }
+
+  NS_DECL_ISUPPORTS;
+  NS_DECL_NSIURLLISTENER;
+
+ protected:
+  virtual ~EwsBiffUrlListener() = default;
+
+ private:
+  EwsBiffUrlListener(RefPtr<EwsIncomingServer> server,
+                     nsTArray<nsCString> syncFolderUris)
+      : mServer(std::move(server)) {
+    for (auto&& folderUri : syncFolderUris) {
+      mCompletionStates.InsertOrUpdate(folderUri, false);
+    }
+  }
+
+  RefPtr<EwsIncomingServer> mServer;
+  nsTHashMap<nsCString, bool> mCompletionStates;
+};
+
+NS_IMPL_ISUPPORTS(EwsBiffUrlListener, nsIUrlListener);
+
+NS_IMETHODIMP EwsBiffUrlListener::OnStartRunningUrl(nsIURI* uri) {
+  return NS_OK;
+}
+
+NS_IMETHODIMP EwsBiffUrlListener::OnStopRunningUrl(nsIURI* uri,
+                                                   nsresult exitCode) {
+  nsAutoCString uriString;
+  nsresult rv = uri->GetSpec(uriString);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (auto lookup = mCompletionStates.Lookup(uriString); lookup) {
+    lookup.Data() = true;
+  }
+
+  bool allDone = true;
+  for (auto&& entry : mCompletionStates) {
+    if (!entry.GetData()) {
+      allDone = false;
+      break;
+    }
+  }
+
+  if (allDone) {
+    mServer->SetPerformingBiff(false);
+  }
+
+  return NS_OK;
+}
+
+}  // namespace
 
 NS_IMPL_ADDREF_INHERITED(EwsIncomingServer, nsMsgIncomingServer)
 NS_IMPL_RELEASE_INHERITED(EwsIncomingServer, nsMsgIncomingServer)
@@ -264,6 +343,57 @@ nsresult EwsIncomingServer::SyncFolderList(
     syncStateToken = EmptyCString();
   }
 
+  nsCOMPtr<nsIMsgStatusFeedback> feedback = nullptr;
+  if (aMsgWindow) {
+    // Format the message we'll show the user while we wait for the remote
+    // operation to complete.
+    //
+    // If `postSyncCallback` also involves syncing the message list of each
+    // folder, we'll also trigger messages for individual folders, but the
+    // status bar implementation ensures messages stay up long enough that they
+    // don't "flicker" too quickly. So the resulting UX will be the following
+    // messages appearing ~1s apart:
+    //  * Looking for new messages for [account name]…
+    //  * Looking for new messages in [folder 1 name]…
+    //  * Looking for new messages in [folder 2 name]…
+    //  * etc.
+    RefPtr<intl::Localization> l10n =
+        intl::Localization::Create({"messenger/activityFeedback.ftl"_ns}, true);
+
+    auto l10nArgs = dom::Optional<intl::L10nArgs>();
+    l10nArgs.Construct();
+
+    nsCString accountName;
+    rv = GetPrettyName(accountName);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    auto idArg = l10nArgs.Value().Entries().AppendElement();
+    idArg->mKey = "accountName"_ns;
+    idArg->mValue.SetValue().SetAsUTF8String().Assign(accountName);
+
+    ErrorResult error;
+    nsCString message;
+    l10n->FormatValueSync("looking-for-messages-account"_ns, l10nArgs, message,
+                          error);
+
+    // Show the message in the status bar.
+    rv = aMsgWindow->GetStatusFeedback(getter_AddRefs(feedback));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // The window might not be attached to an `nsIMsgStatusFeedback`. This
+    // typically happens with new profiles, because the `nsIMsgStatusFeedback`
+    // is only added after the first account is added. Technically this should
+    // also run after the account is added, but we're might be racing against
+    // the `nsIMsgStatusFeedback` being added to the message window, in which
+    // case it might still be null by the time this runs.
+    if (feedback) {
+      rv = feedback->ShowStatusString(NS_ConvertUTF8toUTF16(message));
+      NS_ENSURE_SUCCESS(rv, rv);
+      rv = feedback->StartMeteors();
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+  }
+
   // Define the listener and its callbacks.
   auto onNewRootFolder = [self = RefPtr(this)](const nsACString& id) {
     RefPtr<nsIMsgFolder> root;
@@ -295,9 +425,28 @@ nsresult EwsIncomingServer::SyncFolderList(
         return self->SetStringValue(kSyncStateTokenProperty, syncStateToken);
       };
 
+  auto onSuccess = [feedback, postSyncCallback]() {
+    if (feedback) {
+      // Reset the status bar since the remote operation has finished.
+      nsresult rv = feedback->StopMeteors();
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    return postSyncCallback();
+  };
+
+  auto onError = [feedback](nsresult _status) {
+    if (feedback) {
+      // Reset the status bar since the remote operation has finished.
+      return feedback->StopMeteors();
+    }
+
+    return NS_OK;
+  };
+
   RefPtr<EwsFolderSyncListener> listener = new EwsFolderSyncListener(
       onNewRootFolder, onFolderCreated, onFolderUpdated, onFolderDeleted,
-      onSyncStateTokenChanged, std::move(postSyncCallback));
+      onSyncStateTokenChanged, onSuccess, onError);
 
   // Sync the folder tree for the whole account.
   RefPtr<IEwsClient> client;
@@ -305,20 +454,15 @@ nsresult EwsIncomingServer::SyncFolderList(
   return client->SyncFolderHierarchy(listener, syncStateToken);
 }
 
-nsresult EwsIncomingServer::SyncAllFolders(nsIMsgWindow* aMsgWindow,
-                                           nsIUrlListener* urlListener) {
-  nsCOMPtr<nsIMsgFolder> rootFolder;
-  MOZ_TRY(GetRootFolder(getter_AddRefs(rootFolder)));
-
-  nsTArray<RefPtr<nsIMsgFolder>> msgFolders;
-  MOZ_TRY(rootFolder->GetDescendants(msgFolders));
-
+nsresult EwsIncomingServer::SyncFolders(
+    const nsTArray<RefPtr<nsIMsgFolder>>& folders, nsIMsgWindow* aMsgWindow,
+    nsIUrlListener* urlListener) {
   // TODO: For now, we sync every folder at once, but obviously that's not an
   // amazing solution. In the future, we should probably try to maintain some
   // kind of queue so we can properly batch and sync folders. In the meantime,
   // though, the EWS client should handle any kind of rate limiting well enough,
   // so this improvement can come later.
-  for (const auto& folder : msgFolders) {
+  for (const auto& folder : folders) {
     nsresult rv = folder->GetNewMessages(aMsgWindow, urlListener);
     if (NS_FAILED(rv)) {
       // If we encounter an error, just log it rather than fail the whole sync.
@@ -331,6 +475,17 @@ nsresult EwsIncomingServer::SyncAllFolders(nsIMsgWindow* aMsgWindow,
   }
 
   return NS_OK;
+}
+
+nsresult EwsIncomingServer::SyncAllFolders(nsIMsgWindow* aMsgWindow,
+                                           nsIUrlListener* urlListener) {
+  nsCOMPtr<nsIMsgFolder> rootFolder;
+  MOZ_TRY(GetRootFolder(getter_AddRefs(rootFolder)));
+
+  nsTArray<RefPtr<nsIMsgFolder>> msgFolders;
+  MOZ_TRY(rootFolder->GetDescendants(msgFolders));
+
+  return SyncFolders(msgFolders, aMsgWindow, urlListener);
 }
 
 NS_IMETHODIMP EwsIncomingServer::GetPassword(nsAString& password) {
@@ -415,10 +570,26 @@ NS_IMETHODIMP EwsIncomingServer::GetNewMessages(nsIMsgFolder* aFolder,
 NS_IMETHODIMP EwsIncomingServer::PerformBiff(nsIMsgWindow* aMsgWindow) {
   nsCOMPtr<nsIMsgWindow> window = aMsgWindow;
 
+  nsresult rv = SetPerformingBiff(true);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   // Sync the folder list for the account. Then sync the message list of each
   // folder in the tree.
   return SyncFolderList(aMsgWindow, [self = RefPtr(this), window]() {
-    return self->SyncAllFolders(window, nullptr);
+    nsCOMPtr<nsIMsgFolder> rootFolder;
+    nsresult rv = self->GetRootFolder(getter_AddRefs(rootFolder));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsTArray<RefPtr<nsIMsgFolder>> msgFolders;
+    rv = rootFolder->GetDescendants(msgFolders);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    RefPtr<EwsBiffUrlListener> listener;
+    rv = EwsBiffUrlListener::ForFolders(self, msgFolders.Clone(),
+                                        getter_AddRefs(listener));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    return self->SyncFolders(msgFolders, window, listener);
   });
 }
 
@@ -455,14 +626,31 @@ NS_IMETHODIMP EwsIncomingServer::GetEwsClient(IEwsClient** ewsClient) {
       do_CreateInstance("@mozilla.org/messenger/ews-client;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // EWS uses an HTTP(S) endpoint for calls rather than a simple hostname. This
-  // is stored as a pref against this server.
-  nsCString endpoint;
-  rv = GetStringValue("ews_url", endpoint);
+  nsAutoCString endpoint;
+  rv = GetEwsUrl(endpoint);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  bool overrideOAuth;
+  rv = GetEwsOverrideOAuthDetails(&overrideOAuth);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAutoCString applicationId, tenantId, redirectUri, endpointHost, oauthScopes;
+  if (overrideOAuth) {
+    rv = GetEwsApplicationId(applicationId);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = GetEwsTenantId(tenantId);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = GetEwsRedirectUri(redirectUri);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = GetEwsEndpointHost(endpointHost);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = GetEwsOAuthScopes(oauthScopes);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
   // Set up the client object with access details.
-  rv = client->Initialize(endpoint, this);
+  rv = client->Initialize(endpoint, this, overrideOAuth, applicationId,
+                          tenantId, redirectUri, endpointHost, oauthScopes);
   NS_ENSURE_SUCCESS(rv, rv);
 
   client.forget(ewsClient);
@@ -577,3 +765,30 @@ NS_IMETHODIMP EwsIncomingServer::SetTrashFolderPath(const nsACString& path) {
 NS_IMETHODIMP EwsIncomingServer::GetTrashFolderPath(nsACString& returnValue) {
   return GetStringValue(kTrashFolderPreferenceName, returnValue);
 }
+
+NS_IMETHODIMP EwsIncomingServer::GetEwsOverrideOAuthDetails(bool* value) {
+  return GetBoolValue("ews_override_oauth_details", value);
+}
+
+NS_IMETHODIMP EwsIncomingServer::SetEwsOverrideOAuthDetails(bool value) {
+  return SetBoolValue("ews_override_oauth_details", value);
+}
+
+#define DEFINE_PREF_STRING_PROPERTY(PropName, PrefName)                     \
+  NS_IMETHODIMP EwsIncomingServer::Get##PropName(nsACString& value) {       \
+    return GetStringValue(PrefName, value);                                 \
+  }                                                                         \
+  NS_IMETHODIMP EwsIncomingServer::Set##PropName(const nsACString& value) { \
+    return SetStringValue(PrefName, value);                                 \
+  }
+
+// EWS uses an HTTP(S) endpoint for calls rather than a simple hostname. This
+// is stored as a pref against this server.
+DEFINE_PREF_STRING_PROPERTY(EwsUrl, "ews_url")
+DEFINE_PREF_STRING_PROPERTY(EwsApplicationId, "ews_application_id")
+DEFINE_PREF_STRING_PROPERTY(EwsTenantId, "ews_tenant_id")
+DEFINE_PREF_STRING_PROPERTY(EwsRedirectUri, "ews_redirect_uri")
+DEFINE_PREF_STRING_PROPERTY(EwsEndpointHost, "ews_endpoint_host")
+DEFINE_PREF_STRING_PROPERTY(EwsOAuthScopes, "ews_oauth_scopes")
+
+#undef DEFINE_PREF_PROPERTY

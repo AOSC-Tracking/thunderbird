@@ -126,6 +126,7 @@ nsMsgAccountManager::~nsMsgAccountManager() {
     nsCOMPtr<nsIObserverService> observerService =
         mozilla::services::GetObserverService();
     if (observerService) {
+      observerService->RemoveObserver(this, "quit-application-granted");
       observerService->RemoveObserver(this, "search-folders-changed");
       observerService->RemoveObserver(this, ABOUT_TO_GO_OFFLINE_TOPIC);
       observerService->RemoveObserver(this, "sleep_notification");
@@ -139,15 +140,6 @@ static nsCOMPtr<nsIAsyncShutdownService> GetShutdownService() {
       mozilla::services::GetAsyncShutdownService();
   MOZ_RELEASE_ASSERT(service);
   return service;
-}
-
-static nsCOMPtr<nsIAsyncShutdownClient> GetAppShutdownConfirmed() {
-  nsCOMPtr<nsIAsyncShutdownClient> barrier;
-  nsresult rv =
-      GetShutdownService()->GetAppShutdownConfirmed(getter_AddRefs(barrier));
-  MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
-  MOZ_RELEASE_ASSERT(barrier);
-  return barrier;
 }
 
 static nsCOMPtr<nsIAsyncShutdownClient> GetProfileBeforeChange() {
@@ -194,14 +186,12 @@ nsresult nsMsgAccountManager::Init() {
   nsCOMPtr<nsIObserverService> observerService =
       mozilla::services::GetObserverService();
   if (observerService) {
+    observerService->AddObserver(this, "quit-application-granted", true);
     observerService->AddObserver(this, "search-folders-changed", true);
     observerService->AddObserver(this, ABOUT_TO_GO_OFFLINE_TOPIC, true);
     observerService->AddObserver(this, "sleep_notification", true);
   }
 
-  GetAppShutdownConfirmed()->AddBlocker(
-      this, NS_LITERAL_STRING_FROM_CSTRING(__FILE__), __LINE__,
-      u"nsMsgAccountManager cleanup on exit"_ns);
   GetProfileBeforeChange()->AddBlocker(
       this, NS_LITERAL_STRING_FROM_CSTRING(__FILE__), __LINE__,
       u"nsMsgAccountManager shutdown"_ns);
@@ -306,6 +296,7 @@ NS_IMETHODIMP nsMsgAccountManager::Observe(nsISupports* aSubject,
     return NS_OK;
   }
   if (!strcmp(aTopic, "sleep_notification")) return CloseCachedConnections();
+  if (!strcmp(aTopic, "quit-application-granted")) return CleanupOnExit();
 
   return NS_OK;
 }
@@ -1101,7 +1092,7 @@ nsresult nsMsgAccountManager::LoadAccounts() {
   if (m_shutdownInProgress || m_haveShutdown) return NS_ERROR_FAILURE;
 
   if (!mozilla::StaticPrefs::mail_panorama_enabled_AtStartup()) {
-    // TODO: Reenable this.
+    // TODO: Re-enable this.
     nsCOMPtr<nsIMsgMailSession> mailSession =
         mozilla::components::MailSession::Service();
     mailSession->AddFolderListener(
@@ -1735,8 +1726,6 @@ nsresult nsMsgAccountManager::CleanupOnExit() {
     }
   }
 
-  GetAppShutdownConfirmed()->RemoveBlocker(this);
-
   // Try to do this early on in the shutdown process before
   // necko shuts itself down.
   CloseCachedConnections();
@@ -1755,14 +1744,8 @@ nsMsgAccountManager::GetState(nsIPropertyBag** aState) { return NS_OK; }
 
 NS_IMETHODIMP
 nsMsgAccountManager::BlockShutdown(nsIAsyncShutdownClient* aClient) {
-  nsAutoString name;
-  aClient->GetName(name);
-  if (name.Equals(u"quit-application"_ns)) {
-    return CleanupOnExit();
-  } else {
-    // profile-before-change
-    return Shutdown();
-  }
+  // Called at profile-before-change.
+  return Shutdown();
 }
 
 NS_IMETHODIMP
@@ -1805,7 +1788,7 @@ nsresult nsMsgAccountManager::createKeyedAccount(const nsCString& key,
       }
     }
 
-    // Extracting the account key of the last mail acoount.
+    // Extracting the account key of the last mail account.
     for (int32_t index = m_accounts.Length() - 1; index >= 0; index--) {
       nsCOMPtr<nsIMsgIncomingServer> server;
       rv = m_accounts[index]->GetIncomingServer(getter_AddRefs(server));
@@ -3233,8 +3216,9 @@ NS_IMETHODIMP nsMsgAccountManager::OnFolderAdded(nsIMsgFolder* parent,
       if (listener->m_folderWatching == parent) {
         nsCOMPtr<nsIMsgDatabase> db;
         nsCOMPtr<nsIDBFolderInfo> dbFolderInfo;
-        listener->m_virtualFolder->GetDBFolderInfoAndDB(
+        rv = listener->m_virtualFolder->GetDBFolderInfoAndDB(
             getter_AddRefs(dbFolderInfo), getter_AddRefs(db));
+        NS_ENSURE_SUCCESS(rv, rv);
 
         uint32_t vfFolderFlag;
         dbFolderInfo->GetUint32Property("searchFolderFlag", 0, &vfFolderFlag);

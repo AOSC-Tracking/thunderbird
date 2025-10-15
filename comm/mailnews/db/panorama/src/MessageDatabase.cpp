@@ -409,7 +409,7 @@ Result<MessageDatabase::CachedMsg*, nsresult> MessageDatabase::EnsureCached(
 
 void MessageDatabase::TrimCache() {
   // Standin cache policy:
-  // Grow to maxEntries, then discard an abitrary 25%.
+  // Grow to maxEntries, then discard an arbitrary 25%.
   // Could be waaaay more clever here, but let do some real-world
   // profiling before getting cute.
   constexpr uint32_t maxEntries = 512;  // (roughly 256KB).
@@ -552,9 +552,9 @@ nsresult MessageDatabase::GetMessagePropertyNames(nsMsgKey key,
   return NS_OK;
 }
 
-nsresult MessageDatabase::GetMessageProperty(nsMsgKey aKey,
-                                             const nsACString& aName,
-                                             nsACString& aValue) {
+NS_IMETHODIMP MessageDatabase::GetMessageProperty(nsMsgKey aKey,
+                                                  const nsACString& aName,
+                                                  nsACString& aValue) {
   MOZ_ASSERT(!aName.EqualsLiteral("keywords"));  // Use GetMessageTags().
 
   // TODO: might want to cache selected properties.

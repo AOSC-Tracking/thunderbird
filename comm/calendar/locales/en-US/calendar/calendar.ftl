@@ -131,9 +131,9 @@ unable-to-create-provider = An error was encountered preparing the calendar loca
 
 # Sample: Unknown timezone "USPacific" in "Dentist Appt".  Using the 'floating' local timezone instead: 2008/02/28 14:00:00
 # $timezone timezone name, $title item title, $datetime date-time
-unknown-timezone-in-item = Unknown timezone "{ $timezone }" in "{ $title }".  Treated as 'floating' local timezone instead: { $datetime }
+unknown-timezone-in-item = Unknown timezone “{ $timezone }” in “{ $title }”. Treated as ‘floating’ local timezone instead: { $datetime }
 timezone-errors-alert-title = Timezone Errors
-timezone-errors-see-console = See Error Console: Unknown timezones are treated as the 'floating' local timezone.
+timezone-errors-see-console = See Error Console: Unknown timezones are treated as the ‘floating’ local timezone.
 
 # The following strings are for the prompt to delete/unsubscribe from the calendar
 remove-calendar-title = Remove Calendar
@@ -143,20 +143,21 @@ remove-calendar-button-unsubscribe = Unsubscribe
 # LOCALIZATION NOTE (remove-calendar-message-delete-or-unsubscribe): Shown for
 # calendar where both deleting and unsubscribing is possible.
 # $name:  The name of a calendar
-remove-calendar-message-delete-or-unsubscribe = Do you want to remove the calendar "{ $name }"? Unsubscribing will remove the calendar from the list, deleting will also permanently purge its data.
+remove-calendar-message-delete-or-unsubscribe = Do you want to remove the calendar “{ $name }”? Unsubscribing will remove the calendar from the list, deleting will also permanently purge its data.
 
 # LOCALIZATION NOTE (remove-calendar-message-delete): Shown for calendar where
 # deleting is the only option.
 # $name:  The name of a calendar
-remove-calendar-message-delete = Do you want to permanently delete the calendar "{ $name }"?
+remove-calendar-message-delete = Do you want to permanently delete the calendar “{ $name }”?
 
 # LOCALIZATION NOTE (remove-calendar-message-unsubscribe): Shown for calendar
 # where unsubscribing is the only option.
 # $name:  The name of a calendar
-remove-calendar-message-unsubscribe = Do you want to unsubscribe from the calendar "{ $name }"?
+remove-calendar-message-unsubscribe = Do you want to unsubscribe from the calendar “{ $name }”?
 
 # $title title
 week-title = Week { $title }
+# $title title
 week-title-label =
     .aria-label = Week { $title }
 calendar-none =
@@ -168,7 +169,7 @@ calendar-none =
 # LOCALIZATION NOTE (too-new-schema-error-text):
 #    $hostApplication will be replaced with the name of the host application, e.g. 'Thunderbird'
 #    $fileName will be replaced with the name of the new copy of the file, e.g. 'local-2020-05-11T21-30-17.sqlite'
-too-new-schema-error-text = Your calendar data is not compatible with this version of { $hostApplication }. The calendar data in your profile was updated by a newer version of { $hostApplication }. A backup of the data file has been created, named "{ $fileName }". Continuing with a newly created data file.
+too-new-schema-error-text = Your calendar data is not compatible with this version of { $hostApplication }. The calendar data in your profile was updated by a newer version of { $hostApplication }. A backup of the data file has been created, named “{ $fileName }”. Continuing with a newly created data file.
 
 # List of events or todos (unifinder)
 event-untitled = Untitled
@@ -221,7 +222,7 @@ other-put-error =
 # LOCALIZATION NOTE (read-only-mode):
 # used for an message like 'There has been an error reading data for calendar: Home. It has been...'
 #    $name will be replaced with the name of a calendar
-read-only-mode = There has been an error reading data for calendar: { $name }. It has been placed in read-only mode, since changes to this calendar will likely result in data-loss.  You may change this setting by choosing 'Edit Calendar'.
+read-only-mode = There has been an error reading data for calendar: { $name }. It has been placed in read-only mode, since changes to this calendar will likely result in data-loss.  You may change this setting by choosing ‘Edit Calendar’.
 
 # LOCALIZATION NOTE (disabled-mode):
 # used for an message like 'There has been an error reading data for calendar: Home. It has been...'
@@ -324,8 +325,8 @@ likely-timezone = America/New_York, America/Chicago, America/Denver, America/Pho
 # $timezone OS timezone id
 # $zoneInfoTimezoneId ZoneInfo timezone id
 warning-os-tz-no-match =
-    Warning: Operating system timezone "{ $timezone }"
-    no longer matches the internal ZoneInfo timezone "{ $zoneInfoTimezoneId }".
+    Warning: Operating system timezone “{ $timezone }”
+    no longer matches the internal ZoneInfo timezone “{ $zoneInfoTimezoneId }”.
 
 # "Skipping Operating System timezone 'Pacific/New_Country'."
 # Testing note: not easily testable.  May occur someday if (non-windows)
@@ -344,7 +345,7 @@ skipping-locale-timezone = Skipping locale timezone '{ $timezone }'.
 # Brazil timezones may be "No match" (change every year, so often out of date,
 # and changes are often more than a week different).
 warning-using-floating-tz-no-match =
-    Warning: Using "floating" timezone.
+    Warning: Using “floating” timezone.
     No ZoneInfo timezone data matched the operating system timezone data.
 
 # "Warning:  Using guessed timezone
@@ -374,7 +375,7 @@ tz-seems-to-matchos = This ZoneInfo timezone seems to match the operating system
 #    $timezone will be replaced with the name of a timezone
 tz-fromos =
     This ZoneInfo timezone was chosen based on the operating system timezone
-    identifier "{ $timezone }".
+    identifier “{ $timezone }”.
 
 # Localization note (tz-from-locale): Substitute name of your locale language.
 tz-from-locale =
@@ -511,7 +512,7 @@ error-writing2 = An error occurred when writing to the calendar { $name }! Pleas
 
 # LOCALIZATION NOTE (error-writing-details):
 # This will be displayed in the detail section of the error dialog
-error-writing-details = If you're seeing this message after snoozing or dismissing a reminder and this is for a calendar you do not want to add or edit events for, you can mark this calendar as read-only to avoid such experience in future. To do so, get to the calendar properties by right-clicking on this calendar in the list in the calendar or task view.
+error-writing-details = If you’re seeing this message after snoozing or dismissing a reminder and this is for a calendar you do not want to add or edit events for, you can mark this calendar as read-only to avoid such experience in future. To do so, get to the calendar properties by right-clicking on this calendar in the list in the calendar or task view.
 
 # LOCALIZATION NOTE (tooltip-calendar-disabled):
 # used for an alert-message like 'The calendar Home is momentarily not available'
@@ -755,20 +756,30 @@ event-duration-label-weeks =
 show-calendar = Show { $name }
 # $name calendar name
 hide-calendar = Hide { $name }
-
+# $name calendar name
 hide-calendar-title =
     .title = Show { $name }
+# $name calendar name
 show-calendar-title =
     .title = Hide { $name }
-show-calendar-label =
-    .label = Show { $name }
-hide-calendar-label =
-    .label = Hide { $name }
 
-# uses the access key calendar.context.showonly.accesskey
-# $name calendar name
-show-only-calendar =
+# Variables:
+# $name (String) - The calendar name
+show-calendar-name =
+    .label = Show { $name }
+    .accesskey = h
+
+# Variables:
+# $name (String) - The calendar name
+hide-calendar-name =
+    .label = Hide { $name }
+    .accesskey = H
+
+# Variables:
+# $name (String) - The calendar name
+show-only-calendar-name =
     .label = Show Only { $name }
+    .accesskey = O
 
 # LOCALIZATION NOTE (modify-conflict-*)
 # Used by the event dialog to resolve item modification conflicts.
@@ -825,3 +836,261 @@ calendar-context-paste =
 calendar-taskview-delete =
     .label = Delete
     .tooltiptext = Delete Task
+
+calendar-context-attendance-menu =
+    .label = Attendance
+    .accesskey = d
+
+calendar-context-attendance-occurrence =
+    .label = This Occurrence
+
+calendar-context-attendance-all-series =
+    .label = Complete Series
+
+calendar-context-attendance-send =
+    .label = Send a notification now
+    .accesskey = S
+
+calendar-context-attendance-dontsend =
+    .label = Do not send a notification
+    .accesskey = D
+
+calendar-context-attendance-occ-accepted =
+    .label = Accepted
+    .accesskey = A
+
+calendar-context-attendance-occ-tentative =
+    .label = Accepted tentatively
+    .accesskey = y
+
+calendar-context-attendance-occ-declined =
+    .label = Declined
+    .accesskey = c
+
+calendar-context-attendance-occ-delegated =
+    .label = Delegated
+    .accesskey = g
+
+calendar-context-attendance-occ-needs-action =
+    .label = Still needs action
+    .accesskey = S
+
+calendar-context-attendance-occ-in-progress =
+    .label = In progress
+    .accesskey = I
+
+calendar-context-attendance-occ-completed =
+    .label = Completed
+    .accesskey = C
+
+calendar-context-attendance-all-accepted =
+    .label = Accepted
+    .accesskey = e
+
+calendar-context-attendance-all-tentative =
+    .label = Accepted tentatively
+    .accesskey = v
+
+calendar-context-attendance-all-declined =
+    .label = Declined
+    .accesskey = d
+
+calendar-context-attendance-all-delegated =
+    .label = Delegated
+    .accesskey = l
+
+calendar-context-attendance-all-needs-action =
+    .label = Still needs action
+    .accesskey = l
+
+calendar-context-attendance-all-in-progress =
+    .label = In progress
+    .accesskey = p
+
+calendar-context-attendance-all-completed =
+    .label = Completed
+    .accesskey = m
+
+calendar-context-progress =
+    .label = Progress
+    .accesskey = P
+
+calendar-context-postpone =
+    .label = Postpone Task
+    .accesskey = s
+
+calendar-context-postpone-1hour =
+    .label = 1 Hour
+    .accesskey = H
+
+calendar-context-postpone-1day =
+    .label = 1 Day
+    .accesskey = D
+
+calendar-context-postpone-1week =
+    .label = 1 Week
+    .accesskey = W
+
+calendar-context-new-server =
+    .label = New Calendar…
+    .accesskey = N
+
+calendar-context-delete-server =
+    .label = Delete Calendar…
+    .accesskey = D
+
+calendar-context-remove-server =
+    .label = Remove Calendar…
+    .accesskey = R
+
+calendar-context-unsubscribe-server =
+    .label = Unsubscribe Calendar…
+    .accesskey = U
+
+calendar-context-publish =
+    .label = Publish Calendar…
+    .accesskey = b
+
+calendar-context-export =
+    .label = Export Calendar…
+    .accesskey = E
+
+calendar-context-properties =
+    .label = Properties
+    .accesskey = P
+
+calendar-context-showall =
+    .label = Show All Calendars
+    .accesskey = A
+
+calendar-context-convert-menu =
+    .label = Convert To
+    .accesskey = v
+
+calendar-context-convert-to-event =
+    .label = Event…
+    .accesskey = E
+
+calendar-context-convert-to-message =
+    .label = Message…
+    .accesskey = M
+
+calendar-context-convert-to-task =
+    .label = Task…
+    .accesskey = T
+
+calendar-task-filter-title = Show
+
+calendar-task-filter-all =
+    .label = All
+    .accesskey = A
+
+calendar-task-filter-today =
+    .label = Today
+    .accesskey = T
+
+calendar-task-filter-next7days =
+    .label = Next Seven Days
+    .accesskey = N
+
+calendar-task-filter-notstarted =
+    .label = Not Started Tasks
+    .accesskey = a
+
+calendar-task-filter-overdue =
+    .label = Overdue Tasks
+    .accesskey = O
+
+calendar-task-filter-completed =
+    .label = Completed Tasks
+    .accesskey = C
+
+calendar-task-filter-open =
+    .label = Incomplete Tasks
+    .accesskey = m
+
+# LOCALIZATION NOTE (calendar-task-filter-current):
+# "Current Tasks" shows all tasks except those starting in the future.
+calendar-task-filter-current =
+    .label = Current Tasks
+    .accesskey = u
+
+calendar-task-details-title = title
+calendar-task-details-organizer = from
+calendar-task-details-priority = priority
+calendar-task-details-priority-low = Low
+calendar-task-details-priority-normal = Normal
+calendar-task-details-priority-high = High
+calendar-task-details-status = status
+calendar-task-details-category = category
+calendar-task-details-repeat = repeat
+calendar-task-details-attachments = attachments
+calendar-task-details-start = start date
+calendar-task-details-due = due date
+
+calendar-task-mark-completed =
+    .label = Mark Completed
+    .accesskey = o
+    .tooltiptext = Mark selected tasks completed
+
+calendar-task-change-priority =
+    .label = Priority
+    .accesskey = r
+    .tooltiptext = Change the priority
+
+calendar-task-text-filter-field =
+    .emptytextbase = Filter tasks #1
+    .keylabelnonmac = <Ctrl+Shift+K>
+    .keylabelmac = <⇧⌘K>
+
+calendar-copylink =
+    .label = Copy Link Location
+    .accesskey = C
+
+calendar-progress-level-0 =
+    .label = 0% Completed
+    .accesskey = 0
+
+calendar-progress-level-25 =
+    .label = 25% Completed
+    .accesskey = 2
+
+calendar-progress-level-50 =
+    .label = 50% Completed
+    .accesskey = 5
+
+calendar-progress-level-75 =
+    .label = 75% Completed
+    .accesskey = 7
+
+calendar-progress-level-100 =
+    .label = 100% Completed
+    .accesskey = 1
+
+calendar-priority-none =
+    .label = Not specified
+    .accesskey = s
+
+calendar-priority-low =
+    .label = Low
+    .accesskey = L
+
+calendar-priority-normal =
+    .label = Normal
+    .accesskey = N
+
+calendar-priority-high =
+    .label = High
+    .accesskey = H
+
+calendar-tasks-view-minimonth =
+    .label = Mini-Month
+    .accesskey = M
+
+calendar-tasks-view-calendarlist =
+    .label = Calendar List
+    .accesskey = L
+
+calendar-tasks-view-filtertasks =
+    .label = Filter Tasks
+    .accesskey = F

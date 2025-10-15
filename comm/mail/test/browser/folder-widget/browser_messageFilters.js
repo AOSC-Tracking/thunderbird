@@ -64,7 +64,7 @@ add_setup(async function () {
 
 /**
  * Tests the keyboard navigation on the message filters window, ensures that the
- * new fitler toolbarbutton and it's dropdown work correctly.
+ * new filter toolbarbutton and it's dropdown work correctly.
  */
 add_task(async function key_navigation_test() {
   const filterc = await openFiltersDialogs();
@@ -184,7 +184,7 @@ add_task(async function test_message_filter_shows_newsgroup_server() {
 async function create_simple_filter() {
   const filterc = await openFiltersDialogs();
 
-  function fill_in_filter_fields(fec) {
+  async function fill_in_filter_fields(fec) {
     const filterName = fec.document.getElementById("filterName");
     filterName.value = "A Simple Filter";
     fec.document.getElementById("searchAttr0").value = Ci.nsMsgSearchAttrib.To;
@@ -195,6 +195,20 @@ async function create_simple_filter() {
     const filterActions = fec.document.getElementById("filterActionList");
     const firstAction = filterActions.getItemAtIndex(0);
     firstAction.setAttribute("value", "markasflagged");
+
+    // Test that pressing Enter adds another search row and does not close
+    // the dialog. Remove the second row afterwards.
+    EventUtils.synthesizeMouseAtCenter(searchVal, {}, fec);
+    EventUtils.synthesizeKey("KEY_Enter", {}, fec);
+    await new Promise(resolve => requestIdleCallback(resolve));
+    EventUtils.synthesizeMouseAtCenter(
+      fec.document
+        .getElementById("searchRow1")
+        .getElementsByClassName("small-button")[1],
+      {},
+      fec
+    );
+
     fec.document.querySelector("dialog").acceptDialog();
   }
 

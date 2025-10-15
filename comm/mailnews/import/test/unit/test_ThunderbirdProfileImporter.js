@@ -26,13 +26,9 @@ registerCleanupFunction(() => {
 });
 
 /**
- * Create a temporary dir to use as the source profile dir. Write a prefs.js
- * into it.
- *
- * @param {Array<[string, string]>} prefs - An array of tuples, each tuple is
- *   a pref represented as [prefName, prefValue].
+ * Create a temporary dir to use as the source profile dir.
  */
-async function createTmpProfileWithPrefs(prefs) {
+async function createTmpProfile() {
   tmpProfileDir?.remove(true);
 
   // Create a temporary dir.
@@ -40,6 +36,17 @@ async function createTmpProfileWithPrefs(prefs) {
   tmpProfileDir.append("profile-tmp");
   tmpProfileDir.createUnique(Ci.nsIFile.DIRECTORY_TYPE, 0o755);
   info(`Created a temporary profile at ${tmpProfileDir.path}`);
+}
+
+/**
+ * Create a temporary dir to use as the source profile dir. Write a prefs.js
+ * into it.
+ *
+ * @param {Array<[string, string]>} prefs - An array of tuples, each tuple is
+ *   a pref represented as [prefName, prefValue].
+ */
+async function createTmpProfileWithPrefs(prefs) {
+  createTmpProfile();
 
   // Write prefs to prefs.js.
   const prefsFile = tmpProfileDir.clone();
@@ -52,6 +59,145 @@ async function createTmpProfileWithPrefs(prefs) {
     .join("\n");
   return IOUtils.writeUTF8(prefsFile.path, prefsContent);
 }
+
+/**
+ * Create a zip file from tmpProfileDir.
+ *
+ * @param {string[]} entries
+ * @returns {nsIFile}
+ */
+function createZipProfile(entries) {
+  const tmpZipFile = Services.dirsvc.get("TmpD", Ci.nsIFile);
+  tmpZipFile.append("profile.zip");
+  tmpZipFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o644);
+  tmpZipFile.remove(false);
+  info(`Created a temporary zip file at ${tmpZipFile.path}`);
+
+  const zipWriter = Cc["@mozilla.org/zipwriter;1"].createInstance(
+    Ci.nsIZipWriter
+  );
+  // MODE_WRONLY (0x02) and MODE_CREATE (0x08)
+  zipWriter.open(tmpZipFile, 0x02 | 0x08);
+  for (const entry of entries) {
+    const stream = Cc["@mozilla.org/io/string-input-stream;1"].createInstance(
+      Ci.nsIStringInputStream
+    );
+    stream.setByteStringData("this content doesn't matter");
+    zipWriter.addEntryStream(
+      entry,
+      Date.now() * 1000,
+      Ci.nsIZipWriter.COMPRESSION_NONE,
+      stream,
+      false
+    );
+  }
+  zipWriter.close();
+
+  return tmpZipFile;
+}
+
+/**
+ * Test that we correctly identify a directory containing, or not containing,
+ * Thunderbird profile files.
+ */
+add_task(async function test_validateSourceDirectory() {
+  await createTmpProfileWithPrefs([]);
+
+  const importer = new ThunderbirdProfileImporter();
+  Assert.ok(
+    importer.validateSource(tmpProfileDir),
+    "profile with a prefs.js file should be valid"
+  );
+
+  await IOUtils.remove(PathUtils.join(tmpProfileDir.path, "prefs.js"));
+  Assert.ok(
+    !importer.validateSource(tmpProfileDir),
+    "profile without prefs.js file should be invalid"
+  );
+
+  for (const candidate of ["ImapMail", "News", "Mail"]) {
+    await IOUtils.writeUTF8(
+      PathUtils.join(tmpProfileDir.path, candidate, "test"),
+      "pretend mail file"
+    );
+    Assert.ok(
+      importer.validateSource(tmpProfileDir),
+      `profile with ${candidate} directory should be valid`
+    );
+    await IOUtils.remove(PathUtils.join(tmpProfileDir.path, candidate), {
+      recursive: true,
+    });
+  }
+
+  Assert.ok(
+    !importer.validateSource(tmpProfileDir),
+    "profile without prefs.js file or mail directory should be invalid"
+  );
+
+  await IOUtils.writeUTF8(
+    PathUtils.join(tmpProfileDir.path, "nothing important.txt"),
+    "there's nothing interesting here"
+  );
+  Assert.ok(
+    !importer.validateSource(tmpProfileDir),
+    "profile without prefs.js file or mail directory should be invalid"
+  );
+});
+
+/**
+ * Test that we correctly identify a zip file containing, or not containing,
+ * Thunderbird profile files at the top level. This doesn't work yet, but we
+ * want it to work.
+ */
+add_task(async function test_validateSourceZipAtRoot() {
+  const importer = new ThunderbirdProfileImporter();
+  Assert.ok(
+    !importer.validateSource(createZipProfile([])),
+    "zipped profile without prefs.js file should be invalid"
+  );
+  Assert.ok(
+    importer.validateSource(createZipProfile(["prefs.js"])),
+    "zipped profile with a prefs.js file should be valid"
+  );
+  for (const candidate of ["ImapMail", "News", "Mail"]) {
+    Assert.ok(
+      importer.validateSource(createZipProfile([`${candidate}/`])),
+      `zipped profile with ${candidate} directory should be valid`
+    );
+    Assert.ok(
+      importer.validateSource(createZipProfile([`${candidate}/test`])),
+      `zipped profile with ${candidate} directory should be valid`
+    );
+  }
+});
+
+/**
+ * Test that we correctly identify a zip file containing, or not containing,
+ * Thunderbird profile files inside a top-level directory.
+ */
+add_task(async function test_validateSourceZipAtLevel1() {
+  const importer = new ThunderbirdProfileImporter();
+  Assert.ok(
+    !importer.validateSource(createZipProfile([])),
+    "zipped profile without prefs.js file should be invalid"
+  );
+  Assert.ok(
+    importer.validateSource(createZipProfile(["foo1234.bar/prefs.js"])),
+    "zipped profile with a prefs.js file should be valid"
+  );
+  for (const candidate of ["ImapMail", "News", "Mail"]) {
+    Assert.ok(
+      importer.validateSource(createZipProfile([`foo1234.bar/${candidate}/`])),
+      `zipped profile with ${candidate} directory should be valid`
+    );
+    Assert.ok(
+      importer.validateSource(
+        createZipProfile([`foo1234.bar/${candidate}/test`])
+      ),
+      `zipped profile with ${candidate} directory should be valid`
+    );
+  }
+});
 
 /**
  * Construct a temporary profile dir with prefs, import into the current
@@ -202,6 +348,51 @@ add_task(async function test_mergeLocalFolders() {
 });
 
 /**
+ * Test importing mail files (no preferences) into the local mail account.
+ */
+add_task(async function test_importMailOnly() {
+  createTmpProfile();
+  const mailRoot = PathUtils.join(tmpProfileDir.path, "Mail", "test.invalid");
+  await IOUtils.makeDirectory(mailRoot);
+  await IOUtils.writeUTF8(PathUtils.join(mailRoot, "Inbox"), "fake mail file");
+  await IOUtils.writeUTF8(
+    PathUtils.join(mailRoot, "Inbox.msf"),
+    "fake summary file"
+  );
+  await IOUtils.makeDirectory(PathUtils.join(mailRoot, "Inbox.sbd"));
+  await IOUtils.writeUTF8(
+    PathUtils.join(mailRoot, "Inbox.sbd", "subfolder"),
+    "fake mail file"
+  );
+  await IOUtils.writeUTF8(
+    PathUtils.join(mailRoot, "Inbox.sbd", "subfolder.msf"),
+    "fake summary file"
+  );
+
+  const importer = new ThunderbirdProfileImporter();
+  await importer.startImport(tmpProfileDir, { mailMessages: true });
+
+  const localServer = MailServices.accounts.localFoldersServer;
+  const importFolder =
+    localServer.rootFolder.getChildNamed("Thunderbird Import");
+  const importRoot = importFolder.getChildNamed("test.invalid");
+  Assert.ok(importRoot, "imported root folder should exist");
+  const importPath = importRoot.filePath;
+  importPath.leafName += ".sbd";
+  importPath.append("Inbox");
+  Assert.ok(importPath.exists(), "inbox mail file should exist");
+  importPath.leafName += ".msf";
+  Assert.ok(!importPath.exists(), "inbox summary file should not exist");
+  importPath.leafName = "Inbox.sbd";
+  importPath.append("subfolder");
+  Assert.ok(importPath.exists(), "subfolder mail file should exist");
+  importPath.leafName += ".msf";
+  Assert.ok(!importPath.exists(), "subfolder summary file should not exist");
+
+  Services.prefs.resetPrefs();
+});
+
+/**
  * Test that calendars can be correctly imported.
  */
 add_task(async function test_importCalendars() {
@@ -236,6 +427,65 @@ add_task(async function test_importCalendars() {
     Services.prefs.getCharPref("calendar.list.sortOrder"),
     "uuid-x uuid-1 uuid-3",
     "calendar.list.sortOrder should be correct"
+  );
+
+  Services.prefs.resetPrefs();
+});
+
+/**
+ * Test that address books are correctly imported, and Mork address books are
+ * migrated to SQLite.
+ */
+add_task(async function test_importAddressBooks() {
+  MailServices.ab.directories;
+  await createTmpProfileWithPrefs([
+    ["ldap_2.servers.import.description", "Import SQLite"],
+    ["ldap_2.servers.import.dirType", 101],
+    ["ldap_2.servers.import.filename", "abook.sqlite"],
+    ["ldap_2.servers.import.uid", "ce290bfd-49fa-4e13-90f3-98b41653282d"],
+    ["ldap_2.servers.mab.description", "Import Mork"],
+    ["ldap_2.servers.mab.dirType", 2],
+    ["ldap_2.servers.mab.filename", "mork.mab"],
+    ["ldap_2.servers.mab.uid", "236b82fe-27a0-475b-a742-d22b1a74c7e2"],
+  ]);
+  const sqliteFile = tmpProfileDir.clone();
+  sqliteFile.append("abook.sqlite");
+  const conn = Services.storage.openDatabase(sqliteFile);
+  conn.executeSimpleSQL(await IOUtils.readUTF8(do_get_file("import.sql").path));
+  conn.close();
+  do_get_file("import.mab").copyTo(tmpProfileDir, "mork.mab");
+
+  const importer = new ThunderbirdProfileImporter();
+  await importer.startImport(tmpProfileDir, { addressBooks: true });
+
+  for (const [name, expectedValue] of [
+    ["ldap_2.servers.import.description", "Import SQLite"],
+    ["ldap_2.servers.import.dirType", 101],
+    ["ldap_2.servers.import.filename", "abook-1.sqlite"], // New name.
+    ["ldap_2.servers.mab.description", "Import Mork"],
+    ["ldap_2.servers.mab.dirType", 101], // Migrated to SQLite.
+    ["ldap_2.servers.mab.filename", "mork.sqlite"], // New name.
+  ]) {
+    let actualValue;
+    if (typeof expectedValue == "number") {
+      actualValue = Services.prefs.getIntPref(name, 9999);
+    } else {
+      actualValue = Services.prefs.getStringPref(name, "");
+    }
+    Assert.equal(actualValue, expectedValue, `${name} should be correct`);
+  }
+
+  const importedSqlite = do_get_profile().clone();
+  importedSqlite.append("abook-1.sqlite");
+  Assert.ok(
+    importedSqlite.exists(),
+    "imported sqlite book should have been copied"
+  );
+  const importedMab = do_get_profile().clone();
+  importedMab.append("mork.sqlite");
+  Assert.ok(
+    importedMab.exists(),
+    "imported mork book should have been migrated"
   );
 
   Services.prefs.resetPrefs();

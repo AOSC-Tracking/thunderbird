@@ -5,6 +5,7 @@
 @import url("chrome://messenger/skin/shared/threadPane.css");
 @import url("chrome://messenger/skin/shared/list-container.css");
 @import url("chrome://messenger/skin/shared/serverMenuItems.css");
+@import url("chrome://messenger/skin/widgets.css");
 
 :root {
   --folder-mode-name-padding: 6px;
@@ -267,17 +268,36 @@ body {
     stroke: var(--icon-color, var(--folder-color-folder));
   }
 
+  & .status-icon {
+    margin: 0;
+  }
+
   & li {
+    &.tls-error > .container {
+      & > .icon {
+        --icon-color: var(--color-text-critical) !important;
+      }
+
+      & > .name {
+        color: var(--color-text-critical);
+      }
+
+      & > .status-icon {
+        display: unset;
+        background-image: var(--icon-warning);
+        color: var(--folder-color-warning);
+      }
+    }
 
     &[data-server-type] > .container > .icon {
       --icon-color: var(--primary);
     }
 
-    &:is([data-server-type="imap"], [data-server-type="pop3"]) > .container > .icon {
+    &:is([data-server-type="imap"], [data-server-type="pop3"], [data-server-type="ews"]) > .container > .icon {
       background-image: var(--icon-mail);
     }
 
-    &:is([data-server-type="imap"], [data-server-type="pop3"])[data-server-secure="true"]
+    &:is([data-server-type="imap"], [data-server-type="pop3"], [data-server-type="ews"])[data-server-secure="true"]
       > .container > .icon {
       background-image: var(--icon-mail-secure);
     }
@@ -298,7 +318,7 @@ body {
       background-image: var(--icon-rss);
     }
 
-    &[data-server-type="rss"] > ul > li:not([data-folder-type], [data-is-busy="true"]) .icon {
+    &[data-server-type="rss"] > ul > li:not([data-folder-type], [data-is-busy="true"], [data-has-error="true"]) .icon {
       --icon-color: currentColor;
       fill: var(--icon-color);
     }
@@ -363,7 +383,7 @@ body {
     &[data-is-busy="true"] > .container > .icon {
       content: var(--icon-clock) !important;
       background-image: none;
-      --icon-color: var(--button-primary-background-color) !important;
+      --icon-color: var(--primary) !important;
 
       @media (prefers-reduced-motion: no-preference) {
         content: var(--icon-loading) !important;
@@ -376,8 +396,7 @@ body {
     &[data-has-error="true"] > .container > .icon {
       content: var(--icon-warning) !important;
       background-image: none;
-      --icon-color: var(--color-amber-30) !important;
-      stroke: var(--color-amber-60);
+      --icon-color: var(--folder-color-warning) !important;
     }
 
     &[data-tag-key] > .container > .icon {
@@ -386,6 +405,11 @@ body {
 
     &[data-server-type] > .container > .name {
       font-weight: bold;
+    }
+
+    &.selected.drag-target > .container {
+      color: color-mix(in srgb, currentColor 50%, transparent);
+      border-style: dashed;
     }
 
     @media (prefers-contrast) {
@@ -526,30 +550,6 @@ body {
   }
 }
 
-:is(.reorder-target-before, .reorder-target-after) > .container > .icon {
-  position: relative;
-
-  &::before,
-  &::after {
-    position: absolute;
-    content: '';
-    display: block;
-    background-color: var(--selected-item-color);
-    pointer-events: none;
-  }
-
-  &::before {
-    width: 6px;
-    height: 6px;
-    border-radius: 9px;
-  }
-
-  &::after {
-    width: 100vw;
-    height: 2px;
-  }
-}
-
 .reorder-target-after > .container > .icon {
   &::before {
     inset-inline-start: -6px;
@@ -656,4 +656,8 @@ body {
 
 #placeholderMultipleFolders::before {
   background-image: var(--icon-folder);
+}
+
+conversation-view:not([hidden]) {
+  flex: 1;
 }

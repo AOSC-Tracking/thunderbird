@@ -443,8 +443,8 @@
 
 .icon-danger {
   -moz-context-properties: fill, stroke;
-  fill: color-mix(in srgb, var(--color-danger-pressed) 20%, transparent);
-  stroke: var(--color-danger-pressed);
+  fill: color-mix(in srgb, var(--color-critical-pressed) 20%, transparent);
+  stroke: var(--color-critical-pressed);
   content: var(--icon-warning);
 }
 
@@ -484,8 +484,8 @@
   appearance: none;
   box-sizing: border-box;
   padding: 0;
-  background-color: var(--color-neutral-lower);
-  border: 1px solid var(--color-neutral-border);
+  background-color: var(--color-surface-lower);
+  border: 1px solid var(--color-surface-border);
   height: 22px;
   width: 44px;
   border-radius: 14px;
@@ -495,8 +495,8 @@
     display: block;
     content: "";
     box-sizing: border-box;
-    background-color: var(--color-neutral-base);
-    border: 1px solid var(--color-neutral-border-intense);
+    background-color: var(--color-surface-base);
+    border: 1px solid var(--color-surface-border);
     height: 18px;
     width: 18px;
     margin-block-start: 1px;
@@ -523,7 +523,7 @@
   }
 
   &:is(:hover, :active) {
-    background-color: var(--color-neutral-border);
+    background-color: var(--color-surface-border);
     border-color: var(--color-neutral-200);
   }
 
@@ -592,4 +592,35 @@
 .menupopup {
   --panel-border-color: var(--in-content-box-border-color);
   appearance: none;
+}
+
+/* Drag and Drop indicator */
+
+[is="drop-indicator"] {
+  -moz-context-properties: fill, stroke;
+  fill: var(--selected-item-color);
+  stroke: var(--selected-item-text-color);
+  pointer-events: none;
+  content: url("chrome://messenger/skin/icons/drop-indicator.svg");
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  /* The z-index needs to be big enough to trump other positioned UI pieces
+     that we want to overlay. The selected tab uses 2. */
+  z-index: var(--drop-indicator-z-index);
+  margin: 0;
+  padding: 0;
+  /* The custom element depends on fixed width and height values. */
+  width: 12px;
+  height: 29px;
+
+  &[horizontal] {
+    content: url("chrome://messenger/skin/icons/drop-indicator-horizontal.svg");
+    width: 29px;
+    height: 12px;
+
+    &:dir(rtl) {
+      transform: scaleX(-1);
+    }
+  }
 }

@@ -82,22 +82,25 @@ export class NntpNewsGroup {
         this._server.notifyOn
       ) {
         // Show a dialog to let user decide how many articles to download.
-        const args = Cc[
-          "@mozilla.org/messenger/newsdownloaddialogargs;1"
-        ].createInstance(Ci.nsINewsDownloadDialogArgs);
-        args.articleCount = end - start + 1;
-        args.groupName = this._folder.name;
-        args.serverKey = this._server.key;
+
+        const propBag = Cc["@mozilla.org/hash-property-bag;1"].createInstance(
+          Ci.nsIWritablePropertyBag2
+        );
+        propBag.setPropertyAsInt32("articleCount", end - start + 1);
+        propBag.setPropertyAsAString("groupName", this._folder.name);
+        propBag.setPropertyAsACString("serverKey", this._server.key);
         this._msgWindow.domWindow.openDialog(
           "chrome://messenger/content/downloadheaders.xhtml",
           "_blank",
           "centerscreen,chrome,modal,titlebar",
-          args
+          propBag
         );
-        if (!args.hitOK) {
+        if (!propBag.getPropertyAsBool("hitOK")) {
           return [];
         }
-        start = args.downloadAll ? start : end - this._server.maxArticles + 1;
+        start = propBag.getPropertyAsBool("downloadAll")
+          ? start
+          : end - this._server.maxArticles + 1;
         if (this._server.markOldRead) {
           this._readKeySet.addRange(firstPossible, start - 1);
           this._commitReadKeySet = true;
@@ -292,6 +295,7 @@ export class NntpNewsGroup {
           this,
           this._msgWindow
         );
+        this._folderFilterList.flushLogIfNecessary();
       }
       if (serverFilterCount) {
         this._serverFilterList.applyFiltersToHdr(
@@ -303,6 +307,7 @@ export class NntpNewsGroup {
           this,
           this._msgWindow
         );
+        this._serverFilterList.flushLogIfNecessary();
       }
       if (this._addHdrToDB && !this._db.containsKey(msgHdr.messageKey)) {
         if (this._readKeySet.has(msgHdr.messageKey)) {
@@ -328,9 +333,6 @@ export class NntpNewsGroup {
     let applyMore = true;
 
     for (const action of filter.sortedActionList) {
-      if (loggingEnabled) {
-        filter.logRuleHit(action, this._filteringHdr);
-      }
       switch (action.type) {
         case Ci.nsMsgFilterAction.Delete:
           this._addHdrToDB = false;
@@ -378,10 +380,18 @@ export class NntpNewsGroup {
           );
           break;
         default:
-          throw Components.Exception(
-            `Unexpected filter action type=${action.type}`,
-            Cr.NS_ERROR_UNEXPECTED
-          );
+          if (loggingEnabled) {
+            filter.logRuleHitFail(
+              action,
+              this._filteringHdr,
+              Cr.NS_ERROR_UNEXPECTED,
+              `Unexpected filter action type=${action.type}`
+            );
+          }
+          applyMore = false;
+      }
+      if (loggingEnabled && applyMore) {
+        filter.logRuleHit(action, this._filteringHdr);
       }
     }
     return applyMore;
@@ -393,6 +403,7 @@ export class NntpNewsGroup {
   cleanUp() {
     if (this._commitReadKeySet) {
       this._folder.setReadSetFromStr(this._readKeySet);
+      this._commitReadKeySet = false;
     }
     this._folder.notifyFinishedDownloadinghdrs();
     this._db.commit(Ci.nsMsgDBCommitType.kSessionCommit);

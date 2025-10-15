@@ -6,7 +6,7 @@ import { setTimeout } from "resource://gre/modules/Timer.sys.mjs";
 
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { CommonUtils } from "resource://services-common/utils.sys.mjs";
-import { CryptoUtils } from "resource://services-crypto/utils.sys.mjs";
+import { CryptoUtils } from "moz-src:///services/crypto/modules/utils.sys.mjs";
 import { LineReader } from "resource:///modules/LineReader.sys.mjs";
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { MailStringUtils } from "resource:///modules/MailStringUtils.sys.mjs";
@@ -30,7 +30,7 @@ ChromeUtils.defineLazyGetter(lazy, "messengerStrings", () =>
  *
  * @typedef {object} Pop3Response
  * @property {boolean} success - True for a positive status indicator, "+OK", or
- *   for an authorization challenge respone "+".
+ *   for an authorization challenge response "+".
  * @property {string} status - This is the status indicator. Will be either
  *   "+OK", "-ERR" or, for server authorization challenges, "+".
  * @property {string} statusText - The optional text following the status
@@ -278,6 +278,10 @@ export class Pop3Client {
    */
   _onOpen = () => {
     this._logger.debug("Connected");
+    Services.obs.notifyObservers(
+      this.runningUri,
+      "server-connection-succeeded"
+    );
     this._socket.ondata = this._onData;
     this._socket.onclose = this._onClose;
     this._nextAction = res => {
@@ -344,7 +348,7 @@ export class Pop3Client {
         // NOOP response received. Just reset the flag and return so response
         // is ignored. NOOP is sent only when no other POP3 command is
         // currently sent and waiting on its response. So no parsing for a
-        // specfic response is needed here.
+        // specific response is needed here.
         this._noopRespPending = false;
         return;
       }

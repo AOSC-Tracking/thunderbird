@@ -77,7 +77,7 @@ DatabaseCore::DatabaseCore() {
 NS_IMETHODIMP
 DatabaseCore::Startup() {
   if (sConnection) {
-    MOZ_LOG(gPanoramaLog, LogLevel::Error, ("DatabaseCore is alread started"));
+    MOZ_LOG(gPanoramaLog, LogLevel::Error, ("DatabaseCore is already started"));
     return NS_ERROR_FAILURE;
   }
 
@@ -554,6 +554,7 @@ class FolderMigrator final : public nsIRunnable, mozIStorageStatementCallback {
     }
 
     mMimeConverter = mozilla::components::MimeConverter::Service();
+    NS_ENSURE_TRUE(mMimeConverter, NS_ERROR_FAILURE);
 
     // Duplicate statement! Also in MessageDatabase::AddMessage.
     DatabaseCore::GetStatement("AddMessage"_ns,

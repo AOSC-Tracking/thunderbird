@@ -18,7 +18,10 @@ namespace mozilla::mailnews {
 
 class LiveView : public nsILiveView, public MessageListener {
  public:
-  LiveView() : mSortColumn(LiveView::SortColumn::DATE), mSortDescending(true) {}
+  LiveView()
+      : mThreadsOnly(false),
+        mSortColumn(nsILiveView::SortColumn::DATE),
+        mSortDescending(true) {}
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSILIVEVIEW
@@ -35,12 +38,14 @@ class LiveView : public nsILiveView, public MessageListener {
     if (mCountStmt) mCountStmt->Finalize();
     if (mCountUnreadStmt) mCountUnreadStmt->Finalize();
     if (mSelectStmt) mSelectStmt->Finalize();
+    ResetStatements();
   }
 
   MessageDatabase& MessageDB() const {
     return *DatabaseCore::sInstance->mMessageDatabase;
   }
 
+  void ResetStatements();
   nsCString GetSQLClause();
   void PrepareStatement(mozIStorageStatement* aStatement);
   bool Matches(Message& aMessage);
@@ -49,6 +54,7 @@ class LiveView : public nsILiveView, public MessageListener {
   nsTArray<RefPtr<nsIVariant>> mParams;
   LiveViewFilter* mFolderFilter = nullptr;
 
+  bool mThreadsOnly;
   nsILiveView::SortColumn mSortColumn;
   bool mSortDescending;
 
@@ -60,7 +66,8 @@ class LiveView : public nsILiveView, public MessageListener {
                             const char* messageId, PRTime date,
                             const char* sender, const char* recipients,
                             const char* subject, uint64_t flags,
-                            const char* tags, JSContext* aCx);
+                            const char* tags, uint64_t threadId,
+                            uint64_t threadParent, JSContext* aCx);
   JSObject* CreateJSMessage(Message* aMessage, JSContext* aCx);
 
   // The one and only listener for this live view, if set.

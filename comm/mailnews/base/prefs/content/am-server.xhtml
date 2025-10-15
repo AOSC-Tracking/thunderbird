@@ -15,11 +15,14 @@
     <title>&serverSettings.label;</title>
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline' moz-src:; style-src chrome: 'unsafe-inline'; connect-src https:"
     />
     <link rel="stylesheet" href="chrome://messenger/skin/accountManage.css" />
     <link rel="stylesheet" href="chrome://messenger/skin/icons.css" />
     <link rel="stylesheet" href="chrome://messenger/skin/folderMenus.css" />
+
+    <link rel="localization" href="messenger/certError.ftl" />
+
     <script
       defer="defer"
       src="chrome://messenger/content/globalOverlay.js"
@@ -27,6 +30,10 @@
     <script
       defer="defer"
       src="chrome://global/content/editMenuOverlay.js"
+    ></script>
+    <script
+      type="module"
+      src="chrome://messenger/content/certificate-check.mjs"
     ></script>
     <script
       defer="defer"
@@ -153,36 +160,34 @@
           <html:legend>&securitySettings.label;</html:legend>
           <html:table>
             <html:tr>
-              <html:td>
+              <html:td style="vertical-align: baseline">
                 <label
                   value="&connectionSecurity.label;"
                   accesskey="&connectionSecurity.accesskey;"
-                  control="server."
+                  control="server.socketType"
                 />
               </html:td>
-              <html:td>
-                <menulist
+              <html:td style="vertical-align: baseline">
+                <html:select
                   wsm_persist="true"
                   id="server.socketType"
-                  oncommand="secureSelect();"
-                  style="width: 100%"
+                  onchange="secureSelect();"
                 >
-                  <menupopup id="server.socketTypePopup">
-                    <menuitem
-                      value="0"
-                      label="&connectionSecurityType-0.label;"
-                    />
-                    <menuitem
-                      value="2"
-                      label="&connectionSecurityType-2.label;"
-                      hidefor="nntp"
-                    />
-                    <menuitem
-                      value="3"
-                      label="&connectionSecurityType-3.label;"
-                    />
-                  </menupopup>
-                </menulist>
+                  <html:option
+                    value="0"
+                    label="&connectionSecurityType-0.label;"
+                  />
+                  <html:option
+                    value="2"
+                    label="&connectionSecurityType-2.label;"
+                    hidefor="nntp"
+                  />
+                  <html:option
+                    value="3"
+                    label="&connectionSecurityType-3.label;"
+                  />
+                </html:select>
+                <html:certificate-check id="certCheck"></html:certificate-check>
               </html:td>
             </html:tr>
             <html:tr>
@@ -195,27 +200,24 @@
                 />
               </html:td>
               <html:td>
-                <menulist
+                <html:select
                   id="server.authMethod"
                   wsm_persist="true"
                   preftype="int"
                   prefstring="mail.server.%serverkey%.authMethod"
                   hidefor="nntp"
-                  style="width: 100%"
                 >
-                  <menupopup id="server.authMethodPopup">
-                    <menuitem id="authMethod-no" value="1" />
-                    <menuitem id="authMethod-old" value="2" />
-                    <menuitem id="authMethod-password-cleartext" value="3" />
-                    <menuitem id="authMethod-password-encrypted" value="4" />
-                    <menuitem id="authMethod-kerberos" value="5" />
-                    <menuitem id="authMethod-ntlm" value="6" />
-                    <menuitem id="authMethod-external" value="7" />
-                    <menuitem id="authMethod-oauth2" value="10" />
-                    <menuitem id="authMethod-anysecure" value="8" />
-                    <menuitem id="authMethod-any" value="9" />
-                  </menupopup>
-                </menulist>
+                  <html:option id="authMethod-no" value="1" />
+                  <html:option id="authMethod-old" value="2" />
+                  <html:option id="authMethod-password-cleartext" value="3" />
+                  <html:option id="authMethod-password-encrypted" value="4" />
+                  <html:option id="authMethod-kerberos" value="5" />
+                  <html:option id="authMethod-ntlm" value="6" />
+                  <html:option id="authMethod-external" value="7" />
+                  <html:option id="authMethod-oauth2" value="10" />
+                  <html:option id="authMethod-anysecure" value="8" />
+                  <html:option id="authMethod-any" value="9" />
+                </html:select>
               </html:td>
             </html:tr>
           </html:table>
@@ -261,7 +263,7 @@
               value="&biffEnd.label;"
             />
           </hbox>
-          <vbox align="start" hidefor="pop3,nntp">
+          <vbox id="server.useIdle.box" align="start" hidefor="pop3,nntp,ews">
             <checkbox
               wsm_persist="true"
               id="imap.useIdle"
@@ -274,7 +276,11 @@
 
           <!-- Necessary for POP3 (Bug 480945) -->
           <!-- https://bugzilla.mozilla.org/show_bug.cgi?id=480945 -->
-          <vbox align="start" hidefor="imap,nntp">
+          <vbox
+            id="pop3.downloadOnBiff.box"
+            align="start"
+            hidefor="imap,nntp,ews"
+          >
             <checkbox
               wsm_persist="true"
               id="server.downloadOnBiff"
@@ -285,7 +291,7 @@
             />
           </vbox>
           <!-- POP3 -->
-          <vbox align="start" hidefor="imap,nntp">
+          <vbox id="pop3.settings.box" align="start" hidefor="imap,nntp,ews">
             <checkbox
               wsm_persist="true"
               id="pop3.headersOnly"
@@ -449,13 +455,13 @@
                 wsm_persist="true"
                 id="server.imapAdvancedButton"
                 prefstring="mail.server.%serverkey%.advanced.disable"
-                hidefor="pop3,nntp"
+                hidefor="pop3,nntp,ews"
               />
             </hbox>
           </vbox>
 
           <!-- Advanced IMAP settings -->
-          <hbox flex="1" hidefor="pop3,nntp" hidden="true">
+          <hbox flex="1" hidefor="pop3,nntp,ews" hidden="true">
             <checkbox
               hidden="true"
               wsm_persist="true"
@@ -565,10 +571,40 @@
                 </hbox>
               </radiogroup>
             </hbox>
+            <hbox pack="end">
+              <!-- This button should have identical attributes to the
+             server.popAdvancedButton except the hidefor attribute. -->
+              <button
+                id="server.ewsAdvancedButton"
+                label="&advancedButton.label;"
+                accesskey="&advancedButton.accesskey;"
+                oncommand="onAdvanced();"
+                wsm_persist="true"
+                prefstring="mail.server.%serverkey%.advanced.disable"
+                hidefor="pop3,nntp,imap"
+              />
+            </hbox>
           </vbox>
 
+          <!-- Advanced EWS settings -->
+          <hbox flex="1" hidefor="pop3,nntp,imap" hidden="true">
+            <label id="ews.ewsUrl" wsm_persist="true" hidden="true" />
+            <checkbox
+              id="ews.ewsOverrideOAuthDetails"
+              wsm_persist="true"
+              prefattribute="value"
+              prefstring="mail.server.%serverkey%.ews_override_oauth_details"
+              hidden="true"
+            />
+            <label id="ews.ewsApplicationId" wsm_persist="true" hidden="true" />
+            <label id="ews.ewsTenantId" wsm_persist="true" hidden="true" />
+            <label id="ews.ewsRedirectUri" wsm_persist="true" hidden="true" />
+            <label id="ews.ewsEndpointHost" wsm_persist="true" hidden="true" />
+            <label id="ews.ewsOAuthScopes" wsm_persist="true" hidden="true" />
+          </hbox>
+
           <!-- NNTP -->
-          <hbox hidefor="pop3,imap" align="center">
+          <hbox id="nntp.articles.box" hidefor="pop3,imap,ews" align="center">
             <checkbox
               id="nntp.notifyOn"
               wsm_persist="true"
@@ -595,7 +631,7 @@
             />
           </hbox>
           <checkbox
-            hidefor="pop3,imap"
+            hidefor="pop3,imap,ews"
             wsm_persist="true"
             id="nntp.pushAuth"
             label="&alwaysAuthenticate.label;"
@@ -666,7 +702,7 @@
             </menulist>
           </hbox>
 
-          <hbox align="center" hidefor="imap,pop3">
+          <hbox id="nntp.settings.box" align="center" hidefor="imap,pop3,ews">
             <label
               id="nntp.newsrcFilePath.label"
               value="&newsrcFilePath1.label;"
@@ -724,14 +760,19 @@
         </html:fieldset>
       </html:div>
 
-      <hbox hidefor="imap,pop3" align="center" iscontrolcontainer="true">
+      <hbox
+        id="nntp.charset.box"
+        hidefor="imap,pop3,ews"
+        align="center"
+        iscontrolcontainer="true"
+      >
         <separator class="thin" />
         <label value="&serverDefaultCharset2.label;" control="nntp.charset" />
         <menulist
           is="menulist-charsetpicker-viewing"
           id="nntp.charset"
           hidable="true"
-          hidefor="imap,pop3"
+          hidefor="imap,pop3,ews"
           wsm_persist="true"
           preftype="string"
           prefstring="mail.server.%serverkey%.charset"

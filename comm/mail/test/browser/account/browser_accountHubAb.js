@@ -123,7 +123,7 @@ add_task(async function test_address_book_option_select_no_accounts() {
 });
 
 add_task(async function test_address_book_option_selection() {
-  // Add an account so the sync option is not diabled.
+  // Add an account so the sync option is not disabled.
   IMAPServer.open();
   const abAccount = await loginToAddressBookAccount();
 
@@ -191,7 +191,7 @@ add_task(async function test_address_book_option_selection() {
 });
 
 add_task(async function test_address_book_sync_account() {
-  // Add an account so the sync option is not diabled.
+  // Add an account so the sync option is not disabled.
   IMAPServer.open();
   const abAccount = await loginToAddressBookAccount();
 
@@ -337,7 +337,7 @@ add_task(async function test_address_book_sync_account() {
   info("Waiting for account hub to close...");
   await dialogClosePromise;
 
-  // Check existance of address book and calendar.
+  // Check existence of address book and calendar.
   const [addressBookDirectory] = await addressBookDirectoryPromise;
   Assert.equal(addressBookDirectory.dirName, "You found me!");
   Assert.equal(
@@ -353,11 +353,11 @@ add_task(async function test_address_book_sync_account() {
   const booksList = addressBookDocument.getElementById("books");
 
   const index = booksList.getIndexForUID(addressBookDirectory.UID);
-  Assert.equal(
-    booksList.selectedIndex,
-    index,
-    "The new address book should be selected"
+  await BrowserTestUtils.waitForCondition(
+    () => booksList.selectedIndex == index,
+    `Waiting for the new address book at index ${index} to be selected`
   );
+
   Assert.equal(
     addressBookDocument.activeElement.id,
     "searchInput",
@@ -504,11 +504,11 @@ add_task(async function test_localAddressBookCreation() {
   );
 
   const index = booksList.getIndexForUID(addressBookDirectory.UID);
-  Assert.equal(
-    booksList.selectedIndex,
-    index,
-    "Correct address book should be selected"
+  await BrowserTestUtils.waitForCondition(
+    () => booksList.selectedIndex == index,
+    `Waiting for the correct address book at index ${index} to be selected`
   );
+
   Assert.equal(
     tabmail.currentTabInfo.browser.contentDocument.activeElement.id,
     "searchInput",
@@ -525,7 +525,7 @@ add_task(async function test_localAddressBookCreation() {
  * template, and again when the back button is pressed.
  *
  * @param {HTMLElement} optionSelectTemplate - Option select subview.
- * @param {string} buttonSelector - Selector forthe button to click to show the
+ * @param {string} buttonSelector - Selector for the button to click to show the
  *  subview.
  * @param {HTMLElement} newSubview - Selected subview.
  * @param {HTMLElement} backButton - Dialog footer button.

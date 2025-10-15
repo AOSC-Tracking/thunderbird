@@ -3,6 +3,8 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 SOURCES += [
+    "EwsCopyMoveTransaction.cpp",
+    "EwsFetchMsgToOffline.cpp",
     "EwsFolder.cpp",
     "EwsFolderCopyHandler.cpp",
     "EwsIncomingServer.cpp",
@@ -26,6 +28,7 @@ XPIDL_MODULE = "msgews"
 
 XPIDL_SOURCES += [
     "IEwsClient.idl",
+    "IEwsFolder.idl",
     "IEwsIncomingServer.idl",
 ]
 

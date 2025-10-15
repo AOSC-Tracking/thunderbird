@@ -40,6 +40,8 @@ add_task(function testMessageProperties() {
   Assert.equal(message.subject, "Balanced static project");
   Assert.equal(message.flags, 0);
   Assert.equal(message.tags, "$label1");
+  Assert.equal(message.threadId, 0);
+  Assert.equal(message.threadParent, 0);
 });
 
 add_task(function testInitWithFolder() {
@@ -470,6 +472,11 @@ function assertInitFails(liveView) {
   );
   Assert.throws(
     () => liveView.initWithTag("$labelX"),
+    /NS_ERROR_UNEXPECTED/,
+    "setting the folder a second time should throw"
+  );
+  Assert.throws(
+    () => liveView.initWithConversation(1),
     /NS_ERROR_UNEXPECTED/,
     "setting the folder a second time should throw"
   );

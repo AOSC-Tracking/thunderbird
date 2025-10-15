@@ -11,6 +11,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   OAuth2Module: "resource:///modules/OAuth2Module.sys.mjs",
   RemoteAddressBookUtils:
     "resource:///modules/accountcreation/RemoteAddressBookUtils.sys.mjs",
+  LDAPDirectoryUtils:
+    "resource:///modules/accountcreation/LDAPDirectoryUtils.sys.mjs",
 });
 
 /**
@@ -285,7 +287,7 @@ class AccountHubAddressBook extends HTMLElement {
   /**
    * Initialize the UI of one of the address book subviews.
    *
-   * @param {string} subview - Subview for which the UI is being inititialized.
+   * @param {string} subview - Subview for which the UI is being initialized.
    */
   async #initUI(subview) {
     this.#hideSubviews();
@@ -427,6 +429,33 @@ class AccountHubAddressBook extends HTMLElement {
         await this.#openAddressBook(directory?.UID);
         break;
       }
+      case "ldapAccountSubview": {
+        let directory;
+        try {
+          directory = await lazy.LDAPDirectoryUtils.createDirectory(stateData);
+        } catch (error) {
+          if (error instanceof lazy.LDAPDirectoryUtils.DuplicateNameError) {
+            this.#currentSubview.showNotification({
+              fluentTitleId: "address-book-ldap-duplicate-error",
+              type: "error",
+            });
+
+            break;
+          }
+
+          this.#currentSubview.showNotification({
+            fluentTitleId: "address-book-ldap-creation-error",
+            error,
+            type: "error",
+          });
+
+          break;
+        }
+
+        await this.#openAddressBook(directory.UID);
+
+        break;
+      }
       default:
         break;
     }
@@ -514,6 +543,7 @@ class AccountHubAddressBook extends HTMLElement {
    * @returns {boolean} - If the account hub can remove this view.
    */
   async reset() {
+    this.#currentSubview.clearNotifications?.();
     this.#hideSubviews();
     this.#remoteAddressBookState = {};
     await this.#initUI("optionSelectSubview");

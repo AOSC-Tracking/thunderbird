@@ -3035,27 +3035,38 @@ NS_IMETHODIMP nsMsgDBFolder::GetPrettyPath(nsACString& aPath) {
       aPath.AppendLiteral("/");
     }
   }
-  nsCString name;
-  rv = GetName(name);
+  nsCString localizedName;
+  rv = GetLocalizedName(localizedName);
   NS_ENSURE_SUCCESS(rv, rv);
-  aPath.Append(name);
+  aPath.Append(localizedName);
   return NS_OK;
 }
 
 nsString nsMsgDBFolder::GetLocalizedNameInternal() {
+  // INBOX is special...
   if (mFlags & nsMsgFolderFlags::Inbox &&
       mName.LowerCaseEqualsLiteral("inbox")) {
     return kLocalizedInboxName;
   }
+
+  nsAutoCString serverType;
+  GetIncomingServerType(serverType);
+  if (!serverType.Equals("none")) {
+    // Only Local Folders acccounts should have special treatment of name.
+    // For other accounts, the name may or may not be localized to the
+    // user server side settings. But we must match what's shown to the
+    // user on the server to avoid confusion about what folder it is and
+    // potential duplication (e.g. name + localized name both showing "Sent").
+    // See nsMsgDBFolder::AddSubfolder
+    return u""_ns;
+  }
+
   if (mFlags & nsMsgFolderFlags::SentMail &&
-      (mName.LowerCaseEqualsLiteral("sent") ||
-       mName.LowerCaseEqualsLiteral("sent mail") ||
-       mName.LowerCaseEqualsLiteral("outbox"))) {
+      mName.LowerCaseEqualsLiteral("sent")) {
     return kLocalizedSentName;
   }
   if (mFlags & nsMsgFolderFlags::Drafts &&
-      (mName.LowerCaseEqualsLiteral("drafts") ||
-       mName.LowerCaseEqualsLiteral("draft"))) {
+      mName.LowerCaseEqualsLiteral("drafts")) {
     return kLocalizedDraftsName;
   }
   if (mFlags & nsMsgFolderFlags::Templates &&
@@ -3063,24 +3074,19 @@ nsString nsMsgDBFolder::GetLocalizedNameInternal() {
     return kLocalizedTemplatesName;
   }
   if (mFlags & nsMsgFolderFlags::Trash &&
-      (mName.LowerCaseEqualsLiteral("trash") ||
-       mName.LowerCaseEqualsLiteral("bin") ||
-       mName.LowerCaseEqualsLiteral("deleted"))) {
+      mName.LowerCaseEqualsLiteral("trash")) {
     return kLocalizedTrashName;
   }
   if (mFlags & nsMsgFolderFlags::Queue &&
       mName.LowerCaseEqualsLiteral("unsent messages")) {
     return kLocalizedUnsentName;
   }
-  if (mFlags & nsMsgFolderFlags::Junk &&
-      (mName.LowerCaseEqualsLiteral("junk") ||
-       mName.LowerCaseEqualsLiteral("spam") ||
-       mName.LowerCaseEqualsLiteral("bulk"))) {
+  if (mFlags & nsMsgFolderFlags::Junk && mName.LowerCaseEqualsLiteral("junk")) {
     return kLocalizedJunkName;
   }
   if (mFlags & nsMsgFolderFlags::Archive &&
-      (mName.LowerCaseEqualsLiteral("archive") ||
-       mName.LowerCaseEqualsLiteral("archives"))) {
+
+      mName.LowerCaseEqualsLiteral("archives")) {
     return kLocalizedArchivesName;
   }
   return u""_ns;
@@ -4708,6 +4714,7 @@ nsMsgDBFolder::NotifyPropertyChanged(const nsACString& aProperty,
   // Notify listeners who listen to every folder
   nsCOMPtr<nsIFolderListener> folderListenerManager =
       mozilla::components::MailSession::Service();
+  NS_ENSURE_TRUE(folderListenerManager, NS_ERROR_FAILURE);
   return folderListenerManager->OnFolderPropertyChanged(this, aProperty,
                                                         aOldValue, aNewValue);
 }
@@ -4726,6 +4733,7 @@ nsMsgDBFolder::NotifyIntPropertyChanged(const nsACString& aProperty,
   // Notify listeners who listen to every folder
   nsCOMPtr<nsIFolderListener> folderListenerManager =
       mozilla::components::MailSession::Service();
+  NS_ENSURE_TRUE(folderListenerManager, NS_ERROR_FAILURE);
   return folderListenerManager->OnFolderIntPropertyChanged(
       this, aProperty, aOldValue, aNewValue);
 }
@@ -4739,6 +4747,7 @@ nsMsgDBFolder::NotifyBoolPropertyChanged(const nsACString& aProperty,
   // Notify listeners who listen to every folder
   nsCOMPtr<nsIFolderListener> folderListenerManager =
       mozilla::components::MailSession::Service();
+  NS_ENSURE_TRUE(folderListenerManager, NS_ERROR_FAILURE);
   return folderListenerManager->OnFolderBoolPropertyChanged(
       this, aProperty, aOldValue, aNewValue);
 }
@@ -4754,6 +4763,7 @@ nsMsgDBFolder::NotifyPropertyFlagChanged(nsIMsgDBHdr* aItem,
   // Notify listeners who listen to every folder
   nsCOMPtr<nsIFolderListener> folderListenerManager =
       mozilla::components::MailSession::Service();
+  NS_ENSURE_TRUE(folderListenerManager, NS_ERROR_FAILURE);
   return folderListenerManager->OnFolderPropertyFlagChanged(
       aItem, aProperty, aOldValue, aNewValue);
 }
@@ -4764,6 +4774,7 @@ NS_IMETHODIMP nsMsgDBFolder::NotifyMessageAdded(nsIMsgDBHdr* msg) {
   // Notify listeners who listen to every folder
   nsCOMPtr<nsIFolderListener> folderListenerManager =
       mozilla::components::MailSession::Service();
+  NS_ENSURE_TRUE(folderListenerManager, NS_ERROR_FAILURE);
   return folderListenerManager->OnMessageAdded(this, msg);
 }
 
@@ -4773,6 +4784,7 @@ nsresult nsMsgDBFolder::NotifyMessageRemoved(nsIMsgDBHdr* msg) {
   // Notify listeners who listen to every folder
   nsCOMPtr<nsIFolderListener> folderListenerManager =
       mozilla::components::MailSession::Service();
+  NS_ENSURE_TRUE(folderListenerManager, NS_ERROR_FAILURE);
   return folderListenerManager->OnMessageRemoved(this, msg);
 }
 
@@ -4783,6 +4795,7 @@ NS_IMETHODIMP nsMsgDBFolder::NotifyFolderAdded(nsIMsgFolder* child) {
   // Notify listeners who listen to every folder
   nsCOMPtr<nsIFolderListener> folderListenerManager =
       mozilla::components::MailSession::Service();
+  NS_ENSURE_TRUE(folderListenerManager, NS_ERROR_FAILURE);
   return folderListenerManager->OnFolderAdded(this, child);
 }
 
@@ -4792,6 +4805,7 @@ nsresult nsMsgDBFolder::NotifyFolderRemoved(nsIMsgFolder* child) {
   // Notify listeners who listen to every folder
   nsCOMPtr<nsIFolderListener> folderListenerManager =
       mozilla::components::MailSession::Service();
+  NS_ENSURE_TRUE(folderListenerManager, NS_ERROR_FAILURE);
   return folderListenerManager->OnFolderRemoved(this, child);
 }
 
@@ -4801,6 +4815,7 @@ nsresult nsMsgDBFolder::NotifyFolderEvent(const nsACString& aEvent) {
   // Notify listeners who listen to every folder
   nsCOMPtr<nsIFolderListener> folderListenerManager =
       mozilla::components::MailSession::Service();
+  NS_ENSURE_TRUE(folderListenerManager, NS_ERROR_FAILURE);
   return folderListenerManager->OnFolderEvent(this, aEvent);
 }
 
@@ -5063,7 +5078,7 @@ NS_IMETHODIMP nsMsgDBFolder::NotifyAboutToCompact() {
   return NS_OK;
 }
 
-// NOTE: local folder overides this to clear some state.
+// NOTE: local folder overrides this to clear some state.
 NS_IMETHODIMP nsMsgDBFolder::NotifyCompactCompleted() {
   NotifyFolderEvent(kCompactCompleted);
   return NS_OK;
@@ -5451,11 +5466,10 @@ nsresult nsMsgDBFolder::GetMsgPreviewTextFromStream(nsIMsgDBHdr* msgHdr,
   return rv;
 }
 
-void nsMsgDBFolder::UpdateTimestamps(bool allowUndo) {
+NS_IMETHODIMP nsMsgDBFolder::UpdateTimestamps(bool userInitiated) {
   if (!(mFlags & (nsMsgFolderFlags::Trash | nsMsgFolderFlags::Junk))) {
     SetMRUTime();
-    if (allowUndo)  // This is a proxy for a user-initiated act.
-    {
+    if (userInitiated) {
       bool isArchive;
       IsSpecialFolder(nsMsgFolderFlags::Archive, true, &isArchive);
       if (!isArchive) {
@@ -5463,6 +5477,7 @@ void nsMsgDBFolder::UpdateTimestamps(bool allowUndo) {
       }
     }
   }
+  return NS_OK;
 }
 
 void nsMsgDBFolder::SetMRUTime() {

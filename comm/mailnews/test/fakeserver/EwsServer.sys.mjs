@@ -212,6 +212,16 @@ const MARK_AS_JUNK_RESPONSE_BASE = `${EWS_SOAP_HEAD}
   </MarkAsJunkResponse>
   ${EWS_SOAP_FOOT}`;
 
+const DELETE_FOLDER_RESPONSE_BASE = `${EWS_SOAP_HEAD}
+  <DeleteFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                   xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages>
+    </m:ResponseMessages>
+  </DeleteFolderResponse>
+  ${EWS_SOAP_FOOT}`;
+
 /**
  * A remote folder to sync from the EWS server. While initiating a test, an
  * array of folders is given to the EWS server, which will use it to populate
@@ -476,7 +486,7 @@ export class EwsServer {
    * @param {string} [options.hostname]
    * @param {integer} [options.port]
    * @param {nsIX509Cert} [options.tlsCert]
-   * @param {string} [options.version]
+   * @param {string} [options.version="Exchange2013"]
    * @param {string} [options.username="user"]
    * @param {string} [options.password="password"]
    */
@@ -708,6 +718,8 @@ export class EwsServer {
       resBytes = this.#generateDeleteItemResponse(reqDoc);
     } else if (reqDoc.getElementsByTagName("MarkAsJunk").length) {
       resBytes = this.#generateMarkAsJunkResponse(reqDoc);
+    } else if (reqDoc.getElementsByTagName("DeleteFolder").length) {
+      resBytes = this.#generateDeleteFolderResponse(reqDoc);
     } else {
       throw new Error("Unexpected EWS operation");
     }
@@ -726,7 +738,7 @@ export class EwsServer {
     // Retrieve the parent's folder ID. At some point we might want to match it
     // with an existing folder in `this.folders`, but this is not a requirement
     // right now.
-    // TODO: Support referring to the parent with its distinguised folder ID
+    // TODO: Support referring to the parent with its distinguished folder ID
     // (when relevant). It's not necessary currently because the EWS client will
     // always use `FolderId`.
     const parentFolderId = reqDoc
@@ -830,7 +842,7 @@ export class EwsServer {
     }
 
     const resSyncStateEl = resDoc.createElement("m:SyncState");
-    resSyncStateEl.textContent = offset + changes.length;
+    resSyncStateEl.textContent = this.itemChanges.indexOf(changes.at(-1)) + 1;
     responseMessageEl.appendChild(resSyncStateEl);
 
     const changesEl = resDoc.getElementsByTagName("m:Changes")[0];
@@ -946,7 +958,9 @@ export class EwsServer {
       ...reqDoc.getElementsByTagName("FolderIds")[0].children,
     ].map(c => c.getAttribute("Id"));
 
-    // Map the requested IDs to actual folders if we have them.
+    // Map the requested IDs to actual folders if we have them. A `null` folder
+    // in the resulting array means the folder couldn't be found on the server,
+    // and the relevant response message should reflect this.
     const responseFolders = requestedFolderIds.map(id => {
       // Try to match against a known distinguished ID.
       if (this.#distinguishedIdToFolder.has(id)) {
@@ -958,9 +972,7 @@ export class EwsServer {
         return this.#idToFolder.get(id);
       }
 
-      // TODO: At some point we will likely want to return a
-      // m:GetFolderResponseMessage with an error rather than throwing here.
-      throw new Error(`Client requested unknown folder ${id}`);
+      return null;
     });
 
     // Generate a base document for the response.
@@ -975,49 +987,70 @@ export class EwsServer {
 
     // Add each folder to the response document.
     responseFolders.forEach(folder => {
-      const folderEl = resDoc.createElement("t:Folder");
-      // Add folder class.
-      const folderClassEl = resDoc.createElement("t:FolderClass");
-      // TODO: Allow the value to be configured, to test we correctly filter out
-      // unsupported classes.
-      folderClassEl.appendChild(resDoc.createTextNode("IPF.Note"));
-      folderEl.appendChild(folderClassEl);
+      if (folder) {
+        const folderEl = resDoc.createElement("t:Folder");
+        // Add folder class.
+        const folderClassEl = resDoc.createElement("t:FolderClass");
+        // TODO: Allow the value to be configured, to test we correctly filter out
+        // unsupported classes.
+        folderClassEl.appendChild(resDoc.createTextNode("IPF.Note"));
+        folderEl.appendChild(folderClassEl);
 
-      // Add parent if available.
-      if (folder.parentId) {
-        const parentIdEl = resDoc.createElement("t:ParentFolderId");
-        parentIdEl.setAttribute("Id", folder.parentId);
-        folderEl.appendChild(parentIdEl);
+        // Add parent if available.
+        if (folder.parentId) {
+          const parentIdEl = resDoc.createElement("t:ParentFolderId");
+          parentIdEl.setAttribute("Id", folder.parentId);
+          folderEl.appendChild(parentIdEl);
+        }
+
+        // Add folder ID.
+        const folderIdEl = resDoc.createElement("t:FolderId");
+        folderIdEl.setAttribute("Id", folder.id);
+        folderEl.appendChild(folderIdEl);
+
+        // Add display name (defaults to the folder ID in folder constructor).
+        const folderNameEl = resDoc.createElement("t:DisplayName");
+        folderNameEl.appendChild(resDoc.createTextNode(folder.displayName));
+        folderEl.appendChild(folderNameEl);
+
+        // Add the folder element to t:Folders. Note that, in GetFolders
+        // responses, each t:Folders element only contains one folder.
+        const foldersEl = resDoc.createElement("t:Folders");
+        foldersEl.appendChild(folderEl);
+
+        // Indicate that no error happened when retrieving this message.
+        const resCodeEl = resDoc.createElement("m:ResponseCode");
+        resCodeEl.appendChild(resDoc.createTextNode("NoError"));
+
+        // Build the m:GetFolderResponseMessage element, which is parent to both
+        // t:Folders and m:ResponseCode.
+        const messageEl = resDoc.createElement("m:GetFolderResponseMessage");
+        messageEl.setAttribute("ResponseClass", "Success");
+        messageEl.appendChild(resCodeEl);
+        messageEl.appendChild(foldersEl);
+
+        // Add the message to the document.
+        resMsgsEl.appendChild(messageEl);
+      } else {
+        // We couldn't find a folder with this ID, so format the response
+        // message as an `ErrorFolderNotFound` error.
+        const messageEl = resDoc.createElement("m:GetFolderResponseMessage");
+        messageEl.setAttribute("ResponseClass", "Error");
+
+        // Add the response code to the response message.
+        const resCodeEl = resDoc.createElement("m:ResponseCode");
+        resCodeEl.appendChild(resDoc.createTextNode("ErrorFolderNotFound"));
+        messageEl.appendChild(resCodeEl);
+
+        // Add a human-readable representation of the error to the response
+        // message.
+        const errMessageEl = resDoc.createElement("m:MessageText");
+        errMessageEl.appendChild(resDoc.createTextNode("Folder not found"));
+        messageEl.appendChild(errMessageEl);
+
+        // Append the message to the document.
+        resMsgsEl.appendChild(messageEl);
       }
-
-      // Add folder ID.
-      const folderIdEl = resDoc.createElement("t:FolderId");
-      folderIdEl.setAttribute("Id", folder.id);
-      folderEl.appendChild(folderIdEl);
-
-      // Add display name (defaults to the folder ID in folder constructor).
-      const folderNameEl = resDoc.createElement("t:DisplayName");
-      folderNameEl.appendChild(resDoc.createTextNode(folder.displayName));
-      folderEl.appendChild(folderNameEl);
-
-      // Add the folder element to t:Folders. Note that, in GetFolders
-      // responses, each t:Folders element only contains one folder.
-      const foldersEl = resDoc.createElement("t:Folders");
-      foldersEl.appendChild(folderEl);
-
-      // Indicate that no error happened when retrieving this message.
-      const resCodeEl = resDoc.createElement("m:ResponseCode");
-      resCodeEl.appendChild(resDoc.createTextNode("NoError"));
-
-      // Build the m:GetFolderResponseMessage element, which is parent to both
-      // t:Folders and m:ResponseCode.
-      const messageEl = resDoc.createElement("m:GetFolderResponseMessage");
-      messageEl.setAttribute("ResponseClass", "Success");
-      messageEl.appendChild(resCodeEl);
-      messageEl.appendChild(foldersEl);
-
-      // Add the message to the document.
-      resMsgsEl.appendChild(messageEl);
     });
 
     // Serialize the response to a string that the consumer can return in a response.
@@ -1297,14 +1330,11 @@ export class EwsServer {
         messageEl.appendChild(dateEl);
 
         const senderEl = resDoc.createElement("t:Sender");
-        const mailboxEl = resDoc.createElement("t:Mailbox");
-        const nameEl = resDoc.createElement("t:Name");
-        nameEl.textContent = item.syntheticMessage.fromName;
-        mailboxEl.appendChild(nameEl);
-        const emailAddressEl = resDoc.createElement("t:EmailAddress");
-        emailAddressEl.textContent = item.syntheticMessage.fromAddress;
-        mailboxEl.appendChild(emailAddressEl);
-        senderEl.appendChild(mailboxEl);
+        const senderMailboxEl = this.#mailboxElFromTuple(
+          resDoc,
+          item.syntheticMessage.from
+        );
+        senderEl.appendChild(senderMailboxEl);
         messageEl.appendChild(senderEl);
 
         const toEl = resDoc.createElement("t:DisplayTo");
@@ -1318,6 +1348,26 @@ export class EwsServer {
         const isReadEl = resDoc.createElement("t:IsRead");
         isReadEl.textContent = item.syntheticMessage.metaState.read;
         messageEl.appendChild(isReadEl);
+
+        const sizeEl = resDoc.createElement("t:Size");
+        sizeEl.textContent = item.syntheticMessage.toMessageString().length;
+        messageEl.appendChild(sizeEl);
+
+        const toRecipientsEl = resDoc.createElement("t:ToRecipients");
+        for (const to of item.syntheticMessage.to) {
+          const toMailboxEl = this.#mailboxElFromTuple(resDoc, to);
+          toRecipientsEl.appendChild(toMailboxEl);
+        }
+        messageEl.appendChild(toRecipientsEl);
+
+        if (item.syntheticMessage.cc) {
+          const ccRecipientsEl = resDoc.createElement("t:CcRecipients");
+          for (const cc of item.syntheticMessage.cc) {
+            const ccMailboxEl = this.#mailboxElFromTuple(resDoc, cc);
+            ccRecipientsEl.appendChild(ccMailboxEl);
+          }
+          messageEl.appendChild(ccRecipientsEl);
+        }
 
         if (includeContent) {
           const contentEl = resDoc.createElement("t:MimeContent");
@@ -1406,6 +1456,91 @@ export class EwsServer {
       responseMessagesEl.appendChild(responseMessageEl);
     }
 
+    return this.#serializer.serializeToString(resDoc);
+  }
+
+  /**
+   * Generate a response to a DeleteFolder operation.
+   *
+   * @see {@link https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/deletefolder-operation#successful-deletefolder-response}
+   * @param {XMLDocument} reqDoc - The parsed document for the request to respond to.
+   * @returns {string} A serialized XML document.
+   */
+  #generateDeleteFolderResponse(reqDoc) {
+    // Figure out which folder IDs (or distinguished IDs have been requested).
+    const requestedFolderIds = [
+      ...reqDoc.getElementsByTagName("FolderIds")[0].children,
+    ].map(c => c.getAttribute("Id"));
+
+    // Map the requested IDs to actual folders if we have them. A `null` folder
+    // in the resulting array means the folder couldn't be found on the server,
+    // and the relevant response message should reflect this.
+    const responseFolders = requestedFolderIds.map(id => {
+      // Try to match against a known distinguished ID.
+      if (this.#distinguishedIdToFolder.has(id)) {
+        return this.#distinguishedIdToFolder.get(id);
+      }
+
+      // If that failed, try to match against a known folder ID.=
+      if (this.#idToFolder.has(id)) {
+        return this.#idToFolder.get(id);
+      }
+
+      return null;
+    });
+
+    // Generate a base document for the response.
+    const resDoc = this.#parser.parseFromString(
+      DELETE_FOLDER_RESPONSE_BASE,
+      "text/xml"
+    );
+
+    this.#setVersion(resDoc);
+
+    const resMsgsEl = resDoc.getElementsByTagName("m:ResponseMessages")[0];
+
+    // Add each folder to the response document.
+    responseFolders.forEach(folder => {
+      if (folder) {
+        // Mark the remote folder as deleted, so that this is represented in the
+        // next sync.
+        this.deleteRemoteFolderById(folder.id);
+
+        // Indicate that no error happened when retrieving this message.
+        const resCodeEl = resDoc.createElement("m:ResponseCode");
+        resCodeEl.appendChild(resDoc.createTextNode("NoError"));
+
+        // Build the m:DeleteFolderResponseMessage element, which is parent to
+        // m:ResponseCode.
+        const messageEl = resDoc.createElement("m:DeleteFolderResponseMessage");
+        messageEl.setAttribute("ResponseClass", "Success");
+        messageEl.appendChild(resCodeEl);
+
+        // Add the message to the document.
+        resMsgsEl.appendChild(messageEl);
+      } else {
+        // We couldn't find a folder with this ID, so format the response
+        // message as an `ErrorFolderNotFound` error.
+        const messageEl = resDoc.createElement("m:DeleteFolderResponseMessage");
+        messageEl.setAttribute("ResponseClass", "Error");
+
+        // Add the response code to the response message.
+        const resCodeEl = resDoc.createElement("m:ResponseCode");
+        resCodeEl.appendChild(resDoc.createTextNode("ErrorItemNotFound"));
+        messageEl.appendChild(resCodeEl);
+
+        // Add a human-readable representation of the error to the response
+        // message.
+        const errMessageEl = resDoc.createElement("m:MessageText");
+        errMessageEl.appendChild(resDoc.createTextNode("Folder not found"));
+        messageEl.appendChild(errMessageEl);
+
+        // Append the message to the document.
+        resMsgsEl.appendChild(messageEl);
+      }
+    });
+
+    // Serialize the response to a string that the consumer can return in a response.
     return this.#serializer.serializeToString(resDoc);
   }
 
@@ -1557,6 +1692,22 @@ export class EwsServer {
   }
 
   /**
+   * Get all of the items in a folder.
+   *
+   * @param {string} folderId
+   * @returns {ItemInfo[]}
+   */
+  getItemsInFolder(folderId) {
+    const items = [];
+    for (const item of this.#itemIdToItemInfo.values()) {
+      if (item.parentId === folderId) {
+        items.push(item);
+      }
+    }
+    return items;
+  }
+
+  /**
    * Construct a response for the EWS Move[Item,Folder] operations.
    *
    * @param {string} responseBase The response document base XML.
@@ -1614,6 +1765,32 @@ export class EwsServer {
     });
 
     return resDoc;
+  }
+
+  /**
+   * Generates an EWS `Mailbox` element from the given tuple.
+   *
+   * @param {XMLDocument} resDoc - The response document to use when generating
+   *   new XML elements.
+   * @param {string[]} tuple - A tuple containing two elements: a display name and an
+   *   email address (in that order).
+   * @returns {Element} The resulting `Mailbox` element.
+   */
+  #mailboxElFromTuple(resDoc, tuple) {
+    const nameEl = resDoc.createElement("t:Name");
+    nameEl.textContent = tuple[0];
+
+    const addressEl = resDoc.createElement("t:EmailAddress");
+    addressEl.textContent = tuple[1];
+
+    // Build the final `Mailbox` element. Note that in practice it will contain
+    // more than `Name` and `EmailAddress`, but our EWS client currently ignores
+    // those extra fields.
+    const mailboxEl = resDoc.createElement("t:Mailbox");
+    mailboxEl.appendChild(nameEl);
+    mailboxEl.appendChild(addressEl);
+
+    return mailboxEl;
   }
 }
 

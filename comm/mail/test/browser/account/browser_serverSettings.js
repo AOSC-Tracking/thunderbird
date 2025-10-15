@@ -7,6 +7,10 @@ const { click_account_tree_row, get_account_tree_row, open_advanced_settings } =
     "resource://testing-common/mail/AccountManagerHelpers.sys.mjs"
   );
 
+const { wait_for_frame_load } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
+);
+
 // The accounts to use in tests.
 var ewsAccount;
 var imapAccount;
@@ -81,7 +85,7 @@ add_task(async function test_ews_auth_methods() {
     // Gather the items in the authentication methods menu and filter out the
     // ones that are hidden.
     const visibleItems = Array.from(
-      authMethodMenu.getElementsByTagName("menuitem")
+      authMethodMenu.getElementsByTagName("html:option")
     ).filter(item => !item.hidden);
 
     // Make sure we have the right number of authentication methods.
@@ -277,6 +281,302 @@ add_task(async function test_imap_trash_settings() {
     Assert.ok(
       trashFolderPickerElement.disabled,
       "Trash folder picker should still be disabled."
+    );
+  });
+});
+
+/**
+ * Tests that the IMAP server settings are correctly hidden for EWS accounts.
+ */
+add_task(async function test_ews_advanced_imap_settings() {
+  await open_advanced_settings(async accountSettingsTab => {
+    const iframe = await selectAccountInSettings(
+      accountSettingsTab,
+      ewsAccount.key
+    );
+
+    const advancedImapSettingsButton = iframe.getElementById(
+      "server.imapAdvancedButton"
+    );
+
+    Assert.ok(
+      BrowserTestUtils.isHidden(advancedImapSettingsButton),
+      `Expected advancedImapSettingsButton to be hidden for EWS`
+    );
+  });
+});
+
+/**
+ * Tests that inapplicable server settings are correctly hidden for EWS accounts.
+ */
+add_task(async function test_ews_advanced_settings_hidden_boxes() {
+  await open_advanced_settings(async accountSettingsTab => {
+    const iframe = await selectAccountInSettings(
+      accountSettingsTab,
+      ewsAccount.key
+    );
+
+    const hiddenContainerIds = [
+      "server.useIdle.box",
+      "pop3.downloadOnBiff.box",
+      "pop3.settings.box",
+      "nntp.articles.box",
+      "nntp.pushAuth",
+      "nntp.settings.box",
+      "nntp.charset.box",
+    ];
+
+    for (const elementId of hiddenContainerIds) {
+      const element = iframe.getElementById(elementId);
+
+      Assert.ok(element, `Expected element #${elementId} to exist`);
+      Assert.ok(
+        BrowserTestUtils.isHidden(element),
+        `Expected element #${elementId} to be hidden for EWS`
+      );
+    }
+  });
+});
+
+/**
+ * Wait for the advanced server settings dialog to open.
+ *
+ * @param {HTMLElement} tab
+ * @returns {HTMLElement}
+ */
+async function waitForAdvancedDialog(tab) {
+  return await wait_for_frame_load(
+    tab.browser.contentWindow.gSubDialog._topDialog._frame,
+    "chrome://messenger/content/am-server-advanced.xhtml"
+  );
+}
+
+/**
+ * Accept the advanced dialog and wait for it to close.
+ *
+ * @param {HTMLElement} dialog
+ */
+async function acceptDialogAndWaitForClose(dialog) {
+  dialog.document.documentElement.querySelector("dialog").acceptDialog();
+  await TestUtils.waitForCondition(() => !dialog.visible);
+}
+
+/**
+ * Click the advanced settings button and wait for the advanced
+ * settings dialog to open.
+ *
+ * @param {HTMLIFrameElement} iframe
+ * @param {HTMLElement} accountSettingsTab
+ * @returns {HTMLElement}
+ */
+async function openAdvancedDialog(iframe, accountSettingsTab) {
+  const advancedSettingsButton = iframe.getElementById(
+    "server.ewsAdvancedButton"
+  );
+  Assert.ok(
+    !!advancedSettingsButton,
+    "Should have advanced settings button for EWS."
+  );
+
+  EventUtils.synthesizeMouseAtCenter(
+    advancedSettingsButton,
+    {},
+    advancedSettingsButton.ownerGlobal
+  );
+
+  return await waitForAdvancedDialog(accountSettingsTab);
+}
+
+/** Tests that setting the EWS Host URL changes the incoming server settings. */
+add_task(async function test_ews_host_url_settings() {
+  const incomingServer = ewsAccount.incomingServer;
+  await open_advanced_settings(async accountSettingsTab => {
+    const iframe = await selectAccountInSettings(
+      accountSettingsTab,
+      ewsAccount.key
+    );
+
+    // This page uses hidden elements to connect the advanced settings dialog to
+    // the underlying save infrastructure.
+    const ewsUrlDataElement = iframe.getElementById("ews.ewsUrl");
+    Assert.ok(!!ewsUrlDataElement, "EWS URL data element should exist.");
+
+    // The data elements should all be hidden.
+    Assert.ok(
+      !ewsUrlDataElement.visible,
+      "EWS URL data element should be hidden."
+    );
+
+    const advancedDialog = await openAdvancedDialog(iframe, accountSettingsTab);
+
+    const ewsUrlElement = advancedDialog.document.getElementById("ewsUrl");
+    Assert.ok(!!ewsUrlElement, "Should have the Host URL element.");
+    Assert.equal(
+      ewsUrlElement.value,
+      incomingServer.ewsUrl,
+      "Host URL value should match incoming server URL."
+    );
+
+    // Get the original value.
+    const originalHostUrl = incomingServer.ewsUrl;
+
+    // Change to a new value.
+    ewsUrlElement.focus();
+    EventUtils.synthesizeKey("KEY_Delete", {}, ewsUrlElement.ownerGlobal);
+    EventUtils.sendString("anothervalue", ewsUrlElement.ownerGlobal);
+
+    await acceptDialogAndWaitForClose(advancedDialog);
+
+    // Check the value of the hidden data element.
+    Assert.equal(
+      ewsUrlDataElement.value,
+      "anothervalue",
+      "EWS URL hidden data element value should have changed."
+    );
+
+    Assert.equal(
+      incomingServer.ewsUrl,
+      "anothervalue",
+      "Incoming server Host URL should have changed."
+    );
+
+    // Reopen the dialog and reset the value.
+    const advancedDialogReopened = await openAdvancedDialog(
+      iframe,
+      accountSettingsTab
+    );
+
+    const ewsUrlElementReopened =
+      advancedDialogReopened.document.getElementById("ewsUrl");
+    Assert.ok(!!ewsUrlElement, "Should have the Host URL element.");
+    Assert.equal(
+      ewsUrlElement.value,
+      incomingServer.ewsUrl,
+      "Host URL value should match incoming server URL."
+    );
+
+    ewsUrlElementReopened.focus();
+    EventUtils.synthesizeKey("KEY_Delete", {}, ewsUrlElement.ownerGlobal);
+    EventUtils.sendString(originalHostUrl, ewsUrlElementReopened.ownerGlobal);
+
+    await acceptDialogAndWaitForClose(advancedDialogReopened);
+
+    Assert.equal(
+      incomingServer.ewsUrl,
+      originalHostUrl,
+      "EWS Host URL should have been reset."
+    );
+  });
+});
+
+/** Tests that changing the OAuth override settings correctly updates the incoming server. */
+add_task(async function test_override_oauth_settings() {
+  const incomingServer = ewsAccount.incomingServer;
+  await open_advanced_settings(async accountSettingsTab => {
+    const checkPref = Services.prefs.getBoolPref(
+      "experimental.mail.ews.overrideOAuth.enabled",
+      false
+    );
+    Assert.ok(checkPref, "pref should be enabled.");
+    const iframe = await selectAccountInSettings(
+      accountSettingsTab,
+      ewsAccount.key
+    );
+
+    const dataElements = [
+      "ews.ewsOverrideOAuthDetails",
+      "ews.ewsApplicationId",
+      "ews.ewsTenantId",
+      "ews.ewsRedirectUri",
+      "ews.ewsEndpointHost",
+      "ews.ewsOAuthScopes",
+    ];
+    for (const dataElement of dataElements) {
+      const element = iframe.getElementById(dataElement);
+      Assert.ok(!!element, `Data element ${dataElement} should exist.`);
+      Assert.ok(
+        !element.visible,
+        `Data element ${dataElement} should not be visible.`
+      );
+    }
+
+    const advancedDialog = await openAdvancedDialog(iframe, accountSettingsTab);
+
+    const oauthOverrideControl = advancedDialog.document.getElementById(
+      "ewsOverrideOAuthDetails"
+    );
+    Assert.ok(!!oauthOverrideControl, "OAuth override checkbox should exist.");
+    Assert.ok(
+      !oauthOverrideControl.checked,
+      "OAuth override checkbox should be unchecked."
+    );
+
+    const inputElementIds = [
+      "ewsApplicationId",
+      "ewsTenantId",
+      "ewsRedirectUri",
+      "ewsEndpointHost",
+      "ewsOAuthScopes",
+    ];
+    const inputElements = inputElementIds.map(id =>
+      advancedDialog.document.getElementById(id)
+    );
+    for (const inputElement of inputElements) {
+      Assert.ok(
+        inputElement.disabled,
+        `Input element ${inputElement.id} should be disabled.`
+      );
+    }
+
+    EventUtils.synthesizeMouseAtCenter(
+      oauthOverrideControl,
+      {},
+      oauthOverrideControl.ownerGlobal
+    );
+
+    for (const inputElement of inputElements) {
+      Assert.ok(
+        !inputElement.disabled,
+        `Input element ${inputElement.id} should be enabled.`
+      );
+    }
+
+    for (const inputElement of inputElements) {
+      inputElement.focus();
+      EventUtils.synthesizeKey("KEY_Delete", {}, inputElement.ownerGlobal);
+      EventUtils.sendString("changed_value", inputElement.ownerGlobal);
+    }
+
+    await acceptDialogAndWaitForClose(advancedDialog);
+
+    Assert.ok(
+      incomingServer.ewsOverrideOAuthDetails,
+      "Incoming server should have override OAuth details selected."
+    );
+    Assert.equal(
+      incomingServer.ewsApplicationId,
+      "changed_value",
+      "EWS Application ID should have changed."
+    );
+    Assert.equal(
+      incomingServer.ewsTenantId,
+      "changed_value",
+      "EWS Tenant ID should have changed."
+    );
+    Assert.equal(
+      incomingServer.ewsRedirectUri,
+      "changed_value",
+      "EWS Redirect URI should have changed."
+    );
+    Assert.equal(
+      incomingServer.ewsEndpointHost,
+      "changed_value",
+      "EWS Endpoint Host should have changed."
+    );
+    Assert.equal(
+      incomingServer.ewsOAuthScopes,
+      "changed_value",
+      "EWS OAuth Scopes should have changed."
     );
   });
 });

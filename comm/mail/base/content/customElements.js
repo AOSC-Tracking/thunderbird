@@ -22,7 +22,6 @@
       ["", "chrome://chat/content/conversation-browser.js"],
       ["", "chrome://messenger/content/gloda-autocomplete-input.js"],
       ["", "chrome://chat/content/chat-tooltip.js"],
-      ["", "chrome://messenger/content/mailWidgets.js"],
       ["", "chrome://messenger/content/statuspanel.js"],
       ["folder-summary", "chrome://messenger/content/foldersummary.js"],
       [
@@ -33,7 +32,7 @@
       ["", "chrome://messenger/content/toolbarbutton-menu-button.js"],
     ]) {
       // Immediately load scripts that either define multiple custom elements or
-      // are always used in most doucments this is loaded in.
+      // are always used in most documents this is loaded in.
       if (!tag) {
         Services.scriptloader.loadSubScript(script, window);
         continue;

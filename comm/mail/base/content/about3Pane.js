@@ -195,7 +195,7 @@ window.addEventListener("DOMContentLoaded", async event => {
   // to avoid unnecessarily loading the thread tree or Account Central.
   folderTree.addEventListener("select", folderPane);
 
-  // Delay inital folder selection until after the message list's resize
+  // Delay initial folder selection until after the message list's resize
   // observer has had a chance to respond to layout changes. Otherwise we
   // might end up scrolling to the wrong part of the list.
   await new Promise(resolve => setTimeout(resolve));
@@ -214,6 +214,7 @@ window.addEventListener("DOMContentLoaded", async event => {
 window.addEventListener("unload", () => {
   CalMetronome.off("day", refreshGroupedBySortView);
   MailServices.mailSession.RemoveFolderListener(folderListener);
+  MailServices.mailSession.removeUserFeedbackListener(userFeedbackListener);
   gViewWrapper?.close();
   folderPane.uninit();
   threadPane.uninit();
@@ -925,7 +926,19 @@ var folderPaneContextMenu = {
 };
 
 var folderPane = {
+  /**
+   * If the folder pane has been initialized.
+   *
+   * @type {boolean}
+   */
   _initialized: false,
+
+  /**
+   * The drop indicator used when manually sorting folders.
+   *
+   * @type {?HTMLImageElement}
+   */
+  _dropIndicator: null,
 
   /**
    * If the local folders should be hidden.
@@ -1578,6 +1591,7 @@ var folderPane = {
 
     await FolderTreeProperties.ready;
 
+    this._dropIndicator = document.getElementById("dropIndicator");
     this._modeTemplate = document.getElementById("modeTemplate");
     this._folderTemplate = document.getElementById("folderTemplate");
 
@@ -1593,6 +1607,7 @@ var folderPane = {
       folderListener,
       Ci.nsIFolderListener.all
     );
+    MailServices.mailSession.addUserFeedbackListener(userFeedbackListener);
 
     Services.prefs.addObserver("mail.accountmanager.accounts", this);
     Services.prefs.addObserver("mailnews.tags.", this);
@@ -1605,6 +1620,7 @@ var folderPane = {
     Services.obs.addObserver(this, "folder-properties-changed");
     Services.obs.addObserver(this, "folder-needs-repair");
     Services.obs.addObserver(this, "folder-strings-changed");
+    Services.obs.addObserver(this, "server-connection-succeeded");
 
     folderTree.addEventListener("auxclick", this);
     folderTree.addEventListener("contextmenu", this);
@@ -1678,6 +1694,7 @@ var folderPane = {
     Services.obs.removeObserver(this, "folder-properties-changed");
     Services.obs.removeObserver(this, "folder-needs-repair");
     Services.obs.removeObserver(this, "folder-strings-changed");
+    Services.obs.removeObserver(this, "server-connection-succeeded");
   },
 
   handleEvent(event) {
@@ -1764,6 +1781,19 @@ var folderPane = {
           row.updateFolderNames();
         }
         break;
+      case "server-connection-succeeded": {
+        let server;
+        try {
+          server = MailServices.accounts.findServerByURI(subject);
+        } catch (ex) {
+          console.error(ex);
+          return;
+        }
+        folderPane._changeRows(server.rootFolder, row =>
+          row.classList.remove("tls-error")
+        );
+        break;
+      }
     }
   },
 
@@ -2084,7 +2114,7 @@ var folderPane = {
       try {
         mode.init();
       } catch (e) {
-        console.warn(`Error intiating ${mode.name} mode.`, e);
+        console.warn(`Error initiating ${mode.name} mode.`, e);
         if (typeof mode.regenerateMode != "function") {
           return;
         }
@@ -2382,7 +2412,7 @@ var folderPane = {
   },
 
   /**
-   * Get the first row inside a specifc mode, even if it is hidden.
+   * Get the first row inside a specific mode, even if it is hidden.
    *
    * @param {string} modeName
    * @returns {FolderTreeRow}
@@ -2958,10 +2988,10 @@ var folderPane = {
     // If the currently dragged row is not part of the selection map, use it
     // instead of the current selection entries.
     const rows = folderTree.selection.has(folderTree.rows.indexOf(draggedRow))
-      ? folderTree.selection.values()
+      ? [...folderTree.selection.values()]
       : [draggedRow];
 
-    const folders = [...rows].map(row =>
+    const folders = rows.map(row =>
       MailServices.folderLookup.getFolderForURL(row.uri)
     );
 
@@ -2979,6 +3009,10 @@ var folderPane = {
     ) {
       event.preventDefault();
       return;
+    }
+
+    for (const row of rows) {
+      row.classList.add("drag-target");
     }
 
     for (const [index, folder] of folders.entries()) {
@@ -3074,22 +3108,28 @@ var folderPane = {
         event.dataTransfer.mozItemCount == 1 &&
         row.modeName == "all"
       ) {
-        const { center, quarterOfHeight } = this._calculateElementHeight(row);
-        if (event.clientY < center - quarterOfHeight) {
+        const {
+          targetCenter,
+          quarterOfHeight,
+          targetTop,
+          targetBottom,
+          targetInline,
+        } = this._calculateElementPosition(row);
+        if (event.clientY < targetCenter - quarterOfHeight) {
           // Insert before the target.
           this._clearDropTarget();
-          row.classList.add("reorder-target-before");
+          this._dropIndicator.show(targetTop, targetInline);
           event.dataTransfer.dropEffect = "move";
           return;
         }
         if (
-          event.clientY > center + quarterOfHeight &&
+          event.clientY > targetCenter + quarterOfHeight &&
           (!row.classList.contains("children") ||
             row.classList.contains("collapsed"))
         ) {
           // Insert after the target.
           this._clearDropTarget();
-          row.classList.add("reorder-target-after");
+          this._dropIndicator.show(targetBottom, targetInline);
           event.dataTransfer.dropEffect = "move";
           return;
         }
@@ -3190,14 +3230,23 @@ var folderPane = {
     }
   },
 
+  /**
+   * Clear the visual indicators for drag and drop operations on the folder
+   * pane.
+   */
   _clearDropTarget() {
     folderTree.querySelector(".drop-target")?.classList.remove("drop-target");
-    folderTree
-      .querySelector(".reorder-target-before")
-      ?.classList.remove("reorder-target-before");
-    folderTree
-      .querySelector(".reorder-target-after")
-      ?.classList.remove("reorder-target-after");
+    this._dropIndicator.hide();
+  },
+
+  /**
+   * Clear the visual indicators for drag and drop operations on the folder
+   * pane.
+   */
+  _clearDragTarget() {
+    for (const row of folderTree.querySelectorAll(".drag-target")) {
+      row.classList.remove("drag-target");
+    }
   },
 
   _collapseAutoExpandedRows() {
@@ -3211,24 +3260,56 @@ var folderPane = {
   },
 
   /**
-   * Calculate the center point of a row element related to the client height
-   * and returns it alongside a quarter of its height.
+   * @typedef {object} ElementPosition
+   * @property {number} targetCenter - The center value of the element relative
+   *   to the parent container.
+   * @property {number} quarterOfHeight - The 1/4 of height of the element.
+   * @property {number} targetTop - The top value of the element relative
+   *   to the parent container.
+   * @property {number} targetBottom - The bottom value of the element relative
+   *   to the parent container.
+   * @property {number} targetInline - The inline value of folder icon relative
+   *   to the parent container.
+   */
+  /**
+   * Calculate the needed values to properly position a drop target during
+   * folders reordering.
    *
    * @param {FolderTreeRow} row
-   * @returns {object}
+   * @returns {ElementPosition}
    */
-  _calculateElementHeight(row) {
+  _calculateElementPosition(row) {
     const targetElement = row.querySelector(".container") ?? row;
     const targetRect = targetElement.getBoundingClientRect();
-    const center =
-      targetRect.top + targetElement.clientTop + targetElement.clientHeight / 2;
-    const quarterOfHeight = targetElement.clientHeight / 4;
-    return { center, quarterOfHeight };
+    // Include the top border width for the position since this could be changed
+    // by themes or userChrome.
+    const targetTop = targetRect.top + targetElement.clientTop;
+    // Add 1/2 of the top border to the bottom value in order to account for the
+    // half a pixel shift that can manifest between 2 elements with borders.
+    const targetBottom =
+      targetTop + targetElement.offsetHeight + targetElement.clientTop / 2;
+    const targetCenter = targetTop + targetElement.offsetHeight / 2;
+    const quarterOfHeight = targetElement.offsetHeight / 4;
+
+    const iconRect = targetElement
+      .querySelector(".icon")
+      .getBoundingClientRect();
+    const targetInline =
+      document.dir == "rtl" ? targetRect.right - iconRect.right : iconRect.left;
+
+    return {
+      targetCenter,
+      quarterOfHeight,
+      targetTop,
+      targetBottom,
+      targetInline,
+    };
   },
 
   _onDrop(event) {
     this._timedExpand();
     this._clearDropTarget();
+    this._clearDragTarget();
     this._autoExpandedRows.length = 0;
     if (event.dataTransfer.dropEffect == "none") {
       // Somehow this is possible. It should not be possible.
@@ -3306,10 +3387,12 @@ var folderPane = {
           !targetFolder.isServer &&
           row.modeName == "all"
         ) {
-          const { center, quarterOfHeight } = this._calculateElementHeight(row);
-          const upperElementEnd = event.clientY < center - quarterOfHeight;
+          const { targetCenter, quarterOfHeight } =
+            this._calculateElementPosition(row);
+          const upperElementEnd =
+            event.clientY < targetCenter - quarterOfHeight;
           const lowerElementEndWithoutChildren =
-            event.clientY > center + quarterOfHeight &&
+            event.clientY > targetCenter + quarterOfHeight &&
             (!row.classList.contains("children") ||
               row.classList.contains("collapsed"));
           isReordering = upperElementEnd || lowerElementEndWithoutChildren;
@@ -3423,6 +3506,8 @@ var folderPane = {
   },
 
   _onDragEnd(event) {
+    this._clearDragTarget();
+    this._clearDropTarget();
     if (event.dataTransfer.dropEffect != "none") {
       return;
     }
@@ -3480,9 +3565,9 @@ var folderPane = {
         );
       });
       parentFolder.createSubfolder(subfolderName, top.msgWindow);
+      const newFolder = await promiseNewFolder;
       if (!parentFolder.isServer) {
         // Inherit view/sort/columns from parent folder.
-        const newFolder = await promiseNewFolder;
         const parentInfo = parentFolder.msgDatabase.dBFolderInfo;
         const newInfo = newFolder.msgDatabase.dBFolderInfo;
         newInfo.viewFlags = parentInfo.viewFlags;
@@ -3493,6 +3578,7 @@ var folderPane = {
           parentInfo.getCharProperty("columnStates")
         );
       }
+      newFolder.updateTimestamps(true);
     };
 
     window.openDialog(
@@ -3535,20 +3621,27 @@ var folderPane = {
 
     folder.msgDatabase.summaryValid = false;
     try {
-      const isIMAP = folder.server.type == "imap";
       let transferInfo = null;
-      if (isIMAP) {
-        transferInfo = folder.dBTransferInfo.QueryInterface(
-          Ci.nsIWritablePropertyBag2
-        );
-        transferInfo.setPropertyAsACString("numMsgs", "0");
-        transferInfo.setPropertyAsACString("numNewMsgs", "0");
-        // Reset UID validity so that nsImapMailFolder::UpdateImapMailboxInfo
-        // will recognize that a folder repair is in progress.
-        transferInfo.setPropertyAsACString("UIDValidity", "-1"); // == kUidUnknown
+      switch (folder.server.type) {
+        case "imap":
+          transferInfo = folder.dBTransferInfo.QueryInterface(
+            Ci.nsIWritablePropertyBag2
+          );
+          transferInfo.setPropertyAsACString("numMsgs", "0");
+          transferInfo.setPropertyAsACString("numNewMsgs", "0");
+          // Reset UID validity so that nsImapMailFolder::UpdateImapMailboxInfo
+          // will recognize that a folder repair is in progress.
+          transferInfo.setPropertyAsACString("UIDValidity", "-1"); // == kUidUnknown
+          break;
+        case "ews":
+          // Reset the sync state token so that the next sync will download the
+          // message list again.
+          folder.setStringProperty("ewsSyncStateToken", "");
+          break;
       }
+
       folder.closeAndBackupFolderDB("");
-      if (isIMAP && transferInfo) {
+      if (folder.server.type == "imap" && transferInfo) {
         folder.dBTransferInfo = transferInfo;
       }
     } catch (e) {
@@ -4380,7 +4473,7 @@ var threadPaneHeader = {
   /**
    * The h2 element receiving the folder name.
    *
-   * @type {?HTMLHeadElement}
+   * @type {?HTMLElement}
    */
   folderName: null,
   /**
@@ -5878,7 +5971,7 @@ var threadPane = {
   /**
    * Removes a custom column from the thread pane.
    *
-   * @param {string} columnID - uniqe id of the custom column
+   * @param {string} columnID - unique id of the custom column
    */
   onCustomColumnRemoved(columnID) {
     if (this.rowTemplate) {
@@ -6660,6 +6753,60 @@ var folderListener = {
         folderPane.addFolder(f.parent, f);
       }
     }
+  },
+};
+
+var userFeedbackListener = {
+  QueryInterface: ChromeUtils.generateQI(["nsIMsgUserFeedbackListener"]),
+  onAlert() {
+    return false;
+  },
+  async onCertError(securityInfo, uri) {
+    let server;
+    try {
+      server = MailServices.accounts.findServerByURI(uri);
+    } catch (ex) {
+      console.error(ex);
+      return;
+    }
+
+    let errorString;
+    const errorArgs = { hostname: uri.host };
+
+    switch (securityInfo?.overridableErrorCategory) {
+      case Ci.nsITransportSecurityInfo.ERROR_DOMAIN:
+        errorString = "cert-error-inline-domain-mismatch";
+        break;
+      case Ci.nsITransportSecurityInfo.ERROR_TIME: {
+        const cert = securityInfo.serverCert;
+        const notBefore = cert.validity.notBefore / 1000;
+        const notAfter = cert.validity.notAfter / 1000;
+        const formatter = new Intl.DateTimeFormat();
+
+        if (notBefore && Date.now() < notAfter) {
+          errorString = "cert-error-inline-not-yet-valid";
+          errorArgs["not-before"] = formatter.format(new Date(notBefore));
+        } else {
+          errorString = "cert-error-inline-expired";
+          errorArgs["not-after"] = formatter.format(new Date(notAfter));
+        }
+        break;
+      }
+      default:
+        errorString = "cert-error-inline-untrusted-default";
+        break;
+    }
+
+    window.MozXULElement.insertFTLIfNeeded("messenger/certError.ftl");
+
+    folderPane._changeRows(server.rootFolder, row => {
+      row.classList.add("tls-error");
+      document.l10n.setAttributes(row.statusIcon, errorString, errorArgs);
+      // Click handler set directly (rather than as a listener) so that we
+      // don't have to mess around clearing previous handlers.
+      row.statusIcon.onclick = () =>
+        top.MsgAccountManager("am-server.xhtml", server);
+    });
   },
 };
 

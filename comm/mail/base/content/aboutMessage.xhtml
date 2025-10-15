@@ -46,6 +46,7 @@
   <link rel="localization" href="messenger/messenger.ftl" />
   <link rel="localization" href="toolkit/main-window/findbar.ftl" />
   <link rel="localization" href="toolkit/global/textActions.ftl" />
+  <link rel="localization" href="calendar/calendar.ftl" />
   <link rel="localization" href="calendar/calendar-invitation-panel.ftl" />
   <link rel="localization" href="messenger/openpgp/openpgp.ftl" />
   <link rel="localization" href="messenger/openpgp/openpgp-frontend.ftl" />
@@ -76,6 +77,7 @@
   <script defer="defer" src="chrome://messenger/content/mailCommon.js"></script>
   <script defer="defer" src="chrome://messenger/content/msgHdrView.js"></script>
   <script defer="defer" src="chrome://messenger/content/aboutMessage.js"></script>
+  <script type="module" src="chrome://messenger/content/attachment-list.mjs"></script>
 </head>
 <html:body xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
 
@@ -130,8 +132,6 @@
         <!-- message view -->
         <browser id="messagepane"
                  tooltip="aHTMLTooltip"
-                 style="height: 0px; min-height: 1px;"
-                 flex="1"
                  name="messagepane"
                  disablesecurity="true"
                  disablehistory="true"

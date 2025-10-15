@@ -192,7 +192,7 @@ Services.prefs.addObserver("mail.displayname.version", () => {
   Services.obs.notifyObservers(null, "addrbook-displayname-changed");
 });
 
-// When this prefence has been updated, we need to update the
+// When this preference has been updated, we need to update the
 // mail.displayname.version, which notifies its preference observer (above).
 // This will then notify the addrbook-displayname-changed observer, and change
 // the displayname in the thread tree and message header.
@@ -599,7 +599,7 @@ AddrBookManager.prototype = {
     if (!emailAddress) {
       return null;
     }
-    emailAddress = emailAddress.toLowerCase();
+    emailAddress = emailAddress.trim().toLowerCase();
 
     if (!addressCache) {
       addressCache = new Map();
@@ -610,7 +610,7 @@ AddrBookManager.prototype = {
         try {
           for (const card of directory.childCards.toReversed()) {
             for (const _emailAddress of card.emailAddresses) {
-              addressCache.set(_emailAddress, card);
+              addressCache.set(_emailAddress.trim().toLowerCase(), card);
             }
           }
         } catch (ex) {

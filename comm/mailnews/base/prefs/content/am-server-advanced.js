@@ -34,8 +34,10 @@ function onLoad() {
 
   if (gServerSettings.serverType == "imap") {
     document.getElementById("pop3Panel").hidden = true;
+    document.getElementById("ewsPanel").hidden = true;
   } else if (gServerSettings.serverType == "pop3") {
     document.getElementById("imapPanel").hidden = true;
+    document.getElementById("ewsPanel").hidden = true;
     const radioGroup = document.getElementById("folderStorage");
 
     gFirstDeferredAccount = gServerSettings.deferredToAccount;
@@ -70,6 +72,23 @@ function onLoad() {
 
     const picker = document.getElementById("deferredServerFolderPicker");
     picker.disabled = radioGroup.selectedIndex != 1;
+  } else if (gServerSettings.serverType == "ews") {
+    document.getElementById("pop3Panel").hidden = true;
+    document.getElementById("imapPanel").hidden = true;
+    if (
+      Services.prefs.getBoolPref(
+        "experimental.mail.ews.overrideOAuth.enabled",
+        false
+      )
+    ) {
+      document.getElementById("ewsOverrideOAuthDetailsContainer").hidden =
+        false;
+      setOAuthOverrideState(
+        gServerSettings.account.incomingServer.ewsOverrideOAuthDetails
+      );
+    } else {
+      document.getElementById("ewsOverrideOAuthDetailsContainer").hidden = true;
+    }
   }
 
   var controls = getControls();
@@ -143,4 +162,21 @@ function updateInboxAccount(enablePicker) {
   document.getElementById("deferredServerFolderPicker").disabled =
     !enablePicker;
   document.getElementById("deferGetNewMail").disabled = !enablePicker;
+}
+
+function setOAuthOverrideState(isEnabled) {
+  const oauthElementIds = [
+    "ewsApplicationId",
+    "ewsTenantId",
+    "ewsRedirectUri",
+    "ewsEndpointHost",
+    "ewsOAuthScopes",
+  ];
+  for (const elementId of oauthElementIds) {
+    document.getElementById(elementId).disabled = !isEnabled;
+  }
+}
+
+function onChangeOverrideOAuthSelection(overrideSelector) {
+  setOAuthOverrideState(overrideSelector.checked);
 }

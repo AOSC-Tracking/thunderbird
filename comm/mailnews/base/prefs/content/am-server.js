@@ -257,6 +257,28 @@ function onAdvanced() {
     serverSettings.deferredToAccount = document
       .getElementById("pop3.deferredToAccount")
       .getAttribute("value");
+  } else if (serverType == "ews") {
+    serverSettings.ewsUrl = document
+      .getElementById("ews.ewsUrl")
+      .getAttribute("value");
+    serverSettings.ewsOverrideOAuthDetails = document.getElementById(
+      "ews.ewsOverrideOAuthDetails"
+    ).checked;
+    serverSettings.ewsApplicationId = document
+      .getElementById("ews.ewsApplicationId")
+      .getAttribute("value");
+    serverSettings.ewsTenantId = document
+      .getElementById("ews.ewsTenantId")
+      .getAttribute("value");
+    serverSettings.ewsRedirectUri = document
+      .getElementById("ews.ewsRedirectUri")
+      .getAttribute("value");
+    serverSettings.ewsEndpointHost = document
+      .getElementById("ews.ewsEndpointHost")
+      .getAttribute("value");
+    serverSettings.ewsOAuthScopes = document
+      .getElementById("ews.ewsOAuthScopes")
+      .getAttribute("value");
   }
 
   const onCloseAdvanced = function () {
@@ -387,6 +409,27 @@ function onAdvanced() {
           );
         }
       }
+    } else if (serverType == "ews") {
+      document
+        .getElementById("ews.ewsUrl")
+        .setAttribute("value", serverSettings.ewsUrl);
+      document.getElementById("ews.ewsOverrideOAuthDetails").checked =
+        serverSettings.ewsOverrideOAuthDetails;
+      document
+        .getElementById("ews.ewsApplicationId")
+        .setAttribute("value", serverSettings.ewsApplicationId);
+      document
+        .getElementById("ews.ewsTenantId")
+        .setAttribute("value", serverSettings.ewsTenantId);
+      document
+        .getElementById("ews.ewsRedirectUri")
+        .setAttribute("value", serverSettings.ewsRedirectUri);
+      document
+        .getElementById("ews.ewsEndpointHost")
+        .setAttribute("value", serverSettings.ewsEndpointHost);
+      document
+        .getElementById("ews.ewsOAuthScopes")
+        .setAttribute("value", serverSettings.ewsOAuthScopes);
     }
     document.dispatchEvent(new CustomEvent("prefchange"));
   };
@@ -436,6 +479,20 @@ function secureSelect(aLoading) {
       ? "authPasswordCleartextViaSSL"
       : "authPasswordCleartextInsecurely"
   );
+
+  const certCheck = document.getElementById("certCheck");
+  if (gServer.type == "nntp" || socketType == Ci.nsMsgSocketType.plain) {
+    certCheck.hidden = true;
+  } else {
+    certCheck.init(
+      document.getElementById("server.hostName").value,
+      document.getElementById("server.port").value,
+      document.getElementById("server.type").value,
+      document.getElementById("server.socketType").value ==
+        Ci.nsMsgSocketType.alwaysSTARTTLS
+    );
+    certCheck.hidden = false;
+  }
 }
 
 function setupMailOnServerUI() {

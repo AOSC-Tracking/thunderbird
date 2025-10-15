@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // TODO: Update once linting is updated to handle moz-src
-/* eslint-disable-next-line import/no-unresolved */
+
 import { NotificationManager } from "moz-src:///comm/mail/components/inappnotifications/modules/NotificationManager.sys.mjs";
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
@@ -304,7 +304,7 @@ export const NotificationScheduler = {
       currentWindow.removeEventListener("resize", callback);
     }
 
-    // If we get a bew notifiction before the only one is dismissed update state.
+    // If we get a bew notification before the only one is dismissed update state.
     if (this.id && this.id !== id) {
       this.reset();
       this.id = id;

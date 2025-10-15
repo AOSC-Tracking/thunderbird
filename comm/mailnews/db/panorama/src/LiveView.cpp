@@ -31,7 +31,7 @@ using mozilla::LogLevel;
 
 namespace mozilla::mailnews {
 
-LazyLogModule gLiveViewLog("panorama");
+extern LazyLogModule gPanoramaLog;  // Defined by DatabaseCore.
 
 NS_IMPL_ISUPPORTS(LiveView, nsILiveView)
 
@@ -83,6 +83,30 @@ NS_IMETHODIMP LiveView::InitWithTag(const nsACString& aTag) {
   return NS_OK;
 }
 
+NS_IMETHODIMP LiveView::InitWithConversation(uint64_t aConversationId) {
+  if (mFolderFilter) {
+    NS_WARNING("folder filter already set");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  mFolderFilter = new ConversationFilter(aConversationId);
+  // Conversation view is always in date-ascending order.
+  mSortColumn = nsILiveView::SortColumn::DATE;
+  mSortDescending = false;
+  return NS_OK;
+}
+
+NS_IMETHODIMP LiveView::GetThreadsOnly(bool* threadsOnly) {
+  *threadsOnly = mThreadsOnly;
+  return NS_OK;
+}
+
+NS_IMETHODIMP LiveView::SetThreadsOnly(bool threadsOnly) {
+  mThreadsOnly = threadsOnly;
+  ResetStatements();
+  return NS_OK;
+}
+
 NS_IMETHODIMP LiveView::GetSortColumn(nsILiveView::SortColumn* aSortColumn) {
   *aSortColumn = mSortColumn;
   return NS_OK;
@@ -90,18 +114,7 @@ NS_IMETHODIMP LiveView::GetSortColumn(nsILiveView::SortColumn* aSortColumn) {
 
 NS_IMETHODIMP LiveView::SetSortColumn(nsILiveView::SortColumn aSortColumn) {
   mSortColumn = aSortColumn;
-  if (mCountStmt) {
-    mCountStmt->Finalize();
-    mCountStmt = nullptr;
-  }
-  if (mCountUnreadStmt) {
-    mCountUnreadStmt->Finalize();
-    mCountUnreadStmt = nullptr;
-  }
-  if (mSelectStmt) {
-    mSelectStmt->Finalize();
-    mSelectStmt = nullptr;
-  }
+  ResetStatements();
   return NS_OK;
 }
 
@@ -112,6 +125,11 @@ NS_IMETHODIMP LiveView::GetSortDescending(bool* aSortDescending) {
 
 NS_IMETHODIMP LiveView::SetSortDescending(bool aSortDescending) {
   mSortDescending = aSortDescending;
+  ResetStatements();
+  return NS_OK;
+}
+
+void LiveView::ResetStatements() {
   if (mCountStmt) {
     mCountStmt->Finalize();
     mCountStmt = nullptr;
@@ -124,7 +142,6 @@ NS_IMETHODIMP LiveView::SetSortDescending(bool aSortDescending) {
     mSelectStmt->Finalize();
     mSelectStmt = nullptr;
   }
-  return NS_OK;
 }
 
 /**
@@ -132,6 +149,7 @@ NS_IMETHODIMP LiveView::SetSortDescending(bool aSortDescending) {
  */
 nsCString LiveView::GetSQLClause() {
   if (mClause.IsEmpty()) {
+    mParams.Clear();
     if (mFolderFilter) {
       mClause.Append(mFolderFilter->mSQLClause);
       mParams.AppendElements(mFolderFilter->mSQLParams);
@@ -183,9 +201,14 @@ bool LiveView::Matches(Message& aMessage) {
 
 NS_IMETHODIMP LiveView::CountMessages(uint64_t* aCount) {
   if (!mCountStmt) {
-    nsAutoCString sql("SELECT COUNT(*) AS count FROM messages WHERE ");
+    nsAutoCString sql;
+    if (mThreadsOnly) {
+      sql = "SELECT COUNT(DISTINCT threadId) AS count FROM messages WHERE ";
+    } else {
+      sql = "SELECT COUNT(*) AS count FROM messages WHERE ";
+    }
     sql.Append(GetSQLClause());
-    MOZ_LOG(gLiveViewLog, LogLevel::Debug, ("LiveView SQL: %s", sql.get()));
+    MOZ_LOG(gPanoramaLog, LogLevel::Debug, ("LiveView SQL: %s", sql.get()));
     nsresult rv = DatabaseCore::sConnection->CreateStatement(
         sql, getter_AddRefs(mCountStmt));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -202,11 +225,16 @@ NS_IMETHODIMP LiveView::CountMessages(uint64_t* aCount) {
 
 NS_IMETHODIMP LiveView::CountUnreadMessages(uint64_t* aCount) {
   if (!mCountUnreadStmt) {
-    nsAutoCString sql("SELECT COUNT(*) AS count FROM messages WHERE ");
+    nsAutoCString sql;
+    if (mThreadsOnly) {
+      sql = "SELECT COUNT(DISTINCT threadId) AS count FROM messages WHERE ";
+    } else {
+      sql = "SELECT COUNT(*) AS count FROM messages WHERE ";
+    }
     sql.Append(GetSQLClause());
     sql.Append(" AND ~flags & ");
     sql.AppendInt(nsMsgMessageFlags::Read);
-    MOZ_LOG(gLiveViewLog, LogLevel::Debug, ("LiveView SQL: %s", sql.get()));
+    MOZ_LOG(gPanoramaLog, LogLevel::Debug, ("LiveView SQL: %s", sql.get()));
     nsresult rv = DatabaseCore::sConnection->CreateStatement(
         sql, getter_AddRefs(mCountUnreadStmt));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -228,7 +256,8 @@ JSObject* LiveView::CreateJSMessage(uint64_t id, uint64_t folderId,
                                     const char* messageId, PRTime date,
                                     const char* sender, const char* recipients,
                                     const char* subject, uint64_t flags,
-                                    const char* tags, JSContext* cx) {
+                                    const char* tags, uint64_t threadId,
+                                    uint64_t threadParent, JSContext* cx) {
   Rooted<JSObject*> obj(cx, JS_NewPlainObject(cx));
 
   JS_DefineProperty(cx, obj, "id", (double)(id), JSPROP_ENUMERATE);
@@ -256,6 +285,10 @@ JSObject* LiveView::CreateJSMessage(uint64_t id, uint64_t folderId,
   Rooted<Value> val6(cx, StringValue(JS_NewStringCopyZ(cx, tags)));
   JS_DefineProperty(cx, obj, "tags", val6, JSPROP_ENUMERATE);
 
+  JS_DefineProperty(cx, obj, "threadId", (double)(threadId), JSPROP_ENUMERATE);
+  JS_DefineProperty(cx, obj, "threadParent", (double)(threadParent),
+                    JSPROP_ENUMERATE);
+
   return obj;
 }
 
@@ -271,6 +304,8 @@ JSObject* LiveView::CreateJSMessage(Message* aMessage, JSContext* cx) {
   nsAutoCString subject;
   uint32_t flags;
   nsAutoCString tags;
+  nsMsgKey threadId;
+  nsMsgKey threadParent;
 
   aMessage->GetMessageId(messageId);
   aMessage->GetDate(&date);
@@ -279,10 +314,13 @@ JSObject* LiveView::CreateJSMessage(Message* aMessage, JSContext* cx) {
   aMessage->GetSubject(subject);
   aMessage->GetFlags(&flags);
   aMessage->GetStringProperty("keywords", tags);
+  aMessage->GetThreadId(&threadId);
+  aMessage->GetThreadParent(&threadParent);
 
   return CreateJSMessage(aMessage->Key(), aMessage->FolderId(), messageId.get(),
                          date, sender.get(), recipients.get(), subject.get(),
-                         flags, tags.get(), cx);
+                         flags, tags.get(), (uint64_t)threadId,
+                         (uint64_t)threadParent, cx);
 }
 
 NS_IMETHODIMP LiveView::SelectMessages(uint64_t aLimit, uint64_t aOffset,
@@ -299,10 +337,19 @@ NS_IMETHODIMP LiveView::SelectMessages(uint64_t aLimit, uint64_t aOffset,
           ADDRESS_FORMAT(recipients) AS formattedRecipients, \
           subject, \
           flags, \
-          tags \
-        FROM messages \
-        WHERE ");
+          tags, \
+          threadId, \
+          threadParent");
+    if (mThreadsOnly) {
+      // Get only the newest message in each thread. This is the last column and
+      // only exists to tell SQLite what to do, we don't use this data.
+      sql.Append(", MAX(date)");
+    }
+    sql.Append(" FROM messages WHERE ");
     sql.Append(GetSQLClause());
+    if (mThreadsOnly) {
+      sql.Append(" GROUP BY threadId ");
+    }
     sql.Append(" ORDER BY ");
     switch (mSortColumn) {
       case nsILiveView::SortColumn::DATE:
@@ -333,7 +380,7 @@ NS_IMETHODIMP LiveView::SelectMessages(uint64_t aLimit, uint64_t aOffset,
     }
     sql.Append(mSortDescending ? " DESC" : " ASC");
     sql.Append(" LIMIT :limit OFFSET :offset");
-    MOZ_LOG(gLiveViewLog, LogLevel::Debug, ("LiveView SQL: %s", sql.get()));
+    MOZ_LOG(gPanoramaLog, LogLevel::Debug, ("LiveView SQL: %s", sql.get()));
     nsresult rv = DatabaseCore::sConnection->CreateStatement(
         sql, getter_AddRefs(mSelectStmt));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -358,6 +405,8 @@ NS_IMETHODIMP LiveView::SelectMessages(uint64_t aLimit, uint64_t aOffset,
   double folderId;
   double flags;
   const char* tags;
+  double threadId;
+  double threadParent;
 
   while (NS_SUCCEEDED(mSelectStmt->ExecuteStep(&hasResult)) && hasResult) {
     id = mSelectStmt->AsInt64(0);
@@ -369,9 +418,12 @@ NS_IMETHODIMP LiveView::SelectMessages(uint64_t aLimit, uint64_t aOffset,
     subject = mSelectStmt->AsSharedUTF8String(6, &len);
     flags = mSelectStmt->AsInt64(7);
     tags = mSelectStmt->AsSharedUTF8String(8, &len);
+    threadId = mSelectStmt->AsInt64(9);
+    threadParent = mSelectStmt->AsInt64(10);
 
-    JSObject* obj = CreateJSMessage(id, folderId, messageId, date, sender,
-                                    recipients, subject, flags, tags, aCx);
+    JSObject* obj =
+        CreateJSMessage(id, folderId, messageId, date, sender, recipients,
+                        subject, flags, tags, threadId, threadParent, aCx);
     Rooted<Value> message(aCx, ObjectValue(*obj));
     JS_DefineElement(aCx, arr, count++, message, JSPROP_ENUMERATE);
   }

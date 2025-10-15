@@ -33,10 +33,7 @@ ChromeUtils.defineESModuleGetters(this, {
   CalAttendee: "resource:///modules/CalAttendee.sys.mjs",
   CalMetronome: "resource:///modules/CalMetronome.sys.mjs",
   CardDAVDirectory: "resource:///modules/CardDAVDirectory.sys.mjs",
-  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
   GlodaMsgSearcher: "resource:///modules/gloda/GlodaMsgSearcher.sys.mjs",
-  MailE10SUtils: "resource:///modules/MailE10SUtils.sys.mjs",
-  PluralForm: "resource:///modules/PluralForm.sys.mjs",
   UIDensity: "resource:///modules/UIDensity.sys.mjs",
   UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
   VCardProperties: "resource:///modules/VCardUtils.sys.mjs",
@@ -82,6 +79,14 @@ UIDensity.registerWindow(window);
 UIFontSize.registerWindow(window);
 
 var booksList;
+
+/**
+ * UID of address book to select during load if any is desired. Gets set to
+ * false once initial load is complete.
+ *
+ * @type {string|boolean|undefined}
+ */
+let initialAddressBook;
 
 window.addEventListener("load", () => {
   document
@@ -168,7 +173,9 @@ window.addEventListener("load", () => {
     "mail.addr_book.view.startupURI",
     ""
   );
-  if (startupURI) {
+  if (initialAddressBook) {
+    booksList.selectedIndex = booksList.getIndexForUID(initialAddressBook);
+  } else if (startupURI) {
     for (let index = 0; index < booksList.rows.length; index++) {
       const row = booksList.rows[index];
       if (row._book?.URI == startupURI || row._list?.URI == startupURI) {
@@ -186,6 +193,7 @@ window.addEventListener("load", () => {
   cardsPane.searchInput.focus();
 
   window.dispatchEvent(new CustomEvent("about-addressbook-ready"));
+  initialAddressBook = false;
 });
 
 window.addEventListener("unload", () => {
@@ -301,6 +309,10 @@ function createBook(type = Ci.nsIAbManager.JS_DIRECTORY_TYPE) {
  * @param {string} UID - The UID for the address book.
  */
 async function displayAddressBook(UID) {
+  if (initialAddressBook !== false) {
+    initialAddressBook = UID;
+    return;
+  }
   booksList.selectedIndex = booksList.getIndexForUID(UID);
   if (booksList.selectedIndex == 0) {
     // Index 0 was selected before we started listening.
@@ -308,8 +320,6 @@ async function displayAddressBook(UID) {
   }
 
   cardsPane.searchInput.focus();
-
-  window.dispatchEvent(new CustomEvent("about-addressbook-ready"));
 }
 
 /**
@@ -434,6 +444,18 @@ function updateSharedSplitter(isTableLayout) {
 
   splitter.isCollapsed =
     document.getElementById("detailsPane").hidden && isTableLayout;
+}
+
+/**
+ * @param {?string} displayName - The name.
+ * @returns {string} what to display as avatar for the name.
+ */
+function avatarPlaceholder(displayName) {
+  return (
+    Array.from(
+      displayName?.normalize().replaceAll(/[^\p{Letter}\p{Nd}]+/gu, "")
+    )[0]?.toUpperCase() || ""
+  );
 }
 
 /**
@@ -1283,9 +1305,7 @@ customElements.whenDefined("tree-view-table-row").then(() => {
           this.avatar.replaceChildren(img);
         } else {
           const letter = document.createElement("span");
-          letter.textContent = Array.from(
-            this.name.textContent
-          )[0]?.toUpperCase();
+          letter.textContent = avatarPlaceholder(this.name.textContent);
           letter.setAttribute("aria-hidden", "true");
           this.avatar.replaceChildren(letter);
         }
@@ -2966,7 +2986,7 @@ var detailsPane = {
           avatar.appendChild(img);
         } else {
           const letter = document.createElement("span");
-          letter.textContent = Array.from(name.textContent)[0]?.toUpperCase();
+          letter.textContent = avatarPlaceholder(name.textContent);
           letter.setAttribute("aria-hidden", "true");
           avatar.appendChild(letter);
         }
@@ -3774,7 +3794,7 @@ var detailsPane = {
         avatar.appendChild(img);
       } else {
         const letter = document.createElement("span");
-        letter.textContent = Array.from(name.textContent)[0]?.toUpperCase();
+        letter.textContent = avatarPlaceholder(name.textContent);
         letter.setAttribute("aria-hidden", "true");
         avatar.appendChild(letter);
       }

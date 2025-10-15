@@ -160,10 +160,6 @@ mail-tagfield[collapsed] {
 
 /* ::::: msg header buttons ::::: */
 
-#otherActionsButton > .toolbarbutton-icon {
-  display: none;
-}
-
 .message-header-view-button {
   flex-direction: row;
   min-width: 24px;
@@ -244,6 +240,10 @@ mail-tagfield[collapsed] {
 
 .hdrTrashButton {
   list-style-image: var(--icon-trash);
+}
+
+.hdrMoreButton {
+  list-style-image: var(--icon-kebab);
 }
 
 #attachmentSaveAllSingle,
@@ -1005,6 +1005,14 @@ button.email-action-flagged {
   }
 }
 
+/* Conversation view */
+
+.in-conversation {
+  & #expandedsubjectRow {
+    display: none;
+  }
+}
+
 /* Dark Message Mode */
 
 #darkReaderToggle {
@@ -1023,6 +1031,10 @@ button.email-action-flagged {
 @media (prefers-color-scheme: dark) and -moz-pref("mail.dark-reader.show-toggle") {
   #darkReaderToggle {
     display: initial;
+
+    @media (prefers-contrast) {
+      display: none;
+    }
   }
 }
 

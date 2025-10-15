@@ -7,6 +7,8 @@ support-files = ["data/*"]
 
 ["test_ewsFilters.js"]
 
+["test_folder_operations.js"]
+
 ["test_folder_sync.js"]
 
 ["test_item_operations.js"]
@@ -22,3 +24,5 @@ support-files = ["data/*"]
 ["test_syncFolderHierarchy.js"]
 
 ["test_syncMessagesForFolder.js"]
+
+["test_undo.js"]

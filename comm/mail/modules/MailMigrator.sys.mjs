@@ -30,7 +30,7 @@ export var MailMigrator = {
   _migrateUI() {
     // The code for this was ported from
     // mozilla/browser/components/nsBrowserGlue.js
-    const UI_VERSION = 52;
+    const UI_VERSION = 53;
     const UI_VERSION_PREF = "mail.ui-rdf.version";
     let currentUIVersion = Services.prefs.getIntPref(UI_VERSION_PREF, 0);
 
@@ -287,7 +287,7 @@ export var MailMigrator = {
       }
 
       if (currentUIVersion < 51) {
-        // Bug 1968963: Re-run migration 48 and 49 becasue they were skipped on
+        // Bug 1968963: Re-run migration 48 and 49 because they were skipped on
         // release due to the uplifting of the patch containing migration 50.
         Services.prefs.setBoolPref(
           "searchintegration.enable",
@@ -318,6 +318,34 @@ export var MailMigrator = {
               folders[i].userSortOrder = i + 1;
             }
           });
+      }
+
+      if (currentUIVersion < 53) {
+        function removeStaleValue(url, id) {
+          if (Services.xulStore.hasValue(url, id, "hidden")) {
+            if (Services.xulStore.getValue(url, id, "hidden") == "false") {
+              Services.xulStore.removeValue(url, id, "hidden");
+            }
+          }
+        }
+
+        for (const elementID of [
+          "bottom-events-box",
+          "calendar-view-splitter",
+          "status-bar",
+        ]) {
+          removeStaleValue(
+            "chrome://messenger/content/messenger.xhtml",
+            elementID
+          );
+        }
+
+        for (const elementID of ["FormatToolbar", "status-bar"]) {
+          removeStaleValue(
+            "chrome://messenger/content/messengercompose/messengercompose.xhtml",
+            elementID
+          );
+        }
       }
 
       // Migration tasks that may take a long time are not run immediately, but

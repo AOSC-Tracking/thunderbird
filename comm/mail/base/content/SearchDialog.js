@@ -13,6 +13,9 @@
 
 "use strict";
 
+ChromeUtils.importESModule("chrome://messenger/content/treecol-image.mjs", {
+  global: "current",
+});
 ChromeUtils.defineESModuleGetters(this, {
   DBViewWrapper: "resource:///modules/DBViewWrapper.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
@@ -1021,7 +1024,7 @@ SearchFolderDisplayWidget.prototype = {
 
       // update our toolbar equivalent
       UpdateMailSearch("done-search");
-      // stop spining the meteors
+      // stop spinning the meteors
       gStatusFeedback._stopMeteors();
       // set the result test
       this.updateStatusResultText();

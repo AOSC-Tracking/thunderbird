@@ -396,6 +396,7 @@ void nsMsgSearchSession::TimerCallback(nsITimer* aTimer, void* aClosure) {
   bool isShuttingDown = false;
   nsCOMPtr<nsIAppStartup> appStartup(
       mozilla::components::AppStartup::Service());
+  NS_ENSURE_TRUE_VOID(appStartup);
   appStartup->GetShuttingDown(&isShuttingDown);
   if (isShuttingDown) {
     // Shutting down? Stop searching.
@@ -423,7 +424,7 @@ nsresult nsMsgSearchSession::StartTimer() {
   NS_ENSURE_SUCCESS(rv, rv);
   m_backgroundTimer->InitWithNamedFuncCallback(
       TimerCallback, (void*)this, 0, nsITimer::TYPE_REPEATING_SLACK,
-      "nsMsgSearchSession::TimerCallback");
+      "nsMsgSearchSession::TimerCallback"_ns);
   TimerCallback(m_backgroundTimer, this);
   return NS_OK;
 }

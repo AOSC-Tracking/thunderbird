@@ -253,6 +253,6 @@ unified-toolbar-tab {
   stroke: currentColor;
 }
 
-#tolbarContextGetAllNewMessages {
-  list-style-image: var(--icon-cloud-download);
+#toolbarContextGetAllNewMessages {
+  --menuitem-icon: var(--icon-cloud-download);
 }

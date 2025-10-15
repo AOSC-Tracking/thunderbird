@@ -166,7 +166,13 @@ async function copyItems(sourceFolder, destinationFolder, headers, isMove) {
  */
 async function copyFolder(sourceFolder, destinationFolder, isMove) {
   const copyListener = new PromiseTestUtils.PromiseCopyListener();
-  destinationFolder.copyFolder(sourceFolder, isMove, null, copyListener);
+  MailServices.copy.copyFolder(
+    sourceFolder,
+    destinationFolder,
+    isMove,
+    copyListener,
+    null
+  );
   return copyListener.promise;
 }
 
@@ -560,7 +566,7 @@ add_task(async function test_mark_as_read() {
  * Set up the structure required for the folder copy/move tests.
  *
  * This creates `<prefix>_parent1` and `<prefix>_parent2` in the root folder,
- * and `<prefix>_child` inside of `<prefix>_parent1`. Returns a tuple continaing
+ * and `<prefix>_child` inside of `<prefix>_parent1`. Returns a tuple containing
  * the first parent folder, the second parent folder, and the child folder in
  * that order.
  *

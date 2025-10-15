@@ -445,7 +445,7 @@ NS_IMETHODIMP
 nsImapIncomingServer::RetryUrl(nsIImapUrl* aImapUrl,
                                nsIImapMockChannel* aChannel) {
   nsresult rv;
-  // Get current thread envent queue
+  // Get current thread event queue
   aImapUrl->SetMockChannel(aChannel);
   nsCOMPtr<nsIImapProtocol> protocolInstance;
   nsImapProtocol::LogImapUrl("creating protocol instance to retry queued url",
@@ -668,7 +668,7 @@ nsresult nsImapIncomingServer::GetImapConnection(
     if (!canRunUrlImmediately && !canRunButBusy && connection) {
       rv = connection->IsBusy(&isBusy, &isInboxConnection);
       if (NS_FAILED(rv)) continue;
-      // if max connections is <= 1, we have to re-use the inbox connection.
+      // if max connections is <= 1, we have to reuse the inbox connection.
       if (!isBusy && (!isInboxConnection || maxConnections <= 1)) {
         if (!freeConnection)
           freeConnection = connection;
@@ -1503,7 +1503,7 @@ NS_IMETHODIMP nsImapIncomingServer::DiscoveryDone() {
           } else {
             // No special-use trash found.
             // Clear the trash flag unless folder has the default name "Trash",
-            // ignorng case. If folder matches default name, set that folder's
+            // ignoring case. If folder matches default name, set that folder's
             // name as the pref.
             nsAutoCString trashFolderPath;
             rv = PathFromFolder(trashFolder, trashFolderPath);
@@ -1759,24 +1759,32 @@ nsImapIncomingServer::FEAlertWithName(const char* aMsgName,
 }
 
 NS_IMETHODIMP nsImapIncomingServer::FEAlertFromServer(
-    const nsACString& aServerString, nsIMsgMailNewsUrl* aUrl) {
+    const nsACString& aServerString, nsIMsgMailNewsUrl* aUrl, bool forBye) {
   NS_ENSURE_TRUE(!aServerString.IsEmpty(), NS_OK);
 
   nsCString message(aServerString);
   message.Trim(" \t\b\r\n");
   NS_ENSURE_TRUE(!message.IsEmpty(), NS_OK);
-  if (message.Last() != '.') message.Append('.');
 
-  // Skip over the first two words (the command tag and "NO").
-  // Find the first word break.
-  int32_t pos = message.FindChar(' ');
+  // Ensure a period at end and skip over the first two words (the command tag
+  // and "NO"). But keep it all as-is if this is for an untagged BYE which can
+  // occur in place of a correct greeting response while imap server connection
+  // is is attempting to be made; e.g., print "* BYE no can do" in the alert.
+  if (!forBye) {
+    if (message.Last() != '.') message.Append('.');
 
-  // Find the second word break.
-  if (pos != -1) pos = message.FindChar(' ', pos + 1);
+    // Find the first word break.
+    int32_t pos = message.FindChar(' ');
 
-  // Adjust the message.
-  if (pos != -1) message = Substring(message, pos + 1);
+    // Find the second word break.
+    if (pos != -1) pos = message.FindChar(' ', pos + 1);
 
+    // Adjust the message.
+    if (pos != -1) message = Substring(message, pos + 1);
+  } else {
+    // For untagged BYE greeting show the string on a new line.
+    message.Insert("\r\n", 0);
+  }
   nsAutoCString hostName;
   GetPrettyName(hostName);
 

@@ -255,6 +255,7 @@ class ImporterController {
     if (this._inProgress) {
       this._toggleBackButton(true);
       this._el.classList.remove("progress");
+      this._el.querySelector(".before-progress").disabled = true;
       this._restartOnOk = false;
       this._inProgress = false;
     }
@@ -453,6 +454,7 @@ class ProfileImporterController extends ImporterController {
     document.getElementById("profileNextButton").disabled = false;
 
     this.showPane("profiles");
+    delete this._importingFromZip; // Clear any previous value.
   }
 
   /**
@@ -520,7 +522,7 @@ class ProfileImporterController extends ImporterController {
    *
    * @param {SourceProfile} profile - The profile to import from.
    */
-  _showItems(profile) {
+  async _showItems(profile) {
     Steps.updateSteps(
       {
         returnTo: () => {
@@ -531,13 +533,11 @@ class ProfileImporterController extends ImporterController {
       1
     );
     this._el.classList.remove("final-step", "progress");
-    this._sourceProfile = profile;
     document.l10n.setAttributes(
       this._el.querySelector("#app-items h1"),
       `from-app-${this._sourceAppName}`
     );
-    document.getElementById("appSourceProfilePath").textContent =
-      profile.dir.path;
+    this._sourceProfile = profile;
     document.getElementById("appSourceProfilePath").textContent =
       this._sourceProfile.dir.path;
     document.getElementById("appSourceProfileNameWrapper").hidden =
@@ -546,10 +546,19 @@ class ProfileImporterController extends ImporterController {
       document.getElementById("appSourceProfileName").textContent =
         this._sourceProfile.name;
     }
-    this._setItemsChecked(this._importer.SUPPORTED_ITEMS);
-    document.getElementById("profileNextButton").disabled = Object.values(
-      this._importer.SUPPORTED_ITEMS
-    ).every(isChecked => !isChecked);
+
+    if (this._importer.validateSource(this._sourceProfile.dir)) {
+      this._setItemsChecked(this._importer.SUPPORTED_ITEMS);
+    } else {
+      this._setItemsChecked({});
+    }
+
+    const nothingChecked = Object.keys(profileController._itemCheckboxes).every(
+      k => !document.getElementById(k).checked
+    );
+    document.getElementById("appSourceInvalid").hidden = !nothingChecked;
+    document.getElementById("appSourceItems").hidden = nothingChecked;
+    document.getElementById("profileNextButton").disabled = nothingChecked;
 
     this.showPane("items");
   }
@@ -638,60 +647,8 @@ class ProfileImporterController extends ImporterController {
           return li;
         })
     );
+    this._el.querySelector(".before-progress").disabled = false;
     this.showPane("summary");
-  }
-
-  /**
-   * Extract the zip file to a tmp dir, set _sourceProfile.dir to the tmp dir.
-   */
-  async _extractZipFile() {
-    // Extract the zip file to a tmp dir.
-    const targetDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
-    targetDir.append("tmp-profile");
-    targetDir.createUnique(Ci.nsIFile.DIRECTORY_TYPE, 0o755);
-    const ZipReader = Components.Constructor(
-      "@mozilla.org/libjar/zip-reader;1",
-      "nsIZipReader",
-      "open"
-    );
-    const zip = ZipReader(this._sourceProfile.dir);
-    for (const entry of zip.findEntries(null)) {
-      const parts = entry.split("/");
-      if (
-        this._importer.IGNORE_DIRS.includes(parts[1]) ||
-        entry.endsWith("/")
-      ) {
-        continue;
-      }
-      // Folders can not be unzipped recursively, have to iterate and
-      // extract all file entries one by one.
-      const target = targetDir.clone();
-      for (const part of parts.slice(1)) {
-        // Drop the root folder name in the zip file.
-        target.append(part);
-      }
-      if (!target.parent.exists()) {
-        target.parent.create(Ci.nsIFile.DIRECTORY_TYPE, 0o755);
-      }
-      try {
-        this._logger.debug(`Extracting ${entry} to ${target.path}`);
-        zip.extract(entry, target);
-        this._extractedFileCount++;
-        if (this._extractedFileCount % 10 == 0) {
-          const progress = Math.min(
-            (this._extractedFileCount / 200) * 0.2,
-            0.2
-          );
-          this.updateProgress(progress);
-          await new Promise(resolve => setTimeout(resolve));
-        }
-      } catch (e) {
-        this._logger.error(e);
-      }
-    }
-    // Use the tmp dir as source profile dir.
-    this._sourceProfile = { dir: targetDir };
-    this.updateProgress(0.2);
   }
 
   async startImport() {
@@ -705,9 +662,13 @@ class ProfileImporterController extends ImporterController {
     this.showProgress("progress-pane-importing2");
     if (this._importingFromZip) {
       gleanData.importer += ",zip";
-      this._extractedFileCount = 0;
       try {
-        await this._extractZipFile();
+        this._sourceProfile = {
+          dir: await this._importer.extractZipFile(
+            this._sourceProfile.dir,
+            progress => this.updateProgress(progress * 0.2)
+          ),
+        };
       } catch (e) {
         this.showError("error-message-extract-zip-file-failed2");
         Glean.mail.import.record({ ...gleanData, result: "unzipFailed" });
@@ -970,6 +931,7 @@ class AddrBookImporterController extends ImporterController {
         addressBookName: targetAddressBook,
       }
     );
+    this._el.querySelector(".before-progress").disabled = false;
     this.showPane("summary");
   }
 
@@ -1367,6 +1329,7 @@ class CalendarImporterController extends ImporterController {
         targetCalendar,
       }
     );
+    this._el.querySelector(".before-progress").disabled = false;
     this.showPane("summary");
   }
 

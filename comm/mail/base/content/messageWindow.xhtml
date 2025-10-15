@@ -63,7 +63,7 @@
   <title>&titledefault.label;@PRE_RELEASE_SUFFIX@</title>
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src chrome:; style-src chrome: 'unsafe-inline'; script-src chrome: resource: 'unsafe-inline'; img-src chrome: moz-icon:"
+    content="default-src chrome:; style-src chrome: 'unsafe-inline'; script-src chrome: resource: 'unsafe-inline' moz-src:; img-src chrome: moz-icon:"
   />
   <link rel="stylesheet" href="chrome://messenger/skin/messageWindow.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/popupPanel.css" />
@@ -114,7 +114,7 @@
 #ifdef MOZ_SERVICES_SYNC
   <script defer="defer" src="chrome://messenger/content/sync.js"></script>
 #endif
-  <script defer="defer" src="chrome://messenger/content/panelUI.js"></script>
+  <script defer="defer" src="moz-src:///comm/mail/components/customizableui/content/panelUI.js"></script>
   <script defer="defer" src="chrome://messenger/content/chat/toolbarbutton-badge-button.js"></script>
   <script defer="defer" src="chrome://messenger/content/messenger-customization.js"></script>
 #ifdef XP_MACOSX

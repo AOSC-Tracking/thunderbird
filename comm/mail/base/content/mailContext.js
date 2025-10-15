@@ -532,7 +532,7 @@ var mailContextMenu = {
   },
 
   /**
-   * Hide all top level submenus of the context menu that have no visibile items.
+   * Hide all top level submenus of the context menu that have no visible items.
    * Ignores separators since they are only a visual aid for the user and not
    * actual features making the menu worth showing. Excludes generated submenus.
    */
@@ -606,7 +606,10 @@ var mailContextMenu = {
           this.context.linkURL,
           gFolder
             ? MailServices.accounts.getFirstIdentityForServer(gFolder.server)
-            : null
+            : null,
+          event.shiftKey
+            ? Ci.nsIMsgCompFormat.OppositeOfDefault
+            : Ci.nsIMsgCompFormat.Default
         );
         break;
       case "mailContext-copyemail": {

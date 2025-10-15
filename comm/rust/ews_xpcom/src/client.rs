@@ -9,7 +9,6 @@ mod server_version;
 
 use std::{
     cell::{Cell, RefCell},
-    cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
     env,
 };
@@ -36,11 +35,10 @@ use ews::{
     Recipient,
 };
 use fxhash::FxHashMap;
-use itertools::Itertools;
 use mail_parser::MessageParser;
 use mailnews_ui_glue::{
     handle_auth_failure, handle_transport_sec_failure, maybe_handle_connection_error,
-    AuthErrorOutcome, UserInteractiveServer,
+    report_connection_success, AuthErrorOutcome, UserInteractiveServer,
 };
 use moz_http::Response;
 use nserror::nsresult;
@@ -443,11 +441,13 @@ where
                         "message:ReplyTo",
                         "message:Sender",
                         "item:Subject",
-                        "item:DisplayTo",
-                        "item:DisplayCc",
+                        "message:ToRecipients",
+                        "message:CcRecipients",
+                        "message:BccRecipients",
                         "item:HasAttachments",
                         "item:Importance",
                         "message:References",
+                        "item:Size",
                     ],
                     false,
                 )
@@ -463,39 +463,14 @@ where
                 })
                 .collect::<Result<_, _>>()?;
 
-            // There is no guarantee the server will correctly batch and order
-            // all the changes in the response, so, just to be safe, we make
-            // sure they're ordered in a sensible way. More specifically, we
-            // want to enforce the following order in the type of changes we
-            // process:
-            //  * message creations (new messages)
-            //  * updates to existing messages
-            //  * message deletions
-            let changes: Vec<_> = message
-                .changes
-                .inner
-                .into_iter()
-                // `sorted_by` is provided by the `Itertools` trait, imported
-                // from the `itertools` crate.
-                .sorted_by(|a, b| match a {
-                    sync_folder_items::Change::Create { .. } => match b {
-                        sync_folder_items::Change::Create { .. } => Ordering::Equal,
-                        _ => Ordering::Less,
-                    },
-                    sync_folder_items::Change::Update { .. }
-                    | sync_folder_items::Change::ReadFlagChange { .. } => match b {
-                        sync_folder_items::Change::Create { .. } => Ordering::Greater,
-                        sync_folder_items::Change::Delete { .. } => Ordering::Less,
-                        _ => Ordering::Equal,
-                    },
-                    sync_folder_items::Change::Delete { .. } => match b {
-                        sync_folder_items::Change::Delete { .. } => Ordering::Equal,
-                        _ => Ordering::Greater,
-                    },
-                })
-                .collect();
-
-            for change in changes {
+            // Iterate over each change we got from the server. We expect that
+            // the server has ordered these changes in chronological order. This
+            // means if, for a same given EWS ID, a message was created, then
+            // deleted, then created again (which isn't really something that
+            // should happen anywhere outside of our tests), it should be
+            // represented in the response as a `Create`, then a `Delete`, then
+            // another `Create`, in that order.
+            for change in message.changes.inner.into_iter() {
                 match change {
                     sync_folder_items::Change::Create { item } => {
                         let item_id = &item
@@ -796,30 +771,31 @@ where
         message_iter
             .filter_map(|(&distinguished_id, response_class)| {
                 let message = match process_response_message_class("GetFolder", response_class) {
-                    Ok(message) => message,
+                    Ok(message) => Some(message),
+
+                    // Not every Exchange account will have all queried
+                    // well-known folders, so we skip any which were not
+                    // found.
+                    Err(XpComEwsError::ResponseError(ResponseError {
+                        response_code: ResponseCode::ErrorFolderNotFound,
+                        ..
+                    })) => None,
+
+                    // Return any other error.
                     Err(err) => {
                         return Some(Err(err));
                     }
                 };
-                match validate_get_folder_response_message(&message) {
-                    // Map from EWS folder ID to distinguished ID.
-                    Ok(folder_id) => Some(Ok((folder_id.id, distinguished_id))),
 
-                    Err(err) => {
-                        match err {
-                            // Not every Exchange account will have all queried
-                            // well-known folders, so we skip any which were not
-                            // found.
-                            XpComEwsError::ResponseError(ResponseError {
-                                response_code: ResponseCode::ErrorFolderNotFound,
-                                ..
-                            }) => None,
-
-                            // Propagate any other error.
-                            _ => Some(Err(err)),
-                        }
+                message.and_then(|message| {
+                    // Validate the message (and propagate any error) if it's
+                    // not `None`.
+                    match validate_get_folder_response_message(&message) {
+                        // Map from EWS folder ID to distinguished ID.
+                        Ok(folder_id) => Some(Ok((folder_id.id, distinguished_id))),
+                        Err(err) => Some(Err(err)),
                     }
-                }
+                })
             })
             .collect()
     }
@@ -1496,7 +1472,7 @@ where
     async fn delete_folder_inner(self, folder_id: String) -> Result<(), XpComEwsError> {
         let delete_folder = DeleteFolder {
             folder_ids: vec![BaseFolderId::FolderId {
-                id: folder_id,
+                id: folder_id.clone(),
                 change_key: None,
             }],
             delete_type: DeleteType::HardDelete,
@@ -1509,9 +1485,24 @@ where
         // contain one response message.
         let response_messages = response.into_response_messages();
         let response_message = single_response_or_error(response_messages)?;
-        process_response_message_class("DeleteFolder", response_message)?;
-
-        Ok(())
+        match process_response_message_class("DeleteFolder", response_message) {
+            Ok(_) => Ok(()),
+            Err(err) => match err {
+                XpComEwsError::ResponseError(ResponseError {
+                    response_code: ResponseCode::ErrorItemNotFound,
+                    ..
+                }) => {
+                    // Something happened in a previous attempt that caused the
+                    // folder to be deleted on the EWS server but not in the
+                    // database. In this case, we don't want to force a zombie
+                    // folder in the account, so we ignore the error and move on
+                    // with the local deletion.
+                    log::warn!("found folder that was deleted from the EWS server but not the local db: {folder_id}");
+                    Ok(())
+                }
+                _ => Err(err),
+            },
+        }
     }
 
     pub async fn update_folder(
@@ -1626,7 +1617,7 @@ where
                             // entered a new password after being prompted for one),
                             // and should we emit more requests using this client,
                             // we should be using up to date credentials.
-                            let credentials = self.server.get_credentials()?;
+                            let credentials = self.server.get_credentials(None)?;
                             self.credentials.replace(credentials);
 
                             match outcome {
@@ -1665,6 +1656,8 @@ where
                     };
                 }
             };
+
+            report_connection_success(self.server.clone())?;
 
             // Don't immediately propagate in case the error represents a
             // throttled request, which we can address with retry.
@@ -1866,6 +1859,17 @@ fn populate_db_message_header_from_message_headers(
     if let Some(references) = msg.references() {
         let references = nsCString::from(references.as_ref());
         unsafe { header.SetReferences(&*references) }.to_result()?;
+    }
+
+    if let Some(size) = msg.size() {
+        match size.try_into() {
+            Ok(size) => {
+                unsafe { header.SetMessageSize(size) }.to_result()?;
+            }
+            Err(_) => {
+                log::error!("failed to compute size for message that's larger than supported max size of {}", u32::MAX);
+            }
+        };
     }
 
     Ok(())

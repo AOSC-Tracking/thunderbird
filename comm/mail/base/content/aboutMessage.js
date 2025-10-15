@@ -146,6 +146,7 @@ window.addEventListener("DOMContentLoaded", event => {
 
   preferenceObserver.init();
   Services.obs.addObserver(msgObserver, "message-content-updated");
+  Services.obs.addObserver(msgObserver, "ipc:network:set-offline");
 
   const browser = getMessagePaneBrowser();
 
@@ -187,10 +188,6 @@ window.addEventListener("DOMContentLoaded", event => {
     });
   }
 
-  window.dispatchEvent(
-    new CustomEvent("aboutMessageLoaded", { bubbles: true })
-  );
-
   window.addEventListener("MsgLoaded", msgObserver);
   prefersDarkQuery.addEventListener("change", msgObserver);
 
@@ -217,6 +214,12 @@ window.addEventListener("DOMContentLoaded", event => {
     );
     messagePane.focus();
   });
+
+  customElements.whenDefined("attachment-list").then(() => {
+    window.dispatchEvent(
+      new CustomEvent("aboutMessageLoaded", { bubbles: true })
+    );
+  });
 });
 
 window.addEventListener("unload", () => {
@@ -225,6 +228,7 @@ window.addEventListener("unload", () => {
   MailServices.mailSession.RemoveFolderListener(folderListener);
   preferenceObserver.cleanUp();
   Services.obs.removeObserver(msgObserver, "message-content-updated");
+  Services.obs.removeObserver(msgObserver, "ipc:network:set-offline");
   window.removeEventListener("MsgLoaded", msgObserver);
   prefersDarkQuery.removeEventListener("change", msgObserver);
   gViewWrapper?.close();
@@ -237,7 +241,7 @@ window.addEventListener("unload", () => {
  * @param {?DBViewWrapper} viewWrapper - View wrapper.
  */
 function displayMessage(uri, viewWrapper) {
-  // Clear the state flags, if this window is re-used.
+  // Clear the state flags, if this window is reused.
   window.msgLoaded = false;
   window.msgLoading = false;
 
@@ -445,6 +449,20 @@ var msgObserver = {
       // fully downloaded. The old message URI is now gone. To reload the
       // message, we display it with its new URI.
       displayMessage(data, gViewWrapper);
+      return;
+    }
+
+    // Check if the 'Try again' button in 'about:neterror' (displayed for NNTP
+    // connection issues) has been pressed. Since this button only enables
+    // online mode, we act on observing the corresponding notification when not
+    // offline.
+    if (
+      topic == "ipc:network:set-offline" &&
+      data == "false" &&
+      gMessageURI?.startsWith("news-message://") &&
+      !Services.io.offline
+    ) {
+      ReloadMessage();
     }
   },
 
@@ -579,7 +597,7 @@ var messageHistory = {
    *
    * If the history is growing larger than what we want to keep, it is trimmed.
    *
-   * Assumes the view is currently in the folder that should be comitted to
+   * Assumes the view is currently in the folder that should be committed to
    * history.
    *
    * @param {string} messageURI - Message to add to the history.
@@ -662,7 +680,7 @@ var messageHistory = {
     return { entries: this._history.slice(), currentIndex: this._currentIndex };
   },
   /**
-   * Get a specific history entry relative to the current positon.
+   * Get a specific history entry relative to the current position.
    *
    * @param {number} delta - Relative index to get the value of.
    * @returns {?MessageHistoryEntry} If found, the message and

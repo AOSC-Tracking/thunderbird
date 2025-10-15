@@ -32,6 +32,7 @@
   <link rel="stylesheet" href="chrome://messenger/skin/searchBox.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/about3Pane.css" />
 
+  <link rel="localization" href="calendar/calendar.ftl" />
   <link rel="localization" href="messenger/about3Pane.ftl" />
   <link rel="localization" href="messenger/treeView.ftl" />
   <link rel="localization" href="messenger/messenger.ftl" />
@@ -49,6 +50,7 @@
   <script type="module" src="chrome://messenger/content/tree-listbox.mjs"></script>
   <script type="module" src="chrome://messenger/content/thread-card.mjs"></script>
   <script type="module" src="chrome://messenger/content/thread-row.mjs"></script>
+  <script type="module" src="chrome://messenger/content/drop-indicator.mjs"></script>
   <script type="module" src="chrome://messenger/content/folder-tree-row.mjs"></script>
   <script type="module" src="chrome://messenger/content/tree-view.mjs"></script>
   <script type="module" src="chrome://messenger/content/pane-layout.mjs"></script>
@@ -59,6 +61,7 @@
 </head>
 <body id="paneLayout" is="pane-layout" class="layout-classic">
   <div id="folderPane" class="collapsed-by-splitter" tabindex="-1">
+    <img is="drop-indicator" id="dropIndicator" horizontal="horizontal" />
     <div id="folderPaneHeaderBar" class="sidebar-panel-header" hidden="hidden">
 # Force a reverse tabindex to work alongside the `flex-direction: row-reverse`
 # in order to guarantee a consistent end alignment of the `#folderPaneMoreButton`.
@@ -107,6 +110,8 @@
         <span class="folder-count-badge unread-count"></span>
         <span class="folder-count-badge total-count" hidden="hidden"></span>
         <span class="folder-size" hidden="hidden"></span>
+        <button class="status-icon button button-flat icon-button icon-only"
+                hidden="hidden"></button>
       </div>
       <ul></ul>
     </template>
@@ -324,12 +329,7 @@
               </div>
               <div class="thread-card-icon-info">
                 <img class="attachment-icon" src="" data-l10n-id="tree-list-view-row-attach" />
-                <div class="thread-card-tags-info">
-                  <img class="tag-icon" src="" alt="" hidden="hidden" />
-                  <img class="tag-icon" src="" alt="" hidden="hidden" />
-                  <img class="tag-icon" src="" alt="" hidden="hidden" />
-                  <span class="tag-more" hidden="hidden"></span>
-                </div>
+                <thread-card-tags></thread-card-tags>
                 <button class="button-spam tree-button-spam"
                         data-l10n-id="tree-list-view-row-spam"
                         aria-hidden="true"
@@ -356,6 +356,7 @@
 #include templates/messagePaneTemplate.inc.xhtml
   <message-pane id="messagePane" class="collapsed-by-splitter"></message-pane>
   <xul:browser id="accountCentralBrowser" hidden="true"/>
+#include templates/conversationViewTemplate.inc.xhtml
 </body>
 <popupset xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
   <menupopup id="folderPaneContext" class="gutter-popup">

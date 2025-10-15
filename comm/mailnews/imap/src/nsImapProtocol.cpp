@@ -1012,6 +1012,9 @@ nsresult nsImapProtocol::SetupWithUrlCallback(nsIProxyInfo* aProxyInfo) {
                                        getter_AddRefs(m_outputStream));
     if (NS_FAILED(rv)) return rv;
     SetFlag(IMAP_CONNECTION_IS_OPEN);
+
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    obs->NotifyObservers(m_runningUrl, "server-connection-succeeded", nullptr);
   }
 
   return rv;
@@ -1624,6 +1627,8 @@ void nsImapProtocol::EstablishServerConnection() {
 #define ESC_CAPABILITY_OK_LEN ESC_LENGTH(ESC_CAPABILITY_OK)
 #define ESC_CAPABILITY_GREETING (ESC_CAPABILITY_OK "CAPABILITY")
 #define ESC_CAPABILITY_GREETING_LEN ESC_LENGTH(ESC_CAPABILITY_GREETING)
+#define ESC_BYE "* BYE"
+#define ESC_BYE_LEN ESC_LENGTH(ESC_BYE)
 
   char* serverResponse = CreateNewLineFromSocket();  // read in the greeting
   // record the fact that we've received a greeting for this connection so we
@@ -1695,8 +1700,21 @@ void nsImapProtocol::EstablishServerConnection() {
            hostName.get()));
       SetConnectionStatus(NS_ERROR_FAILURE);  // stop netlib
     }
+  } else if (!PL_strncasecmp(serverResponse, ESC_BYE, ESC_BYE_LEN)) {
+    if (m_imapServerSink) {
+      nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(m_runningUrl);
+      m_imapServerSink->FEAlertFromServer(nsDependentCString(serverResponse),
+                                          mailnewsUrl, true);
+    }
+    SetConnectionStatus(NS_ERROR_FAILURE);  // stop netlib
+    if (MOZ_LOG_TEST(IMAP, LogLevel::Error)) {
+      const nsCString& hostName = GetImapHostName();
+      MOZ_LOG(IMAP, LogLevel::Error,
+              ("BYE greeting sent by IMAP server %s. "
+               "Connection rejected by server and is now closed.",
+               hostName.get()));
+    }
   }
-
   PR_Free(serverResponse);  // we don't care about the greeting yet...
 
 #undef ESC_LENGTH
@@ -1710,6 +1728,8 @@ void nsImapProtocol::EstablishServerConnection() {
 #undef ESC_CAPABILITY_OK_LEN
 #undef ESC_CAPABILITY_GREETING
 #undef ESC_CAPABILITY_GREETING_LEN
+#undef ESC_BYE
+#undef ESC_BYE_LEN
 }
 
 // This can get called from the UI thread or an imap thread.
@@ -3069,7 +3089,7 @@ void nsImapProtocol::ProcessSelectedStateURL() {
           // and expunge from trash only these messages. With default gmail.com
           // imap setting this completely removes the deleted messages, even
           // from All Mail. Gmail supports UIDPLUS so no check of imap
-          // capabilites is needed, but if a command fails or is not supported
+          // capabilities is needed, but if a command fails or is not supported
           // below, the added flags (including \deleted) are set for the folder.
           if (m_isGmailServer && !GetShowDeletedMessages() &&
               (msgFlags & kImapMsgDeletedFlag) && gExpungeAfterDelete) {
@@ -5229,11 +5249,11 @@ void nsImapProtocol::AlertUserEventFromServer(const char* aServerEvent,
       nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl =
           do_QueryInterface(m_runningUrlLatest);
       m_imapServerSinkLatest->FEAlertFromServer(
-          nsDependentCString(aServerEvent), mailnewsUrl);
+          nsDependentCString(aServerEvent), mailnewsUrl, false);
     } else if (m_imapServerSink) {
       nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(m_runningUrl);
       m_imapServerSink->FEAlertFromServer(nsDependentCString(aServerEvent),
-                                          mailnewsUrl);
+                                          mailnewsUrl, false);
     }
   }
 }
@@ -6829,7 +6849,7 @@ void nsImapProtocol::OnStatusForFolder(const char* mailboxName) {
     // folder. Handle as though this were an IDLE response. Can't check for any
     // untagged as for Noop() above since STATUS always produces an untagged
     // response for the target mailbox and possibly also for the SELECTed box.
-    // Of cource, this won't occur if imap connection is not in selected state.
+    // Of course, this won't occur if imap connection is not in selected state.
     if (GetServerStateParser().GetIMAPstate() ==
             nsImapServerResponseParser::kFolderSelected &&
         m_imapMailFolderSinkSelected &&
@@ -9434,7 +9454,7 @@ nsresult nsImapMockChannel::OpenCacheEntry() {
   // clang-format on
 
   // Use the uid validity as part of the cache key, so that if the uid validity
-  // changes, we won't re-use the wrong cache entries.
+  // changes, we won't reuse the wrong cache entries.
   nsAutoCString extension;
   extension.AppendInt(uidValidity, 16);
 
@@ -9540,7 +9560,7 @@ nsresult nsImapMockChannel::ReadFromCache2(nsICacheEntry* entry) {
       // since only async access occurs) so don't check it.
       if (NS_FAILED(rv)) {
         MOZ_LOG(IMAPCache, LogLevel::Debug,
-                ("%s: Input stream for disk cache not useable", __func__));
+                ("%s: Input stream for disk cache not usable", __func__));
         useCacheEntry = false;
       }
     }

@@ -24,7 +24,7 @@
     <title>&wizard.title;</title>
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline' moz-src:; style-src chrome: 'unsafe-inline'"
     />
     <link rel="stylesheet" href="chrome://messenger/skin/messenger.css" />
     <link rel="stylesheet" href="chrome://messenger/skin/input-fields.css" />
@@ -32,6 +32,7 @@
     <link rel="stylesheet" href="chrome://messenger/skin/themeableDialog.css" />
     <link rel="stylesheet" href="chrome://calendar/skin/shared/calendar-creation.css" />
     <link rel="localization" href="toolkit/global/wizard.ftl" />
+    <link rel="localization" href="calendar/calendar.ftl" />
     <link rel="localization" href="calendar/calendar-creation.ftl" />
     <script defer="defer" src="chrome://messenger/content/globalOverlay.js"></script>
     <script defer="defer" src="chrome://global/content/editMenuOverlay.js"></script>
@@ -211,6 +212,9 @@
             <description class="status-label network-authfail-label"
               >&network.authfail.description;</description
             >
+            <description class="status-label network-certerror-label"
+              >&network.certerror.description;</description
+            >
           </html:td>
         </html:tr>
       </html:table>
@@ -243,7 +247,8 @@
         </hbox>
         <richlistbox
           id="network-calendar-list"
-          propertiesbuttonlabel="&calendar.context.properties.label;"
+          data-l10n-id="calendar-context-properties"
+          data-l10n-attrs="aria-label"
         />
         <html:hr />
         <hbox>

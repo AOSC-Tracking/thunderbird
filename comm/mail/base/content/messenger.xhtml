@@ -174,7 +174,7 @@
   <script defer="defer" src="chrome://messenger/content/sync.js"></script>
 #endif
   <!-- panelUI.js is for the appmenus. -->
-  <script defer="defer" src="chrome://messenger/content/panelUI.js"></script>
+  <script defer="defer" src="moz-src:///comm/mail/components/customizableui/content/panelUI.js"></script>
 #ifdef XP_MACOSX
   <script defer="defer" src="chrome://messenger/content/macMessengerMenu.js"></script>
   <script defer="defer" src="chrome://global/content/macWindowMenu.js"></script>
@@ -217,6 +217,7 @@
   <script defer="defer" src="chrome://calendar/content/widgets/calendar-minidate.js"></script>
   <script defer="defer" src="chrome://calendar/content/widgets/calendar-minimonth.js"></script>
   <script defer="defer" src="chrome://calendar/content/widgets/calendar-modebox.js"></script>
+  <script type="module" src="chrome://messenger/content/drop-indicator.mjs"></script>
 
   <!-- NEEDED FOR TASK VIEW/LIST SUPPORT -->
   <script defer="defer" src="chrome://calendar/content/calendar-task-editing.js"></script>
@@ -248,6 +249,7 @@
   <script defer="defer" src="chrome://calendar/content/calendar-dialog-utils.js"></script>
   <script defer="defer" src="chrome://calendar/content/calApplicationUtils.js"></script>
   <script defer="defer" src="chrome://calendar/content/calendar-menus.js"></script>
+  <script type="module" src="chrome://messenger/content/treecol-image.mjs"></script>
 
   <!-- NEEDED FOR MIGRATION CHECK AT INSTALL -->
   <script defer="defer" src="chrome://calendar/content/calendar-migration.js"></script>
@@ -533,10 +535,7 @@
             alltabsbutton="alltabs-button"
             context="toolbar-context-menu"
             collapsetoolbar="tabs-toolbar">
-        <html:img class="tab-drop-indicator"
-                  src="chrome://messenger/skin/icons/tab-drag-indicator.svg"
-                  alt=""
-                  hidden="hidden" />
+        <html:img is="drop-indicator" />
         <arrowscrollbox id="tabmail-arrowscrollbox"
                         orient="horizontal"
                         flex="1"

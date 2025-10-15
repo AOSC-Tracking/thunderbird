@@ -305,7 +305,7 @@ nsresult FolderCompactor::BeginCompacting(
   rv = msgStore->AsyncCompact(mFolder, this, patchXMozillaHeaders);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Gah. Would much rather have this notification defered until
+  // Gah. Would much rather have this notification deferred until
   // OnCompactionBegin() is called, but test_nsIMsgFolderListenerLocal.js
   // relies on this being called _before_ we return...
   // See Bug 1887592.
@@ -634,7 +634,7 @@ NS_IMETHODIMP FolderCompactor::OnCompactionComplete(nsresult status) {
              mPaths.Compacted->HumanReadablePath().get(),
              mPaths.Source->HumanReadablePath().get(), (uint32_t)rv));
   }
-  // Return as soon as possible - we're in a critial phase here.
+  // Return as soon as possible - we're in a critical phase here.
   // We've updated the high-level (db) stuff, so we're out of sync until the
   // low-level side commits it's changes (e.g. installs the compacted mbox).
   // If anything went wrong, returning an error here tells the lower-level
@@ -723,6 +723,7 @@ RefPtr<FolderCompactor::ShutdownObserver>
 FolderCompactor::ShutdownObserver::ShutdownObserver() {
   nsCOMPtr<nsIAppStartup> appStartup(
       mozilla::components::AppStartup::Service());
+  NS_ENSURE_TRUE_VOID(appStartup);
   appStartup->GetShuttingDown(&mIsShuttingDown);
 
   if (!mIsShuttingDown) {
@@ -931,7 +932,7 @@ void BatchCompactor::StartNext() {
            mAttempt, (int)mQueue.Length(), kRetryDelayMs));
       nsresult rv = mRetryTimer->InitWithNamedFuncCallback(
           RetryTimerCallback, (void*)this, kRetryDelayMs,
-          nsITimer::TYPE_ONE_SHOT, "BatchCompactor RetryTimer");
+          nsITimer::TYPE_ONE_SHOT, "BatchCompactor RetryTimer"_ns);
       if (NS_SUCCEEDED(rv)) {
         // Time to wait.
         return;
@@ -972,7 +973,7 @@ void BatchCompactor::StartNext() {
       continue;
     }
 
-    // We've sucessfully set a compaction running!
+    // We've successfully set a compaction running!
     if (mWindow) {
       GUIShowCompactingMsg(mWindow, mQueue.LastElement());
     }

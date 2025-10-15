@@ -76,6 +76,9 @@ export class ThunderbirdProfileImporter extends BaseProfileImporter {
     "xulstore",
   ];
 
+  /**
+   * @returns {SourceProfile[]} Profiles found on this machine.
+   */
   async getSourceProfiles() {
     const profileService = Cc[
       "@mozilla.org/toolkit/profile-service;1"
@@ -91,6 +94,104 @@ export class ThunderbirdProfileImporter extends BaseProfileImporter {
       });
     }
     return sourceProfiles;
+  }
+
+  /**
+   * Test `sourceProfileDir` for required files.
+   *
+   * @param {nsIFile} sourceProfileDir - A directory or file (likely but not
+   *   necessarily a zip file) to be imported.
+   * @returns {boolean} False if importing this source should not continue.
+   */
+  validateSource(sourceProfileDir) {
+    this._logger.debug(
+      `Validating ${sourceProfileDir.path} is a Thunderbird profile`
+    );
+    if (sourceProfileDir.isDirectory()) {
+      return this.validateDirectorySource(sourceProfileDir);
+    }
+
+    const zipReader = Cc["@mozilla.org/libjar/zip-reader;1"].createInstance(
+      Ci.nsIZipReader
+    );
+    try {
+      zipReader.open(sourceProfileDir);
+      zipReader.test(null);
+    } catch {
+      this._logger.debug(
+        `${sourceProfileDir.leafName} is not a zip file, too big to be opened, or corrupt`
+      );
+      return false;
+    }
+
+    // The profile data could be at the top level, or inside a lone folder at
+    // the top level. Find out which.
+    const entries = [...zipReader.findEntries(null)];
+    const rootDirs = entries.filter(e => /^[^\/]*\/$/.test(e));
+    if (
+      entries.length > 1 &&
+      rootDirs.length == 1 &&
+      this.validateZipSource(zipReader, rootDirs[0])
+    ) {
+      return true;
+    }
+
+    return this.validateZipSource(zipReader);
+  }
+
+  /**
+   * Test `sourceProfileDir` for required files.
+   *
+   * @param {nsIFile} sourceProfileDir - A directory to be imported.
+   * @returns {boolean} False if importing this source should not continue.
+   */
+  validateDirectorySource(sourceProfileDir) {
+    const candidates = ["prefs.js", "ImapMail", "Mail", "News"];
+    for (const candidate of candidates) {
+      const candidateFile = sourceProfileDir.clone();
+      candidateFile.append(candidate);
+      if (candidateFile.exists()) {
+        this._logger.debug(
+          `${sourceProfileDir.leafName} is a directory containing ${candidate}, assuming it is a Thunderbird profile`
+        );
+        return true;
+      }
+    }
+    this._logger.debug(
+      `${sourceProfileDir.leafName} contains none of the candidate files, it is not a Thunderbird profile`
+    );
+    return false;
+  }
+
+  /**
+   * Test a zip file for required files.
+   *
+   * @param {nsIZipReader} zipReader - A reader already opened on the file
+   *   to be imported.
+   * @param {string} [prefix=""] - A prefix to apply to all paths being checked.
+   * @returns {boolean} False if importing this source should not continue.
+   */
+  validateZipSource(zipReader, prefix = "") {
+    // Directory entries are optional and end with a slash. Helpfully
+    // our zip reader says there ARE entries (for non-empty directories)
+    // even if there are not.
+    const candidates = ["prefs.js", "ImapMail/", "Mail/", "News/"];
+    if (prefix && candidates.includes(prefix)) {
+      return false;
+    }
+
+    for (const candidate of candidates) {
+      if (zipReader.hasEntry(prefix + candidate)) {
+        this._logger.debug(
+          `${zipReader.file.leafName} is a zip file containing ${prefix}${candidate}, assuming it is a Thunderbird profile`
+        );
+        return true;
+      }
+    }
+    this._logger.debug(
+      `${zipReader.file.leafName} contains none of the candidate files, it is not a Thunderbird profile`
+    );
+    return false;
   }
 
   async startImport(sourceProfileDir, items) {
@@ -167,6 +268,9 @@ export class ThunderbirdProfileImporter extends BaseProfileImporter {
 
     const sourcePrefsFile = this._sourceProfileDir.clone();
     sourcePrefsFile.append("prefs.js");
+    if (!sourcePrefsFile.exists()) {
+      return;
+    }
     const sourcePrefsBuffer = await IOUtils.read(sourcePrefsFile.path);
 
     const savePref = (type, name, value) => {
@@ -305,7 +409,7 @@ export class ThunderbirdProfileImporter extends BaseProfileImporter {
   }
 
   /**
-   * Import mail identites.
+   * Import mail identities.
    *
    * @param {PrefItem[]} prefs - All source prefs in the MAIL_IDENTITY branch.
    * @param {SmtpServerKeyMap} smtpServerKeyMap - A map from the source SMTP
@@ -658,7 +762,7 @@ export class ThunderbirdProfileImporter extends BaseProfileImporter {
         const newFolder = targetDir.clone();
         newFolder.append(entry.leafName);
         newFolder.create(Ci.nsIFile.DIRECTORY_TYPE, 0o755);
-        this._recursivelyCopyMsgFolder(entry, newFolder);
+        this._recursivelyCopyMsgFolder(entry, newFolder, isTargetLocal);
       } else {
         const leafName = entry.leafName;
         const extName = leafName.slice(leafName.lastIndexOf(".") + 1);

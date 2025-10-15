@@ -13,11 +13,12 @@
     <title data-l10n-id="outgoing-server-settings-title"></title>
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline' moz-src:; style-src chrome: 'unsafe-inline'; connect-src https:"
     />
     <link rel="stylesheet" href="chrome://messenger/skin/accountManage.css" />
 
     <link rel="localization" href="messenger/accountManager.ftl" />
+    <link rel="localization" href="messenger/certError.ftl" />
 
     <script
       defer="defer"
@@ -26,6 +27,10 @@
     <script
       defer="defer"
       src="chrome://global/content/editMenuOverlay.js"
+    ></script>
+    <script
+      type="module"
+      src="chrome://messenger/content/certificate-check.mjs"
     ></script>
     <script defer="defer" src="chrome://messenger/content/amUtils.js"></script>
     <script defer="defer" src="chrome://messenger/content/am-smtp.js"></script>

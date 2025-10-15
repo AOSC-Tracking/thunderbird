@@ -137,8 +137,8 @@ class CalDavRequestBase {
      */
     function tryGetInterface(aObj) {
       try {
-        const requestor = aObj.QueryInterface(Ci.nsIInterfaceRequestor);
-        return requestor.getInterface(aIID);
+        const requester = aObj.QueryInterface(Ci.nsIInterfaceRequestor);
+        return requester.getInterface(aIID);
       } catch (e) {
         return null;
       }
@@ -423,9 +423,20 @@ class CalDavSimpleResponse extends CalDavResponseBase {
       // this.request is CalDavRequestBase instance and it contains calICalendar property
       // which is needed for checkBadCertStatus. CalDavRequestBase.calendar can be null,
       // this possibility is handled in BadCertHandler.
-      cal.provider.checkBadCertStatus(aLoader.request, aStatus, this.request.calendar);
+      this.#certError = cal.provider.checkBadCertStatus(
+        aLoader.request,
+        aStatus,
+        this.request.calendar
+      );
       this._onrespondederror(this);
     }
+  }
+
+  #certError = false;
+
+  /** If the response had a certificate error. */
+  get certError() {
+    return this.#certError;
   }
 }
 
@@ -1088,7 +1099,7 @@ class FreeBusyResponse extends CalDavSimpleResponse {
      * Helper to get the trimmed text content
      *
      * @param {Element} aParent - The parent node to search in
-     * @param {string} aPath - The css query path to serch
+     * @param {string} aPath - The css query path to search
      * @returns {string} The trimmed text content
      */
     function querySelectorText(aParent, aPath) {

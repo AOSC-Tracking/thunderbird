@@ -136,6 +136,9 @@ function createCalendar({
  * @param {boolean} [options.repeats=false] - If the event is repeating.
  * @param {string} [options.location] - Location of the event. Only set if not
  *  falsy.
+ * @param {string} [options.description=""] - Description for the event.
+ * @param {string} [options.descriptionHTML] - HTML version of the
+ *   description. Overrides description if truthy.
  *
  * @returns {CalEvent} - The created event.
  */
@@ -148,6 +151,8 @@ async function createEvent({
   categories = [],
   repeats = false,
   location,
+  description = "",
+  descriptionHTML,
 } = {}) {
   let start = new Date(baseDate);
   start.setDate(baseDate.getDate() + offset);
@@ -164,6 +169,10 @@ async function createEvent({
   event.title = name;
   event.startDate = start;
   event.endDate = end;
+  event.descriptionText = description;
+  if (descriptionHTML) {
+    event.descriptionHTML = descriptionHTML;
+  }
 
   if (repeats) {
     event.recurrenceInfo = new CalRecurrenceInfo(event);
@@ -294,7 +303,7 @@ async function waitForCalendarReady() {
 }
 
 /**
- * Check that the dialog falls within the expected tollerances of the target
+ * Check that the dialog falls within the expected tolerances of the target
  * and the container elements.
  *
  * @param {HTMLElement} target - The target element to compare against.
@@ -350,17 +359,17 @@ function checkTollerance(target, message) {
 
   Assert.ok(
     horizontalContainer,
-    `${message} - within horizontal container tollerance`
+    `${message} - within horizontal container tolerance`
   );
   Assert.ok(
     horizontalTarget,
-    `${message} - within horizontal target tollerance`
+    `${message} - within horizontal target tolerance`
   );
   Assert.ok(
     verticalContainer,
-    `${message} - within vertical container tollerance`
+    `${message} - within vertical container tolerance`
   );
-  Assert.ok(verticalTarget, `${message} - within vertical  target tollerance`);
+  Assert.ok(verticalTarget, `${message} - within vertical  target tolerance`);
 }
 
 const originalWidth = window.outerWidth;

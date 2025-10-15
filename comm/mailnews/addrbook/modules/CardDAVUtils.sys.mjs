@@ -167,44 +167,58 @@ export var CardDAVUtils = {
               // non-cert error, so ignore this.
             }
 
-            if (isCertError && finalChannel.securityInfo) {
-              const secInfo = finalChannel.securityInfo.QueryInterface(
-                Ci.nsITransportSecurityInfo
-              );
-              const params = {
-                exceptionAdded: false,
-                securityInfo: secInfo,
-                prefetchCert: true,
-                location: finalChannel.originalURI.displayHostPort,
-              };
-              const deferred = Promise.withResolvers();
-              const dialog = Services.wm
-                .getMostRecentWindow("")
-                .openDialog(
-                  "chrome://pippki/content/exceptionDialog.xhtml",
-                  "",
-                  "chrome,centerscreen,dependent",
-                  params
-                );
-              function onWindowClosed(win) {
-                if (win == dialog) {
-                  Services.obs.removeObserver(
-                    onWindowClosed,
-                    "domwindowclosed"
-                  );
-                  deferred.resolve();
-                }
-              }
-              Services.obs.addObserver(onWindowClosed, "domwindowclosed");
-              await deferred.promise;
-
-              if (params.exceptionAdded) {
-                // Try again now that an exception has been added.
-                CardDAVUtils.makeRequest(uri, details).then(resolve, reject);
-                return;
-              }
+            if (!isCertError || !finalChannel.securityInfo) {
+              reject(new Components.Exception("Connection failure", status));
+              return;
             }
 
+            uri = finalChannel.URI;
+            console.warn(
+              `Certificate error (${finalChannel.securityInfo.errorCodeString}) for ${uri.hostPort}`
+            );
+            const secInfo = finalChannel.securityInfo.QueryInterface(
+              Ci.nsITransportSecurityInfo
+            );
+            const params = {
+              exceptionAdded: false,
+              securityInfo: secInfo,
+              prefetchCert: true,
+              location: finalChannel.originalURI.displayHostPort,
+            };
+            const deferred = Promise.withResolvers();
+            const dialog = Services.wm
+              .getMostRecentWindow("")
+              .openDialog(
+                "chrome://pippki/content/exceptionDialog.xhtml",
+                "",
+                "chrome,centerscreen,dependent",
+                params
+              );
+            function onWindowClosed(win) {
+              if (win == dialog) {
+                Services.obs.removeObserver(onWindowClosed, "domwindowclosed");
+                deferred.resolve();
+              }
+            }
+            Services.obs.addObserver(onWindowClosed, "domwindowclosed");
+            await deferred.promise;
+
+            if (params.exceptionAdded) {
+              let port = uri.port;
+              if (port == -1) {
+                port = Services.io.getDefaultPort(uri.scheme);
+              }
+              Glean.mail.certificateExceptionAdded.record({
+                error_category: finalChannel.securityInfo.errorCodeString,
+                protocol: "carddav",
+                port,
+                ui: "carddav-utils",
+              });
+
+              // Try again now that an exception has been added.
+              CardDAVUtils.makeRequest(uri, details).then(resolve, reject);
+              return;
+            }
             reject(new Components.Exception("Connection failure", status));
             return;
           }
@@ -397,7 +411,7 @@ export var CardDAVUtils = {
         </prop>
       </propfind>`;
       await tryURL(`${url.origin}/.well-known/carddav`);
-      // The request may have been successfull, returning a 207 status, but it
+      // The request may have been successful, returning a 207 status, but it
       // could still not contain any useful information.
       if (
         !response?.dom?.querySelector("resourcetype addressbook") &&
