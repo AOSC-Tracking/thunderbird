@@ -41,29 +41,38 @@ interface IEwsFallibleOperationListener;
 interface IEwsClient : nsISupports
 {
   /**
+   * Record in telemetry (Glean) the version for the Exchange Server with the
+   * provided URL, and whether it refers to Office365 or an on-premise server.
+   *
+   * This method can fail if the provided URL is invalid (e.g. un-parseable
+   * URL, URL without a domain...) or if reading the pref in which Exchange
+   * Server versions are stored failed. If a failure, happens, no telemetry
+   * records are created.
+   *
+   * If no known version exists for this server, no version is recorded for this
+   * server in the telemetry data. However, a record regarding whether the
+   * server refers to Office365 or an on-premise server is still created in this
+   * case.
+   *
+   * This method is stateless (thus can be called repeatedly on the same
+   * `IEwsClient` instance with different URLs) and does not require
+   * `initialize` to be called.
+   *
+   * @param endpoint - The full URL to the server's EWS endpoint.
+   */
+  void recordTelemetry(in AUTF8String endpoint);
+
+  /**
    * Initializes a new client with the necessary host address and authentication
    * details to communicate with an Exchange server.
    *
    * @param endpoint - The HTTP(S) address of an Exchange server's EWS endpoint.
    * @param server - An incoming server entity corresponding to an EWS-capable
    *   account.
-   * @param overrideOAuthDetails - Whether or not to override OAuth default issuer details.
-   * @param applicationId - The override value for the application (client) ID.
-   * @param tenantId - The override value for the tenant ID.
-   * @param redirectUri - The override value for the redirect URI.
-   * @param endpointHost - The override value for the endpoint host, which also
-   *                       identifies the issuer domain.
-   * @param scopes - The override value for the OAuth scopes.
    */
   void initialize(
     in AUTF8String endpoint,
-    in nsIMsgIncomingServer server,
-    in boolean overrideOAuthDetails,
-    in AUTF8String applicationId,
-    in AUTF8String tenantId,
-    in AUTF8String redirectUri,
-    in AUTF8String endpointHost,
-    in AUTF8String scopes);
+    in nsIMsgIncomingServer server);
 
   /**
    * Checks that the current client configuration is able to connect and
@@ -136,7 +145,27 @@ interface IEwsClient : nsISupports
    * @param isRead - The new read/unread state for the message, indicating
    *   whether the message should be marked as read.
    */
-  void changeReadStatus(in Array<AUTF8String> messageIds, in boolean isRead);
+  void changeReadStatus(in IEwsSimpleOperationListener listener, in Array<AUTF8String> messageIds, in boolean isRead);
+
+  /**
+   * Changes the read/unread status of all messages in the listed folders on the
+   * Exchange server, if the server supports it (Exchange 2013 on).
+   *
+   * If the server is too old, the listener will use the success callback with
+   * the use_legacy_fallback flag set, but the items will not be marked read.
+   *
+   * @param folderIds - The EWS IDs of the folders which read/unread status to
+   *   change.
+   * @param isRead - The new read/unread state for the messages, indicating
+   *   whether the messages should be marked as read.
+   * @param suppressReadReceipts - Whether read receipts should be suppressed
+   *   for any messages marked read. This is ignored if the server is too old to
+   *   support it (pre-2013).
+   */
+  void changeReadStatusAll(in IEwsSimpleOperationListener listener,
+                           in Array<AUTF8String> folderIds,
+                           in boolean isRead,
+                           in boolean suppressReadReceipts);
 
   /**
    * Creates a new message on the server using the data read from the stream.
@@ -163,13 +192,13 @@ interface IEwsClient : nsISupports
   void deleteMessages(in IEwsSimpleOperationListener listener, in Array<AUTF8String> messageEwsIds);
 
   /**
-   * Deletes a folder on the Exchange server.
+   * Deletes the folders with the given EWS IDs from the server.
    *
    * @param listener - Listener to indicate the success or failure of the
    *   folder deletion operation.
-   * @param folderId - The EWS ID of the folder to delete.
+   * @param folderIds - The EWS IDs of the folders to delete.
    */
-  void deleteFolder(in IEwsSimpleOperationListener listener, in AUTF8String folderId);
+  void deleteFolder(in IEwsSimpleOperationListener listener, in Array<AUTF8String> folderIds);
 
   /**
    * Renames a folder on the Exchange server.
@@ -473,7 +502,7 @@ interface IEwsMessageCreateListener : nsISupports
 interface IEwsMessageFetchListener : nsISupports
 {
   void onFetchStart();
-  void onFetchedDataAvailable(in nsIInputStream inputStream, in unsigned long count);
+  void onFetchedDataAvailable(in nsIInputStream inputStream);
   void onFetchStop(in nsresult status);
 };
 

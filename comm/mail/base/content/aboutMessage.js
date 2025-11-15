@@ -9,9 +9,6 @@
      nsMsgViewIndex_None, TreeSelection */
 /* globals gDBView: true, gFolder: true, gViewWrapper: true */
 
-// mailContext.js
-/* globals mailContextMenu */
-
 // msgHdrView.js
 /* globals AdjustHeaderView ClearCurrentHeaders ClearPendingReadTimer
    HideMessageHeaderPane initFolderDBListener OnLoadMsgHeaderPane OnTagsChange
@@ -153,10 +150,6 @@ window.addEventListener("DOMContentLoaded", event => {
   if (parent == top) {
     // Standalone message display? Focus the message pane.
     browser.focus();
-  }
-
-  if (window.parent == window.top) {
-    mailContextMenu.init();
   }
 
   // There might not be a msgWindow variable on the top window
@@ -441,28 +434,29 @@ var msgObserver = {
   QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
 
   observe(subject, topic, data) {
-    if (
-      topic == "message-content-updated" &&
-      gMessageURI == subject.QueryInterface(Ci.nsISupportsString).data
-    ) {
-      // This notification is triggered after a partial pop3 message was
-      // fully downloaded. The old message URI is now gone. To reload the
-      // message, we display it with its new URI.
-      displayMessage(data, gViewWrapper);
-      return;
-    }
+    switch (topic) {
+      case "message-content-updated":
+        if (gMessageURI == subject.QueryInterface(Ci.nsISupportsString).data) {
+          // This notification is triggered after a partial pop3 message was
+          // fully downloaded. The old message URI is now gone. To reload the
+          // message, we display it with its new URI.
+          displayMessage(data, gViewWrapper);
+        }
+        break;
 
-    // Check if the 'Try again' button in 'about:neterror' (displayed for NNTP
-    // connection issues) has been pressed. Since this button only enables
-    // online mode, we act on observing the corresponding notification when not
-    // offline.
-    if (
-      topic == "ipc:network:set-offline" &&
-      data == "false" &&
-      gMessageURI?.startsWith("news-message://") &&
-      !Services.io.offline
-    ) {
-      ReloadMessage();
+      case "ipc:network:set-offline":
+        // Check if the 'Try again' button in 'about:neterror' (displayed for NNTP
+        // connection issues) has been pressed. Since this button only enables
+        // online mode, we act on observing the corresponding notification when not
+        // offline.
+        if (
+          data == "false" &&
+          gMessageURI?.startsWith("news-message://") &&
+          !Services.io.offline
+        ) {
+          ReloadMessage();
+        }
+        break;
     }
   },
 
@@ -519,8 +513,7 @@ var preferenceObserver = {
   observe(subject, topic, data) {
     if (data == "mail.show_headers") {
       AdjustHeaderView(Services.prefs.getIntPref(data));
-    }
-    if (data == "mail.dark-reader.enabled") {
+    } else if (data == "mail.dark-reader.enabled") {
       document.getElementById("disableDarkReader").checked =
         !Services.prefs.getBoolPref(data);
     }

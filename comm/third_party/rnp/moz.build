@@ -74,9 +74,15 @@ rnp_defines = {
     "PACKAGE_BUGREPORT": '"https://bugzilla.mozilla.org/enter_bug.cgi?product=Thunderbird"',
 }
 if CONFIG["MZLA_LIBRNP_BACKEND"] == "botan":
-    LOCAL_INCLUDES += ["!../botan/build/include"]
+    LOCAL_INCLUDES += ["!../botan/build/include/public"]
     if CONFIG["MZLA_SYSTEM_BOTAN"]:
         CXXFLAGS += CONFIG["MZLA_BOTAN_CFLAGS"]
+
+    if CONFIG["OS_TARGET"] == "WINNT":
+        CXXFLAGS += ["/std:c++20"]
+    if CONFIG["OS_TARGET"] != "WINNT":
+        LDFLAGS += ["-pthread"]
+        CXXFLAGS += ["-std=c++20"]
 
     rnp_defines.update({
         "CRYPTO_BACKEND_BOTAN": True,
@@ -235,6 +241,11 @@ if CONFIG["MZLA_LIBRNP_BACKEND"] == "openssl":
         "src/lib/crypto/rsa_ossl.cpp",
         "src/lib/crypto/s2k_ossl.cpp",
         "src/lib/crypto/symmetric_ossl.cpp",
+    ]
+
+if CONFIG["MOZ_STDCXX_COMPAT"] and (CONFIG["MOZ_ASAN"] or CONFIG["MOZ_TSAN"]):
+    SOURCES += [
+        "/comm/build/unix/stdc++compat-tb.cpp"
     ]
 
 DIRS += ["src/rnp", "src/rnpkeys"]

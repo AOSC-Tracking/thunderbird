@@ -240,6 +240,9 @@ export class MsgIncomingServer {
       ["Bool", "canFileMessagesOnServer", "canFileMessages"],
       ["Bool", "limitOfflineMessageSize", "limit_offline_message_size"],
       ["Bool", "hidden"],
+      ["Bool", "offlineDownload", "offline_download"],
+      ["Bool", "autoSyncOfflineStores", "autosync_offline_stores"],
+      ["Int", "autoSyncMaxAgeDays", "autosync_max_age_days"],
     ]);
 
     // nsIMsgIncomingServer attributes.
@@ -248,7 +251,6 @@ export class MsgIncomingServer {
     this.biffState = Ci.nsIMsgFolder.nsMsgBiffState_Unknown;
     this.canHaveFilters = true;
     this.canBeDefaultServer = false;
-    this.supportsDiskSpace = true;
 
     // @type {Map<string, number>} - The key is MsgId+Subject, the value is
     //   this._hdrIndex.

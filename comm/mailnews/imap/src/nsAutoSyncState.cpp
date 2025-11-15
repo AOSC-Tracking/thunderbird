@@ -4,6 +4,8 @@
 
 #include "nsAutoSyncState.h"
 
+#include "EwsFetchMsgsToOffline.h"
+#include "IEwsFolder.h"
 #include "nsImapMailFolder.h"
 #include "nsIImapService.h"
 #include "nsIMsgMailNewsUrl.h"
@@ -14,6 +16,7 @@
 #include "nsServiceManagerUtils.h"
 #include "mozilla/Components.h"
 #include "mozilla/Logging.h"
+#include "mozilla/ScopeExit.h"
 
 using namespace mozilla;
 
@@ -68,8 +71,7 @@ bool MsgStrategyComparatorAdaptor::LessThan(const nsMsgKey& a,
   return false;
 }
 
-nsAutoSyncState::nsAutoSyncState(nsImapMailFolder* aOwnerFolder,
-                                 PRTime aLastSyncTime)
+nsAutoSyncState::nsAutoSyncState(nsIMsgFolder* folder, PRTime lastSyncTime)
     : mSyncState(stCompletedIdle),
       mOffset(0U),
       mLastOffset(0U),
@@ -77,13 +79,12 @@ nsAutoSyncState::nsAutoSyncState(nsImapMailFolder* aOwnerFolder,
       mLastServerRecent(0),
       mLastServerUnseen(0),
       mLastNextUID(0),
-      mLastSyncTime(aLastSyncTime),
+      mLastSyncTime(lastSyncTime),
       mLastUpdateTime(0UL),
       mProcessPointer(0U),
       mIsDownloadQChanged(false),
       mRetryCounter(0U) {
-  mOwnerFolder =
-      do_GetWeakReference(static_cast<nsIMsgImapMailFolder*>(aOwnerFolder));
+  mOwnerFolder = do_GetWeakReference(folder);
   mHaveAStatusResponse = false;
 }
 
@@ -360,6 +361,7 @@ NS_IMETHODIMP nsAutoSyncState::ProcessExistingHeaders(
   return rv;
 }
 
+// Called by IMAP folder nsImapMailFolder::HeaderFetchCompleted().
 void nsAutoSyncState::OnNewHeaderFetchCompleted(
     const nsTArray<nsMsgKey>& aMsgKeyList) {
   SetLastUpdateTime(PR_Now());
@@ -374,13 +376,34 @@ NS_IMETHODIMP nsAutoSyncState::UpdateFolder() {
   nsCOMPtr<nsIAutoSyncManager> autoSyncMgr =
       do_GetService(NS_AUTOSYNCMANAGER_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
+  // Make sure it really _is_ a nsIUrlListener.
   nsCOMPtr<nsIUrlListener> autoSyncMgrListener =
       do_QueryInterface(autoSyncMgr, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIMsgImapMailFolder> imapFolder =
-      do_QueryReferent(mOwnerFolder, &rv);
-  SetState(nsAutoSyncState::stUpdateIssued);
-  return imapFolder->UpdateFolderWithListener(nullptr, autoSyncMgrListener);
+  nsCOMPtr<nsIMsgFolder> folder = do_QueryReferent(mOwnerFolder, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // TODO: this should be protocol-agnostic, but currently the base
+  // nsIMsgFolder.updateFolder() doesn't take a listener.
+  // For EWS, GetNewMessages() works as update-with-listener.
+  //
+  // The autoSyncMgr is a nsIUrlListener, so this operation will
+  // invoke nsAutoSyncManager::OnStopRunningUrl() when done.
+  nsAutoCString serverType;
+  folder->GetIncomingServerType(serverType);
+  if (serverType.EqualsLiteral("imap")) {
+    nsCOMPtr<nsIMsgImapMailFolder> imapFolder = do_QueryInterface(folder);
+    rv = imapFolder->UpdateFolderWithListener(nullptr, autoSyncMgrListener);
+  } else if (serverType.EqualsLiteral("ews")) {
+    rv = folder->GetNewMessages(nullptr, autoSyncMgrListener);
+  } else {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  if (NS_SUCCEEDED(rv)) {
+    SetState(nsAutoSyncState::stUpdateIssued);
+  }
+  return rv;
 }
 
 NS_IMETHODIMP nsAutoSyncState::OnStartRunningUrl(nsIURI* aUrl) {
@@ -629,35 +652,90 @@ NS_IMETHODIMP nsAutoSyncState::IsDownloadQEmpty(bool* aResult) {
 NS_IMETHODIMP nsAutoSyncState::DownloadMessagesForOffline(
     nsTArray<RefPtr<nsIMsgDBHdr>> const& messages) {
   nsresult rv;
-  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
 
-  nsAutoCString messageIds;
-  nsTArray<nsMsgKey> msgKeys;
-
-  rv = nsImapMailFolder::BuildIdsAndKeyArray(messages, messageIds, msgKeys);
-  if (NS_FAILED(rv) || messageIds.IsEmpty()) return rv;
-
-  // acquire semaphore for offline store. If it fails, we won't download
   nsCOMPtr<nsIMsgFolder> folder = do_QueryReferent(mOwnerFolder, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // Acquire semaphore for offline store. If it fails, we won't download.
   rv = folder->AcquireSemaphore(
       folder, "nsAutoSyncState::DownloadMessagesForOffline"_ns);
   NS_ENSURE_SUCCESS(rv, rv);
+  auto guard = mozilla::MakeScopeExit([=] {
+    folder->ReleaseSemaphore(
+        folder, "nsAutoSyncState::DownloadMessagesForOffline failure"_ns);
+  });
 
-  if (MOZ_LOG_TEST(gAutoSyncLog, LogLevel::Debug)) {
-    nsCString folderName;
-    folder->GetURI(folderName);
-    MOZ_LOG(gAutoSyncLog, LogLevel::Debug,
-            ("%s: downloading UIDs %s for folder %s", __func__,
-             messageIds.get(), folderName.get()));
+  nsAutoCString serverType;
+  rv = folder->GetIncomingServerType(serverType);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (serverType.EqualsLiteral("imap")) {
+    // The keys are IMAP UIDs we can send to the server.
+    nsAutoCString messageIds;
+    nsTArray<nsMsgKey> msgKeys;
+    rv = nsImapMailFolder::BuildIdsAndKeyArray(messages, messageIds, msgKeys);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (messageIds.IsEmpty()) {
+      return NS_OK;
+    }
+
+    if (MOZ_LOG_TEST(gAutoSyncLog, LogLevel::Debug)) {
+      nsCString folderName;
+      folder->GetURI(folderName);
+      MOZ_LOG(gAutoSyncLog, LogLevel::Debug,
+              ("%s: downloading UIDs %s for folder %s", __func__,
+               messageIds.get(), folderName.get()));
+    }
+
+    // Start downloading, passing the nsAutoSyncState as listener.
+    // So OnStopRunningUrl() is called when the download completes.
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
+    rv = imapService->DownloadMessagesForOffline(messageIds, folder, this,
+                                                 nullptr);
+    NS_ENSURE_SUCCESS(rv, rv);
+  } else if (serverType.EqualsLiteral("ews")) {
+    nsTArray<nsMsgKey> keys(messages.Length());
+    for (nsIMsgDBHdr* hdr : messages) {
+      nsMsgKey key;
+      hdr->GetMessageKey(&key);
+      MOZ_ASSERT(key != nsMsgKey_None);
+      keys.AppendElement(key);
+    }
+    MOZ_LOG(gAutoSyncLog, LogLevel::Info,
+            ("Downloading %d messages for offline, for folder %s",
+             (int)keys.Length(), folder->URI().get()));
+    rv = EwsFetchMsgsToOffline(
+        folder, keys, [folder, self = RefPtr(this)](nsresult status) {
+          // For IMAP, this is handled in OnStopRunningUrl().
+          folder->ReleaseSemaphore(
+              folder, "nsAutoSyncState::DownloadMessagesForOffline done"_ns);
+          MOZ_LOG(gAutoSyncLog,
+                  NS_SUCCEEDED(status) ? LogLevel::Info : LogLevel::Error,
+                  ("Finished downloading messages (status=0x%x) for folder %s",
+                   status, folder->URI().get()));
+
+          // Let the folder know these messages are now stored offline.
+          nsCOMPtr<IEwsFolder> ewsFolder{do_QueryInterface(folder)};
+          if (ewsFolder) {
+            ewsFolder->HandleDownloadedMessages();
+          }
+
+          nsCOMPtr<nsIAutoSyncManager> autoSyncMgr =
+              do_GetService(NS_AUTOSYNCMANAGER_CONTRACTID);
+          autoSyncMgr->OnDownloadCompleted(self, status);
+        });
+    NS_ENSURE_SUCCESS(rv, rv);
+  } else {
+    NS_WARNING(
+        "nsAutoSyncState::DownloadMessagesForOffline() used on unsupported "
+        "folder type");
+    return NS_ERROR_UNEXPECTED;
   }
-  // start downloading
-  rv = imapService->DownloadMessagesForOffline(messageIds, folder, this,
-                                               nullptr);
-  if (NS_SUCCEEDED(rv)) SetState(stDownloadInProgress);
 
-  return rv;
+  rv = SetState(stDownloadInProgress);
+  NS_ENSURE_SUCCESS(rv, rv);
+  guard.release();
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsAutoSyncState::GetLastSyncTime(PRTime* aLastSyncTime) {

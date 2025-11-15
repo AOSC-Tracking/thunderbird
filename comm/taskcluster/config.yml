@@ -39,6 +39,7 @@ treeherder:
         'cs': 'Checksum signing'
         'css': 'Checksum signing for source'
         'Deb': 'Deb archive generation'
+        'Deb-l10n': 'Localized deb repacks'
         'Flatpak': 'Flatpak image generation'
         'L10n': 'Localised Repacks'
         'L10n-Rpk': 'Localized Repackaged Repacks'
@@ -130,6 +131,9 @@ task-priority:
 taskgraph:
     register: comm_taskgraph:register
     decision-parameters: 'comm_taskgraph.decision:get_decision_parameters'
+    repositories:
+        gecko:
+            name: 'Mozilla Firefox'
 
 workers:
     aliases:
@@ -231,7 +235,7 @@ workers:
                 by-release-level:
                     production: comm-3-tree
                     staging: comm-1-tree
-        t-linux-docker(|-noscratch):
+        t-linux-docker(|-noscratch|-noscratch-amd|-amd):
             provisioner: comm-t
             implementation: docker-worker
             os: linux
@@ -380,11 +384,11 @@ expiration-policy:
             medium: 28 days
             long: 28 days
         try-comm-central:
-            default: 1 month
+            default: 28 days
             shortest: 7 days
             short: 14 days
-            medium: 1 month
-            long: 1 month
+            medium: 28 days
+            long: 28 days
         ash:
             default: 1 month
             shortest: 7 days

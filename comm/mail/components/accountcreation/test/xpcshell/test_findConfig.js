@@ -64,11 +64,13 @@ add_task(async function testFindConfigFound() {
   );
 
   const abortable = new SuccessiveAbortable();
-  const config = await FindConfig.parallelAutoDiscovery(
+  const discoveryStream = FindConfig.parallelAutoDiscovery(
     abortable,
     "imap.test",
     "yamatoo.nadeshiko@imap.test"
   );
+
+  const { value: config } = await discoveryStream.next();
 
   Assert.equal(
     config.incoming.type,
@@ -109,11 +111,13 @@ add_task(async function testFindConfigNotFound() {
   );
 
   const abortable = new SuccessiveAbortable();
-  const config = await FindConfig.parallelAutoDiscovery(
+  const discoveryStream = FindConfig.parallelAutoDiscovery(
     abortable,
     "imap.testtt",
     "yamatoo.nadeshiko@imap.testtt"
   );
+
+  const { value: config } = await discoveryStream.next();
 
   Assert.equal(
     config,
@@ -149,11 +153,13 @@ add_task(async function testFindConfigExchange() {
   );
 
   const abortable = new SuccessiveAbortable();
-  const config = await FindConfig.parallelAutoDiscovery(
+  const discoveryStream = await FindConfig.parallelAutoDiscovery(
     abortable,
     "exchange.test",
     "testExchange@exchange.test"
   );
+
+  const { value: config } = await discoveryStream.next();
 
   Assert.equal(
     config.incoming.type,
@@ -230,10 +236,9 @@ add_task(async function testFindConfigExchangeAuthRequired() {
     }
   );
 
-  const abortable = new SuccessiveAbortable();
-
+  let abortable = new SuccessiveAbortable();
   await Assert.rejects(
-    FindConfig.parallelAutoDiscovery(abortable, "exchange.test", user),
+    FindConfig.parallelAutoDiscovery(abortable, "exchange.test", user).next(),
     error =>
       error.message === "Exchange auth error" &&
       error.cause.fluentTitleId === "account-setup-credentials-wrong",
@@ -241,13 +246,102 @@ add_task(async function testFindConfigExchangeAuthRequired() {
   );
 
   expectSuccess = true;
-  const config = await FindConfig.parallelAutoDiscovery(
+  abortable = new SuccessiveAbortable();
+  const discoveryStream = FindConfig.parallelAutoDiscovery(
     abortable,
     "exchange.test",
     user,
     password
   );
+
+  const { value: config } = await discoveryStream.next();
+
   Assert.ok(config, "Should get a config with password");
+
+  // Clean up.
+  secureAutodiscover.destroy();
+  server.identity.remove("https", "autodiscover.exchange.test", 443);
+  server.registerFile("/autodiscover/autodiscover.xml", null);
+  Services.cache2.clear();
+  Services.prefs.clearUserPref(
+    "mailnews.auto_config.fetchFromExchange.enabled"
+  );
+});
+
+add_task(async function testFindConfigExchangeWithUsername() {
+  // Set up a configuration file at
+  // https://exchange.test/autodiscover/autodiscover.xml"
+  // We need https, since that's the only way authorization is sent.
+  Services.prefs.setBoolPref(
+    "mailnews.auto_config.fetchFromExchange.enabled",
+    true
+  );
+
+  const secureAutodiscover = await HttpsProxy.create(
+    server.identity.primaryPort,
+    "autodiscover.exchange.test",
+    "autodiscover.exchange.test"
+  );
+  const password = "hunter2";
+  const user = "CrashOverride";
+  const basicAuth = btoa(
+    String.fromCharCode(...new TextEncoder().encode(`${user}:${password}`))
+  );
+  const autodiscoverResponse = await IOUtils.readUTF8(
+    do_get_file("data/exchange.test.xml").path
+  );
+  let expectSuccess = false;
+  server.identity.add("https", "autodiscover.exchange.test", 443);
+  server.registerPathHandler(
+    "/autodiscover/autodiscover.xml",
+    (request, response) => {
+      response.setHeader("Cache-Control", "private");
+      if (
+        !request.hasHeader("Authorization") ||
+        request.getHeader("Authorization") != `Basic ${basicAuth}`
+      ) {
+        response.setStatusLine(request.httpVersion, 401, "Unauthorized");
+        response.setHeader("WWW-Authenticate", 'Basic Realm=""');
+        Assert.ok(
+          !expectSuccess,
+          "Autodiscover request with missing or incorrect authorization should fail"
+        );
+        return;
+      }
+      response.setStatusLine(request.httpVersion, 200, "OK");
+      response.setHeader("Content-Type", "application/xml");
+      response.write(autodiscoverResponse);
+      Assert.ok(expectSuccess, "Autodiscover request should be authenticated");
+    }
+  );
+
+  const abortable = new SuccessiveAbortable();
+
+  await Assert.rejects(
+    FindConfig.parallelAutoDiscovery(
+      abortable,
+      "exchange.test",
+      "testExchange@exchange.test",
+      password
+    ).next(),
+    error =>
+      error.message === "Exchange auth error" &&
+      error.cause.fluentTitleId === "account-setup-credentials-wrong",
+    "Should reject with an exchange credentials specific error"
+  );
+
+  expectSuccess = true;
+  const discoveryStream = FindConfig.parallelAutoDiscovery(
+    abortable,
+    "exchange.test",
+    "testExchange@exchange.test",
+    password,
+    user
+  );
+
+  const { value: config } = await discoveryStream.next();
+
+  Assert.ok(config, "Should get a config with password and separate username");
 
   // Clean up.
   secureAutodiscover.destroy();

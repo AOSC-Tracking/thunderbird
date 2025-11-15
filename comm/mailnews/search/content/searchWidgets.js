@@ -82,12 +82,11 @@
           `
           <menulist class="ruleactionitem" flex="1">
             <menupopup>
-              <menuitem value="100" label="&junk.label;"/>
-              <menuitem value="0" label="&notJunk.label;"/>
+              <menuitem value="100" data-l10n-id="rule-menuitem-spam"/>
+              <menuitem value="0" data-l10n-id="rule-menuitem-not-spam"/>
             </menupopup>
           </menulist>
-          `,
-          ["chrome://messenger/locale/FilterEditor.dtd"]
+          `
         )
       );
 
@@ -725,8 +724,12 @@
       for (const itemData of itemDataList) {
         const item = document.createXULElement("menuitem");
         item.classList.add("search-value-menuitem");
-        item.label =
-          itemData.label || bundle.GetStringFromName(itemData.stringId);
+        if (itemData.l10nID) {
+          document.l10n.setAttributes(item, itemData.l10nID);
+        } else {
+          item.label =
+            itemData.label || bundle.GetStringFromName(itemData.stringId);
+        }
         item.value = itemData.value;
         menupopup.appendChild(item);
       }
@@ -822,7 +825,10 @@
           case "junk-status":
             // "Junk Status is/isn't/is empty/isn't empty 'Junk'".
             input = this.constructor._createMenulist([
-              { stringId: "junk", value: Ci.nsIJunkMailPlugin.JUNK },
+              {
+                value: Ci.nsIJunkMailPlugin.JUNK,
+                l10nID: "menuitem-label-spam",
+              },
             ]);
             break;
           case "attachment-status":
@@ -1507,7 +1513,7 @@
                         value="setpriorityto"></menuitem>
               <menuitem label="&addTag.label;"
                         value="addtagtomessage"></menuitem>
-              <menuitem label="&setJunkScore.label;"
+              <menuitem data-l10n-id="rule-action-set-spam-status"
                         value="setjunkscore"
                         enablefornews="false"></menuitem>
               <menuseparator enableforpop3="true"></menuseparator>

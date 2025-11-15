@@ -12,8 +12,6 @@
 #define EWS_INCOMING_SERVER_IID \
   {0x6eaa0a24, 0x78f6, 0x4ad7, {0xa2, 0x8a, 0x07, 0x7d, 0x24, 0x02, 0x2c, 0xd2}}
 
-class FolderSyncListener;
-
 class EwsIncomingServer : public nsMsgIncomingServer,
                           public IEwsIncomingServer {
  public:
@@ -45,6 +43,7 @@ class EwsIncomingServer : public nsMsgIncomingServer,
 
   // nsIMsgIncomingServer
   NS_IMETHOD GetPassword(nsAString& password) override;
+  NS_IMETHOD GetPort(int32_t* aPort) override;
   NS_IMETHOD GetLocalStoreType(nsACString& aLocalStoreType) override;
   NS_IMETHOD GetLocalDatabaseType(nsACString& aLocalDatabaseType) override;
   NS_IMETHOD GetCanBeDefaultServer(bool* canBeDefaultServer) override;
@@ -55,6 +54,7 @@ class EwsIncomingServer : public nsMsgIncomingServer,
   NS_IMETHOD PerformExpand(nsIMsgWindow* aMsgWindow) override;
   NS_IMETHOD VerifyLogon(nsIUrlListener* aUrlListener, nsIMsgWindow* aMsgWindow,
                          nsIURI** _retval) override;
+  NS_IMETHOD GetCanSearchMessages(bool* canSearchMessages) override;
 
  private:
   /**
@@ -81,12 +81,18 @@ class EwsIncomingServer : public nsMsgIncomingServer,
   nsresult SyncAllFolders(nsIMsgWindow* aMsgWindow,
                           nsIUrlListener* urlListener);
 
-  RefPtr<msgIOAuth2Module> mOAuth2Module;
-
-  friend class FolderSyncListener;
-
+  /**
+   * Retrieve the trash folder using the path stored in the server's prefs.
+   */
   nsresult GetTrashFolder(nsIMsgFolder** trashFolder);
+
+  /**
+   * Set the trash folder flag to the folder which path is stored in the
+   * relevant pref.
+   */
   nsresult UpdateTrashFolder();
+
+  nsCOMPtr<msgIOAuth2Module> mOAuth2Module;
 };
 
 #endif  // COMM_MAILNEWS_PROTOCOLS_EWS_SRC_EWSINCOMINGSERVER_H_

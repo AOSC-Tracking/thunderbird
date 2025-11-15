@@ -28,6 +28,10 @@ support-files = ["files/**"]
 
 ["browser_accountHubAddressBookSync.js"]
 
+["browser_accountHubEmailAuthenticationForm.js"]
+
+["browser_accountHubEmailManualIncomingForm.js"]
+
 ["browser_accountHubEmailPasswordForm.js"]
 
 ["browser_accountHubFooter.js"]

@@ -1474,13 +1474,6 @@ NS_IMETHODIMP nsMsgIncomingServer::SetDownloadSettings(
 }
 
 NS_IMETHODIMP
-nsMsgIncomingServer::GetSupportsDiskSpace(bool* aSupportsDiskSpace) {
-  NS_ENSURE_ARG_POINTER(aSupportsDiskSpace);
-  *aSupportsDiskSpace = true;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsMsgIncomingServer::GetOfflineSupportLevel(int32_t* aSupportLevel) {
   NS_ENSURE_ARG_POINTER(aSupportLevel);
 
@@ -1547,6 +1540,15 @@ NS_IMPL_SERVERPREF_INT(nsMsgIncomingServer, IncomingDuplicateAction,
                        "dup_action")
 
 NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, Hidden, "hidden")
+
+NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, OfflineDownload,
+                        "offline_download")
+
+NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, AutoSyncOfflineStores,
+                        "autosync_offline_stores")
+
+NS_IMPL_SERVERPREF_INT(nsMsgIncomingServer, AutoSyncMaxAgeDays,
+                       "autosync_max_age_days")
 
 NS_IMETHODIMP nsMsgIncomingServer::GetSocketType(int32_t* aSocketType) {
   if (!mPrefBranch) return NS_ERROR_NOT_INITIALIZED;

@@ -11,20 +11,31 @@ ChromeUtils.defineESModuleGetters(lazy, {
   SmartMailboxUtils: "resource:///modules/SmartMailboxUtils.sys.mjs",
 });
 
-/**
- * Helper to add logins to the login manager.
- *
- * @param {string} hostname
- * @param {string} username
- * @param {string} password
- */
-async function addLoginInfo(hostname, username, password) {
-  const loginInfo = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(
-    Ci.nsILoginInfo
-  );
-  loginInfo.init(hostname, null, hostname, username, password, "", "");
-  await Services.logins.addLoginAsync(loginInfo);
-}
+// Logs every window that opens during tests (esp. common dialogs).
+(function installDialogLogger() {
+  const TOPIC = "domwindowopened";
+  function observer(subject, topic) {
+    if (topic !== TOPIC) {
+      return;
+    }
+    const win = subject;
+    win.addEventListener(
+      "load",
+      () => {
+        const doc = win.document;
+        const uri = doc.documentURI || "";
+        const wt = doc.documentElement?.getAttribute("windowtype") || "";
+        const title = doc.title || "";
+        info(
+          `[dialog] opened: windowtype="${wt}" uri="${uri}" title="${title}"`
+        );
+      },
+      { once: true }
+    );
+  }
+  Services.obs.addObserver(observer, TOPIC);
+  registerCleanupFunction(() => Services.obs.removeObserver(observer, TOPIC));
+})();
 
 async function focusWindow(win) {
   win.focus();
@@ -52,21 +63,6 @@ async function clickExtensionButton(win, buttonId) {
   EventUtils.synthesizeMouseAtCenter(actionButton, {}, win);
 
   return actionButton;
-}
-
-async function openExtensionPopup(win, buttonId) {
-  const actionButton = await clickExtensionButton(win, buttonId);
-
-  const panel = win.top.document.getElementById(
-    "webextension-remote-preload-panel"
-  );
-  const browser = panel.querySelector("browser");
-  await TestUtils.waitForCondition(
-    () => browser.clientWidth > 100,
-    "waiting for browser to resize"
-  );
-
-  return { actionButton, panel, browser };
 }
 
 function getSmartServer() {
@@ -278,31 +274,6 @@ class MenuTestHelper {
     await BrowserTestUtils.waitForPopupEvent(this.menu.menupopup, "hidden");
     await new Promise(resolve => setTimeout(resolve));
   }
-}
-
-/**
- * Opens a .eml file in a standalone message window and waits for it to load.
- *
- * @param {nsIFile} file - The file to open.
- */
-async function openMessageFromFile(file) {
-  const fileURL = Services.io
-    .newFileURI(file)
-    .mutate()
-    .setQuery("type=application/x-message-display")
-    .finalize();
-
-  const winPromise = BrowserTestUtils.domWindowOpenedAndLoaded();
-  window.openDialog(
-    "chrome://messenger/content/messageWindow.xhtml",
-    "_blank",
-    "all,chrome,dialog=no,status,toolbar",
-    fileURL
-  );
-  const win = await winPromise;
-  await messageLoadedIn(win.messageBrowser);
-  await TestUtils.waitForCondition(() => Services.focus.activeWindow == win);
-  return win;
 }
 
 /**

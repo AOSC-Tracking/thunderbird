@@ -12,13 +12,15 @@
 #include ./accountHubAddressBookOptionSelectTemplate.inc.xhtml
 #include ./accountHubAddressBookRemoteAccountFormTemplate.inc.xhtml
 #include ./accountHubAddressBookSyncTemplate.inc.xhtml
+#include ./accountHubEmailAddedSuccessTemplate.inc.xhtml
+#include ./accountHubEmailAuthenticationFormTemplate.inc.xhtml
 #include ./accountHubEmailAutoFormTemplate.inc.xhtml
 #include ./accountHubEmailConfigFoundTemplate.inc.xhtml
+#include ./accountHubEmailCredentialsConfirmationTemplate.inc.xhtml
 #include ./accountHubEmailIncomingFormTemplate.inc.xhtml
 #include ./accountHubEmailOutgoingFormTemplate.inc.xhtml
 #include ./accountHubEmailPasswordFormTemplate.inc.xhtml
 #include ./accountHubEmailSyncAccountsFormTemplate.inc.xhtml
-#include ./accountHubEmailAddedSuccessTemplate.inc.xhtml
 #include ./accountHubFooterTemplate.inc.xhtml
 #include ./accountHubHeaderTemplate.inc.xhtml
 #include ./accountHubStepTemplate.inc.xhtml
@@ -96,13 +98,6 @@
   >
   </email-auto-form>
   <email-manual-incoming-form
-    id="emailEwsConfigSubview"
-    title-id="account-hub-email-setup-ews"
-    class="account-hub-step"
-    hidden="hidden"
-  >
-  </email-manual-incoming-form>
-  <email-manual-incoming-form
     id="emailIncomingConfigSubview"
     title-id="account-hub-email-setup-incoming"
     class="account-hub-step"
@@ -123,6 +118,13 @@
     hidden="hidden"
   >
   </email-config-found>
+  <email-credentials-confirmation
+    id="emailCredentialsConfirmationSubview"
+    title-id="account-hub-email-credentials-confirmation"
+    class="account-hub-step"
+    hidden="hidden"
+  >
+  </email-credentials-confirmation>
   <email-password-form
     id="emailPasswordSubview"
     title-id="account-hub-email-enter-password"
@@ -130,6 +132,12 @@
     hidden="hidden"
   >
   </email-password-form>
+  <email-authentication-form
+    id="emailAutodiscoverAuthenticationSubview"
+    title-id="account-hub-email-enter-password"
+    class="account-hub-step"
+    hidden="hidden"
+  ></email-authentication-form>
   <email-sync-accounts-form
     id="emailSyncAccountsSubview"
     title-id="account-hub-email-sync-accounts"

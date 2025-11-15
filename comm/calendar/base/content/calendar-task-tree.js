@@ -66,9 +66,7 @@
           this.tree.mFilter.getOccurrences(oldItem)
         );
         // We also need to notify potential listeners.
-        const event = document.createEvent("Events");
-        event.initEvent("select", true, false);
-        this.tree.dispatchEvent(event);
+        this.tree.dispatchEvent(new CustomEvent("select", { bubbles: true }));
       }
     }
 
@@ -391,7 +389,7 @@
         if (visibleColumns.includes(itemProperty)) {
           col.removeAttribute("hidden");
         } else {
-          col.setAttribute("hidden", "true");
+          col.toggleAttribute("hidden", true);
         }
         if (ordinals.length > 0) {
           col.ordinal = ordinals.shift();

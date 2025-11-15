@@ -8,6 +8,7 @@
 #include "msgCore.h"
 #include "netCore.h"
 #include "../public/nsIImapHostSessionList.h"
+#include "nsFmtString.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIMsgIdentity.h"
 #include "nsIImapUrl.h"
@@ -277,14 +278,8 @@ NS_IMPL_SERVERPREF_STR(nsImapIncomingServer, AdminUrl, "admin_url")
 NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, CleanupInboxOnExit,
                         "cleanup_inbox_on_exit")
 
-NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, OfflineDownload,
-                        "offline_download")
-
 NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, DownloadBodiesOnGetNewMail,
                         "download_bodies_on_get_new_mail")
-
-NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, AutoSyncOfflineStores,
-                        "autosync_offline_stores")
 
 NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, UseIdle, "use_idle")
 
@@ -297,9 +292,6 @@ NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, IsGMailServer, "is_gmail")
 
 NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, UseCompressDeflate,
                         "use_compress_deflate")
-
-NS_IMPL_SERVERPREF_INT(nsImapIncomingServer, AutoSyncMaxAgeDays,
-                       "autosync_max_age_days")
 
 NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, AllowUTF8Accept,
                         "allow_utf8_accept")
@@ -2494,34 +2486,6 @@ nsImapIncomingServer::GetCanSearchMessages(bool* canSearchMessages) {
   return NS_OK;
 }
 
-nsresult nsImapIncomingServer::CreateHostSpecificPrefName(
-    const char* prefPrefix, nsAutoCString& prefName) {
-  NS_ENSURE_ARG_POINTER(prefPrefix);
-
-  nsCString hostName;
-  nsresult rv = GetHostName(hostName);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  prefName = prefPrefix;
-  prefName.Append('.');
-  prefName.Append(hostName);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsImapIncomingServer::GetSupportsDiskSpace(bool* aSupportsDiskSpace) {
-  NS_ENSURE_ARG_POINTER(aSupportsDiskSpace);
-  nsAutoCString prefName;
-  nsresult rv =
-      CreateHostSpecificPrefName("default_supports_diskspace", prefName);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  *aSupportsDiskSpace = true;
-  Preferences::GetBool(prefName.get(), aSupportsDiskSpace);
-
-  return NS_OK;
-}
-
 // Check whether all connections in the cache are idle.
 NS_IMETHODIMP
 nsImapIncomingServer::GetAllConnectionsIdle(bool* aAllIdle) {
@@ -2566,18 +2530,14 @@ nsImapIncomingServer::GetCanCreateFoldersOnServer(
 NS_IMETHODIMP
 nsImapIncomingServer::GetOfflineSupportLevel(int32_t* aSupportLevel) {
   NS_ENSURE_ARG_POINTER(aSupportLevel);
-  nsresult rv = NS_OK;
 
-  rv = GetIntValue("offline_support_level", aSupportLevel);
-  if (*aSupportLevel != OFFLINE_SUPPORT_LEVEL_UNDEFINED) return rv;
-
-  nsAutoCString prefName;
-  rv = CreateHostSpecificPrefName("default_offline_support_level", prefName);
+  *aSupportLevel = OFFLINE_SUPPORT_LEVEL_UNDEFINED;
+  nsresult rv = GetIntValue("offline_support_level", aSupportLevel);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *aSupportLevel =
-      Preferences::GetInt(prefName.get(), OFFLINE_SUPPORT_LEVEL_REGULAR);
-
+  if (*aSupportLevel == OFFLINE_SUPPORT_LEVEL_UNDEFINED) {
+    *aSupportLevel = OFFLINE_SUPPORT_LEVEL_REGULAR;
+  }
   return NS_OK;
 }
 
@@ -2686,9 +2646,9 @@ nsImapIncomingServer::GetNewMessagesForNonInboxFolders(nsIMsgFolder* aFolder,
                                                        bool forceAllFolders,
                                                        bool performingBiff) {
   NS_ENSURE_ARG_POINTER(aFolder);
-  static bool gGotStatusPref = false;
-  static bool gUseStatus = false;
-
+  // Default is to use STATUS to check for new messages.
+  // If false, a full UpdateFolder() is performed.
+  bool useStatus = Preferences::GetBool("mail.imap.use_status_for_biff", true);
   bool isRootFolder;
   (void)aFolder->GetIsServer(&isRootFolder);
   // Check this folder for new messages if it is marked to be checked
@@ -2703,20 +2663,13 @@ nsImapIncomingServer::GetNewMessagesForNonInboxFolders(nsIMsgFolder* aFolder,
   if (!isRootFolder && canOpen &&
       ((forceAllFolders &&
         !(flags & (nsMsgFolderFlags::Inbox | nsMsgFolderFlags::Trash |
-                   nsMsgFolderFlags::Junk | nsMsgFolderFlags::Virtual))) ||
+                   nsMsgFolderFlags::Virtual))) ||
        flags & nsMsgFolderFlags::CheckNew)) {
     // Get new messages for this folder.
     aFolder->SetGettingNewMessages(true);
     if (performingBiff) imapFolder->SetPerformingBiff(true);
 
-    // eventually, the gGotStatusPref should go away, once we work out the kinks
-    // from using STATUS.
-    if (!gGotStatusPref) {
-      Preferences::GetBool("mail.imap.use_status_for_biff", &gUseStatus);
-      gGotStatusPref = true;
-    }
-
-    if (gUseStatus) {
+    if (useStatus) {
       if (m_foldersToStat.IndexOf(imapFolder) == -1) {
         // Prepare to do folderstatus URL. If folder not imap SELECTed, this
         // results in imap STATUS sent. If SELECTed, this result in imap NOOP.

@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "EwsListeners.h"
+#include "EwsOAuth2CustomDetails.h"
 #include "IEwsClient.h"
 #include "nsIMsgFolderNotificationService.h"
 #include "nsIMsgStatusFeedback.h"
@@ -255,6 +256,9 @@ nsresult EwsIncomingServer::DeleteFolderWithId(const nsACString& id) {
 /**
  * Locates the folder associated with this server which has the remote (EWS)
  * ID specified, if any.
+ *
+ * This function returns `NS_OK` if, and only if, the folder with the specified
+ * `id` is found.
  */
 nsresult EwsIncomingServer::FindFolderWithId(const nsACString& id,
                                              nsIMsgFolder** _retval) {
@@ -289,22 +293,24 @@ nsresult EwsIncomingServer::FindFolderWithId(const nsACString& id,
         // recording the IDs on folder creation or in retrieving them from
         // storage.
 
+        // We don't want to fail now in case a properly-constructed subfolder
+        // matches the requested ID. Note the failure in case we don't find a
+        // match, then continue the search.
+        failureStatus = rv;
+
         // Retrieve the folder's URI as an identifier for logging.
         nsCString uri;
         rv = folder->GetURI(uri);
         if (NS_FAILED(rv)) {
           // If we can't get the URI either, something is seriously wrong.
           NS_ERROR("failed to get ewsId property or URI for folder");
+          failureStatus = rv;
+        } else {
+          NS_WARNING(
+              nsPrintfCString("failed to get ewsId property for folder %s",
+                              uri.get())
+                  .get());
         }
-
-        NS_WARNING(nsPrintfCString("failed to get ewsId property for folder %s",
-                                   uri.get())
-                       .get());
-
-        // We don't want to fail now in case a properly-constructed subfolder
-        // matches the requested ID. Note the failure in case we don't find a
-        // match, then continue the search.
-        failureStatus = rv;
       }
 
       // This folder didn't match the ID we want. We'll check any subfolders
@@ -323,6 +329,41 @@ nsresult EwsIncomingServer::FindFolderWithId(const nsACString& id,
   }
 
   return failureStatus;
+}
+
+NS_IMETHODIMP EwsIncomingServer::GetPort(int32_t* aPort) {
+  NS_ENSURE_ARG_POINTER(aPort);
+
+  nsCString ewsURL;
+  nsresult rv = GetEwsUrl(ewsURL);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  int32_t port = -1;
+
+  // We might not have a valid URL yet.
+  if (!ewsURL.IsEmpty()) {
+    nsCOMPtr<nsIURI> uri;
+    rv = NS_NewURI(getter_AddRefs(uri), ewsURL);
+
+    // We might have a URL that's invalid (e.g. set by a test).
+    if (NS_SUCCEEDED(rv)) {
+      rv = uri->GetPort(&port);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+  }
+
+  if (port < 0) {
+    // If we don't have a valid URL yet, or it doesn't specify a port, default
+    // to the relevant one (as per the socket type).
+    nsMsgSocketTypeValue socketType;
+    rv = GetSocketType(&socketType);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    port = socketType == nsMsgSocketType::SSL ? 443 : 80;
+  }
+
+  *aPort = port;
+  return NS_OK;
 }
 
 NS_IMETHODIMP EwsIncomingServer::SyncFolderHierarchy(
@@ -634,23 +675,8 @@ NS_IMETHODIMP EwsIncomingServer::GetEwsClient(IEwsClient** ewsClient) {
   rv = GetEwsOverrideOAuthDetails(&overrideOAuth);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsAutoCString applicationId, tenantId, redirectUri, endpointHost, oauthScopes;
-  if (overrideOAuth) {
-    rv = GetEwsApplicationId(applicationId);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = GetEwsTenantId(tenantId);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = GetEwsRedirectUri(redirectUri);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = GetEwsEndpointHost(endpointHost);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = GetEwsOAuthScopes(oauthScopes);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-
   // Set up the client object with access details.
-  rv = client->Initialize(endpoint, this, overrideOAuth, applicationId,
-                          tenantId, redirectUri, endpointHost, oauthScopes);
+  rv = client->Initialize(endpoint, this);
   NS_ENSURE_SUCCESS(rv, rv);
 
   client.forget(ewsClient);
@@ -766,29 +792,113 @@ NS_IMETHODIMP EwsIncomingServer::GetTrashFolderPath(nsACString& returnValue) {
   return GetStringValue(kTrashFolderPreferenceName, returnValue);
 }
 
+NS_IMETHODIMP EwsIncomingServer::GetCanSearchMessages(bool* canSearchMessages) {
+  NS_ENSURE_ARG_POINTER(canSearchMessages);
+  *canSearchMessages = true;
+  return NS_OK;
+}
+
+NS_IMETHODIMP EwsIncomingServer::GetEwsUrl(nsACString& value) {
+  return GetStringValue("ews_url", value);
+}
+
+NS_IMETHODIMP EwsIncomingServer::SetEwsUrl(const nsACString& value) {
+  return SetStringValue("ews_url", value);
+}
+
+namespace {
+
+nsresult GetDetailsForHostname(EwsIncomingServer* server,
+                               EwsOAuth2CustomDetails** details) {
+  NS_ENSURE_ARG_POINTER(details);
+
+  nsAutoCString hostname;
+  nsresult rv = server->GetHostName(hostname);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  RefPtr<EwsOAuth2CustomDetails> result;
+  rv = EwsOAuth2CustomDetails::ForHostname(hostname, getter_AddRefs(result));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  result.forget(details);
+
+  return NS_OK;
+}
+
+template <typename F>
+nsresult GetOAuthProperty(EwsIncomingServer* server, nsACString& value,
+                          F&& accessor) {
+  RefPtr<EwsOAuth2CustomDetails> details;
+  nsresult rv = GetDetailsForHostname(server, getter_AddRefs(details));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  const std::optional<nsAutoCString> found = accessor(*details);
+  if (found) {
+    value.Assign(*found);
+  } else {
+    value.Assign("");
+  }
+
+  return NS_OK;
+}
+
+template <typename F>
+nsresult SetOAuthProperty(EwsIncomingServer* server, const nsACString& value,
+                          F&& accessor) {
+  RefPtr<EwsOAuth2CustomDetails> details;
+  nsresult rv = GetDetailsForHostname(server, getter_AddRefs(details));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return accessor(*details, value);
+}
+
+}  // namespace
+
 NS_IMETHODIMP EwsIncomingServer::GetEwsOverrideOAuthDetails(bool* value) {
-  return GetBoolValue("ews_override_oauth_details", value);
+  NS_ENSURE_ARG(value);
+
+  RefPtr<EwsOAuth2CustomDetails> details;
+  nsresult rv = GetDetailsForHostname(this, getter_AddRefs(details));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  *value = details->GetConfiguredUseCustomDetails();
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP EwsIncomingServer::SetEwsOverrideOAuthDetails(bool value) {
-  return SetBoolValue("ews_override_oauth_details", value);
+  NS_ENSURE_ARG(value);
+
+  RefPtr<EwsOAuth2CustomDetails> details;
+  nsresult rv = GetDetailsForHostname(this, getter_AddRefs(details));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = details->SetConfiguredUseCustomDetails(value);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
 }
 
-#define DEFINE_PREF_STRING_PROPERTY(PropName, PrefName)                     \
-  NS_IMETHODIMP EwsIncomingServer::Get##PropName(nsACString& value) {       \
-    return GetStringValue(PrefName, value);                                 \
-  }                                                                         \
-  NS_IMETHODIMP EwsIncomingServer::Set##PropName(const nsACString& value) { \
-    return SetStringValue(PrefName, value);                                 \
+#define DEFINE_OAUTH_PROPERTY_ACCESSORS(PropertyName, OAuthValueName)     \
+  NS_IMETHODIMP EwsIncomingServer::Get##PropertyName(nsACString& value) { \
+    return GetOAuthProperty(this, value,                                  \
+                            [](const EwsOAuth2CustomDetails& details) {   \
+                              return details.Get##OAuthValueName();       \
+                            });                                           \
+  }                                                                       \
+  NS_IMETHODIMP EwsIncomingServer::Set##PropertyName(                     \
+      const nsACString& value) {                                          \
+    return SetOAuthProperty(                                              \
+        this, value,                                                      \
+        [](EwsOAuth2CustomDetails& details, const nsACString& value) {    \
+          return details.Set##OAuthValueName(value);                      \
+        });                                                               \
   }
 
-// EWS uses an HTTP(S) endpoint for calls rather than a simple hostname. This
-// is stored as a pref against this server.
-DEFINE_PREF_STRING_PROPERTY(EwsUrl, "ews_url")
-DEFINE_PREF_STRING_PROPERTY(EwsApplicationId, "ews_application_id")
-DEFINE_PREF_STRING_PROPERTY(EwsTenantId, "ews_tenant_id")
-DEFINE_PREF_STRING_PROPERTY(EwsRedirectUri, "ews_redirect_uri")
-DEFINE_PREF_STRING_PROPERTY(EwsEndpointHost, "ews_endpoint_host")
-DEFINE_PREF_STRING_PROPERTY(EwsOAuthScopes, "ews_oauth_scopes")
+DEFINE_OAUTH_PROPERTY_ACCESSORS(EwsApplicationId, ConfiguredApplicationId);
+DEFINE_OAUTH_PROPERTY_ACCESSORS(EwsTenantId, ConfiguredTenant);
+DEFINE_OAUTH_PROPERTY_ACCESSORS(EwsRedirectUri, ConfiguredRedirectUri);
+DEFINE_OAUTH_PROPERTY_ACCESSORS(EwsEndpointHost, ConfiguredEndpointHost);
+DEFINE_OAUTH_PROPERTY_ACCESSORS(EwsOAuthScopes, ConfiguredOAuthScopes);
 
-#undef DEFINE_PREF_PROPERTY
+#undef DEFINE_OAUTH_PROPERTY_ACCESSORS

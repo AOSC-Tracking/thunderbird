@@ -28,7 +28,7 @@ pub(crate) trait MessageHeaders {
     fn author<'a>(&'a self) -> Option<Mailbox<'a>>;
 
     /// The `Reply-To` header for this message.
-    fn reply_to_recipient<'a>(&'a self) -> Option<Mailbox<'a>>;
+    fn reply_to_recipients<'a>(&'a self) -> Option<impl IntoIterator<Item = Mailbox<'a>>>;
 
     /// The `To` header for this message.
     fn to_recipients<'a>(&'a self) -> Option<impl IntoIterator<Item = Mailbox<'a>>>;
@@ -52,6 +52,9 @@ pub(crate) trait MessageHeaders {
 
     /// The size of the message in bytes.
     fn size(&self) -> Option<usize>;
+
+    /// A short preview string for the message.
+    fn preview(&self) -> Option<impl AsRef<str>>;
 }
 
 impl MessageHeaders for &ews::Message {
@@ -103,10 +106,15 @@ impl MessageHeaders for &ews::Message {
             .map(|recipient| Mailbox::from(&recipient.mailbox))
     }
 
-    fn reply_to_recipient<'a>(&'a self) -> Option<Mailbox<'a>> {
+    fn reply_to_recipients<'a>(&'a self) -> Option<impl IntoIterator<Item = Mailbox<'a>>> {
         self.reply_to
             .as_ref()
-            .map(|recipient| Mailbox::from(&recipient.mailbox))
+            .map(|recipients| &recipients.0)
+            .map(|recipients| {
+                recipients
+                    .iter()
+                    .map(|recipient| Mailbox::from(&recipient.mailbox))
+            })
     }
 
     fn to_recipients<'a>(&'a self) -> Option<impl IntoIterator<Item = Mailbox<'a>>> {
@@ -146,6 +154,10 @@ impl MessageHeaders for &ews::Message {
     fn size(&self) -> Option<usize> {
         self.size
     }
+
+    fn preview(&self) -> Option<impl AsRef<str>> {
+        self.preview.as_ref()
+    }
 }
 
 impl MessageHeaders for mail_parser::Message<'_> {
@@ -184,10 +196,13 @@ impl MessageHeaders for mail_parser::Message<'_> {
             .and_then(|addr| addr.try_into().ok())
     }
 
-    fn reply_to_recipient<'a>(&'a self) -> Option<Mailbox<'a>> {
-        self.reply_to()
-            .and_then(mail_parser::Address::first)
-            .and_then(|addr| addr.try_into().ok())
+    fn reply_to_recipients<'a>(&'a self) -> Option<impl IntoIterator<Item = Mailbox<'a>>> {
+        self.reply_to().map(|addr| addr.iter()).and_then(|addrs| {
+            addrs
+                .into_iter()
+                .map(|addr| addr.try_into().ok())
+                .collect::<Option<Vec<Mailbox<'a>>>>()
+        })
     }
 
     fn to_recipients<'a>(&'a self) -> Option<impl IntoIterator<Item = Mailbox<'a>>> {
@@ -234,6 +249,10 @@ impl MessageHeaders for mail_parser::Message<'_> {
     fn size(&self) -> Option<usize> {
         Some(self.raw_message.len())
     }
+
+    fn preview(&self) -> Option<impl AsRef<str>> {
+        None::<String>
+    }
 }
 
 /// Gets an iterator of mailboxes from a `mail_parser` address field, filtering
@@ -257,14 +276,14 @@ fn array_of_recipients_to_mailboxes<'a>(
 #[derive(Clone, Copy, Debug)]
 pub struct Mailbox<'a> {
     pub name: Option<&'a str>,
-    pub email_address: &'a str,
+    pub email_address: Option<&'a str>,
 }
 
 impl<'a> From<&'a ews::Mailbox> for Mailbox<'a> {
     fn from(value: &'a ews::Mailbox) -> Self {
         Mailbox {
             name: value.name.as_deref(),
-            email_address: &value.email_address,
+            email_address: value.email_address.as_deref(),
         }
     }
 }
@@ -275,7 +294,7 @@ impl<'a> TryFrom<&'a mail_parser::Addr<'_>> for Mailbox<'a> {
     fn try_from(value: &'a mail_parser::Addr) -> Result<Self, Self::Error> {
         value.address.as_ref().ok_or(()).map(|address| Mailbox {
             name: value.name.as_ref().map(|name| name.as_ref()),
-            email_address: address.as_ref(),
+            email_address: Some(address.as_ref()),
         })
     }
 }
@@ -284,7 +303,6 @@ impl std::fmt::Display for Mailbox<'_> {
     /// Writes the contents of the mailbox in a format suitable for use in an
     /// Internet Message Format header.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let email_address = self.email_address;
         if let Some(name) = self.name {
             let mut buf: Vec<u8> = Vec::new();
 
@@ -295,9 +313,15 @@ impl std::fmt::Display for Mailbox<'_> {
             // It's okay to unwrap here, as successful RFC 2047 encoding implies the
             // result is ASCII.
             let name = std::str::from_utf8(&buf).unwrap();
-            write!(f, "{name} <{email_address}>")
-        } else {
-            write!(f, "{email_address}")
+            write!(f, "{name}")?;
+
+            if let Some(address) = self.email_address {
+                write!(f, " <{address}>")?;
+            }
+        } else if let Some(address) = self.email_address {
+            write!(f, "{address}")?;
         }
+
+        Ok(())
     }
 }

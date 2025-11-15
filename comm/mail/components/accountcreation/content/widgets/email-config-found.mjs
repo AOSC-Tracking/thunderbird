@@ -9,9 +9,11 @@ const {
 } = ChromeUtils.importESModule(
   "resource:///modules/accountcreation/AccountCreationUtils.sys.mjs"
 );
-
 const { Sanitizer } = ChromeUtils.importESModule(
   "resource:///modules/accountcreation/Sanitizer.sys.mjs"
+);
+const { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
 );
 
 /**
@@ -33,13 +35,6 @@ class EmailConfigFound extends AccountHubStep {
    * @type {HTMLElement}
    */
   #protocolForm;
-
-  /**
-   * The install link.
-   *
-   * @type {HTMLElement}
-   */
-  #installAddon;
 
   /**
    * The Account Config object with the selected incoming set.
@@ -70,7 +65,6 @@ class EmailConfigFound extends AccountHubStep {
     this.appendChild(template);
 
     this.#protocolForm = this.querySelector("#protocolForm");
-    this.#installAddon = this.querySelector("#addonInstall");
 
     this.#protocolForm.addEventListener("change", event => {
       // Remove 'selected' class from all label elements.
@@ -84,6 +78,7 @@ class EmailConfigFound extends AccountHubStep {
     });
 
     this.querySelector("#editConfiguration").addEventListener("click", this);
+    this.querySelector("#addonInstall").addEventListener("click", this);
     this.querySelector("#addonInfo").addEventListener("click", this);
 
     this.#currentConfig = {};
@@ -99,11 +94,14 @@ class EmailConfigFound extends AccountHubStep {
             })
           );
         } else if (event.target.id === "addonInstall") {
+          this.querySelector("#addonInstall").disabled = true;
           this.dispatchEvent(
             new CustomEvent("install-addon", {
               bubbles: true,
             })
           );
+        } else if (event.target.id === "addonInfo") {
+          openLinkExternally(event.target.href);
         }
         break;
       default:
@@ -197,14 +195,14 @@ class EmailConfigFound extends AccountHubStep {
     this.querySelector("#incomingUsername").title = username;
     this.querySelector("#owlExchangeDescription").hidden = true;
     this.querySelector("#editConfiguration").hidden = false;
-    const incomingSSL = Sanitizer.translate(incoming.socketType, {
-      0: "no-encryption",
-      2: "starttls",
-      3: "ssl",
+    const incomingSocketType = Sanitizer.translate(incoming.socketType, {
+      0: "no-encryption", // account-setup-result-no-encryption
+      2: "starttls", // account-setup-result-no-starttls
+      3: "ssl", // account-setup-result-no-ssl
     });
     document.l10n.setAttributes(
-      this.querySelector("#incomingAuth"),
-      `account-setup-result-${incomingSSL}`
+      this.querySelector("#incomingSocketType"),
+      `account-setup-result-${incomingSocketType}`
     );
 
     this.#selectedConfig = this.#currentConfig.copy();
@@ -213,7 +211,7 @@ class EmailConfigFound extends AccountHubStep {
     this.#setContinueState();
 
     // Hide outgoing config details if unavailable.
-    if (!outgoing || incoming.type === "ews" || incoming.type === "exchange") {
+    if (!outgoing || incoming.type == "ews" || incoming.type == "exchange") {
       this.querySelector("#outgoingConfigType").hidden = true;
       this.querySelector("#outgoingConfig").hidden = true;
       document.l10n.setAttributes(
@@ -221,11 +219,23 @@ class EmailConfigFound extends AccountHubStep {
         "account-hub-result-ews-text"
       );
 
-      this.querySelector("#owlExchangeDescription").hidden =
-        (incoming.type === "exchange" && this.#addon?.isInstalled) ||
-        incoming.type === "ews";
+      // Show OWL add-on installation option if incoming type is exchange
+      // (not ews) and the add-on is not already installed.
+      if (
+        incoming.type == "exchange" &&
+        this.#addon &&
+        !this.#addon.isInstalled
+      ) {
+        this.querySelector("#owlExchangeDescription").hidden = false;
+        this.querySelector("#addonInstall").disabled = false;
+        const link = this.querySelector("#addonInfo");
+        link.textContent = this.#addon.description;
+        link.href = this.#addon.websiteURL;
+        if (this.#addon.icon32) {
+          this.querySelector("#addonIcon").src = this.#addon.icon32;
+        }
+      }
 
-      // FIXME: Bug 1899649 is tracking being able to edit an EWS config.
       this.querySelector("#editConfiguration").hidden =
         incoming.type === "exchange" && !this.#addon?.isInstalled;
 
@@ -247,14 +257,14 @@ class EmailConfigFound extends AccountHubStep {
     this.querySelector("#outgoingType").title = outgoing.type;
     this.querySelector("#outgoingHost").title = outgoing.hostname;
     this.querySelector("#outgoingUsername").title = outgoing.username;
-    const outgoingSsl = Sanitizer.translate(outgoing.socketType, {
-      0: "no-encryption",
-      2: "starttls",
-      3: "ssl",
+    const outgoingSocketType = Sanitizer.translate(outgoing.socketType, {
+      0: "no-encryption", // account-setup-result-no-encryption
+      2: "starttls", // account-setup-result-starttls
+      3: "ssl", // account-setup-result-ssl
     });
     document.l10n.setAttributes(
-      this.querySelector("#outgoingAuth"),
-      `account-setup-result-${outgoingSsl}`
+      this.querySelector("#outgoingSocketType"),
+      `account-setup-result-${outgoingSocketType}`
     );
   }
 
@@ -274,15 +284,20 @@ class EmailConfigFound extends AccountHubStep {
     this.#addon.isDisabled = await installer.isDisabled();
 
     if (this.#addon.isInstalled) {
-      this.#currentConfig.incoming.addonAccountType =
-        this.#addon.useType.addonAccountType;
+      const exchangeConfigs = [
+        this.#currentConfig.incoming,
+        ...this.#currentConfig.incomingAlternatives,
+      ].filter(config => config.type == "exchange");
+      for (const config of exchangeConfigs) {
+        config.addonAccountType = this.#addon.useType.addonAccountType;
+      }
       this.querySelector("#owlExchangeDescription").hidden = true;
       this.querySelector("#editConfiguration").hidden = false;
       return;
     }
 
     if (this.#addon.isDisabled) {
-      this.#installAddon.disabled = true;
+      this.querySelector("#addonInstall").disabled = true;
 
       // Trigger an add-on update check. If an update is available,
       // enable the install button to (re)install.
@@ -292,7 +307,7 @@ class EmailConfigFound extends AccountHubStep {
         }
         const listener = {
           onUpdateAvailable() {
-            this.querySelector("#installAddon").disabled = false;
+            this.querySelector("#addonInstall").disabled = false;
           },
           onNoUpdateAvailable() {},
         };

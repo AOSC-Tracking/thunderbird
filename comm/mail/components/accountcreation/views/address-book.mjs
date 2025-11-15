@@ -340,6 +340,8 @@ class AccountHubAddressBook extends HTMLElement {
       })
     );
 
+    document.getElementById("tabmail").globalOverlay = false;
+
     await window.toAddressBook(["cmd_displayAddressBook", directoryUID]);
   }
 
@@ -472,6 +474,7 @@ class AccountHubAddressBook extends HTMLElement {
     this.#states.syncAddressBooksSubview.previousStep = previousStep;
     this.classList.add("busy");
     this.#footer.disabled = true;
+    this.#footer.toggleBackDisabled(true);
     this.#currentSubview.showNotification({
       fluentTitleId: "address-book-finding-remote-address-books",
       type: "info",
@@ -514,6 +517,7 @@ class AccountHubAddressBook extends HTMLElement {
       });
     } finally {
       this.#footer.disabled = false;
+      this.#footer.toggleBackDisabled(false);
       this.classList.remove("busy");
     }
   }

@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* globals ReloadMessage, getMessagePaneBrowser, openContentTab,
-           GetNumSelectedMessages, gMessageNotificationBar */
+   gMessageNotificationBar */
 
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
@@ -25,9 +25,6 @@ var { openLinkExternally } = ChromeUtils.importESModule(
 ChromeUtils.defineESModuleGetters(this, {
   MsgHdrToMimeMessage: "resource:///modules/gloda/MimeMessage.sys.mjs",
 });
-
-// This global is for SeaMonkey compatibility.
-var gShowFeedSummary;
 
 var FeedMessageHandler = {
   gShowSummary: true,
@@ -106,7 +103,7 @@ var FeedMessageHandler = {
 
     if (aToggle) {
       // Toggle mode, flip value.
-      return (gShowFeedSummary = this.gShowSummary = !this.gShowSummary);
+      return (this.gShowSummary = !this.gShowSummary);
     }
 
     const wintype = document.documentElement.getAttribute("windowtype");
@@ -141,7 +138,7 @@ var FeedMessageHandler = {
       }
     }
 
-    gShowFeedSummary = this.gShowSummary = showSummary;
+    this.gShowSummary = showSummary;
 
     if (messageWindow || messageTab) {
       // Message opened in either standalone window or tab, due to either
@@ -235,7 +232,7 @@ var FeedMessageHandler = {
   setContent(aMsgHdr, aShowSummary) {
     if (aShowSummary) {
       // Only here if toggling to summary in 3pane.
-      if (this.gToggle && window.gDBView && GetNumSelectedMessages() == 1) {
+      if (this.gToggle && window.gDBView) {
         ReloadMessage();
       }
     } else {
@@ -304,7 +301,7 @@ function openComposeWindowForRSSArticle(
     !is3pane &&
     FeedMessageHandler.onOpenPref == FeedMessageHandler.kOpenWebPage;
 
-  if (gShowFeedSummary && !showingwebpage) {
+  if (FeedMessageHandler.gShowSummary && !showingwebpage) {
     // The user is viewing the summary.
     MailServices.compose.OpenComposeWindow(
       aMsgComposeWindow,

@@ -3,9 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
 #include "nsIMsgHdr.h"
 #include "nsMsgUtils.h"
+#include "nsISeekableStream.h"
 #include "nsIStringStream.h"
 #include "nsMsgFolderFlags.h"
 #include "nsMsgMessageFlags.h"
@@ -15,11 +15,9 @@
 #include "nsIImapUrl.h"
 #include "nsIMailboxUrl.h"
 #include "nsMsgI18N.h"
-#include "nsNativeCharsetUtils.h"
 #include "nsCharTraits.h"
 #include "prprf.h"
 #include "prmem.h"
-#include "nsNetCID.h"
 #include "nsIIOService.h"
 #include "nsIMimeConverter.h"
 #include "nsIPrefBranch.h"
@@ -29,7 +27,6 @@
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsISpamSettings.h"
 #include "nsICryptoHash.h"
-#include "nsNativeCharsetUtils.h"
 #include "nsDirectoryServiceUtils.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsIRssIncomingServer.h"
@@ -37,7 +34,6 @@
 #include "nsIMsgProtocolInfo.h"
 #include "nsIMsgMessageService.h"
 #include "nsIOutputStream.h"
-#include "nsMsgFileStream.h"
 #include "nsIFileURL.h"
 #include "nsLocalFile.h"
 #include "nsNetUtil.h"
@@ -48,8 +44,6 @@
 #include "nsIMsgMailNewsUrl.h"
 #include "nsIStringBundle.h"
 #include "nsIMsgWindow.h"
-#include "nsIWindowWatcher.h"
-#include "nsIPrompt.h"
 #include "nsIMsgSearchTerm.h"
 #include "nsTextFormatter.h"
 #include "nsIStreamListener.h"
@@ -71,7 +65,6 @@
 #include "mozilla/Utf8.h"
 #include "mozilla/Buffer.h"
 #include "nsIPromptService.h"
-#include "nsEmbedCID.h"
 #include "mozilla/intl/Localization.h"
 #include <algorithm>
 #include <limits.h>
@@ -274,17 +267,6 @@ inline uint32_t StringHash(const nsString& str) {
   return StringHash(reinterpret_cast<const char*>(strbuf), str.Length() * 2);
 }
 
-/* Utility functions used in a few places in mailnews */
-int32_t MsgFindCharInSet(const nsCString& aString, const char* aChars,
-                         uint32_t aOffset) {
-  return aString.FindCharInSet(aChars, aOffset);
-}
-
-int32_t MsgFindCharInSet(const nsString& aString, const char16_t* aChars,
-                         uint32_t aOffset) {
-  return aString.FindCharInSet(aChars, aOffset);
-}
-
 const static uint32_t MAX_LEN = 55;
 
 // XXX : The number of UTF-16 2byte code units are half the number of
@@ -299,8 +281,7 @@ nsString NS_MsgHashIfNecessary(const nsACString& unsafeName) {
 nsString NS_MsgHashIfNecessary(const nsAString& unsafeName) {
   nsString name(unsafeName);
   if (name.IsEmpty()) return name;  // Nothing to do.
-  int32_t illegalCharacterIndex = MsgFindCharInSet(
-      name,
+  int32_t illegalCharacterIndex = name.FindCharInSet(
       u"" FILE_PATH_SEPARATOR FILE_ILLEGAL_CHARACTERS ILLEGAL_FOLDER_CHARS, 0);
 
   // Need to check the first ('.') and last ('.', '~' and ' ') char
@@ -436,7 +417,16 @@ nsresult NS_MsgCreatePathStringFromFolderURI(const char* aFolderURI,
         CopyUTF16toMUTF7(pathPiece, tmp);
         CopyASCIItoUTF16(tmp, pathPiece);
       }
-      path += NS_MsgHashIfNecessary(pathPiece);
+
+      // To handle safely creating database folders, some paths need to be
+      // hashed. Hashing operates on an unescaped string, so we unescape each
+      // string individually. We need to do this here because if we were to
+      // unescape the URI string prior to separating it into path pieces,
+      // characters like `/` would break the path piece parsing.
+      nsAutoCString unescapedPathPiece;
+      MsgUnescapeString(NS_ConvertUTF16toUTF8(pathPiece), 0,
+                        unescapedPathPiece);
+      path += NS_MsgHashIfNecessary(unescapedPathPiece);
       haveFirst = true;
     }
     // look for the next slash
@@ -576,21 +566,6 @@ char* NS_MsgSACat(char** destination, const char* source) {
   return *destination;
 }
 
-nsresult NS_MsgEscapeEncodeURLPath(const nsACString& aStr, nsCString& aResult) {
-  return MsgEscapeString(aStr, nsINetUtil::ESCAPE_URL_PATH, aResult);
-}
-
-nsresult NS_MsgDecodeUnescapeURLPath(const nsACString& aPath,
-                                     nsAString& aResult) {
-  nsAutoCString unescapedName;
-  MsgUnescapeString(
-      aPath,
-      nsINetUtil::ESCAPE_URL_FILE_BASENAME | nsINetUtil::ESCAPE_URL_FORCED,
-      unescapedName);
-  CopyUTF8toUTF16(unescapedName, aResult);
-  return NS_OK;
-}
-
 bool WeAreOffline() {
   bool offline = false;
 
@@ -636,7 +611,8 @@ nsresult GetExistingFolder(nsIMsgFolder* parent, const nsACString& folderPath,
   NS_ENSURE_ARG_POINTER(folder);
 
   nsAutoCString encodedPath;
-  nsresult rv = NS_MsgEscapeEncodeURLPath(folderPath, encodedPath);
+  nsresult rv =
+      MsgEscapeString(folderPath, nsINetUtil::ESCAPE_URL_PATH, encodedPath);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString folderUri;
@@ -691,7 +667,7 @@ nsresult CreateFolderAndCache(nsIMsgFolder* parentFolder,
     // both representations for a conflict. This workaround can be removed once
     // Bug 1969363 is addressed.
     nsAutoCString urlEncodedName;
-    NS_MsgEscapeEncodeURLPath(folderName, urlEncodedName);
+    MsgEscapeString(folderName, nsINetUtil::ESCAPE_URL_PATH, urlEncodedName);
     nsAutoCString candidateUri{parentFolder->URI()};
     candidateUri.Append("/");
     candidateUri.Append(urlEncodedName);
@@ -737,60 +713,6 @@ nsresult FolderPathInServer(nsIMsgFolder* folder, nsACString& path) {
   uri->GetFilePath(fullfolderPath);
   return MsgUnescapeString(Substring(fullfolderPath, 1),  // Skip leading slash.
                            nsINetUtil::ESCAPE_URL_PATH, path);
-}
-
-bool IsAFromSpaceLine(char* start, const char* end) {
-  bool rv = false;
-  while ((start < end) && (*start == '>')) start++;
-  // If the leading '>'s are followed by an 'F' then we have a possible case
-  // here.
-  if ((*start == 'F') && (end - start > 4) && !strncmp(start, "From ", 5))
-    rv = true;
-  return rv;
-}
-
-//
-// This function finds all lines starting with "From " or "From " preceding
-// with one or more '>' (ie, ">From", ">>From", etc) in the input buffer
-// (between 'start' and 'end') and prefix them with a ">" .
-//
-nsresult EscapeFromSpaceLine(nsIOutputStream* outputStream, char* start,
-                             const char* end) {
-  nsresult rv;
-  char* pChar;
-  uint32_t written;
-
-  pChar = start;
-  while (start < end) {
-    while ((pChar < end) && (*pChar != '\r') && ((pChar + 1) < end) &&
-           (*(pChar + 1) != '\n'))
-      pChar++;
-    if ((pChar + 1) == end) pChar++;
-
-    if (pChar < end) {
-      // Found a line so check if it's a qualified "From " line.
-      if (IsAFromSpaceLine(start, pChar)) {
-        rv = outputStream->Write(">", 1, &written);
-        NS_ENSURE_SUCCESS(rv, rv);
-      }
-      int32_t lineTerminatorCount = (*(pChar + 1) == '\n') ? 2 : 1;
-      rv = outputStream->Write(start, pChar - start + lineTerminatorCount,
-                               &written);
-      NS_ENSURE_SUCCESS(rv, rv);
-      pChar += lineTerminatorCount;
-      start = pChar;
-    } else if (start < end) {
-      // Check and flush out the remaining data and we're done.
-      if (IsAFromSpaceLine(start, end)) {
-        rv = outputStream->Write(">", 1, &written);
-        NS_ENSURE_SUCCESS(rv, rv);
-      }
-      rv = outputStream->Write(start, end - start, &written);
-      NS_ENSURE_SUCCESS(rv, rv);
-      break;
-    }
-  }
-  return NS_OK;
 }
 
 nsresult IsRFC822HeaderFieldName(const char* aHdr, bool* aResult) {
@@ -1255,14 +1177,6 @@ nsresult MsgCleanupTempFiles(const char* fileName, const char* extension) {
       tmpFile->SetNativeLeafName(leafName);
     }
   } while (exists && index++ < 10000);
-  return NS_OK;
-}
-
-nsresult MsgGetFileStream(nsIFile* file, nsIOutputStream** fileStream) {
-  RefPtr<nsMsgFileStream> newFileStream = new nsMsgFileStream;
-  nsresult rv = newFileStream->InitWithFile(file);
-  NS_ENSURE_SUCCESS(rv, rv);
-  newFileStream.forget(fileStream);
   return NS_OK;
 }
 
@@ -1937,4 +1851,49 @@ nsCString DecodeFilename(nsAString const& filename) {
   // NS_UnescapeURL() does generic percent-decoding, not just for URLs.
   NS_UnescapeURL(out);
   return out;
+}
+
+nsTArray<nsCString> ParseIdentificationFields(nsACString const& m) {
+  nsTArray<nsCString> out;
+  // TODO: implement a proper parser?
+  // This adhoc mess should be fine for most cases, but we're not exactly
+  // following RFC5322 in exact detail here...
+  // Noting that we also have to account for real-world messiness.
+  // See also nsMsgHdr::GetNextReference().
+
+  for (auto part : m.Split(' ')) {
+    nsAutoCString s(part);
+
+    s.Trim(" \t");  // Trim WSP.
+
+    // Strip (optional) angle brackets.
+    size_t len = s.Length();
+    if (len >= 2 && s[0] == '<' && s[len - 1] == '>') {
+      s = Substring(s, 1, len - 2);
+    }
+
+    if (!s.IsEmpty()) {
+      out.AppendElement(s);
+    }
+  }
+  return out;
+}
+
+nsresult LocalizeMessage(mozilla::intl::Localization* l10n,
+                         nsACString const& id,
+                         nsTArray<std::pair<nsCString, nsCString>> const& args,
+                         nsACString& message) {
+  auto l10nArgs = dom::Optional<intl::L10nArgs>();
+  l10nArgs.Construct();
+
+  for (auto&& [key, value] : args) {
+    auto idArg = l10nArgs.Value().Entries().AppendElement();
+    idArg->mKey = key;
+    idArg->mValue.SetValue().SetAsUTF8String().Assign(value);
+  }
+
+  ErrorResult error;
+  l10n->FormatValueSync(id, l10nArgs, message, error);
+  NS_ENSURE_TRUE(!error.Failed(), error.StealNSResult());
+  return NS_OK;
 }

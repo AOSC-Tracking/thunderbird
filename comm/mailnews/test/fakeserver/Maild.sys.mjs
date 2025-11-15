@@ -399,25 +399,17 @@ class nsMailReader {
   }
 
   _findLines() {
-    var buf = this._buffer;
-    for (
-      var crlfLoc = buf.indexOf(13);
-      crlfLoc >= 0;
-      crlfLoc = buf.indexOf(13, crlfLoc + 1)
-    ) {
-      if (buf[crlfLoc + 1] == 10) {
-        break;
+    let last = 0;
+    for (let i = 0; i < this._buffer.length; i++) {
+      if (this._buffer[i] == 13 && this._buffer[i + 1] == 10) {
+        this._lines.push(
+          String.fromCharCode.apply(null, this._buffer.slice(last, i))
+        );
+        last = i + 2;
       }
     }
-    if (crlfLoc == -1) {
-      // We failed to find a newline
-      return;
-    }
 
-    var line = String.fromCharCode.apply(null, buf.slice(0, crlfLoc));
-    this._buffer = buf.slice(crlfLoc + 2);
-    this._lines.push(line);
-    this._findLines();
+    this._buffer = this._buffer.slice(last);
   }
 
   onInputStreamReady(stream) {
@@ -551,15 +543,22 @@ class nsMailReader {
   _realCloseSocket(immediately) {
     this._isRunning = false;
     this._server.stopTest();
+
+    const cleanUp = () => {
+      this._transport?.close(Cr.NS_OK);
+      this._transport = null;
+      this._output = null;
+    };
+
     if (immediately) {
-      this._transport.close(Cr.NS_OK);
+      cleanUp();
       return;
     }
 
     // Wait a moment, then close the connection. Closing immediately can
     // prevent the last output stream message from reaching the client
     // (although that's not supposed to happen).
-    setTimeout(() => this._transport.close(Cr.NS_OK), 50);
+    setTimeout(cleanUp, 50);
   }
 
   setMultiline(multi) {

@@ -4,10 +4,16 @@
 
 /**
  * Tests imap save and detach attachments.
+ *
+ * This should closely match
+ * mailnews/protocols/ews/test/unit/test_ewsAttachmentSaves.js
  */
 
 var { MessageGenerator } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+var { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 var { PromiseTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
@@ -19,100 +25,102 @@ var { AttachmentInfo } = ChromeUtils.importESModule(
   "resource:///modules/AttachmentInfo.sys.mjs"
 );
 
-var kAttachFileName = "bob.txt";
-function SaveAttachmentCallback() {
-  this.attachments = null;
-  this._promise = new Promise((resolve, reject) => {
-    this._resolve = resolve;
-    this._reject = reject;
-  });
+const kAttachFileName = "bob.txt";
+
+class SaveAttachmentCallbackListener {
+  constructor() {
+    this.attachments = null;
+    this.deferred = Promise.withResolvers();
+  }
+
+  callback(aMsgHdr, aMimeMessage) {
+    this.attachments = aMimeMessage.allAttachments;
+    this.deferred.resolve();
+  }
 }
 
-SaveAttachmentCallback.prototype = {
-  callback: function saveAttachmentCallback_callback(aMsgHdr, aMimeMessage) {
-    this.attachments = aMimeMessage.allAttachments;
-    this._resolve();
-  },
-  get promise() {
-    return this._promise;
-  },
-};
-var gCallbackObject = new SaveAttachmentCallback();
+const gCallbackObject = new SaveAttachmentCallbackListener();
 
 add_setup(function () {
   setupIMAPPump();
+
+  registerCleanupFunction(() => {
+    teardownIMAPPump();
+  });
 });
 
-// load and update a message in the imap fake server
-add_task(async function loadImapMessage() {
-  const gMessageGenerator = new MessageGenerator();
+add_task(async function testImapAttachmentDetac() {
+  const messageGenerator = new MessageGenerator();
   // create a synthetic message with attachment
-  const smsg = gMessageGenerator.makeMessage({
+  const smsg = messageGenerator.makeMessage({
     attachments: [{ filename: kAttachFileName, body: "I like cheese!" }],
   });
 
+  const imapInbox = IMAPPump.daemon.getMailbox("INBOX");
+
+  // load and update a message in the fake imap server
   const msgURI = Services.io.newURI(
     "data:text/plain;base64," + btoa(smsg.toMessageString())
   );
-  const imapInbox = IMAPPump.daemon.getMailbox("INBOX");
   const message = new ImapMessage(msgURI.spec, imapInbox.uidnext++, []);
   IMAPPump.mailbox.addMessage(message);
   const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
-  Assert.equal(1, IMAPPump.inbox.getTotalMessages(false));
+
+  Assert.equal(
+    1,
+    IMAPPump.inbox.getTotalMessages(false),
+    "Inbox should have the one message we added"
+  );
   const msgHdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
   Assert.ok(msgHdr instanceof Ci.nsIMsgDBHdr);
-});
 
-// process the message through mime
-add_task(async function startMime() {
-  const msgHdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
-
+  // process the message through mime
   MsgHdrToMimeMessage(
     msgHdr,
     gCallbackObject,
     gCallbackObject.callback,
     true // allowDownload
   );
-  await gCallbackObject.promise;
-});
+  await gCallbackObject.deferred.promise;
 
-// detach any found attachments
-add_task(async function startDetach() {
-  const msgHdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
+  // detach any found attachments
   const attachment = new AttachmentInfo(gCallbackObject.attachments[0]);
   const profileDir = do_get_profile();
-
   await AttachmentInfo.detachAttachments(msgHdr, [attachment], profileDir.path);
 
   // Now test that the detachment was successful.
   const checkFile = do_get_profile().clone();
   checkFile.append(kAttachFileName);
+  Assert.ok(
+    checkFile.exists(),
+    "Detached file should exist in the profile directory"
+  );
 
-  // Check that the file attached to the message now exists in the profile
-  // directory.
-  Assert.ok(checkFile.exists());
+  // Wait for the folder to update, if you don't wait,
+  // the message count can be 0 or 2.
+  await TestUtils.waitForCondition(
+    () => [...IMAPPump.inbox.messages].length === 1,
+    "Waiting for IMAP detach to settle to one message",
+    200, // Wait 200 ms.
+    10 // 10 tries, usually one is enough.
+  );
 
   // The message should now have a detached attachment. Read the message,
-  //  and search for "AttachmentDetached" which is added on detachment.
+  // and search for "AttachmentDetached" which is added on detachment.
 
   // Get the message header - detached copy has UID 2. The original should be
   // gone.
-  Assert.equal(
-    [...IMAPPump.inbox.messages].length,
-    1,
-    "should have just one message"
-  );
   const msgHdr2 = IMAPPump.inbox.GetMessageHeader(2);
-  Assert.notStrictEqual(msgHdr2, null);
-  const messageContent = await getContentFromMessage(msgHdr2);
-  Assert.ok(messageContent.includes("AttachmentDetached"));
-});
+  Assert.ok(!!msgHdr2, "Should have a message header");
 
-// Cleanup
-add_task(function endTest() {
-  teardownIMAPPump();
+  const messageContent = await getContentFromMessage(msgHdr2);
+  Assert.stringContains(
+    messageContent,
+    "AttachmentDetached",
+    "Message content should indicate that an attachment was detached"
+  );
 });
 
 /**
@@ -146,15 +154,16 @@ function getContentFromMessage(aMsgHdr) {
         }
       },
     };
+
     // Pass true for aLocalOnly since message should be in offline store.
     MailServices.messageServiceFromURI(msgUri).streamMessage(
       msgUri,
       streamListener,
       null,
       null,
-      false,
+      false, // aConvertData
       "",
-      true
+      true // aLocalOnly
     );
   });
 }

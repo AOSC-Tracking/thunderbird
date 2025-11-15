@@ -313,7 +313,8 @@ class nsImapMailFolder : public nsMsgDBFolder,
 
   // overrides nsMsgDBFolder::HasMsgOffline()
   NS_IMETHOD HasMsgOffline(nsMsgKey msgKey, bool* _retval) override;
-  NS_IMETHOD GetLocalMsgStream(nsIMsgDBHdr* hdr,
+  // Overrides nsMsgDBFolder::GetMsgInputStream() for the gmail hack.
+  NS_IMETHOD GetMsgInputStream(nsIMsgDBHdr* hdr,
                                nsIInputStream** stream) override;
 
   NS_IMETHOD HandleViewCommand(nsMsgViewCommandTypeValue command,
@@ -339,6 +340,7 @@ class nsImapMailFolder : public nsMsgDBFolder,
   NS_IMETHOD GetCustomIdentity(nsIMsgIdentity** aIdentity) override;
 
   NS_IMETHOD GetIncomingServerType(nsACString& serverType) override;
+  NS_IMETHOD GetAutoSyncStateObj(nsIAutoSyncState** autoSyncStateObj) override;
 
   nsresult AddSubfolderWithPath(const nsACString& name, nsIFile* folderPath,
                                 nsIMsgFolder** child, bool brandNew = false);

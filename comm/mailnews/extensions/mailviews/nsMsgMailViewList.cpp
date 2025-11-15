@@ -4,21 +4,22 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsMsgMailViewList.h"
-#include "nsArray.h"
 #include "nsIMsgFilterService.h"
+#include "nsIMsgFilter.h"
 #include "nsIMsgMailSession.h"
 #include "nsIMsgSearchTerm.h"
+#include "nsMsgUtils.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsDirectoryServiceUtils.h"
 #include "nsIFile.h"
 #include "nsComponentManagerUtils.h"
 #include "mozilla/Components.h"
-#include "nsIMsgFilter.h"
+#include "mozilla/intl/Localization.h"
 
 #define kDefaultViewPeopleIKnow "People I Know"
 #define kDefaultViewRecent "Recent Mail"
 #define kDefaultViewFiveDays "Last 5 Days"
-#define kDefaultViewNotJunk "Not Junk"
+#define kDefaultViewNotSpam "Not Spam"
 #define kDefaultViewHasAttachments "Has Attachments"
 
 nsMsgMailView::nsMsgMailView() {}
@@ -29,56 +30,51 @@ NS_IMPL_QUERY_INTERFACE(nsMsgMailView, nsIMsgMailView)
 
 nsMsgMailView::~nsMsgMailView() {}
 
-NS_IMETHODIMP nsMsgMailView::GetMailViewName(char16_t** aMailViewName) {
-  NS_ENSURE_ARG_POINTER(aMailViewName);
-
-  *aMailViewName = ToNewUnicode(mName);
+NS_IMETHODIMP nsMsgMailView::GetMailViewName(nsACString& aMailViewName) {
+  aMailViewName = mName;
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgMailView::SetMailViewName(const char16_t* aMailViewName) {
+NS_IMETHODIMP nsMsgMailView::SetMailViewName(const nsACString& aMailViewName) {
   mName = aMailViewName;
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgMailView::GetPrettyName(char16_t** aMailViewName) {
-  NS_ENSURE_ARG_POINTER(aMailViewName);
-
+NS_IMETHODIMP nsMsgMailView::GetPrettyName(nsACString& aPrettyName) {
   nsresult rv = NS_OK;
-  if (!mBundle) {
-    nsCOMPtr<nsIStringBundleService> bundleService =
-        mozilla::components::StringBundle::Service();
-    NS_ENSURE_TRUE(bundleService, NS_ERROR_UNEXPECTED);
-    bundleService->CreateBundle(
-        "chrome://messenger/locale/mailviews.properties",
-        getter_AddRefs(mBundle));
-  }
 
-  NS_ENSURE_TRUE(mBundle, NS_ERROR_FAILURE);
+  RefPtr<mozilla::intl::Localization> l10n =
+      mozilla::intl::Localization::Create({"messenger/mailViews.ftl"_ns}, true);
 
-  // see if mName has an associated pretty name inside our string bundle and if
-  // so, use that as the pretty name otherwise just return mName
-  nsAutoString mailViewName;
+  nsAutoCString mailViewName;
+  bool gotLocalized = false;
   if (mName.EqualsLiteral(kDefaultViewPeopleIKnow)) {
-    rv = mBundle->GetStringFromName("mailViewPeopleIKnow", mailViewName);
-    *aMailViewName = ToNewUnicode(mailViewName);
+    rv = LocalizeMessage(l10n, "mail-view-known-people"_ns, {}, mailViewName);
+    gotLocalized = NS_SUCCEEDED(rv) && !mailViewName.IsEmpty();
   } else if (mName.EqualsLiteral(kDefaultViewRecent)) {
-    rv = mBundle->GetStringFromName("mailViewRecentMail", mailViewName);
-    *aMailViewName = ToNewUnicode(mailViewName);
+    rv = LocalizeMessage(l10n, "mail-view-recent"_ns, {}, mailViewName);
+    gotLocalized = NS_SUCCEEDED(rv) && !mailViewName.IsEmpty();
   } else if (mName.EqualsLiteral(kDefaultViewFiveDays)) {
-    rv = mBundle->GetStringFromName("mailViewLastFiveDays", mailViewName);
-    *aMailViewName = ToNewUnicode(mailViewName);
-  } else if (mName.EqualsLiteral(kDefaultViewNotJunk)) {
-    rv = mBundle->GetStringFromName("mailViewNotJunk", mailViewName);
-    *aMailViewName = ToNewUnicode(mailViewName);
+    rv = LocalizeMessage(l10n, "mail-view-last-five-days"_ns, {}, mailViewName);
+    gotLocalized = NS_SUCCEEDED(rv) && !mailViewName.IsEmpty();
+  } else if (mName.EqualsLiteral(kDefaultViewNotSpam)) {
+    rv = LocalizeMessage(l10n, "mail-view-not-spam"_ns, {}, mailViewName);
+    gotLocalized = NS_SUCCEEDED(rv) && !mailViewName.IsEmpty();
   } else if (mName.EqualsLiteral(kDefaultViewHasAttachments)) {
-    rv = mBundle->GetStringFromName("mailViewHasAttachments", mailViewName);
-    *aMailViewName = ToNewUnicode(mailViewName);
+    rv =
+        LocalizeMessage(l10n, "mail-view-has-attachments"_ns, {}, mailViewName);
+    gotLocalized = NS_SUCCEEDED(rv) && !mailViewName.IsEmpty();
   } else {
-    *aMailViewName = ToNewUnicode(mName);
+    aPrettyName = mName;
   }
 
-  return rv;
+  if (gotLocalized) {
+    aPrettyName = mailViewName;
+  } else {
+    aPrettyName = mName;
+  }
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgMailView::GetSearchTerms(
@@ -180,12 +176,13 @@ nsresult nsMsgMailViewList::ConvertMailViewListToFilterList() {
   uint32_t mailViewCount = m_mailViews.Length();
   nsCOMPtr<nsIMsgMailView> mailView;
   nsCOMPtr<nsIMsgFilter> newMailFilter;
-  nsString mailViewName;
+  nsAutoCString mailViewName;
   for (uint32_t index = 0; index < mailViewCount; index++) {
     GetMailViewAt(index, getter_AddRefs(mailView));
     if (!mailView) continue;
-    mailView->GetMailViewName(getter_Copies(mailViewName));
-    mFilterList->CreateFilter(mailViewName, getter_AddRefs(newMailFilter));
+    mailView->GetMailViewName(mailViewName);
+    mFilterList->CreateFilter(NS_ConvertUTF8toUTF16(mailViewName),
+                              getter_AddRefs(newMailFilter));
     if (!newMailFilter) continue;
 
     nsTArray<RefPtr<nsIMsgSearchTerm>> searchTerms;
@@ -264,7 +261,7 @@ nsresult nsMsgMailViewList::ConvertFilterListToMailViews() {
 
     nsString filterName;
     msgFilter->GetFilterName(filterName);
-    newMailView->SetMailViewName(filterName.get());
+    newMailView->SetMailViewName(NS_ConvertUTF16toUTF8(filterName));
 
     nsTArray<RefPtr<nsIMsgSearchTerm>> filterSearchTerms;
     rv = msgFilter->GetSearchTerms(filterSearchTerms);

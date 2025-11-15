@@ -1094,3 +1094,148 @@ calendar-tasks-view-calendarlist =
 calendar-tasks-view-filtertasks =
     .label = Filter Tasks
     .accesskey = F
+
+calendar-properties-color =
+    .value = Color:
+calendar-properties-location =
+    .value = Location:
+calendar-properties-refresh =
+    .value = Refresh Calendar:
+calendar-properties-refresh-manual =
+    .label = Manually
+calendar-properties-read-only =
+    .label = Read Only
+calendar-properties-show-reminders =
+    .label = Show Reminders
+calendar-properties-offline-support =
+    .label = Offline Support
+calendar-properties-enable-calendar =
+    .label = Enable This Calendar
+calendar-properties-provider-missing = The provider for this calendar could not be found. This often happens if you have disabled or uninstalled certain addons.
+calendar-properties-unsubscribe =
+    .label = Unsubscribe
+    .accesskey = U
+    .buttonlabelextra1 = Unsubscribe
+    .buttonaccesskeyextra1 = U
+
+calendar-alarm-dialog-title = Calendar Reminders
+calendar-alarm-details =
+    .value = Details…
+
+calendar-alarm-dismiss =
+    .label = Dismiss
+calendar-alarm-dismiss-all =
+    .label = Dismiss All
+
+calendar-alarm-snooze-for =
+    .label = Snooze for
+calendar-alarm-snooze-all-for =
+    .label = Snooze All for
+
+# Variables:
+# $count (Number) - The number of minutes to snooze.
+calendar-alarm-snooze-preset-minutes =
+    .label =
+        { $count ->
+            [one] { $count } Minute
+           *[other] { $count } Minutes
+        }
+
+# Variables:
+# $count (Number) - The number of hours to snooze.
+calendar-alarm-snooze-preset-hours =
+    .label =
+        { $count ->
+            [one] { $count } Hour
+           *[other] { $count } Hours
+        }
+
+# Variables:
+# $count (Number) - The number of days to snooze.
+calendar-alarm-snooze-preset-days =
+    .label =
+        { $count ->
+            [one] { $count } Day
+           *[other] { $count } Days
+        }
+
+# LOCALIZATION NOTE (calendar-alarm-snooze-cancel):
+# This string is not visible in the UI. It is read by screen readers when the
+# user focuses the "Cancel" button in the "Snooze for..." popup of the alarm dialog.
+calendar-alarm-snooze-cancel =
+    .aria-label = Cancel Snooze
+
+calendar-calendar =
+    .label = Calendar
+    .accesskey = C
+
+calendar-newevent-button =
+    .label = New Event
+    .tooltiptext = Create a new event
+
+calendar-newtask-button =
+    .label = New Task
+    .tooltiptext = Create a new task
+
+calendar-unifinder-show-completed-todos =
+    .label = Show completed Tasks
+
+calendar-display-todos-checkbox =
+    .label = Tasks in View
+    .accesskey = k
+
+calendar-completed-tasks-checkbox =
+    .label = Show completed Tasks
+    .accesskey = c
+
+calendar-only-workday-checkbox =
+    .label = Workweek days only
+    .accesskey = r
+
+calendar-orientation =
+    .label = Rotate View
+    .accesskey = o
+
+calendar-todaypane-button =
+    .label = Today Pane
+    .tooltiptext = Show Today Pane
+
+calendar-search-options-searchfor =
+    .value = contain
+
+calendar-server-dialog-title-edit =
+    .title = Edit Calendar
+
+calendar-server-dialog-name-label =
+    .value = Calendar Name:
+
+calendar-publish-dialog-title =
+    .title = Publish Calendar
+
+calendar-publish-url-label = Publishing URL
+
+calendar-publish-publish-button = Publish
+
+calendar-publish-close-button = Close
+
+calendar-select-dialog-title = Select Calendar
+
+calendar-error-detail =
+    .label = Details…
+
+calendar-error-code =
+    .value = Error code:
+
+calendar-error-description =
+    .value = Description:
+
+calendar-error-title =
+    .title = An error has occurred
+
+calendar-extract-event-button =
+    .label = Add as event
+    .tooltiptext = Extract calendaring information from the message and add it to your calendar as an event
+
+calendar-extract-task-button =
+    .label = Add as task
+    .tooltiptext = Extract calendaring information from the message and add it to your calendar as a task

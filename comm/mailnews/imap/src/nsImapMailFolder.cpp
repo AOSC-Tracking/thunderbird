@@ -29,7 +29,6 @@
 #include "nsMsgI18N.h"
 #include "nsIMsgFilter.h"
 #include "nsIMsgFilterService.h"
-#include "nsIMsgSearchCustomTerm.h"
 #include "nsIMsgSearchTerm.h"
 #include "nsImapMoveCoalescer.h"
 #include "nsIPrompt.h"
@@ -279,7 +278,7 @@ NS_IMETHODIMP nsImapMailFolder::AddSubfolder(const nsACString& aName,
   uri.Append('/');
 
   nsAutoCString escapedName;
-  rv = NS_MsgEscapeEncodeURLPath(aName, escapedName);
+  rv = MsgEscapeString(aName, nsINetUtil::ESCAPE_URL_PATH, escapedName);
   NS_ENSURE_SUCCESS(rv, rv);
 
   uri += escapedName.get();
@@ -302,13 +301,15 @@ NS_IMETHODIMP nsImapMailFolder::AddSubfolder(const nsACString& aName,
 
   flags |= nsMsgFolderFlags::Mail;
 
-  nsCOMPtr<nsIImapIncomingServer> imapServer;
-  GetImapIncomingServer(getter_AddRefs(imapServer));
-  if (imapServer) {
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  rv = GetServer(getter_AddRefs(server));
+  NS_ENSURE_SUCCESS(rv, rv);
+  {
     bool setNewFoldersForOffline = false;
-    rv = imapServer->GetOfflineDownload(&setNewFoldersForOffline);
-    if (NS_SUCCEEDED(rv) && setNewFoldersForOffline)
+    rv = server->GetOfflineDownload(&setNewFoldersForOffline);
+    if (NS_SUCCEEDED(rv) && setNewFoldersForOffline) {
       flags |= nsMsgFolderFlags::Offline;
+    }
   }
 
   folder->SetParent(this);
@@ -370,15 +371,14 @@ nsresult nsImapMailFolder::AddSubfolderWithPath(const nsACString& name,
   GetFlags(&pFlags);
   bool isParentInbox = pFlags & nsMsgFolderFlags::Inbox;
 
-  nsCOMPtr<nsIImapIncomingServer> imapServer;
-  rv = GetImapIncomingServer(getter_AddRefs(imapServer));
-  NS_ENSURE_SUCCESS(rv, rv);
-
   // Only set these if these are top level children or parent is inbox
   if (isInbox)
     flags |= nsMsgFolderFlags::Inbox;
   else if (isServer || isParentInbox) {
     nsMsgImapDeleteModel deleteModel;
+    nsCOMPtr<nsIImapIncomingServer> imapServer;
+    rv = GetImapIncomingServer(getter_AddRefs(imapServer));
+    NS_ENSURE_SUCCESS(rv, rv);
     imapServer->GetDeleteModel(&deleteModel);
     if (deleteModel == nsMsgImapDeleteModels::MoveToTrash) {
       nsAutoCString trashName;
@@ -392,7 +392,10 @@ nsresult nsImapMailFolder::AddSubfolderWithPath(const nsACString& name,
   if (brandNew &&
       !(flags & (nsMsgFolderFlags::Trash | nsMsgFolderFlags::Junk))) {
     bool setNewFoldersForOffline = false;
-    rv = imapServer->GetOfflineDownload(&setNewFoldersForOffline);
+    nsCOMPtr<nsIMsgIncomingServer> server;
+    rv = GetServer(getter_AddRefs(server));
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = server->GetOfflineDownload(&setNewFoldersForOffline);
     if (NS_SUCCEEDED(rv) && setNewFoldersForOffline)
       flags |= nsMsgFolderFlags::Offline;
   }
@@ -934,11 +937,11 @@ NS_IMETHODIMP nsImapMailFolder::CreateClientSubfolderInfo(
       // offline_download preference is true, unless it's the Trash or Junk
       // folder.
       if (!(flags & (nsMsgFolderFlags::Trash | nsMsgFolderFlags::Junk))) {
-        nsCOMPtr<nsIImapIncomingServer> imapServer;
-        rv = GetImapIncomingServer(getter_AddRefs(imapServer));
+        nsCOMPtr<nsIMsgIncomingServer> server;
+        rv = GetServer(getter_AddRefs(server));
         NS_ENSURE_SUCCESS(rv, rv);
         bool setNewFoldersForOffline = false;
-        rv = imapServer->GetOfflineDownload(&setNewFoldersForOffline);
+        rv = server->GetOfflineDownload(&setNewFoldersForOffline);
         if (NS_SUCCEEDED(rv) && setNewFoldersForOffline)
           flags |= nsMsgFolderFlags::Offline;
       } else {
@@ -1177,10 +1180,10 @@ NS_IMETHODIMP nsImapMailFolder::ApplyRetentionSettings() {
   int32_t numDaysToKeepOfflineMsgs = -1;
 
   // Check if we've limited the offline storage by age.
-  nsCOMPtr<nsIImapIncomingServer> imapServer;
-  nsresult rv = GetImapIncomingServer(getter_AddRefs(imapServer));
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  nsresult rv = GetServer(getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv, rv);
-  imapServer->GetAutoSyncMaxAgeDays(&numDaysToKeepOfflineMsgs);
+  server->GetAutoSyncMaxAgeDays(&numDaysToKeepOfflineMsgs);
 
   nsCOMPtr<nsIMsgDatabase> holdDBOpen;
   if (numDaysToKeepOfflineMsgs > 0) {
@@ -1756,17 +1759,24 @@ nsImapMailFolder::MarkAllMessagesRead(nsIMsgWindow* aMsgWindow) {
   nsresult rv = GetDatabase();
   if (NS_SUCCEEDED(rv)) {
     nsTArray<nsMsgKey> thoseMarked;
-    EnableNotifications(allMessageCountNotifications, false);
+    rv = EnableNotifications(allMessageCountNotifications, false);
+    NS_ENSURE_SUCCESS(rv, rv);
     rv = mDatabase->MarkAllRead(thoseMarked);
-    EnableNotifications(allMessageCountNotifications, true);
-    if (NS_SUCCEEDED(rv) && thoseMarked.Length() > 0) {
+    nsresult rv2 = EnableNotifications(allMessageCountNotifications, true);
+    NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_SUCCESS(rv2, rv2);
+
+    if (thoseMarked.Length() > 0) {
       rv = StoreImapFlags(kImapMsgSeenFlag, true, thoseMarked, nullptr);
-      mDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
+      NS_ENSURE_SUCCESS(rv, rv);
+      rv = mDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
+      NS_ENSURE_SUCCESS(rv, rv);
 
       // Setup a undo-state
-      if (aMsgWindow)
+      if (aMsgWindow) {
         rv = AddMarkAllReadUndoAction(aMsgWindow, thoseMarked.Elements(),
                                       thoseMarked.Length());
+      }
     }
   }
   return rv;
@@ -5062,9 +5072,7 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
                   }
                 }
                 (void)OnCopyCompleted(m_copyState->m_srcSupport, aExitCode);
-                if (imapAction == nsIImapUrl::nsImapAppendDraftFromFile) {
-                  UpdateFolderWithListener(msgWindow, m_urlListener);
-                }
+                UpdateFolderWithListener(msgWindow, m_urlListener);
               }
             } else {
               // clear the copyState if copy has failed
@@ -5410,13 +5418,18 @@ nsImapMailFolder::HeaderFetchCompleted(nsIImapProtocol* aProtocol) {
     GetImapIncomingServer(getter_AddRefs(imapServer));
 
     bool autoDownloadNewHeaders = false;
-    bool autoSyncOfflineStores = false;
-
     if (imapServer) {
-      imapServer->GetAutoSyncOfflineStores(&autoSyncOfflineStores);
       imapServer->GetDownloadBodiesOnGetNewMail(&autoDownloadNewHeaders);
       if (m_filterListRequiresBody) autoDownloadNewHeaders = true;
     }
+
+    bool autoSyncOfflineStores = false;
+    nsCOMPtr<nsIMsgIncomingServer> server;
+    GetServer(getter_AddRefs(server));
+    if (server) {
+      server->GetAutoSyncOfflineStores(&autoSyncOfflineStores);
+    }
+
     bool notifiedBodies = false;
     if (m_downloadingFolderForOfflineUse || autoSyncOfflineStores ||
         autoDownloadNewHeaders) {
@@ -6393,7 +6406,7 @@ static nsresult CopyStoreMessage(nsIMsgDBHdr* srcHdr, nsIMsgDBHdr* destHdr,
 
   // Copy message into the msgStore.
   nsCOMPtr<nsIInputStream> srcStream;
-  rv = srcFolder->GetLocalMsgStream(srcHdr, getter_AddRefs(srcStream));
+  rv = srcFolder->GetMsgInputStream(srcHdr, getter_AddRefs(srcStream));
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIOutputStream> destStream;
   rv = destStore->GetNewMsgOutputStream(destFolder, getter_AddRefs(destStream));
@@ -8388,6 +8401,7 @@ void nsImapMailFolder::GetTrashFolderName(nsACString& aFolderName) {
   imapServer->GetTrashFolderName(aFolderName);
   return;
 }
+
 NS_IMETHODIMP nsImapMailFolder::FetchMsgPreviewText(
     nsTArray<nsMsgKey> const& aKeysToFetch, nsIUrlListener* aUrlListener,
     bool* aAsyncResults) {
@@ -8424,7 +8438,7 @@ NS_IMETHODIMP nsImapMailFolder::FetchMsgPreviewText(
     uint32_t msgFlags;
     msgHdr->GetFlags(&msgFlags);
     if (msgFlags & nsMsgMessageFlags::Offline) {
-      rv = GetLocalMsgStream(msgHdr, getter_AddRefs(inputStream));
+      rv = GetMsgInputStream(msgHdr, getter_AddRefs(inputStream));
       NS_ENSURE_SUCCESS(rv, rv);
       rv = GetMsgPreviewTextFromStream(msgHdr, inputStream);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -8789,7 +8803,7 @@ nsresult nsImapMailFolder::GetOfflineMsgFolder(nsMsgKey msgKey,
   return NS_OK;
 }
 
-NS_IMETHODIMP nsImapMailFolder::GetLocalMsgStream(nsIMsgDBHdr* hdr,
+NS_IMETHODIMP nsImapMailFolder::GetMsgInputStream(nsIMsgDBHdr* hdr,
                                                   nsIInputStream** stream) {
   // Gmail hack. Check if message is actually stored in another folder.
   nsMsgKey msgKey;
@@ -8813,10 +8827,10 @@ NS_IMETHODIMP nsImapMailFolder::GetLocalMsgStream(nsIMsgDBHdr* hdr,
     if (!otherHdr) {
       return NS_ERROR_FAILURE;  // Couldn't find the message.
     }
-    return otherFolder->GetLocalMsgStream(otherHdr, stream);
+    return otherFolder->GetMsgInputStream(otherHdr, stream);
   }
 
-  rv = GetMsgInputStream(hdr, stream);
+  rv = nsMsgDBFolder::GetMsgInputStream(hdr, stream);
   NS_ENSURE_SUCCESS(rv, rv);
   return NS_OK;
 }

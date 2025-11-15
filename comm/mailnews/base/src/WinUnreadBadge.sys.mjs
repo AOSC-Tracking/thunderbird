@@ -16,8 +16,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 XPCOMUtils.defineLazyServiceGetters(lazy, {
-  imgTools: ["@mozilla.org/image/tools;1", "imgITools"],
-  taskbar: ["@mozilla.org/windows-taskbar;1", "nsIWinTaskbar"],
+  imgTools: ["@mozilla.org/image/tools;1", Ci.imgITools],
+  taskbar: ["@mozilla.org/windows-taskbar;1", Ci.nsIWinTaskbar],
 });
 
 /**
@@ -42,7 +42,8 @@ function getCanvasAsImgContainer(canvas, width, height) {
     imageData.height,
     imageData.width * 4,
     imgEncoder.INPUT_FORMAT_RGBA,
-    ""
+    "", // outputOptions
+    null // randomizationKey
   );
 
   // Now turn the PNG stream into an imgIContainer.

@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsISupports.idl"
+#include "MailNewsTypes2.idl" // For nsMsgKey.
 
 interface nsIMsgCopyServiceListener;
 interface nsIMsgDBHdr;
@@ -41,6 +42,35 @@ void copyItemsOnSameServer(
     in long undoOperationType,
     in IEwsFolderOperationListener listener);
 
+/**
+ * Copy a folder on the same server to this folder.
+ *
+ * @param sourceFolder The folder to copy.
+ * @param isMove Whether or not this is a move operation.
+ * @param window A context window for the operation.
+ * @param copyListener The copy listener for the operation.
+ */
+void copyFolderOnSameServer(
+    in nsIMsgFolder sourceFolder,
+    in boolean isMove,
+    in nsIMsgWindow window,
+    in nsIMsgCopyServiceListener copyListener);
+
+/**
+ * Tell the folder that some messages have been downloaded for
+ * offline use and are now in the local message store.
+ *
+ * IMAP and NNTP handle downloading messages directly in the folder code,
+ * but EWS farms the work out to folder-external code
+ * (EwsFetchMsgsToOffline()), so this call is needed to tell the folder
+ * to perform any actions it might need to do in response (e.g. applying
+ * message filters which require the full message).
+ *
+ * Ultimately it'd be nice to have IMAP and NNTP share the same
+ * offline-download path as EWS, and at that point this call would
+ * be removed in favour of a more general mechanism.
+ */
+ void handleDownloadedMessages();
 };
 
 /**

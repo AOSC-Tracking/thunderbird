@@ -542,6 +542,7 @@ pub struct Folders {
 #[xml_struct(variant_ns_prefix = "t")]
 #[non_exhaustive]
 pub enum RealItem {
+    CalendarItem(Message),
     Message(Message),
     MeetingMessage(Message),
     MeetingRequest(Message),
@@ -553,7 +554,8 @@ impl RealItem {
     /// Return the [`Message`] object contained within this [`RealItem`].
     pub fn inner_message(&self) -> &Message {
         match self {
-            RealItem::Message(message)
+            RealItem::CalendarItem(message)
+            | RealItem::Message(message)
             | RealItem::MeetingMessage(message)
             | RealItem::MeetingRequest(message)
             | RealItem::MeetingResponse(message)
@@ -564,7 +566,8 @@ impl RealItem {
     /// Take ownership of the inner [`Message`].
     pub fn into_inner_message(self) -> Message {
         match self {
-            RealItem::Message(message)
+            RealItem::CalendarItem(message)
+            | RealItem::Message(message)
             | RealItem::MeetingMessage(message)
             | RealItem::MeetingRequest(message)
             | RealItem::MeetingResponse(message)
@@ -761,7 +764,7 @@ pub struct Message {
     pub is_response_requested: Option<bool>,
 
     #[xml_struct(ns_prefix = "t")]
-    pub reply_to: Option<Recipient>,
+    pub reply_to: Option<ArrayOfRecipients>,
 
     #[xml_struct(ns_prefix = "t")]
     pub received_by: Option<Recipient>,
@@ -783,6 +786,17 @@ pub struct Message {
 
     #[xml_struct(ns_prefix = "t")]
     pub references: Option<String>,
+
+    /// A short preview of the first 256 characters of an item.
+    ///
+    /// This value isn't documented for either the `Item` or `Message`
+    /// interfaces in the Exchange documentation. However, the element itself is
+    /// documented at
+    /// <https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/preview-ex15websvcsotherref>
+    ///
+    /// This element was introduced in Exchange 2013.
+    #[xml_struct(ns_prefix = "t")]
+    pub preview: Option<String>,
 }
 
 /// An extended MAPI property of an Exchange item or folder.
@@ -882,14 +896,21 @@ pub struct Mailbox {
     #[xml_struct(ns_prefix = "t")]
     pub name: Option<String>,
 
-    /// The email address for this mailbox.
+    /// The email address for this mailbox. This can be [`None`] in some cases,
+    /// e.g. if it designates an automated system account (see
+    /// <https://bugzilla.mozilla.org/show_bug.cgi?id=1994719> for an example).
     #[xml_struct(ns_prefix = "t")]
-    pub email_address: String,
+    pub email_address: Option<String>,
 
     /// The protocol used in routing to this mailbox.
     ///
     /// See <https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/routingtype-emailaddress>
-    pub routing_type: Option<RoutingType>,
+    ///
+    /// Note: Although the documentation says that `SMTP` and `EX` are the only
+    /// possible values, it also appears that `SYSTEM` is a value that sometimes
+    /// occurs. Since the documentation isn't clear, this is a free-form string
+    /// field.
+    pub routing_type: Option<String>,
 
     /// The type of sender/recipient represented by this mailbox.
     ///
@@ -899,17 +920,6 @@ pub struct Mailbox {
     /// An identifier for a contact or list of contacts corresponding to this
     /// mailbox.
     pub item_id: Option<ItemId>,
-}
-
-/// A protocol used in routing mail.
-///
-/// See <https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/routingtype-emailaddress>
-#[derive(Clone, Copy, Debug, Default, Deserialize, XmlSerialize, PartialEq, Eq)]
-#[xml_struct(text)]
-pub enum RoutingType {
-    #[default]
-    SMTP,
-    EX,
 }
 
 /// The type of sender or recipient a mailbox represents.
@@ -1182,7 +1192,7 @@ mod tests {
         let alice = Recipient {
             mailbox: Mailbox {
                 name: Some("Alice Test".into()),
-                email_address: "alice@test.com".into(),
+                email_address: Some("alice@test.com".into()),
                 routing_type: None,
                 mailbox_type: None,
                 item_id: None,
@@ -1192,17 +1202,27 @@ mod tests {
         let bob = Recipient {
             mailbox: Mailbox {
                 name: Some("Bob Test".into()),
-                email_address: "bob@test.com".into(),
+                email_address: Some("bob@test.com".into()),
                 routing_type: None,
                 mailbox_type: None,
                 item_id: None,
             },
         };
 
-        let recipients = ArrayOfRecipients(vec![alice, bob]);
+        let charlie = Recipient {
+            mailbox: Mailbox {
+                name: Some("Charlie Test".into()),
+                email_address: None,
+                routing_type: None,
+                mailbox_type: None,
+                item_id: None,
+            },
+        };
+
+        let recipients = ArrayOfRecipients(vec![alice, bob, charlie]);
 
         // Ensure the structure of the XML document is correct.
-        let expected = "<Recipients><t:Mailbox><t:Name>Alice Test</t:Name><t:EmailAddress>alice@test.com</t:EmailAddress></t:Mailbox><t:Mailbox><t:Name>Bob Test</t:Name><t:EmailAddress>bob@test.com</t:EmailAddress></t:Mailbox></Recipients>";
+        let expected = "<Recipients><t:Mailbox><t:Name>Alice Test</t:Name><t:EmailAddress>alice@test.com</t:EmailAddress></t:Mailbox><t:Mailbox><t:Name>Bob Test</t:Name><t:EmailAddress>bob@test.com</t:EmailAddress></t:Mailbox><t:Mailbox><t:Name>Charlie Test</t:Name></t:Mailbox></Recipients>";
 
         assert_serialized_content(&recipients, "Recipients", expected);
 
@@ -1215,7 +1235,7 @@ mod tests {
     #[test]
     fn deserialize_array_of_recipients() -> Result<(), Error> {
         // The raw XML to deserialize.
-        let xml = "<Recipients><t:Mailbox><t:Name>Alice Test</t:Name><t:EmailAddress>alice@test.com</t:EmailAddress></t:Mailbox><t:Mailbox><t:Name>Bob Test</t:Name><t:EmailAddress>bob@test.com</t:EmailAddress></t:Mailbox></Recipients>";
+        let xml = "<Recipients><t:Mailbox><t:Name>Alice Test</t:Name><t:EmailAddress>alice@test.com</t:EmailAddress></t:Mailbox><t:Mailbox><t:Name>Bob Test</t:Name><t:EmailAddress>bob@test.com</t:EmailAddress></t:Mailbox><t:Mailbox><t:Name>Charlie Test</t:Name></t:Mailbox></Recipients>";
 
         // Deserialize the raw XML, with `serde_path_to_error` to help
         // troubleshoot any issue.
@@ -1224,7 +1244,7 @@ mod tests {
 
         // Ensure we have the right number of recipients in the resulting
         // `ArrayOfRecipients`.
-        assert_eq!(recipients.0.len(), 2);
+        assert_eq!(recipients.0.len(), 3);
 
         // Ensure the first recipient correctly has a name and address.
         assert_eq!(
@@ -1232,7 +1252,7 @@ mod tests {
             &Recipient {
                 mailbox: Mailbox {
                     name: Some("Alice Test".into()),
-                    email_address: "alice@test.com".into(),
+                    email_address: Some("alice@test.com".into()),
                     routing_type: None,
                     mailbox_type: None,
                     item_id: None,
@@ -1246,10 +1266,23 @@ mod tests {
             &Recipient {
                 mailbox: Mailbox {
                     name: Some("Bob Test".into()),
-                    email_address: "bob@test.com".into(),
+                    email_address: Some("bob@test.com".into()),
                     routing_type: None,
                     mailbox_type: None,
                     item_id: None,
+                },
+            }
+        );
+
+        assert_eq!(
+            recipients.get(2).expect("no recipient at index 2"),
+            &Recipient {
+                mailbox: Mailbox {
+                    name: Some("Charlie Test".into()),
+                    email_address: None,
+                    routing_type: None,
+                    mailbox_type: None,
+                    item_id: None
                 },
             }
         );

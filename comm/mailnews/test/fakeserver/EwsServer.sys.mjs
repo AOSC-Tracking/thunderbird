@@ -165,11 +165,6 @@ const GET_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
                      xmlns:xsd="http://www.w3.org/2001/XMLSchema"
                      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
     <m:ResponseMessages>
-      <m:GetItemResponseMessage ResponseClass="Success">
-        <m:ResponseCode>NoError</m:ResponseCode>
-        <m:Items>
-        </m:Items>
-      </m:GetItemResponseMessage>
     </m:ResponseMessages>
   </m:GetItemResponse>
   ${EWS_SOAP_FOOT}`;
@@ -180,14 +175,6 @@ const UPDATE_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
                         xmlns:xsd="http://www.w3.org/2001/XMLSchema"
                         xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
     <m:ResponseMessages>
-      <m:UpdateItemResponseMessage ResponseClass="Success">
-        <m:ResponseCode>NoError</m:ResponseCode>
-        <m:Items>
-        </m:Items>
-        <m:ConflictResults>
-          <t:Count>0</t:Count>
-        </m:ConflictResults>
-      </m:UpdateItemResponseMessage>
     </m:ResponseMessages>
   </m:UpdateItemResponse>
   ${EWS_SOAP_FOOT}`;
@@ -220,6 +207,16 @@ const DELETE_FOLDER_RESPONSE_BASE = `${EWS_SOAP_HEAD}
     <m:ResponseMessages>
     </m:ResponseMessages>
   </DeleteFolderResponse>
+  ${EWS_SOAP_FOOT}`;
+
+const MARK_ALL_ITEMS_AS_READ_RESPONSE_BASE = `${EWS_SOAP_HEAD}
+  <m:MarkAllItemsAsReadResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                   xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages>
+    </m:ResponseMessages>
+  </m:MarkAllItemsAsReadResponse>
   ${EWS_SOAP_FOOT}`;
 
 /**
@@ -278,6 +275,11 @@ export class ItemInfo {
   /**
    * @type {string}
    */
+  id;
+
+  /**
+   * @type {string}
+   */
   parentId;
 
   /**
@@ -288,11 +290,13 @@ export class ItemInfo {
   /**
    * Construct a new item within the given parent.
    *
+   * @param {string} id
    * @param {string} parentId
    * @param {SyntheticMessage} [syntheticMessage] - Message data from
    *   MessageGenerator, if this item is a message.
    */
-  constructor(parentId, syntheticMessage) {
+  constructor(id, parentId, syntheticMessage) {
+    this.id = id;
     this.parentId = parentId;
     this.syntheticMessage = syntheticMessage;
   }
@@ -482,13 +486,35 @@ export class EwsServer {
   #tlsCert;
 
   /**
-   * @param {object} options
-   * @param {string} [options.hostname]
-   * @param {integer} [options.port]
-   * @param {nsIX509Cert} [options.tlsCert]
-   * @param {string} [options.version="Exchange2013"]
-   * @param {string} [options.username="user"]
-   * @param {string} [options.password="password"]
+   * The port to use when starting the HTTP server. -1 means to let the mock
+   * HTTP server set a random port.
+   *
+   * @type {number}
+   * @name EwsServer.port
+   * @private
+   */
+  #listenPort;
+
+  /**
+   * @param {object} options - The parameters to use to configure the mock EWS
+   *   server and its underlying HTTP(S) server.
+   * @param {string} [options.hostname] - The hostname used by ServerTestUtils
+   *   to make the server appear as listening on this host. This doesn't mean
+   *   the HTTP server is listening on that host.
+   * @param {integer} [options.port] - The port used by ServerTestUtils to make
+   *   the server appear as listening on this port. This doesn't mean the HTTP
+   *   server is listening on that port, use `listenPort` to control which port
+   *   the HTTP server is actually listening on.
+   * @param {nsIX509Cert} [options.tlsCert] - The certificate to use for HTTPS
+   *   requests. `null` means HTTPS is not available.
+   * @param {string} [options.version="Exchange2013"] - The Exchange Server
+   *   version to advertise.
+   * @param {string} [options.username="user"] - The username for the account
+   *   used for testing.
+   * @param {string} [options.password="password"] - The password for the
+   *   account used for testing.
+   * @param {integer} [options.listenPort=-1] - The port to listen to. -1 means
+   *   to let the mock HTTP server set a random port.
    */
   constructor({
     hostname,
@@ -497,6 +523,7 @@ export class EwsServer {
     version = "Exchange2013",
     username = "user",
     password = "password",
+    listenPort = -1,
   } = {}) {
     this.version = version;
     this.#httpServer = new HttpServer();
@@ -519,7 +546,7 @@ export class EwsServer {
       // Used by ServerTestUtils to make this server appear at hostname:port.
       // This doesn't mean the HTTP server is listening on that host and port.
       this.#httpServer.identity.add(
-        port == 443 ? "http" : "https",
+        port == 443 ? "https" : "http",
         hostname,
         port
       );
@@ -527,6 +554,7 @@ export class EwsServer {
     this.#tlsCert = tlsCert;
     this.#username = username;
     this.#password = password;
+    this.#listenPort = listenPort;
 
     this.#parser = new DOMParser();
     this.#serializer = new XMLSerializer();
@@ -538,7 +566,7 @@ export class EwsServer {
    * Start listening for requests.
    */
   start() {
-    this.#httpServer.start(-1);
+    this.#httpServer.start(this.#listenPort);
     if (this.#tlsCert) {
       const { HttpsProxy } = ChromeUtils.importESModule(
         "resource://testing-common/mailnews/HttpsProxy.sys.mjs"
@@ -559,7 +587,9 @@ export class EwsServer {
   }
 
   /**
-   * The port this server is listening for new requests on.
+   * The port this server is listening for new requests on. This might not
+   * reflect the value passed for the `port` argument to the class's
+   * constructor.
    *
    * @type {number}
    */
@@ -600,7 +630,7 @@ export class EwsServer {
   }
 
   /**
-   * Set the exclusive list of folders this server should use to generate
+   * Set the exhaustive list of folders this server should use to generate
    * responses. If this method is called more than once, the previous list of
    * folders is replaced by the new one.
    *
@@ -685,7 +715,7 @@ export class EwsServer {
     const requestVersionHeaders = reqDoc.getElementsByTagName(
       "t:RequestServerVersion"
     );
-    if (requestVersionHeaders.length > 0) {
+    if (requestVersionHeaders.length) {
       const versionHeader = requestVersionHeaders[0];
       this.#lastRequestedVersion = versionHeader.getAttribute("Version");
     }
@@ -720,6 +750,8 @@ export class EwsServer {
       resBytes = this.#generateMarkAsJunkResponse(reqDoc);
     } else if (reqDoc.getElementsByTagName("DeleteFolder").length) {
       resBytes = this.#generateDeleteFolderResponse(reqDoc);
+    } else if (reqDoc.getElementsByTagName("MarkAllItemsAsRead").length) {
+      resBytes = this.#generateMarkAllItemsAsReadResponse(reqDoc);
     } else {
       throw new Error("Unexpected EWS operation");
     }
@@ -1058,7 +1090,7 @@ export class EwsServer {
   }
 
   /**
-   * Generate a response to a SyncFolderItems operation.
+   * Generate a response to a CreateItem operation.
    *
    * Currently, generated responses will always serve a static success report.
    *
@@ -1264,7 +1296,8 @@ export class EwsServer {
 
     this.#setVersion(resDoc);
 
-    const itemsEl = resDoc.getElementsByTagName("m:Items")[0];
+    const responsesMessagesEl =
+      resDoc.getElementsByTagName("m:ResponseMessages")[0];
     for (const itemChange of reqDoc.getElementsByTagName("t:ItemChange")) {
       const itemId = itemChange
         .getElementsByTagName("t:ItemId")[0]
@@ -1276,11 +1309,24 @@ export class EwsServer {
         this.itemChanges.push(["readflag", item.parentId, itemId]);
       }
 
-      const itemEl = itemsEl
+      const updateItemResponseMessageEl = responsesMessagesEl.appendChild(
+        resDoc.createElement("m:UpdateItemResponseMessage")
+      );
+      updateItemResponseMessageEl.setAttribute("ResponseClass", "Success");
+      const responseCodeEl = updateItemResponseMessageEl.appendChild(
+        resDoc.createElement("m:ResponseCode")
+      );
+      responseCodeEl.textContent = "NoError";
+      const itemEl = updateItemResponseMessageEl
+        .appendChild(resDoc.createElement("m:Items"))
         .appendChild(resDoc.createElement("t:Message"))
         .appendChild(resDoc.createElement("t:ItemId"));
       itemEl.setAttribute("Id", itemId);
       itemEl.setAttribute("ChangeKey", "abc12345");
+      const countEl = updateItemResponseMessageEl
+        .appendChild(resDoc.createElement("m:ConflictResults"))
+        .appendChild(resDoc.createElement("t:Count"));
+      countEl.textContent = "0";
     }
 
     return this.#serializer.serializeToString(resDoc);
@@ -1309,8 +1355,22 @@ export class EwsServer {
       reqDoc.getElementsByTagName("t:IncludeMimeContent")[0]?.textContent ==
       "true";
 
-    const itemsEl = resDoc.getElementsByTagName("m:Items")[0];
+    const responseMessagesEl =
+      resDoc.getElementsByTagName("m:ResponseMessages")[0];
     reqItemIds.forEach(reqItemId => {
+      const responseMessageEl = resDoc.createElement(
+        "m:GetItemResponseMessage"
+      );
+      responseMessageEl.setAttribute("ResponseClass", "Success");
+      responseMessagesEl.appendChild(responseMessageEl);
+
+      const responseCodeEl = resDoc.createElement("m:ResponseCode");
+      responseCodeEl.textContent = "NoError";
+      responseMessageEl.appendChild(responseCodeEl);
+
+      const itemsEl = resDoc.createElement("m:Items");
+      responseMessageEl.appendChild(itemsEl);
+
       const item = this.#itemIdToItemInfo.get(reqItemId);
       const messageEl = resDoc.createElement("t:Message");
       const itemIdEl = resDoc.createElement("t:ItemId");
@@ -1367,6 +1427,18 @@ export class EwsServer {
             ccRecipientsEl.appendChild(ccMailboxEl);
           }
           messageEl.appendChild(ccRecipientsEl);
+        }
+
+        if (
+          item.syntheticMessage.bodyPart &&
+          item.syntheticMessage.bodyPart.body &&
+          typeof item.syntheticMessage.bodyPart.body == "string"
+        ) {
+          const previewEl = resDoc.createElement("t:Preview");
+          previewEl.textContent = sanitizeXmlTextContent(
+            item.syntheticMessage.bodyPart.body.substring(0, 256)
+          );
+          messageEl.appendChild(previewEl);
         }
 
         if (includeContent) {
@@ -1545,6 +1617,112 @@ export class EwsServer {
   }
 
   /**
+   * Generate a response to a MarkAllItemsAsRead operation.
+   *
+   * @see {@link https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/markallitemsasread-operation}
+   * @param {XMLDocument} reqDoc - The parsed document for the request to respond to.
+   * @returns {string} A serialized XML document.
+   */
+  #generateMarkAllItemsAsReadResponse(reqDoc) {
+    // Figure out which folder IDs (or distinguished IDs have been requested).
+    const requestedFolderIds = [
+      ...reqDoc.getElementsByTagName("FolderIds")[0].children,
+    ].map(c => c.getAttribute("Id"));
+
+    // Map the requested IDs to actual folders if we have them. A `null` folder
+    // in the resulting array means the folder couldn't be found on the server,
+    // and the relevant response message should reflect this.
+    const responseFolders = requestedFolderIds.map(id => {
+      // Try to match against a known distinguished ID.
+      if (this.#distinguishedIdToFolder.has(id)) {
+        return this.#distinguishedIdToFolder.get(id);
+      }
+
+      // If that failed, try to match against a known folder ID.=
+      if (this.#idToFolder.has(id)) {
+        return this.#idToFolder.get(id);
+      }
+
+      return null;
+    });
+
+    // Get whether we're marking as read or unread
+    const markRead =
+      reqDoc.getElementsByTagName("ReadFlag")[0].textContent == "true";
+
+    // Generate a base document for the response.
+    const resDoc = this.#parser.parseFromString(
+      MARK_ALL_ITEMS_AS_READ_RESPONSE_BASE,
+      "text/xml"
+    );
+
+    this.#setVersion(resDoc);
+
+    const resMsgsEl = resDoc.getElementsByTagName("m:ResponseMessages")[0];
+
+    // Mark all the messages as (un)read and add a single success or failure
+    // response message
+    let success = false;
+    responseFolders.forEach(folder => {
+      if (folder) {
+        this.getItemsInFolder(folder.id).forEach(item => {
+          item.syntheticMessage.metaState.read = markRead;
+          this.itemChanges.push(["readflag", item.parentId, item.id]);
+          console.log(item.id, item.syntheticMessage.metaState.read);
+        });
+
+        if (!success) {
+          // Indicate that no error happened when retrieving this message.
+          const resCodeEl = resDoc.createElement("m:ResponseCode");
+          resCodeEl.appendChild(resDoc.createTextNode("NoError"));
+
+          // Build the m:MarkAllItemsAsReadResponseMessage element, which is
+          // parent to m:ResponseCode.
+          const messageEl = resDoc.createElement(
+            "m:MarkAllItemsAsReadResponseMessage"
+          );
+          messageEl.setAttribute("ResponseClass", "Success");
+          messageEl.appendChild(resCodeEl);
+
+          // Add the message to the document.
+          resMsgsEl.appendChild(messageEl);
+
+          // We only do this once.
+          success = true;
+        }
+      } else {
+        // We couldn't find a folder with this ID, so format the response
+        // message as an `ErrorFolderNotFound` error.
+        const messageEl = resDoc.createElement(
+          "m:MarkAllItemsAsReadResponseMessage"
+        );
+        messageEl.setAttribute("ResponseClass", "Error");
+
+        // Add the response code to the response message.
+        const resCodeEl = resDoc.createElement("m:ResponseCode");
+        resCodeEl.appendChild(resDoc.createTextNode("ErrorItemNotFound"));
+        messageEl.appendChild(resCodeEl);
+
+        // Add a human-readable representation of the error to the response
+        // message.
+        const errMessageEl = resDoc.createElement("m:MessageText");
+        errMessageEl.appendChild(
+          resDoc.createTextNode(
+            "The specified object was not found in the store."
+          )
+        );
+        messageEl.appendChild(errMessageEl);
+
+        // Append the message to the document.
+        resMsgsEl.appendChild(messageEl);
+      }
+    });
+
+    // Serialize the response to a string that the consumer can return in a response.
+    return this.#serializer.serializeToString(resDoc);
+  }
+
+  /**
    * Add a new remote folder to the server to include in future responses.
    *
    * @param {RemoteFolder} folder
@@ -1637,7 +1815,7 @@ export class EwsServer {
       itemInfo.parentId = folderId;
       this.itemChanges.push(["create", folderId, itemId]);
     } else {
-      itemInfo = new ItemInfo(folderId, syntheticMessage);
+      itemInfo = new ItemInfo(itemId, folderId, syntheticMessage);
       this.itemChanges.push(["create", folderId, itemId]);
     }
     this.#itemIdToItemInfo.set(itemId, itemInfo);
@@ -1818,4 +1996,41 @@ function extractMoveObjects(reqDoc, collectionElementName, objectElementName) {
   ].map(e => e.getAttribute("Id"));
 
   return [destinationFolderId, objectIds];
+}
+
+/**
+ * Sanitize text content for use in an XML text node.
+ *
+ * This will replace the characters <>&"' with appropriate entity references and
+ * non-ASCII unicode characters with an appropriate entity reference to their
+ * codepoint.
+ *
+ * @param {string} s
+ *
+ * @returns {string}
+ */
+function sanitizeXmlTextContent(s) {
+  let result = "";
+  for (const c of s) {
+    if (c == "<") {
+      result += "&lt;";
+    } else if (c == ">") {
+      result += "&gt;";
+    } else if (c == "&") {
+      result += "&amp;";
+    } else if (c == '"') {
+      result += "&quot;";
+    } else if (c == "'") {
+      result += "&apos;";
+      // eslint-disable-next-line no-control-regex
+    } else if (/[\x00-\x7f]/.test(c)) {
+      result += c;
+    } else {
+      // Replace the character with a unicode entity reference.
+      const reference =
+        "&#" + `${c}`.charCodeAt().toString().padStart(5, "0") + ";";
+      result += reference;
+    }
+  }
+  return result;
 }

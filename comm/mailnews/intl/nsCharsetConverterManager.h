@@ -8,21 +8,15 @@
 
 #include "nsICharsetConverterManager.h"
 
-class nsCharsetAlias;
-
 class nsCharsetConverterManager : public nsICharsetConverterManager {
-  friend class nsCharsetAlias;
-
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSICHARSETCONVERTERMANAGER
 
  public:
-  nsCharsetConverterManager();
+  nsCharsetConverterManager() = default;
 
  private:
-  virtual ~nsCharsetConverterManager();
-
-  static bool IsInternal(const nsACString& aCharset);
+  virtual ~nsCharsetConverterManager() {}
 };
 
 #endif  // COMM_MAILNEWS_INTL_NSCHARSETCONVERTERMANAGER_H_

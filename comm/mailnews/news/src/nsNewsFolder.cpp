@@ -117,7 +117,7 @@ nsMsgNewsFolder::AddNewsgroup(const nsACString& name, const nsACString& setStr,
   // (see RFC2396 Uniform Resource Identifiers (URI): Generic Syntax)
 
   nsAutoCString escapedName;
-  rv = NS_MsgEscapeEncodeURLPath(name, escapedName);
+  rv = MsgEscapeString(name, nsINetUtil::ESCAPE_URL_PATH, escapedName);
   if (NS_FAILED(rv)) return rv;
 
   rv = nntpServer->AddNewsgroup(name);
@@ -1246,11 +1246,6 @@ NS_IMETHODIMP nsMsgNewsFolder::DownloadMessagesForOffline(
   }
 
   return rv;
-}
-
-NS_IMETHODIMP nsMsgNewsFolder::GetLocalMsgStream(nsIMsgDBHdr* hdr,
-                                                 nsIInputStream** stream) {
-  return GetMsgInputStream(hdr, stream);
 }
 
 NS_IMETHODIMP nsMsgNewsFolder::NotifyArticleDownloaded(uint32_t articleNumber,

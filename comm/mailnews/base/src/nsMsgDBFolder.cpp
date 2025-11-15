@@ -16,7 +16,6 @@
 #include "nsIMsgMailNewsUrl.h"
 #include "nsMsgDatabase.h"
 #include "nsIMsgAccountManager.h"
-#include "nsISeekableStream.h"
 #include "nsIChannel.h"
 #include "nsITransport.h"
 #include "nsIWindowWatcher.h"
@@ -56,16 +55,14 @@
 #include "nsIScriptError.h"
 #include "nsIURIMutator.h"
 #include "nsIXULAppInfo.h"
-#include "nsPrintfCString.h"
 #include "mozilla/Components.h"
-#include "mozilla/intl/LocaleService.h"
+#include "mozilla/intl/Localization.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ProfilerMarkers.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_mail.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/Utf8.h"
 #include "nsIPromptService.h"
 #include "nsEmbedCID.h"
 #include "nsIWritablePropertyBag2.h"
@@ -94,8 +91,6 @@ static PRTime gtimeOfLastPurgeCheck;  // variable to know when to check for
 #define PREF_MAIL_PURGE_THRESHOLD_MB "mail.purge_threshold_mb"
 #define PREF_MAIL_PURGE_ASK "mail.purge.ask"
 #define PREF_MAIL_WARN_FILTER_CHANGED "mail.warn_filter_changed"
-#define PREF_MAIL_DISCARD_OFFLINE_ON_FAILURE \
-  "mail.discard_offline_msg_on_failure"
 
 const char* kUseServerRetentionProp = "useServerRetention";
 
@@ -743,11 +738,9 @@ NS_IMETHODIMP nsMsgDBFolder::GetMsgStore(nsIMsgPluggableStore** aStore) {
   return server->GetMsgStore(aStore);
 }
 
-NS_IMETHODIMP nsMsgDBFolder::GetLocalMsgStream(nsIMsgDBHdr* hdr,
-                                               nsIInputStream** stream) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
+// NOTE: IMAP folder overrides this to handle the gmail-specific hack which
+// allows messages to appear in multiple folders without having to store
+// multiple offline copies.
 NS_IMETHODIMP
 nsMsgDBFolder::GetMsgInputStream(nsIMsgDBHdr* aMsgHdr,
                                  nsIInputStream** aInputStream) {
@@ -1081,10 +1074,6 @@ NS_IMETHODIMP nsMsgDBFolder::HasMsgOffline(nsMsgKey msgKey, bool* result) {
 }
 
 NS_IMETHODIMP nsMsgDBFolder::DiscardOfflineMsg(nsMsgKey msgKey) {
-  if (!Preferences::GetBool(PREF_MAIL_DISCARD_OFFLINE_ON_FAILURE, true)) {
-    return NS_OK;
-  }
-
   GetDatabase();
   if (!mDatabase) return NS_ERROR_FAILURE;
 
@@ -1681,6 +1670,11 @@ nsresult nsMsgDBFolder::HandleAutoCompactEvent(nsIMsgWindow* aWindow) {
           }
           rv = AsyncCompactFolders(folderArray, nullptr, aWindow);
         }
+      }
+    } else {
+      // Ensure commit happens regularly, even if offline stores are disabled.
+      if (mDatabase) {
+        mDatabase->Commit(nsMsgDBCommitType::kCompressCommit);
       }
     }
   }
@@ -2516,9 +2510,16 @@ nsresult nsMsgDBFolder::initializeStrings() {
   bundle->GetStringFromName("sentFolderName", kLocalizedSentName);
   bundle->GetStringFromName("draftsFolderName", kLocalizedDraftsName);
   bundle->GetStringFromName("templatesFolderName", kLocalizedTemplatesName);
-  bundle->GetStringFromName("junkFolderName", kLocalizedJunkName);
   bundle->GetStringFromName("outboxFolderName", kLocalizedUnsentName);
   bundle->GetStringFromName("archivesFolderName", kLocalizedArchivesName);
+
+  RefPtr<mozilla::intl::Localization> l10n =
+      mozilla::intl::Localization::Create({"messenger/messenger.ftl"_ns}, true);
+  nsAutoCString localizedSpamName;
+  rv = LocalizeMessage(l10n, "folder-name-spam"_ns, {}, localizedSpamName);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  kLocalizedJunkName = NS_ConvertUTF8toUTF16(localizedSpamName);
 
   nsCOMPtr<nsIStringBundle> brandBundle;
   rv = bundleService->CreateBundle("chrome://branding/locale/brand.properties",
@@ -2707,7 +2708,7 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolderId(uint64_t folderId) {
   server->GetServerURI(mURI);
   nsCString path;
   MOZ_TRY_VAR(path, folderDB.GetFolderPath(folderId));
-  rv = NS_MsgEscapeEncodeURLPath(path, path);
+  rv = MsgEscapeString(path, nsINetUtil::ESCAPE_URL_PATH, path);
   NS_ENSURE_SUCCESS(rv, rv);
   mURI.Append(Substring(path, path.FindChar('/')));
   mBaseMessageURI = "mailbox-message:"_ns + Substring(mURI, 8);
@@ -2846,11 +2847,8 @@ nsresult nsMsgDBFolder::parseURI(bool needServer) {
   if (server) {
     nsAutoString newPath;
     nsAutoCString escapedUrlPath;
-    nsAutoCString urlPath;
     url->GetFilePath(escapedUrlPath);
     if (!escapedUrlPath.IsEmpty()) {
-      MsgUnescapeString(escapedUrlPath, 0, urlPath);
-
       // transform the filepath from the URI, such as
       // "/folder1/folder2/foldern"
       // to
@@ -2864,7 +2862,8 @@ nsresult nsMsgDBFolder::parseURI(bool needServer) {
                        scheme.EqualsLiteral("snews") ||
                        scheme.EqualsLiteral("nntp");
       }
-      NS_MsgCreatePathStringFromFolderURI(urlPath.get(), newPath, isNewsFolder);
+      NS_MsgCreatePathStringFromFolderURI(escapedUrlPath.get(), newPath,
+                                          isNewsFolder);
     }
 
     // now append munged path onto server path
@@ -5658,6 +5657,15 @@ nsresult nsMsgDBFolder::MessagesInKeyOrder(
     }
   }
   return rv;
+}
+
+// Optional support for autosync manager.
+// IMAP, EWS provide this, other folder types just return null.
+NS_IMETHODIMP nsMsgDBFolder::GetAutoSyncStateObj(
+    nsIAutoSyncState** autoSyncStateObj) {
+  NS_ENSURE_ARG_POINTER(autoSyncStateObj);
+  autoSyncStateObj = nullptr;
+  return NS_OK;
 }
 
 /* static */ nsMsgKeySetU* nsMsgKeySetU::Create() {

@@ -54,7 +54,6 @@ reference-tasks:
     - linux64-winchecksec
     - linux64-wine
     - linux64-x64-compiler-rt-19
-    - linux64-x86-compiler-rt-19
     - linux64-xar
     - macosx64-aarch64-compiler-rt-19
     - macosx64-clang-19-profile
@@ -100,6 +99,9 @@ reference-tasks:
     - win64-rust-size
     - win64-sccache
     - win64-winchecksec
+    - winappsdk-x86-pc-windows-msvc
+    - winappsdk-x86_64-pc-windows-msvc
+    - winappsdk-aarch64-pc-windows-msvc
 
 transforms:
     - gecko_taskgraph.transforms.try_job:transforms

@@ -52,6 +52,7 @@ fluent-langneg = { version = "0.13", features = ['cldr'] }
 fluent-langneg-ffi = { path = "../../../intl/locale/rust/fluent-langneg-ffi" }
 fog_control = { path = "../../../toolkit/components/glean" }
 gecko-profiler = { path = "../../../tools/profiler/rust-api" }
+gecko-trace = { path = "../../../toolkit/components/gecko-trace" }
 gecko_logger = { path = "../../../xpcom/rust/gecko_logger" }
 gecko_tracing = { path = "../../../xpcom/rust/gecko_tracing" }
 geckoservo = { path = "../../../servo/ports/geckolib" }
@@ -104,8 +105,8 @@ unic-langid-ffi = { path = "../../../intl/locale/rust/unic-langid-ffi" }
 unicode-bidi = { version = "0.3.15" }
 unicode-bidi-ffi = { path = "../../../intl/bidi/rust/unicode-bidi-ffi" }
 uritemplate_glue = { path = "../../../netwerk/base/uritemplate_glue" }
-url = { version = "2.5.0" }
-urlpattern = { version = "0.3.0" }
+url = { version = "2.5.7" }
+urlpattern = { version = "0.4.0" }
 urlpattern_glue = { path = "../../../netwerk/base/urlpattern_glue" }
 webrender_bindings = { path = "../../../gfx/webrender_bindings" }
 wgpu_bindings = { path = "../../../gfx/wgpu_bindings" }

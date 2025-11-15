@@ -80,23 +80,18 @@ account-hub-protocol-label = Protocol
 account-hub-result-hostname-label = Hostname
     .title = Hostname
 
-account-hub-result-authentication-label = Authentication
-    .title = Authentication
+account-hub-result-socket-type-label = Connection security
 
-account-hub-port-label = Port
-    .title = Set the port number to 0 for autodetection
+account-hub-on-port-label = Port
 
 account-hub-auto-description = { -brand-short-name } will attempt to auto-detect fields that are left blank.
 
 account-hub-ssl-label = Connection security
 
-## Incoming/Outgoing SSL Authentication options
+## Incoming/Outgoing authentication method options
 
 account-hub-ssl-autodetect-option =
     .label = Autodetect
-
-account-hub-ssl-no-authentication-option =
-    .label = No authentication
 
 account-hub-ssl-cleartext-password-option =
     .label = Normal password
@@ -104,7 +99,7 @@ account-hub-ssl-cleartext-password-option =
 account-hub-ssl-encrypted-password-option =
     .label = Encrypted password
 
-## Incoming/Outgoing SSL options
+## Incoming/Outgoing connection security options
 
 account-hub-ssl-noencryption-option =
     .label = None
@@ -220,7 +215,7 @@ account-hub-username-error-text = Username is required
 
 account-hub-oauth-pending = Waiting for authorization in login popup…
 
-account-hub-addon-install-needed = { -brand-short-name } doesn’t natively support this server. To access Exchange email, <a data-l10n-name="addon-install"> install a third-party add-on like Owl (paid).</a>
+account-hub-addon-install-button = Install
 
 account-hub-addon-error = Add-on installation failed. Please try again or contact the add-on author for assistance.
 
@@ -354,3 +349,18 @@ address-book-ldap-creation-error = Could not create LDAP Directory.
 account-hub-email-setup-ews = Server Settings
 
 account-hub-result-host-url-label = EWS endpoint URL
+
+account-hub-email-credentials-confirmation = Account Configuration
+
+account-hub-result-unknown-hostname = Unknown Hostname
+
+account-hub-result-unknown-cert = Unverified Certificate
+
+account-hub-close-button =
+  .title = Close
+
+account-hub-email-manual-configuration = Manual configuration
+
+account-hub-notification-unknown-host = Setup information found on 3rd party domain
+
+account-hub-ssl-noencryption = None

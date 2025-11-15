@@ -6,16 +6,14 @@
 #ifndef COMM_MAILNEWS_BASE_SRC_NSMSGUTILS_H_
 #define COMM_MAILNEWS_BASE_SRC_NSMSGUTILS_H_
 
-#include "nsString.h"
 #include "msgCore.h"
 #include "MailNewsTypes2.h"
-#include "nsTArray.h"
 #include "nsINetUtil.h"
 #include "nsILoadInfo.h"
 #include "nsIFile.h"
+#include "nsEscape.h"
 
 class nsIChannel;
-class nsIFile;
 class nsIPrefBranch;
 class nsIMsgFolder;
 class nsIMsgMessageService;
@@ -23,12 +21,14 @@ class nsIUrlListener;
 class nsIOutputStream;
 class nsIInputStream;
 class nsIMsgDatabase;
-class nsIProxyInfo;
-class nsIMsgWindow;
 class nsIStreamListener;
 class nsICancelable;
 class nsIProtocolProxyCallback;
 class nsIMsgSearchTerm;
+
+namespace mozilla::intl {
+class Localization;
+}
 
 #define FILE_IO_BUFFER_SIZE (16 * 1024)
 #define MSGS_URL "chrome://messenger/locale/messenger.properties"
@@ -66,9 +66,11 @@ nsresult NS_MsgGetUntranslatedPriorityName(const nsMsgPriorityValue p,
 nsresult FormatFileSize(int64_t size, bool useKB, nsAString& formattedSize);
 
 /**
- * given a folder uri, return the path to folder in the user profile directory.
+ * Given an escaped folder uri, return the path to folder in the user profile
+ * directory.
  *
- * @param aFolderURI uri of folder we want the path to, without the scheme
+ * @param aFolderURI Escaped uri of folder we want the path to, without the
+ * scheme
  * @param[out] aPathString result path string
  * @param aScheme scheme of the uri
  * @param[optional] aIsNewsFolder is this a news folder?
@@ -92,11 +94,6 @@ bool NS_MsgStripRE(const nsCString& subject, nsCString& modifiedSubject);
 char* NS_MsgSACopy(char** destination, const char* source);
 
 char* NS_MsgSACat(char** destination, const char* source);
-
-nsresult NS_MsgEscapeEncodeURLPath(const nsACString& aStr, nsCString& aResult);
-
-nsresult NS_MsgDecodeUnescapeURLPath(const nsACString& aPath,
-                                     nsAString& aResult);
 
 bool WeAreOffline();
 
@@ -154,11 +151,6 @@ nsresult CreateRootFolderAndCache(const nsACString& folderName,
 /// This returns a `/`-separated path to the folder as referenced from
 /// the server root folder.
 nsresult FolderPathInServer(nsIMsgFolder* folder, nsACString& path);
-
-// Escape lines starting with "From ", ">From ", etc. in a buffer.
-nsresult EscapeFromSpaceLine(nsIOutputStream* ouputStream, char* start,
-                             const char* end);
-bool IsAFromSpaceLine(char* start, const char* end);
 
 nsresult NS_GetPersistentFile(const char* relPrefName, const char* absPrefName,
                               const char* dirServiceProp,  // Can be NULL
@@ -222,8 +214,6 @@ nsresult GetSpecialDirectoryWithFileName(const char* specialDirName,
 // be filled.
 nsresult MsgCleanupTempFiles(const char* fileName, const char* extension);
 
-nsresult MsgGetFileStream(nsIFile* file, nsIOutputStream** fileStream);
-
 // Automatically creates an output stream with a suitable buffer
 nsresult MsgNewBufferedFileOutputStream(nsIOutputStream** aResult,
                                         nsIFile* aFile, int32_t aIOFlags = -1,
@@ -261,17 +251,12 @@ nsresult MsgEscapeURL(const nsACString& aStr, uint32_t aFlags,
 // Given a message db and a set of keys, fetch the corresponding message
 // headers.
 nsresult MsgGetHeadersFromKeys(nsIMsgDatabase* aDB,
-                               const nsTArray<nsMsgKey>& aKeys,
+                               const nsTArray<nsMsgKey>& aMsgKeys,
                                nsTArray<RefPtr<nsIMsgDBHdr>>& aHeaders);
 
 nsresult MsgExamineForProxyAsync(nsIChannel* channel,
                                  nsIProtocolProxyCallback* listener,
                                  nsICancelable** result);
-
-int32_t MsgFindCharInSet(const nsCString& aString, const char* aChars,
-                         uint32_t aOffset = 0);
-int32_t MsgFindCharInSet(const nsString& aString, const char16_t* aChars,
-                         uint32_t aOffset = 0);
 
 /**
  * Calculate a PRTime value used to determine if a date is XX
@@ -320,8 +305,6 @@ nsresult MsgDetectCharsetFromFile(nsIFile* aFile, nsACString& aCharset);
  */
 nsresult ConvertBufToPlainText(nsString& aConBuf, bool formatFlowed,
                                bool formatOutput, bool disallowBreaks);
-
-#include "nsEscape.h"
 
 /**
  * Converts a hex string into an integer.
@@ -374,52 +357,11 @@ void MsgRemoveQueryPart(nsCString& aSpec);
   }
 
 /**
- * Macro and helper function for reporting an error, warning or
- * informational message to the Error Console
- *
- * This will require the inclusion of the following files in the source file
- * #include "nsIScriptError.h"
- * #include "nsIConsoleService.h"
- *
+ * Helper function for reporting an error, warning or informational message
+ * to the Error Console. For flag constants see nsIScriptError.h.
  */
-
 void MsgLogToConsole4(const nsAString& aErrorText, const nsCString& aFilename,
-                      uint32_t aLine, uint32_t flags);
-
-// Macro with filename and line number
-#define MSG_LOG_TO_CONSOLE(_text, _flag)                                       \
-  MsgLogToConsole4(NS_LITERAL_STRING_FROM_CSTRING(_text), nsCString(__FILE__), \
-                   __LINE__, _flag)
-#define MSG_LOG_ERR_TO_CONSOLE(_text) \
-  MSG_LOG_TO_CONSOLE(_text, nsIScriptError::errorFlag)
-#define MSG_LOG_WARN_TO_CONSOLE(_text) \
-  MSG_LOG_TO_CONSOLE(_text, nsIScriptError::warningFlag)
-#define MSG_LOG_INFO_TO_CONSOLE(_text) \
-  MSG_LOG_TO_CONSOLE(_text, nsIScriptError::infoFlag)
-
-// Helper macros to cope with shoddy I/O error reporting (or lack thereof)
-#define MSG_NS_ERROR(_txt)        \
-  do {                            \
-    NS_ERROR(_txt);               \
-    MSG_LOG_ERR_TO_CONSOLE(_txt); \
-  } while (0)
-#define MSG_NS_WARNING(_txt)       \
-  do {                             \
-    NS_WARNING(_txt);              \
-    MSG_LOG_WARN_TO_CONSOLE(_txt); \
-  } while (0)
-#define MSG_NS_WARN_IF_FALSE(_val, _txt) \
-  do {                                   \
-    if (!(_val)) {                       \
-      NS_WARNING(_txt);                  \
-      MSG_LOG_WARN_TO_CONSOLE(_txt);     \
-    }                                    \
-  } while (0)
-#define MSG_NS_INFO(_txt)                                             \
-  do {                                                                \
-    MSG_LOCAL_INFO_TO_CONSOLE(_txt);                                  \
-    fprintf(stderr, "(info) %s (%s:%d)\n", _txt, __FILE__, __LINE__); \
-  } while (0)
+                      uint32_t aLinenumber, uint32_t aFlag);
 
 /**
  * Perform C-style string escaping. E.g. "foo\r\n" => "foo\\r\\n"
@@ -538,5 +480,37 @@ nsString EncodeFilename(nsACString const& str);
  *   DecodeFilename("u"f%6F%6F bar"_ns)  => "foo bar"
  */
 nsCString DecodeFilename(nsAString const& filename);
+
+// Parse Message-Ids from a space-separated list (or single Message-Id).
+// As per section 3.6.4 of RFC 5322.
+// i.e. Parse "Message-Id", "In-Reply-To:" and "References:" headers.
+//
+// Examples:
+// "" -> []
+// "<test@example.com>" -> ["test@example.com"]
+// "<foo23@example.com> <bar99@blah.org>"
+//   -> ["foo23@example.com", bar99@blah.org"]
+// "\t\t\t   <foo23@example.com>    <bar99@blah.org> \t\t "
+//    -> ["foo23@example.com", bar99@blah.org"]
+// "foo bar" -> ["foo","bar"]
+//
+// Some currently-undefined corner-cases...
+// "<<<foo bar" -> ["<<foo","bar"]?
+// "<foo bar>" -> ???
+// etc...
+nsTArray<nsCString> ParseIdentificationFields(nsACString const& m);
+
+/**
+ * Helper for formatting text with intl::Localization.
+ *
+ * @param l10n            The intl::Localization object.
+ * @param id              The id of the localizable string.
+ * @param args            Values to use for placeables in the text.
+ * @param [out] message   The localized text.
+ */
+nsresult LocalizeMessage(mozilla::intl::Localization* l10n,
+                         nsACString const& id,
+                         nsTArray<std::pair<nsCString, nsCString>> const& args,
+                         nsACString& message);
 
 #endif  // COMM_MAILNEWS_BASE_SRC_NSMSGUTILS_H_

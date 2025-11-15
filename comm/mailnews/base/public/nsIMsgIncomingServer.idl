@@ -6,6 +6,7 @@
 #include "nsISupports.idl"
 #include "MailNewsTypes2.idl"
 
+interface IOAuth2CustomDetails;
 interface nsIMsgFolder;
 interface nsIMsgFolderCache;
 interface nsIMsgWindow;
@@ -367,6 +368,28 @@ interface nsIMsgIncomingServer : nsISupports {
   attribute boolean limitOfflineMessageSize;
   attribute long maxMessageSize;
 
+  /**
+   * Where offline downloads are supported, this determines
+   * if new folders are marked for offline use or not.
+   * Reflects the `offline_download` server pref.
+   */
+  attribute boolean offlineDownload;
+
+  /**
+   * Where offline downloads and autosync are supported, this
+   * determines if this server will use autosync or not.
+   * Reflects the `autosync_offline_stores` server pref.
+   */
+  attribute boolean autoSyncOfflineStores;
+
+  /**
+   * Where autosync is being used, this is the maximum age of
+   * messages to download for offline use.
+   * -1 = no limit.
+   * Reflects the `autosync_max_age_days` server pref.
+   */
+  attribute long autoSyncMaxAgeDays;
+
   attribute nsIMsgRetentionSettings retentionSettings;
 
   /* check if this server can be a default server */
@@ -375,6 +398,9 @@ interface nsIMsgIncomingServer : nsISupports {
   /* check if this server allows search operations */
   readonly attribute boolean canSearchMessages;
 
+  /**
+   * Settings for NNTP downloads.
+   */
   attribute nsIMsgDownloadSettings downloadSettings;
 
   /*
@@ -394,9 +420,6 @@ interface nsIMsgIncomingServer : nsISupports {
    *
    */
   readonly attribute long offlineSupportLevel;
-
-  /* does this server have disk space settings? */
-  readonly attribute boolean supportsDiskSpace;
 
   /**
    * Hide this server/account from the UI - used for smart mailboxes.

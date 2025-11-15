@@ -28,6 +28,9 @@
   <link rel="stylesheet" href="chrome://messenger/skin/colors.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/themeableDialog.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/filterDialog.css" />
+
+  <link rel="localization" href="messenger/filterEditor.ftl" />
+
   <script defer="defer" src="chrome://messenger/content/globalOverlay.js"></script>
   <script defer="defer" src="chrome://global/content/editMenuOverlay.js"></script>
   <script defer="defer" src="chrome://messenger/content/searchWidgets.js"></script>
@@ -158,7 +161,7 @@
 
   <hbox id="statusbar" role="status">
     <label id="statusText" flex="1" crop="end"/>
-    <hbox id="statusbar-progresspanel" class="statusbarpanel-progress" collapsed="true">
+    <hbox id="statusbar-progresspanel" class="statusbarpanel-progress" collapsed="collapsed">
       <html:progress class="progressmeter-statusbar" id="statusbar-icon" value="0" max="100"/>
     </hbox>
   </hbox>

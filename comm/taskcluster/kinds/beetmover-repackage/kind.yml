@@ -30,13 +30,13 @@ kind-dependencies:
     - partials-signing
     - repackage-signing-msi
     - repackage-signing-shippable-l10n-msix
-    - release-deb-repackage
+    - repackage-deb
+    - repackage-deb-l10n
     - mar-signing
     - mar-signing-l10n
     - upload-symbols
 
 only-for-build-platforms:
-    - linux-shippable/opt
     - linux64-shippable/opt
     - linux64-asan-reporter-shippable/opt
     - macosx64-shippable/opt

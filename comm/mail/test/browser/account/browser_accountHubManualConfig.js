@@ -250,6 +250,33 @@ add_task(async function test_account_email_manual_form() {
     "The incoming config template should be in view"
   );
 
+  // We should check that the EWS changes to the config form aren't here, as
+  // we're not editing an EWS config.
+  Assert.ok(
+    BrowserTestUtils.isVisible(
+      incomingConfigTemplate.querySelector("#incomingProtocol")
+    ),
+    "Default protocol dropdown should be visible"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(
+      incomingConfigTemplate.querySelector("#incomingConnectionSecurity")
+    ),
+    "Incoming connection security dropdown should be visible"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(
+      incomingConfigTemplate.querySelector("#incomingPort")
+    ),
+    "Incoming port input should be visible"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(
+      incomingConfigTemplate.querySelector("#incomingEwsUrl")
+    ),
+    "EWS URL input should be hidden"
+  );
+
   let outgoingConfigTemplate = dialog.querySelector(
     "#emailOutgoingConfigSubview"
   );
@@ -379,12 +406,8 @@ add_task(async function test_invalid_manual_config_flow() {
   const emailTemplate = dialog.querySelector("email-auto-form");
   const nameInput = emailTemplate.querySelector("#realName");
   const emailInput = emailTemplate.querySelector("#email");
-  const footerForward = dialog
-    .querySelector("#emailFooter")
-    .querySelector("#forward");
-  const footerCustom = dialog
-    .querySelector("#emailFooter")
-    .querySelector("#custom");
+  const footerForward = dialog.querySelector("#emailFooter #forward");
+  const footerCustom = dialog.querySelector("#emailFooter #custom");
 
   // Ensure fields are empty.
   nameInput.value = "";
@@ -427,9 +450,7 @@ add_task(async function test_invalid_manual_config_flow() {
   await incomingConfigTemplatePromise;
 
   // The continue button should be enabled if you go back to the email form.
-  const footerBack = dialog
-    .querySelector("#emailFooter")
-    .querySelector("#back");
+  const footerBack = dialog.querySelector("#emailFooter #back");
   EventUtils.synthesizeMouseAtCenter(footerBack, {});
   const emailFormTemplatePromise = TestUtils.waitForCondition(
     () => BrowserTestUtils.isVisible(emailTemplate),
@@ -496,16 +517,24 @@ add_task(async function test_invalid_manual_config_flow() {
     "#incomingConnectionSecurityNoEncryption"
   );
   EventUtils.synthesizeMouseAtCenter(incomingConnectionSecurity, {});
-  await TestUtils.waitForTick();
-  EventUtils.synthesizeMouseAtCenter(noEncryptionOption, {});
-  const securityWarningPromise = TestUtils.waitForCondition(
-    () =>
-      BrowserTestUtils.isVisible(
-        incomingConfigTemplate.querySelector("#incomingSecurityWarning")
-      ),
-    "The incoming security warning message should be visible"
+  await BrowserTestUtils.waitForPopupEvent(
+    incomingConnectionSecurity.menupopup,
+    "shown"
   );
-  await securityWarningPromise;
+  EventUtils.synthesizeMouseAtCenter(noEncryptionOption, {});
+  await BrowserTestUtils.waitForPopupEvent(
+    incomingConnectionSecurity.menupopup,
+    "hidden"
+  );
+  const securityWarning = incomingConfigTemplate.querySelector(
+    "#incomingSecurityWarning"
+  );
+  await BrowserTestUtils.waitForAttributeRemoval("hidden", securityWarning);
+  Assert.ok(
+    BrowserTestUtils.isVisible(securityWarning),
+    "Should show security warning"
+  );
+  await BrowserTestUtils.waitForAttributeRemoval("disabled", footerForward);
   Assert.ok(!footerForward.disabled, "Continue button should be enabled");
 
   // Clicking continue should lead to the outgoing view, with an invalid
@@ -514,11 +543,10 @@ add_task(async function test_invalid_manual_config_flow() {
   const outgoingConfigTemplate = dialog.querySelector(
     "#emailOutgoingConfigSubview"
   );
-  let outgoingConfigTemplatePromise = TestUtils.waitForCondition(
-    () => BrowserTestUtils.isVisible(outgoingConfigTemplate),
-    "The outgoing config template should be in view"
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    outgoingConfigTemplate
   );
-  await outgoingConfigTemplatePromise;
   Assert.ok(footerForward.disabled, "Continue button should be disabled");
   const outgoingHostname = outgoingConfigTemplate.querySelector(
     "#outgoingHostname:invalid"
@@ -553,6 +581,33 @@ add_task(async function test_invalid_manual_config_flow() {
     "The outgoing hostname error message should be hidden"
   );
 
+  // Hitting the test footer button should change the back button to cancel, to
+  // cancel finding the config.
+  let backTextPromise = BrowserTestUtils.waitForMutationCondition(
+    footerBack,
+    { attributes: true },
+    () =>
+      footerBack.getAttribute("data-l10n-id") ===
+      "account-hub-email-cancel-button"
+  );
+  EventUtils.synthesizeMouseAtCenter(footerCustom, {});
+  await backTextPromise;
+
+  // Hitting cancel should change the back button text to "back" and keep the
+  // form as the outgoing form.
+  EventUtils.synthesizeMouseAtCenter(footerBack, {});
+  backTextPromise = BrowserTestUtils.waitForMutationCondition(
+    footerBack,
+    { attributes: true },
+    () =>
+      footerBack.getAttribute("data-l10n-id") ===
+      "account-hub-email-back-button"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(outgoingConfigTemplate),
+    "The outgoing form should still be visible"
+  );
+
   // We still have a config that can't be found because of the testing domain,
   // so hitting the test button should lead back to the incoming config, with
   // an error notification.
@@ -569,18 +624,113 @@ add_task(async function test_invalid_manual_config_flow() {
       header.shadowRoot
         .querySelector("#emailFormNotification")
         .classList.contains("error"),
-    "The notification should be present."
+    "The notification should be present"
   );
 
   // The continue button should still be enabled, but going to outgoing the
   // continue button should be disabled.
   Assert.ok(!footerForward.disabled, "Continue button should be enabled");
   EventUtils.synthesizeMouseAtCenter(footerForward, {});
-  outgoingConfigTemplatePromise = TestUtils.waitForCondition(
-    () => BrowserTestUtils.isVisible(outgoingConfigTemplate),
-    "The outgoing config template should be in view"
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    outgoingConfigTemplate
   );
-  await outgoingConfigTemplatePromise;
   Assert.ok(footerForward.disabled, "Continue button should be disabled");
   await subtest_close_account_hub_dialog(dialog, outgoingConfigTemplate);
+});
+
+add_task(async function test_account_email_manual_to_ews() {
+  const dialog = await subtest_open_account_hub_dialog();
+
+  const emailTemplate = dialog.querySelector("email-auto-form");
+  const nameInput = emailTemplate.querySelector("#realName");
+  const emailInput = emailTemplate.querySelector("#email");
+  const footerForward = dialog.querySelector("#emailFooter #forward");
+
+  // Ensure fields are empty.
+  nameInput.value = "";
+  emailInput.value = "";
+
+  EventUtils.synthesizeMouseAtCenter(nameInput, {});
+  let inputEvent = BrowserTestUtils.waitForEvent(
+    nameInput,
+    "input",
+    false,
+    event => event.target.value === "Test User"
+  );
+  EventUtils.sendString("Test User");
+  await inputEvent;
+
+  EventUtils.synthesizeMouseAtCenter(emailInput, {});
+  inputEvent = BrowserTestUtils.waitForEvent(
+    emailInput,
+    "input",
+    false,
+    event => event.target.value === "badtest@example.localhost"
+  );
+  EventUtils.sendString("badtest@example.localhost");
+  await inputEvent;
+
+  Assert.ok(!footerForward.disabled, "Continue button should be enabled");
+
+  // Click continue and wait for incoming config view.
+  EventUtils.synthesizeMouseAtCenter(footerForward, {});
+
+  const incomingConfigSubview = dialog.querySelector(
+    "#emailIncomingConfigSubview"
+  );
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    incomingConfigSubview
+  );
+
+  info("Now that we're in the incoming config view, switch to EWS");
+
+  const protocolSelector =
+    incomingConfigSubview.querySelector("#incomingProtocol");
+
+  EventUtils.synthesizeMouseAtCenter(protocolSelector, {});
+  await BrowserTestUtils.waitForPopupEvent(protocolSelector.menupopup, "shown");
+
+  EventUtils.synthesizeMouseAtCenter(
+    protocolSelector.querySelector("#incomingProtocolEWS"),
+    {}
+  );
+  await BrowserTestUtils.waitForPopupEvent(
+    protocolSelector.menupopup,
+    "hidden"
+  );
+
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    incomingConfigSubview.querySelector("#incomingEwsUrlFormGroup")
+  );
+
+  const ewsURLInput = incomingConfigSubview.querySelector("#incomingEwsUrl");
+  const focusEvent = BrowserTestUtils.waitForEvent(ewsURLInput, "focus");
+  EventUtils.synthesizeMouseAtCenter(ewsURLInput, {});
+  await focusEvent;
+
+  const configUpdatedEvent = BrowserTestUtils.waitForEvent(
+    incomingConfigSubview,
+    "config-updated",
+    false,
+    () => ewsURLInput.value == "https://example.com/"
+  );
+  EventUtils.sendString("https://example.com/");
+  const { detail: configState } = await configUpdatedEvent;
+
+  Assert.ok(configState.completed, "Should have a complete EWS config");
+  Assert.ok(!footerForward.disabled, "Forward button should be enabled");
+
+  EventUtils.synthesizeMouseAtCenter(footerForward, {});
+
+  const passwordSubview = dialog.querySelector("email-password-form");
+  await BrowserTestUtils.waitForAttributeRemoval("hidden", passwordSubview);
+  Assert.ok(
+    BrowserTestUtils.isVisible(passwordSubview),
+    "Should go to password subview next"
+  );
+
+  await subtest_close_account_hub_dialog(dialog, passwordSubview);
 });

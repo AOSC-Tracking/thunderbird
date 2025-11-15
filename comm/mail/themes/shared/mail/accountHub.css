@@ -450,6 +450,10 @@ header {
     }
   }
 
+  &.email-form-body {
+    position: relative;
+  }
+
   &.password-form-body,
   &.email-form-body,
   &.option-select-body,
@@ -457,7 +461,8 @@ header {
     max-width: 400px;
   }
 
-  &.account-select-body {
+  &.account-select-body,
+  &.credentials-confirmation-body {
     max-width: 500px;
   }
 
@@ -750,6 +755,10 @@ header {
     min-width: 128px;
     padding: 10px 25px;
     text-align: center;
+  }
+
+  .busy & {
+    z-index: 3;
   }
 }
 

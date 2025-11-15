@@ -50,7 +50,7 @@ static nsresult IsSibling(nsIAutoSyncState* syncA, nsIAutoSyncState* syncB,
 }
 
 // recommended size of each group of messages per download
-static const uint32_t kDefaultGroupSize = 50U * 1024U /* 50K */;
+static const uint32_t kDefaultGroupSize = 2000U * 1024U /* 2MB */;
 
 nsDefaultAutoSyncMsgStrategy::nsDefaultAutoSyncMsgStrategy() = default;
 
@@ -113,14 +113,13 @@ NS_IMETHODIMP nsDefaultAutoSyncMsgStrategy::IsExcluded(nsIMsgFolder* aFolder,
 
   nsresult rv = aFolder->GetServer(getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIImapIncomingServer> imapServer(do_QueryInterface(server, &rv));
-  int32_t offlineMsgAgeLimit = -1;
-  imapServer->GetAutoSyncMaxAgeDays(&offlineMsgAgeLimit);
+  int32_t maxAge = -1;  // -1 = no limit.
+  rv = server->GetAutoSyncMaxAgeDays(&maxAge);
   NS_ENSURE_SUCCESS(rv, rv);
+
   PRTime msgDate;
   aMsgHdr->GetDate(&msgDate);
-  *aDecision = offlineMsgAgeLimit > 0 &&
-               msgDate < MsgConvertAgeInDaysToCutoffDate(offlineMsgAgeLimit);
+  *aDecision = maxAge > 0 && msgDate < MsgConvertAgeInDaysToCutoffDate(maxAge);
   return NS_OK;
 }
 
@@ -322,10 +321,27 @@ void nsAutoSyncManager::TimerCallback(nsITimer* aTimer, void* aClosure) {
           nsCOMPtr<nsIMsgFolder> folder;
           autoSyncStateObj->GetOwnerFolder(getter_AddRefs(folder));
           if (folder) {
+            // NOTE: this _should_ be protocol-agnostic, but we're not quite
+            // there yet.
+            // In both these cases, the autoSyncMgr is used as nsIUrlListener,
+            // so nsAutoSyncManager::OnStopRunningUrl() will be invoked when
+            // done.
             nsCOMPtr<nsIMsgImapMailFolder> imapFolder =
-                do_QueryInterface(folder, &rv);
-            NS_ENSURE_SUCCESS_VOID(rv);
-            rv = imapFolder->InitiateAutoSync(autoSyncMgr);
+                do_QueryInterface(folder);
+            if (imapFolder) {
+              // IMAP. This will either UpdateFolder() immediately, or
+              // issue a STATUS command to check message counts on the
+              // server.
+              rv = imapFolder->InitiateAutoSync(autoSyncMgr);
+            } else {
+              // Other types have no stStatusIssued phase, so just jump
+              // straight to folder update.
+              // To unify this, other protocols could be given a proper
+              // status operation to check the message counts on the
+              // server, or IMAP STATUS could be rolled up into its folder
+              // update operation.
+              rv = autoSyncStateObj->UpdateFolder();
+            }
             if (NS_SUCCEEDED(rv)) {
               autoSyncMgr->mUpdateInProgress = true;
               NOTIFY_LISTENERS_STATIC(autoSyncMgr, OnAutoSyncInitiated,
@@ -749,28 +765,48 @@ nsresult nsAutoSyncManager::AutoUpdateFolders() {
     rv = account->GetIncomingServer(getter_AddRefs(incomingServer));
     if (!incomingServer) continue;
 
-    nsCString type;
-    rv = incomingServer->GetType(type);
-
-    if (!type.EqualsLiteral("imap")) continue;
-
-    // If we haven't logged onto this server yet during this session or if the
-    // password has been removed from cache (see
-    // nsImapIncomingServer::ForgetSessionPassword) then skip autosync for
-    // this account.
-    bool notLoggedIn;
-    incomingServer->GetServerRequiresPasswordForBiff(&notLoggedIn);
-    if (notLoggedIn) {
-      if (MOZ_LOG_TEST(gAutoSyncLog, LogLevel::Debug)) {
-        nsCString serverName;
-        incomingServer->GetHostName(serverName);
-        MOZ_LOG(gAutoSyncLog, LogLevel::Debug,
-                ("%s: server |%s| don't autosync; not yet logged in", __func__,
-                 serverName.get()));
-      }
+    // Skip if AutoSyncOfflineStores pref is not set for this server.
+    bool autoSyncOfflineStores = false;
+    rv = incomingServer->GetAutoSyncOfflineStores(&autoSyncOfflineStores);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (!autoSyncOfflineStores) {
+      continue;
+    }
+    // Ideally, the GetAutoSyncOfflineStores() test should be enough.
+    // But because the `autosync_offline_stores` pref defaults to
+    // true, we might end up trying to autosync folder types which
+    // don't support it.
+    // So for now, also do an explicit test for server types we _know_
+    // support autosync.
+    nsAutoCString type;
+    incomingServer->GetType(type);
+    if (!(type.EqualsLiteral("imap") || type.EqualsLiteral("ews"))) {
       continue;
     }
 
+    // Bypass the logged-in check for EWS.
+    // TODO: EWS doesn't yet have an obvious logged-in check.
+    // It uses default .serverRequiresPasswordForBiff, which always returns
+    // true.
+    if (!type.EqualsLiteral("ews")) {
+      // If we haven't logged onto this server yet during this session or if the
+      // password has been removed from cache (see
+      // nsImapIncomingServer::ForgetSessionPassword) then skip autosync for
+      // this account.
+      bool notLoggedIn;
+      incomingServer->GetServerRequiresPasswordForBiff(&notLoggedIn);
+
+      if (notLoggedIn) {
+        if (MOZ_LOG_TEST(gAutoSyncLog, LogLevel::Debug)) {
+          nsCString serverName;
+          incomingServer->GetHostName(serverName);
+          MOZ_LOG(gAutoSyncLog, LogLevel::Debug,
+                  ("%s: server |%s| don't autosync; not yet logged in",
+                   __func__, serverName.get()));
+        }
+        continue;
+      }
+    }
     nsCOMPtr<nsIMsgFolder> rootFolder;
 
     rv = incomingServer->GetRootFolder(getter_AddRefs(rootFolder));
@@ -812,22 +848,8 @@ nsresult nsAutoSyncManager::AutoUpdateFolders() {
           continue;
         }
 
-        nsCOMPtr<nsIMsgImapMailFolder> imapFolder =
-            do_QueryInterface(folder, &rv);
-        if (NS_FAILED(rv)) continue;
-
-        nsCOMPtr<nsIImapIncomingServer> imapServer;
-        rv = imapFolder->GetImapIncomingServer(getter_AddRefs(imapServer));
-        if (imapServer) {
-          bool autoSyncOfflineStores = false;
-          rv = imapServer->GetAutoSyncOfflineStores(&autoSyncOfflineStores);
-
-          // skip if AutoSyncOfflineStores pref is not set for this folder
-          if (NS_FAILED(rv) || !autoSyncOfflineStores) continue;
-        }
-
         nsCOMPtr<nsIAutoSyncState> autoSyncState;
-        rv = imapFolder->GetAutoSyncStateObj(getter_AddRefs(autoSyncState));
+        rv = folder->GetAutoSyncStateObj(getter_AddRefs(autoSyncState));
         NS_ASSERTION(
             autoSyncState,
             "*** nsAutoSyncState shouldn't be NULL, check owner folder");
@@ -1106,16 +1128,6 @@ nsresult nsAutoSyncManager::HandleDownloadErrorFor(
   return NS_OK;
 }
 
-NS_IMETHODIMP nsAutoSyncManager::GetGroupSize(uint32_t* aGroupSize) {
-  NS_ENSURE_ARG_POINTER(aGroupSize);
-  *aGroupSize = mGroupSize;
-  return NS_OK;
-}
-NS_IMETHODIMP nsAutoSyncManager::SetGroupSize(uint32_t aGroupSize) {
-  mGroupSize = aGroupSize ? aGroupSize : kDefaultGroupSize;
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsAutoSyncManager::GetMsgStrategy(
     nsIAutoSyncMsgStrategy** aMsgStrategy) {
   NS_ENSURE_ARG_POINTER(aMsgStrategy);
@@ -1184,6 +1196,7 @@ nsAutoSyncManager::DoesMsgFitDownloadCriteria(nsIMsgDBHdr* aMsgHdr,
   return NS_OK;
 }
 
+// This is called by nsAutoSyncState::PlaceIntoDownloadQ().
 NS_IMETHODIMP nsAutoSyncManager::OnDownloadQChanged(
     nsIAutoSyncState* aAutoSyncStateObj) {
   nsCOMPtr<nsIAutoSyncState> autoSyncStateObj(aAutoSyncStateObj);

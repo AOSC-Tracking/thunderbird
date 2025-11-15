@@ -2,15 +2,21 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+EXPORTS += [
+    "EwsFetchMsgsToOffline.h",
+]
+
 SOURCES += [
     "EwsCopyMoveTransaction.cpp",
-    "EwsFetchMsgToOffline.cpp",
+    "EwsFetchMsgsToOffline.cpp",
     "EwsFolder.cpp",
     "EwsFolderCopyHandler.cpp",
     "EwsIncomingServer.cpp",
+    "EwsLanguageInteropFactory.cpp",
     "EwsListeners.cpp",
     "EwsMessageChannel.cpp",
     "EwsMessageCopyHandler.cpp",
+    "EwsOAuth2CustomDetails.cpp",
     "EwsProtocolHandler.cpp",
     "EwsProtocolInfo.cpp",
     "EwsService.cpp",
@@ -30,6 +36,7 @@ XPIDL_SOURCES += [
     "IEwsClient.idl",
     "IEwsFolder.idl",
     "IEwsIncomingServer.idl",
+    "IEwsLanguageInteropFactory.idl",
 ]
 
 FINAL_LIBRARY = "mail"

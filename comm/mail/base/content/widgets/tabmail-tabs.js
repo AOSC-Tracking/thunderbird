@@ -514,9 +514,9 @@
 
       if (!alreadySelected) {
         // Fire an onselect event for the tabs element.
-        const event = document.createEvent("Events");
-        event.initEvent("select", true, true);
-        this.dispatchEvent(event);
+        this.dispatchEvent(
+          new CustomEvent("select", { bubbles: true, cancelable: true })
+        );
       }
     }
 
@@ -562,7 +562,7 @@
           }
 
           this.arrowScrollbox.removeAttribute("overflow");
-          alltabsButton.setAttribute("hidden", "true");
+          alltabsButton.toggleAttribute("hidden", true);
           break;
         case "resize": {
           const width = this.arrowScrollbox.getBoundingClientRect().width;

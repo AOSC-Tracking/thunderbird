@@ -24,8 +24,8 @@
 #include "nsMsgSearchTerm.h"
 #include "nsMsgUtils.h"
 #include "nsNativeCharsetUtils.h"
-#include "nsServiceManagerUtils.h"
 #include "prmem.h"
+#include "mozilla/intl/Localization.h"
 
 static const char* kImapPrefix = "//imap:";
 static const char* kWhitespace = "\b\t\r\n ";
@@ -529,10 +529,23 @@ nsresult nsMsgFilter::LogRuleHitGeneric(nsIMsgRuleAction* aFilterAction,
     buffer += filterActionName;
   } else {
     nsString actionValue;
-    nsAutoCString filterActionID;
-    filterActionID = "filterAction"_ns;
-    filterActionID.AppendInt(actionType);
-    rv = bundle->GetStringFromName(filterActionID.get(), actionValue);
+    // Use the new "spam" fluent string if the action matches. We can remove
+    // this after we migrated all the filter.properties strings to fluent.
+    if (actionType == 14) {
+      RefPtr<mozilla::intl::Localization> l10n =
+          mozilla::intl::Localization::Create({"messenger/filterEditor.ftl"_ns},
+                                              true);
+
+      nsAutoCString filterActionSpam;
+      rv = LocalizeMessage(l10n, "filter-action-log-spam"_ns, {},
+                           filterActionSpam);
+      actionValue = NS_ConvertUTF8toUTF16(filterActionSpam);
+    } else {
+      nsAutoCString filterActionID;
+      filterActionID = "filterAction"_ns;
+      filterActionID.AppendInt(actionType);
+      rv = bundle->GetStringFromName(filterActionID.get(), actionValue);
+    }
     NS_ENSURE_SUCCESS(rv, rv);
 
     buffer += actionValue;
@@ -711,7 +724,8 @@ nsresult nsMsgFilter::ConvertMoveOrCopyToFolderValue(
 #endif
         destFolderUri.Append('/');
         if (filterVersion == k45Version) {
-          rv = NS_MsgEscapeEncodeURLPath(moveValue, moveValue);
+          rv = MsgEscapeString(moveValue, nsINetUtil::ESCAPE_URL_PATH,
+                               moveValue);
         }
         destFolderUri.Append(moveValue);
         localMailRoot->GetChildWithURI(destFolderUri, true,

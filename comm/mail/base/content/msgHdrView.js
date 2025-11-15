@@ -14,7 +14,6 @@
 /* import-globals-from aboutMessage.js */
 /* import-globals-from editContactPanel.js */
 /* import-globals-from globalOverlay.js */
-/* import-globals-from mailContext.js */
 /* import-globals-from mail-offline.js */
 /* import-globals-from mailCore.js */
 /* import-globals-from msgSecurityPane.js */
@@ -36,8 +35,8 @@ ChromeUtils.defineESModuleGetters(this, {
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   MessageArchiver: "resource:///modules/MessageArchiver.sys.mjs",
   PgpSqliteDb2: "chrome://openpgp/content/modules/sqliteDb.sys.mjs",
+  PhishingDetector: "resource:///modules/PhishingDetector.sys.mjs",
   PluralForm: "resource:///modules/PluralForm.sys.mjs",
-
   calendarDeactivator:
     "resource:///modules/calendar/calCalendarDeactivator.sys.mjs",
 });
@@ -46,19 +45,19 @@ XPCOMUtils.defineLazyServiceGetter(
   this,
   "gDbService",
   "@mozilla.org/msgDatabase/msgDBService;1",
-  "nsIMsgDBService"
+  Ci.nsIMsgDBService
 );
 XPCOMUtils.defineLazyServiceGetter(
   this,
   "gMIMEService",
   "@mozilla.org/mime;1",
-  "nsIMIMEService"
+  Ci.nsIMIMEService
 );
 XPCOMUtils.defineLazyServiceGetter(
   this,
   "gHandlerService",
   "@mozilla.org/uriloader/handler-service;1",
-  "nsIHandlerService"
+  Ci.nsIHandlerService
 );
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -2539,16 +2538,16 @@ function onShowOtherActionsPopup() {
     tagsItem.disabled = true;
     markAsReadItem.disabled = true;
     markAsReadItem.removeAttribute("hidden");
-    markAsUnreadItem.setAttribute("hidden", true);
+    markAsUnreadItem.toggleAttribute("hidden", true);
   } else {
     tagsItem.disabled = false;
     markAsReadItem.disabled = false;
     if (SelectedMessagesAreRead()) {
-      markAsReadItem.setAttribute("hidden", true);
+      markAsReadItem.toggleAttribute("hidden", true);
       markAsUnreadItem.removeAttribute("hidden");
     } else {
       markAsReadItem.removeAttribute("hidden");
-      markAsUnreadItem.setAttribute("hidden", true);
+      markAsUnreadItem.toggleAttribute("hidden", true);
     }
   }
 
@@ -3857,16 +3856,9 @@ var gMessageNotificationBar = {
         true
       );
     } else if (junkBarStatus == 1) {
-      const brandName = this.brandBundle.getString("brandShortName");
-      const junkBarMsg = this.stringBundle.getFormattedString(
-        "junkBarMessage",
-        [brandName]
-      );
-
       const buttons = [
         {
-          label: this.stringBundle.getString("junkBarInfoButton"),
-          accessKey: this.stringBundle.getString("junkBarInfoButtonKey"),
+          "l10n-id": "message-bar-learn-more-button",
           popup: null,
           callback() {
             // TODO: This doesn't work in a message window.
@@ -3877,8 +3869,7 @@ var gMessageNotificationBar = {
           },
         },
         {
-          label: this.stringBundle.getString("junkBarButton"),
-          accessKey: this.stringBundle.getString("junkBarButtonKey"),
+          "l10n-id": "message-bar-not-spam-button",
           popup: null,
           callback() {
             commandController.doCommand("cmd_markAsNotJunk");
@@ -3895,7 +3886,7 @@ var gMessageNotificationBar = {
         .appendNotification(
           "junkContent",
           {
-            label: junkBarMsg,
+            label: { "l10n-id": "message-bar-spam" },
             image: "chrome://messenger/skin/icons/junk.svg",
             priority: this.msgNotificationBar.PRIORITY_WARNING_HIGH,
           },

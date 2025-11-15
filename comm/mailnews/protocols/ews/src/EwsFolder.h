@@ -7,7 +7,7 @@
 
 #include "IEwsClient.h"
 #include "IEwsFolder.h"
-#include "nsICopyMessageListener.h"
+#include "mozilla/HashTable.h"
 #include "nsMsgDBFolder.h"
 #include "nscore.h"
 
@@ -18,6 +18,8 @@
 nsresult CreateNewLocalEwsFolder(nsIMsgFolder* parent, const nsACString& ewsId,
                                  const nsACString& folderName,
                                  nsIMsgFolder** createdFolder);
+
+class nsAutoSyncState;
 
 /**
  * The EWS implementation for `nsIMsgFolder` which represents a folder in an EWS
@@ -56,6 +58,7 @@ class EwsFolder : public nsMsgDBFolder, public IEwsFolder {
                             nsIMsgWindow* msgWindow, bool deleteStorage,
                             bool isMove, nsIMsgCopyServiceListener* listener,
                             bool allowUndo) override;
+  NS_IMETHOD EmptyTrash(nsIUrlListener* aListener) override;
   NS_IMETHOD CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
                         nsIMsgWindow* window,
                         nsIMsgCopyServiceListener* listener) override;
@@ -70,6 +73,7 @@ class EwsFolder : public nsMsgDBFolder, public IEwsFolder {
       nsTArray<RefPtr<nsIMsgFolder>>& aSubFolders) override;
   NS_IMETHOD MarkMessagesRead(const nsTArray<RefPtr<nsIMsgDBHdr>>& messages,
                               bool markRead) override;
+  NS_IMETHOD MarkAllMessagesRead(nsIMsgWindow* aMsgWindow) override;
   NS_IMETHOD RenameSubFolders(nsIMsgWindow* msgWindow,
                               nsIMsgFolder* oldFolder) override;
   NS_IMETHOD Rename(const nsACString& aNewName,
@@ -95,6 +99,11 @@ class EwsFolder : public nsMsgDBFolder, public IEwsFolder {
   NS_IMETHOD FetchMsgPreviewText(nsTArray<nsMsgKey> const& aKeysToFetch,
                                  nsIUrlListener* aUrlListener,
                                  bool* aAsyncResults) override;
+  NS_IMETHOD GetAutoSyncStateObj(nsIAutoSyncState** autoSyncStateObj) override;
+
+  NS_IMETHOD WriteToFolderCacheElem(nsIMsgFolderCacheElement* element) override;
+  NS_IMETHOD ReadFromFolderCacheElem(
+      nsIMsgFolderCacheElement* element) override;
 
  private:
   bool mHasLoadedSubfolders;
@@ -135,9 +144,47 @@ class EwsFolder : public nsMsgDBFolder, public IEwsFolder {
   nsresult GetHdrForEwsId(const nsACString& ewsId, nsIMsgDBHdr** hdr);
 
   /**
-   * Apply the current filters to a list of new messages.
+   * Handle a generic message or folder delete operation.
+   *
+   * If `forceHardDelete` is true, then this will call `onHardDelete`, otherwise
+   * whether `onHardDelete` or `onSoftDelete` is called will depend on the
+   * server delete model configuration and whether this is the configured trash
+   * folder for the server.
    */
-  nsresult ApplyFilters(const nsTArray<RefPtr<nsIMsgDBHdr>>& newMessages);
+  nsresult HandleDeleteOperation(
+      bool forceHardDelete, std::function<nsresult()>&& onHardDelete,
+      std::function<nsresult(IEwsFolder* trashFolder)>&& onSoftDelete);
+
+  /**
+   * Get the nsAutoSyncState for this folder, used for interacting with
+   * AutoSyncManager (for downloading messages in the background etc...)
+   * Created lazily, so use this instead of mAutoSyncState!
+   */
+  nsAutoSyncState* AutoSyncState();
+
+  // Don't use this directly - it's created lazily by AutoSyncState().
+  RefPtr<nsAutoSyncState> mAutoSyncState;
+
+  /**
+   * Tracks the set of messages which require filtering. New messages are
+   * added to this when their headers are first received from the server,
+   * then removed when they've been filtered - see PerformFiltering().
+   * Messages copied in from other folders wouldn't appear here.
+   */
+  mozilla::HashSet<nsMsgKey> mRequireFiltering;
+
+  /**
+   * PerformFiltering() attempts to apply filtering to as many messages in the
+   * mRequireFiltering set as possible.
+   * It's a best-effort approach - if the filterlist requires full message
+   * bodies for matching, only messages which have local (offline) copies
+   * can be processed.
+   *
+   * Messages which are filtered are removed from mRequireFiltering, and
+   * the rest are left, in the hopes that the next time PerformFiltering() is
+   * called, things might have changed.
+   */
+  nsresult PerformFiltering();
 };
 
 #endif  // COMM_MAILNEWS_PROTOCOLS_EWS_SRC_EWSFOLDER_H_

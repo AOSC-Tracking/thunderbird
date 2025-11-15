@@ -18,16 +18,6 @@ task-defaults:
         script: build-libotr.sh
         toolchain-artifact: public/build/libotr.tar.xz
 
-linux32-libotr:
-    treeherder:
-        symbol: TL32(libotr)
-    run:
-        arguments: ['linux32']
-    fetches:
-        toolchain:
-            - linux64-clang
-            - sysroot-i686-linux-gnu
-
 linux64-libotr:
     treeherder:
         symbol: TL(libotr)
@@ -54,7 +44,7 @@ macosx64-x64-libotr:
         symbol: TM(libotr)
     worker:
         env:
-            MACOS_SDK_DIR: "MacOSX15.5.sdk"
+            MACOS_SDK_DIR: "MacOSX26.0.sdk"
             MACOS_TARGET_SDK: "10.15"
     run:
         arguments: ['macosx64']
@@ -70,7 +60,7 @@ macosx64-aarch64-libotr:
         symbol: TMA64(libotr)
     worker:
         env:
-            MACOS_SDK_DIR: "MacOSX15.5.sdk"
+            MACOS_SDK_DIR: "MacOSX26.0.sdk"
             MACOS_TARGET_SDK: "11.0"
     run:
         arguments: ['macosx64-aarch64']

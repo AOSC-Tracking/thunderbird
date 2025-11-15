@@ -222,26 +222,26 @@
         Those two strings are meant to be invisible and will be used exclusively to provide
         localization for an alert window.
       -->
-      <label id="fips-title" hidden="true" data-l10n-id="forms-primary-pw-fips-title"></label>
-      <label id="fips-desc" hidden="true" data-l10n-id="forms-master-pw-fips-desc"></label>
+      <label id="fips-title" hidden="hidden" data-l10n-id="forms-primary-pw-fips-title"></label>
+      <label id="fips-desc" hidden="hidden" data-l10n-id="forms-master-pw-fips-desc"></label>
     </html:fieldset>
     </html:div>
 
     <hbox id="privacyJunkCategory"
           class="subcategory"
           data-category="panePrivacy">
-      <html:h1 data-l10n-id="privacy-junk-header"></html:h1>
+      <html:h1 data-l10n-id="privacy-spam-header"></html:h1>
     </hbox>
 
     <separator data-category="panePrivacy"/>
 
     <html:div data-category="panePrivacy">
     <html:fieldset data-category="panePrivacy">
-      <description data-l10n-id="junk-description"/>
+      <description data-l10n-id="spam-description"/>
       <separator class="thin"/>
       <hbox>
         <checkbox id="manualMark"
-                  data-l10n-id="junk-marked-label"
+                  data-l10n-id="spam-marked-label"
                   preference="mail.spam.manualMark"
                   oncommand="gPrivacyPane.updateManualMarkMode(this.checked);"/>
         <spacer flex="1"/>
@@ -253,39 +253,39 @@
         <hbox>
           <radio id="manualMarkMode0"
                  value="0"
-                 data-l10n-id="junk-move-label"/>
+                 data-l10n-id="spam-move-label"/>
           <spacer flex="1"/>
         </hbox>
         <hbox>
           <radio id="manualMarkMode1"
                  value="1"
-                 data-l10n-id="junk-delete-label"/>
+                 data-l10n-id="spam-delete-label"/>
           <spacer flex="1"/>
         </hbox>
       </radiogroup>
       <separator class="thin"/>
-      <description data-l10n-id="junk-read-description"></description>
+      <description data-l10n-id="spam-read-description"></description>
       <checkbox class="indent"
                 id="manualMarkAsJunkMarksRead"
-                data-l10n-id="junk-read-manual-label"
+                data-l10n-id="spam-read-manual-label"
                 preference="mailnews.ui.junk.manualMarkAsJunkMarksRead" />
       <checkbox class="indent"
                 id="markAsReadOnSpam"
-                data-l10n-id="junk-read-auto-label"
+                data-l10n-id="spam-read-auto-label"
                 preference="mail.spam.markAsReadOnSpam" />
       <hbox align="start">
-        <checkbox id="enableJunkLogging" data-l10n-id="junk-log-label"
+        <checkbox id="enableJunkLogging" data-l10n-id="spam-log-label"
                   oncommand="gPrivacyPane.updateJunkLogButton(this.checked);"
                   preference="mail.spam.logging.enabled"/>
         <spacer flex="1"/>
         <button is="highlightable-button" id="openJunkLogButton"
-                data-l10n-id="junk-log-button"
+                data-l10n-id="spam-log-button"
                 oncommand="gPrivacyPane.openJunkLog();"/>
       </hbox>
       <hbox align="start">
         <spacer flex="1"/>
         <button is="highlightable-button"
-                data-l10n-id="reset-junk-button"
+                data-l10n-id="reset-spam-button"
                 oncommand="gPrivacyPane.resetTrainingData()"/>
       </hbox>
     </html:fieldset>
@@ -611,4 +611,175 @@
       <description data-l10n-id="email-e2ee-automatism-post"/>
     </html:fieldset>
     </html:div>
+
+    <!-- DoH -->
+    <hbox id="DoHCategory"
+          class="subcategory"
+          hidden="hidden"
+          data-category="panePrivacy">
+      <html:h1 data-l10n-id="preferences-doh-header"/>
+    </hbox>
+
+    <html:div id="dohBox" data-category="panePrivacy" data-subcategory="doh" class="highlighting-group">
+      <html:legend data-l10n-id="preferences-doh-header"></html:legend>
+      <vbox flex="1">
+        <description class="tail-with-learn-more" data-l10n-id="preferences-doh-description"/>
+        <html:a id="dohLearnMore"
+                is="moz-support-link"
+                class="learnMore"
+                support-page="dns-over-https"
+        />
+      </vbox>
+      <vbox id="dohStatusSection" class="privacy-detailedoption info-box-container">
+        <hbox>
+      <description id="dohStatus" class="doh-status-label tail-with-learn-more"/>
+      <html:a id="dohStatusLearnMore"
+              is="moz-support-link"
+              class="learnMore"
+              support-page="doh-status"
+              hidden="hidden"/>
+    </hbox>
+    <description id="dohResolver" class="doh-status-label"/>
+    <description id="dohSteeringStatus"
+                 class="doh-status-label"
+                 data-l10n-id="preferences-doh-steering-status"
+                 hidden="true"/>
+      </vbox>
+      <vbox>
+        <html:legend id="dohGroupMessage" data-l10n-id="preferences-doh-group-message"></html:legend>
+        <vbox id="dohCategories">
+          <radiogroup id="dohCategoryRadioGroup"
+                      preference="network.trr.mode" aria-labelledby="dohGroupMessage">
+            <vbox id="dohOptionDefault" class="privacy-detailedoption info-box-container">
+              <hbox>
+                <radio id="dohDefaultRadio"
+                       value="0"
+                       data-l10n-id="preferences-doh-setting-default"
+                       flex="1"/>
+                <button id="dohDefaultArrow"
+                        is="highlightable-button"
+                        class="arrowhead doh-expand-section"
+                        data-l10n-id="preferences-doh-expand-section"
+                        aria-expanded="false"/>
+              </hbox>
+              <vbox class="indent">
+                <description data-l10n-id="preferences-doh-default-desc"/>
+                <vbox class="privacy-extra-information">
+                  <vbox class="indent">
+                    <hbox class="extra-information-label">
+                      <description class="doh-label" data-l10n-id="preferences-doh-default-detailed-desc-1"/>
+                    </hbox>
+                    <hbox class="extra-information-label">
+                      <description class="doh-label" data-l10n-id="preferences-doh-default-detailed-desc-2"/>
+                    </hbox>
+                    <hbox class="extra-information-label">
+                      <description class="doh-label tail-with-learn-more" data-l10n-id="preferences-doh-default-detailed-desc-3"/>
+                      <html:a id="default-desc-3-learn-more"
+                              is="moz-support-link"
+                              class="learnMore"
+                              support-page="doh-local-provider"
+                      />
+                    </hbox>
+                    <hbox class="extra-information-label">
+                      <description class="doh-label" data-l10n-id="preferences-doh-default-detailed-desc-4"/>
+                    </hbox>
+                    <hbox class="extra-information-label">
+                      <description class="doh-label tail-with-learn-more" data-l10n-id="preferences-doh-default-detailed-desc-5"/>
+                      <html:a id="default-desc-5-learn-more"
+                              is="moz-support-link"
+                              class="learnMore"
+                              support-page="firefox-turn-off-secure-dns"
+                      />
+                    </hbox>
+                  </vbox>
+                </vbox>
+              </vbox>
+            </vbox>
+            <vbox id="dohOptionEnabled" class="privacy-detailedoption info-box-container">
+              <hbox>
+                <radio id="dohEnabledRadio"
+                       value="2"
+                       data-l10n-id="preferences-doh-setting-enabled"
+                       flex="1"/>
+                <button id="dohEnabledArrow"
+                        is="highlightable-button"
+                        class="arrowhead doh-expand-section"
+                        data-l10n-id="preferences-doh-expand-section"
+                        aria-expanded="false"/>
+              </hbox>
+              <vbox class="indent">
+                <description data-l10n-id="preferences-doh-enabled-desc"/>
+                <vbox class="privacy-extra-information">
+                  <vbox class="indent">
+                    <hbox class="extra-information-label">
+                      <description class="doh-label" data-l10n-id="preferences-doh-enabled-detailed-desc-1"/>
+                    </hbox>
+                    <hbox class="extra-information-label">
+                      <description class="doh-label" data-l10n-id="preferences-doh-enabled-detailed-desc-2"/>
+                    </hbox>
+                  </vbox>
+                  <vbox class="extra-information-label">
+                    <description data-l10n-id="preferences-doh-select-resolver"/>
+                    <menulist id="dohEnabledResolverChoices"
+                              sizetopopup="none">
+                    </menulist>
+                    <html:input id="dohEnabledInputField" type="text" style="flex: 1;"
+                                preference="network.trr.custom_uri" hidden="hidden"/>
+                  </vbox>
+                </vbox>
+              </vbox>
+            </vbox>
+            <vbox id="dohOptionStrict" class="privacy-detailedoption info-box-container">
+              <hbox>
+                <radio id="dohStrictRadio"
+                       value="3"
+                       data-l10n-id="preferences-doh-setting-strict"
+                       flex="1"/>
+                <button id="dohStrictArrow"
+                        is="highlightable-button"
+                        class="arrowhead doh-expand-section"
+                        data-l10n-id="preferences-doh-expand-section"
+                        aria-expanded="false"/>
+              </hbox>
+              <vbox class="indent">
+                <description data-l10n-id="preferences-doh-strict-desc"/>
+                <vbox class="privacy-extra-information">
+                  <vbox class="indent">
+                    <hbox class="extra-information-label">
+                      <description class="doh-label" data-l10n-id="preferences-doh-strict-detailed-desc-1"/>
+                    </hbox>
+                    <hbox class="extra-information-label">
+                      <description class="doh-label" data-l10n-id="preferences-doh-strict-detailed-desc-2"/>
+                    </hbox>
+                    <hbox class="extra-information-label">
+                      <description class="doh-label" data-l10n-id="preferences-doh-strict-detailed-desc-3"/>
+                    </hbox>
+                  </vbox>
+                  <vbox class="extra-information-label">
+                    <description data-l10n-id="preferences-doh-select-resolver"/>
+                    <menulist id="dohStrictResolverChoices"
+                              sizetopopup="none">
+                    </menulist>
+                    <html:input id="dohStrictInputField" type="text" style="flex: 1;"
+                                preference="network.trr.custom_uri" hidden="hidden"/>
+                  </vbox>
+                </vbox>
+              </vbox>
+            </vbox>
+            <vbox id="dohOptionOff" class="privacy-detailedoption info-box-container">
+              <hbox>
+                <radio id="dohOffRadio"
+                       value="5"
+                       data-l10n-id="preferences-doh-setting-off"
+                       flex="1"/>
+              </hbox>
+              <vbox class="indent">
+                <description data-l10n-id="preferences-doh-off-desc"/>
+              </vbox>
+            </vbox>
+          </radiogroup>
+        </vbox>
+      </vbox>
+    </html:div>
+
   </html:template>

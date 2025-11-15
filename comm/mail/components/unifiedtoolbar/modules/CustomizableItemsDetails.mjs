@@ -244,11 +244,11 @@ export default [
   },
   {
     id: "junk",
-    labelId: "toolbar-junk",
+    labelId: "toolbar-spam",
     spaces: ["mail"],
     templateId: "junkTemplate",
     requiredModules: [
-      "chrome://messenger/content/unifiedtoolbar/mail-tab-button.mjs",
+      "chrome://messenger/content/unifiedtoolbar/spam-button.mjs",
     ],
   },
   {

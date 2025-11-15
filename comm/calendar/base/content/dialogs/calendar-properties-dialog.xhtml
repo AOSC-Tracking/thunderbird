@@ -4,8 +4,6 @@
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
 <!DOCTYPE html [ <!ENTITY % dtd1 SYSTEM "chrome://calendar/locale/global.dtd"> %dtd1;
-<!ENTITY % dtd2 SYSTEM "chrome://calendar/locale/calendar.dtd" >
-%dtd2;
 <!ENTITY % dtd3 SYSTEM "chrome://calendar/locale/calendarCreation.dtd" >
 %dtd3;
 <!ENTITY % dtd4 SYSTEM "chrome://lightning/locale/lightning.dtd" >
@@ -23,7 +21,7 @@
   height="630"
 >
   <head>
-    <title>&calendar.server.dialog.title.edit;</title>
+    <title data-l10n-id="calendar-server-dialog-title-edit"></title>
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src chrome:; script-src chrome: 'unsafe-inline' moz-src:; style-src chrome: 'unsafe-inline'"
@@ -53,19 +51,22 @@
   as a native HTML dialog. Keep these dialogs in sync if a property changes. -->
     <dialog
       buttons="accept,cancel,extra1"
-      buttonlabelextra1="&calendarproperties.unsubscribe.label;"
-      buttonaccesskeyextra1="&calendarproperties.unsubscribe.accesskey;"
+      data-l10n-id="calendar-properties-unsubscribe"
+      data-l10n-attrs="buttonlabelextra1,buttonaccesskeyextra1"
     >
-      <description id="force-disabled-description" hidden="true"
-        >&calendarproperties.forceDisabled.label;</description
+      <description
+        id="force-disabled-description"
+        hidden="hidden"
+        data-l10n-id="calendar-properties-provider-missing"
       >
+      </description>
 
       <vbox id="no-identity-notification" class="notification-inline">
         <!-- notificationbox will be added here lazily. -->
       </vbox>
       <checkbox
         id="calendar-enabled-checkbox"
-        label="&calendarproperties.enabled2.label;"
+        data-l10n-id="calendar-properties-enable-calendar"
         oncommand="setupEnabledCheckbox()"
       />
       <html:table id="calendar-properties-table">
@@ -73,7 +74,7 @@
           <html:th>
             <label
               id="calendar-name-label"
-              value="&calendar.server.dialog.name.label;"
+              data-l10n-id="calendar-server-dialog-name-label"
               disable-with-calendar="true"
               control="calendar-name"
             />
@@ -94,7 +95,7 @@
           <html:th>
             <label
               id="calendar-color-label"
-              value="&calendarproperties.color.label;"
+              data-l10n-id="calendar-properties-color"
               disable-with-calendar="true"
               control="calendar-color"
             />
@@ -134,7 +135,7 @@
           <html:th>
             <label
               id="calendar-uri-label"
-              value="&calendarproperties.location.label;"
+              data-l10n-id="calendar-properties-location"
               disable-with-calendar="true"
               control="calendar-uri"
             />
@@ -155,24 +156,20 @@
         <html:tr id="calendar-refreshInterval-row">
           <html:th>
             <label
-              value="&calendarproperties.refreshInterval.label;"
+              data-l10n-id="calendar-properties-refresh"
               disable-with-calendar="true"
-              control="calendar-refreshInterval-textbox"
+              control="calendar-refreshInterval-menulist"
             />
           </html:th>
           <html:td>
-            <menulist
-              id="calendar-refreshInterval-menulist"
-              disable-with-calendar="true"
-              label="&calendarproperties.refreshInterval.label;"
-            >
+            <menulist id="calendar-refreshInterval-menulist" disable-with-calendar="true">
               <menupopup id="calendar-refreshInterval-menupopup">
                 <!-- This will be filled programmatically to reduce the number of needed strings -->
                 <menuseparator id="calendar-refreshInterval-manual-separator" />
                 <menuitem
                   id="calendar-refreshInterval-manual"
                   value="0"
-                  label="&calendarproperties.refreshInterval.manual.label;"
+                  data-l10n-id="calendar-properties-refresh-manual"
                 />
               </menupopup>
             </menulist>
@@ -183,7 +180,7 @@
           <html:td>
             <checkbox
               id="read-only"
-              label="&calendarproperties.readonly.label;"
+              data-l10n-id="calendar-properties-read-only"
               disable-with-calendar="true"
             />
           </html:td>
@@ -193,7 +190,7 @@
           <html:td>
             <checkbox
               id="fire-alarms"
-              label="&calendarproperties.firealarms.label;"
+              data-l10n-id="calendar-properties-show-reminders"
               disable-with-calendar="true"
             />
           </html:td>
@@ -203,7 +200,7 @@
           <html:td>
             <checkbox
               id="cache"
-              label="&calendarproperties.cache3.label;"
+              data-l10n-id="calendar-properties-offline-support"
               disable-with-calendar="true"
             />
           </html:td>

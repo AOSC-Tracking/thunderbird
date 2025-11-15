@@ -14,7 +14,7 @@ var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
 
-const { PromiseTestUtils } = ChromeUtils.importESModule(
+var { PromiseTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
@@ -221,7 +221,7 @@ add_task(async function test_delete_message() {
 
   // Build the string we expect to see in the status bar.
   const l10n = new Localization(["messenger/activityFeedback.ftl"], true);
-  const expectedStatus = l10n.formatValueSync("deleting-messages", {
+  const expectedStatus = l10n.formatValueSync("deleting-message", {
     number: "1",
     folderName,
   });
