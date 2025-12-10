@@ -17,7 +17,7 @@
 #include <sys/syscall.h>
 
 #if !defined(WEBRTC_ARCH_ARM) && !defined(WEBRTC_ARCH_ARM64)
-#include <asm/unistd_64.h>
+#include <asm/unistd.h>
 #endif
 #endif
 
