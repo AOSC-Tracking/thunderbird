@@ -5,6 +5,15 @@
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
 import { calItemBase, makeMemberAttrProperty } from "resource:///modules/CalItemBase.sys.mjs";
 
+const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
+
 /**
  * Constructor for `calITodo` objects.
  *
@@ -54,7 +63,9 @@ CalTodo.prototype = {
   },
 
   createProxy(aRecurrenceId) {
-    cal.ASSERT(!this.mIsProxy, "Tried to create a proxy for an existing proxy!", true);
+    if (this.mIsProxy) {
+      throw new Error("Tried to create a proxy for an existing proxy!");
+    }
 
     const proxy = new CalTodo();
 
@@ -162,7 +173,7 @@ CalTodo.prototype = {
                 if (e.result == Cr.NS_ERROR_ILLEGAL_VALUE) {
                   // Illegal values should be ignored, but we could log them if
                   // the user has enabled logging.
-                  cal.LOG(
+                  lazy.log.debug(
                     "Warning: Invalid todo parameter value " +
                       paramName +
                       "=" +
@@ -177,7 +188,7 @@ CalTodo.prototype = {
           icalcomp.addProperty(icalprop);
         }
       } catch (e) {
-        cal.ERROR("failed to set " + name + " to " + value + ": " + e + "\n");
+        lazy.log.error("failed to set " + name + " to " + value + ": " + e + "\n");
       }
     }
     return icalcomp;

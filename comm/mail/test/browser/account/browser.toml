@@ -1,7 +1,7 @@
 [DEFAULT]
 head = "head.js"
 prefs = [
-  "calendar.debug.log=true",
+  "calendar.loglevel=Debug",
   "carddav.setup.loglevel=Debug",
   "carddav.sync.loglevel=Debug",
   "chat.otr.enable=false",
@@ -51,7 +51,6 @@ prefs = [
   "mailnews.start_page.override_url=about:blank",
   "mailnews.start_page.url=about:blank",
 ]
-skip-if = ["debug"]
 subsuite = "thunderbird"
 support-files = ["xml/**"]
 
@@ -71,7 +70,14 @@ tags = ["addrbook", "carddav", "oauth"]
 
 ["browser_accountHubBackground.js"]
 
+["browser_accountHubConfigAlternatives.js"]
+tags = ["oauth"]
+
 ["browser_accountHubConfigSelect.js"]
+
+["browser_accountHubCredentialsConfirmation.js"]
+
+["browser_accountHubEmailConfigFound.js"]
 
 ["browser_accountHubExchange.js"]
 
@@ -81,6 +87,8 @@ tags = ["addrbook", "carddav", "oauth"]
 tags = ["oauth"]
 
 ["browser_accountHubOpen.js"]
+
+["browser_accountHubPlaceholder.js"]
 
 ["browser_accountHubSyncAccounts.js"]
 
@@ -103,8 +111,13 @@ tags = ["archive"]
 
 ["browser_manageIdentities.js"]
 
+["browser_offlineSettings.js"]
+tags = ["dataadapter"]
+
 ["browser_portSetting.js"]
-skip-if = ["os == 'win'"]
+skip-if = [
+  "os == 'win'",
+]
 
 ["browser_retestConfig.js"]
 

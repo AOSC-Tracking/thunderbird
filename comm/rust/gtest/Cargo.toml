@@ -5,10 +5,12 @@ authors = ["The Mozilla Project Developers"]
 license = "MPL-2.0"
 description = "Testing code for libgkrust"
 edition = "2021"
+rust-version.workspace = true
 
 [dependencies]
 mozilla-central-workspace-hack = { version = "0.1", features = ["gkrust-gtest"], optional = true }
 ews_xpcom = { version = "0.1.0", path = "../ews_xpcom" }
+graph_xpcom = { version = "0.1.0", path = "../graph_xpcom" }
 sys_tray = { version = "0.1.0", path = "../sys_tray" }
 bench-collections-gtest = { path = "../../../xpcom/rust/gtest/bench-collections" }
 l10nregistry-ffi-gtest = { path = "../../../intl/l10n/rust/gtest" }
@@ -19,13 +21,12 @@ xpcom-gtest = { path = "../../../xpcom/rust/gtest/xpcom" }
 gkrust-shared = { path = "../../../toolkit/library/rust/shared" }
 gecko-fuzz-targets = { path = "../../../tools/fuzzing/rust", optional = true }
 fog-gtest = { path = "../../../toolkit/components/glean/tests/gtest" }
-dap_ffi-gtest = { path = "../../../toolkit/components/telemetry/dap/ffi-gtest" }
+dap_ffi-gtest = { path = "../../../toolkit/components/dap/ffi-gtest" }
 kvstore-gtest = { path = "../../../toolkit/components/kvstore/test/gtest" }
 
 # Workarounds for https://github.com/rust-lang/rust/issues/58393
 mozglue-static = { path = "../../../mozglue/static/rust" }
 swgl = { path = "../../../gfx/wr/swgl" }
-lmdb-rkv-sys = "0.11"
 
 [lib]
 path = "lib.rs"

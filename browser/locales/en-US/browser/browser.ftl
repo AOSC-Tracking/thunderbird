@@ -181,6 +181,10 @@ urlbar-star-edit-bookmark =
 urlbar-star-add-bookmark =
     .tooltiptext = Bookmark this page ({ $shortcut })
 
+urlbar-split-view-button =
+    .tooltiptext = Split view
+    .aria-label = Split view
+
 ## Page Action Context Menu
 
 page-action-manage-extension2 =
@@ -323,6 +327,10 @@ quickactions-cmd-restart = restart
 # Opens the screenshot tool
 quickactions-screenshot3 = Take a screenshot
 quickactions-cmd-screenshot2 = screenshot, take a screenshot
+
+# Opens about:translations
+quickactions-translate = Translate
+quickactions-cmd-translate = translate
 
 # Opens about:preferences
 quickactions-settings2 = Manage settings
@@ -695,6 +703,10 @@ urlbar-result-menu-dont-show-market =
 # A message that replaces a result when the user dismisses Market suggestions.
 urlbar-result-dismissal-acknowledgment-market = Thanks for your feedback. You won’t see market suggestions anymore.
 
+# This a11y label is read by screen readers when an item in the row is selected.
+urlbar-result-aria-group-market =
+  .aria-label = Stock market suggestions
+
 # A message that replaces a result when the user dismisses all suggestions of a
 # particular type.
 urlbar-result-dismissal-acknowledgment-all = Thanks for your feedback. You won’t see these suggestions anymore.
@@ -757,6 +769,12 @@ urlbar-searchmode-button2 =
 urlbar-searchmode-button-no-engine =
     .label = No shortcut selected, pick a shortcut
     .tooltiptext = No shortcut selected, pick a shortcut
+
+# Refers to the ability to search using keywords in the address bar
+urlbar-searchmode-no-keyword =
+    .label = Keyword search is disabled
+    .tooltiptext = Keyword search is disabled
+
 urlbar-searchmode-dropmarker =
     .tooltiptext = Pick a Search Engine
 urlbar-searchmode-bookmarks =
@@ -1337,7 +1355,12 @@ onboarding-aw-finish-setup-button =
 
 onboarding-checklist-button-label = Finish setup
 
-## The urlbar trust panel
+## The urlbar trust icon & panel
+
+# LOCALIZATION NOTE (trustpanel-urlbar-notsecure-label):
+# Keep this string as short as possible, this is displayed in the URL bar
+# use a synonym for "safe" or "private" if "secure" is too long.
+urlbar-trust-icon-notsecure-label = Not Secure
 
 trustpanel-etp-label-enabled = Enhanced Tracking Protection is on
 trustpanel-etp-label-disabled = Enhanced Tracking Protection is off

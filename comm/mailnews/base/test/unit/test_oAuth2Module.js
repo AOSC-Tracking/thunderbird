@@ -531,6 +531,120 @@ add_task(async function testSetRefreshTokenPreservesOthers() {
   delete oAuth2Server.grantedScope;
 });
 
+/**
+ * Tests that calling `setRefreshToken`, `clearAccessToken`, and `clearTokens`
+ * from outside the module (e.g. an add-on) appropriately sets or clears the
+ * tokens on the inner object, as well as saving or clearing the token in the
+ * login manager.
+ */
+add_task(async function testSetAndClearTokensExternally() {
+  // Test calling `setRefreshToken` from outside the module.
+  const mod = new OAuth2Module();
+  mod.initFromHostname("mochi.test", "victor@foo.invalid", "imap");
+  Assert.equal(mod._oauth.refreshToken, "");
+  await mod.setRefreshToken("external_token");
+  Assert.equal(
+    mod._oauth.refreshToken,
+    "external_token",
+    "refresh token should be set in memory"
+  );
+
+  // Check that the saved token was updated.
+  const logins = await Services.logins.getAllLogins();
+  Assert.equal(logins.length, 1, "a login should have been added");
+
+  Assert.equal(logins[0].hostname, "oauth://test.test");
+  Assert.equal(logins[0].httpRealm, "test_scope");
+  Assert.equal(logins[0].username, "victor@foo.invalid");
+  Assert.equal(logins[0].password, "external_token", "token should be set");
+
+  const server = await OAuth2TestUtils.startServer({
+    refreshToken: "external_token",
+  });
+  let deferred = Promise.withResolvers();
+  mod.connect(false, {
+    onSuccess: deferred.resolve,
+    onFailure: deferred.reject,
+  });
+  await deferred.promise;
+
+  Assert.equal(
+    mod._oauth.refreshToken,
+    "external_token",
+    "refresh token should still be set in memory"
+  );
+  Assert.equal(
+    mod._oauth.accessToken,
+    "access_token",
+    "access token should be set in memory"
+  );
+
+  // Test calling `clearAccessToken` from outside the module.
+  mod.clearAccessToken();
+  Assert.equal(
+    mod._oauth.refreshToken,
+    "external_token",
+    "refresh token should still be set in memory"
+  );
+  Assert.equal(
+    mod._oauth.accessToken,
+    null,
+    "access token should be cleared from memory"
+  );
+
+  server.accessToken = "new_access_token";
+  deferred = Promise.withResolvers();
+  mod.connect(false, {
+    onSuccess: deferred.resolve,
+    onFailure: deferred.reject,
+  });
+  await deferred.promise;
+
+  Assert.equal(
+    mod._oauth.refreshToken,
+    "external_token",
+    "refresh token should still be set in memory"
+  );
+  Assert.equal(
+    mod._oauth.accessToken,
+    "new_access_token",
+    "new access token should be set in memory, proving we talked to the server"
+  );
+
+  // Test calling `clearTokens` from outside the module.
+  mod.clearTokens();
+  Assert.equal(
+    mod._oauth.refreshToken,
+    null,
+    "refresh token should be cleared from memory"
+  );
+  Assert.equal(
+    mod._oauth.accessToken,
+    null,
+    "access token should be cleared from memory"
+  );
+  Assert.equal(
+    await Services.logins.countLogins("oauth://test.test", "", "test_scope"),
+    0,
+    "login should have been removed"
+  );
+
+  deferred = Promise.withResolvers();
+  mod.connect(false, {
+    onSuccess: deferred.reject,
+    onFailure: deferred.resolve,
+  });
+  Assert.equal(
+    await deferred.promise,
+    Cr.NS_ERROR_ABORT,
+    "connect should fail without UI, proving we needed to re-auth"
+  );
+
+  Services.logins.removeAllLogins();
+  OAuth2TestUtils.forgetObjects();
+  OAuth2TestUtils.stopServer();
+});
+
 add_task(async function testOverrideIssuerDetails() {
   const mod = new OAuth2Module();
 

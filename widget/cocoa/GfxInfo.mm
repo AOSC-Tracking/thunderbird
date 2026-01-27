@@ -6,8 +6,6 @@
 #include <OpenGL/OpenGL.h>
 #include <OpenGL/CGLRenderers.h>
 
-#include "mozilla/ArrayUtils.h"
-
 #include "GfxInfo.h"
 #include "nsUnicharUtils.h"
 #include "nsExceptionHandler.h"
@@ -15,8 +13,6 @@
 #include "nsCocoaUtils.h"
 #include "mozilla/Preferences.h"
 #include "js/PropertyAndElement.h"  // JS_SetElement, JS_SetProperty
-
-#include <algorithm>
 
 #import <Foundation/Foundation.h>
 #import <IOKit/IOKitLib.h>
@@ -244,9 +240,6 @@ nsresult GfxInfo::Init() {
 
   return rv;
 }
-
-NS_IMETHODIMP
-GfxInfo::GetD2DEnabled(bool* aEnabled) { return NS_ERROR_FAILURE; }
 
 NS_IMETHODIMP
 GfxInfo::GetDWriteEnabled(bool* aEnabled) { return NS_ERROR_FAILURE; }
@@ -533,14 +526,6 @@ nsresult GfxInfo::GetFeatureStatusImpl(
       *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
       aFailureId = "FEATURE_UNQUALIFIED_WEBRENDER_MAC_ROSETTA";
       return NS_OK;
-#ifndef EARLY_BETA_OR_EARLIER
-    } else if (aFeature == nsIGfxInfo::FEATURE_WEBGPU &&
-               !nsCocoaFeatures::OnTahoeOrLater()) {
-      // https://bugzilla.mozilla.org/show_bug.cgi?id=1993341
-      *aStatus = nsIGfxInfo::FEATURE_BLOCKED_OS_VERSION;
-      aFailureId = "FEATURE_FAILURE_WEBGPU_MACOS_26_REQUIRED";
-      return NS_OK;
-#endif
     }
   }
 

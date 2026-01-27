@@ -8,6 +8,7 @@
 #include "nsIWebProgressListener.idl"
 
 interface mozIDOMWindowProxy;
+interface nsIMsgComposeProgressParams;
 interface nsIMsgWindow;
 
 [scriptable, uuid(6d6fe91d-7f9a-4552-9737-9f74b0e75538)]
@@ -17,18 +18,30 @@ interface nsIMsgProgress: nsIWebProgressListener {
    * Open the progress dialog, you can specify parameters through an xpcom object
    */
   void openProgressDialog(in mozIDOMWindowProxy parent,
-                          in nsIMsgWindow aMsgWindow,
                           in string dialogURL,
-                          in boolean inDisplayModal,
-                          in nsISupports parameters);
+                          in nsIMsgComposeProgressParams composeParams);
 
   /* Close the progress dialog */
   void closeProgressDialog(in boolean forceClose);
 
-  /* Register a Web Progress Listener */
+  /**
+   * Registers a listener to receive progress events.
+   *
+   * @param listener - The listener interface to be called when a progress
+   *   event occurs. This object must also implement nsISupportsWeakReference.
+   * @throw NS_ERROR_INVALID_ARG - Indicates that listener was either null or
+   *   that it does not support weak references.
+   * @throw NS_ERROR_FAILURE - Indicates that listener was already registered.
+   */
   void registerListener(in nsIWebProgressListener listener);
 
-  /* Unregister a Web Progress Listener */
+  /**
+   * Removes a previously registered listener of progress events.
+   *
+   * @param listener - The listener interface previously registered with a
+   *   call to registerListener.
+   * @throw NS_ERROR_FAILURE - Indicates that listener was not registered.
+   */
   void unregisterListener(in nsIWebProgressListener listener);
 
   /* Indicated if the user asked to cancel the current process */

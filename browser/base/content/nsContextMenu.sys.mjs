@@ -22,7 +22,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "resource://gre/modules/LoginManagerContextMenu.sys.mjs",
   NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
-  PlacesUIUtils: "moz-src:///browser/components/places/PlacesUIUtils.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   ScreenshotsUtils: "resource:///modules/ScreenshotsUtils.sys.mjs",
   SearchUIUtils: "moz-src:///browser/components/search/SearchUIUtils.sys.mjs",
@@ -59,13 +58,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
 
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
-  "STRIP_ON_SHARE_CAN_DISABLE",
-  "privacy.query_stripping.strip_on_share.canDisable",
-  false
-);
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
   "PDFJS_ENABLE_COMMENT",
   "pdfjs.enableComment",
   false
@@ -82,27 +74,20 @@ XPCOMUtils.defineLazyServiceGetter(
   lazy,
   "QueryStringStripper",
   "@mozilla.org/url-query-string-stripper;1",
-  "nsIURLQueryStringStripper"
+  Ci.nsIURLQueryStringStripper
 );
 
 XPCOMUtils.defineLazyServiceGetter(
   lazy,
   "clipboard",
   "@mozilla.org/widget/clipboardhelper;1",
-  "nsIClipboardHelper"
+  Ci.nsIClipboardHelper
 );
 
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
   "TEXT_FRAGMENTS_ENABLED",
   "dom.text_fragments.enabled",
-  false
-);
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "TEXT_FRAGMENTS_SHOW_CONTEXT_MENU",
-  "dom.text_fragments.create_text_fragment.enabled",
   false
 );
 
@@ -114,6 +99,7 @@ export class nsContextMenu {
    * A promise to retrieve the translations language pair
    * if the context menu was opened in a context relevant to
    * open the SelectTranslationsPanel.
+   *
    * @type {Promise<{sourceLanguage: string, targetLanguage: string}>}
    */
   #translationsLangPairPromise;
@@ -121,6 +107,7 @@ export class nsContextMenu {
   /**
    * The value of the `main-context-menu-new-feature-badge` l10n string. Fetched
    * lazily.
+   *
    * @type {string}
    */
   #newFeatureBadgeL10nString;
@@ -184,13 +171,6 @@ export class nsContextMenu {
     this.viewFrameSourceElement = this.document.getElementById(
       "context-viewframesource"
     );
-    this.ellipsis = "\u2026";
-    try {
-      this.ellipsis = Services.prefs.getComplexValue(
-        "intl.ellipsis",
-        Ci.nsIPrefLocalizedString
-      ).data;
-    } catch (e) {}
 
     // Reset after "on-build-contextmenu" notification in case selection was
     // changed during the notification.
@@ -249,7 +229,6 @@ export class nsContextMenu {
     this.onPiPVideo = context.onPiPVideo;
     this.onEditable = context.onEditable;
     this.onImage = context.onImage;
-    this.onKeywordField = context.onKeywordField;
     this.onSearchField = context.onSearchField;
     this.onLink = context.onLink;
     this.onLoadedImage = context.onLoadedImage;
@@ -470,9 +449,7 @@ export class nsContextMenu {
 
   initTextFragmentItems() {
     const shouldShow =
-      lazy.TEXT_FRAGMENTS_SHOW_CONTEXT_MENU &&
       lazy.TEXT_FRAGMENTS_ENABLED &&
-      lazy.STRIP_ON_SHARE_ENABLED &&
       !(
         this.inPDFViewer ||
         this.inFrame ||
@@ -481,7 +458,10 @@ export class nsContextMenu {
       ) &&
       (this.hasTextFragments || this.isContentSelected);
     this.showItem("context-copy-link-to-highlight", shouldShow);
-    this.showItem("context-copy-clean-link-to-highlight", shouldShow);
+    this.showItem(
+      "context-copy-clean-link-to-highlight",
+      shouldShow && lazy.STRIP_ON_SHARE_ENABLED
+    );
 
     // disables both options by default, while API tries to build a text fragment
     this.setItemAttr("context-copy-link-to-highlight", "disabled", true);
@@ -493,30 +473,20 @@ export class nsContextMenu {
   }
 
   async getTextDirective() {
-    if (
-      !Services.prefs.getBoolPref(
-        "dom.text_fragments.create_text_fragment.enabled",
-        false
-      )
-    ) {
+    if (!lazy.TEXT_FRAGMENTS_ENABLED) {
       return;
     }
     this.textFragmentURL = await this.actor.getTextDirective();
 
     // enable menu items when a text fragment can be built
     if (this.textFragmentURL) {
-      this.setItemAttr("context-copy-link-to-highlight", "disabled", false);
-
-      // only enables the clean link based on preference and canStripForShare()
-      // this follows the same pattern as https://bugzilla.mozilla.org/show_bug.cgi?id=1895334
-      let canNotStripTextFragmentParams =
-        lazy.STRIP_ON_SHARE_CAN_DISABLE &&
-        !this.#canStripParams(this.getLinkURI(this.textFragmentURL));
-
+      this.setItemAttr("context-copy-link-to-highlight", "disabled", null);
+      let link = this.getLinkURI(this.textFragmentURL);
+      let disabledAttr = this.#canStripParams(link) ? null : true;
       this.setItemAttr(
         "context-copy-clean-link-to-highlight",
         "disabled",
-        canNotStripTextFragmentParams
+        disabledAttr
       );
     }
   }
@@ -948,7 +918,6 @@ export class nsContextMenu {
         this.onPlainTextLink
     );
     this.showItem("context-add-engine", this.shouldShowAddEngine());
-    this.showItem("context-keywordfield", this.shouldShowAddKeyword());
     this.showItem("frame", this.inFrame);
 
     if (this.inFrame) {
@@ -1104,24 +1073,13 @@ export class nsContextMenu {
         !this.isSecureAboutPage()
     );
 
-    let canNotStrip =
-      lazy.STRIP_ON_SHARE_CAN_DISABLE && !this.#canStripParams();
+    let disabledAttr = this.#canStripParams() ? null : true;
+    this.setItemAttr("context-stripOnShareLink", "disabled", disabledAttr);
 
-    this.setItemAttr("context-stripOnShareLink", "disabled", canNotStrip);
-
-    let copyLinkSeparator = this.document.getElementById(
-      "context-sep-copylink"
+    let sendLinkSeparator = this.document.getElementById(
+      "context-sep-sendlinktodevice"
     );
-    // Show "Copy Link", "Copy" and "Copy Clean Link" with no divider, and "copy link" and "Send link to Device" with no divider between.
-    // Other cases will show a divider.
-    copyLinkSeparator.toggleAttribute(
-      "ensureHidden",
-      this.onLink &&
-        !this.onMailtoLink &&
-        !this.onTelLink &&
-        !this.onImage &&
-        this.syncItemsShown
-    );
+    sendLinkSeparator.toggleAttribute("ensureHidden", !this.syncItemsShown);
 
     this.showItem("context-copyvideourl", this.onVideo);
     this.showItem("context-copyaudiourl", this.onAudio);
@@ -2322,28 +2280,6 @@ export class nsContextMenu {
     }
   }
 
-  addKeywordForSearchField() {
-    this.actor.getSearchFieldBookmarkData(this.targetIdentifier).then(data => {
-      let title = this.window.gNavigatorBundle.getFormattedString(
-        "addKeywordTitleAutoFill",
-        [data.title]
-      );
-      lazy.PlacesUIUtils.showBookmarkDialog(
-        {
-          action: "add",
-          type: "bookmark",
-          uri: this.window.makeURI(data.spec),
-          title,
-          keyword: "",
-          postData: data.postData,
-          charSet: data.charset,
-          hiddenRows: ["location", "tags"],
-        },
-        this.window
-      );
-    });
-  }
-
   async addSearchFieldAsEngine() {
     let { url, formData, charset, method } =
       await this.actor.getSearchFieldEngineData(this.targetIdentifier);
@@ -2387,9 +2323,9 @@ export class nsContextMenu {
    * Show/hide one item (specified via name or the item element itself).
    * If the element is not found, then this function finishes silently.
    *
-   * @param {Element|String} aItemOrId The item element or the name of the element
+   * @param {Element | string} aItemOrId The item element or the name of the element
    *                                   to show.
-   * @param {Boolean} aShow Set to true to show the item, false to hide it.
+   * @param {boolean} aShow Set to true to show the item, false to hide it.
    */
   showItem(aItemOrId, aShow) {
     var item =
@@ -2445,9 +2381,9 @@ export class nsContextMenu {
 
   /**
    * Strips any known query params from the link URI.
+   *
    * @returns {nsIURI|null} - the stripped version of the URI,
    * or the original URI if we could not strip any query parameter.
-   *
    */
   getStrippedLink(uri = this.linkURI) {
     if (!uri) {
@@ -2468,8 +2404,8 @@ export class nsContextMenu {
 
   /**
    * Checks if there is a query parameter that can be stripped
-   * @returns {Boolean}
    *
+   * @returns {boolean}
    */
   #canStripParams(uri = this.linkURI) {
     if (!uri) {
@@ -2485,8 +2421,8 @@ export class nsContextMenu {
 
   /**
    * Checks if a webpage is a secure interal webpage
-   * @returns {Boolean}
    *
+   * @returns {boolean}
    */
   isSecureAboutPage() {
     let { currentURI } = this.browser;
@@ -2522,18 +2458,6 @@ export class nsContextMenu {
     return false;
   }
 
-  shouldShowAddKeyword() {
-    return (
-      this.onTextInput &&
-      this.onKeywordField &&
-      !this.isLoginForm() &&
-      !Services.prefs.getBoolPref(
-        "browser.urlbar.update2.engineAliasRefresh",
-        false
-      )
-    );
-  }
-
   shouldShowAddEngine() {
     let uri = this.browser.currentURI;
 
@@ -2541,11 +2465,7 @@ export class nsContextMenu {
       this.onTextInput &&
       this.onSearchField &&
       !this.isLoginForm() &&
-      (uri.schemeIs("http") || uri.schemeIs("https")) &&
-      Services.prefs.getBoolPref(
-        "browser.urlbar.update2.engineAliasRefresh",
-        false
-      )
+      (uri.schemeIs("http") || uri.schemeIs("https"))
     );
   }
 
@@ -2556,10 +2476,7 @@ export class nsContextMenu {
 
     var locale = "-";
     try {
-      locale = Services.prefs.getComplexValue(
-        "intl.accept_languages",
-        Ci.nsIPrefLocalizedString
-      ).data;
+      locale = Services.locale.acceptLanguages;
     } catch (e) {}
 
     var version = "-";
@@ -2841,7 +2758,8 @@ export class nsContextMenu {
       if (truncChar >= 0xdc00 && truncChar <= 0xdfff) {
         truncLength++;
       }
-      selectedText = selectedText.substr(0, truncLength) + this.ellipsis;
+      selectedText =
+        selectedText.substr(0, truncLength) + Services.locale.ellipsis;
     }
 
     const { gNavigatorBundle } = this.window;
@@ -2892,6 +2810,11 @@ export class nsContextMenu {
       return;
     }
     if (!Services.search.hasSuccessfullyInitialized) {
+      menuitem.hidden = true;
+      return;
+    }
+
+    if (isPrivateSearchMenuitem && !lazy.PrivateBrowsingUtils.enabled) {
       menuitem.hidden = true;
       return;
     }

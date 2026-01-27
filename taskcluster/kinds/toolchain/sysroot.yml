@@ -3,7 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ---
 task-defaults:
-    worker-type: b-linux-amd
+    worker-type: b-linux-docker-amd
     worker:
         max-run-time: 1800
     run:
@@ -97,10 +97,6 @@ sysroot-wasm32-wasi-clang-19:
             - wasi-sdk.patch
         resources:
             - taskcluster/scripts/misc/wasi-sdk.patch
-        toolchain-alias:
-            by-project:
-                toolchains: null
-                default: sysroot-wasm32-wasi
         toolchain-artifact: public/build/sysroot-wasm32-wasi.tar.zst
     fetches:
         fetch:
@@ -122,6 +118,10 @@ sysroot-wasm32-wasi-clang-20:
             - wasi-sdk.patch
         resources:
             - taskcluster/scripts/misc/wasi-sdk.patch
+        toolchain-alias:
+            by-project:
+                toolchains: null
+                default: sysroot-wasm32-wasi
         toolchain-artifact: public/build/sysroot-wasm32-wasi.tar.zst
     fetches:
         fetch:
@@ -172,6 +172,23 @@ sysroot-aarch64-linux-gnu:
         toolchain-artifact: public/build/sysroot-aarch64-linux-gnu.tar.zst
         arguments:
             - arm64
+
+linux32-toolchain-sysroot:
+    description: "Sysroot for linux32 toolchain builds"
+    worker:
+        env:
+            PACKAGES_TASKS: {task-reference: '<gcc-8>'}
+            GCC_VERSION: '8'
+    treeherder:
+        symbol: TL32(sysroot-toolchain)
+    dependencies:
+        gcc-8: packages-deb8-32-gcc-8
+    run:
+        arguments:
+            - i386
+            # For clang
+            - binutils-dev
+            - libxml2-dev
 
 linux64-toolchain-sysroot:
     description: "Sysroot for linux64 toolchain builds"

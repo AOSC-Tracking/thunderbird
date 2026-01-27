@@ -16,7 +16,7 @@ const { gAccountSetupLogger } = AccountCreationUtils;
  * Account Hub Header Template
  * Template ID: #accountHubHeaderTemplate (from accountHubHeaderTemplate.inc.xhtml)
  *
- * @fires request-close - Event when close button is clicked to close dialog.
+ * @fires CustomEvent#"request-close" - When close button is clicked to close dialog.
  */
 class AccountHubHeader extends HTMLElement {
   /**
@@ -30,6 +30,13 @@ class AccountHubHeader extends HTMLElement {
    * @type {?HTMLElement}
    */
   #closeButton;
+
+  /**
+   * The minimize button for the modal.
+   *
+   * @type {?HTMLElement}
+   */
+  #minimizeButton;
 
   connectedCallback() {
     if (this.shadowRoot) {
@@ -60,10 +67,14 @@ class AccountHubHeader extends HTMLElement {
     );
 
     this.#closeButton = this.shadowRoot.querySelector("#closeButton");
+    this.#minimizeButton = this.shadowRoot.querySelector("#minimizeButton");
     // TODO: Re-enable / re-think how this will work when first time experience
     // is enabled.
     // this.#closeButton.hidden = !MailServices.accounts.accounts.length;
     this.#closeButton.addEventListener("click", () => this.#closeAccountHub());
+    this.#minimizeButton.addEventListener("click", () =>
+      this.#minimizeAccountHub()
+    );
 
     this.clearNotifications();
   }
@@ -114,9 +125,14 @@ class AccountHubHeader extends HTMLElement {
         error,
         fluentTitleArguments,
       });
-    } else if (description || fluentDescriptionId || error?.message) {
+    } else if (
+      description ||
+      fluentDescriptionId ||
+      error?.message ||
+      error?.cause?.fluentDescriptionId
+    ) {
       this.#setNotificationTitle({
-        fluentTitleId: fluentDescriptionId || error.cause.fluentDescriptionId,
+        fluentTitleId: fluentDescriptionId || error?.cause?.fluentDescriptionId,
         title: description || error?.message,
         error,
       });
@@ -243,8 +259,12 @@ class AccountHubHeader extends HTMLElement {
     this.dispatchEvent(closeEvent);
   }
 
-  disconnectedCallback() {
-    this.#closeButton.removeEventListener("click", this.#closeAccountHub());
+  #minimizeAccountHub() {
+    const minimizeEvent = new CustomEvent("request-toggle", {
+      bubbles: true,
+      composed: true,
+    });
+    this.dispatchEvent(minimizeEvent);
   }
 
   showSubheader() {

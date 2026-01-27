@@ -14,6 +14,9 @@ use nserror::{
     nsresult, NS_ERROR_ALREADY_INITIALIZED, NS_ERROR_INVALID_ARG, NS_ERROR_NOT_INITIALIZED, NS_OK,
 };
 use nsstring::{nsACString, nsCString};
+use protocol_shared::{
+    authentication::credentials::AuthenticationProvider, ExchangeConnectionDetails,
+};
 use std::{cell::OnceCell, ffi::c_void};
 use thin_vec::ThinVec;
 use url::Url;
@@ -26,7 +29,6 @@ use xpcom::{
     nsIID, xpcom_method, RefPtr,
 };
 
-use authentication::credentials::{AuthenticationProvider, Credentials};
 use client::server_version;
 use client::XpComEwsClient;
 use safe_xpcom::{
@@ -34,9 +36,9 @@ use safe_xpcom::{
     SafeEwsMessageSyncListener, SafeEwsSimpleOperationListener, SafeUri, SafeUrlListener,
 };
 
-mod authentication;
 mod cancellable_request;
 mod client;
+mod error;
 mod headers;
 mod outgoing;
 mod safe_xpcom;
@@ -76,14 +78,7 @@ pub unsafe extern "C" fn NS_CreateEwsClient(iid: &nsIID, result: *mut *mut c_voi
 #[xpcom::xpcom(implement(IEwsClient), atomic)]
 pub struct XpcomEwsBridge {
     server: OnceCell<Box<dyn UserInteractiveServer>>,
-    details: OnceCell<EwsConnectionDetails>,
-}
-
-#[derive(Clone)]
-struct EwsConnectionDetails {
-    endpoint: Url,
-    server: RefPtr<nsIMsgIncomingServer>,
-    credentials: Credentials,
+    details: OnceCell<ExchangeConnectionDetails>,
 }
 
 impl XpcomEwsBridge {
@@ -139,7 +134,7 @@ impl XpcomEwsBridge {
         let server = RefPtr::new(server);
 
         self.details
-            .set(EwsConnectionDetails {
+            .set(ExchangeConnectionDetails {
                 endpoint,
                 server,
                 credentials,
@@ -259,6 +254,50 @@ impl XpcomEwsBridge {
                     .iter()
                     .map(|s| s.to_utf8().into_owned())
                     .collect(),
+            ),
+        )
+        .detach();
+
+        Ok(())
+    }
+
+    xpcom_method!(empty_folder => EmptyFolder(
+        listener: *const IEwsSimpleOperationListener,
+        folder_ids: *const ThinVec<nsCString>,
+        subfolder_ids: *const ThinVec<nsCString>,
+        message_ids: *const ThinVec<nsCString>
+    ));
+    fn empty_folder(
+        &self,
+        listener: &IEwsSimpleOperationListener,
+        folder_ids: &ThinVec<nsCString>,
+        subfolder_ids: &ThinVec<nsCString>,
+        message_ids: &ThinVec<nsCString>,
+    ) -> Result<(), nsresult> {
+        let client = self.try_new_client()?;
+
+        let folder_ids = folder_ids
+            .iter()
+            .map(|s| s.to_utf8().into_owned())
+            .collect();
+        let subfolder_ids = subfolder_ids
+            .iter()
+            .map(|s| s.to_utf8().into_owned())
+            .collect();
+        let message_ids = message_ids
+            .iter()
+            .map(|s| s.to_utf8().into_owned())
+            .collect();
+
+        // The client operation is async and we want it to survive the end of
+        // this scope, so spawn it as a detached `moz_task`.
+        moz_task::spawn_local(
+            "empty_folder",
+            client.empty_folder(
+                SafeEwsSimpleOperationListener::new(listener),
+                folder_ids,
+                subfolder_ids,
+                message_ids,
             ),
         )
         .detach();
@@ -612,7 +651,7 @@ impl XpcomEwsBridge {
         // We only get a reference out of the cell, but we need ownership in
         // order for the `XpcomEwsClient` to be `Send`, so we're forced to
         // clone.
-        let EwsConnectionDetails {
+        let ExchangeConnectionDetails {
             endpoint,
             server,
             credentials,

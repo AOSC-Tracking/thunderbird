@@ -7,11 +7,19 @@
  *  in the file PATENTS.  All contributing project authors may
  *  be found in the AUTHORS file in the root of the source tree.
  */
+#include "p2p/base/turn_port.h"
+
 #include <cstddef>
 #include <cstdint>
+#include <list>
+#include <memory>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/functional/any_invocable.h"
+#include "absl/strings/string_view.h"
 #include "api/array_view.h"
 #include "api/candidate.h"
 #include "api/environment/environment.h"
@@ -20,56 +28,46 @@
 #include "api/test/mock_async_dns_resolver.h"
 #include "api/test/rtc_error_matchers.h"
 #include "api/transport/stun.h"
-#include "p2p/base/connection_info.h"
-#include "p2p/base/port.h"
-#include "p2p/base/port_interface.h"
-#include "p2p/base/stun_request.h"
-#include "p2p/client/relay_port_factory_interface.h"
-#include "rtc_base/async_packet_socket.h"
-#include "rtc_base/ip_address.h"
-#include "rtc_base/net_helpers.h"
-#include "rtc_base/network.h"
-#include "rtc_base/network/received_packet.h"
-#include "rtc_base/third_party/sigslot/sigslot.h"
-#include "system_wrappers/include/metrics.h"
-#include "test/gmock.h"
-#include "test/wait_until.h"
-#if defined(WEBRTC_POSIX)
-#include <dirent.h>  // IWYU pragma: keep
-
-#include "absl/strings/string_view.h"
-#endif
-
-#include <list>
-#include <memory>
-#include <optional>
-#include <utility>
-#include <vector>
-
 #include "api/units/time_delta.h"
 #include "p2p/base/basic_packet_socket_factory.h"
 #include "p2p/base/connection.h"
+#include "p2p/base/connection_info.h"
 #include "p2p/base/p2p_constants.h"
+#include "p2p/base/port.h"
 #include "p2p/base/port_allocator.h"
+#include "p2p/base/port_interface.h"
 #include "p2p/base/stun_port.h"
+#include "p2p/base/stun_request.h"
 #include "p2p/base/transport_description.h"
-#include "p2p/base/turn_port.h"
+#include "p2p/client/relay_port_factory_interface.h"
 #include "p2p/test/mock_dns_resolving_packet_socket_factory.h"
 #include "p2p/test/test_turn_customizer.h"
 #include "p2p/test/test_turn_server.h"
 #include "p2p/test/turn_server.h"
+#include "rtc_base/async_packet_socket.h"
 #include "rtc_base/buffer.h"
 #include "rtc_base/byte_buffer.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/fake_clock.h"
 #include "rtc_base/gunit.h"
+#include "rtc_base/ip_address.h"
 #include "rtc_base/net_helper.h"
+#include "rtc_base/net_helpers.h"
+#include "rtc_base/network.h"
+#include "rtc_base/network/received_packet.h"
 #include "rtc_base/socket.h"
 #include "rtc_base/socket_address.h"
+#include "rtc_base/third_party/sigslot/sigslot.h"
 #include "rtc_base/thread.h"
-#include "rtc_base/time_utils.h"
 #include "rtc_base/virtual_socket_server.h"
+#include "system_wrappers/include/metrics.h"
+#include "test/gmock.h"
 #include "test/gtest.h"
+#include "test/wait_until.h"
+
+#if defined(WEBRTC_POSIX)
+#include <dirent.h>  // IWYU pragma: keep
+#endif
 
 namespace {
 using ::testing::_;
@@ -111,13 +109,13 @@ const SocketAddress kTurnUdpIPv6IntAddr("2400:4030:1:2c00:be30:abcd:efab:cdef",
 const SocketAddress kTurnInvalidAddr("www.google.invalid.", 3478);
 const SocketAddress kTurnValidAddr("www.google.valid.", 3478);
 
-const char kCandidateFoundation[] = "foundation";
-const char kIceUfrag1[] = "TESTICEUFRAG0001";
-const char kIceUfrag2[] = "TESTICEUFRAG0002";
-const char kIcePwd1[] = "TESTICEPWD00000000000001";
-const char kIcePwd2[] = "TESTICEPWD00000000000002";
-const char kTurnUsername[] = "test";
-const char kTurnPassword[] = "test";
+constexpr char kCandidateFoundation[] = "foundation";
+constexpr char kIceUfrag1[] = "TESTICEUFRAG0001";
+constexpr char kIceUfrag2[] = "TESTICEUFRAG0002";
+constexpr char kIcePwd1[] = "TESTICEPWD00000000000001";
+constexpr char kIcePwd2[] = "TESTICEPWD00000000000002";
+constexpr char kTurnUsername[] = "test";
+constexpr char kTurnPassword[] = "test";
 // This test configures the virtual socket server to simulate delay so that we
 // can verify operations take no more than the expected number of round trips.
 constexpr unsigned int kSimulatedRtt = 50;
@@ -368,8 +366,11 @@ class TurnPortTest : public ::testing::Test,
     turn_port_->SignalPortComplete.connect(this,
                                            &TurnPortTest::OnTurnPortComplete);
     turn_port_->SignalPortError.connect(this, &TurnPortTest::OnTurnPortError);
-    turn_port_->SignalCandidateError.connect(this,
-                                             &TurnPortTest::OnCandidateError);
+    turn_port_->SubscribeCandidateError(
+        [this](Port* port, const IceCandidateErrorEvent& event) {
+          OnCandidateError(port, event);
+        });
+
     turn_port_->SignalUnknownAddress.connect(
         this, &TurnPortTest::OnTurnUnknownAddress);
     turn_port_->SubscribePortDestroyed(
@@ -1051,7 +1052,7 @@ TEST_F(TurnPortTest, TestTurnBadCredentials) {
                         {.timeout = TimeDelta::Millis(kSimulatedRtt * 3),
                          .clock = &fake_clock_}),
               IsRtcOk());
-  EXPECT_EQ(error_event_.error_text, "Unauthorized");
+  EXPECT_EQ(error_event_.error_text, "Unauthorized.");
 }
 
 // Test that we fail without emitting an error if we try to get an address from
@@ -1293,7 +1294,7 @@ TEST_F(TurnPortTest, TestTurnAllocateNonceResetAfterAllocateMismatch) {
   // using timestamp `ts_before` but then get an allocate mismatch error and
   // receive an even newer nonce based on the system clock. `ts_before` is
   // chosen so that the two NONCEs generated by the server will be different.
-  int64_t ts_before = TimeMillis() - 1;
+  int64_t ts_before = env_.clock().TimeInMilliseconds() - 1;
   std::string first_nonce =
       turn_server_.server()->SetTimestampForNextNonce(ts_before);
   turn_port_->PrepareAddress();
@@ -1349,7 +1350,8 @@ TEST_F(TurnPortTest, TestTurnAllocateMismatch) {
   std::string test_packet = "Test packet";
   EXPECT_FALSE(turn_port_->HandleIncomingPacket(
       socket_.get(), ReceivedIpPacket::CreateFromLegacy(
-                         test_packet.data(), test_packet.size(), TimeMicros(),
+                         test_packet.data(), test_packet.size(),
+                         env_.clock().TimeInMicroseconds(),
                          SocketAddress(kTurnUdpExtAddr.ipaddr(), 0))));
 }
 
@@ -2181,13 +2183,14 @@ static struct IPAddressTypeTestConfig {
   absl::string_view address;
   IPAddressType address_type;
 } kAllIPAddressTypeTestConfigs[] = {
-    {"127.0.0.1", IPAddressType::kLoopback},
-    {"localhost", IPAddressType::kLoopback},
-    {"::1", IPAddressType::kLoopback},
-    {"10.0.0.3", IPAddressType::kPrivate},
-    {"fd00:4860:4860::8844", IPAddressType::kPrivate},
-    {"1.1.1.1", IPAddressType::kPublic},
-    {"2001:4860:4860::8888", IPAddressType::kPublic},
+    {.address = "127.0.0.1", .address_type = IPAddressType::kLoopback},
+    {.address = "localhost", .address_type = IPAddressType::kLoopback},
+    {.address = "::1", .address_type = IPAddressType::kLoopback},
+    {.address = "10.0.0.3", .address_type = IPAddressType::kPrivate},
+    {.address = "fd00:4860:4860::8844",
+     .address_type = IPAddressType::kPrivate},
+    {.address = "1.1.1.1", .address_type = IPAddressType::kPublic},
+    {.address = "2001:4860:4860::8888", .address_type = IPAddressType::kPublic},
 };
 
 // Used by the test framework to print the param value for parameterized tests.

@@ -15,8 +15,9 @@ allday-event = All day event
 recurrent-event =
   .value = Repeating event
 # $locationProperty is the location of the event
-calendar-invitations-location =
+calendar-invitation-location =
   .value = Location: { $locationProperty }
+  .tooltiptext = { $locationProperty }
 # $organizerProperty is the organizer of the event
 organizer =
   .value = Organizer: { $organizerProperty }
@@ -24,3 +25,13 @@ organizer =
 calendar-invitations-attendee =
   .value = Attendee: { $attendeeProperty }
 calendar-invitations-none = None
+# Invitations dialog
+calendar-invitations-title = Invitations
+calendar-invitations-status-updating = Updating list of invitations.
+calendar-invitations-status-none = No unconfirmed invitations found.
+
+# Invitations list buttons
+calendar-invitations-accept =
+    .label = Accept
+calendar-invitations-decline =
+    .label = Decline

@@ -3,8 +3,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { AsyncShutdown } from "resource://gre/modules/AsyncShutdown.sys.mjs";
-
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
+
+const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
 
 const connections = new Map();
 
@@ -239,7 +247,7 @@ export class CalStorageDatabase {
           }
         },
         handleError(aError) {
-          cal.WARN(aError);
+          lazy.log.warn(aError);
         },
         async handleCompletion(aReason) {
           await Promise.all(this.resultPromises);
@@ -279,9 +287,9 @@ export class CalStorageDatabase {
    * last statement so the problem can be investigated more easily.
    *
    * @param {string} message - Error message to log.
-   * @param {Error} exception - Exception that caused the error.
+   * @param {Error} e - Exception that caused the error.
    */
-  logError(message, exception) {
+  logError(message, e) {
     let logMessage = "Message: " + message;
     if (this.db) {
       if (this.db.connectionReady) {
@@ -315,10 +323,10 @@ export class CalStorageDatabase {
       }
     }
 
-    if (exception) {
-      logMessage += "\nException: " + exception;
+    if (e) {
+      logMessage += "\nException: " + e;
     }
-    cal.ERROR("[calStorageCalendar] " + logMessage + "\n" + cal.STACK(10));
+    lazy.log.error(logMessage, e);
   }
 
   /**

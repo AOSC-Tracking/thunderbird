@@ -16,14 +16,12 @@
 #include "nsICommandLineHandler.h"
 
 class nsMsgComposeService : public nsIMsgComposeService,
-                            public nsICommandLineHandler,
                             public nsSupportsWeakReference {
  public:
   nsMsgComposeService();
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIMSGCOMPOSESERVICE
-  NS_DECL_NSICOMMANDLINEHANDLER
 
   nsresult Init();
   void Reset();
@@ -56,6 +54,8 @@ class nsMsgComposeService : public nsIMsgComposeService,
   // instead of the entire message.
   nsresult GetHTMLForSelection(mozilla::dom::Selection* selection,
                                nsACString& aSelHTML);
+
+  nsresult GetDefaultIdentity(nsIMsgIdentity** _retval);
 };
 
 #endif  // COMM_MAILNEWS_COMPOSE_SRC_NSMSGCOMPOSESERVICE_H_

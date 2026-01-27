@@ -65,6 +65,7 @@ class EwsFolder : public nsMsgDBFolder, public IEwsFolder {
   NS_IMETHOD DeleteSelf(nsIMsgWindow* aWindow) override;
   NS_IMETHOD GetDBFolderInfoAndDB(nsIDBFolderInfo** folderInfo,
                                   nsIMsgDatabase** _retval) override;
+  NS_IMETHOD GetSupportsOffline(bool* supportsOffline) override;
   NS_IMETHOD GetDeletable(bool* deletable) override;
   NS_IMETHOD GetIncomingServerType(nsACString& aIncomingServerType) override;
   NS_IMETHOD GetNewMessages(nsIMsgWindow* aWindow,
@@ -106,6 +107,7 @@ class EwsFolder : public nsMsgDBFolder, public IEwsFolder {
       nsIMsgFolderCacheElement* element) override;
 
  private:
+  nsresult CreateChildrenFromStore();
   bool mHasLoadedSubfolders;
 
   // The OnMessageClassified() implementation uses this to accumulate the
@@ -119,7 +121,7 @@ class EwsFolder : public nsMsgDBFolder, public IEwsFolder {
    * Generate or retrieve an EWS API client capable of interacting with the EWS
    * server this folder depends from.
    */
-  nsresult GetEwsClient(IEwsClient** ewsClient);
+  nsresult CreateProtocolClient(IEwsClient** ewsClient);
 
   /**
    * Locally look up the EWS ID for the current folder.
@@ -185,6 +187,9 @@ class EwsFolder : public nsMsgDBFolder, public IEwsFolder {
    * called, things might have changed.
    */
   nsresult PerformFiltering();
+
+  /** Which exchange protocol this folder was created with. */
+  nsAutoCString mExchangeProtocol;
 };
 
 #endif  // COMM_MAILNEWS_PROTOCOLS_EWS_SRC_EWSFOLDER_H_

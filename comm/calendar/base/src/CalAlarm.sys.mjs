@@ -5,13 +5,20 @@
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
 
 const lazy = {};
-
 ChromeUtils.defineESModuleGetters(lazy, {
   CalAttachment: "resource:///modules/CalAttachment.sys.mjs",
   CalAttendee: "resource:///modules/CalAttendee.sys.mjs",
   CalDateTime: "resource:///modules/CalDateTime.sys.mjs",
   CalDuration: "resource:///modules/CalDuration.sys.mjs",
 });
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
+
 ChromeUtils.defineLazyGetter(
   lazy,
   "l10n",
@@ -474,7 +481,7 @@ CalAlarm.prototype = {
             if (e.result == Cr.NS_ERROR_ILLEGAL_VALUE) {
               // Illegal values should be ignored, but we could log them if
               // the user has enabled logging.
-              cal.LOG(
+              lazy.log.debug(
                 "Warning: Invalid alarm parameter value " + paramName + "=" + propBucket[paramName]
               );
             } else {
@@ -599,7 +606,7 @@ CalAlarm.prototype = {
     const name = aName.toUpperCase();
     if (name in this.promotedProps) {
       if (this.promotedProps[name] === true) {
-        cal.WARN(`Attempted to set complex property ${name} to a simple value ${aValue}`);
+        lazy.log.warn(`Attempted to set complex property ${name} to a simple value ${aValue}`);
       } else {
         this[this.promotedProps[name]] = aValue;
       }

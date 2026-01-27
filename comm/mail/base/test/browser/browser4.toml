@@ -41,4 +41,10 @@ tags = ["virtualfolders"]
 
 ["browser_threads.js"]
 
+["browser_virtualFolderEdit.js"]
+tags = [
+  "dataadapter",
+  "virtualfolders",
+]
+
 ["browser_zoom.js"]

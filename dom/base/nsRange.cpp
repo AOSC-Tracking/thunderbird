@@ -20,7 +20,6 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/RangeUtils.h"
 #include "mozilla/ToString.h"
-#include "mozilla/UniquePtr.h"
 #include "mozilla/dom/CharacterData.h"
 #include "mozilla/dom/ChildIterator.h"
 #include "mozilla/dom/DOMRect.h"
@@ -3061,7 +3060,11 @@ void nsRange::CollectClientRectsAndText(
   }
 
   if (aFlushLayout) {
-    aStartContainer->OwnerDoc()->FlushPendingNotifications(FlushType::Layout);
+    if (auto* content = nsIContent::FromNode(aStartContainer)) {
+      content->GetPrimaryFrame(FlushType::Layout);
+    } else {
+      aStartContainer->OwnerDoc()->FlushPendingNotifications(FlushType::Layout);
+    }
     // Recheck whether we're still in the document
     if (!aStartContainer->IsInComposedDoc()) {
       return;
@@ -3359,12 +3362,13 @@ void nsRange::ExcludeNonSelectableNodes(nsTArray<RefPtr<nsRange>>* aOutRanges) {
           selectable = false;
         }
         if (selectable) {
+          // FIXME: Use content->IsSelectable()
           nsIFrame* frame = content->GetPrimaryFrame();
           for (nsIContent* p = content; !frame && (p = p->GetParent());) {
             frame = p->GetPrimaryFrame();
           }
           if (frame) {
-            selectable = frame->IsSelectable(nullptr);
+            selectable = frame->IsSelectable();
           }
         }
       }

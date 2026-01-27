@@ -26,10 +26,10 @@ struct CompilationDependency : public TempObject {
     ArraySpecies,
     TypedArraySpecies,
     RegExpPrototype,
-    StringPrototypeSymbols,
     EmulatesUndefined,
     ArrayExceedsInt32Length,
     ObjectFuseProperty,
+    DefaultCaseMapping,
     Limit
   };
 

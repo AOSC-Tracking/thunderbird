@@ -73,6 +73,25 @@ rtc_library("enable_media_with_defaults") {
   ]
 }
 
+rtc_library("create_modular_peer_connection_factory") {
+  visibility = [ "*" ]
+  allow_poison = [ "environment_construction" ]
+  sources = [
+    "create_modular_peer_connection_factory.cc",
+    "create_modular_peer_connection_factory.h",
+  ]
+  deps = [
+    ":libjingle_peerconnection_api",
+    ":scoped_refptr",
+    ":sequence_checker",
+    "../pc:peer_connection_factory",
+    "../pc:peer_connection_factory_proxy",
+    "../rtc_base:threading",
+    "../rtc_base/system:rtc_export",
+    "../stats:rtc_stats",
+  ]
+}
+
 if (!build_with_chromium && !build_with_mozilla) {
   rtc_library("create_peerconnection_factory") {
     visibility = [ "*" ]
@@ -82,14 +101,13 @@ if (!build_with_chromium && !build_with_mozilla) {
       "create_peerconnection_factory.h",
     ]
     deps = [
+      ":create_modular_peer_connection_factory",
       ":enable_media",
       ":field_trials_view",
       ":libjingle_peerconnection_api",
       ":scoped_refptr",
-      "../pc:peer_connection_factory",
       "../rtc_base:threading",
       "../rtc_base/system:rtc_export",
-      "../stats:rtc_stats",
       "audio:audio_device",
       "audio:audio_mixer_api",
       "audio:audio_processing",
@@ -224,7 +242,8 @@ rtc_source_set("ice_transport_interface") {
     ":ref_count",
     ":rtc_error",
     ":scoped_refptr",
-    "rtc_event_log:rtc_event_log",
+    "environment",
+    "rtc_event_log",
   ]
 }
 
@@ -445,6 +464,7 @@ rtc_library("frame_transformer_interface") {
     ":make_ref_counted",
     ":ref_count",
     ":scoped_refptr",
+    "../rtc_base:checks",
     "../rtc_base:refcount",
     "../rtc_base/system:rtc_export",
     "units:time_delta",
@@ -921,6 +941,8 @@ rtc_source_set("simulated_network_api") {
     "../rtc_base:random",
     "transport:ecn_marking",
     "units:data_rate",
+    "units:data_size",
+    "units:timestamp",
     "//third_party/abseil-cpp/absl/functional:any_invocable",
   ]
 }
@@ -946,6 +968,7 @@ rtc_library("network_emulation_manager_api") {
     "../rtc_base:socket_address",
     "../test/network:simulated_network",
     "test/network_emulation",
+    "test/network_emulation:network_queue",
     "units:data_rate",
     "//third_party/abseil-cpp/absl/base:nullability",
     "//third_party/abseil-cpp/absl/strings:string_view",
@@ -1009,8 +1032,8 @@ rtc_source_set("refcountedbase") {
   ]
 }
 
-if (!build_with_mozilla) {
 rtc_library("ice_transport_factory") {
+if (!build_with_mozilla) {
   visibility = [ "*" ]
   sources = [
     "ice_transport_factory.cc",
@@ -1031,7 +1054,7 @@ rtc_library("ice_transport_factory") {
     "../rtc_base:macromagic",
     "../rtc_base:threading",
     "../rtc_base/system:rtc_export",
-    "rtc_event_log:rtc_event_log",
+    "rtc_event_log",
   ]
 }
 }
@@ -1058,7 +1081,7 @@ rtc_source_set("sequence_checker") {
     "../rtc_base:checks",
     "../rtc_base:macromagic",
     "../rtc_base/synchronization:sequence_checker_internal",
-    "task_queue:task_queue",
+    "task_queue",
   ]
 }
 
@@ -1400,6 +1423,7 @@ if (rtc_include_tests) {
       ":candidate",
       ":libjingle_peerconnection_api",
       "../test:test_support",
+      "//third_party/abseil-cpp/absl/strings:string_view",
     ]
   }
 
@@ -1428,13 +1452,17 @@ if (rtc_include_tests) {
     ]
   }
 
-  rtc_source_set("mock_local_network_access_permission") {
+  rtc_library("mock_local_network_access_permission") {
     visibility = [ "*" ]
     testonly = true
-    sources = [ "test/mock_local_network_access_permission.h" ]
+    sources = [
+      "test/mock_local_network_access_permission.cc",
+      "test/mock_local_network_access_permission.h",
+    ]
     deps = [
       ":local_network_access_permission",
       "../rtc_base:socket_address",
+      "../rtc_base:threading",
       "../test:test_support",
       "//third_party/abseil-cpp/absl/functional:any_invocable",
     ]
@@ -1655,6 +1683,9 @@ if (rtc_include_tests) {
       "video:rtp_video_frame_assembler_unittests",
       "video:video_frame",
       "video:video_frame_metadata_unittest",
+      "video/corruption_detection:frame_instrumentation_data_reader_unittest",
+      "video/corruption_detection:frame_instrumentation_data_unittest",
+      "video/corruption_detection:frame_instrumentation_evaluation_unittest",
       "//third_party/abseil-cpp/absl/functional:any_invocable",
       "//third_party/abseil-cpp/absl/strings",
       "//third_party/abseil-cpp/absl/strings:string_view",
@@ -1731,6 +1762,11 @@ rtc_source_set("field_trials_view") {
 
 rtc_library("field_trials") {
   visibility = [ "*" ]
+
+  # Internally webrtc shouldn't create or modify field trials, and should use
+  # FieldTrials through the FieldTrialsView interface that is usually propagated
+  # with Environment.
+  poisonous = [ "environment_construction" ]
   sources = [
     "field_trials.cc",
     "field_trials.h",
@@ -1755,7 +1791,7 @@ rtc_library("frame_transformer_factory") {
     ":frame_transformer_interface",
     ":ref_count",
     ":scoped_refptr",
-    "../audio:audio",
+    "../audio",
     "../modules/rtp_rtcp",
     "../rtc_base:checks",
     "../rtc_base/system:rtc_export",

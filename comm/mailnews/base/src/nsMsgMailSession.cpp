@@ -5,35 +5,36 @@
 
 #include "nsMsgMailSession.h"
 
-#include "msgCore.h"  // for pre-compiled headers
-#include "nsIMsgMessageService.h"
-#include "nsMsgUtils.h"
-#include "nsIMsgAccountManager.h"
+#include "mozilla/Components.h"
+#include "mozilla/dom/Document.h"
+#include "mozilla/dom/Element.h"
+#include "mozilla/Preferences.h"
+#include "mozilla/Services.h"
+#include "msgCore.h"
+#include "nsAppDirectoryServiceDefs.h"
+#include "nsAppShellCID.h"
+#include "nsComponentManagerUtils.h"
+#include "nsEmbedCID.h"
+#include "nsFocusManager.h"
+#include "nsIAppStartup.h"
 #include "nsIChromeRegistry.h"
 #include "nsIDirectoryService.h"
-#include "nsAppDirectoryServiceDefs.h"
-#include "nsPIDOMWindow.h"
 #include "nsIDocShell.h"
-#include "mozilla/dom/Document.h"
+#include "nsIMsgAccountManager.h"
+#include "nsIMsgMailNewsUrl.h"
+#include "nsIMsgMessageService.h"
+#include "nsIMsgStatusFeedback.h"
 #include "nsIObserverService.h"
-#include "nsIAppStartup.h"
+#include "nsIPromptService.h"
+#include "nsIProperties.h"
 #include "nsISupportsPrimitives.h"
-#include "nsAppShellCID.h"
 #include "nsIWindowMediator.h"
 #include "nsIWindowWatcher.h"
-#include "nsIMsgMailNewsUrl.h"
-#include "prcmon.h"
-#include "nsThreadUtils.h"
-#include "nsComponentManagerUtils.h"
+#include "nsMsgUtils.h"
+#include "nsPIDOMWindow.h"
 #include "nsServiceManagerUtils.h"
-#include "nsIProperties.h"
-#include "mozilla/Services.h"
-#include "mozilla/dom/Element.h"
-#include "mozilla/Components.h"
-#include "mozilla/Preferences.h"
-#include "nsFocusManager.h"
-#include "nsIPromptService.h"
-#include "nsEmbedCID.h"
+#include "nsThreadUtils.h"
+#include "prcmon.h"
 
 using mozilla::Preferences;
 
@@ -41,7 +42,7 @@ NS_IMPL_ISUPPORTS(nsMsgMailSession, nsIMsgMailSession, nsIFolderListener)
 
 nsMsgMailSession::nsMsgMailSession() {}
 
-nsMsgMailSession::~nsMsgMailSession() { Shutdown(); }
+nsMsgMailSession::~nsMsgMailSession() {}
 
 nsresult nsMsgMailSession::Init() {
   // Ensures the shutdown service is initialised
@@ -50,8 +51,6 @@ nsresult nsMsgMailSession::Init() {
       do_GetService("@mozilla.org/messenger/msgshutdownservice;1", &rv);
   return rv;
 }
-
-nsresult nsMsgMailSession::Shutdown() { return NS_OK; }
 
 NS_IMETHODIMP nsMsgMailSession::AddFolderListener(nsIFolderListener* aListener,
                                                   uint32_t aNotifyFlags) {
@@ -563,9 +562,14 @@ NS_IMETHODIMP nsMsgShutdownService::Observe(nsISupports* aSubject,
         mQuitMode |= nsIAppStartup::eRestart;
     }
 
+    // This doesn't look great, but the purpose of progress.msgWindow is to
+    // clear msgWindow.statusFeedback when the progress ends.
+    nsCOMPtr<nsIMsgStatusFeedback> feedback = do_QueryInterface(mMsgProgress);
+    topMsgWindow->SetStatusFeedback(feedback);
+    mMsgProgress->SetMsgWindow(topMsgWindow);
     mMsgProgress->OpenProgressDialog(
-        internalDomWin, topMsgWindow,
-        "chrome://messenger/content/shutdownWindow.xhtml", false, nullptr);
+        internalDomWin, "chrome://messenger/content/shutdownWindow.xhtml",
+        nullptr);
 
     if (mQuitForced) {
       nsCOMPtr<nsIThread> thread(do_GetCurrentThread());

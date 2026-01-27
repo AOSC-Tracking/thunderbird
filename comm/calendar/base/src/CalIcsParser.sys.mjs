@@ -6,7 +6,13 @@ import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
 import { NetUtil } from "resource://gre/modules/NetUtil.sys.mjs";
 
 const lazy = {};
-
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
 ChromeUtils.defineESModuleGetters(lazy, {
   CalEvent: "resource:///modules/CalEvent.sys.mjs",
   CalRecurrenceInfo: "resource:///modules/CalRecurrenceInfo.sys.mjs",
@@ -14,6 +20,12 @@ ChromeUtils.defineESModuleGetters(lazy, {
   MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
 });
 ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
+
+const AlertNotification = Components.Constructor(
+  "@mozilla.org/alert-notification;1",
+  "nsIAlertNotification",
+  "initWithObject"
+);
 
 export function CalIcsParser() {
   this.wrappedJSObject = this;
@@ -41,15 +53,7 @@ CalIcsParser.prototype = {
     }
 
     if (!calComp) {
-      const message = "Parser Error. Could not find 'VCALENDAR' component.\n";
-      try {
-        // we try to also provide the parsed component - if that fails due to an error in
-        // libical, we append the error message of the caught exception, which includes
-        // already a stack trace.
-        cal.ERROR(message + rootComp + "\n" + cal.STACK(10));
-      } catch (e) {
-        cal.ERROR(message + e);
-      }
+      lazy.log.error(`Could not find 'VCALENDAR' component; rootComp=${rootComp}`);
     }
 
     const self = this;
@@ -107,11 +111,7 @@ CalIcsParser.prototype = {
           const title = lazy.l10n.formatValueSync("timezone-errors-alert-title");
           const text = lazy.l10n.formatValueSync("timezone-errors-see-console");
           try {
-            const alert = Cc["@mozilla.org/alert-notification;1"].createInstance(
-              Ci.nsIAlertNotification
-            );
-            alert.init(title, "", title, text);
-            notifier.showAlert(alert);
+            notifier.showAlert(new AlertNotification({ name: title, title, text }));
           } catch (e) {
             // The notifier may not be available, e.g. on xpcshell tests
           }
@@ -151,7 +151,7 @@ CalIcsParser.prototype = {
         const icalComp = cal.icsService.parseICS(aICSString);
         this.processIcalComponent(icalComp);
       } catch (exc) {
-        cal.ERROR(exc.message + " when parsing\n" + aICSString);
+        lazy.log.error(exc.message + " when parsing\n" + aICSString);
       }
     }
   },
@@ -248,7 +248,7 @@ parserState.prototype = {
         };
         const msg = lazy.l10n.formatValueSync("unknown-timezone-in-item", msgArgs);
 
-        cal.ERROR(msg + "\n" + item.icalString);
+        lazy.log.error(msg + "\n" + item.icalString);
         this.tzErrors[hid] = true;
       }
     }

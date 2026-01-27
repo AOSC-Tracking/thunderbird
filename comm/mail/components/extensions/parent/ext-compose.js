@@ -293,8 +293,8 @@ const ALLOWED_CUSTOM_HEADER_NAMES = ["msip_labels"];
 
 /**
  * Checks if the provided header name is an allowed custom header and returns it
- * sanitized. It should start with X- (but not with X-Mozilla-) or be one of the
- * explicitly allowed header names.
+ * sanitized. It should start with X- (but not with X-Mozilla-), with List- or
+ * be one of the explicitly allowed header names.
  *
  * @param {string} headerName - The header name to be checked.
  * @returns {?string} The sanitized header name, or null if the header is invalid.
@@ -303,6 +303,7 @@ function sanitizeCustomHeaderName(headerName) {
   const sanitized = headerName.toLowerCase().trim();
   if (
     (sanitized.startsWith("x-") && !sanitized.startsWith("x-mozilla-")) ||
+    sanitized.startsWith("list-") ||
     ALLOWED_CUSTOM_HEADER_NAMES.includes(sanitized)
   ) {
     return sanitized;
@@ -335,7 +336,8 @@ function trimContent(content) {
 }
 
 /**
- * Get the compose details of the requested compose window.
+ * Converts the native compose details of the given compose window into a
+ * WebExtension ComposeDetails object.
  *
  * @param {DOMWindow} composeWindow
  * @param {ExtensionData} extension
@@ -343,7 +345,7 @@ function trimContent(content) {
  *
  * @see mail/components/extensions/schemas/compose.json
  */
-async function getComposeDetails(composeWindow, extension) {
+function convertComposeDetails(composeWindow, extension) {
   const composeFields = composeWindow.GetComposeDetails();
   const editor = composeWindow.GetCurrentEditor();
 
@@ -728,7 +730,7 @@ async function setComposeDetails(composeWindow, details, extension) {
           throw new ExtensionError(
             `Invalid custom header: ${
               h.name
-            }. Name must be prefixed by "X-" (but not by "X-Mozilla-") or be one of the explicitly allowed headers (${ALLOWED_CUSTOM_HEADER_NAMES.join(
+            }. Name must be prefixed by "X-" (but not by "X-Mozilla-"), "List-" or be one of the explicitly allowed headers (${ALLOWED_CUSTOM_HEADER_NAMES.join(
               ", "
             )})`
           );
@@ -1033,37 +1035,112 @@ var composeStates = {
   },
 };
 
+/**
+ * @typedef MsgOperationListener
+ * @property {OnConvertSyncCallback} onConvertSync - Synchronously called when
+ *   the compose window is still valid, locked and the message is about to be
+ *   send. Expected to return the converted ComposeDetails.
+ * @property {OnSuccessCallback} onSuccess - Called when the message operation
+ *   succeeded.
+ * @property {OnFailureCallback} onFailure - Called when the message operation
+ *   failed.
+ * @property {MsgOperationMode[]} modes - Array of message operation modes this
+ *   listener is interested in.
+ * @property {Extension} extension - Reference to the extension object that owns
+ *   this listener.
+ * @property {integer} [outerWindowId] - If set, the listener callbacks are only
+ *   invoked for message operations originating from the compose window with this
+ *   specific `outerWindowId`. If omitted, the listener receives callbacks for all
+ *   compose windows.
+ */
+
+/**
+ * @typedef {"sendNow" | "sendLater" | "draft" | "template"} MsgOperationMode
+ *   Supported modes for a message operation.
+ */
+
+/**
+ * @callback OnConvertSyncCallback
+ * @param {Window} window - the associated compose window
+ * @returns {*} the converted data
+ */
+
+/**
+ * @callback OnSuccessCallback
+ * @param {object} result - Details about the successful message operation.
+ * @param {MsgOperationMode} result.mode - Mode of the ongoing message operation.
+ * @param {MessageHeader[]} result.messages - Array of headers of saved/sent
+ *   messages.
+ * @param {string} [result.headerMessageId] - Optional "Message-Id" header of the
+ *   outgoing message, if available.
+ * @param {*} [result.convertedData] - Optional data previously returned by the
+ *   OnConvertSyncCallback (if the listener has such a callback).
+ */
+
+/**
+ * @callback OnFailureCallback
+ * @param {object} result - Details about the failed message operation.
+ * @param {MsgOperationMode} result.mode - Mode of the ongoing message operation.
+ * @param {Error} result.exception - Exception that caused the failure.
+ * @param {*} [result.convertedData] - Optional data previously returned by the
+ *   OnConvertSyncCallback (if the listener has such a callback).
+ */
+
 class MsgOperationObserver {
-  constructor(composeWindow) {
+  /**
+   * Creates a new MsgOperationObserver for monitoring messages being send or
+   * saved in a compose window.
+   *
+   * @param {MsgOperationMode} mode - mode of the ongoing message operation
+   * @param {Window} composeWindow - compose window where the message operation
+   *   occurs.
+   * @param {Array<MsgOperationListener>} extensionListeners - array of extension
+   *   listeners
+   */
+  constructor(mode, composeWindow, extensionListeners) {
+    this.mode = mode;
     this.composeWindow = composeWindow;
     this.savedMessages = [];
     this.headerMessageId = null;
-    this.deliveryCallbacks = null;
-    this.preparedCallbacks = null;
     this.classifiedMessages = new Map();
+    this.extensionListeners = extensionListeners;
+    this.convertedData = new Map();
+    this.outerWindowId = composeWindow.docShell.outerWindowID;
 
-    // The preparedPromise fulfills when the message has been prepared and handed
+    // The preperationTask fulfills when the message has been prepared and handed
     // over to the send process.
-    this.preparedPromise = new Promise((resolve, reject) => {
-      this.preparedCallbacks = { resolve, reject };
-    });
+    this.preperationTask = Promise.withResolvers();
 
-    // The deliveryPromise fulfills when the message has been saved/send.
-    this.deliveryPromise = new Promise((resolve, reject) => {
-      this.deliveryCallbacks = { resolve, reject };
-    });
+    // The deliveryTask fulfills when the message has been saved/send.
+    this.deliveryTask = Promise.withResolvers();
 
     Services.obs.addObserver(this, "mail:composeSendProgressStop");
     this.composeWindow.gMsgCompose.addMsgSendListener(this);
     MailServices.mfn.addListener(this, MailServices.mfn.msgsClassified);
     this.composeWindow.addEventListener(
-      "compose-prepare-message-success",
-      () => this.preparedCallbacks.resolve(),
-      { once: true }
-    );
-    this.composeWindow.addEventListener(
-      "compose-prepare-message-failure",
-      event => this.preparedCallbacks.reject(event.detail.exception),
+      "compose-prepare-message-completed",
+      event => {
+        for (const listener of this.extensionListeners) {
+          if (!listener.onConvertSync) {
+            continue;
+          }
+          // Since multiple listener for the same extension will get
+          // the same data, we only need to convert and store the result once.
+          if (this.convertedData.has(listener.extension.id)) {
+            continue;
+          }
+          this.convertedData.set(
+            listener.extension.id,
+            listener.onConvertSync(this.composeWindow)
+          );
+        }
+
+        if (event.detail?.exception) {
+          this.preperationTask.reject(event.detail.exception);
+        } else {
+          this.preperationTask.resolve();
+        }
+      },
       { once: true }
     );
   }
@@ -1072,7 +1149,7 @@ class MsgOperationObserver {
   observe(subject) {
     const { composeWindow } = subject.wrappedJSObject;
     if (composeWindow == this.composeWindow) {
-      this.deliveryCallbacks.resolve();
+      this.deliveryTask.resolve();
     }
   }
 
@@ -1082,9 +1159,7 @@ class MsgOperationObserver {
   onStatus() {}
   onStopSending(msgID, status) {
     if (!Components.isSuccessCode(status)) {
-      this.deliveryCallbacks.reject(
-        new ExtensionError("Message operation failed")
-      );
+      this.deliveryTask.reject(new ExtensionError("Message operation failed"));
       return;
     }
     // In case of success, this is only called for sendNow, stating the
@@ -1117,37 +1192,86 @@ class MsgOperationObserver {
   }
 
   /**
-   * @typedef MsgOperationInfo
-   * @property {string} headerMessageId - the id used in the "Message-Id" header
-   *    of the outgoing message, only available for the "sendNow" mode
-   * @property {MessageHeader[]} messages - array of WebExtension MessageHeader
-   *   objects, with information about saved messages (depends on fcc config)
-   *   @see mail/components/extensions/schemas/compose.json
+   * Waits for the message operation to finish and handles all registered extension
+   * listeners accordingly.
    */
+  async waitForOperationAndHandleResults() {
+    let msgOperationInfo = null;
+    let msgOperationException = null;
 
-  /**
-   * Returns a Promise, which resolves once the message operation has finished.
-   *
-   * @returns {Promise<MsgOperationInfo>} - Promise for information about the
-   *   performed message operation.
-   */
-  async waitForOperation() {
     try {
-      await Promise.all([this.deliveryPromise, this.preparedPromise]);
-      return {
+      await this.preperationTask.promise;
+      await this.deliveryTask.promise;
+      msgOperationInfo = {
         messages: this.savedMessages
           .map(m => this.classifiedMessages.get(m))
           .filter(Boolean),
         headerMessageId: this.headerMessageId,
       };
     } catch (ex) {
-      // In case of error, reject the pending delivery Promise.
-      this.deliveryCallbacks.reject();
-      throw ex;
+      msgOperationException = ex;
+      // In case of error, resolve the potentially still pending delivery Promise.
+      // There are no other consumers waiting for the promise. We should not keep
+      // it in the pending state forever.
+      this.deliveryTask.resolve();
     } finally {
       MailServices.mfn.removeListener(this);
       Services.obs.removeObserver(this, "mail:composeSendProgressStop");
       this.composeWindow?.gMsgCompose?.removeMsgSendListener(this);
+    }
+
+    // Handle extension listeners.
+    for (const listener of this.extensionListeners) {
+      if (!listener.modes.includes(this.mode)) {
+        continue;
+      }
+
+      if (msgOperationInfo && !msgOperationException) {
+        try {
+          let convertedMessages;
+          if (listener.extension.messageManager) {
+            convertedMessages = msgOperationInfo.messages.flatMap(
+              cachedMsgHdr => {
+                const msg =
+                  listener.extension.messageManager.convert(cachedMsgHdr);
+                return msg ? [msg] : [];
+              }
+            );
+          }
+
+          if (
+            listener.outerWindowId === undefined ||
+            listener.outerWindowId === this.outerWindowId
+          ) {
+            await listener.onSuccess({
+              mode: this.mode,
+              messages: convertedMessages,
+              headerMessageId: msgOperationInfo.headerMessageId,
+              convertedData: listener.onConvertSync
+                ? this.convertedData.get(listener.extension.id)
+                : undefined,
+            });
+          }
+          continue;
+        } catch (ex) {
+          // The listener failed.
+          msgOperationException = ex;
+        }
+      }
+
+      // This listener or the entire operation failed.
+      if (
+        listener.outerWindowId === undefined ||
+        listener.outerWindowId === this.outerWindowId
+      ) {
+        await listener.onFailure({
+          mode: this.mode,
+          exception: msgOperationException,
+          convertedData: listener.onConvertSync
+            ? this.convertedData.get(listener.extension.id)
+            : undefined,
+        });
+      }
     }
   }
 }
@@ -1191,22 +1315,21 @@ async function goDoCommand(composeWindow, extension, sendMode) {
   }
 
   const sendPromise = new Promise((resolve, reject) => {
+    // Request a notification when the send process in the given window has been
+    // completed.
     const listener = {
-      onSuccess(window, mode, messages, headerMessageId) {
-        if (window == composeWindow) {
-          afterSaveSendEventTracker.removeListener(listener);
-          const info = { mode, messages };
-          if (mode == "sendNow") {
-            info.headerMessageId = headerMessageId;
-          }
-          resolve(info);
+      outerWindowId: composeWindow.docShell.outerWindowID,
+      async onSuccess({ mode, messages, headerMessageId }) {
+        afterSaveSendEventTracker.removeListener(listener);
+        const info = { mode, messages };
+        if (mode == "sendNow") {
+          info.headerMessageId = headerMessageId;
         }
+        resolve(info);
       },
-      onFailure(window, mode, exception) {
-        if (window == composeWindow) {
-          afterSaveSendEventTracker.removeListener(listener);
-          reject(exception);
-        }
+      async onFailure({ exception }) {
+        afterSaveSendEventTracker.removeListener(listener);
+        reject(exception);
       },
       modes: [sendMode],
       extension,
@@ -1241,37 +1364,6 @@ var afterSaveSendEventTracker = {
   removeListener(listener) {
     this.listeners.delete(listener);
   },
-  async handleSuccess(window, mode, messages, headerMessageId) {
-    for (const listener of this.listeners) {
-      if (!listener.modes.includes(mode)) {
-        continue;
-      }
-
-      let convertedMessages;
-      if (listener.extension.messageManager) {
-        convertedMessages = messages.flatMap(cachedMsgHdr => {
-          const msg = listener.extension.messageManager.convert(cachedMsgHdr);
-          return msg ? [msg] : [];
-        });
-      }
-
-      await listener.onSuccess(
-        window,
-        mode,
-        convertedMessages,
-        headerMessageId
-      );
-    }
-  },
-  async handleFailure(window, mode, exception) {
-    for (const listener of this.listeners) {
-      if (!listener.modes.includes(mode)) {
-        continue;
-      }
-      await listener.onFailure(window, mode, exception);
-    }
-  },
-
   // Event handler for the "compose-prepare-message-start", which initiates a
   // new message operation (send or save).
   handleEvent(event) {
@@ -1288,20 +1380,12 @@ var afterSaveSendEventTracker = {
     const mode = modes.get(msgType);
 
     if (mode && this.listeners.size > 0) {
-      const msgOperationObserver = new MsgOperationObserver(composeWindow);
-      msgOperationObserver
-        .waitForOperation()
-        .then(msgOperationInfo =>
-          this.handleSuccess(
-            composeWindow,
-            mode,
-            msgOperationInfo.messages,
-            msgOperationInfo.headerMessageId
-          )
-        )
-        .catch(msgOperationException =>
-          this.handleFailure(composeWindow, mode, msgOperationException)
-        );
+      const msgOperationObserver = new MsgOperationObserver(
+        mode,
+        composeWindow,
+        this.listeners
+      );
+      msgOperationObserver.waitForOperationAndHandleResults();
     }
   },
 };
@@ -1339,7 +1423,7 @@ var beforeSendEventTracker = {
     for (const { handler, extension } of this.listeners) {
       const result = await handler(
         composeWindow,
-        await getComposeDetails(composeWindow, extension)
+        convertComposeDetails(composeWindow, extension)
       );
       if (!result) {
         continue;
@@ -1469,21 +1553,25 @@ this.compose = class extends ExtensionAPIPersistent {
       const { extension } = this;
       const { tabManager, windowManager } = extension;
       const listener = {
-        async onSuccess(window, mode, messages, headerMessageId) {
+        onConvertSync(window) {
           const win = windowManager.wrapWindow(window);
           const tab = tabManager.convert(win.activeTab.nativeTab);
+          const details = convertComposeDetails(window, extension);
+          return { tab, details };
+        },
+        async onSuccess({ mode, messages, headerMessageId, convertedData }) {
+          const { tab, details } = convertedData;
+          const sendInfo = { mode, messages, details };
           if (fire.wakeup) {
             await fire.wakeup();
           }
-          const sendInfo = { mode, messages };
           if (mode == "sendNow") {
             sendInfo.headerMessageId = headerMessageId;
           }
           return fire.async(tab, sendInfo);
         },
-        async onFailure(window, mode, exception) {
-          const win = windowManager.wrapWindow(window);
-          const tab = tabManager.convert(win.activeTab.nativeTab);
+        async onFailure({ mode, exception, convertedData }) {
+          const { tab } = convertedData;
           if (fire.wakeup) {
             await fire.wakeup();
           }
@@ -1510,23 +1598,26 @@ this.compose = class extends ExtensionAPIPersistent {
       const { extension } = this;
       const { tabManager, windowManager } = extension;
       const listener = {
-        async onSuccess(window, mode, messages) {
-          if (fire.wakeup) {
-            await fire.wakeup();
-          }
+        onConvertSync(window) {
           const win = windowManager.wrapWindow(window);
-          const saveInfo = { mode, messages };
-          return fire.async(
-            tabManager.convert(win.activeTab.nativeTab),
-            saveInfo
-          );
+          const tab = tabManager.convert(win.activeTab.nativeTab);
+          const details = convertComposeDetails(window, extension);
+          return { tab, details };
         },
-        async onFailure(window, mode, exception) {
+        async onSuccess({ mode, messages, convertedData }) {
+          const { tab, details } = convertedData;
+          const saveInfo = { mode, messages, details };
           if (fire.wakeup) {
             await fire.wakeup();
           }
-          const win = windowManager.wrapWindow(window);
-          return fire.async(tabManager.convert(win.activeTab.nativeTab), {
+          return fire.async(tab, saveInfo);
+        },
+        async onFailure({ mode, exception, convertedData }) {
+          const { tab } = convertedData;
+          if (fire.wakeup) {
+            await fire.wakeup();
+          }
+          return fire.async(tab, {
             mode,
             messages: [],
             error: exception.message,
@@ -1838,7 +1929,7 @@ this.compose = class extends ExtensionAPIPersistent {
         },
         async getComposeDetails(tabId) {
           const tab = await getComposeTab(tabId);
-          return getComposeDetails(tab.nativeTab, extension);
+          return convertComposeDetails(tab.nativeTab, extension);
         },
         async setComposeDetails(tabId, details) {
           const tab = await getComposeTab(tabId);

@@ -11,6 +11,13 @@ import { CalStorageStatements } from "resource:///modules/calendar/CalStorageSta
 import { upgradeDB } from "resource:///modules/calendar/calStorageUpgrade.sys.mjs";
 
 const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
 ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
 export function CalStorageCalendar() {
   this.initProviderBase();
@@ -467,7 +474,9 @@ CalStorageCalendar.prototype = {
   // assumes this.mStorageDb is valid
 
   initDB() {
-    cal.ASSERT(this.mStorageDb, "Database has not been opened!", true);
+    if (!this.mStorageDb) {
+      throw new Error("Database has not been opened!");
+    }
 
     try {
       this.mStorageDb.executeSimpleSQL("PRAGMA journal_mode=WAL");
@@ -504,7 +513,7 @@ CalStorageCalendar.prototype = {
         this.mStorageDb = null;
       }
     } catch (e) {
-      cal.ERROR("Error closing storage database: " + e);
+      lazy.log.error("Error closing storage database: " + e);
     }
   },
 

@@ -72,6 +72,7 @@
 #include "nsTextNode.h"  // from dom/base
 #include "nsIParserUtils.h"
 #include "nsIStringBundle.h"
+#include "nsWeakReference.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -818,20 +819,9 @@ nsMsgCompose::Initialize(nsIMsgComposeParams* aParams,
   nsresult rv;
 
   aParams->GetIdentity(getter_AddRefs(m_identity));
-
   if (aWindow) {
     m_window = aWindow;
-    nsCOMPtr<nsPIDOMWindowOuter> window = nsPIDOMWindowOuter::From(aWindow);
-    NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
-
-    nsCOMPtr<nsIDocShellTreeItem> treeItem = window->GetDocShell();
-    nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
-    rv = treeItem->GetTreeOwner(getter_AddRefs(treeOwner));
-    if (NS_FAILED(rv)) return rv;
-
-    m_baseWindow = do_QueryInterface(treeOwner);
   }
-
   aParams->GetAutodetectCharset(&mAutodetectCharset);
 
   MSG_ComposeFormat format;
@@ -1132,7 +1122,6 @@ nsMsgCompose::SendMsgToServer(MSG_DeliverMode deliverMode,
 NS_IMETHODIMP nsMsgCompose::SendMsg(MSG_DeliverMode deliverMode,
                                     nsIMsgIdentity* identity,
                                     const char* accountKey,
-                                    nsIMsgWindow* aMsgWindow,
                                     nsIMsgProgress* progress,
                                     Promise** aPromise) {
   NS_ENSURE_TRUE(m_compFields, NS_ERROR_NOT_INITIALIZED);
@@ -1196,9 +1185,9 @@ NS_IMETHODIMP nsMsgCompose::SendMsg(MSG_DeliverMode deliverMode,
         params->SetDeliveryMode(deliverMode);
 
         mProgress->OpenProgressDialog(
-            m_window, aMsgWindow,
+            m_window,
             "chrome://messenger/content/messengercompose/sendProgress.xhtml",
-            false, params);
+            params);
       }
     }
 
@@ -1338,18 +1327,13 @@ NS_IMETHODIMP nsMsgCompose::CloseWindow(void) {
   // ensure that the destructor of nsMsgSend is invoked to remove
   // temporary files.
   mMsgSend = nullptr;
-
-  // We are going away for real, we need to do some clean up first
-  if (m_baseWindow) {
-    if (m_editor) {
-      // The editor will be destroyed during the close window.
-      // Set it to null to be sure we won't use it anymore.
-      m_editor = nullptr;
-    }
-    nsCOMPtr<nsIBaseWindow> window = m_baseWindow.forget();
-    rv = window->Destroy();
+  m_editor = nullptr;
+  nsCOMPtr<nsPIDOMWindowOuter> outerWin = nsPIDOMWindowOuter::From(m_window);
+  if (!outerWin) {
+    NS_WARNING("Getting outer win FAILED");
+    return NS_ERROR_FAILURE;
   }
-
+  outerWin->Close();
   m_window = nullptr;
   return rv;
 }
@@ -2976,23 +2960,10 @@ NS_IMETHODIMP nsMsgCompose::OnGetDraftFolderURI(const char* aMsgID,
 // operation. We have to create this class to listen for message send completion
 // and deal with failures in both send and copy operations
 ////////////////////////////////////////////////////////////////////////////////////
-NS_IMPL_ADDREF(nsMsgComposeSendListener)
-NS_IMPL_RELEASE(nsMsgComposeSendListener)
 
-/*
-NS_IMPL_QUERY_INTERFACE(nsMsgComposeSendListener,
-                         nsIMsgComposeSendListener,
-                         nsIMsgSendListener,
-                         nsIMsgCopyServiceListener,
-                         nsIWebProgressListener)
-*/
-NS_INTERFACE_MAP_BEGIN(nsMsgComposeSendListener)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIMsgComposeSendListener)
-  NS_INTERFACE_MAP_ENTRY(nsIMsgComposeSendListener)
-  NS_INTERFACE_MAP_ENTRY(nsIMsgSendListener)
-  NS_INTERFACE_MAP_ENTRY(nsIMsgCopyServiceListener)
-  NS_INTERFACE_MAP_ENTRY(nsIWebProgressListener)
-NS_INTERFACE_MAP_END
+NS_IMPL_ISUPPORTS(nsMsgComposeSendListener, nsIMsgComposeSendListener,
+                  nsIMsgSendListener, nsIMsgCopyServiceListener,
+                  nsIWebProgressListener, nsISupportsWeakReference)
 
 nsMsgComposeSendListener::nsMsgComposeSendListener(void) { mDeliverMode = 0; }
 
@@ -3366,7 +3337,7 @@ nsresult nsMsgComposeSendListener::RemoveCurrentDraftMessage(
     nsCOMPtr<nsIMsgFolder> savedToFolder;
     nsCOMPtr<nsIMsgSend> msgSend;
     rv = compObj->GetMessageSend(getter_AddRefs(msgSend));
-    NS_ASSERTION(msgSend, "RemoveCurrentDraftMessage msgSend is null.");
+    if (!msgSend) NS_WARNING("RemoveCurrentDraftMessage msgSend is null.");
     if (NS_FAILED(rv) || !msgSend) return rv;
 
     rv = msgSend->GetMessageKey(&newUid);
@@ -4079,39 +4050,6 @@ nsresult nsMsgCompose::NotifyStateListeners(int32_t aNotificationType,
         break;
     }
   }
-
-  return NS_OK;
-}
-
-nsresult nsMsgCompose::AttachmentPrettyName(const nsACString& scheme,
-                                            const char* charset,
-                                            nsACString& _retval) {
-  nsresult rv;
-
-  if (StringHead(scheme, 5).LowerCaseEqualsLiteral("file:")) {
-    nsCOMPtr<nsIFile> file;
-    rv = NS_GetFileFromURLSpec(scheme, getter_AddRefs(file));
-    NS_ENSURE_SUCCESS(rv, rv);
-    nsAutoString leafName;
-    rv = file->GetLeafName(leafName);
-    NS_ENSURE_SUCCESS(rv, rv);
-    CopyUTF16toUTF8(leafName, _retval);
-    return rv;
-  }
-
-  nsCOMPtr<nsITextToSubURI> textToSubURI =
-      do_GetService(NS_ITEXTTOSUBURI_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsAutoString retUrl;
-  rv = textToSubURI->UnEscapeURIForUI(scheme, retUrl);
-
-  if (NS_SUCCEEDED(rv)) {
-    CopyUTF16toUTF8(retUrl, _retval);
-  } else {
-    _retval.Assign(scheme);
-  }
-  if (StringHead(scheme, 5).LowerCaseEqualsLiteral("http:")) _retval.Cut(0, 7);
 
   return NS_OK;
 }

@@ -75,9 +75,11 @@ class AutoTreeView extends TreeView {
         this.sortBy(event.detail.column);
         break;
       case "uidensitychange":
-        this._rowElementClass.ROW_HEIGHT =
-          this._rowElementClass.ROW_HEIGHTS[UIDensity.prefValue];
-        this.reset();
+        if (this._rowElementClass) {
+          this._rowElementClass.ROW_HEIGHT =
+            this._rowElementClass.ROW_HEIGHTS[UIDensity.prefValue];
+          this.reset();
+        }
         break;
       case "keydown": {
         let modifier = event.ctrlKey;
@@ -353,9 +355,11 @@ class AutoTreeView extends TreeView {
     this.table
       .querySelector(".sorting")
       ?.classList.remove("sorting", "ascending", "descending");
+    // Use the values from the view here, in case it rejects `newColumn` or
+    // `newDirection`.
     this.table
-      .querySelector(`#${newColumn} button`)
-      ?.classList.add("sorting", newDirection);
+      .querySelector(`#${this.view.sortColumn} button`)
+      ?.classList.add("sorting", this.view.sortDirection);
   }
 
   /**
@@ -420,6 +424,7 @@ class AutoTreeViewTableRow extends TreeViewTableRow {
   fillRow() {
     super.fillRow();
 
+    const viewRow = this.view.rowAt(this._index);
     this.dataset.properties = this.view.getRowProperties(this._index);
 
     for (const column of this.list.table.columns) {
@@ -429,14 +434,59 @@ class AutoTreeViewTableRow extends TreeViewTableRow {
         continue;
       }
 
+      cell.replaceChildren();
+      cell.removeAttribute("aria-label");
+      cell.title = "";
+
+      if (column.checkbox) {
+        const checkbox = cell.appendChild(document.createElement("input"));
+        checkbox.type = "checkbox";
+        checkbox.tabIndex = -1;
+        checkbox.checked = viewRow.hasProperty(column.checkbox);
+        checkbox.addEventListener("change", () => {
+          viewRow.toggleProperty(column.checkbox, checkbox.checked);
+          this.dataset.properties = this.view.getRowProperties(this._index);
+        });
+        continue;
+      }
+
       const text = this.view.getCellText(this._index, column.id);
-      cell.textContent = text;
-      if (column.l10n.cell) {
+      let container = cell;
+      if (column.twisty || column.cellIcon) {
+        container = cell.appendChild(document.createElement("div"));
+        container.classList.add("container");
+      }
+      if (column.twisty) {
+        container.style.paddingInlineStart =
+          this.view.getLevel(this._index) * 16 + "px";
+        const twistyButton = container.appendChild(
+          document.createElement("button")
+        );
+        twistyButton.type = "button";
+        twistyButton.classList.add("button", "button-flat", "twisty");
+        twistyButton.ariaHidden = "hidden";
+        twistyButton.tabIndex = -1;
+        const twistyIcon = twistyButton.appendChild(
+          document.createElement("img")
+        );
+        twistyIcon.classList.add("twisty-icon");
+      }
+      if (column.cellIcon) {
+        container
+          .appendChild(document.createElement("img"))
+          .classList.add("icon");
+      }
+      if (container.childElementCount) {
+        const div = container.appendChild(document.createElement("div"));
+        div.textContent = text;
+      } else {
+        container.textContent = text;
+      }
+      if (column.l10n?.cell) {
         document.l10n.setAttributes(cell, column.l10n.cell, { title: text });
         continue;
       }
 
-      cell.removeAttribute("aria-label");
       cell.title = text;
     }
 

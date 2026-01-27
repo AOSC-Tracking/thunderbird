@@ -1,7 +1,8 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
 
 /* global MozElements */
 /* global MozXULElement */
@@ -35,9 +36,6 @@
       );
       this.showPreview = Services.prefs.getBoolPref(
         "mail.biff.alert.show_preview"
-      );
-      this.messengerBundle = Services.strings.createBundle(
-        "chrome://messenger/locale/messenger.properties"
       );
 
       ChromeUtils.defineESModuleGetters(this, {
@@ -218,9 +216,8 @@
             folderSummarySender.value =
               addrs.length > 0 ? addrs[0].name || addrs[0].email : "";
             if (addrs.length > 1) {
-              const andOthersStr =
-                this.messengerBundle.GetStringFromName("andOthers");
-              folderSummarySender.value += " " + andOthersStr;
+              folderSummarySender.value +=
+                " " + MozFolderSummary.l10n.formatValueSync("and-others");
             }
           }
 
@@ -276,9 +273,8 @@
           folderSummarySender.value =
             addrs.length > 0 ? addrs[0].name || addrs[0].email : "";
           if (addrs.length > 1) {
-            const andOthersStr =
-              this.messengerBundle.GetStringFromName("andOthers");
-            folderSummarySender.value += " " + andOthersStr;
+            folderSummarySender.value +=
+              " " + MozFolderSummary.l10n.formatValueSync("and-others");
           }
         }
 
@@ -291,4 +287,10 @@
     }
   }
   customElements.define("folder-summary", MozFolderSummary);
+
+  ChromeUtils.defineLazyGetter(
+    MozFolderSummary,
+    "l10n",
+    () => new Localization(["messenger/messenger.ftl"], true)
+  );
 }

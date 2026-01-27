@@ -67,7 +67,6 @@
  */
 
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
-
 import {
   CAL_ITEM_FLAG,
   textToDate,
@@ -76,6 +75,13 @@ import {
 } from "resource:///modules/calendar/calStorageHelpers.sys.mjs";
 
 const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
 ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
 ChromeUtils.defineESModuleGetters(lazy, {
   CalAlarm: "resource:///modules/CalAlarm.sys.mjs",
@@ -132,7 +138,7 @@ export function getAllSql(version) {
   for (const tblName in tblData) {
     sql += getSql(tblName, tblData) + "\n\n";
   }
-  cal.LOG("Storage: Full SQL statement is " + sql);
+  lazy.log.debug("Storage: Full SQL statement is " + sql);
   return sql;
 }
 
@@ -187,7 +193,7 @@ function getVersion(db) {
  * Backup the database and notify the user via error console of the process
  */
 export function backupDB(db, currentVersion) {
-  cal.LOG("Storage: Backing up current database...");
+  lazy.log.debug("Storage: Backing up current database...");
   try {
     // Prepare filenames and path
     const backupFilename = "local.v" + currentVersion + ".sqlite";
@@ -200,11 +206,11 @@ export function backupDB(db, currentVersion) {
     // Create a backup file and notify the user via WARN, since LOG will not
     // be visible unless a pref is set.
     const file = Services.storage.backupDatabaseFile(db.databaseFile, backupFilename, backupPath);
-    cal.WARN(
+    lazy.log.warn(
       "Storage: Upgrading to v" + DB_SCHEMA_VERSION + ", a backup was written to: " + file.path
     );
   } catch (e) {
-    cal.ERROR("Storage: Error creating backup file: " + e);
+    lazy.log.error("Storage: Error creating backup file: " + e);
   }
 }
 
@@ -215,7 +221,9 @@ export function backupDB(db, currentVersion) {
  */
 export function upgradeDB(storageCalendar) {
   const db = storageCalendar.db;
-  cal.ASSERT(db, "Database has not been opened!", true);
+  if (!db) {
+    throw new Error("db has not been opened");
+  }
 
   if (db.tableExists("cal_calendar_schema_version")) {
     const version = getVersion(db);
@@ -240,7 +248,7 @@ export function upgradeDB(storageCalendar) {
  * @param {mozIStorageAsyncConnection} db - New database to upgrade.
  */
 function upgradeBrandNewDB(db) {
-  cal.LOG("Storage: Creating tables from scratch");
+  lazy.log.debug("Storage: Creating tables from scratch");
   beginTransaction(db);
   try {
     executeSimpleSQL(db, getAllSql());
@@ -261,7 +269,7 @@ function upgradeExistingDB(db, version) {
   backupDB(db, version);
 
   // Then start the latest upgrader
-  cal.LOG("Storage: Preparing to upgrade v" + version + " to v" + DB_SCHEMA_VERSION);
+  lazy.log.debug("Storage: Preparing to upgrade v" + version + " to v" + DB_SCHEMA_VERSION);
   upgrade["v" + DB_SCHEMA_VERSION](db, version);
 }
 
@@ -293,7 +301,7 @@ function handleTooNewSchema(storageCalendar) {
     hostApplication: appName,
     fileName: copyFileName,
   });
-  cal.ERROR(errorText);
+  lazy.log.error(errorText);
 
   storageCalendar.prepareInitDB();
 }
@@ -328,15 +336,7 @@ function createDBDelegate(funcName) {
       try {
         return db[funcName](...args);
       } catch (e) {
-        cal.ERROR(
-          "Error calling '" +
-            funcName +
-            "' db error: '" +
-            lastErrorString(db) +
-            "'.\nException: " +
-            e
-        );
-        cal.WARN(cal.STACK(10));
+        lazy.log.error(`${funcName} FAILED`, e);
       }
     }
     return null;
@@ -399,7 +399,7 @@ function createIndex(tblData, tblName, colNameArray, db) {
  */
 function LOGdb(db, msg) {
   if (db) {
-    cal.LOG(msg);
+    lazy.log.debug(msg);
   }
 }
 
@@ -414,7 +414,7 @@ function reportErrorAndRollback(db, e) {
   if (db && db.transactionInProgress) {
     rollbackTransaction(db);
   }
-  cal.ERROR(
+  lazy.log.error(
     `++++++ Storage error! ++++++ DB Error: ${lastErrorString(db)}\n++++++ Exception: ${e}`
   );
   return e;
@@ -442,7 +442,7 @@ function ensureUpdatedTimezones(db) {
   }
 
   if (versionComp != 0) {
-    cal.LOG(
+    lazy.log.debug(
       "[calStorageCalendar] Timezones have been changed from " +
         version +
         " to " +
@@ -480,7 +480,7 @@ function ensureUpdatedTimezones(db) {
         }
       }
     } catch (e) {
-      cal.ERROR("Error updating timezones: " + e + "\nDB Error " + lastErrorString(db));
+      lazy.log.error("Error updating timezones: " + e + "\nDB Error " + lastErrorString(db));
     } finally {
       getZones.finalize();
     }
@@ -512,7 +512,7 @@ function ensureUpdatedTimezones(db) {
       );
       commitTransaction(db);
     } catch (e) {
-      cal.ASSERT(false, "Timezone update failed! DB Error: " + lastErrorString(db));
+      lazy.log.error(`Timezone update failed! DB Error: ${lastErrorString(db)}`, e);
       rollbackTransaction(db);
       throw e;
     }
@@ -529,7 +529,9 @@ function ensureUpdatedTimezones(db) {
  * @param {mozIStorageAsyncConnection} [db] - The optional database to apply the operation on
  */
 function addColumn(tblData, tblName, colName, colType, db) {
-  cal.ASSERT(tblName in tblData, `Table ${tblName} is missing from table def`, true);
+  if (!(tblName in tblData)) {
+    throw new Error(`Table ${tblName} is missing from table def`);
+  }
   tblData[tblName][colName] = colType;
 
   executeSimpleSQL(db, `ALTER TABLE ${tblName} ADD COLUMN ${colName} ${colType}`);
@@ -1293,7 +1295,7 @@ upgrade.v16 = function (db, version) {
         } catch (e) {
           // Errors in this function are not really logged. Do this
           // separately.
-          cal.ERROR("Error converting alarms: " + e);
+          lazy.log.error("Error converting alarms: " + e);
           throw e;
         }
       },
@@ -1625,7 +1627,7 @@ upgrade.v22 = function (db, version) {
           attach.encoding = aEncoding;
           return attach.icalString;
         } catch (e) {
-          cal.ERROR("Error converting attachment: " + e);
+          lazy.log.error("Error converting attachment: " + e);
           throw e;
         }
       },
@@ -1648,7 +1650,7 @@ upgrade.v22 = function (db, version) {
           relation.relId = aRelId;
           return relation.icalString;
         } catch (e) {
-          cal.ERROR("Error converting relation: " + e);
+          lazy.log.error("Error converting relation: " + e);
           throw e;
         }
       },
@@ -1700,7 +1702,7 @@ upgrade.v22 = function (db, version) {
         } catch (e) {
           // There are some attendees with a null ID. We are taking
           // the opportunity to remove them here.
-          cal.ERROR("Error converting attendee, removing: " + e);
+          lazy.log.error("Error converting attendee, removing: " + e);
           return null;
         }
       },
@@ -1806,7 +1808,7 @@ upgrade.v22 = function (db, version) {
 
           return ritem.icalString;
         } catch (e) {
-          cal.ERROR("Error converting recurrence: " + e);
+          lazy.log.error("Error converting recurrence: " + e);
           throw e;
         }
       },

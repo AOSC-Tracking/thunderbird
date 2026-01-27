@@ -28,7 +28,7 @@ ChromeUtils.defineLazyGetter(lazy, "log", () => {
 });
 
 export var EnigmailPersistentCrypto = {
-  /***
+  /**
    * Decrypts a message and copy it to a folder. If targetKey is
    * not null, it encrypts a message to the target key afterwards.
    *
@@ -37,22 +37,14 @@ export var EnigmailPersistentCrypto = {
    * @param {boolean} move - true for move, false for copy.
    * @param {KeyObject} targetKey - Target key if encryption is requested.
    * @returns {nsMsgKey} message key of the new message.
-   **/
+   */
   async cryptMessage(hdr, destFolder, move, targetKey) {
-    return new Promise(function (resolve, reject) {
-      const uri = hdr.folder.getUriForMsg(hdr);
-      const url = MailServices.messageServiceFromURI(uri).getUrlForUri(uri);
+    const uri = hdr.folder.getUriForMsg(hdr);
+    const url = MailServices.messageServiceFromURI(uri).getUrlForUri(uri);
 
-      const crypt = new CryptMessageIntoFolder(destFolder, move, targetKey);
-      getMimeTreeFromUrl(url, true, async function (mime) {
-        try {
-          const newMsgKey = await crypt.messageParseCallback(mime, hdr);
-          resolve(newMsgKey);
-        } catch (ex) {
-          reject(ex);
-        }
-      });
-    });
+    const crypt = new CryptMessageIntoFolder(destFolder, move, targetKey);
+    const mime = await getMimeTreeFromUrl(url, true);
+    return await crypt.messageParseCallback(mime, hdr);
   },
 
   changeMessageId(content, newMessageIdPrefix) {
@@ -96,7 +88,7 @@ export var EnigmailPersistentCrypto = {
     return newHeaders + "\r\n" + body;
   },
 
-  /*
+  /**
    * Copies an email message to a folder, which is a modified copy of an
    * existing message, optionally creating a new message ID.
    *
@@ -224,7 +216,8 @@ class CryptMessageIntoFolder extends MimeTreeDecrypter {
     this.targetKey = targetKey;
   }
 
-  /** Here is the effective action of a call to cryptMessage.
+  /**
+   * Here is the effective action of a call to cryptMessage.
    * If no failure is seen when attempting to decrypt (!decryptFailure),
    * then we copy. (This includes plain messages that didn't need
    * decryption.)

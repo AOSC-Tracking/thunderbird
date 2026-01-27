@@ -10,10 +10,10 @@
 
 #include "p2p/base/port.h"
 
-#include <string.h>
-
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <list>
 #include <memory>
@@ -29,6 +29,7 @@
 #include "api/candidate.h"
 #include "api/environment/environment.h"
 #include "api/environment/environment_factory.h"
+#include "api/field_trials.h"
 #include "api/packet_socket_factory.h"
 #include "api/rtc_error.h"
 #include "api/test/rtc_error_matchers.h"
@@ -71,9 +72,9 @@
 #include "rtc_base/thread.h"
 #include "rtc_base/time_utils.h"
 #include "rtc_base/virtual_socket_server.h"
+#include "test/create_test_field_trials.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
-#include "test/scoped_key_value_config.h"
 #include "test/wait_until.h"
 
 using ::testing::Eq;
@@ -123,7 +124,7 @@ constexpr int kTiebreaker1 = 11111;
 constexpr int kTiebreaker2 = 22222;
 constexpr int kTiebreakerDefault = 44444;
 
-const char* kTestData = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
+constexpr char kTestData[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
 
 Candidate GetCandidate(Port* port) {
   RTC_DCHECK_GE(port->Candidates().size(), 1);
@@ -208,7 +209,8 @@ class TestPort : public Port {
 
   Connection* CreateConnection(const Candidate& remote_candidate,
                                CandidateOrigin /* origin */) override {
-    Connection* conn = new ProxyConnection(NewWeakPtr(), 0, remote_candidate);
+    Connection* conn =
+        new ProxyConnection(env(), NewWeakPtr(), 0, remote_candidate);
     AddOrReplaceConnection(conn);
     // Set use-candidate attribute flag as this will add USE-CANDIDATE attribute
     // in STUN binding requests.
@@ -877,7 +879,7 @@ class PortTest : public ::testing::Test, public sigslot::has_slots<> {
                                     .ice_username_fragment = username,
                                     .ice_password = password};
     auto port = std::make_unique<TestPort>(args, 0, 0);
-    port->SignalRoleConflict.connect(this, &PortTest::OnRoleConflict);
+    port->SubscribeRoleConflict([this]() { OnRoleConflict(); });
     return port;
   }
   std::unique_ptr<TestPort> CreateTestPort(const SocketAddress& addr,
@@ -901,11 +903,21 @@ class PortTest : public ::testing::Test, public sigslot::has_slots<> {
                                     .ice_username_fragment = username,
                                     .ice_password = password};
     auto port = std::make_unique<TestPort>(args, 0, 0);
-    port->SignalRoleConflict.connect(this, &PortTest::OnRoleConflict);
+    port->SubscribeRoleConflict([this]() { OnRoleConflict(); });
     return port;
   }
 
-  void OnRoleConflict(PortInterface* port) { role_conflict_ = true; }
+  std::unique_ptr<TestPort> CreateRawTestPort() {
+    Port::PortParametersRef args = {
+        .env = env_,
+        .network_thread = &main_,
+        .socket_factory = &socket_factory_,
+        .network = MakeNetwork(kLocalAddr1),
+    };
+    return std::make_unique<TestPort>(args, 0, 0);
+  }
+
+  void OnRoleConflict() { role_conflict_ = true; }
   bool role_conflict() const { return role_conflict_; }
 
   void ConnectToSignalDestroyed(PortInterface* port) {
@@ -2808,7 +2820,7 @@ TEST_F(PortTest, TestComputeCandidatePriority) {
 }
 
 TEST_F(PortTest, TestComputeCandidatePriorityWithPriorityAdjustment) {
-  test::ScopedKeyValueConfig field_trials(
+  FieldTrials field_trials = CreateTestFieldTrials(
       "WebRTC-IncreaseIceCandidatePriorityHostSrflx/Enabled/");
   auto port = CreateTestPort(kLocalAddr1, "name", "pass", &field_trials);
   port->SetIceTiebreaker(kTiebreakerDefault);
@@ -3025,7 +3037,7 @@ TEST_F(PortTest, TestConnectionPriority) {
 
 // Test the Connection priority is calculated correctly.
 TEST_F(PortTest, TestConnectionPriorityWithPriorityAdjustment) {
-  test::ScopedKeyValueConfig field_trials(
+  FieldTrials field_trials = CreateTestFieldTrials(
       "WebRTC-IncreaseIceCandidatePriorityHostSrflx/Enabled/");
   auto lport = CreateTestPort(kLocalAddr1, "lfrag", "lpass", &field_trials);
   lport->SetIceTiebreaker(kTiebreakerDefault);
@@ -4023,6 +4035,32 @@ TEST_F(PortTest, TestAddConnectionWithSameAddress) {
   Thread::Current()->ProcessMessages(300);
   EXPECT_TRUE(port->GetConnection(address) != nullptr);
 }
+
+#if RTC_DCHECK_IS_ON && GTEST_HAS_DEATH_TEST && !defined(WEBRTC_ANDROID)
+class DeathChannel : public sigslot::has_slots<> {
+ public:
+  explicit DeathChannel(std::unique_ptr<Port> port) : port_(std::move(port)) {}
+  void IgnoredSlot(PortInterface* /* port */) {}
+  void AddSignal() {
+    port_->SignalRoleConflict.connect(this, &DeathChannel::IgnoredSlot);
+  }
+  void AddCallback() {
+    port_->SubscribeRoleConflict([]() {});
+  }
+
+ private:
+  std::unique_ptr<Port> port_;
+};
+
+class PortDeathTest : public PortTest {};
+
+TEST_F(PortDeathTest, AddSignalThenCallback) {
+  DeathChannel dc(CreateRawTestPort());
+  dc.AddSignal();
+  EXPECT_DEATH(dc.AddCallback(), "");
+}
+
+#endif  // RTC_DCHECK_IS_ON && GTEST_HAS_DEATH_TEST && !defined(WEBRTC_ANDROID)
 
 // TODO(webrtc:11463) : Move Connection tests into separate unit test
 // splitting out shared test code as needed.

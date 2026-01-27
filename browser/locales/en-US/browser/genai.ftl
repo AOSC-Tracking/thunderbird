@@ -103,8 +103,8 @@ genai-shortcuts-hide =
 genai-chatbot-title = AI chatbot
 genai-header-provider-menu =
     .title = Choose a chatbot
-genai-header-options-button =
-    .title = Open menu
+genai-header-settings-button =
+    .title = AI Chat settings
 genai-header-close-button =
     .title = Close
 
@@ -250,3 +250,9 @@ link-preview-onboarding-button = See a preview
 
 # Onboarding card Close button
 link-preview-onboarding-close = Close
+
+# Title for the first-time setup modal
+link-preview-first-time-setup-title = First-time setup
+
+# Message for the first-time setup modal
+link-preview-first-time-setup-message = This may take a moment. You’ll see key points more quickly next time.

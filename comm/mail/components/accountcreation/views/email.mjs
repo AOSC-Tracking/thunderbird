@@ -168,6 +168,14 @@ class AccountHubEmail extends HTMLElement {
   #discoveryStream = null;
 
   /**
+   * Dictionary of confirmed 3rd party redirect domains, with the email
+   * as the key, and target host as the value.
+   *
+   * @type {object}
+   */
+  #redirectAccepted = {};
+
+  /**
    * States of the email setup flow, based on the ID's of the steps in the
    * flow.
    *
@@ -398,11 +406,10 @@ class AccountHubEmail extends HTMLElement {
 
     this.#stopLoading();
 
-    // If the findConfig() async generator is waiting for a response, we send
-    // back a rejection. Because we've aborted the autodiscovery before this,
-    // findConfig() will fail silently.
+    // If the findConfig() async generator is waiting for a response, we reset
+    // the disoveryStream. Because we've aborted the autodiscovery before this,
+    // any network requests will have already been cancelled.
     if (this.#discoveryStream) {
-      this.#discoveryStream.next({ acceptRedirect: false });
       this.#discoveryStream = null;
     }
   }
@@ -417,6 +424,13 @@ class AccountHubEmail extends HTMLElement {
     this.#clearNotifications();
     this.#currentState = subview;
     await this.#loadTemplateScript(this.#states[subview].templateId);
+    // Always dispatch the maximized event to ensure that the account hub is
+    // fully visible when we change subview.
+    this.dispatchEvent(
+      new CustomEvent("request-maximize", {
+        bubbles: true,
+      })
+    );
     this.#currentSubview.hidden = false;
     this.#setFooterButtons();
   }
@@ -532,22 +546,35 @@ class AccountHubEmail extends HTMLElement {
     switch (event.type) {
       case "back":
         try {
-          // An abortable is ongoing if we are in the credentials confirmation
-          // step, so we must go back to the first step as well as cancelling
-          // the abortable.
-          if (
-            !this.abortable ||
-            this.#currentState == "emailCredentialsConfirmationSubview"
-          ) {
-            await this.#initUI(stateDetails.previousStep);
-            this.#handleBackAction(this.#currentState);
+          // We handle the back action within the credentials confirmation
+          // subview as continue with rejecting the redirect host, if we're not
+          // loading (the user hasn't selected continue). If we're loading,
+          // cancel all operations and go back to the autoConfigSubview.
+          if (this.#currentState == "emailCredentialsConfirmationSubview") {
+            if (this.classList.contains("busy")) {
+              this.#handleAbortable();
+              await this.#initUI(stateDetails.previousStep);
+            }
+            await this.#handleBackAction(this.#currentState);
+            break;
           }
 
-          this.#handleAbortable();
+          // If there is an ongoing operation, we should just cancel the
+          // abortable and stay in the current subview.
+          if (this.abortable) {
+            this.#handleAbortable();
+            break;
+          }
+
+          // Show the previous step and handle any clean up required for that
+          // step.
+          await this.#initUI(stateDetails.previousStep);
+          await this.#handleBackAction(this.#currentState);
         } catch (error) {
+          this.#handleAbortable();
           this.#currentSubview.showNotification({
-            title: error.cause.code,
-            description: error.cause.text,
+            title: error.title || error.message,
+            description: error.text,
             error,
             type: "error",
           });
@@ -590,6 +617,7 @@ class AccountHubEmail extends HTMLElement {
           const stateData = this.#currentSubview.captureState();
           this.#email = stateData.email;
           this.#realName = stateData.realName;
+          this.#exchangeUsername = "";
         }
 
         // If we are in this step, we already have email and realName set.
@@ -629,14 +657,27 @@ class AccountHubEmail extends HTMLElement {
         break;
       case "advanced-config":
         try {
-          let stateData = this.#currentSubview.captureState().config;
-          if (this.#currentState === "outgoingConfigSubview") {
-            stateData = this.#currentSubview.captureState();
-            stateData.incoming =
-              this.#states.incomingConfigSubview.subview.captureState().config.incoming;
+          let stateData = this.#currentSubview.captureState();
+
+          if (this.#currentState === "incomingConfigSubview") {
+            // captureState in incoming returns an object with the config prop.
+            stateData = stateData.config;
           }
-          stateData = this.#fillAccountConfig(stateData);
-          await this.#advancedSetup(stateData);
+
+          // If we couldn't find a configuration when directed to manual
+          // config, the default config doesn't have an outgoing type.
+          if (stateData.incoming.type != "ews" && !stateData.outgoing.type) {
+            stateData.outgoing.type = "smtp";
+          }
+
+          // If the configuration is for EWS, set the outgoing type to use EWS
+          // as well.
+          if (stateData.incoming.type == "ews") {
+            stateData.incoming.handlesOutgoing = true;
+          }
+
+          const config = this.#fillAccountConfig(stateData);
+          await this.#advancedSetup(config);
         } catch (error) {
           this.#currentSubview.showNotification({
             title: error.title,
@@ -677,12 +718,43 @@ class AccountHubEmail extends HTMLElement {
    *
    * @param {string} currentState - The current state of the email flow.
    */
-  #handleBackAction(currentState) {
+  async #handleBackAction(currentState) {
     switch (currentState) {
       case "autoConfigSubview":
         this.#currentSubview.checkValidEmailForm();
         // Focus on the correct input in the auto config subview.
         this.#currentSubview.setState();
+        break;
+      case "emailCredentialsConfirmationSubview":
+        try {
+          this.#startLoading("account-hub-lookup-email-configuration-title");
+
+          // If we're in the credentials confirmation step, a cancel action
+          // should send a rejection for the redirect host confirmation.
+          const config = await this.#findConfig({ acceptRedirect: false });
+          this.#stopLoading();
+
+          if (!config) {
+            this.#currentConfig = null;
+            await this.#initFallbackConfigView("autoConfigSubview");
+            break;
+          }
+
+          await this.#initConfigView(config);
+        } catch (error) {
+          if (error instanceof AuthenticationRequiredError) {
+            // We already have a password, so the provided password or username
+            // was probably wrong. Stay at the current step.
+            if (this.#currentConfig?.hasPassword()) {
+              throw error;
+            }
+            this.#initAutodiscoverAuthenticationView();
+            break;
+          }
+
+          throw error;
+        }
+
         break;
       case "incomingConfigSubview":
         // Set the currentConfig outgoing to the updated fields in the
@@ -712,11 +784,17 @@ class AccountHubEmail extends HTMLElement {
     switch (currentState) {
       case "autoConfigSubview":
         this.#startLoading("account-hub-lookup-email-configuration-title");
+
+        // Reset state so this always ends up doing the same from the same
+        // form inputs in the initial subview.
+        this.#currentConfig = null;
+        this.#exchangeUsername = "";
+
         try {
           this.#email = stateData.email;
           this.#realName = stateData.realName;
 
-          const config = await this.#findConfig();
+          let config = await this.#findConfig();
           this.#stopLoading();
 
           // If the config is null, the guessConfig couldn't find anything so
@@ -731,22 +809,27 @@ class AccountHubEmail extends HTMLElement {
           // If the autodiscovery requires confirmation to submit credentials,
           // we show the subview to confirm credentials submission.
           if (config.isRedirect) {
-            await this.#initUI("emailCredentialsConfirmationSubview");
-            this.#currentSubview.setState({
-              host: config.host,
-              username: stateData.email,
-              scheme: config.scheme,
-            });
-            this.#states[this.#currentState].previousStep = "autoConfigSubview";
-            this.#currentSubview.showNotification({
-              fluentTitleId: "account-hub-notification-unknown-host",
-              type: "info",
-            });
-            break;
+            if (this.#redirectAccepted[this.#email] == config.host) {
+              config = await this.#findConfig({ acceptRedirect: true });
+            } else {
+              await this.#initUI("emailCredentialsConfirmationSubview");
+              this.#currentSubview.setState({
+                host: config.host,
+                username: stateData.email,
+                scheme: config.scheme,
+              });
+              this.#states[this.#currentState].previousStep =
+                "autoConfigSubview";
+              this.#currentSubview.showNotification({
+                fluentTitleId: "account-hub-notification-unknown-host",
+                type: "info",
+              });
+              break;
+            }
           }
 
           this.#abortable = null;
-          this.#initConfigView(config);
+          await this.#initConfigView(config);
           break;
         } catch (error) {
           if (error instanceof AuthenticationRequiredError) {
@@ -766,9 +849,14 @@ class AccountHubEmail extends HTMLElement {
         }
       case "emailCredentialsConfirmationSubview":
         try {
+          this.#startLoading("account-hub-lookup-email-configuration-title");
+          this.#redirectAccepted[this.#email] = stateData.host;
+
           // The findConfig() async generator will continue with autodiscovery
           // as the user has accepted submitting their credentials.
           const config = await this.#findConfig({ acceptRedirect: true });
+
+          this.#stopLoading();
 
           // If the config is null, the guessConfig couldn't find anything so
           // move to the manual config form to get them to fill in details,
@@ -779,7 +867,7 @@ class AccountHubEmail extends HTMLElement {
             break;
           }
 
-          this.#initConfigView(config);
+          await this.#initConfigView(config);
           break;
         } catch (error) {
           if (error instanceof AuthenticationRequiredError) {
@@ -811,7 +899,7 @@ class AccountHubEmail extends HTMLElement {
           this.#exchangeUsername = stateData.username;
           gAccountSetupLogger.debug("Retrying config discovery with password.");
 
-          const config = await this.#findConfig();
+          let config = await this.#findConfig();
 
           if (!config) {
             // Use the #currentConfig from before, which will already be an
@@ -823,31 +911,37 @@ class AccountHubEmail extends HTMLElement {
           // If the autodiscovery requires confirmation to submit credentials,
           // we show the subview to confirm credentials submission.
           if (config.isRedirect) {
-            await this.#initUI("emailCredentialsConfirmationSubview");
-            this.#currentSubview.setState({
-              host: config.host,
-              username: stateData.email,
-            });
-            this.#states[this.#currentState].previousStep =
-              "emailAutodiscoverAuthenticationSubview";
-            this.#currentSubview.showNotification({
-              fluentTitleId: "account-hub-password-info",
-              type: "info",
-            });
-            break;
+            if (this.#redirectAccepted[this.#email] == config.host) {
+              config = await this.#findConfig({ acceptRedirect: true });
+            } else {
+              await this.#initUI("emailCredentialsConfirmationSubview");
+              this.#currentSubview.setState({
+                host: config.host,
+                username: this.#exchangeUsername || this.#email,
+                scheme: config.scheme,
+              });
+              this.#states[this.#currentState].previousStep =
+                "emailAutodiscoverAuthenticationSubview";
+              this.#currentSubview.showNotification({
+                fluentTitleId: "account-hub-password-info",
+                type: "info",
+              });
+              break;
+            }
           }
 
-          if (
-            Services.prefs.getBoolPref("experimental.mail.ews.enabled", true)
-          ) {
-            lazy.FindConfig.ewsifyConfig(config);
-          }
+          // Check if we have found an Exchange config we should tweak to make it work
+          // with our native EWS support (and do so if that's the case).
+          lazy.FindConfig.ewsifyConfig(config);
 
           this.#currentConfig = this.#fillAccountConfig(
             config,
             stateData.password
           );
         } catch (error) {
+          // Reset footer back button state.
+          this.#emailFooter.canBack(true);
+
           if (!(error instanceof UserCancelledException)) {
             // Stay on the password view.
             throw error;
@@ -859,10 +953,7 @@ class AccountHubEmail extends HTMLElement {
 
         await this.#initUI(this.#states[this.#currentState].nextStep);
 
-        this.#currentSubview.showNotification({
-          fluentTitleId: "account-hub-config-success",
-          type: "success",
-        });
+        this.#showConfigFoundNotification();
         this.#setCurrentConfigForSubview();
         break;
       case "incomingConfigSubview":
@@ -871,6 +962,10 @@ class AccountHubEmail extends HTMLElement {
           break;
         }
         await this.#initUI(this.#states[this.#currentState].nextStep);
+        if (this.#currentConfig?.hasPassword()) {
+          stateData.config.incoming.password =
+            this.#currentConfig.incoming.password;
+        }
         this.#currentConfig.incoming = stateData.config.incoming;
         this.#setCurrentConfigForSubview();
 
@@ -885,74 +980,13 @@ class AccountHubEmail extends HTMLElement {
         await this.#validateAccountConfig(stateData);
         break;
       case "emailPasswordSubview":
-        this.#startLoading("account-hub-creating-account");
-        // We don't want the user to be able to cancel account creation here,
-        // as the back button is available in this step. The next state doesn't
-        // have a back button, so we don't need to reset it after.
-        this.#emailFooter.canBack(false);
-        try {
-          // Get password and remember from the state and apply it to the config.
-          this.#currentConfig = this.#fillAccountConfig(
-            this.#currentConfig,
-            stateData.password
-          );
-          this.#currentConfig.rememberPassword = stateData.rememberPassword;
-          gAccountSetupLogger.debug("Create button clicked.");
-
-          await this.#validateAndFinish(this.#currentConfig.copy());
-        } catch (error) {
-          this.#stopLoading();
-          // Show the back button again if account creation failed.
-          this.#emailFooter.canBack(true);
-          throw error;
-        } finally {
-          this.#configVerifier?.cleanup();
-        }
-
-        this.#stopLoading();
-        await this.#initUI(this.#states[this.#currentState].nextStep);
-        try {
-          this.#startLoading("account-hub-fetching-sync-accounts");
-          this.abortable = new AbortController();
-          const syncAccounts = {};
-          syncAccounts.addressBooks = await this.#getAddressBooks(
-            stateData.password
-          );
-
-          // If the user hit cancel while loading, we won't fetch
-          // the calendars.
-          this.abortable.signal.throwIfAborted();
-
-          // If the user cancels while loading and calendars have been
-          // fetched, we won't show them and show the error instead.
-          syncAccounts.calendars = await this.#getCalendars(
-            stateData.password,
-            stateData.rememberPassword
-          );
-          this.abortable?.signal?.throwIfAborted();
-          this.abortable = null;
-
-          this.#currentSubview.setState(syncAccounts);
-          this.#stopLoading();
-
-          const accountsFound =
-            syncAccounts.addressBooks.length || syncAccounts.calendars.length;
-          this.#currentSubview.showNotification({
-            fluentTitleId: accountsFound
-              ? "account-hub-sync-accounts-found"
-              : "account-hub-sync-accounts-not-found",
-            type: accountsFound ? "success" : "info",
-          });
-        } catch (error) {
-          this.#stopLoading();
-          this.abortable = null;
-          this.#currentSubview.showNotification({
-            fluentTitleId: "account-hub-sync-accounts-not-found",
-            type: "error",
-            error,
-          });
-        }
-
+        // Get password and remember from the state and apply it to the config.
+        this.#currentConfig = this.#fillAccountConfig(
+          this.#currentConfig,
+          stateData.password
+        );
+        this.#currentConfig.rememberPassword = stateData.rememberPassword;
+        await this.#createAccount("account-hub-creating-account");
         break;
       case "emailSyncAccountsSubview":
         try {
@@ -1017,6 +1051,10 @@ class AccountHubEmail extends HTMLElement {
               type: "success",
             });
             this.#emailFooter.toggleForwardDisabled(false);
+            if (this.#currentConfig?.hasPassword()) {
+              config.incoming.password = this.#currentConfig.incoming.password;
+              config.outgoing.password = this.#currentConfig.outgoing.password;
+            }
             // The config is complete, therefore we can set the currentConfig
             // as the complete config, and update the outgoing config with any
             // changes the guess config made.
@@ -1097,10 +1135,7 @@ class AccountHubEmail extends HTMLElement {
 
     await this.#initUI(this.#states[this.#currentState].nextStep);
 
-    this.#currentSubview.showNotification({
-      fluentTitleId: "account-hub-config-success",
-      type: "success",
-    });
+    this.#showConfigFoundNotification();
 
     this.#setCurrentConfigForSubview();
   }
@@ -1129,30 +1164,21 @@ class AccountHubEmail extends HTMLElement {
    * @returns {?AccountConfig} @see AccountConfig.sys.mjs
    */
   async #findConfig(userFeedback) {
-    if (this.abortable) {
-      this.#handleAbortable();
-    }
-
     const emailSplit = this.#email.split("@");
     const domain = emailSplit[1];
-    const initialConfig = new lazy.AccountConfig();
-    const emailLocal = lazy.Sanitizer.nonemptystring(emailSplit[0]);
-    initialConfig.incoming.username = emailLocal;
-    initialConfig.outgoing.username = emailLocal;
-
-    if (this.#currentConfig?.hasPassword()) {
-      initialConfig.incoming.password = this.#currentConfig.incoming.password;
-      initialConfig.outgoing.password = this.#currentConfig.outgoing.password;
-    }
-
     gAccountSetupLogger.debug("findConfig()");
-    this.abortable = new SuccessiveAbortable();
     let config, discoveryDone;
 
     // This can throw an error which will be caught up the call stack
     // to show the correct notification.
     try {
       if (!this.#discoveryStream) {
+        if (this.abortable) {
+          this.#handleAbortable();
+        }
+
+        this.abortable = new SuccessiveAbortable();
+
         this.#discoveryStream = lazy.FindConfig.parallelAutoDiscovery(
           this.abortable,
           domain,
@@ -1166,7 +1192,9 @@ class AccountHubEmail extends HTMLElement {
       ({ value: config, done: discoveryDone } =
         await this.#discoveryStream.next(userFeedback));
     } catch (error) {
+      discoveryDone = true;
       this.#discoveryStream = null;
+
       if (error.cause?.fluentTitleId === "account-setup-credentials-wrong") {
         throw new AuthenticationRequiredError(error.message, {
           cause: error.cause,
@@ -1174,11 +1202,25 @@ class AccountHubEmail extends HTMLElement {
       }
       throw error;
     } finally {
-      this.abortable = null;
+      // If the user hit cancel, but the abortable shows a completed status,
+      // the null abortable should tell us to throw a cancelled exception.
+      if (!this.abortable) {
+        // eslint-disable-next-line no-unsafe-finally
+        throw new UserCancelledException();
+      }
+
+      if (discoveryDone) {
+        this.abortable = null;
+      }
     }
 
     if (!config) {
       try {
+        const initialConfig = new lazy.AccountConfig();
+        const emailLocal = lazy.Sanitizer.nonemptystring(emailSplit[0]);
+        initialConfig.incoming.username = emailLocal;
+        initialConfig.outgoing.username = emailLocal;
+
         config = await this.#guessConfig(domain, initialConfig);
       } catch (error) {
         this.#discoveryStream = null;
@@ -1198,9 +1240,9 @@ class AccountHubEmail extends HTMLElement {
         }
       }
 
-      if (Services.prefs.getBoolPref("experimental.mail.ews.enabled", true)) {
-        lazy.FindConfig.ewsifyConfig(config);
-      }
+      // Check if we have found an Exchange config we should tweak to make it work
+      // with our native EWS support (and do so if that's the case).
+      lazy.FindConfig.ewsifyConfig(config);
 
       config = this.#fillAccountConfig(config);
     }
@@ -1298,81 +1340,111 @@ class AccountHubEmail extends HTMLElement {
     this.#currentConfig = this.#fillAccountConfig(accountConfig);
 
     if (this.#currentConfig.isOauthOnly()) {
-      //TODO share this with the code path for pw entry...
-      this.#startLoading("account-hub-oauth-pending");
-      gAccountSetupLogger.debug("Create button clicked.");
-      try {
-        // We don't want the user to be able to cancel account creation here,
-        // as the back button is available in this step. The next state doesn't
-        // have a back button, so we don't need to reset it after.
-        this.#emailFooter.canBack(false);
-        await this.#validateAndFinish(this.#currentConfig);
-      } catch (error) {
-        // Show the back button again if account creation failed.
-        this.#emailFooter.canBack(true);
-        throw error;
-      } finally {
-        this.#stopLoading();
-        this.#configVerifier?.cleanup();
-      }
-
-      await this.#initUI("emailSyncAccountsSubview");
-
-      try {
-        this.#startLoading("account-hub-fetching-sync-accounts");
-        this.abortable = new AbortController();
-        const syncAccounts = {};
-        //TODO fetch address books and calendars in parallel?
-        syncAccounts.addressBooks = await this.#getAddressBooks("");
-
-        // If the user hit cancel while loading, we won't fetch
-        // the calendars.
-        this.abortable.signal.throwIfAborted();
-
-        // If the user cancels while loading and calendars have been
-        // fetched, we won't show them and show the error instead.
-        syncAccounts.calendars = await this.#getCalendars("", false);
-        this.abortable?.signal?.throwIfAborted();
-        this.abortable = null;
-
-        this.#currentSubview.setState(syncAccounts);
-        this.#stopLoading();
-
-        const accountsFound =
-          syncAccounts.addressBooks.length || syncAccounts.calendars.length;
-        this.#currentSubview.showNotification({
-          fluentTitleId: accountsFound
-            ? "account-hub-sync-accounts-found"
-            : "account-hub-sync-accounts-not-found",
-          type: accountsFound ? "success" : "info",
-        });
-      } catch (error) {
-        this.abortable = null;
-        this.#stopLoading();
-        this.#currentSubview.showNotification({
-          fluentTitleId: "account-hub-sync-accounts-not-found",
-          type: "error",
-          error,
-        });
-      }
-
+      await this.#createAccount("account-hub-oauth-pending");
       return;
     }
-    //TODO Bug 1973959: Consider trying to go directly to validating the
-    // account credentials if we already have a password from autoconfig.
+
+    let creationError;
+    if (this.#currentConfig.incoming.password) {
+      try {
+        await this.#createAccount("account-hub-creating-account");
+        return;
+      } catch (error) {
+        // Show error in password view.
+        creationError = error;
+      }
+    }
 
     const currentState = this.#currentState;
     // Move to the password stage where validateAndFinish is run.
     await this.#initUI("emailPasswordSubview");
-    // The password stage should now have the outgoing subview as the
+    // The password step should now have the step we're coming from as its
     // previous step.
     this.#states[this.#currentState].previousStep = currentState;
     this.#currentSubview.setState();
 
-    this.#currentSubview.showNotification({
-      fluentTitleId: "account-hub-password-info",
-      type: "info",
-    });
+    if (creationError) {
+      this.#currentSubview.showNotification({
+        title: creationError.title || creationError.message,
+        description: creationError.text,
+        error: creationError,
+        type: "error",
+      });
+    } else {
+      this.#currentSubview.showNotification({
+        fluentTitleId: "account-hub-password-info",
+        type: "info",
+      });
+    }
+  }
+
+  /**
+   * Create account and advance to sync accounts step if successful.
+   *
+   * @param {string} loadReason - Fluent string ID with the load reason.
+   */
+  async #createAccount(loadReason) {
+    this.#startLoading(loadReason);
+    gAccountSetupLogger.debug("Create button clicked.");
+    try {
+      // We don't want the user to be able to cancel account creation here,
+      // as the back button is available in this step. The next state doesn't
+      // have a back button, so we don't need to reset it after.
+      this.#emailFooter.canBack(false);
+      await this.#validateAndFinish(this.#currentConfig.copy());
+    } catch (error) {
+      // Show the back button again if account creation failed.
+      this.#emailFooter.canBack(true);
+      throw error;
+    } finally {
+      this.#stopLoading();
+      this.#configVerifier?.cleanup();
+    }
+
+    await this.#initUI("emailSyncAccountsSubview");
+
+    try {
+      this.#startLoading("account-hub-fetching-sync-accounts");
+      this.abortable = new AbortController();
+      const syncAccounts = {};
+      //TODO fetch address books and calendars in parallel?
+      syncAccounts.addressBooks = await this.#getAddressBooks(
+        this.#currentConfig.incoming.password ?? ""
+      );
+
+      // If the user hit cancel while loading, we won't fetch
+      // the calendars.
+      this.abortable.signal.throwIfAborted();
+
+      // If the user cancels while loading and calendars have been
+      // fetched, we won't show them and show the error instead.
+      syncAccounts.calendars = await this.#getCalendars(
+        this.#currentConfig.incoming.password ?? "",
+        false
+      );
+      this.abortable?.signal?.throwIfAborted();
+      this.abortable = null;
+
+      this.#currentSubview.setState(syncAccounts);
+      this.#stopLoading();
+
+      const accountsFound =
+        syncAccounts.addressBooks.length || syncAccounts.calendars.length;
+      this.#currentSubview.showNotification({
+        fluentTitleId: accountsFound
+          ? "account-hub-sync-accounts-found"
+          : "account-hub-sync-accounts-not-found",
+        type: accountsFound ? "success" : "info",
+      });
+    } catch (error) {
+      this.abortable = null;
+      this.#stopLoading();
+      this.#currentSubview.showNotification({
+        fluentTitleId: "account-hub-sync-accounts-not-found",
+        type: "error",
+        error,
+      });
+    }
   }
 
   /**
@@ -1382,12 +1454,15 @@ class AccountHubEmail extends HTMLElement {
    * @param {string} [password=""] - The password for the account.
    * @returns {AccountConfig} - The concrete AccountConfig object.
    */
-  #fillAccountConfig(configData, password = "") {
+  #fillAccountConfig(configData, password) {
     lazy.AccountConfig.replaceVariables(
       configData,
       this.#realName,
       this.#email,
-      password
+      password ||
+        (configData.hasPassword()
+          ? configData.incoming.password || configData.outgoing.password
+          : "")
     );
     return configData;
   }
@@ -1689,6 +1764,35 @@ class AccountHubEmail extends HTMLElement {
     // eslint-disable-next-line no-undef
     MsgAccountManager("am-server.xhtml", data);
     await this.reset();
+  }
+
+  #showConfigFoundNotification() {
+    let configFoundString = "account-hub-config-success-unknown";
+
+    const CONFIG_SOURCE = {
+      [lazy.AccountConfig.kSourceExchange]:
+        "account-hub-config-success-exchange",
+      [lazy.AccountConfig.kSourceGuess]: "account-hub-config-success-guess",
+    };
+
+    if (Object.hasOwn(CONFIG_SOURCE, this.#currentConfig.source)) {
+      configFoundString = CONFIG_SOURCE[this.#currentConfig.source];
+    } else if (this.#currentConfig.source == lazy.AccountConfig.kSourceXML) {
+      const CONFIG_SUBSOURCE = {
+        "xml-from-disk": "account-hub-config-success-disk",
+        "xml-from-isp-https": "account-hub-config-success-isp",
+        "xml-from-isp-http": "account-hub-config-success-isp",
+        "xml-from-db": "account-hub-config-success",
+      };
+      if (Object.hasOwn(CONFIG_SUBSOURCE, this.#currentConfig.subSource)) {
+        configFoundString = CONFIG_SUBSOURCE[this.#currentConfig.subSource];
+      }
+    }
+
+    this.#currentSubview.showNotification({
+      fluentTitleId: configFoundString,
+      type: "success",
+    });
   }
 
   /**

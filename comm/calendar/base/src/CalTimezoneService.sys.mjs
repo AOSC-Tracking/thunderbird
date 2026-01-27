@@ -3,12 +3,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
-
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
-
 import ICAL from "resource:///modules/calendar/Ical.sys.mjs";
-
 import { CalTimezone } from "resource:///modules/CalTimezone.sys.mjs";
+
+const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
 
 const TIMEZONE_CHANGED_TOPIC = "default-timezone-changed";
 
@@ -64,7 +70,7 @@ CalTimezoneService.prototype = {
 
     // Fetch the version of the backing database
     this.mVersion = this._timezoneDatabase.version;
-    cal.LOG("[CalTimezoneService] Timezones version " + this.version + " loaded");
+    lazy.log.debug("[CalTimezoneService] Timezones version " + this.version + " loaded");
 
     // Set up zones for special values
     const utc = new CalTimezone(ICAL.Timezone.utcTimezone);
@@ -105,7 +111,6 @@ CalTimezoneService.prototype = {
 
   getTimezone(tzid) {
     if (!tzid) {
-      cal.ERROR("Unknown timezone requested\n" + cal.STACK(10));
       return null;
     }
 
@@ -132,7 +137,7 @@ CalTimezoneService.prototype = {
       const tzdef = this._timezoneDatabase.getTimezoneDefinition(tzid);
 
       if (!tzdef) {
-        cal.ERROR(`Could not find definition for ${tzid}`);
+        lazy.log.error(`Could not find definition for ${tzid}`);
         return null;
       }
 
@@ -194,7 +199,9 @@ CalTimezoneService.prototype = {
     // Update default timezone and preference if necessary
     if (!this.mDefaultTimezone || this.mDefaultTimezone.tzid != tzid) {
       this.mDefaultTimezone = this.getTimezone(tzid);
-      cal.ASSERT(this.mDefaultTimezone, `Timezone not found: ${tzid}`);
+      if (!this.mDefaultTimezone) {
+        lazy.log.warn(`Timezone not found: ${tzid}`);
+      }
       Services.obs.notifyObservers(null, "defaultTimezoneChanged");
 
       if (this.mDefaultTimezone.tzid != prefTzid) {

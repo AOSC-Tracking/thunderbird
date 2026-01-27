@@ -1286,11 +1286,17 @@ function updateDateCheckboxes(aDatePickerId, aCheckboxId, aDateTime) {
   }
 
   // force something to get set if there was nothing there before
-  aDatePickerId.value = document.getElementById(aDatePickerId).value;
+  const datePicker = document.getElementById(aDatePickerId);
+  // eslint-disable-next-line no-self-assign
+  datePicker.value = datePicker.value; // FIXME: check if really needed
 
   // first of all disable the datetime picker if we don't have a date
   const hasDate = document.getElementById(aCheckboxId).checked;
-  aDatePickerId.disabled = !hasDate;
+  if (!hasDate) {
+    datePicker.setAttribute("disabled", "true");
+  } else {
+    datePicker.removeAttribute("disabled");
+  }
 
   // create a new datetime object if date is now checked for the first time
   if (hasDate && !aDateTime.isValid()) {
@@ -2143,9 +2149,7 @@ function attachFileByAccountKey(aAccountKey) {
  */
 function attachFile(cloudProvider) {
   if (!cloudProvider) {
-    cal.ERROR(
-      "[calendar-event-dialog] Could not attach file without cloud provider" + cal.STACK(10)
-    );
+    throw new Error("Need a filelink provider to attach a file!");
   }
 
   const filePicker = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
@@ -2257,10 +2261,7 @@ function uploadCloudAttachment(attachment, cloudFileAccount, listItem) {
       updateAttachment();
     },
     statusCode => {
-      cal.ERROR(
-        "[calendar-event-dialog] Uploading cloud attachment failed. Status code: " +
-          statusCode.result
-      );
+      console.error("Uploading cloud attachment failed. Status code: " + statusCode.result);
 
       // Uploading failed. First of all, show an error icon. Also,
       // delete it from the attach map now, this will make sure it is
@@ -2396,20 +2397,15 @@ function deleteAttachment() {
         .deleteFile(null, item.attachCloudFileUpload.id)
         .catch(statusCode => {
           // TODO With a notification bar, we could actually show this error.
-          cal.ERROR(
-            "[calendar-event-dialog] Deleting cloud attachment " +
+          console.error(
+            "Deleting cloud attachment " +
               "failed, file will remain on server. " +
               " Status code: " +
               statusCode
           );
         });
     } catch (e) {
-      cal.ERROR(
-        "[calendar-event-dialog] Deleting cloud attachment " +
-          "failed, file will remain on server. " +
-          "Exception: " +
-          e
-      );
+      console.error("Deleting cloud attachment failed, file will remain on server", e);
     }
   }
   item.remove();
@@ -4137,7 +4133,6 @@ function displayCounterProposal() {
   } else if (partStat == "NEEDS-ACTION") {
     partStat = "counterSummaryNeedsAction";
   } else {
-    cal.LOG("Unexpected partstat " + partStat + " detected.");
     // we simply reset partStat not display the summary text of the counter box
     // to avoid the window of death
     partStat = null;
@@ -4191,19 +4186,11 @@ function lookupCounterLabel(aProperty) {
   const labels =
     nodeIds.has(aProperty.property) &&
     document.getElementsByAttribute("control", nodeIds.get(aProperty.property));
-  let labelValue;
   if (labels && labels.length) {
     // as label control assignment should be unique, we can just take the first result
-    labelValue = labels[0].value;
-  } else {
-    cal.LOG(
-      "Unsupported property " +
-        aProperty.property +
-        " detected when setting up counter " +
-        "box labels."
-    );
+    return labels[0].value;
   }
-  return labelValue;
+  return null;
 }
 
 /**
@@ -4226,10 +4213,6 @@ function formatCounterValue(aProperty) {
     }
   } else if (stringProps.includes(aProperty.property)) {
     val = aProperty.proposed;
-  } else {
-    cal.LOG(
-      "Unsupported property " + aProperty.property + " detected when setting up counter box values."
-    );
   }
   return val;
 }

@@ -23,7 +23,7 @@ use super::{conv, descriptor, D3D12Lib};
 use crate::{
     auxil::{
         self,
-        dxgi::{name::ObjectExt, result::HResult},
+        dxgi::{name::ObjectExt as _, result::HResult as _},
     },
     dx12::{
         borrow_optional_interface_temporarily, shader_compilation, suballocation, DCompLib,
@@ -726,7 +726,7 @@ impl crate::Device for super::Device {
         let mut filter = Direct3D12::D3D12_FILTER(
             (conv::map_filter_mode(desc.min_filter).0 << Direct3D12::D3D12_MIN_FILTER_SHIFT)
                 | (conv::map_filter_mode(desc.mag_filter).0 << Direct3D12::D3D12_MAG_FILTER_SHIFT)
-                | (conv::map_filter_mode(desc.mipmap_filter).0
+                | (conv::map_mipmap_filter_mode(desc.mipmap_filter).0
                     << Direct3D12::D3D12_MIP_FILTER_SHIFT)
                 | (reduction.0 << Direct3D12::D3D12_FILTER_REDUCTION_TYPE_SHIFT),
         );
@@ -796,6 +796,7 @@ impl crate::Device for super::Device {
             mem_allocator: self.mem_allocator.clone(),
             rtv_pool: Arc::clone(&self.rtv_pool),
             temp_rtv_handles: Vec::new(),
+            intermediate_copy_bufs: Vec::new(),
             null_rtv_handle: self.null_rtv_handle,
             list: None,
             free_lists: Vec::new(),
@@ -1895,8 +1896,8 @@ impl crate::Device for super::Device {
             DepthBias: bias.constant,
             DepthBiasClamp: bias.clamp,
             SlopeScaledDepthBias: bias.slope_scale,
-            DepthClipEnable: Foundation::BOOL::from(!desc.primitive.unclipped_depth),
-            MultisampleEnable: Foundation::BOOL::from(desc.multisample.count > 1),
+            DepthClipEnable: windows_core::BOOL::from(!desc.primitive.unclipped_depth),
+            MultisampleEnable: windows_core::BOOL::from(desc.multisample.count > 1),
             ForcedSampleCount: 0,
             AntialiasedLineEnable: false.into(),
             ConservativeRaster: if desc.primitive.conservative {
@@ -1925,7 +1926,7 @@ impl crate::Device for super::Device {
             RasterizedStream: 0,
         };
         let blend_state = Direct3D12::D3D12_BLEND_DESC {
-            AlphaToCoverageEnable: Foundation::BOOL::from(
+            AlphaToCoverageEnable: windows_core::BOOL::from(
                 desc.multisample.alpha_to_coverage_enabled,
             ),
             IndependentBlendEnable: true.into(),

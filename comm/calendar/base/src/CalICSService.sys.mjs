@@ -4,9 +4,15 @@
 
 import ICAL from "resource:///modules/calendar/Ical.sys.mjs";
 
-import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
-
 const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
+
 ChromeUtils.defineESModuleGetters(lazy, {
   CalDateTime: "resource:///modules/CalDateTime.sys.mjs",
   CalDuration: "resource:///modules/CalDuration.sys.mjs",
@@ -195,7 +201,7 @@ CalIcalProperty.prototype = {
   },
 
   clearXParameters() {
-    cal.WARN(
+    lazy.log.warn(
       "calIICSService::clearXParameters is no longer implemented, please use removeParameter"
     );
   },
@@ -588,7 +594,7 @@ CalICSService.prototype = {
       listener.onParsingComplete(Cr.OK, icalComp);
     };
     worker.onerror = function (event) {
-      cal.ERROR(`Parsing failed; ${event.message}. ICS data:\n${serialized}`);
+      lazy.log.error(`Parsing failed; ${event.message}. ICS data:\n${serialized}`);
       listener.onParsingComplete(Cr.NS_ERROR_FAILURE, null);
     };
     worker.postMessage(serialized);

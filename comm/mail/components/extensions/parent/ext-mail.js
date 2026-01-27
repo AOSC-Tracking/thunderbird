@@ -31,7 +31,14 @@ const POPUP_WINDOW_URI = "chrome://messenger/content/extensionPopup.xhtml";
 const COMPOSE_WINDOW_URI =
   "chrome://messenger/content/messengercompose/messengercompose.xhtml";
 const MESSAGE_WINDOW_URI = "chrome://messenger/content/messageWindow.xhtml";
-const MESSAGE_PROTOCOLS = ["imap", "mailbox", "news", "nntp", "snews"];
+const MESSAGE_PROTOCOLS = [
+  "imap",
+  "mailbox",
+  "news",
+  "nntp",
+  "snews",
+  "x-moz-ews",
+];
 
 (function () {
   // Monkey-patch all processes to add the "messenger" alias in all contexts.
@@ -408,18 +415,33 @@ class TabTracker extends TabTrackerBase {
 
     this._handleTabDestroyed = this._handleTabDestroyed.bind(this);
 
-    ExtensionSupport.registerWindowListener("ext-sessions", {
+    ExtensionSupport.registerWindowListener("ext-tab-storage", {
       chromeURLs: [MAIN_WINDOW_URI],
       onLoadWindow(window) {
+        // Handle tab-specific data for the sessions API.
         window.gTabmail.registerTabMonitor({
           monitorName: "extensionSession",
           onTabTitleChanged() {},
           onTabClosing() {},
-          onTabPersist(aTab) {
-            return aTab._ext.extensionSession;
+          onTabPersist(tab) {
+            return tab._ext.extensionSession;
           },
-          onTabRestored(aTab, aState) {
-            aTab._ext.extensionSession = aState;
+          onTabRestored(tab, state) {
+            tab._ext.extensionSession = state;
+          },
+          onTabSwitched() {},
+          onTabOpened() {},
+        });
+        // Handle tab-specific data for the spaces API.
+        window.gTabmail.registerTabMonitor({
+          monitorName: "extensionSpaces",
+          onTabTitleChanged() {},
+          onTabClosing() {},
+          onTabPersist(tab) {
+            return tab._ext.extensionSpaces;
+          },
+          onTabRestored(tab, state) {
+            tab._ext.extensionSpaces = state;
           },
           onTabSwitched() {},
           onTabOpened() {},

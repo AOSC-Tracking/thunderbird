@@ -8,11 +8,6 @@ import os
 import sys
 
 from redo import retry
-from taskgraph.decision import (
-    _determine_more_accurate_base_ref,
-    _determine_more_accurate_base_rev,
-    _get_env_prefix,
-)
 from taskgraph.taskgraph import TaskGraph
 from taskgraph.util.taskcluster import get_artifact
 from taskgraph.util.vcs import get_repository
@@ -28,7 +23,7 @@ from gecko_taskgraph.util.taskgraph import (
 )
 
 from . import COMM
-from comm_taskgraph.files_changed import get_changed_files
+from comm_taskgraph.files_changed import prefix_paths
 from comm_taskgraph.try_option_syntax import parse_message
 from comm_taskgraph.util.suite import is_suite_only_push
 
@@ -176,6 +171,7 @@ def get_decision_parameters(graph_config, parameters):
     for n in (
         "COMM_BASE_REPOSITORY",
         "COMM_BASE_REV",
+        "COMM_BASE_REF",
         "COMM_HEAD_REPOSITORY",
         "COMM_HEAD_REV",
         "COMM_HEAD_REF",
@@ -183,32 +179,36 @@ def get_decision_parameters(graph_config, parameters):
         val = os.environ.get(n, "")
         parameters[n.lower()] = val
 
-    repo_path = COMM
-    repo = get_repository(repo_path)
-    logger.info("Determining comm_base_ref...")
-    parameters["comm_base_ref"] = _determine_more_accurate_base_ref(
-        repo,
-        candidate_base_ref="",
-        head_ref=parameters.get("comm_head_ref"),
-        base_rev=parameters.get("comm_base_rev"),
-    )
-    logger.info("Determining comm_base_rev...")
-    parameters["comm_base_rev"] = _determine_more_accurate_base_rev(
-        repo,
-        base_ref=parameters["comm_base_ref"],
-        candidate_base_rev=parameters.get("comm_base_rev"),
-        head_rev=parameters.get("comm_head_rev"),
-        env_prefix=_get_env_prefix(graph_config),
-    )
+    repo = get_repository(COMM)
+
+    # If comm_base_ref is None, set to default branch
+    if not parameters.get("comm_base_ref"):
+        logger.info("Determining comm_base_ref...")
+        logger.info("comm_base_ref not provided; using repo default_branch")
+        parameters["comm_base_ref"] = getattr(repo, "default_branch", "") or ""
+
+    # If both comm_base_rev and comm_head_rev exist, set comm_base_rev to latest
+    # common revision with comm_head_rev
+    if parameters.get("comm_base_rev") and parameters.get("comm_head_rev"):
+        logger.info("Determining comm_base_rev...")
+        try:
+            logger.info("Recomputing comm_base_rev as merge-base with comm_head_rev")
+            parameters["comm_base_rev"] = repo.find_latest_common_revision(
+                parameters["comm_base_rev"], parameters["comm_head_rev"]
+            )
+        except Exception:
+            logger.exception("Failed to compute merge-base; keeping provided comm_base_rev")
 
     # Calculate changed files here. Already have gecko's changed files when this
     # executes, so only need to add comm changed files
-    parameters["files_changed"] += sorted(
-        get_changed_files(
-            parameters["comm_head_repository"],
-            parameters["comm_head_rev"],
-            parameters["comm_src_path"],
-        )
+    changed_files_since_base = set(
+        repo.get_changed_files(rev=parameters["comm_head_rev"], base=parameters["comm_base_rev"])
+    )
+    if "try-comm-central" in parameters["project"] and options["tasks_for"] == "hg-push":
+        changed_files_since_base |= set(repo.get_outgoing_files())
+
+    parameters["files_changed"] = sorted(
+        prefix_paths(changed_files_since_base, parameters["comm_src_path"])
     )
 
     # If the target method is nightly, we should build partials. This means

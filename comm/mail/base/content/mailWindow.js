@@ -1,7 +1,8 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
 
 /* import-globals-from ../../../../toolkit/content/contentAreaUtils.js */
 /* import-globals-from ../../../../toolkit/content/viewZoomOverlay.js */
@@ -357,10 +358,10 @@ nsMsgStatusFeedback.prototype = {
     }, this);
   },
 
-  /*
+  /**
    * Set the statusbar display for hovered links, from browser.js.
    *
-   * @param {String} url - The href to display.
+   * @param {string} url - The href to display.
    */
   setOverLink(url) {
     if (url) {
@@ -1119,10 +1120,14 @@ window.addEventListener("aboutMessageLoaded", event => {
   });
 });
 
-// Listener to correctly set the busy flag on the webBrowser in about:3pane. All
-// other content tabs are handled by tabmail.js.
 contentProgress.addListener({
-  onStateChange(browser, webProgress, request, stateFlags, statusCode) {
+  onLocationChange() {
+    // Clear any URL for a hovered link that is displayed in the status bar.
+    window.MsgStatusFeedback.setOverLink("");
+  },
+  // Listener to correctly set the busy flag on the webBrowser in about:3pane. All
+  // other content tabs are handled by tabmail.js.
+  onStateChange(browser, _webProgress, _request, stateFlags, statusCode) {
     // Skip if this is not the webBrowser in about:3pane.
     if (browser.id != "webBrowser") {
       return;

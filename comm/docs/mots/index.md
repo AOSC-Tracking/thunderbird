@@ -373,19 +373,20 @@ widths: 30 70
 ---
 * - Owner(s)
   -
-    * [Brendan Abolivier (babolivier)](https://people.mozilla.org/s?query=babolivier)
+    * [Eleanor Dicharry (edicharry)](https://people.mozilla.org/s?query=edicharry)
 * - Peer(s)
   -
     * [Heather Ellsworth (heather)](https://people.mozilla.org/s?query=heather)
     * [Magnus Melin (mkmelin)](https://people.mozilla.org/s?query=mkmelin)
-    * [Eleanor Dicharry (edicharry)](https://people.mozilla.org/s?query=edicharry)
+    * [Brendan Abolivier (babolivier)](https://people.mozilla.org/s?query=babolivier)
     * [Justin Tracey (jtracey)](https://people.mozilla.org/s?query=jtracey)
 * - Owner(s) Emeritus
-  - Sean Burke
+  - Sean Burke, Brendan Abolivier
 * - Includes
   -
     * mailnews/protocols/ews/\*\*
     * rust/ews_xpcom/\*\*
+    * rust/graph_xpcom/\*\*
 * - Bugzilla Components
   - MailNews Core::Networking: Exchange
 ```

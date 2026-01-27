@@ -5,6 +5,15 @@
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
 import { calItemBase } from "resource:///modules/CalItemBase.sys.mjs";
 
+const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
+
 /**
  * Constructor for `calIEvent` objects.
  *
@@ -47,7 +56,9 @@ CalEvent.prototype = {
   },
 
   createProxy(aRecurrenceId) {
-    cal.ASSERT(!this.mIsProxy, "Tried to create a proxy for an existing proxy!", true);
+    if (this.mIsProxy) {
+      throw new Error("Tried to create a proxy for an existing proxy!");
+    }
 
     const proxy = new CalEvent();
 
@@ -122,7 +133,7 @@ CalEvent.prototype = {
                 if (e.result == Cr.NS_ERROR_ILLEGAL_VALUE) {
                   // Illegal values should be ignored, but we could log them if
                   // the user has enabled logging.
-                  cal.LOG(
+                  lazy.log.debug(
                     "Warning: Invalid event parameter value " +
                       paramName +
                       "=" +
@@ -137,7 +148,7 @@ CalEvent.prototype = {
           icalcomp.addProperty(icalprop);
         }
       } catch (e) {
-        cal.ERROR("failed to set " + name + " to " + value + ": " + e + "\n");
+        lazy.log.error(`Setting ${name}=${value} FAILED.`, e);
       }
     }
     return icalcomp;

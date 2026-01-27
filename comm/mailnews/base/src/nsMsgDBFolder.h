@@ -289,7 +289,7 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   nsCOMPtr<nsIFile> mPath;
   nsCString mBaseMessageURI;  // The uri with the message scheme
 
-  nsString GetLocalizedNameInternal();
+  virtual nsString GetLocalizedNameInternal();
   bool UsesLocalizedName();
   nsresult GetLocalizedName(nsACString& name);  // UTF-8 convenience version
 
@@ -306,6 +306,7 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   static nsString kLocalizedUnsentName;
   static nsString kLocalizedJunkName;
   static nsString kLocalizedArchivesName;
+  static nsString kLocalizedAllMailName;
 
   static nsString kLocalizedBrandShortName;
 

@@ -5,7 +5,9 @@
 
 #include "nsLocalMailFolder.h"
 
+#include "nsIScriptError.h"
 #include "nsISeekableStream.h"
+#include "nsPrintfCString.h"
 #include "prlog.h"
 #include "CopyMessageStreamListener.h"
 #include "FolderCompactor.h"
@@ -124,6 +126,43 @@ nsMsgLocalMailFolder::~nsMsgLocalMailFolder(void) {}
 NS_IMPL_ISUPPORTS_INHERITED(nsMsgLocalMailFolder, nsMsgDBFolder,
                             nsICopyMessageListener, nsIMsgLocalMailFolder)
 
+nsString nsMsgLocalMailFolder::GetLocalizedNameInternal() {
+  // Localized names for local folders.
+
+  if (mFlags & nsMsgFolderFlags::Inbox &&
+      mName.LowerCaseEqualsLiteral("inbox")) {
+    return kLocalizedInboxName;
+  }
+  if (mFlags & nsMsgFolderFlags::SentMail &&
+      mName.LowerCaseEqualsLiteral("sent")) {
+    return kLocalizedSentName;
+  }
+  if (mFlags & nsMsgFolderFlags::Drafts &&
+      mName.LowerCaseEqualsLiteral("drafts")) {
+    return kLocalizedDraftsName;
+  }
+  if (mFlags & nsMsgFolderFlags::Templates &&
+      mName.LowerCaseEqualsLiteral("templates")) {
+    return kLocalizedTemplatesName;
+  }
+  if (mFlags & nsMsgFolderFlags::Trash &&
+      mName.LowerCaseEqualsLiteral("trash")) {
+    return kLocalizedTrashName;
+  }
+  if (mFlags & nsMsgFolderFlags::Queue &&
+      mName.LowerCaseEqualsLiteral("unsent messages")) {
+    return kLocalizedUnsentName;
+  }
+  if (mFlags & nsMsgFolderFlags::Junk && mName.LowerCaseEqualsLiteral("junk")) {
+    return kLocalizedJunkName;
+  }
+  if (mFlags & nsMsgFolderFlags::Archive &&
+      mName.LowerCaseEqualsLiteral("archives")) {
+    return kLocalizedArchivesName;
+  }
+  return u""_ns;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 NS_IMETHODIMP nsMsgLocalMailFolder::CreateLocalSubfolder(
@@ -201,7 +240,19 @@ NS_IMETHODIMP nsMsgLocalMailFolder::ParseFolder(nsIMsgWindow* window,
 
   // Start the parsing.
   rv = indexer->GoIndex(this, progressFn, completionFn);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    nsAutoCString prettyPath;
+    GetPrettyPath(prettyPath);
+    nsPrintfCString msg("Unable to build summary file for %s (error 0x%08X).",
+                        prettyPath.get(), static_cast<uint32_t>(rv));
+    NS_WARNING(msg.get());
+    msg.Append("\nRepairing the folder may fix this issue."_ns);
+    MsgLogToConsole4(NS_ConvertUTF8toUTF16(msg), nsCString(__FILE__), __LINE__,
+                     nsIScriptError::errorFlag);
+    if (listener) listener->OnStopRunningUrl(nullptr, rv);
+    return rv;
+  }
+
   m_parsingFolder = true;
   mReparseListener = listener;
 
@@ -1840,7 +1891,7 @@ NS_IMETHODIMP nsMsgLocalMailFolder::GetNewMessages(nsIMsgWindow* aWindow,
   // XXX todo, move all this into nsILocalMailIncomingServer's GetNewMail
   // so that we don't have to have RSS foo here.
   nsCOMPtr<nsIRssIncomingServer> rssServer = do_QueryInterface(server, &rv);
-  mozilla::Unused << rssServer;
+  (void)rssServer;
   if (NS_SUCCEEDED(rv)) {
     nsCOMPtr<nsIURI> resultURI;
     return localMailServer->GetNewMail(aWindow, aListener, this,
@@ -2934,7 +2985,7 @@ nsMsgLocalMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
     // if we are the inbox and running pop url
     nsresult rv;
     nsCOMPtr<nsIPop3URL> popurl = do_QueryInterface(aUrl, &rv);
-    mozilla::Unused << popurl;
+    (void)popurl;
     if (NS_SUCCEEDED(rv)) {
       nsCOMPtr<nsIMsgIncomingServer> server;
       GetServer(getter_AddRefs(server));

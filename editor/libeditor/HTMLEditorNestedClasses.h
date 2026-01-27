@@ -1690,8 +1690,8 @@ HTMLEditor::AutoDeleteRangesHandler::AutoEmptyBlockAncestorDeleter final {
    * `mEmptyInclusiveAncestorBlockElement`.
    */
   [[nodiscard]] Result<CaretPoint, nsresult> GetNewCaretPosition(
-      const HTMLEditor& aHTMLEditor,
-      nsIEditor::EDirection aDirectionAndAmount) const;
+      const HTMLEditor& aHTMLEditor, nsIEditor::EDirection aDirectionAndAmount,
+      const Element& aEditingHost) const;
 
   RefPtr<Element> mEmptyInclusiveAncestorBlockElement;
 };
@@ -2076,7 +2076,7 @@ class HTMLEditor::DocumentModifiedEvent final : public Runnable {
       : Runnable("DocumentModifiedEvent"), mHTMLEditor(aHTMLEditor) {}
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD Run() {
-    Unused << MOZ_KnownLive(mHTMLEditor)->OnModifyDocument(*this);
+    (void)MOZ_KnownLive(mHTMLEditor)->OnModifyDocument(*this);
     return NS_OK;
   }
 

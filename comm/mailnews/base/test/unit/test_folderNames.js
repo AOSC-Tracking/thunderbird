@@ -3,13 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- * Tests folders which should have a localised name that is different from the
- * folder's name.
+ * Tests local folders which should have a localised name that is different
+ * from the folder's name.
  */
 
 add_task(function () {
   // Get the localized strings. This test should work in any locale, or if you
-  // change the string values in messenger.properties.
+  // change the string values in messenger.properties/messenger.ftl.
 
   const bundle = Services.strings.createBundle(
     "chrome://messenger/locale/messenger.properties"
@@ -21,6 +21,9 @@ add_task(function () {
   const templatesFolderName = bundle.GetStringFromName("templatesFolderName");
   const outboxFolderName = bundle.GetStringFromName("outboxFolderName");
   const archivesFolderName = bundle.GetStringFromName("archivesFolderName");
+
+  const l10n = new Localization(["messenger/messenger.ftl"], true);
+  const spamFolderName = l10n.formatValueSync("folder-name-spam");
 
   Cc["@mozilla.org/msgFolder/msgFolderService;1"]
     .getService(Ci.nsIMsgFolderService)
@@ -53,7 +56,6 @@ add_task(function () {
     panorama ? "Sent" : ""
   );
 
-  // Gmail.
   const sentFolder2 = rootFolder.createLocalSubfolder("Sent Mail");
   sentFolder2.setFlag(Ci.nsMsgFolderFlags.SentMail);
   Assert.equal(sentFolder2.name, "Sent Mail");
@@ -75,7 +77,6 @@ add_task(function () {
     panorama ? "Drafts" : ""
   );
 
-  // Yahoo!.
   const draftsFolder2 = rootFolder.createLocalSubfolder("Draft");
   draftsFolder2.setFlag(Ci.nsMsgFolderFlags.Drafts);
   Assert.equal(draftsFolder2.name, "Draft");
@@ -129,11 +130,9 @@ add_task(function () {
     panorama ? "Unsent Messages" : ""
   );
 
-  const junkFolder = rootFolder.createLocalSubfolder("Spam");
+  const junkFolder = rootFolder.createLocalSubfolder("Junk");
   junkFolder.setFlag(Ci.nsMsgFolderFlags.Junk);
-  Assert.equal(junkFolder.name, "Spam");
-  const l10n = new Localization(["messenger/messenger.ftl"], true);
-  const spamFolderName = l10n.formatValueSync("folder-name-spam");
+  Assert.equal(junkFolder.name, "Junk");
   Assert.equal(junkFolder.localizedName, spamFolderName);
   Assert.equal(
     junkFolder.msgDatabase.dBFolderInfo.folderName,

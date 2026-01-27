@@ -358,7 +358,7 @@ nsresult nsImapMailFolder::AddSubfolderWithPath(const nsACString& name,
 
   folder->SetFilePath(folderPath);
   nsCOMPtr<nsIMsgImapMailFolder> imapFolder = do_QueryInterface(folder, &rv);
-  mozilla::Unused << imapFolder;
+  (void)imapFolder;
   NS_ENSURE_SUCCESS(rv, rv);
 
   uint32_t flags = 0;
@@ -1147,8 +1147,9 @@ NS_IMETHODIMP nsImapMailFolder::SetBoxFlags(int32_t aBoxFlags) {
     }
   }
   // Treat the GMail all mail folder as the archive folder.
-  if (m_boxFlags & (kImapAllMail | kImapArchive))
-    newFlags |= nsMsgFolderFlags::Archive;
+  if (m_boxFlags & kImapAllMail)
+    newFlags |= nsMsgFolderFlags::Archive | nsMsgFolderFlags::AllMail;
+  if (m_boxFlags & kImapArchive) newFlags |= nsMsgFolderFlags::Archive;
 
   SetFlags(newFlags);
   return NS_OK;
@@ -1424,68 +1425,66 @@ NS_IMETHODIMP nsImapMailFolder::UpdateStatus(nsIUrlListener* aListener,
 NS_IMETHODIMP nsImapMailFolder::EmptyTrash(nsIUrlListener* aListener) {
   nsCOMPtr<nsIMsgFolder> trashFolder;
   nsresult rv = GetTrashFolder(getter_AddRefs(trashFolder));
-  if (NS_SUCCEEDED(rv)) {
-    if (WeAreOffline()) {
-      nsCOMPtr<nsIMsgDatabase> trashDB;
-      rv = trashFolder->GetMsgDatabase(getter_AddRefs(trashDB));
-      if (trashDB) {
-        nsCOMPtr<nsIMsgOfflineOpsDatabase> opsDb =
-            do_QueryInterface(trashDB, &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        // Offline operations are usually indexed by a msgKey. There's no
-        // message here, so we pretend and generate a fake msgKey to hang the
-        // offline op from. Ugh.
-        nsMsgKey fakeKey;
-        opsDb->GetNextFakeOfflineMsgKey(&fakeKey);
-
-        nsCOMPtr<nsIMsgOfflineImapOperation> op;
-        rv = opsDb->GetOfflineOpForKey(fakeKey, true, getter_AddRefs(op));
-        trashFolder->SetFlag(nsMsgFolderFlags::OfflineEvents);
-        op->SetOperation(nsIMsgOfflineImapOperation::kDeleteAllMsgs);
-      }
-      return rv;
-    }
-
-    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
-    if (aListener)
-      rv = imapService->DeleteAllMessages(trashFolder, aListener);
-    else {
-      nsCOMPtr<nsIUrlListener> urlListener = do_QueryInterface(trashFolder);
-      rv = imapService->DeleteAllMessages(trashFolder, urlListener);
-    }
-    // Return an error if this failed. We want the empty trash on exit code
-    // to know if this fails so that it doesn't block waiting for empty trash to
-    // finish.
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // Delete any subfolders under Trash.
-    nsTArray<RefPtr<nsIMsgFolder>> subFolders;
-    rv = trashFolder->GetSubFolders(subFolders);
-    NS_ENSURE_SUCCESS(rv, rv);
-    while (!subFolders.IsEmpty()) {
-      RefPtr<nsIMsgFolder> f = subFolders.PopLastElement();
-      rv = trashFolder->PropagateDelete(f, true);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (WeAreOffline()) {
+    nsCOMPtr<nsIMsgDatabase> trashDB;
+    rv = trashFolder->GetMsgDatabase(getter_AddRefs(trashDB));
+    if (trashDB) {
+      nsCOMPtr<nsIMsgOfflineOpsDatabase> opsDb =
+          do_QueryInterface(trashDB, &rv);
       NS_ENSURE_SUCCESS(rv, rv);
+
+      // Offline operations are usually indexed by a msgKey. There's no
+      // message here, so we pretend and generate a fake msgKey to hang the
+      // offline op from. Ugh.
+      nsMsgKey fakeKey;
+      opsDb->GetNextFakeOfflineMsgKey(&fakeKey);
+
+      nsCOMPtr<nsIMsgOfflineImapOperation> op;
+      rv = opsDb->GetOfflineOpForKey(fakeKey, true, getter_AddRefs(op));
+      trashFolder->SetFlag(nsMsgFolderFlags::OfflineEvents);
+      op->SetOperation(nsIMsgOfflineImapOperation::kDeleteAllMsgs);
     }
-
-    nsCOMPtr<nsIPropertyBag2> transferInfo;
-    rv = trashFolder->GetDBTransferInfo(getter_AddRefs(transferInfo));
-    NS_ENSURE_SUCCESS(rv, rv);
-    // Bulk-delete all the messages by deleting the msf file and storage.
-    // This is a little kludgy.
-    rv = trashFolder->DeleteStorage();
-    NS_ENSURE_SUCCESS(rv, rv);
-    if (transferInfo) trashFolder->SetDBTransferInfo(transferInfo);
-    trashFolder->SetSizeOnDisk(0);
-
-    // The trash folder has effectively been deleted.
-    nsCOMPtr<nsIMsgFolderNotificationService> notifier =
-        mozilla::components::FolderNotification::Service();
-    notifier->NotifyFolderDeleted(trashFolder);
-
-    return NS_OK;
+    return rv;
   }
+
+  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
+  if (aListener)
+    rv = imapService->DeleteAllMessages(trashFolder, aListener);
+  else {
+    nsCOMPtr<nsIUrlListener> urlListener = do_QueryInterface(trashFolder);
+    rv = imapService->DeleteAllMessages(trashFolder, urlListener);
+  }
+  // Return an error if this failed. We want the empty trash on exit code
+  // to know if this fails so that it doesn't block waiting for empty trash to
+  // finish.
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Delete any subfolders under Trash.
+  nsTArray<RefPtr<nsIMsgFolder>> subFolders;
+  rv = trashFolder->GetSubFolders(subFolders);
+  NS_ENSURE_SUCCESS(rv, rv);
+  while (!subFolders.IsEmpty()) {
+    RefPtr<nsIMsgFolder> f = subFolders.PopLastElement();
+    rv = trashFolder->PropagateDelete(f, true);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  nsCOMPtr<nsIPropertyBag2> transferInfo;
+  rv = trashFolder->GetDBTransferInfo(getter_AddRefs(transferInfo));
+  NS_ENSURE_SUCCESS(rv, rv);
+  // Bulk-delete all the messages by deleting the msf file and storage.
+  // This is a little kludgy.
+  rv = trashFolder->DeleteStorage();
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (transferInfo) trashFolder->SetDBTransferInfo(transferInfo);
+  trashFolder->SetSizeOnDisk(0);
+
+  // The trash folder has effectively been deleted.
+  nsCOMPtr<nsIMsgFolderNotificationService> notifier =
+      mozilla::components::FolderNotification::Service();
+  rv = notifier->NotifyFolderDeleted(trashFolder);
+
   return rv;
 }
 
@@ -7239,8 +7238,13 @@ nsImapMailFolder::CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
       newPathFile->IsDirectory(&isDirectory);
       if (!isDirectory) {
         AddDirectorySeparator(newPathFile);
-        rv = newPathFile->Create(nsIFile::DIRECTORY_TYPE, 0700);
+        bool exists = false;
+        rv = newPathFile->Exists(&exists);
         NS_ENSURE_SUCCESS(rv, rv);
+        if (!exists) {
+          rv = newPathFile->Create(nsIFile::DIRECTORY_TYPE, 0700);
+          NS_ENSURE_SUCCESS(rv, rv);
+        }
       }
 
       rv = CheckIfFolderExists(folderName, this, msgWindow);
@@ -7279,48 +7283,51 @@ nsImapMailFolder::CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
         parentPathFile->GetDirectoryEntries(getter_AddRefs(children));
         bool more;
         // checks if the directory is empty or not
-        if (children && NS_SUCCEEDED(children->HasMoreElements(&more)) && !more)
+        if (children && NS_SUCCEEDED(children->HasMoreElements(&more)) &&
+            !more) {
           parentPathFile->Remove(true);
-      }
-    } else  // non-virtual folder
-    {
-      nsCOMPtr<nsIImapService> imapService =
-          mozilla::components::Imap::Service();
-      nsCOMPtr<nsISupports> srcSupport = do_QueryInterface(srcFolder);
-      bool match = false;
-      bool confirmed = false;
-      if (mFlags & nsMsgFolderFlags::Trash) {
-        rv = srcFolder->MatchOrChangeFilterDestination(nullptr, false, &match);
-        if (match) {
-          srcFolder->ConfirmFolderDeletionForFilter(msgWindow, &confirmed);
-          // should we return an error to copy service?
-          // or send a notification?
-          if (!confirmed) return NS_OK;
         }
       }
-      rv = InitCopyState(srcSupport, {}, false, false, false, 0, EmptyCString(),
-                         listener, msgWindow, false);
-      if (NS_FAILED(rv)) return OnCopyCompleted(srcSupport, rv);
-
-      rv = imapService->MoveFolder(srcFolder, this, this, msgWindow);
+      nsCOMPtr<nsIMsgCopyService> copyService =
+          mozilla::components::Copy::Service();
+      return copyService->NotifyCompletion(srcFolder, this, rv);
     }
-  } else {
-    // !sameServer OR it's a copy. Unit tests expect a successful folder
-    // copy within the same IMAP server even though the UI forbids copy and
-    // only allows moves inside the same server. folderCopier, set below,
-    // handles the folder copy within an IMAP server (needed by unit tests) and
-    // the folder move or copy from another account or server into an IMAP
-    // account/server. The folder move from another account is "impure" since
-    // just the messages are moved and the source folder remains in place.
-    RefPtr<nsImapFolderCopyState> folderCopier = new nsImapFolderCopyState(
-        this, srcFolder,
-        isMoveFolder,  // Always copy folders; if true only move the messages
-        msgWindow, listener);
-    // NOTE: the copystate object must hold itself in existence until complete,
-    // as we're not keeping hold of it here.
-    rv = folderCopier->StartNextCopy();
+
+    // non-virtual folder
+    nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
+    nsCOMPtr<nsISupports> srcSupport = do_QueryInterface(srcFolder);
+    bool match = false;
+    bool confirmed = false;
+    if (mFlags & nsMsgFolderFlags::Trash) {
+      rv = srcFolder->MatchOrChangeFilterDestination(nullptr, false, &match);
+      if (match) {
+        srcFolder->ConfirmFolderDeletionForFilter(msgWindow, &confirmed);
+        // should we return an error to copy service?
+        // or send a notification?
+        if (!confirmed) return NS_OK;
+      }
+    }
+    rv = InitCopyState(srcSupport, {}, false, false, false, 0, EmptyCString(),
+                       listener, msgWindow, false);
+    if (NS_FAILED(rv)) return OnCopyCompleted(srcSupport, rv);
+
+    return imapService->MoveFolder(srcFolder, this, this, msgWindow);
   }
-  return rv;
+
+  // !sameServer OR it's a copy. Unit tests expect a successful folder
+  // copy within the same IMAP server even though the UI forbids copy and
+  // only allows moves inside the same server. folderCopier, set below,
+  // handles the folder copy within an IMAP server (needed by unit tests) and
+  // the folder move or copy from another account or server into an IMAP
+  // account/server. The folder move from another account is "impure" since
+  // just the messages are moved and the source folder remains in place.
+  RefPtr<nsImapFolderCopyState> folderCopier = new nsImapFolderCopyState(
+      this, srcFolder,
+      isMoveFolder,  // Always copy folders; if true only move the messages
+      msgWindow, listener);
+  // NOTE: the copystate object must hold itself in existence until complete,
+  // as we're not keeping hold of it here.
+  return rv = folderCopier->StartNextCopy();
 }
 
 NS_IMETHODIMP

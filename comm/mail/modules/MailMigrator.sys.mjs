@@ -30,7 +30,7 @@ export var MailMigrator = {
   _migrateUI() {
     // The code for this was ported from
     // mozilla/browser/components/nsBrowserGlue.js
-    const UI_VERSION = 54;
+    const UI_VERSION = 56;
     const UI_VERSION_PREF = "mail.ui-rdf.version";
     let currentUIVersion = Services.prefs.getIntPref(UI_VERSION_PREF, 0);
 
@@ -139,10 +139,7 @@ export var MailMigrator = {
       if (currentUIVersion < 42) {
         // Update the display name version pref so we force clear the cache of
         // sender names.
-        Services.prefs.setIntPref(
-          "mail.displayname.version",
-          Services.prefs.getIntPref("mail.displayname.version", 0) + 1
-        );
+        MailServices.ab.clearCache();
       }
 
       if (currentUIVersion < 43) {
@@ -363,6 +360,19 @@ export var MailMigrator = {
             "-moz-missing\n"
           );
         }
+      }
+
+      if (currentUIVersion < 55) {
+        // Force all logins to be re-encrypted to make use of more modern crypto.
+        // This pref is checked in the initialization of the LoginManagerStorage.
+        Services.prefs.setBoolPref("signon.reencryptionNeeded", true);
+      }
+
+      if (currentUIVersion < 56) {
+        // As we've removed this pref (in the process of stabilizing the native
+        // EWS support), we should clear it from user's profiles if its value
+        // has been changed.
+        Services.prefs.clearUserPref("experimental.mail.ews.enabled");
       }
 
       // Migration tasks that may take a long time are not run immediately, but

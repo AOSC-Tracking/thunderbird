@@ -18,8 +18,6 @@ tags = ["archive"]
 
 ["test_attachmentChecker.js"]
 
-["test_bug1086527.js"]
-
 ["test_columns.js"]
 
 ["test_darkReader.js"]
@@ -29,22 +27,32 @@ tags = ["archive"]
 ["test_emptyTrash_dbViewWrapper.js"]
 run-sequentially = true  # Avoid bustage.
 
+["test_folderSelectionDataAdapter.js"]
+tags = ["dataadapter"]
+
 ["test_linkHelper.js"]
 
 ["test_mailGlue_distribution.js"]
-skip-if = ["os == 'win' && msix"]  # MSIX has a distribution.ini and it's unwritable. Tests fail.
+skip-if = [
+  "os == 'win' && msix", # MSIX has a distribution.ini and it's unwritable. Tests fail.
+]
 
 ["test_migrateTryStartTLS.js"]
 
-["test_pluralForm.js"]
+["test_pluralForm-english.js"]
 
-["test_pluralForm_english.js"]
-
-["test_pluralForm_makeGetter.js"]
+["test_pluralForm-irish.js"]
 
 ["test_qrExport.js"]
 
+["test_state_preferenceSlice.js"]
+
+["test_state_store.js"]
+
+["test_state_xulStoreSlice.js"]
+
 ["test_treeDataAdapter.js"]
+tags = ["dataadapter"]
 
 ["test_treeSelection.js"]
 
@@ -54,7 +62,9 @@ run-sequentially = true  # Avoid bustage.
 ["test_viewWrapper_logic.js"]
 
 ["test_viewWrapper_realFolder.js"]
-skip-if = ["os == 'mac' && !debug"]
+skip-if = [
+  "os == 'mac' && !debug",
+]
 reason = "osx shippable perma failures"
 
 ["test_viewWrapper_virtualFolder.js"]

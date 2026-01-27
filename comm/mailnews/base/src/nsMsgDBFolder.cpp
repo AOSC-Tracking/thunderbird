@@ -170,6 +170,7 @@ MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedDraftsName;
 MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedTemplatesName;
 MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedUnsentName;
 MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedJunkName;
+MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedAllMailName;
 MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedArchivesName;
 
 MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedBrandShortName;
@@ -2515,11 +2516,17 @@ nsresult nsMsgDBFolder::initializeStrings() {
 
   RefPtr<mozilla::intl::Localization> l10n =
       mozilla::intl::Localization::Create({"messenger/messenger.ftl"_ns}, true);
+
   nsAutoCString localizedSpamName;
   rv = LocalizeMessage(l10n, "folder-name-spam"_ns, {}, localizedSpamName);
   NS_ENSURE_SUCCESS(rv, rv);
+  CopyUTF8toUTF16(localizedSpamName, kLocalizedJunkName);
 
-  kLocalizedJunkName = NS_ConvertUTF8toUTF16(localizedSpamName);
+  nsAutoCString localizedAllMailName;
+  rv = LocalizeMessage(l10n, "folder-name-all-mail"_ns, {},
+                       localizedAllMailName);
+  NS_ENSURE_SUCCESS(rv, rv);
+  CopyUTF8toUTF16(localizedAllMailName, kLocalizedAllMailName);
 
   nsCOMPtr<nsIStringBundle> brandBundle;
   rv = bundleService->CreateBundle("chrome://branding/locale/brand.properties",
@@ -2666,12 +2673,11 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolderId(uint64_t folderId) {
       mozilla::mailnews::DatabaseCore::GetInstanceForService();
   mozilla::mailnews::FolderDatabase& folderDB(dbCore->FolderDB());
 
-  uint64_t parentId;
-  MOZ_TRY_VAR(parentId, folderDB.GetFolderParent(folderId));
+  uint64_t parentId = MOZ_TRY(folderDB.GetFolderParent(folderId));
   mIsServer = (parentId == 0);
   mIsServerIsValid = true;
-  MOZ_TRY_VAR(mName, folderDB.GetFolderName(folderId));
-  MOZ_TRY_VAR(mFlags, folderDB.GetFolderFlags(folderId));
+  mName = MOZ_TRY(folderDB.GetFolderName(folderId));
+  mFlags = MOZ_TRY(folderDB.GetFolderFlags(folderId));
 
   // Set up the filesystem path. This could probably be improved by using the
   // parent folder's path instead of constructing the whole thing.
@@ -2679,10 +2685,8 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolderId(uint64_t folderId) {
   nsCOMPtr<nsIMsgAccountManager> accountManager =
       mozilla::components::AccountManager::Service();
   nsCOMPtr<nsIMsgIncomingServer> server;
-  uint64_t rootId;
-  MOZ_TRY_VAR(rootId, folderDB.GetFolderRoot(folderId));
-  nsCString rootName;
-  MOZ_TRY_VAR(rootName, folderDB.GetFolderName(rootId));
+  uint64_t rootId = MOZ_TRY(folderDB.GetFolderRoot(folderId));
+  nsCString rootName = MOZ_TRY(folderDB.GetFolderName(rootId));
 
   rv = accountManager->GetIncomingServer(rootName, getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2692,11 +2696,10 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolderId(uint64_t folderId) {
   rv = server->GetLocalPath(getter_AddRefs(mPath));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsTArray<uint64_t> ancestorIds;
-  MOZ_TRY_VAR(ancestorIds, folderDB.GetFolderAncestors(folderId));
+  nsTArray<uint64_t> ancestorIds =
+      MOZ_TRY(folderDB.GetFolderAncestors(folderId));
   for (int i = ancestorIds.Length() - 2; i >= 0; --i) {
-    nsCString name;
-    MOZ_TRY_VAR(name, folderDB.GetFolderName(ancestorIds[i]));
+    nsCString name = MOZ_TRY(folderDB.GetFolderName(ancestorIds[i]));
     mPath->Append(EncodeFilename(name) + u".sbd"_ns);
   }
   if (!mIsServer) {
@@ -2706,8 +2709,7 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolderId(uint64_t folderId) {
   // Set up the URI.
 
   server->GetServerURI(mURI);
-  nsCString path;
-  MOZ_TRY_VAR(path, folderDB.GetFolderPath(folderId));
+  nsCString path = MOZ_TRY(folderDB.GetFolderPath(folderId));
   rv = MsgEscapeString(path, nsINetUtil::ESCAPE_URL_PATH, path);
   NS_ENSURE_SUCCESS(rv, rv);
   mURI.Append(Substring(path, path.FindChar('/')));
@@ -2733,8 +2735,8 @@ NS_IMETHODIMP nsMsgDBFolder::InitWithFolderId(uint64_t folderId) {
   MOZ_TRY(folderDB.Reconcile(folderId, childNames));
 
   // Add the subfolders.
-  nsTArray<uint64_t> subFolderIds;
-  MOZ_TRY_VAR(subFolderIds, folderDB.GetFolderChildren(folderId));
+  nsTArray<uint64_t> subFolderIds =
+      MOZ_TRY(folderDB.GetFolderChildren(folderId));
   for (auto subFolderId : subFolderIds) {
     nsCOMPtr<nsIMsgFolder> msgFolder =
         do_CreateInstance("@mozilla.org/mail/folder;1?name=mailbox", &rv);
@@ -2771,7 +2773,7 @@ NS_IMETHODIMP nsMsgDBFolder::GetPath(nsACString& path) {
   RefPtr<mozilla::mailnews::DatabaseCore> dbCore =
       mozilla::mailnews::DatabaseCore::GetInstanceForService();
   mozilla::mailnews::FolderDatabase& folderDB(dbCore->FolderDB());
-  MOZ_TRY_VAR(path, folderDB.GetFolderPath(mFolderId));
+  path = MOZ_TRY(folderDB.GetFolderPath(mFolderId));
 
 #else
   MOZ_ASSERT(false, "panorama-only code");
@@ -3042,30 +3044,30 @@ NS_IMETHODIMP nsMsgDBFolder::GetPrettyPath(nsACString& aPath) {
 }
 
 nsString nsMsgDBFolder::GetLocalizedNameInternal() {
-  // INBOX is special...
+  // Localized names for remote folders. For local folders, this function is
+  // overridden with different behaviour in nsLocalMailFolder.
+
   if (mFlags & nsMsgFolderFlags::Inbox &&
       mName.LowerCaseEqualsLiteral("inbox")) {
     return kLocalizedInboxName;
   }
 
-  nsAutoCString serverType;
-  GetIncomingServerType(serverType);
-  if (!serverType.Equals("none")) {
-    // Only Local Folders acccounts should have special treatment of name.
-    // For other accounts, the name may or may not be localized to the
-    // user server side settings. But we must match what's shown to the
-    // user on the server to avoid confusion about what folder it is and
-    // potential duplication (e.g. name + localized name both showing "Sent").
-    // See nsMsgDBFolder::AddSubfolder
+  if (!StaticPrefs::mail_useLocalizedFolderNames_AtStartup()) {
     return u""_ns;
   }
 
   if (mFlags & nsMsgFolderFlags::SentMail &&
-      mName.LowerCaseEqualsLiteral("sent")) {
+      (mName.LowerCaseEqualsLiteral("sent") ||
+       mName.LowerCaseEqualsLiteral("sent mail") ||   // Gmail
+       mName.LowerCaseEqualsLiteral("sent items") ||  // Thundermail
+       mName.LowerCaseEqualsLiteral("outbox")))       // Some French providers
+  {
     return kLocalizedSentName;
   }
   if (mFlags & nsMsgFolderFlags::Drafts &&
-      mName.LowerCaseEqualsLiteral("drafts")) {
+      (mName.LowerCaseEqualsLiteral("drafts") ||
+       mName.LowerCaseEqualsLiteral("draft")))  // Yahoo!
+  {
     return kLocalizedDraftsName;
   }
   if (mFlags & nsMsgFolderFlags::Templates &&
@@ -3073,20 +3075,37 @@ nsString nsMsgDBFolder::GetLocalizedNameInternal() {
     return kLocalizedTemplatesName;
   }
   if (mFlags & nsMsgFolderFlags::Trash &&
-      mName.LowerCaseEqualsLiteral("trash")) {
+      (mName.LowerCaseEqualsLiteral("trash") ||
+       mName.LowerCaseEqualsLiteral("bin") ||  // Gmail
+       mName.LowerCaseEqualsLiteral("deleted") ||
+       mName.LowerCaseEqualsLiteral(
+           "deleted items")))  // Thundermail, Office365
+  {
     return kLocalizedTrashName;
   }
   if (mFlags & nsMsgFolderFlags::Queue &&
-      mName.LowerCaseEqualsLiteral("unsent messages")) {
+      (mName.LowerCaseEqualsLiteral("unsent messages") ||
+       mName.LowerCaseEqualsLiteral("outbox")))  // Exchange
+  {
     return kLocalizedUnsentName;
   }
-  if (mFlags & nsMsgFolderFlags::Junk && mName.LowerCaseEqualsLiteral("junk")) {
+  if (mFlags & nsMsgFolderFlags::Junk &&
+      (mName.LowerCaseEqualsLiteral("junk") ||
+       mName.LowerCaseEqualsLiteral("junk mail") ||   // Thundermail
+       mName.LowerCaseEqualsLiteral("junk email") ||  // Exchange
+       mName.LowerCaseEqualsLiteral("spam") ||        // Gmail
+       mName.LowerCaseEqualsLiteral("bulk")))         // Yahoo!
+  {
     return kLocalizedJunkName;
   }
   if (mFlags & nsMsgFolderFlags::Archive &&
-
-      mName.LowerCaseEqualsLiteral("archives")) {
+      (mName.LowerCaseEqualsLiteral("archives") ||
+       mName.LowerCaseEqualsLiteral("archive")))  // Yahoo!, Office365
+  {
     return kLocalizedArchivesName;
+  }
+  if (mFlags & nsMsgFolderFlags::AllMail) {  // Gmail only
+    return kLocalizedAllMailName;
   }
   return u""_ns;
 }
@@ -3397,10 +3416,9 @@ NS_IMETHODIMP nsMsgDBFolder::AddSubfolder(const nsACString& name,
         mozilla::mailnews::DatabaseCore::GetInstanceForService();
     mozilla::mailnews::FolderDatabase& folderDB(dbCore->FolderDB());
 
-    uint64_t subFolderId;
     // FolderDatabase might already have an entry? Unclear...
-    MOZ_TRY_VAR(subFolderId,
-                folderDB.GetFolderChildNamed(mFolderId, actualName));
+    uint64_t subFolderId =
+        MOZ_TRY(folderDB.GetFolderChildNamed(mFolderId, actualName));
     if (subFolderId == 0) {
       rv = folderDB.InsertFolder(mFolderId, actualName, &subFolderId);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -3422,6 +3440,16 @@ NS_IMETHODIMP nsMsgDBFolder::AddSubfolder(const nsACString& name,
       return rv;
     }
 
+    // `CreateFolderAndCache` will return `NS_MSG_FOLDER_EXISTS` in two cases:
+    // 1. This folder object already has a child with the specified name.
+    // 2. This folder object already has a child with the specified URI.
+    // In both cases, that means `mSubFolders` already contains a child with the
+    // given name. This cannot be treated as an error condition because the
+    // folder lookup service reuses folder objects for the same URI, so a folder
+    // that already exists in the cache with this folder's URI will also already
+    // have children matching the child folder's URI. This can be changed once
+    // dangling folders are removed. See
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=1679333
     if (NS_SUCCEEDED(rv)) {
       mSubFolders.AppendObject(folder);
     }
@@ -5012,7 +5040,7 @@ NS_IMETHODIMP nsMsgDBFolder::ThrowAlertMsg(const char* msgName,
         ident);
   }
   if (ident.IsEmpty()) {
-    ident = NS_ConvertUTF8toUTF16(folderPath);  // Fallback, just in case.
+    CopyUTF8toUTF16(folderPath, ident);  // Fallback, just in case.
   }
 
   // Format the actual error message (NOTE: not all error messages use the

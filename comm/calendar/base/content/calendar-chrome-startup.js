@@ -31,14 +31,15 @@ ChromeUtils.defineESModuleGetters(this, {
  */
 async function loadCalendarComponent() {
   if (loadCalendarComponent.hasBeenCalled) {
-    cal.ERROR("loadCalendarComponent was called more than once for a single window");
-    return;
+    throw Error("loadCalendarComponent was called more than once for a single window");
   }
   loadCalendarComponent.hasBeenCalled = true;
 
-  if (cal.manager.wrappedJSObject.mCache) {
-    cal.ASSERT(
-      [...Services.wm.getEnumerator("mail:3pane")].length > 1,
+  if (
+    cal.manager.wrappedJSObject.mCache &&
+    [...Services.wm.getEnumerator("mail:3pane")].length == 1
+  ) {
+    console.error(
       "Calendar manager initialised calendars before loadCalendarComponent ran on the first " +
         "3pane window. This should not happen."
     );
@@ -226,7 +227,7 @@ function migrateCalendarUI() {
     }
     Services.prefs.setIntPref("calendar.ui.version", UI_VERSION);
   } catch (e) {
-    cal.ERROR("Error upgrading UI from " + currentUIVersion + " to " + UI_VERSION + ": " + e);
+    console.error("Error upgrading UI from " + currentUIVersion + " to " + UI_VERSION + ": " + e);
   }
 }
 
@@ -248,8 +249,6 @@ function setLocaleDefaultPreferences() {
     }
   }
 
-  cal.LOG("Start loading of locale dependent preference default values...");
-
   const defaultBranch = Services.prefs.getDefaultBranch("");
   const calendarInfo = cal.l10n.calendarInfo();
 
@@ -267,8 +266,6 @@ function setLocaleDefaultPreferences() {
   for (const prefDefault of prefDefaults) {
     setDefaultLocaleValue(prefDefault);
   }
-
-  cal.LOG("Loading of locale sensitive preference default values completed.");
 }
 
 /**

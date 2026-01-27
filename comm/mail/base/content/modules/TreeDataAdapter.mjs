@@ -20,11 +20,8 @@ export class TreeDataAdapter {
   _tree = null;
 
   /**
-   * An array of TreeDataRow items, each item corresponds to a row in the tree.
-   * This array contains the visible rows, that is top-level rows and any
-   * deeper row that has no closed ancestor.
-   *
-   * TODO: Maintain a separate list of top-level rows only.
+   * An array of TreeDataRow items, each item corresponds to a top-level row
+   * in the tree.
    *
    * @type {TreeDataRow[]}
    */
@@ -70,7 +67,60 @@ export class TreeDataAdapter {
    * @returns {integer}
    */
   get rowCount() {
-    return this._rowMap.length;
+    return this._rowMap.reduce(
+      (total, current) => total + (current.open ? current.rowCount + 1 : 1),
+      0
+    );
+  }
+
+  /**
+   * Get the row at a given row index, accounting for open rows. This is NOT
+   * the same as `this._rowMap[rowIndex]` or `this._rowMap.at(rowIndex).
+   *
+   * @param {number} rowIndex - A non-negative integer.
+   * @returns {?TreeDataRow}
+   */
+  rowAt(rowIndex) {
+    for (const topLevelRow of this._rowMap) {
+      if (rowIndex == 0) {
+        return topLevelRow;
+      }
+      rowIndex--;
+      if (topLevelRow.open) {
+        if (rowIndex < topLevelRow.rowCount) {
+          // A subclass might return undefined here, if it loads rows
+          // asynchronously. Use a blank row in the interim.
+          return topLevelRow.rowAt(rowIndex) ?? new TreeDataRow();
+        }
+        rowIndex -= topLevelRow.rowCount;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Get the row index of a given row, accounting for open rows. This is NOT
+   * the same as `this._rowMap.indexOf(row)`.
+   *
+   * @param {TreeDataRow} row
+   * @returns {number} The index of the row (can be used with rowAt) or -1.
+   */
+  indexOf(row) {
+    let rowIndex = 0;
+    for (const topLevelRow of this._rowMap) {
+      if (topLevelRow == row) {
+        return rowIndex;
+      }
+      rowIndex++;
+      if (topLevelRow.open) {
+        const childIndex = topLevelRow.indexOf(row);
+        if (childIndex >= 0) {
+          return rowIndex + childIndex;
+        }
+        rowIndex += topLevelRow.rowCount;
+      }
+    }
+    return -1;
   }
 
   /**
@@ -81,7 +131,7 @@ export class TreeDataAdapter {
    * @returns {string}
    */
   getCellText(rowIndex, columnID) {
-    return this._rowMap.at(rowIndex).getText(columnID);
+    return this.rowAt(rowIndex).getText(columnID);
   }
 
   /**
@@ -92,17 +142,17 @@ export class TreeDataAdapter {
    * @returns {string|number}
    */
   getCellValue(rowIndex, columnID) {
-    return this._rowMap.at(rowIndex).getValue(columnID);
+    return this.rowAt(rowIndex).getValue(columnID);
   }
 
   /**
-   * Properties of the row at `rowIndex`.
+   * Properties of the row at `rowIndex` as a space-separated list.
    *
    * @param {integer} rowIndex
    * @returns {string}
    */
   getRowProperties(rowIndex) {
-    return this._rowMap.at(rowIndex).getProperties();
+    return [...this.rowAt(rowIndex).properties].join(" ");
   }
 
   /**
@@ -112,7 +162,7 @@ export class TreeDataAdapter {
    * @returns {integer}
    */
   getLevel(rowIndex) {
-    return this._rowMap.at(rowIndex).level;
+    return this.rowAt(rowIndex).level;
   }
 
   /**
@@ -123,7 +173,7 @@ export class TreeDataAdapter {
    * @returns {integer}
    */
   getParentIndex(rowIndex) {
-    return this._rowMap.indexOf(this._rowMap.at(rowIndex).parent);
+    return this.indexOf(this.rowAt(rowIndex).parent);
   }
 
   /**
@@ -133,7 +183,7 @@ export class TreeDataAdapter {
    * @returns {boolean}
    */
   isContainer(rowIndex) {
-    return this._rowMap.at(rowIndex).children.length > 0;
+    return this.rowAt(rowIndex).children.length > 0;
   }
 
   /**
@@ -144,7 +194,7 @@ export class TreeDataAdapter {
    */
   isContainerEmpty(rowIndex) {
     // If the container has no children, the container is empty.
-    return !this._rowMap.at(rowIndex).children.length;
+    return !this.rowAt(rowIndex).children.length;
   }
 
   /**
@@ -154,7 +204,7 @@ export class TreeDataAdapter {
    * @returns {boolean}
    */
   isContainerOpen(rowIndex) {
-    return this._rowMap.at(rowIndex).open;
+    return this.rowAt(rowIndex).open;
   }
 
   /**
@@ -164,73 +214,23 @@ export class TreeDataAdapter {
    * @param {integer} rowIndex
    */
   toggleOpenState(rowIndex) {
-    // Ok, this is a bit tricky.
-    const row = this._rowMap.at(rowIndex);
-    row.open = !row.open;
-
-    if (!row.open) {
-      // We're closing the current container.  Remove the children
-
-      // Note that we can't simply splice out children.length, because some of
-      // them might have children too.  Find out how many items we're actually
-      // going to splice
-      const level = row.level;
-      let newRowIndex = rowIndex + 1;
-      while (
-        newRowIndex < this._rowMap.length &&
-        this._rowMap.at(newRowIndex).level > level
-      ) {
-        newRowIndex++;
-      }
-      const count = newRowIndex - rowIndex - 1;
-      this._rowMap.splice(rowIndex + 1, count);
-
-      // Notify the tree of changes
-      if (this._tree && count) {
-        this._tree.rowCountChanged(rowIndex + 1, -count);
+    const row = this.rowAt(rowIndex);
+    const rowCount = row.rowCount;
+    if (row.open) {
+      row.open = false;
+      if (rowCount) {
+        this._tree?.rowCountChanged(rowIndex + 1, -rowCount);
       }
     } else {
-      // We're opening the container.  Add the children to our map
-
-      // Note that these children may have been open when we were last closed,
-      // and if they are, we also have to add those grandchildren to the map
-      const oldCount = this._rowMap.length;
-      this.#recursivelyAddToMap(row, rowIndex);
-
-      // Notify the tree of changes
-      if (this._tree) {
-        const count = this._rowMap.length - oldCount;
-        if (count) {
-          this._tree.rowCountChanged(rowIndex + 1, count);
-        }
+      row.open = true;
+      // Tell the row it is being opened and it should prepare the child rows.
+      // (Used for subclasses.)
+      row.ensureChildren?.(this, rowIndex);
+      if (rowCount) {
+        this._tree?.rowCountChanged(rowIndex + 1, rowCount);
       }
     }
-
-    // Invalidate the toggled row, so that the open/closed marker changes
-    if (this._tree) {
-      this._tree.invalidateRow(rowIndex);
-    }
-  }
-
-  /**
-   * Adds the children of an open row to the array of visible rows.
-   *
-   * @param {TreeDataRow} parentRow
-   * @param {integer} newIndex - The index of `parentRow` in `_rowMap`.
-   * @returns {integer} The number of rows added.
-   */
-  #recursivelyAddToMap(parentRow, newIndex) {
-    // When we add sub-children, we're going to need to increase our index
-    // for the next add item at our own level.
-    const currentCount = this._rowMap.length;
-    if (parentRow.children.length && parentRow.open) {
-      for (const [i, child] of parentRow.children.entries()) {
-        const index = newIndex + i + 1;
-        this._rowMap.splice(index, 0, child);
-        newIndex += this.#recursivelyAddToMap(child, index);
-      }
-    }
-    return this._rowMap.length - currentCount;
+    this._tree?.invalidateRow(rowIndex);
   }
 
   /**
@@ -309,22 +309,138 @@ export class TreeDataAdapter {
  * the constructor, or make a class inheriting from this one to provide it.
  */
 export class TreeDataRow {
+  /**
+   * How deep in the tree this row is. Top-level rows are at level 0.
+   *
+   * @type {number}
+   */
   level = 0;
+
+  /**
+   * Whether or not this row is open (its children are visible).
+   *
+   * @protected
+   * @type {boolean}
+   */
+  _open = false;
+
+  /**
+   * The parent of this row, or null if this is a top-level row.
+   *
+   * @type {?TreeDataRow}
+   */
   parent = null;
-  open = false;
+
+  /**
+   * Child rows of this row.
+   *
+   * @type {TreeDataRow[]}
+   */
   children = [];
 
   /**
-   * @param {object} texts - The text to be displayed for this row. The
-   *   object's keys are column IDs, and the values are the text to display.
-   * @param {object} values - Same as `texts`, but instead the values are string
-   *   or numeric values for sorting the rows.
-   * @param {string} properties - The defined properties for this row.
+   * A set of string properties.
+   *
+   * Setting `@name` and `@private` explicitly to work around jsdoc/sphinx-js
+   * not understanding private class fields (#properties).
+   *
+   * @name TreeDataAdapter.TreeDataRow._properties
+   * @private
+   * @type {Set<string>}
    */
-  constructor(texts = {}, values = {}, properties = "") {
+  #properties;
+
+  /**
+   * @param {object} [texts={}] - The text to be displayed for this row. The
+   *   object's keys are column IDs, and the values are the text to display.
+   * @param {object} [values={}] - Same as `texts`, but instead the values are string
+   *   or numeric values for sorting the rows.
+   * @param {Iterable<string>} [properties=[]] - The defined properties for this row.
+   */
+  constructor(texts = {}, values = {}, properties = []) {
     this.texts = texts;
     this.values = values;
-    this.properties = properties;
+    this.#properties = new Set(properties);
+  }
+
+  /**
+   * Whether or not this row is open (its children are visible). Getter and
+   * setter can be overridden in a subclass to run extra code.
+   *
+   * @type {boolean}
+   */
+  get open() {
+    return this._open;
+  }
+
+  set open(value) {
+    this._open = value;
+  }
+
+  /**
+   * The number of visible descendants of this row. Note: this is the same
+   * value regardless of whether this row is open or closed.
+   *
+   * @returns {integer}
+   */
+  get rowCount() {
+    // A subclass might have undefined elements in the children array (i.e. a
+    // sparse array), so don't call `reduce` on it.
+    let count = 0;
+    for (const child of this.children) {
+      count += child?.open ? child.rowCount + 1 : 1;
+    }
+    return count;
+  }
+
+  /**
+   * Get the row at a given row index, relative to this row (that is, the
+   * first child would be at index 0), and accounting for open rows. This is
+   * NOT the same as `this.children[rowIndex]` or `this.children.at(rowIndex).
+   *
+   * @param {number} rowIndex - A non-negative integer.
+   * @returns {?TreeDataRow}
+   */
+  rowAt(rowIndex) {
+    for (const childRow of this.children) {
+      if (rowIndex == 0) {
+        return childRow;
+      }
+      rowIndex--;
+      if (childRow?.open) {
+        if (rowIndex < childRow.rowCount) {
+          return childRow.rowAt(rowIndex);
+        }
+        rowIndex -= childRow.rowCount;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Get the row index of a given row, relative to this row (that is, the
+   * first child would be at index 0), and accounting for open rows. This is
+   * NOT the same as `this.children.indexOf(row)`.
+   *
+   * @param {TreeDataRow} row
+   * @returns {number} The index of the row (can be used with rowAt) or -1.
+   */
+  indexOf(row) {
+    let rowIndex = 0;
+    for (const childRow of this.children) {
+      if (childRow == row) {
+        return rowIndex;
+      }
+      rowIndex++;
+      if (childRow.open) {
+        const childIndex = childRow.indexOf(row);
+        if (childIndex >= 0) {
+          return rowIndex + childIndex;
+        }
+        rowIndex + childRow.rowCount;
+      }
+    }
+    return -1;
   }
 
   /**
@@ -349,13 +465,57 @@ export class TreeDataRow {
   }
 
   /**
-   * Properties of the row. Usually a space-separated list that gets assigned
-   * to an element's attribute and matched with CSS selectors.
+   * Get the properties of the row.
    *
-   * @returns {string}
+   * @returns {Iterable<string>} Though this function returns an Iterator,
+   *   subclasses can override it and return any Iterable (e.g. an Array).
    */
-  getProperties() {
-    return this.properties;
+  get properties() {
+    return this.#properties.values();
+  }
+
+  /**
+   * Add a property to the row.
+   *
+   * @param {string} property
+   */
+  addProperty(property) {
+    this.#properties.add(property);
+  }
+
+  /**
+   * Change the existence of a property to a given value, or the opposite of
+   * the current value.
+   *
+   * @param {string} property
+   * @param {boolean} [force] - If true, the property will be added. If false,
+   *   it will be removed. If not given, the property will be toggled.
+   */
+  toggleProperty(property, force = !this.hasProperty(property)) {
+    if (force) {
+      this.addProperty(property);
+    } else {
+      this.removeProperty(property);
+    }
+  }
+
+  /**
+   * Test if the row has the given property.
+   *
+   * @param {string} property
+   * @returns {boolean}
+   */
+  hasProperty(property) {
+    return this.#properties.has(property);
+  }
+
+  /**
+   * Remove a property from the row.
+   *
+   * @param {string} property
+   */
+  removeProperty(property) {
+    this.#properties.delete(property);
   }
 
   /**

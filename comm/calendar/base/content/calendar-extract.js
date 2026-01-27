@@ -23,67 +23,6 @@ ChromeUtils.defineLazyGetter(this, "extractService", () => {
 });
 
 var calendarExtract = {
-  onShowLocaleMenu(target) {
-    const localeList = document.getElementById(target.id);
-    const langs = [];
-    const chrome = Cc["@mozilla.org/chrome/chrome-registry;1"]
-      .getService(Ci.nsIXULChromeRegistry)
-      .QueryInterface(Ci.nsIToolkitChromeRegistry);
-    const langRegex = /^(([^-]+)-*(.*))$/;
-
-    for (const locale of chrome.getLocalesForPackage("calendar")) {
-      const localeParts = langRegex.exec(locale);
-      let langName = localeParts[2];
-
-      try {
-        langName = cal.l10n.getAnyString("global", "languageNames", langName);
-      } catch (ex) {
-        // If no language name is found that is ok, keep the technical term
-      }
-
-      let label = calendarExtract.l10n.formatValueSync("extract-using", { languageName: langName });
-      if (localeParts[3] != "") {
-        label = calendarExtract.l10n.formatValueSync("extract-using-region", {
-          languageName: langName,
-          region: localeParts[3],
-        });
-      }
-
-      langs.push([label, localeParts[1]]);
-    }
-
-    // sort
-    const pref = "calendar.patterns.last.used.languages";
-    const lastUsedLangs = Services.prefs.getStringPref(pref, "");
-
-    langs.sort((a, b) => {
-      const idx_a = lastUsedLangs.indexOf(a[1]);
-      const idx_b = lastUsedLangs.indexOf(b[1]);
-
-      if (idx_a == -1 && idx_b == -1) {
-        return a[0].localeCompare(b[0]);
-      } else if (idx_a != -1 && idx_b != -1) {
-        return idx_a - idx_b;
-      } else if (idx_a == -1) {
-        return 1;
-      }
-      return -1;
-    });
-    while (localeList.lastChild) {
-      localeList.lastChild.remove();
-    }
-
-    for (const lang of langs) {
-      addMenuItem(localeList, lang[0], lang[1], null);
-    }
-  },
-
-  extractWithLocale(event, isEvent) {
-    event.stopPropagation();
-    const locale = event.target.value;
-    this.extractFromEmail(null, isEvent, true, locale);
-  },
-
   async extractFromEmail(message, isEvent, fixedLang, fixedLocale) {
     const folder = message.folder;
     const title = message.mime2DecodedSubject;
@@ -117,9 +56,8 @@ var calendarExtract = {
       MailServices.messageServiceFromURI(uri).streamMessage(uri, listener, null, null, false, "");
     });
 
-    cal.LOG("[calExtract] Original email content: \n" + title + "\r\n" + content);
     const date = new Date(message.date / 1000);
-    const time = new Date().getTime();
+    // const time = new Date().getTime();
 
     const item = isEvent ? new CalEvent() : new CalTodo();
     item.title = message.mime2DecodedSubject;
@@ -174,7 +112,6 @@ var calendarExtract = {
 
     // if we only have email date then use default start and end
     if (!useService && collected.length <= 1) {
-      cal.LOG("[calExtract] Date and time information was not found in email/selection.");
       createEventWithDialog(null, null, null, null, item);
     } else {
       if (!useService) {
@@ -259,12 +196,7 @@ var calendarExtract = {
       }
     }
 
-    const timeSpent = new Date().getTime() - time;
-    cal.LOG(
-      "[calExtract] Total time spent for conversion (including loading of dictionaries): " +
-        timeSpent +
-        "ms"
-    );
+    // const timeSpent = new Date().getTime() - time;
   },
 };
 ChromeUtils.defineLazyGetter(

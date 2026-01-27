@@ -12,10 +12,8 @@
 #include "MediaList.h"
 #include "imgLoader.h"
 #include "mozilla/AsyncEventDispatcher.h"
-#include "mozilla/Attributes.h"
 #include "mozilla/Components.h"
 #include "mozilla/EventDispatcher.h"
-#include "mozilla/MemoryReporting.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_network.h"
@@ -27,6 +25,7 @@
 #include "mozilla/dom/ReferrerInfo.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "nsAttrValueInlines.h"
+#include "nsAttrValueOrString.h"
 #include "nsContentUtils.h"
 #include "nsDOMTokenList.h"
 #include "nsGenericHTMLElement.h"
@@ -132,7 +131,7 @@ void HTMLLinkElement::UnbindFromTree(UnbindContext& aContext) {
 
   nsGenericHTMLElement::UnbindFromTree(aContext);
 
-  Unused << UpdateStyleSheetInternal(oldDoc, oldShadowRoot);
+  (void)UpdateStyleSheetInternal(oldDoc, oldShadowRoot);
 }
 
 bool HTMLLinkElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
@@ -225,8 +224,7 @@ void HTMLLinkElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
       CreateAndDispatchEvent(u"DOMLinkChanged"_ns);
     }
     mTriggeringPrincipal = nsContentUtils::GetAttrTriggeringPrincipal(
-        this, aValue ? aValue->GetStringValue() : EmptyString(),
-        aSubjectPrincipal);
+        this, nsAttrValueOrString(aValue).String(), aSubjectPrincipal);
 
     // If the link has `rel=localization` and its `href` attribute is changed,
     // update the list of localization links.
@@ -291,7 +289,7 @@ void HTMLLinkElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
           dropSheet || aName == nsGkAtoms::title || aName == nsGkAtoms::media ||
           aName == nsGkAtoms::type || aName == nsGkAtoms::disabled;
 
-      Unused << UpdateStyleSheetInternal(
+      (void)UpdateStyleSheetInternal(
           nullptr, nullptr, forceUpdate ? ForceUpdate::Yes : ForceUpdate::No);
     }
   } else {
@@ -304,7 +302,7 @@ void HTMLLinkElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
       if (aName == nsGkAtoms::href || aName == nsGkAtoms::rel ||
           aName == nsGkAtoms::title || aName == nsGkAtoms::media ||
           aName == nsGkAtoms::type || aName == nsGkAtoms::disabled) {
-        Unused << UpdateStyleSheetInternal(nullptr, nullptr, ForceUpdate::Yes);
+        (void)UpdateStyleSheetInternal(nullptr, nullptr, ForceUpdate::Yes);
       }
       if ((aName == nsGkAtoms::as || aName == nsGkAtoms::type ||
            aName == nsGkAtoms::crossorigin || aName == nsGkAtoms::media) &&
@@ -411,7 +409,7 @@ void HTMLLinkElement::AddSizeOfExcludingThis(nsWindowSizes& aSizes,
                                              size_t* aNodeSize) const {
   nsGenericHTMLElement::AddSizeOfExcludingThis(aSizes, aNodeSize);
   if (nsCOMPtr<nsISizeOf> iface = do_QueryInterface(mCachedURI)) {
-    *aNodeSize += iface->SizeOfExcludingThis(aSizes.mState.mMallocSizeOf);
+    *aNodeSize += iface->SizeOfIncludingThis(aSizes.mState.mMallocSizeOf);
   }
 }
 
@@ -521,7 +519,10 @@ void HTMLLinkElement::
   }
 
   if (linkTypes & eMODULE_PRELOAD) {
-    ScriptLoader* scriptLoader = OwnerDoc()->ScriptLoader();
+    ScriptLoader* scriptLoader = OwnerDoc()->GetScriptLoader();
+    if (!scriptLoader) {
+      return;
+    }
     ModuleLoader* moduleLoader = scriptLoader->GetModuleLoader();
 
     if (!moduleLoader) {

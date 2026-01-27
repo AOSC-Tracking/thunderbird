@@ -21,7 +21,6 @@
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "api/data_channel_interface.h"
-#include "api/field_trials.h"
 #include "api/jsep.h"
 #include "api/make_ref_counted.h"
 #include "api/rtc_error.h"
@@ -64,7 +63,7 @@ class PeerConnectionDataChannelOpenTest
       : background_thread_(std::make_unique<Thread>(&vss_)) {
     RTC_CHECK(background_thread_->Start());
     // Delay is set to 50ms so we get a 100ms RTT.
-    vss_.set_delay_mean(/*delay_ms=*/50);
+    vss_.set_delay_mean(/*delay_mean=*/50);
     vss_.UpdateDelayDistribution();
   }
 
@@ -72,10 +71,9 @@ class PeerConnectionDataChannelOpenTest
       absl::string_view field_trials = "") {
     auto pc_wrapper = make_ref_counted<PeerConnectionTestWrapper>(
         "pc", &vss_, background_thread_.get(), background_thread_.get());
-    pc_wrapper->CreatePc(
-        {}, CreateBuiltinAudioEncoderFactory(),
-        CreateBuiltinAudioDecoderFactory(),
-        std::make_unique<FieldTrials>(CreateTestFieldTrials(field_trials)));
+    pc_wrapper->CreatePc({}, CreateBuiltinAudioEncoderFactory(),
+                         CreateBuiltinAudioDecoderFactory(),
+                         CreateTestFieldTrialsPtr(field_trials));
     return pc_wrapper;
   }
 

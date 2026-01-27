@@ -176,7 +176,7 @@ partial interface Document {
   boolean queryCommandIndeterm(DOMString commandId);
   [Throws]
   boolean queryCommandState(DOMString commandId);
-  [Throws, NeedsCallerType]
+  [Throws, NeedsSubjectPrincipal]
   boolean queryCommandSupported(DOMString commandId);
   [Throws]
   DOMString queryCommandValue(DOMString commandId);
@@ -248,13 +248,17 @@ partial interface Document {
   [ChromeOnly]
   readonly attribute ReferrerPolicy referrerPolicy;
 
-    /**
+  /**
    * Current referrer info, which holds all referrer related information
    * including referrer policy and raw referrer of document.
    */
   [ChromeOnly]
   readonly attribute nsIReferrerInfo referrerInfo;
 
+  // If true, forces the (-moz-native-theme) media query to evaluate to false
+  // on this document. Note this doesn't propagate to subdocuments.
+  [ChromeOnly]
+  attribute boolean forceNonNativeTheme;
 };
 
 // https://html.spec.whatwg.org/multipage/obsolete.html#other-elements%2C-attributes-and-apis
@@ -368,12 +372,6 @@ partial interface Document {
 
 //  Mozilla extensions of various sorts
 partial interface Document {
-  // @deprecated We are going to remove these (bug 1584269).
-  [Pref="dom.events.script_execute.enabled"]
-  attribute EventHandler onbeforescriptexecute;
-  [Pref="dom.events.script_execute.enabled"]
-  attribute EventHandler onafterscriptexecute;
-
   // Creates a new XUL element regardless of the document's default type.
   [ChromeOnly, CEReactions, NewObject, Throws]
   Element createXULElement(DOMString localName, optional (ElementCreationOptions or DOMString) options = {});
@@ -741,14 +739,22 @@ partial interface Document {
     readonly attribute FragmentDirective fragmentDirective;
 };
 
-// https://drafts.csswg.org/css-view-transitions-1/#additions-to-document-api
-partial interface Document {
-  [Pref="dom.viewTransitions.enabled"]
-  ViewTransition startViewTransition(optional ViewTransitionUpdateCallback updateCallback);
+
+callback ViewTransitionUpdateCallback = Promise<any> ();
+dictionary StartViewTransitionOptions {
+  ViewTransitionUpdateCallback? update = null;
+  sequence<DOMString>? types = null;
 };
 
-// https://github.com/w3c/csswg-drafts/pull/10767 for the name divergence in the spec
-callback ViewTransitionUpdateCallback = Promise<any> ();
+// https://drafts.csswg.org/css-view-transitions-2/#idl-index
+partial interface Document {
+  [Pref="dom.viewTransitions.enabled"]
+  ViewTransition startViewTransition(
+    optional (ViewTransitionUpdateCallback or StartViewTransitionOptions) callbackOptions = {}
+  );
+  [Pref="dom.viewTransitions.enabled"]
+  readonly attribute ViewTransition? activeViewTransition;
+};
 
 // https://wicg.github.io/sanitizer-api/#sanitizer-api
 partial interface Document {

@@ -3,10 +3,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import ICAL from "resource:///modules/calendar/Ical.sys.mjs";
-
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
 
 const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
 ChromeUtils.defineESModuleGetters(lazy, {
   CalDateTime: "resource:///modules/CalDateTime.sys.mjs",
   CalIcalProperty: "resource:///modules/CalICSService.sys.mjs",
@@ -58,7 +64,7 @@ CalRecurrenceRule.prototype = {
   freqSupported() {
     const { freq } = this.innerObject;
     if (freq == "SECONDLY" || freq == "MINUTELY") {
-      cal.WARN(
+      lazy.log.warn(
         `The frequency value "${freq}" is currently not supported. No occurrences will be generated.`
       );
       return false;
@@ -213,7 +219,7 @@ CalRecurrenceRule.prototype = {
       for (let i = 0; i < values.length; i++) {
         const match = /^([+-])?(5[0-3]|[1-4][0-9]|[1-9])?(SU|MO|TU|WE|TH|FR|SA)$/.exec(values[i]);
         if (!match) {
-          cal.ERROR("Malformed BYDAY rule\n" + cal.STACK(10));
+          lazy.log.warn(`Malformed BYDAY rule: ${values[i]}`);
           return [];
         }
         values[i] = ICAL.Recur.icalDayToNumericDay(match[3]);

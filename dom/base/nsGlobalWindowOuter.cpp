@@ -10,6 +10,7 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/ScopeExit.h"
+#include "nsDeviceContext.h"
 #include "nsGlobalWindowInner.h"
 
 // Local Includes
@@ -91,7 +92,6 @@
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/Sprintf.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "nsJSEnvironment.h"
 #include "nsJSUtils.h"
@@ -171,8 +171,6 @@
 #include "nsQueryObject.h"
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
-#include "nsView.h"
-#include "nsViewManager.h"
 #include "xpcprivate.h"
 
 #ifdef NS_PRINTING
@@ -308,7 +306,7 @@ static inline nsGlobalWindowInner* GetCurrentInnerWindowInternal(
       return err_rval;                                     \
     }                                                      \
     nsCOMPtr<Document> kungFuDeathGrip = GetDoc();         \
-    ::mozilla::Unused << kungFuDeathGrip;                  \
+    (void)kungFuDeathGrip;                                 \
     if (!mInnerWindow) {                                   \
       return err_rval;                                     \
     }                                                      \
@@ -3018,7 +3016,7 @@ void nsPIDOMWindowOuter::ActivateMediaComponents() {
            "no longer to delay media from start, this = %p\n",
            this));
   if (BrowsingContext* bc = GetBrowsingContext()) {
-    Unused << bc->Top()->SetShouldDelayMediaFromStart(false);
+    (void)bc->Top()->SetShouldDelayMediaFromStart(false);
   }
   NotifyResumingDelayedMedia();
 }
@@ -3430,24 +3428,25 @@ nsresult nsGlobalWindowOuter::GetInnerSize(CSSSize& aSize) {
 
   NS_ENSURE_STATE(mDocShell);
 
-  RefPtr<nsPresContext> presContext = mDocShell->GetPresContext();
-  PresShell* presShell = mDocShell->GetPresShell();
-
-  if (!presContext || !presShell) {
+  RefPtr<PresShell> presShell = mDocShell->GetPresShell();
+  if (!presShell) {
     aSize = {};
     return NS_OK;
   }
 
   // Whether or not the css viewport has been overridden, we can get the
   // correct value by looking at the visible area of the presContext.
-  if (RefPtr<nsViewManager> viewManager = presShell->GetViewManager()) {
-    viewManager->FlushDelayedResize();
+  presShell->FlushDelayedResize();
+
+  nsPresContext* pc = presShell->GetPresContext();
+  if (NS_WARN_IF(!pc)) {
+    aSize = {};
+    return NS_OK;
   }
 
   nsSize innerSize = presShell->GetInnerSize();
-  if (presContext->GetDynamicToolbarState() == DynamicToolbarState::Collapsed) {
-    innerSize =
-        nsLayoutUtils::ExpandHeightForViewportUnits(presContext, innerSize);
+  if (pc->GetDynamicToolbarState() == DynamicToolbarState::Collapsed) {
+    innerSize = nsLayoutUtils::ExpandHeightForViewportUnits(pc, innerSize);
   }
 
   aSize = CSSPixel::FromAppUnits(innerSize);
@@ -3889,7 +3888,7 @@ nsIWidget* nsGlobalWindowOuter::GetNearestWidget() const {
   if (!rootFrame) {
     return nullptr;
   }
-  return rootFrame->GetView()->GetNearestWidget(nullptr);
+  return rootFrame->GetNearestWidget();
 }
 
 void nsGlobalWindowOuter::SetFullscreenOuter(bool aFullscreen,
@@ -4941,12 +4940,12 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
   }
 
   if (top) {
-    Unused << top->SetIsPrinting(true);
+    (void)top->SetIsPrinting(true);
   }
 
   auto unset = MakeScopeExit([&] {
     if (top) {
-      Unused << top->SetIsPrinting(false);
+      (void)top->SetIsPrinting(false);
     }
   });
 
@@ -5059,7 +5058,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
   } else {
     if (aDocShellToCloneInto) {
       // Ensure the content viewer is created if needed.
-      Unused << aDocShellToCloneInto->GetDocument();
+      (void)aDocShellToCloneInto->GetDocument();
       bc = aDocShellToCloneInto->GetBrowsingContext();
     } else {
       AutoNoJSAPI nojsapi;
@@ -5092,7 +5091,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
       return nullptr;
     }
 
-    Unused << bc->Top()->SetIsPrinting(true);
+    (void)bc->Top()->SetIsPrinting(true);
     nsCOMPtr<nsIDocShell> cloneDocShell = bc->GetDocShell();
     MOZ_DIAGNOSTIC_ASSERT(cloneDocShell);
     cloneDocShell->GetDocViewer(getter_AddRefs(viewer));
@@ -6139,8 +6138,7 @@ nsGlobalWindowOuter* nsGlobalWindowOuter::EnterModalState() {
       do_GetService("@mozilla.org/widget/dragservice;1");
   if (ds && topWin->GetDocShell()) {
     if (PresShell* presShell = topWin->GetDocShell()->GetPresShell()) {
-      if (nsViewManager* vm = presShell->GetViewManager()) {
-        RefPtr<nsIWidget> widget = vm->GetRootWidget();
+      if (RefPtr<nsIWidget> widget = presShell->GetRootWidget()) {
         if (nsCOMPtr<nsIDragSession> session = ds->GetCurrentSession(widget)) {
           session->EndDragSession(true, 0);
         }
@@ -6352,7 +6350,7 @@ bool nsGlobalWindowOuter::FindOuter(const nsAString& aString,
                                     bool aWrapAround, bool aWholeWord,
                                     bool aSearchInFrames, bool aShowDialog,
                                     ErrorResult& aError) {
-  Unused << aShowDialog;
+  (void)aShowDialog;
 
   nsCOMPtr<nsIWebBrowserFind> finder(do_GetInterface(mDocShell));
   if (!finder) {
@@ -6769,7 +6767,7 @@ nsresult nsGlobalWindowOuter::OpenInternal(
   // BrowsingContext::RevisePopupAbuseLevel() below.
   RefPtr<nsDocShellLoadState> loadState = aLoadState;
   if (!loadState && aNavigate && uri) {
-    loadState = nsWindowWatcher::CreateLoadState(uri, this);
+    loadState = nsWindowWatcher::CreateLoadState(uri, this, aDoJSFixups);
   }
 
   PopupBlocker::PopupControlState abuseLevel =
@@ -6892,7 +6890,7 @@ nsresult nsGlobalWindowOuter::OpenInternal(
 
       // Force document creation.
       nsCOMPtr<Document> doc = outer->GetDoc();
-      Unused << doc;
+      (void)doc;
     }
   }
 
@@ -6928,10 +6926,10 @@ void nsGlobalWindowOuter::MaybeAllowStorageForOpenedWindow(nsIURI* aURI) {
   // We don't care when the asynchronous work finishes here.
   // Without e10s or fission enabled this is run in the parent process.
   if (XRE_IsParentProcess()) {
-    Unused << StorageAccessAPIHelper::AllowAccessForOnParentProcess(
+    (void)StorageAccessAPIHelper::AllowAccessForOnParentProcess(
         principal, GetBrowsingContext(), ContentBlockingNotifier::eOpener);
   } else {
-    Unused << StorageAccessAPIHelper::AllowAccessForOnChildProcess(
+    (void)StorageAccessAPIHelper::AllowAccessForOnChildProcess(
         principal, GetBrowsingContext(), ContentBlockingNotifier::eOpener);
   }
 }
@@ -7056,7 +7054,7 @@ already_AddRefed<nsISupports> nsGlobalWindowOuter::SaveWindowState() {
 
   if (WindowContext* wc = inner->GetWindowContext()) {
     MOZ_ASSERT(!wc->GetWindowStateSaved());
-    Unused << wc->SetWindowStateSaved(true);
+    (void)wc->SetWindowStateSaved(true);
   }
 
   // Don't do anything else to this inner window! After this point, all
@@ -7103,7 +7101,7 @@ nsresult nsGlobalWindowOuter::RestoreWindowState(nsISupports* aState) {
 
   if (WindowContext* wc = inner->GetWindowContext()) {
     MOZ_ASSERT(wc->GetWindowStateSaved());
-    Unused << wc->SetWindowStateSaved(false);
+    (void)wc->SetWindowStateSaved(false);
   }
 
   inner->Thaw();
@@ -7163,26 +7161,14 @@ void nsGlobalWindowOuter::SetCursorOuter(const nsACString& aCursor,
   }
 
   if (presContext) {
-    // Need root widget.
     PresShell* presShell = mDocShell->GetPresShell();
     if (!presShell) {
       aError.Throw(NS_ERROR_FAILURE);
       return;
     }
 
-    nsViewManager* vm = presShell->GetViewManager();
-    if (!vm) {
-      aError.Throw(NS_ERROR_FAILURE);
-      return;
-    }
-
-    nsView* rootView = vm->GetRootView();
-    if (!rootView) {
-      aError.Throw(NS_ERROR_FAILURE);
-      return;
-    }
-
-    nsIWidget* widget = rootView->GetNearestWidget(nullptr);
+    // Need root widget.
+    nsIWidget* widget = presShell->GetRootWidget();
     if (!widget) {
       aError.Throw(NS_ERROR_FAILURE);
       return;
@@ -7317,7 +7303,7 @@ void nsGlobalWindowOuter::MaybeResetWindowName(Document* aNewDocument) {
     return;
   }
 
-  Unused << mBrowsingContext->SetName(EmptyString());
+  (void)mBrowsingContext->SetName(EmptyString());
 }
 
 nsGlobalWindowOuter::TemporarilyDisableDialogs::TemporarilyDisableDialogs(
@@ -7368,7 +7354,7 @@ void nsPIDOMWindowOuter::MaybeCreateDoc() {
     // don't have to explicitly set the member variable because the docshell
     // has already called SetNewDocument().
     nsCOMPtr<Document> document = docShell->GetDocument();
-    Unused << document;
+    (void)document;
   }
 }
 

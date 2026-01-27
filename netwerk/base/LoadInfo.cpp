@@ -758,6 +758,7 @@ LoadInfo::LoadInfo(
     nsIPrincipal* aPrincipalToInherit, nsIPrincipal* aTopLevelPrincipal,
     nsIURI* aResultPrincipalURI, nsICookieJarSettings* aCookieJarSettings,
     nsIPolicyContainer* aPolicyContainerToInherit,
+    const Maybe<dom::FeaturePolicyInfo>& aContainerFeaturePolicyInfo,
     const nsACString& aTriggeringRemoteType,
     const nsID& aSandboxedNullPrincipalID, const Maybe<ClientInfo>& aClientInfo,
     const Maybe<ClientInfo>& aReservedClientInfo,
@@ -792,6 +793,7 @@ LoadInfo::LoadInfo(
       mResultPrincipalURI(aResultPrincipalURI),
       mCookieJarSettings(aCookieJarSettings),
       mPolicyContainerToInherit(aPolicyContainerToInherit),
+      mContainerFeaturePolicyInfo(aContainerFeaturePolicyInfo),
       mTriggeringRemoteType(aTriggeringRemoteType),
       mSandboxedNullPrincipalID(aSandboxedNullPrincipalID),
       mClientInfo(aClientInfo),
@@ -958,7 +960,7 @@ nsIPrincipal* LoadInfo::FindPrincipalToInherit(nsIChannel* aChannel) {
 
   nsCOMPtr<nsIURI> uri = mResultPrincipalURI;
   if (!uri) {
-    Unused << aChannel->GetOriginalURI(getter_AddRefs(uri));
+    (void)aChannel->GetOriginalURI(getter_AddRefs(uri));
   }
 
   auto* prin = BasePrincipal::Cast(mTriggeringPrincipal);
@@ -1151,7 +1153,7 @@ LoadInfo::GetCookieJarSettings(nsICookieJarSettings** aCookieJarSettings) {
   if (!mCookieJarSettings) {
     bool isPrivate = mOriginAttributes.IsPrivateBrowsing();
     nsCOMPtr<nsIPrincipal> loadingPrincipal;
-    Unused << this->GetLoadingPrincipal(getter_AddRefs(loadingPrincipal));
+    (void)this->GetLoadingPrincipal(getter_AddRefs(loadingPrincipal));
     bool shouldResistFingerprinting =
         nsContentUtils::ShouldResistFingerprinting_dangerous(
             loadingPrincipal,
@@ -1544,14 +1546,14 @@ LoadInfo::AppendRedirectHistoryEntry(nsIChannel* aChannel,
   nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(aChannel));
   if (httpChannel) {
     nsCOMPtr<nsIReferrerInfo> referrerInfo;
-    Unused << httpChannel->GetReferrerInfo(getter_AddRefs(referrerInfo));
+    (void)httpChannel->GetReferrerInfo(getter_AddRefs(referrerInfo));
     if (referrerInfo) {
       referrer = referrerInfo->GetComputedReferrer();
     }
 
     nsCOMPtr<nsIHttpChannelInternal> intChannel(do_QueryInterface(aChannel));
     if (intChannel) {
-      Unused << intChannel->GetRemoteAddress(remoteAddress);
+      (void)intChannel->GetRemoteAddress(remoteAddress);
     }
   }
 

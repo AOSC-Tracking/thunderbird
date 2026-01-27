@@ -63,6 +63,12 @@ add_setup(async () => {
     is(tabmail.tabInfo.length, 1, "One tab open from start");
   }
 });
+
+// Keep tack of the origial value of the pref extensions.webextensions.uuids to
+// be able to restore its original value after running the tests.
+const webextensions_uuids = Services.prefs.getStringPref(
+  "extensions.webextensions.uuids"
+);
 registerCleanupFunction(() => {
   const tabmail = document.getElementById("tabmail");
   is(tabmail.tabInfo.length, 1, "Only one tab open at end of test");
@@ -98,7 +104,10 @@ registerCleanupFunction(() => {
   setCachedAllowedSpaces(new Map());
   Services.prefs.clearUserPref("mail.pane_config.dynamic");
   Services.prefs.clearUserPref("mail.threadpane.listview");
-  Services.prefs.setStringPref("extensions.webextensions.uuids", "{}");
+  Services.prefs.setStringPref(
+    "extensions.webextensions.uuids",
+    webextensions_uuids
+  );
 });
 
 /**
@@ -129,12 +138,11 @@ async function enforceState(state) {
 async function check3PaneState(folderPaneOpen = null, messagePaneOpen = null) {
   const tabmail = document.getElementById("tabmail");
   const tab = tabmail.currentTabInfo;
-  if (tab.chromeBrowser.contentDocument.readyState != "complete") {
-    await BrowserTestUtils.waitForEvent(
-      tab.chromeBrowser.contentWindow,
-      "load"
-    );
-  }
+  const doc = tab.chromeBrowser.contentDocument;
+
+  await TestUtils.waitForCondition(() => {
+    return doc.location.href == "about:3pane" && doc.readyState == "complete";
+  }, `The 3pane tab should be loaded`);
 
   const { paneLayout } = tabmail.currentAbout3Pane;
   if (folderPaneOpen !== null) {
@@ -1754,4 +1762,119 @@ async function run_action_button_order_test(configs, window, actionType) {
     await config.extension2.unload();
   }
   test_buttons([], window, toolbars);
+}
+
+/**
+ * Create a dark add-on theme for testing icon selection.
+ *
+ * @returns {object}
+ */
+function makeDarkTheme() {
+  return ExtensionTestUtils.loadExtension({
+    manifest: {
+      theme: {
+        colors: {
+          frame: "#000",
+          tab_background_text: "#FFF",
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Create a light add-on theme for testing icon selection.
+ *
+ * @returns {object}
+ */
+function makeLightTheme() {
+  return ExtensionTestUtils.loadExtension({
+    manifest: {
+      theme: {
+        colors: {
+          frame: "#FFF",
+          tab_background_text: "#000",
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Test a button's icon selection with various themes.
+ *
+ * @param {Element} button - The button to check.
+ * @param {string} uuid - The UUID of the extension that provided `button`.
+ */
+async function testThemeIcons(button, uuid) {
+  async function checkIcons(themeName, expectedIcon) {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    let expectedStyle;
+    if (expectedIcon == "default") {
+      expectedStyle = makeIconSet(`url("moz-extension://${uuid}/default.png")`);
+    } else {
+      expectedStyle = makeIconSet(
+        `url("moz-extension://${uuid}/${expectedIcon}16.png")`,
+        `url("moz-extension://${uuid}/${expectedIcon}32.png")`
+      );
+    }
+    Assert.equal(
+      win.getComputedStyle(button).listStyleImage,
+      expectedStyle,
+      `${themeName} theme should use ${expectedIcon} icon.`
+    );
+  }
+
+  const win = button.ownerGlobal;
+
+  // An add-on dark theme.
+  const darkCustomTheme = makeDarkTheme();
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(win, "windowlwthemeupdate"),
+    darkCustomTheme.startup(),
+  ]);
+  await checkIcons("Dark custom theme", "light");
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(win, "windowlwthemeupdate"),
+    darkCustomTheme.unload(),
+  ]);
+
+  // An add-on light theme.
+  const lightCustomTheme = makeLightTheme();
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(win, "windowlwthemeupdate"),
+    lightCustomTheme.startup(),
+  ]);
+  await checkIcons("Light custom theme", "dark");
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(win, "windowlwthemeupdate"),
+    lightCustomTheme.unload(),
+  ]);
+
+  // The built-in dark theme.
+  const darkBuiltInTheme = await AddonManager.getAddonByID(
+    "thunderbird-compact-dark@mozilla.org"
+  );
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(win, "windowlwthemeupdate"),
+    darkBuiltInTheme.enable(),
+  ]);
+  await checkIcons("Dark built-in theme", "light");
+
+  // The built-in light theme.
+  const lightBuiltInTheme = await AddonManager.getAddonByID(
+    "thunderbird-compact-light@mozilla.org"
+  );
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(win, "windowlwthemeupdate"),
+    lightBuiltInTheme.enable(),
+  ]);
+  await checkIcons("Light built-in theme", "default");
+
+  // Disabling a theme will enable the default theme.
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(win, "windowlwthemeupdate"),
+    lightBuiltInTheme.disable(),
+  ]);
+  await checkIcons("Default theme", "default");
 }

@@ -147,6 +147,9 @@ folder-toolbar-toggle-folder-compact-view =
 
 ## Folder names
 
+# Gmail's "All Mail" folder. Please make sure this is the same string used in the Gmail web UI for your language.
+folder-name-all-mail = All Mail
+
 folder-name-spam = Spam
 
 ## File Menu
@@ -154,6 +157,22 @@ folder-name-spam = Spam
 menu-file-save-as-file =
     .label = File…
     .accesskey = F
+
+# Variables:
+# $count (Number) - One or more than one folder selected for compacting
+menu-file-compact =
+  .label =
+    { $count ->
+      [1] Compact Folder
+     *[other] Compact Folders
+    }
+  .accesskey = F
+
+# One or more servers selected for compacting all their folders. Only this or
+# menu-file-compact string will appear at a time, not both.
+menu-file-compact-all =
+  .label = Compact All Folders
+  .accesskey = F
 
 ## Edit Menu
 
@@ -633,10 +652,40 @@ archive-action = Archive
 
 ## Message list.
 
-message-flag-spam = Spam
+message-priority-lowest = Lowest
+message-priority-low = Low
+# Normal priority is often blank, depending on the consumers of these strings.
+message-priority-normal = Normal
+message-priority-high = High
+message-priority-highest = Highest
 
-menuitem-label-spam =
-  .label = Spam
+message-flag-replied = Replied
+message-flag-forwarded = Forwarded
+message-flag-redirected = Redirected
+message-flag-new = New
+message-flag-read = Read
+message-flag-starred = Starred
+
+# Grouped By Date thread pane titles
+message-group-today = Today
+message-group-yesterday = Yesterday
+message-group-last-seven-days = Last 7 Days
+message-group-last-fourteen-days = Last 14 Days
+message-group-older = Older
+message-group-future-date = Future
+
+# Different Grouped By Sort thread pane titles
+message-group-untagged = Untagged Messages
+message-group-no-status = No Status
+message-group-no-priority = No Priority
+message-group-no-attachments = No Attachments
+message-group-attachments = Attachments
+message-group-not-starred = Not Starred
+message-group-starred = Starred
+
+# For multiple authors, add this abbreviation to the first author to indicate
+# there are more; for the From column in the threadpane message list.
+and-others = et al.
 
 menuitem-label-spam-score-origin =
   .label = Spam Score Origin

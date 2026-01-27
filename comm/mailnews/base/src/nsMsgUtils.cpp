@@ -57,7 +57,6 @@
 #include "nsIChannel.h"
 #include "nsIURIMutator.h"
 #include "nsReadableUtils.h"
-#include "mozilla/Unused.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Encoding.h"
 #include "mozilla/EncodingDetector.h"
@@ -902,7 +901,7 @@ nsresult IsRSSArticle(nsIURI* aMsgURI, bool* aIsRSSArticle) {
   }
 
   nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(aMsgURI, &rv);
-  mozilla::Unused << mailnewsUrl;
+  (void)mailnewsUrl;
   NS_ENSURE_SUCCESS(rv, rv);
 
   // get the folder and the server from the msghdr
@@ -1064,8 +1063,8 @@ nsresult NS_SetPersistentFile(const char* relPrefName, const char* absPrefName,
 
   // Write the relative path.
   nsCOMPtr<nsIRelativeFilePref> relFilePref = new nsRelativeFilePref();
-  mozilla::Unused << relFilePref->SetFile(aFile);
-  mozilla::Unused << relFilePref->SetRelativeToKey(
+  (void)relFilePref->SetFile(aFile);
+  (void)relFilePref->SetRelativeToKey(
       nsLiteralCString(NS_APP_USER_PROFILE_50_DIR));
 
   nsresult rv2 = prefBranch->SetComplexValue(
@@ -1528,12 +1527,12 @@ nsresult MsgDetectCharsetFromFile(nsIFile* aFile, nsACString& aCharset) {
   while (NS_SUCCEEDED(inputStream->Read(buffer, sizeof(buffer), &numRead))) {
     mozilla::Span<const uint8_t> src =
         mozilla::AsBytes(mozilla::Span(buffer, numRead));
-    Unused << detector->Feed(src, false);
+    (void)detector->Feed(src, false);
     if (numRead == 0) {
       break;
     }
   }
-  Unused << detector->Feed(nullptr, true);
+  (void)detector->Feed(nullptr, true);
   auto encoding = detector->Guess(nullptr, true);
   encoding->Name(aCharset);
   return NS_OK;
@@ -1810,15 +1809,14 @@ nsString EncodeFilename(nsACString const& str) {
   // See also nsLocalFile::CheckForReservedFileName(), which has a similar
   // list (but is only included in windows builds).
   static const nsLiteralCString forbiddenNames[] = {
-      u8"CON"_ns, u8"PRN"_ns, u8"AUX"_ns, u8"NUL"_ns, u8"COM1"_ns, u8"COM2"_ns,
-      u8"COM3"_ns, u8"COM4"_ns, u8"COM5"_ns, u8"COM6"_ns, u8"COM7"_ns,
-      u8"COM8"_ns, u8"COM9"_ns,
+      "CON"_ns, "PRN"_ns, "AUX"_ns, "NUL"_ns, "COM1"_ns, "COM2"_ns, "COM3"_ns,
+      "COM4"_ns, "COM5"_ns, "COM6"_ns, "COM7"_ns, "COM8"_ns, "COM9"_ns,
       // COM^1, COM^2, COM^3 (digit superscripts in Latin-1 range):
-      u8"COM\u00B9"_ns, u8"COM\u00B2"_ns, u8"COM\u00B3"_ns, u8"LPT1"_ns,
-      u8"LPT2"_ns, u8"LPT3"_ns, u8"LPT4"_ns, u8"LPT5"_ns, u8"LPT6"_ns,
-      u8"LPT7"_ns, u8"LPT8"_ns, u8"LPT9"_ns,
+      "COM\u00B9"_ns, "COM\u00B2"_ns, "COM\u00B3"_ns, "LPT1"_ns, "LPT2"_ns,
+      "LPT3"_ns, "LPT4"_ns, "LPT5"_ns, "LPT6"_ns, "LPT7"_ns, "LPT8"_ns,
+      "LPT9"_ns,
       // LPT^1, LPT^2, LPT^3 (digit superscripts in Latin-1 range):
-      u8"LPT\u00B9"_ns, u8"LPT\u00B2"_ns, u8"LPT\u00B3"_ns};
+      "LPT\u00B9"_ns, "LPT\u00B2"_ns, "LPT\u00B3"_ns};
 
   for (const nsLiteralCString& forbidden : forbiddenNames) {
     if (StringBeginsWith(out, forbidden,

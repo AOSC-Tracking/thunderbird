@@ -37,7 +37,7 @@ const folderPaneContextData = {
     "rssFeed",
     "multiselect-plain",
   ],
-  "folderPaneContext-rename": ["plain", "junk", ...virtualFolders, "rssFeed"],
+  "folderPaneContext-rename": ["plain", ...virtualFolders, "rssFeed"],
   "folderPaneContext-moveMenu": [
     "plain",
     ...virtualFolders,
@@ -46,12 +46,11 @@ const folderPaneContextData = {
   ],
   "folderPaneContext-copyMenu": ["plain", "rssFeed", "multiselect-plain"],
   "folderPaneContext-compact": [
-    "server",
-    "rssRoot",
     ...realFolders,
-    "multiselect",
     "multiselect-plain",
+    "multiselect",
   ],
+  "folderPaneContext-compactAll": ["server", "rssRoot"],
   "folderPaneContext-markMailFolderAllRead": [
     ...realFolders,
     "virtual",

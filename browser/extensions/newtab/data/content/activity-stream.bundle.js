@@ -160,8 +160,6 @@ for (const type of [
   "DISCOVERY_STREAM_TOPICS_LOADING",
   "DISCOVERY_STREAM_USER_EVENT",
   "DOWNLOAD_CHANGED",
-  "FAKESPOT_CTA_CLICK",
-  "FAKESPOT_DISMISS",
   "FAKE_FOCUS_SEARCH",
   "FILL_SEARCH_TERM",
   "FOLLOW_SECTION",
@@ -190,7 +188,6 @@ for (const type of [
   "NEW_TAB_STATE_REQUEST_STARTUPCACHE",
   "NEW_TAB_STATE_REQUEST_WITHOUT_STARTUPCACHE",
   "NEW_TAB_UNLOAD",
-  "OPEN_ABOUT_FAKESPOT",
   "OPEN_DOWNLOAD_FILE",
   "OPEN_LINK",
   "OPEN_NEW_WINDOW",
@@ -270,10 +267,6 @@ for (const type of [
   "TOP_SITES_UPDATED",
   "TOTAL_BOOKMARKS_REQUEST",
   "TOTAL_BOOKMARKS_RESPONSE",
-  "TRENDING_SEARCH_IMPRESSION",
-  "TRENDING_SEARCH_SUGGESTION_OPEN",
-  "TRENDING_SEARCH_TOGGLE_COLLAPSE",
-  "TRENDING_SEARCH_UPDATE",
   "UNBLOCK_SECTION",
   "UNFOLLOW_SECTION",
   "UNINIT",
@@ -624,8 +617,6 @@ function _extends() { return _extends = Object.assign ? Object.assign.bind() : f
 const PREF_AD_SIZE_MEDIUM_RECTANGLE = "newtabAdSize.mediumRectangle";
 const PREF_AD_SIZE_BILLBOARD = "newtabAdSize.billboard";
 const PREF_AD_SIZE_LEADERBOARD = "newtabAdSize.leaderboard";
-const PREF_CONTEXTUAL_CONTENT_SELECTED_FEED = "discoverystream.contextualContent.selectedFeed";
-const PREF_CONTEXTUAL_CONTENT_FEEDS = "discoverystream.contextualContent.feeds";
 const PREF_SECTIONS_ENABLED = "discoverystream.sections.enabled";
 const PREF_SPOC_PLACEMENTS = "discoverystream.placements.spocs";
 const PREF_SPOC_COUNTS = "discoverystream.placements.spocs.counts";
@@ -728,9 +719,9 @@ class DiscoveryStreamAdminUI extends (external_React_default()).PureComponent {
     this.resetBlocks = this.resetBlocks.bind(this);
     this.refreshInferredPersonalization = this.refreshInferredPersonalization.bind(this);
     this.refreshTopicSelectionCache = this.refreshTopicSelectionCache.bind(this);
-    this.toggleTBRFeed = this.toggleTBRFeed.bind(this);
     this.handleSectionsToggle = this.handleSectionsToggle.bind(this);
     this.toggleIABBanners = this.toggleIABBanners.bind(this);
+    this.sendConversionEvent = this.sendConversionEvent.bind(this);
     this.state = {
       toggledStories: {},
       weatherQuery: ""
@@ -786,11 +777,6 @@ class DiscoveryStreamAdminUI extends (external_React_default()).PureComponent {
   }
   showPlaceholder() {
     this.dispatchSimpleAction(actionTypes.DISCOVERY_STREAM_DEV_SHOW_PLACEHOLDER);
-  }
-  toggleTBRFeed(e) {
-    const feed = e.target.value;
-    const selectedFeed = PREF_CONTEXTUAL_CONTENT_SELECTED_FEED;
-    this.props.dispatch(actionCreators.SetPref(selectedFeed, feed));
   }
   idleDaily() {
     this.dispatchSimpleAction(actionTypes.DISCOVERY_STREAM_DEV_IDLE_DAILY);
@@ -899,6 +885,19 @@ class DiscoveryStreamAdminUI extends (external_React_default()).PureComponent {
     this.props.dispatch(actionCreators.SetPref(PREF_SECTIONS_ENABLED, pressed));
     this.props.dispatch(actionCreators.SetPref("discoverystream.sections.cards.enabled", pressed));
     this.props.dispatch(actionCreators.SetPref("discoverystream.sections.cards.thumbsUpDown.enabled", pressed));
+  }
+  sendConversionEvent() {
+    const detail = {
+      partnerId: "demo-partner",
+      lookbackDays: 7,
+      impressionType: "default"
+    };
+    const event = new CustomEvent("FirefoxConversionNotification", {
+      detail,
+      bubbles: true,
+      composed: true
+    });
+    window?.dispatchEvent(event);
   }
   renderComponent(width, component) {
     return /*#__PURE__*/external_React_default().createElement("table", null, /*#__PURE__*/external_React_default().createElement("tbody", null, /*#__PURE__*/external_React_default().createElement(Row, null, /*#__PURE__*/external_React_default().createElement("td", {
@@ -1057,9 +1056,7 @@ class DiscoveryStreamAdminUI extends (external_React_default()).PureComponent {
       layout
     } = this.props.state.DiscoveryStream;
     const personalized = this.props.otherPrefs["discoverystream.personalization.enabled"];
-    const selectedFeed = this.props.otherPrefs[PREF_CONTEXTUAL_CONTENT_SELECTED_FEED];
     const sectionsEnabled = this.props.otherPrefs[PREF_SECTIONS_ENABLED];
-    const TBRFeeds = this.props.otherPrefs[PREF_CONTEXTUAL_CONTENT_FEEDS].split(",").map(s => s.trim()).filter(item => item);
 
     // Prefs for IAB Banners
     const mediumRectangleEnabled = this.props.otherPrefs[PREF_AD_SIZE_MEDIUM_RECTANGLE];
@@ -1096,14 +1093,7 @@ class DiscoveryStreamAdminUI extends (external_React_default()).PureComponent {
     }, "Refresh Topic selection count"), /*#__PURE__*/external_React_default().createElement("br", null), /*#__PURE__*/external_React_default().createElement("button", {
       className: "button",
       onClick: this.showPlaceholder
-    }, "Show Placeholder Cards"), " ", /*#__PURE__*/external_React_default().createElement("select", {
-      className: "button",
-      onChange: this.toggleTBRFeed,
-      value: selectedFeed
-    }, TBRFeeds.map(feed => /*#__PURE__*/external_React_default().createElement("option", {
-      key: feed,
-      value: feed
-    }, feed))), /*#__PURE__*/external_React_default().createElement("div", {
+    }, "Show Placeholder Cards"), " ", /*#__PURE__*/external_React_default().createElement("div", {
       className: "toggle-wrapper"
     }, /*#__PURE__*/external_React_default().createElement("moz-toggle", {
       id: "sections-toggle",
@@ -1133,7 +1123,10 @@ class DiscoveryStreamAdminUI extends (external_React_default()).PureComponent {
       pressed: mediumRectangleEnabledPressed || null,
       onToggle: this.toggleIABBanners,
       label: "Enable IAB Medium Rectangle (MREC)"
-    }))), /*#__PURE__*/external_React_default().createElement("table", null, /*#__PURE__*/external_React_default().createElement("tbody", null, prefToggles.map(pref => /*#__PURE__*/external_React_default().createElement(Row, {
+    }))), /*#__PURE__*/external_React_default().createElement("button", {
+      className: "button",
+      onClick: this.sendConversionEvent
+    }, "Send conversion event"), /*#__PURE__*/external_React_default().createElement("table", null, /*#__PURE__*/external_React_default().createElement("tbody", null, prefToggles.map(pref => /*#__PURE__*/external_React_default().createElement(Row, {
       key: pref
     }, /*#__PURE__*/external_React_default().createElement("td", null, /*#__PURE__*/external_React_default().createElement(TogglePrefCheckbox, {
       checked: config[pref],
@@ -1810,7 +1803,6 @@ const LinkMenuOptions = {
         format: site.format,
         ...(site.flight_id ? { flight_id: site.flight_id } : {}),
         is_pocket_card: site.type === "CardGrid",
-        is_list_card: site.is_list_card,
         ...(site.section
           ? {
               section: site.section,
@@ -1866,7 +1858,6 @@ const LinkMenuOptions = {
         position: pos,
         ...(site.sponsored_tile_id ? { tile_id: site.sponsored_tile_id } : {}),
         is_pocket_card: site.type === "CardGrid",
-        is_list_card: site.is_list_card,
         ...(site.format ? { format: site.format } : {}),
         ...(site.section
           ? {
@@ -2113,29 +2104,6 @@ const LinkMenuOptions = {
       data: { url: site.url },
     }),
   }),
-  FakespotDismiss: () => ({
-    id: "newtab-menu-dismiss",
-    action: actionCreators.OnlyToMain({
-      type: actionTypes.SET_PREF,
-      data: {
-        name: "discoverystream.contextualContent.fakespot.enabled",
-        value: false,
-      },
-    }),
-    impression: actionCreators.OnlyToMain({
-      type: actionTypes.FAKESPOT_DISMISS,
-    }),
-  }),
-  AboutFakespot: site => ({
-    id: "newtab-menu-about-fakespot",
-    action: actionCreators.OnlyToMain({
-      type: actionTypes.OPEN_LINK,
-      data: { url: site.url },
-    }),
-    impression: actionCreators.OnlyToMain({
-      type: actionTypes.OPEN_ABOUT_FAKESPOT,
-    }),
-  }),
   SectionBlock: ({
     sectionPersonalization,
     sectionKey,
@@ -2258,35 +2226,6 @@ const LinkMenuOptions = {
       }),
     };
   },
-  TrendingSearchLearnMore: site => ({
-    id: "newtab-trending-searches-learn-more",
-    action: actionCreators.OnlyToMain({
-      type: actionTypes.OPEN_LINK,
-      data: { url: site.url },
-    }),
-    impression: actionCreators.OnlyToMain({
-      type: actionTypes.TRENDING_SEARCH_LEARN_MORE,
-      data: {
-        variant: site.variant,
-      },
-    }),
-  }),
-  TrendingSearchDismiss: site => ({
-    id: "newtab-trending-searches-dismiss",
-    action: actionCreators.OnlyToMain({
-      type: actionTypes.SET_PREF,
-      data: {
-        name: "trendingSearch.enabled",
-        value: false,
-      },
-    }),
-    impression: actionCreators.OnlyToMain({
-      type: actionTypes.TRENDING_SEARCH_DISMISS,
-      data: {
-        variant: site.variant,
-      },
-    }),
-  }),
 };
 
 ;// CONCATENATED MODULE: ./content-src/components/LinkMenu/LinkMenu.jsx
@@ -2359,7 +2298,6 @@ class _LinkMenu extends (external_React_default()).PureComponent {
                 fetchTimestamp,
                 firstVisibleTimestamp,
                 format,
-                is_list_card,
                 is_section_followed,
                 received_rank,
                 recommendation_id,
@@ -2378,7 +2316,6 @@ class _LinkMenu extends (external_React_default()).PureComponent {
                 fetchTimestamp,
                 firstVisibleTimestamp,
                 format,
-                is_list_card,
                 received_rank,
                 recommendation_id,
                 recommended_at,
@@ -2490,7 +2427,8 @@ class ContextMenuButton extends (external_React_default()).PureComponent {
       contextMenuKeyboard
     } = this.state;
     return /*#__PURE__*/external_React_default().createElement((external_React_default()).Fragment, null, /*#__PURE__*/external_React_default().createElement("button", {
-      "aria-haspopup": "true",
+      "aria-haspopup": "menu",
+      "aria-expanded": showContextMenu,
       "data-l10n-id": tooltip,
       "data-l10n-args": tooltipArgs ? JSON.stringify(tooltipArgs) : null,
       className: "context-menu-button icon",
@@ -2540,7 +2478,8 @@ class _DSLinkMenu extends (external_React_default()).PureComponent {
       tooltipArgs: {
         title
       },
-      onUpdate: this.props.onMenuUpdate
+      onUpdate: this.props.onMenuUpdate,
+      tabIndex: this.props.tabIndex
     }, /*#__PURE__*/external_React_default().createElement(LinkMenu, {
       dispatch: dispatch,
       index: index,
@@ -2568,7 +2507,6 @@ class _DSLinkMenu extends (external_React_default()).PureComponent {
         recommended_at: this.props.recommended_at,
         received_rank: this.props.received_rank,
         topic: this.props.topic,
-        is_list_card: this.props.is_list_card,
         position: index,
         ...(this.props.format ? {
           format: this.props.format
@@ -2600,16 +2538,14 @@ const PREF_SYSTEM_STORIES_ENABLED = "feeds.system.topstories";
  * A custom react hook that sets up an IntersectionObserver to observe a single
  * or list of elements and triggers a callback when the element comes into the viewport
  * Note: The refs used should be an array type
+ *
  * @function useIntersectionObserver
  * @param {function} callback - The function to call when an element comes into the viewport
- * @param {Object} options - Options object passed to Intersection Observer:
+ * @param {object} options - Options object passed to Intersection Observer:
  * https://developer.mozilla.org/en-US/docs/Web/API/IntersectionObserver/IntersectionObserver#options
- * @param {Boolean} [isSingle = false] Boolean if the elements are an array or single element
+ * @param {boolean} [isSingle = false] Boolean if the elements are an array or single element
  *
  * @returns {React.MutableRefObject} a ref containing an array of elements or single element
- *
- *
- *
  */
 function useIntersectionObserver(callback, threshold = 0.3) {
   const elementsRef = (0,external_React_namespaceObject.useRef)([]);
@@ -2636,6 +2572,36 @@ function useIntersectionObserver(callback, threshold = 0.3) {
     return () => observer.disconnect();
   }, [callback, threshold]);
   return elementsRef;
+}
+
+/**
+ * Determines which column layout is active based on the screen width
+ *
+ * @param {number} screenWidth - The current window width (in pixels)
+ * @returns {string} The active column layout (e.g. "col-3", "col-2", "col-1")
+ */
+function getActiveColumnLayout(screenWidth) {
+  const breakpoints = [{
+    min: 1374,
+    column: "col-4"
+  },
+  // $break-point-sections-variant
+  {
+    min: 1122,
+    column: "col-3"
+  },
+  // $break-point-widest
+  {
+    min: 724,
+    column: "col-2"
+  },
+  // $break-point-layout-variant
+  {
+    min: 0,
+    column: "col-1"
+  } // (default layout)
+  ];
+  return breakpoints.find(bp => screenWidth >= bp.min).column;
 }
 
 /**
@@ -2666,32 +2632,10 @@ function getActiveCardSize(screenWidth, classNames, sectionsEnabled, flightId) {
     return null;
   }
   const classList = classNames.split(" ");
-
-  // Each breakpoint corresponds to a minimum screen width and its associated column class
-  const breakpoints = [{
-    min: 1374,
-    column: "col-4"
-  },
-  // $break-point-sections-variant
-  {
-    min: 1122,
-    column: "col-3"
-  },
-  // $break-point-widest
-  {
-    min: 724,
-    column: "col-2"
-  },
-  // $break-point-layout-variant
-  {
-    min: 0,
-    column: "col-1"
-  } // (default layout)
-  ];
   const cardTypes = ["small", "medium", "large"];
 
   // Determine which column is active based on the current screen width
-  const currColumnCount = breakpoints.find(bp => screenWidth >= bp.min).column;
+  const currColumnCount = getActiveColumnLayout(screenWidth);
 
   // Match the card type for that column count
   for (let type of cardTypes) {
@@ -2945,9 +2889,6 @@ class ImpressionStats_ImpressionStats extends (external_React_default()).PureCom
     const {
       props
     } = this;
-    const {
-      isFakespot
-    } = props;
     const cards = props.rows;
     if (this.props.flightId) {
       this.props.dispatch(actionCreators.OnlyToMain({
@@ -2976,54 +2917,40 @@ class ImpressionStats_ImpressionStats extends (external_React_default()).PureCom
       }
     }
     if (this._needsImpressionStats(cards)) {
-      if (isFakespot) {
-        props.dispatch(actionCreators.DiscoveryStreamImpressionStats({
-          source: props.source.toUpperCase(),
-          window_inner_width: window.innerWidth,
-          window_inner_height: window.innerHeight,
-          tiles: cards.map(link => ({
-            id: link.id,
-            type: "fakespot",
-            category: link.category
-          }))
-        }));
-      } else {
-        props.dispatch(actionCreators.DiscoveryStreamImpressionStats({
-          source: props.source.toUpperCase(),
-          window_inner_width: window.innerWidth,
-          window_inner_height: window.innerHeight,
-          tiles: cards.map(link => ({
-            id: link.id,
-            pos: link.pos,
-            type: props.flightId ? "spoc" : "organic",
-            ...(link.shim ? {
-              shim: link.shim
-            } : {}),
-            recommendation_id: link.recommendation_id,
-            fetchTimestamp: link.fetchTimestamp,
-            corpus_item_id: link.corpus_item_id,
-            scheduled_corpus_item_id: link.scheduled_corpus_item_id,
-            recommended_at: link.recommended_at,
-            received_rank: link.received_rank,
-            topic: link.topic,
-            features: link.features,
-            is_list_card: link.is_list_card,
-            ...(link.format ? {
-              format: link.format
-            } : {
-              format: getActiveCardSize(window.innerWidth, link.class_names, link.section, link.flightId)
-            }),
-            ...(link.section ? {
-              section: link.section,
-              section_position: link.section_position,
-              is_section_followed: link.is_section_followed,
-              layout_name: link.sectionLayoutName
-            } : {})
-          })),
-          firstVisibleTimestamp: props.firstVisibleTimestamp
-        }));
-        this.impressionCardGuids = cards.map(link => link.id);
-      }
+      props.dispatch(actionCreators.DiscoveryStreamImpressionStats({
+        source: props.source.toUpperCase(),
+        window_inner_width: window.innerWidth,
+        window_inner_height: window.innerHeight,
+        tiles: cards.map(link => ({
+          id: link.id,
+          pos: link.pos,
+          type: props.flightId ? "spoc" : "organic",
+          ...(link.shim ? {
+            shim: link.shim
+          } : {}),
+          recommendation_id: link.recommendation_id,
+          fetchTimestamp: link.fetchTimestamp,
+          corpus_item_id: link.corpus_item_id,
+          scheduled_corpus_item_id: link.scheduled_corpus_item_id,
+          recommended_at: link.recommended_at,
+          received_rank: link.received_rank,
+          topic: link.topic,
+          features: link.features,
+          ...(link.format ? {
+            format: link.format
+          } : {
+            format: getActiveCardSize(window.innerWidth, link.class_names, link.section, link.flightId)
+          }),
+          ...(link.section ? {
+            section: link.section,
+            section_position: link.section_position,
+            is_section_followed: link.is_section_followed,
+            layout_name: link.sectionLayoutName
+          } : {})
+        })),
+        firstVisibleTimestamp: props.firstVisibleTimestamp
+      }));
+      this.impressionCardGuids = cards.map(link => link.id);
     }
   }
 
@@ -3204,7 +3131,8 @@ class SafeAnchor extends (external_React_default()).PureComponent {
       url,
       className,
       title,
-      isSponsored
+      isSponsored,
+      onFocus
     } = this.props;
     let anchor = /*#__PURE__*/external_React_default().createElement("a", SafeAnchor_extends({
       href: this.safeURI(url),
@@ -3215,6 +3143,8 @@ class SafeAnchor extends (external_React_default()).PureComponent {
     }, this.props.tabIndex === 0 || this.props.tabIndex ? {
       ref: this.props.setRef,
       tabIndex: this.props.tabIndex
+    } : {}, onFocus ? {
+      onFocus
     } : {}), this.props.children);
     return anchor;
   }
@@ -3451,16 +3381,19 @@ function DSThumbsUpDownButtons({
   onThumbsDownClick,
   isThumbsUpActive,
   isThumbsDownActive,
-  refinedCardsLayout
+  refinedCardsLayout,
+  tabIndex
 }) {
   let thumbsButtons = /*#__PURE__*/external_React_default().createElement((external_React_default()).Fragment, null, /*#__PURE__*/external_React_default().createElement("button", {
     onClick: onThumbsUpClick,
     className: `card-stp-thumbs-button icon icon-thumbs-up ${isThumbsUpActive ? "is-active" : null}`,
-    "data-l10n-id": "newtab-pocket-thumbs-up-tooltip"
+    "data-l10n-id": "newtab-pocket-thumbs-up-tooltip",
+    tabIndex: tabIndex
   }), /*#__PURE__*/external_React_default().createElement("button", {
     onClick: onThumbsDownClick,
     className: `card-stp-thumbs-button icon icon-thumbs-down ${isThumbsDownActive ? "is-active" : null}`,
-    "data-l10n-id": "newtab-pocket-thumbs-down-tooltip"
+    "data-l10n-id": "newtab-pocket-thumbs-down-tooltip",
+    tabIndex: tabIndex
   }));
   if (refinedCardsLayout) {
     thumbsButtons = /*#__PURE__*/external_React_default().createElement((external_React_default()).Fragment, null, /*#__PURE__*/external_React_default().createElement("moz-button", {
@@ -3468,13 +3401,15 @@ function DSThumbsUpDownButtons({
       onClick: onThumbsUpClick,
       className: `card-stp-thumbs-button icon icon-thumbs-up refined-layout ${isThumbsUpActive ? "is-active" : null}`,
       "data-l10n-id": "newtab-pocket-thumbs-up-tooltip",
-      type: "icon ghost"
+      type: "icon ghost",
+      tabIndex: tabIndex
     }), /*#__PURE__*/external_React_default().createElement("moz-button", {
       iconsrc: "chrome://global/skin/icons/thumbs-down-20.svg",
       onClick: onThumbsDownClick,
       className: `card-stp-thumbs-button icon icon-thumbs-down ${isThumbsDownActive ? "is-active" : null}`,
       "data-l10n-id": "newtab-pocket-thumbs-down-tooltip",
-      type: "icon ghost"
+      type: "icon ghost",
+      tabIndex: tabIndex
     }));
   }
   return /*#__PURE__*/external_React_default().createElement("div", {
@@ -3509,6 +3444,7 @@ const PREF_FAVICONS_ENABLED = "discoverystream.publisherFavicon.enabled";
 
 /**
  * READ TIME FROM WORD COUNT
+ *
  * @param {int} wordCount number of words in an article
  * @returns {int} number of words per minute in minutes
  */
@@ -3587,16 +3523,16 @@ const DefaultMeta = ({
   mayHaveThumbsUpDown,
   onThumbsUpClick,
   onThumbsDownClick,
-  isListCard,
   state,
   format,
   topic,
   isSectionsCard,
   showTopics,
   icon_src,
-  refinedCardsLayout
+  refinedCardsLayout,
+  tabIndex
 }) => {
-  const shouldHaveThumbs = !isListCard && format !== "rectangle" && mayHaveSectionsCards && mayHaveThumbsUpDown;
+  const shouldHaveThumbs = format !== "rectangle" && mayHaveSectionsCards && mayHaveThumbsUpDown;
   const shouldHaveFooterSection = isSectionsCard && (shouldHaveThumbs || showTopics);
   return /*#__PURE__*/external_React_default().createElement("div", {
     className: "meta"
@@ -3616,12 +3552,13 @@ const DefaultMeta = ({
     className: "excerpt clamp"
   }, "Sponsored content supports our mission to build a better web.") : excerpt && /*#__PURE__*/external_React_default().createElement("p", {
     className: "excerpt clamp"
-  }, excerpt)), !isListCard && format !== "rectangle" && !mayHaveSectionsCards && mayHaveThumbsUpDown && !refinedCardsLayout && /*#__PURE__*/external_React_default().createElement(DSThumbsUpDownButtons, {
+  }, excerpt)), format !== "rectangle" && !mayHaveSectionsCards && mayHaveThumbsUpDown && !refinedCardsLayout && /*#__PURE__*/external_React_default().createElement(DSThumbsUpDownButtons, {
     onThumbsDownClick: onThumbsDownClick,
     onThumbsUpClick: onThumbsUpClick,
     sponsor: sponsor,
     isThumbsDownActive: state.isThumbsDownActive,
-    isThumbsUpActive: state.isThumbsUpActive
+    isThumbsUpActive: state.isThumbsUpActive,
+    tabIndex: tabIndex
   }), (shouldHaveFooterSection || refinedCardsLayout) && /*#__PURE__*/external_React_default().createElement("div", {
     className: "sections-card-footer"
   }, refinedCardsLayout && format !== "rectangle" && format !== "spoc" && /*#__PURE__*/external_React_default().createElement(DSSource, {
@@ -3639,7 +3576,8 @@ const DefaultMeta = ({
     sponsor: sponsor,
     isThumbsDownActive: state.isThumbsDownActive,
     isThumbsUpActive: state.isThumbsUpActive,
-    refinedCardsLayout: refinedCardsLayout
+    refinedCardsLayout: refinedCardsLayout,
+    tabIndex: tabIndex
   }), showTopics && /*#__PURE__*/external_React_default().createElement("span", {
     className: "ds-card-topic",
     "data-l10n-id": `newtab-topic-label-${topic}`
@@ -3754,80 +3692,68 @@ class _DSCard extends (external_React_default()).PureComponent {
   onLinkClick() {
     const matchesSelectedTopic = this.doesLinkTopicMatchSelectedTopic();
     if (this.props.dispatch) {
-      if (this.props.isFakespot) {
-        this.props.dispatch(actionCreators.DiscoveryStreamUserEvent({
-          event: "FAKESPOT_CLICK",
-          value: {
-            product_id: this.props.id,
-            category: this.props.category || ""
-          }
-        }));
-      } else {
-        this.props.dispatch(actionCreators.DiscoveryStreamUserEvent({
-          event: "CLICK",
-          source: this.props.type.toUpperCase(),
-          action_position: this.props.pos,
-          value: {
-            event_source: "card",
-            card_type: this.props.flightId ? "spoc" : "organic",
-            recommendation_id: this.props.recommendation_id,
-            tile_id: this.props.id,
-            ...(this.props.shim && this.props.shim.click ? {
-              shim: this.props.shim.click
-            } : {}),
-            fetchTimestamp: this.props.fetchTimestamp,
-            firstVisibleTimestamp: this.props.firstVisibleTimestamp,
-            corpus_item_id: this.props.corpus_item_id,
-            scheduled_corpus_item_id: this.props.scheduled_corpus_item_id,
-            recommended_at: this.props.recommended_at,
-            received_rank: this.props.received_rank,
-            topic: this.props.topic,
-            features: this.props.features,
-            matches_selected_topic: matchesSelectedTopic,
-            selected_topics: this.props.selectedTopics,
-            is_list_card: this.props.isListCard,
-            ...(this.props.format ? {
-              format: this.props.format
-            } : {
-              format: getActiveCardSize(window.innerWidth, this.props.sectionsClassNames, this.props.section, this.props.flightId)
-            }),
-            ...(this.props.section ? {
-              section: this.props.section,
-              section_position: this.props.sectionPosition,
-              is_section_followed: this.props.sectionFollowed,
-              layout_name: this.props.sectionLayoutName
-            } : {})
-          }
-        }));
-        this.props.dispatch(actionCreators.ImpressionStats({
-          source: this.props.type.toUpperCase(),
-          click: 0,
-          window_inner_width: this.props.windowObj.innerWidth,
-          window_inner_height: this.props.windowObj.innerHeight,
-          tiles: [{
-            id: this.props.id,
-            pos: this.props.pos,
-            ...(this.props.shim && this.props.shim.click ? {
-              shim: this.props.shim.click
-            } : {}),
-            type: this.props.flightId ? "spoc" : "organic",
-            recommendation_id: this.props.recommendation_id,
-            topic: this.props.topic,
-            selected_topics: this.props.selectedTopics,
-            is_list_card: this.props.isListCard,
-            ...(this.props.format ? {
-              format: this.props.format
-            } : {
-              format: getActiveCardSize(window.innerWidth, this.props.sectionsClassNames, this.props.section, this.props.flightId)
-            }),
-            ...(this.props.section ? {
-              section: this.props.section,
-              section_position: this.props.sectionPosition,
-              is_section_followed: this.props.sectionFollowed
-            } : {})
-          }]
-        }));
-      }
+      this.props.dispatch(actionCreators.DiscoveryStreamUserEvent({
+        event: "CLICK",
+        source: this.props.type.toUpperCase(),
+        action_position: this.props.pos,
+        value: {
+          event_source: "card",
+          card_type: this.props.flightId ? "spoc" : "organic",
+          recommendation_id: this.props.recommendation_id,
+          tile_id: this.props.id,
+          ...(this.props.shim && this.props.shim.click ? {
+            shim: this.props.shim.click
+          } : {}),
+          fetchTimestamp: this.props.fetchTimestamp,
+          firstVisibleTimestamp: this.props.firstVisibleTimestamp,
+          corpus_item_id: this.props.corpus_item_id,
+          scheduled_corpus_item_id: this.props.scheduled_corpus_item_id,
+          recommended_at: this.props.recommended_at,
+          received_rank: this.props.received_rank,
+          topic: this.props.topic,
+          features: this.props.features,
+          matches_selected_topic: matchesSelectedTopic,
+          selected_topics: this.props.selectedTopics,
+          ...(this.props.format ? {
+            format: this.props.format
+          } : {
+            format: getActiveCardSize(window.innerWidth, this.props.sectionsClassNames, this.props.section, this.props.flightId)
+          }),
+          ...(this.props.section ? {
+            section: this.props.section,
+            section_position: this.props.sectionPosition,
+            is_section_followed: this.props.sectionFollowed,
+            layout_name: this.props.sectionLayoutName
+          } : {})
+        }
+      }));
+      this.props.dispatch(actionCreators.ImpressionStats({
+        source: this.props.type.toUpperCase(),
+        click: 0,
+        window_inner_width: this.props.windowObj.innerWidth,
+        window_inner_height: this.props.windowObj.innerHeight,
+        tiles: [{
+          id: this.props.id,
+          pos: this.props.pos,
+          ...(this.props.shim && this.props.shim.click ? {
+            shim: this.props.shim.click
+          } : {}),
+          type: this.props.flightId ? "spoc" : "organic",
+          recommendation_id: this.props.recommendation_id,
+          topic: this.props.topic,
+          selected_topics: this.props.selectedTopics,
+          ...(this.props.format ? {
+            format: this.props.format
+          } : {
+            format: getActiveCardSize(window.innerWidth, this.props.sectionsClassNames, this.props.section, this.props.flightId)
+          }),
+          ...(this.props.section ? {
+            section: this.props.section,
+            section_position: this.props.sectionPosition,
+            is_section_followed: this.props.sectionFollowed
+          } : {})
+        }]
+      }));
     }
   }
   onThumbsUpClick(event) {
@@ -4115,8 +4041,6 @@ class _DSCard extends (external_React_default()).PureComponent {
       isRecentSave,
       DiscoveryStream,
       Prefs,
-      isListCard,
-      isFakespot,
       mayHaveSectionsCards,
       format
     } = this.props;
@@ -4144,7 +4068,7 @@ class _DSCard extends (external_React_default()).PureComponent {
         }));
       }
       return /*#__PURE__*/external_React_default().createElement("div", {
-        className: `ds-card placeholder ${placeholderClassName} ${isListCard ? "list-card-placeholder" : ""} ${refinedCardsClassName}`,
+        className: `ds-card placeholder ${placeholderClassName} ${refinedCardsClassName}`,
         ref: this.setPlaceholderRef
       }, placeholderElements);
     }
@@ -4180,8 +4104,6 @@ class _DSCard extends (external_React_default()).PureComponent {
     const ctaButtonClassName = ctaButtonEnabled ? `ds-card-cta-button` : ``;
     const compactImagesClassName = compactImages ? `ds-card-compact-image` : ``;
     const imageGradientClassName = imageGradient ? `ds-card-image-gradient` : ``;
-    const listCardClassName = isListCard ? `list-feed-card` : ``;
-    const fakespotClassName = isFakespot ? `fakespot` : ``;
     const sectionsCardsClassName = [mayHaveSectionsCards ? `sections-card-ui` : ``, this.props.sectionsClassNames].join(" ");
     const titleLinesName = `ds-card-title-lines-${titleLines}`;
     const descLinesClassName = `ds-card-desc-lines-${descLines}`;
@@ -4193,15 +4115,11 @@ class _DSCard extends (external_React_default()).PureComponent {
     });
     if (isMediumRectangle) {
       images = this.renderImage();
-    } else if (isListCard) {
-      images = this.renderImage({
-        sizes: this.listCardImageSizes
-      });
     } else if (sectionsEnabled) {
       images = this.renderSectionCardImages();
     }
     return /*#__PURE__*/external_React_default().createElement("article", {
-      className: `ds-card ${listCardClassName} ${fakespotClassName} ${sectionsCardsClassName} ${compactImagesClassName} ${imageGradientClassName} ${titleLinesName} ${descLinesClassName} ${spocFormatClassName} ${ctaButtonClassName} ${ctaButtonVariantClassName} ${refinedCardsClassName}`,
+      className: `ds-card ${sectionsCardsClassName} ${compactImagesClassName} ${imageGradientClassName} ${titleLinesName} ${descLinesClassName} ${spocFormatClassName} ${ctaButtonClassName} ${ctaButtonVariantClassName} ${refinedCardsClassName}`,
       ref: this.setContextMenuButtonHostRef,
       "data-position-one": this.props["data-position-one"],
       "data-position-two": this.props["data-position-one"],
@@ -4213,8 +4131,10 @@ class _DSCard extends (external_React_default()).PureComponent {
       onLinkClick: !this.props.placeholder ? this.onLinkClick : undefined,
       url: this.props.url,
       title: this.props.title,
-      isSponsored: !!this.props.flightId
-    }, this.props.showTopics && !this.props.mayHaveSectionsCards && this.props.topic && !isListCard && !refinedCardsLayout && /*#__PURE__*/external_React_default().createElement("span", {
+      isSponsored: !!this.props.flightId,
+      tabIndex: this.props.tabIndex,
+      onFocus: this.props.onFocus
+    }, this.props.showTopics && !this.props.mayHaveSectionsCards && this.props.topic && !refinedCardsLayout && /*#__PURE__*/external_React_default().createElement("span", {
       className: "ds-card-topic",
       "data-l10n-id": `newtab-topic-label-${this.props.topic}`
     }), /*#__PURE__*/external_React_default().createElement("div", {
@@ -4235,11 +4155,9 @@ class _DSCard extends (external_React_default()).PureComponent {
         received_rank: this.props.received_rank,
         topic: this.props.topic,
         features: this.props.features,
-        is_list_card: isListCard,
         ...(format ? {
           format
         } : {}),
-        isFakespot,
         category: this.props.category,
         ...(this.props.section ? {
           section: this.props.section,
@@ -4254,18 +4172,11 @@ class _DSCard extends (external_React_default()).PureComponent {
         } : {})
       }],
       dispatch: this.props.dispatch,
-      isFakespot: isFakespot,
       source: this.props.type,
       firstVisibleTimestamp: this.props.firstVisibleTimestamp
     }), ctaButtonVariant === "variant-b" && /*#__PURE__*/external_React_default().createElement("div", {
       className: "cta-header"
-    }, "Shop Now"), isFakespot ? /*#__PURE__*/external_React_default().createElement("div", {
-      className: "meta"
-    }, /*#__PURE__*/external_React_default().createElement("div", {
-      className: "info-wrap"
-    }, /*#__PURE__*/external_React_default().createElement("h3", {
-      className: "title clamp"
-    }, this.props.title))) : /*#__PURE__*/external_React_default().createElement(DefaultMeta, {
+    }, "Shop Now"), /*#__PURE__*/external_React_default().createElement(DefaultMeta, {
       source: source,
       title: this.props.title,
       excerpt: excerpt,
@@ -4282,18 +4193,18 @@ class _DSCard extends (external_React_default()).PureComponent {
       onThumbsUpClick: this.onThumbsUpClick,
       onThumbsDownClick: this.onThumbsDownClick,
       state: this.state,
-      isListCard: isListCard,
       showTopics: !refinedCardsLayout && this.props.showTopics,
-      isSectionsCard: this.props.mayHaveSectionsCards && this.props.topic && !isListCard,
+      isSectionsCard: this.props.mayHaveSectionsCards && this.props.topic,
       format: format,
       topic: this.props.topic,
       icon_src: faviconSrc,
-      refinedCardsLayout: refinedCardsLayout
+      refinedCardsLayout: refinedCardsLayout,
+      tabIndex: this.props.tabIndex
     })), /*#__PURE__*/external_React_default().createElement("div", {
       className: "card-stp-button-hover-background"
     }, /*#__PURE__*/external_React_default().createElement("div", {
       className: "card-stp-button-position-wrapper"
-    }, !isFakespot && /*#__PURE__*/external_React_default().createElement(DSLinkMenu, {
+    }, /*#__PURE__*/external_React_default().createElement(DSLinkMenu, {
       id: this.props.id,
       index: this.props.pos,
       dispatch: this.props.dispatch,
@@ -4317,7 +4228,6 @@ class _DSCard extends (external_React_default()).PureComponent {
       scheduled_corpus_item_id: this.props.scheduled_corpus_item_id,
       recommended_at: this.props.recommended_at,
       received_rank: this.props.received_rank,
-      is_list_card: this.props.isListCard,
       section: this.props.section,
       section_position: this.props.sectionPosition,
       is_section_followed: this.props.sectionFollowed,
@@ -4326,7 +4236,8 @@ class _DSCard extends (external_React_default()).PureComponent {
       format: format ? format : getActiveCardSize(window.innerWidth, this.props.sectionsClassNames, this.props.section, this.props.flightId),
       isSectionsCard: this.props.mayHaveSectionsCards,
       topic: this.props.topic,
-      selected_topics: this.props.selected_topics
+      selected_topics: this.props.selected_topics,
+      tabIndex: this.props.tabIndex
     }))));
   }
 }
@@ -4549,151 +4460,6 @@ _TopicsWidget.defaultProps = {
 const TopicsWidget = (0,external_ReactRedux_namespaceObject.connect)(state => ({
   DiscoveryStream: state.DiscoveryStream
 }))(_TopicsWidget);
-;// CONCATENATED MODULE: ./content-src/components/DiscoveryStreamComponents/ListFeed/ListFeed.jsx
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-
-
-
-
-
-
-
-const PREF_LISTFEED_TITLE = "discoverystream.contextualContent.listFeedTitle";
-const PREF_FAKESPOT_CATEGROY = "discoverystream.contextualContent.fakespot.defaultCategoryTitle";
-const PREF_FAKESPOT_FOOTER = "discoverystream.contextualContent.fakespot.footerCopy";
-const PREF_FAKESPOT_CTA_COPY = "discoverystream.contextualContent.fakespot.ctaCopy";
-const PREF_FAKESPOT_CTA_URL = "discoverystream.contextualContent.fakespot.ctaUrl";
-const ListFeed_PREF_CONTEXTUAL_CONTENT_SELECTED_FEED = "discoverystream.contextualContent.selectedFeed";
-function ListFeed({
-  type,
-  firstVisibleTimestamp,
-  recs,
-  categories,
-  dispatch
-}) {
-  const [selectedFakespotFeed, setSelectedFakespotFeed] = (0,external_React_namespaceObject.useState)("");
-  const prefs = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.Prefs.values);
-  const listFeedTitle = prefs[PREF_LISTFEED_TITLE];
-  const categoryTitle = prefs[PREF_FAKESPOT_CATEGROY];
-  const footerCopy = prefs[PREF_FAKESPOT_FOOTER];
-  const ctaCopy = prefs[PREF_FAKESPOT_CTA_COPY];
-  const ctaUrl = prefs[PREF_FAKESPOT_CTA_URL];
-  const isFakespot = prefs[ListFeed_PREF_CONTEXTUAL_CONTENT_SELECTED_FEED] === "fakespot";
-  // Todo: need to remove ads while using default recommendations, remove this line once API has been updated.
-  let listFeedRecs = selectedFakespotFeed ? recs.filter(rec => rec.category === selectedFakespotFeed) : recs;
-  function handleCtaClick() {
-    dispatch(actionCreators.OnlyToMain({
-      type: "FAKESPOT_CTA_CLICK"
-    }));
-  }
-  function handleChange(e) {
-    setSelectedFakespotFeed(e.target.value);
-    dispatch(actionCreators.DiscoveryStreamUserEvent({
-      event: "FAKESPOT_CATEGORY",
-      value: {
-        category: e.target.value || ""
-      }
-    }));
-  }
-  const contextMenuOptions = ["FakespotDismiss", "AboutFakespot"];
-  const {
-    length: listLength
-  } = listFeedRecs;
-  // determine if the list should take up all availible height or not
-  const fullList = listLength >= 5;
-  return listLength > 0 && /*#__PURE__*/external_React_default().createElement("div", {
-    className: `list-feed ${fullList ? "full-height" : ""} ${listLength > 2 ? "span-2" : "span-1"}`
-  }, /*#__PURE__*/external_React_default().createElement("div", {
-    className: "list-feed-inner-wrapper"
-  }, isFakespot ? /*#__PURE__*/external_React_default().createElement("div", {
-    className: "fakespot-heading"
-  }, /*#__PURE__*/external_React_default().createElement("div", {
-    className: "dropdown-wrapper"
-  }, /*#__PURE__*/external_React_default().createElement("select", {
-    className: "fakespot-dropdown",
-    name: "fakespot-categories",
-    value: selectedFakespotFeed,
-    onChange: handleChange
-  }, /*#__PURE__*/external_React_default().createElement("option", {
-    value: ""
-  }, categoryTitle || "Holiday Gift Guide"), categories.map(category => /*#__PURE__*/external_React_default().createElement("option", {
-    key: category,
-    value: category
-  }, category))), /*#__PURE__*/external_React_default().createElement("div", {
-    className: "context-menu-wrapper"
-  }, /*#__PURE__*/external_React_default().createElement(ContextMenuButton, null, /*#__PURE__*/external_React_default().createElement(LinkMenu, {
-    dispatch: dispatch,
-    options: contextMenuOptions,
-    shouldSendImpressionStats: true,
-    site: {
-      url: "https://www.fakespot.com"
-    }
-  })))), /*#__PURE__*/external_React_default().createElement("p", {
-    className: "fakespot-desc"
-  }, listFeedTitle)) : /*#__PURE__*/external_React_default().createElement("h1", {
-    className: "list-feed-title",
-    id: "list-feed-title"
-  }, /*#__PURE__*/external_React_default().createElement("span", {
-    className: "icon icon-newsfeed"
-  }), listFeedTitle), /*#__PURE__*/external_React_default().createElement("div", {
-    className: "list-feed-content",
-    role: "menu",
-    "aria-labelledby": "list-feed-title"
-  }, listFeedRecs.slice(0, 5).map((rec, index) => {
-    if (!rec || rec.placeholder) {
-      return /*#__PURE__*/external_React_default().createElement(DSCard, {
-        key: `list-card-${index}`,
-        placeholder: true,
-        isListCard: true
-      });
-    }
-    return /*#__PURE__*/external_React_default().createElement(DSCard, {
-      key: `list-card-${index}`,
-      pos: index,
-      flightId: rec.flight_id,
-      image_src: rec.image_src,
-      raw_image_src: rec.raw_image_src,
-      word_count: rec.word_count,
-      time_to_read: rec.time_to_read,
-      title: rec.title,
-      topic: rec.topic,
-      excerpt: rec.excerpt,
-      url: rec.url,
-      id: rec.id,
-      shim: rec.shim,
-      type: type,
-      context: rec.context,
-      sponsor: rec.sponsor,
-      sponsored_by_override: rec.sponsored_by_override,
-      dispatch: dispatch,
-      source: rec.domain,
-      publisher: rec.publisher,
-      pocket_id: rec.pocket_id,
-      context_type: rec.context_type,
-      bookmarkGuid: rec.bookmarkGuid,
-      firstVisibleTimestamp: firstVisibleTimestamp,
-      corpus_item_id: rec.corpus_item_id,
-      scheduled_corpus_item_id: rec.scheduled_corpus_item_id,
-      recommended_at: rec.recommended_at,
-      received_rank: rec.received_rank,
-      isListCard: true,
-      isFakespot: isFakespot,
-      category: rec.category
-    });
-  }), isFakespot && /*#__PURE__*/external_React_default().createElement("div", {
-    className: "fakespot-footer"
-  }, /*#__PURE__*/external_React_default().createElement("p", null, footerCopy), /*#__PURE__*/external_React_default().createElement(SafeAnchor, {
-    className: "fakespot-cta",
-    url: ctaUrl,
-    referrer: "",
-    onLinkClick: handleCtaClick,
-    dispatch: dispatch
-  }, ctaCopy)))));
-}
-
 ;// CONCATENATED MODULE: ./content-src/components/DiscoveryStreamComponents/AdBannerContextMenu/AdBannerContextMenu.jsx
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -5055,239 +4821,10 @@ const AdBanner = ({
     toggleActive: toggleActive
   }))), promoCardEnabled && /*#__PURE__*/external_React_default().createElement(PromoCard, null));
 };
-;// CONCATENATED MODULE: ./content-src/components/DiscoveryStreamComponents/TrendingSearches/TrendingSearches.jsx
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-
-
-
-
-
-const PREF_TRENDING_VARIANT = "trendingSearch.variant";
-const PREF_REFINED_CARDS_LAYOUT = "discoverystream.refinedCardsLayout.enabled";
-function TrendingSearches() {
-  const [showContextMenu, setShowContextMenu] = (0,external_React_namespaceObject.useState)(false);
-  // The keyboard access parameter is passed down to LinkMenu component
-  // that uses it to focus on the first context menu option for accessibility.
-  const [isKeyboardAccess, setIsKeyboardAccess] = (0,external_React_namespaceObject.useState)(false);
-  const dispatch = (0,external_ReactRedux_namespaceObject.useDispatch)();
-  const {
-    TrendingSearch,
-    Prefs
-  } = (0,external_ReactRedux_namespaceObject.useSelector)(state => state);
-  const {
-    values: prefs
-  } = Prefs;
-  const {
-    suggestions,
-    collapsed
-  } = TrendingSearch;
-  const variant = prefs[PREF_TRENDING_VARIANT];
-  const refinedCards = prefs[PREF_REFINED_CARDS_LAYOUT];
-  let resultRef = (0,external_React_namespaceObject.useRef)([]);
-  let contextMenuHost = (0,external_React_namespaceObject.useRef)(null);
-  const TRENDING_SEARCH_CONTEXT_MENU_OPTIONS = ["TrendingSearchDismiss", "TrendingSearchLearnMore"];
-  function onArrowClick() {
-    dispatch(actionCreators.AlsoToMain({
-      type: actionTypes.TRENDING_SEARCH_TOGGLE_COLLAPSE,
-      data: {
-        collapsed: !collapsed,
-        variant
-      }
-    }));
-  }
-  function handleLinkOpen() {
-    dispatch(actionCreators.AlsoToMain({
-      type: actionTypes.TRENDING_SEARCH_SUGGESTION_OPEN,
-      data: {
-        variant
-      }
-    }));
-  }
-
-  // If the window is small, the context menu in variant B will move closer to the card
-  // so that it doesn't cut off
-  const handleContextMenuShow = () => {
-    const host = contextMenuHost.current;
-    const isRTL = document.dir === "rtl"; // returns true if page language is right-to-left
-    const checkRect = host.getBoundingClientRect();
-    const maxBounds = 200;
-
-    // Adds the class of "last-item" if the card is near the edge of the window
-    const checkBounds = isRTL ? checkRect.left <= maxBounds : window.innerWidth - checkRect.right <= maxBounds;
-    if (checkBounds) {
-      host.classList.add("last-item");
-    }
-  };
-  const handleContextMenuUpdate = () => {
-    const host = contextMenuHost.current;
-    if (!host) {
-      return;
-    }
-    host.classList.remove("last-item");
-  };
-  const toggleContextMenu = isKeyBoard => {
-    setShowContextMenu(!showContextMenu);
-    setIsKeyboardAccess(isKeyBoard);
-    if (!showContextMenu) {
-      handleContextMenuShow();
-    } else {
-      handleContextMenuUpdate();
-    }
-  };
-  function onContextMenuClick(e) {
-    e.preventDefault();
-    toggleContextMenu(false);
-  }
-  function onContextMenuKeyDown(e) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      toggleContextMenu(true);
-    }
-  }
-  function onUpdate() {
-    setShowContextMenu(!showContextMenu);
-  }
-  function handleResultKeyDown(event, index) {
-    const maxResults = suggestions.length;
-    let nextIndex = index;
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      if (index < maxResults - 1) {
-        nextIndex = index + 1;
-      } else {
-        return;
-      }
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      if (index > 0) {
-        nextIndex = index - 1;
-      } else {
-        return;
-      }
-    }
-    resultRef.current[index].tabIndex = -1;
-    resultRef.current[nextIndex].tabIndex = 0;
-    resultRef.current[nextIndex].focus();
-  }
-  const handleIntersection = (0,external_React_namespaceObject.useCallback)(() => {
-    dispatch(actionCreators.AlsoToMain({
-      type: actionTypes.TRENDING_SEARCH_IMPRESSION,
-      data: {
-        variant
-      }
-    }));
-  }, [dispatch, variant]);
-  const ref = useIntersectionObserver(handleIntersection);
-  if (!suggestions?.length) {
-    return null;
-  } else if (variant === "a" || variant === "c") {
-    return /*#__PURE__*/external_React_default().createElement("section", {
-      ref: el => {
-        ref.current = [el];
-      }
-      // Variant C matches the design of variant A but should only
-      // appear on hover
-      ,
-      className: `trending-searches-pill-wrapper ${variant === "c" ? "hover-only" : ""}`
-    }, /*#__PURE__*/external_React_default().createElement("div", {
-      className: "trending-searches-title-wrapper"
-    }, /*#__PURE__*/external_React_default().createElement("span", {
-      className: "trending-searches-icon icon icon-arrow-trending"
-    }), /*#__PURE__*/external_React_default().createElement("h2", {
-      className: "trending-searches-title",
-      "data-l10n-id": "newtab-trending-searches-title"
-    }), /*#__PURE__*/external_React_default().createElement("div", {
-      className: "close-open-trending-searches"
-    }, /*#__PURE__*/external_React_default().createElement("moz-button", {
-      iconsrc: `chrome://global/skin/icons/arrow-${collapsed ? "down" : "up"}.svg`,
-      onClick: onArrowClick,
-      className: `icon icon-arrowhead-up`,
-      type: "icon ghost",
-      "data-l10n-id": `newtab-trending-searches-${collapsed ? "show" : "hide"}-trending`
-    }))), !collapsed && /*#__PURE__*/external_React_default().createElement("ul", {
-      className: "trending-searches-list"
-    }, suggestions.map((result, index) => {
-      return /*#__PURE__*/external_React_default().createElement("li", {
-        key: result.suggestion,
-        className: "trending-search-item",
-        onKeyDown: e => handleResultKeyDown(e, index)
-      }, /*#__PURE__*/external_React_default().createElement(SafeAnchor, {
-        url: result.searchUrl,
-        onLinkClick: handleLinkOpen,
-        title: result.suggestion,
-        setRef: item => resultRef.current[index] = item,
-        tabIndex: index === 0 ? 0 : -1
-      }, result.lowerCaseSuggestion));
-    })));
-  } else if (variant === "b") {
-    return /*#__PURE__*/external_React_default().createElement("div", {
-      ref: el => {
-        ref.current = [el];
-        contextMenuHost.current = el;
-      },
-      className: "trending-searches-list-view"
-    }, /*#__PURE__*/external_React_default().createElement("div", {
-      className: "trending-searches-list-view-header"
-    }, /*#__PURE__*/external_React_default().createElement("h3", {
-      "data-l10n-id": "newtab-trending-searches-title"
-    }), /*#__PURE__*/external_React_default().createElement("div", {
-      className: "trending-searches-context-menu-wrapper"
-    }, /*#__PURE__*/external_React_default().createElement("div", {
-      className: `trending-searches-context-menu ${showContextMenu ? "context-menu-open" : ""}`
-    }, /*#__PURE__*/external_React_default().createElement("moz-button", {
-      type: "icon ghost",
-      size: "default",
-      "data-l10n-id": "newtab-menu-section-tooltip",
-      iconsrc: "chrome://global/skin/icons/more.svg",
-      onClick: onContextMenuClick,
-      onKeyDown: onContextMenuKeyDown
-    }), showContextMenu && /*#__PURE__*/external_React_default().createElement(LinkMenu, {
-      onUpdate: onUpdate,
-      dispatch: dispatch,
-      keyboardAccess: isKeyboardAccess,
-      options: TRENDING_SEARCH_CONTEXT_MENU_OPTIONS,
-      shouldSendImpressionStats: true,
-      site: {
-        url: "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/trending-searches-new-tab",
-        variant
-      }
-    })))), /*#__PURE__*/external_React_default().createElement("ul", {
-      className: "trending-searches-list-items"
-    }, suggestions.slice(0, 6).map((result, index) => {
-      return /*#__PURE__*/external_React_default().createElement("li", {
-        key: result.suggestion,
-        className: `trending-searches-list-item ${refinedCards ? "compact" : ""}`,
-        onKeyDown: e => handleResultKeyDown(e, index)
-      }, /*#__PURE__*/external_React_default().createElement(SafeAnchor, {
-        url: result.searchUrl,
-        onLinkClick: handleLinkOpen,
-        title: result.suggestion,
-        setRef: item => resultRef.current[index] = item,
-        tabIndex: index === 0 ? 0 : -1
-      }, result.icon ? /*#__PURE__*/external_React_default().createElement("div", {
-        className: "trending-icon-wrapper"
-      }, /*#__PURE__*/external_React_default().createElement("img", {
-        src: result.icon,
-        alt: "",
-        className: "trending-icon"
-      }), /*#__PURE__*/external_React_default().createElement("div", {
-        className: "trending-info-wrapper"
-      }, result.lowerCaseSuggestion, /*#__PURE__*/external_React_default().createElement("small", null, result.description))) : /*#__PURE__*/external_React_default().createElement((external_React_default()).Fragment, null, /*#__PURE__*/external_React_default().createElement("span", {
-        className: "trending-searches-icon icon icon-arrow-trending"
-      }), result.lowerCaseSuggestion)));
-    })));
-  }
-}
-
 ;// CONCATENATED MODULE: ./content-src/components/DiscoveryStreamComponents/CardGrid/CardGrid.jsx
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-
 
 
 
@@ -5302,17 +4839,10 @@ const PREF_TOPICS_ENABLED = "discoverystream.topicLabels.enabled";
 const PREF_TOPICS_SELECTED = "discoverystream.topicSelection.selectedTopics";
 const PREF_TOPICS_AVAILABLE = "discoverystream.topicSelection.topics";
 const PREF_SPOCS_STARTUPCACHE_ENABLED = "discoverystream.spocs.startupCache.enabled";
-const PREF_LIST_FEED_ENABLED = "discoverystream.contextualContent.enabled";
-const PREF_LIST_FEED_SELECTED_FEED = "discoverystream.contextualContent.selectedFeed";
-const PREF_FAKESPOT_ENABLED = "discoverystream.contextualContent.fakespot.enabled";
 const PREF_BILLBOARD_ENABLED = "newtabAdSize.billboard";
 const PREF_BILLBOARD_POSITION = "newtabAdSize.billboard.position";
 const PREF_LEADERBOARD_ENABLED = "newtabAdSize.leaderboard";
 const PREF_LEADERBOARD_POSITION = "newtabAdSize.leaderboard.position";
-const PREF_TRENDING_SEARCH = "trendingSearch.enabled";
-const PREF_TRENDING_SEARCH_SYSTEM = "system.trendingSearch.enabled";
-const PREF_SEARCH_ENGINE = "trendingSearch.defaultSearchEngine";
-const PREF_TRENDING_SEARCH_VARIANT = "trendingSearch.variant";
 const WIDGET_IDS = {
   TOPICS: 1
 };
@@ -5356,6 +4886,46 @@ function CardGrid_IntersectionObserver({
   }, children);
 }
 class _CardGrid extends (external_React_default()).PureComponent {
+  constructor(props) {
+    super(props);
+    this.state = {
+      focusedIndex: 0
+    };
+    this.onCardFocus = this.onCardFocus.bind(this);
+    this.handleCardKeyDown = this.handleCardKeyDown.bind(this);
+  }
+  onCardFocus(index) {
+    this.setState({
+      focusedIndex: index
+    });
+  }
+  handleCardKeyDown(e) {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const currentCardEl = e.target.closest("article.ds-card");
+      if (!currentCardEl) {
+        return;
+      }
+
+      // Arrow direction should match visual navigation direction in RTL
+      const isRTL = document.dir === "rtl";
+      const navigateToPrevious = isRTL ? e.key === "ArrowRight" : e.key === "ArrowLeft";
+      let targetCardEl = currentCardEl;
+
+      // Walk through siblings to find the target card element
+      while (targetCardEl) {
+        targetCardEl = navigateToPrevious ? targetCardEl.previousElementSibling : targetCardEl.nextElementSibling;
+        if (targetCardEl && targetCardEl.matches("article.ds-card")) {
+          const link = targetCardEl.querySelector("a.ds-card-link");
+          if (link) {
+            link.focus();
+          }
+          break;
+        }
+      }
+    }
+  }
+
   // eslint-disable-next-line max-statements
   renderCards() {
     const prefs = this.props.Prefs.values;
@@ -5375,64 +4945,68 @@ class _CardGrid extends (external_React_default()).PureComponent {
     const selectedTopics = prefs[PREF_TOPICS_SELECTED];
     const availableTopics = prefs[PREF_TOPICS_AVAILABLE];
     const spocsStartupCacheEnabled = prefs[PREF_SPOCS_STARTUPCACHE_ENABLED];
-    const listFeedEnabled = prefs[PREF_LIST_FEED_ENABLED];
-    const listFeedSelectedFeed = prefs[PREF_LIST_FEED_SELECTED_FEED];
     const billboardEnabled = prefs[PREF_BILLBOARD_ENABLED];
     const leaderboardEnabled = prefs[PREF_LEADERBOARD_ENABLED];
-    const trendingEnabled = prefs[PREF_TRENDING_SEARCH] && prefs[PREF_TRENDING_SEARCH_SYSTEM] && prefs[PREF_SEARCH_ENGINE]?.toLowerCase() === "google";
-    const trendingVariant = prefs[PREF_TRENDING_SEARCH_VARIANT];
-
-    // filter out recs that should be in ListFeed
-    const recs = this.props.data.recommendations.filter(item => !item.feedName).slice(0, items);
+    const recs = this.props.data.recommendations.slice(0, items);
     const cards = [];
+    let cardIndex = 0;
     for (let index = 0; index < items; index++) {
       const rec = recs[index];
-      cards.push(topicsLoading || this.props.placeholder || !rec || rec.placeholder || rec.flight_id && !spocsStartupCacheEnabled && this.props.App.isForStartupCache.DiscoveryStream ? /*#__PURE__*/external_React_default().createElement(PlaceholderDSCard, {
-        key: `dscard-${index}`
-      }) : /*#__PURE__*/external_React_default().createElement(DSCard, {
-        key: `dscard-${rec.id}`,
-        pos: rec.pos,
-        flightId: rec.flight_id,
-        image_src: rec.image_src,
-        raw_image_src: rec.raw_image_src,
-        icon_src: rec.icon_src,
-        word_count: rec.word_count,
-        time_to_read: rec.time_to_read,
-        title: rec.title,
-        topic: rec.topic,
-        features: rec.features,
-        showTopics: showTopics,
-        selectedTopics: selectedTopics,
-        excerpt: rec.excerpt,
-        availableTopics: availableTopics,
-        url: rec.url,
-        id: rec.id,
-        shim: rec.shim,
-        fetchTimestamp: rec.fetchTimestamp,
-        type: this.props.type,
-        context: rec.context,
-        sponsor: rec.sponsor,
-        sponsored_by_override: rec.sponsored_by_override,
-        dispatch: this.props.dispatch,
-        source: rec.domain,
-        publisher: rec.publisher,
-        pocket_id: rec.pocket_id,
-        context_type: rec.context_type,
-        bookmarkGuid: rec.bookmarkGuid,
-        ctaButtonSponsors: ctaButtonSponsors,
-        ctaButtonVariant: ctaButtonVariant,
-        recommendation_id: rec.recommendation_id,
-        firstVisibleTimestamp: this.props.firstVisibleTimestamp,
-        mayHaveThumbsUpDown: mayHaveThumbsUpDown,
-        mayHaveSectionsCards: mayHaveSectionsCards,
-        corpus_item_id: rec.corpus_item_id,
-        scheduled_corpus_item_id: rec.scheduled_corpus_item_id,
-        recommended_at: rec.recommended_at,
-        received_rank: rec.received_rank,
-        format: rec.format,
-        alt_text: rec.alt_text,
-        isTimeSensitive: rec.isTimeSensitive
-      }));
+      const isPlaceholder = topicsLoading || this.props.placeholder || !rec || rec.placeholder || rec.flight_id && !spocsStartupCacheEnabled && this.props.App.isForStartupCache.DiscoveryStream;
+      if (isPlaceholder) {
+        cards.push(/*#__PURE__*/external_React_default().createElement(PlaceholderDSCard, {
+          key: `dscard-${index}`
+        }));
+      } else {
+        const currentCardIndex = cardIndex;
+        cardIndex++;
+        cards.push(/*#__PURE__*/external_React_default().createElement(DSCard, {
+          key: `dscard-${rec.id}`,
+          pos: rec.pos,
+          flightId: rec.flight_id,
+          image_src: rec.image_src,
+          raw_image_src: rec.raw_image_src,
+          icon_src: rec.icon_src,
+          word_count: rec.word_count,
+          time_to_read: rec.time_to_read,
+          title: rec.title,
+          topic: rec.topic,
+          features: rec.features,
+          showTopics: showTopics,
+          selectedTopics: selectedTopics,
+          excerpt: rec.excerpt,
+          availableTopics: availableTopics,
+          url: rec.url,
+          id: rec.id,
+          shim: rec.shim,
+          fetchTimestamp: rec.fetchTimestamp,
+          type: this.props.type,
+          context: rec.context,
+          sponsor: rec.sponsor,
+          sponsored_by_override: rec.sponsored_by_override,
+          dispatch: this.props.dispatch,
+          source: rec.domain,
+          publisher: rec.publisher,
+          pocket_id: rec.pocket_id,
+          context_type: rec.context_type,
+          bookmarkGuid: rec.bookmarkGuid,
+          ctaButtonSponsors: ctaButtonSponsors,
+          ctaButtonVariant: ctaButtonVariant,
+          recommendation_id: rec.recommendation_id,
+          firstVisibleTimestamp: this.props.firstVisibleTimestamp,
+          mayHaveThumbsUpDown: mayHaveThumbsUpDown,
+          mayHaveSectionsCards: mayHaveSectionsCards,
+          corpus_item_id: rec.corpus_item_id,
+          scheduled_corpus_item_id: rec.scheduled_corpus_item_id,
+          recommended_at: rec.recommended_at,
+          received_rank: rec.received_rank,
+          format: rec.format,
+          alt_text: rec.alt_text,
+          isTimeSensitive: rec.isTimeSensitive,
+          tabIndex: currentCardIndex === this.state.focusedIndex ? 0 : -1,
+          onFocus: () => this.onCardFocus(currentCardIndex)
+        }));
+      }
     }
     if (widgets?.positions?.length && widgets?.data?.length) {
       let positionIndex = 0;
@@ -5462,22 +5036,6 @@ class _CardGrid extends (external_React_default()).PureComponent {
           cards.splice(position.index, 1, widgetComponent);
         }
       }
-    }
-    if (listFeedEnabled) {
-      const isFakespot = listFeedSelectedFeed === "fakespot";
-      const fakespotEnabled = prefs[PREF_FAKESPOT_ENABLED];
-      if (!isFakespot || isFakespot && fakespotEnabled) {
-        // Place the list feed as the 3rd element in the card grid
-        cards.splice(2, 1, this.renderListFeed(this.props.data.recommendations, listFeedSelectedFeed));
-      }
-    }
-    if (trendingEnabled && trendingVariant === "b") {
-      const firstSpocPosition = this.props.spocPositions[0]?.index;
-      // double check that a spoc/mrec is actually in the index it should be in
-      const format = cards[firstSpocPosition]?.props?.format;
-      const isSpoc = format === "spoc" || format === "rectangle";
-      // if the spoc is not in its position, place TrendingSearches in the 3rd position
-      cards.splice(isSpoc ? firstSpocPosition + 1 : 2, 1, /*#__PURE__*/external_React_default().createElement(TrendingSearches, null));
     }
 
     // if a banner ad is enabled and we have any available, place them in the grid
@@ -5531,26 +5089,9 @@ class _CardGrid extends (external_React_default()).PureComponent {
     }
     const gridClassName = this.renderGridClassName();
     return /*#__PURE__*/external_React_default().createElement((external_React_default()).Fragment, null, cards?.length > 0 && /*#__PURE__*/external_React_default().createElement("div", {
-      className: gridClassName
+      className: gridClassName,
+      onKeyDown: this.handleCardKeyDown
     }, cards));
-  }
-  renderListFeed(recommendations, selectedFeed) {
-    const recs = recommendations.filter(item => item.feedName === selectedFeed);
-    const isFakespot = selectedFeed === "fakespot";
-    // remove duplicates from category list
-    const categories = [...new Set(recs.map(({
-      category
-    }) => category))];
-    const listFeed = /*#__PURE__*/external_React_default().createElement(ListFeed
-    // only display recs that match selectedFeed for ListFeed
-    , {
-      recs: recs,
-      categories: isFakespot ? categories : [],
-      firstVisibleTimestamp: this.props.firstVisibleTimestamp,
-      type: this.props.type,
-      dispatch: this.props.dispatch
-    });
-    return listFeed;
   }
   renderGridClassName() {
     const {
@@ -6066,323 +5607,6 @@ const ReportContent = spocs => {
     className: "submit-report-btn"
   }))));
 };
-;// CONCATENATED MODULE: ./content-src/components/DiscoveryStreamComponents/DSSignup/DSSignup.jsx
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-
-
-
-
-
-
-class DSSignup extends (external_React_default()).PureComponent {
-  constructor(props) {
-    super(props);
-    this.state = {
-      active: false,
-      lastItem: false
-    };
-    this.onMenuButtonUpdate = this.onMenuButtonUpdate.bind(this);
-    this.onLinkClick = this.onLinkClick.bind(this);
-    this.onMenuShow = this.onMenuShow.bind(this);
-  }
-  onMenuButtonUpdate(showContextMenu) {
-    if (!showContextMenu) {
-      this.setState({
-        active: false,
-        lastItem: false
-      });
-    }
-  }
-  nextAnimationFrame() {
-    return new Promise(resolve => this.props.windowObj.requestAnimationFrame(resolve));
-  }
-  async onMenuShow() {
-    let {
-      lastItem
-    } = this.state;
-    // Wait for next frame before computing scrollMaxX to allow fluent menu strings to be visible
-    await this.nextAnimationFrame();
-    if (this.props.windowObj.scrollMaxX > 0) {
-      lastItem = true;
-    }
-    this.setState({
-      active: true,
-      lastItem
-    });
-  }
-  onLinkClick() {
-    const {
-      data
-    } = this.props;
-    if (this.props.dispatch && data && data.spocs && data.spocs.length) {
-      const source = this.props.type.toUpperCase();
-      // Grab the first item in the array as we only have 1 spoc position.
-      const [spoc] = data.spocs;
-      this.props.dispatch(actionCreators.DiscoveryStreamUserEvent({
-        event: "CLICK",
-        source,
-        action_position: 0
-      }));
-      this.props.dispatch(actionCreators.ImpressionStats({
-        source,
-        click: 0,
-        tiles: [{
-          id: spoc.id,
-          pos: 0,
-          ...(spoc.shim && spoc.shim.click ? {
-            shim: spoc.shim.click
-          } : {})
-        }]
-      }));
-    }
-  }
-  render() {
-    const {
-      data,
-      dispatch,
-      type
-    } = this.props;
-    if (!data || !data.spocs || !data.spocs[0]) {
-      return null;
-    }
-    // Grab the first item in the array as we only have 1 spoc position.
-    const [spoc] = data.spocs;
-    const {
-      title,
-      url,
-      excerpt,
-      flight_id,
-      id,
-      shim
-    } = spoc;
-    const SIGNUP_CONTEXT_MENU_OPTIONS = ["OpenInNewWindow", "OpenInPrivateWindow", "Separator", "BlockUrl", ...(flight_id ? ["ShowPrivacyInfo"] : [])];
-    const outerClassName = ["ds-signup", this.state.active && "active", this.state.lastItem && "last-item"].filter(v => v).join(" ");
-    return /*#__PURE__*/external_React_default().createElement("div", {
-      className: outerClassName
-    }, /*#__PURE__*/external_React_default().createElement("div", {
-      className: "ds-signup-content"
-    }, /*#__PURE__*/external_React_default().createElement("span", {
-      className: "icon icon-small-spacer icon-mail"
-    }), /*#__PURE__*/external_React_default().createElement("span", null, title, " ", /*#__PURE__*/external_React_default().createElement(SafeAnchor, {
-      className: "ds-chevron-link",
-      dispatch: dispatch,
-      onLinkClick: this.onLinkClick,
-      url: url
-    }, excerpt)), /*#__PURE__*/external_React_default().createElement(ImpressionStats_ImpressionStats, {
-      flightId: flight_id,
-      rows: [{
-        id,
-        pos: 0,
-        shim: shim && shim.impression
-      }],
-      dispatch: dispatch,
-      source: type
-    })), /*#__PURE__*/external_React_default().createElement(ContextMenuButton, {
-      tooltip: "newtab-menu-content-tooltip",
-      tooltipArgs: {
-        title
-      },
-      onUpdate: this.onMenuButtonUpdate
-    }, /*#__PURE__*/external_React_default().createElement(LinkMenu, {
-      dispatch: dispatch,
-      index: 0,
-      source: type.toUpperCase(),
-      onShow: this.onMenuShow,
-      options: SIGNUP_CONTEXT_MENU_OPTIONS,
-      shouldSendImpressionStats: true,
-      userEvent: actionCreators.DiscoveryStreamUserEvent,
-      site: {
-        referrer: "https://getpocket.com/recommendations",
-        title,
-        type,
-        url,
-        guid: id,
-        shim,
-        flight_id
-      }
-    })));
-  }
-}
-DSSignup.defaultProps = {
-  windowObj: window // Added to support unit tests
-};
-;// CONCATENATED MODULE: ./content-src/components/DiscoveryStreamComponents/DSDismiss/DSDismiss.jsx
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-
-class DSDismiss extends (external_React_default()).PureComponent {
-  constructor(props) {
-    super(props);
-    this.onDismissClick = this.onDismissClick.bind(this);
-    this.onHover = this.onHover.bind(this);
-    this.offHover = this.offHover.bind(this);
-    this.state = {
-      hovering: false
-    };
-  }
-  onDismissClick() {
-    if (this.props.onDismissClick) {
-      this.props.onDismissClick();
-    }
-  }
-  onHover() {
-    this.setState({
-      hovering: true
-    });
-  }
-  offHover() {
-    this.setState({
-      hovering: false
-    });
-  }
-  render() {
-    let className = `ds-dismiss
-      ${this.state.hovering ? ` hovering` : ``}
-      ${this.props.extraClasses ? ` ${this.props.extraClasses}` : ``}`;
-    return /*#__PURE__*/external_React_default().createElement("div", {
-      className: className
-    }, this.props.children, /*#__PURE__*/external_React_default().createElement("button", {
-      className: "ds-dismiss-button",
-      "data-l10n-id": "newtab-dismiss-button-tooltip",
-      onClick: this.onDismissClick,
-      onMouseEnter: this.onHover,
-      onMouseLeave: this.offHover
-    }, /*#__PURE__*/external_React_default().createElement("span", {
-      className: "icon icon-dismiss"
-    })));
-  }
-}
-;// CONCATENATED MODULE: ./content-src/components/DiscoveryStreamComponents/DSTextPromo/DSTextPromo.jsx
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-
-
-
-
-
-
-
-class DSTextPromo extends (external_React_default()).PureComponent {
-  constructor(props) {
-    super(props);
-    this.onLinkClick = this.onLinkClick.bind(this);
-    this.onDismissClick = this.onDismissClick.bind(this);
-  }
-  onLinkClick() {
-    const {
-      data
-    } = this.props;
-    if (this.props.dispatch && data && data.spocs && data.spocs.length) {
-      const source = this.props.type.toUpperCase();
-      // Grab the first item in the array as we only have 1 spoc position.
-      const [spoc] = data.spocs;
-      this.props.dispatch(actionCreators.DiscoveryStreamUserEvent({
-        event: "CLICK",
-        source,
-        action_position: 0
-      }));
-      this.props.dispatch(actionCreators.ImpressionStats({
-        source,
-        click: 0,
-        tiles: [{
-          id: spoc.id,
-          pos: 0,
-          ...(spoc.shim && spoc.shim.click ? {
-            shim: spoc.shim.click
-          } : {})
-        }]
-      }));
-    }
-  }
-  onDismissClick() {
-    const {
-      data
-    } = this.props;
-    if (this.props.dispatch && data && data.spocs && data.spocs.length) {
-      const index = 0;
-      const source = this.props.type.toUpperCase();
-      // Grab the first item in the array as we only have 1 spoc position.
-      const [spoc] = data.spocs;
-      const spocData = {
-        url: spoc.url,
-        guid: spoc.id,
-        shim: spoc.shim
-      };
-      const blockUrlOption = LinkMenuOptions.BlockUrl(spocData, index, source);
-      const {
-        action,
-        impression,
-        userEvent
-      } = blockUrlOption;
-      this.props.dispatch(action);
-      this.props.dispatch(actionCreators.DiscoveryStreamUserEvent({
-        event: userEvent,
-        source,
-        action_position: index
-      }));
-      if (impression) {
-        this.props.dispatch(impression);
-      }
-    }
-  }
-  render() {
-    const {
-      data
-    } = this.props;
-    if (!data || !data.spocs || !data.spocs[0]) {
-      return null;
-    }
-    // Grab the first item in the array as we only have 1 spoc position.
-    const [spoc] = data.spocs;
-    const {
-      image_src,
-      raw_image_src,
-      alt_text,
-      title,
-      url,
-      context,
-      cta,
-      flight_id,
-      id,
-      shim
-    } = spoc;
-    return /*#__PURE__*/external_React_default().createElement(DSDismiss, {
-      onDismissClick: this.onDismissClick,
-      extraClasses: `ds-dismiss-ds-text-promo`
-    }, /*#__PURE__*/external_React_default().createElement("div", {
-      className: "ds-text-promo"
-    }, /*#__PURE__*/external_React_default().createElement(DSImage, {
-      alt_text: alt_text,
-      source: image_src,
-      rawSource: raw_image_src
-    }), /*#__PURE__*/external_React_default().createElement("div", {
-      className: "text"
-    }, /*#__PURE__*/external_React_default().createElement("h3", null, `${title}\u2003`, /*#__PURE__*/external_React_default().createElement(SafeAnchor, {
-      className: "ds-chevron-link",
-      dispatch: this.props.dispatch,
-      onLinkClick: this.onLinkClick,
-      url: url
-    }, cta)), /*#__PURE__*/external_React_default().createElement("p", {
-      className: "subtitle"
-    }, context)), /*#__PURE__*/external_React_default().createElement(ImpressionStats_ImpressionStats, {
-      flightId: flight_id,
-      rows: [{
-        id,
-        pos: 0,
-        shim: shim && shim.impression
-      }],
-      dispatch: this.props.dispatch,
-      source: this.props.type
-    })));
-  }
-}
 ;// CONCATENATED MODULE: ./content-src/lib/screenshot-utils.mjs
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -6793,7 +6017,7 @@ _PerfService.prototype = {
    * object to add a mark with the given name to the appropriate performance
    * timeline.
    *
-   * @param  {String} name  the name to give the current mark
+   * @param  {string} name  the name to give the current mark
    * @return {void}
    */
   mark: function mark(str) {
@@ -6804,8 +6028,8 @@ _PerfService.prototype = {
    * Calls the underlying getEntriesByName on the appropriate Window.performance
    * object.
    *
-   * @param  {String} name
-   * @param  {String} type eg "mark"
+   * @param  {string} name
+   * @param  {string} type eg "mark"
    * @return {Array}       Performance* objects
    */
   getEntriesByName: function getEntriesByName(entryName, type) {
@@ -6825,7 +6049,7 @@ _PerfService.prototype = {
    * created dynamically later.  Exactly how/when that shows up needs to be
    * investigated.
    *
-   * @return {Number} A double of milliseconds with a precision of 0.5us.
+   * @return {number} A double of milliseconds with a precision of 0.5us.
    */
   get timeOrigin() {
     return this._perf.timeOrigin;
@@ -6836,7 +6060,7 @@ _PerfService.prototype = {
    * should ([bug 1401406](https://bugzilla.mozilla.org/show_bug.cgi?id=1401406)
    * be comparable across both chrome and content.
    *
-   * @return {Number}
+   * @return {number}
    */
   absNow: function absNow() {
     return this.timeOrigin + this._perf.now();
@@ -6846,9 +6070,9 @@ _PerfService.prototype = {
    * This returns the absolute startTime from the most recent performance.mark()
    * with the given name.
    *
-   * @param  {String} name  the name to lookup the start time for
+   * @param  {string} name  the name to lookup the start time for
    *
-   * @return {Number}       the returned start time, as a DOMHighResTimeStamp
+   * @return {number}       the returned start time, as a DOMHighResTimeStamp
    *
    * @throws {Error}        "No Marks with the name ..." if none are available
    *
@@ -7494,10 +6718,6 @@ const INITIAL_STATE = {
     searchActive: false,
     locationSearchString: "",
     suggestedLocations: [],
-  },
-  TrendingSearch: {
-    suggestions: [],
-    collapsed: false,
   },
   // Widgets
   ListsWidget: {
@@ -8152,7 +7372,8 @@ function DiscoveryStream(prevState = INITIAL_STATE.DiscoveryStream, action) {
       if (action.data) {
         // If spocs have been loaded on this tab, we can ignore future updates.
         // This should never be true on the main store, only content pages.
-        if (prevState.spocs.onDemand.loaded) {
+        // We check agasint onDemand just to be safe. It generally shouldn't be needed.
+        if (prevState.spocs?.onDemand?.loaded) {
           return prevState;
         }
         return {
@@ -8419,17 +7640,6 @@ function Ads(prevState = INITIAL_STATE.Ads, action) {
   }
 }
 
-function TrendingSearch(prevState = INITIAL_STATE.TrendingSearch, action) {
-  switch (action.type) {
-    case actionTypes.TRENDING_SEARCH_UPDATE:
-      return { ...prevState, suggestions: action.data };
-    case actionTypes.TRENDING_SEARCH_TOGGLE_COLLAPSE:
-      return { ...prevState, collapsed: action.data.collapsed };
-    default:
-      return prevState;
-  }
-}
-
 function TimerWidget(prevState = INITIAL_STATE.TimerWidget, action) {
   // fallback to current timerType in state if not provided in action
   const timerType = action.data?.timerType || prevState.timerType;
@@ -8533,7 +7743,6 @@ const reducers = {
   Search,
   TimerWidget,
   ListsWidget,
-  TrendingSearch,
   Wallpapers,
   Weather,
 };
@@ -9335,7 +8544,8 @@ class TopSiteLink extends (external_React_default()).PureComponent {
           reporting_url: link.sponsored_impression_url,
           advertiser: title.toLocaleLowerCase(),
           source: NEWTAB_SOURCE,
-          visible_topsites: visibleTopSites
+          visible_topsites: visibleTopSites,
+          frecency_boosted: link.type === "frecency-boost"
         }
         // For testing.
         ,
@@ -9352,7 +8562,9 @@ class TopSiteLink extends (external_React_default()).PureComponent {
           source: NEWTAB_SOURCE,
           isPinned: this.props.link.isPinned,
           guid: this.props.link.guid,
-          visible_topsites: visibleTopSites
+          visible_topsites: visibleTopSites,
+          smartScores: this.props.link.scores,
+          smartWeights: this.props.link.weights
         }
         // For testing.
         ,
@@ -9553,7 +8765,8 @@ class TopSite extends (external_React_default()).PureComponent {
             reporting_url: this.props.link.sponsored_click_url,
             advertiser: title.toLocaleLowerCase(),
             source: NEWTAB_SOURCE,
-            visible_topsites: this.props.visibleTopSites
+            visible_topsites: this.props.visibleTopSites,
+            frecency_boosted: this.props.link.type === "frecency-boost"
           }
         }));
       } else {
@@ -9566,7 +8779,9 @@ class TopSite extends (external_React_default()).PureComponent {
             source: NEWTAB_SOURCE,
             isPinned: this.props.link.isPinned,
             guid: this.props.link.guid,
-            visible_topsites: this.props.visibleTopSites
+            visible_topsites: this.props.visibleTopSites,
+            smartScores: this.props.link.scores,
+            smartWeights: this.props.link.weights
           }
         }));
       }
@@ -9843,17 +9058,16 @@ class _TopSiteList extends (external_React_default()).PureComponent {
     if (this.state.activeIndex || this.state.activeIndex === 0) {
       return;
     }
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      // prevent the page from scrolling up/down while navigating.
-      e.preventDefault();
-    }
-    if (this.focusedRef?.nextSibling?.querySelector("a") && e.key === "ArrowDown") {
-      this.focusedRef.nextSibling.querySelector("a").tabIndex = 0;
-      this.focusedRef.nextSibling.querySelector("a").focus();
-    }
-    if (this.focusedRef?.previousSibling?.querySelector("a") && e.key === "ArrowUp") {
-      this.focusedRef.previousSibling.querySelector("a").tabIndex = 0;
-      this.focusedRef.previousSibling.querySelector("a").focus();
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      // Arrow direction should match visual navigation direction in RTL
+      const isRTL = document.dir === "rtl";
+      const navigateToPrevious = isRTL ? e.key === "ArrowRight" : e.key === "ArrowLeft";
+      const targetTopSite = navigateToPrevious ? this.focusedRef?.previousSibling : this.focusedRef?.nextSibling;
+      const targetAnchor = targetTopSite?.querySelector("a");
+      if (targetAnchor) {
+        targetAnchor.tabIndex = 0;
+        targetAnchor.focus();
+      }
     }
   }
   onWrapperFocus() {
@@ -10268,6 +9482,7 @@ function topSiteIconType(link) {
 
 /**
  * Iterates through TopSites and counts types of images.
+ *
  * @param acc Accumulator for reducer.
  * @param topsite Entry in TopSites.
  */
@@ -10937,9 +10152,7 @@ const selectLayoutRender = ({ state = {}, prefs = {} }) => {
   const positions = {};
   const DS_COMPONENTS = [
     "Message",
-    "TextPromo",
     "SectionTitle",
-    "Signup",
     "Navigation",
     "Widgets",
     "CardGrid",
@@ -10994,7 +10207,7 @@ const selectLayoutRender = ({ state = {}, prefs = {} }) => {
 
   const placeholderComponent = component => {
     if (!component.feed) {
-      // TODO we now need a placeholder for topsites and textPromo.
+      // TODO we now need a placeholder for topsites.
       return {
         ...component,
         data: {
@@ -11478,7 +10691,7 @@ const PersonalizedCard = ({
   handleBlock,
   messageData
 }) => {
-  const wavingFox = "chrome://newtab/content/data/content/assets/waving-fox.svg";
+  const kitFox = "chrome://newtab/content/data/content/assets/kit.png";
   const onDismiss = (0,external_React_namespaceObject.useCallback)(() => {
     handleDismiss();
     handleBlock();
@@ -11504,7 +10717,7 @@ const PersonalizedCard = ({
   })), /*#__PURE__*/external_React_default().createElement("div", {
     className: "personalized-card-inner"
   }, /*#__PURE__*/external_React_default().createElement("img", {
-    src: wavingFox,
+    src: kitFox,
     alt: ""
   }), /*#__PURE__*/external_React_default().createElement("h2", null, messageData.content.cardTitle), /*#__PURE__*/external_React_default().createElement("p", null, messageData.content.cardMessage), /*#__PURE__*/external_React_default().createElement("div", {
     className: "personalized-card-cta-wrapper"
@@ -11704,6 +10917,7 @@ function LocationSearch({
 
 const Weather_VISIBLE = "visible";
 const Weather_VISIBILITY_CHANGE_EVENT = "visibilitychange";
+const PREF_SYSTEM_SHOW_WEATHER = "system.showWeather";
 function WeatherPlaceholder() {
   const [isSeen, setIsSeen] = (0,external_React_namespaceObject.useState)(false);
 
@@ -11889,10 +11103,17 @@ class _Weather extends (external_React_default()).PureComponent {
       }));
     });
   };
+  isEnabled() {
+    const {
+      values
+    } = this.props.Prefs;
+    const systemValue = values[PREF_SYSTEM_SHOW_WEATHER] && values["feeds.weatherfeed"];
+    const experimentValue = values.trainhopConfig?.weather?.enabled;
+    return systemValue || experimentValue;
+  }
   render() {
     // Check if weather should be rendered
-    const isWeatherEnabled = this.props.Prefs.values["system.showWeather"];
-    if (!isWeatherEnabled) {
+    if (!this.isEnabled()) {
       return false;
     }
     if (this.props.App.isForStartupCache.Weather || !this.props.Weather.initialized) {
@@ -11912,34 +11133,31 @@ class _Weather extends (external_React_default()).PureComponent {
     const WEATHER_SUGGESTION = Weather.suggestions?.[0];
     const outerClassName = ["weather", Weather.searchActive && "search", props.isInSection && "section-weather"].filter(v => v).join(" ");
     const showDetailedView = Prefs.values["weather.display"] === "detailed";
-    const isOptInEnabled = Prefs.values["system.showWeatherOptIn"];
+    const weatherOptIn = Prefs.values["system.showWeatherOptIn"];
+    const nimbusWeatherOptInEnabled = Prefs.values.trainhopConfig?.weather?.weatherOptInEnabled;
     const optInDisplayed = Prefs.values["weather.optInDisplayed"];
-    const nimbusOptInDisplayed = Prefs.values.trainhopConfig?.weather?.optInDisplayed;
     const optInUserChoice = Prefs.values["weather.optInAccepted"];
-    const nimbusOptInUserChoice = Prefs.values.trainhopConfig?.weather?.optInAccepted;
     const staticWeather = Prefs.values["weather.staticData.enabled"];
-    const nimbusStaticWeather = Prefs.values.trainhopConfig?.weather?.staticDataEnabled;
-    const optInPrompt = nimbusOptInDisplayed ?? optInDisplayed ?? false;
-    const userChoice = nimbusOptInUserChoice ?? optInUserChoice ?? false;
-    const isUserWeatherEnabled = Prefs.values.showWeather;
-    const staticDataEnabled = nimbusStaticWeather ?? staticWeather ?? false;
+
+    // Conditionals for rendering feature based on prefs + nimbus experiment variables
+    const isOptInEnabled = weatherOptIn || nimbusWeatherOptInEnabled;
 
     // Opt-in dialog should only show if:
     // - weather enabled on customization menu
     // - weather opt-in pref is enabled
     // - opt-in prompt is enabled
     // - user hasn't accepted the opt-in yet
-    const shouldShowOptInDialog = isUserWeatherEnabled && isOptInEnabled && optInPrompt && !userChoice;
+    const shouldShowOptInDialog = isOptInEnabled && optInDisplayed && !optInUserChoice;
 
     // Show static weather data only if:
     // - weather is enabled on customization menu
     // - weather opt-in pref is enabled
     // - static weather data is enabled
-    const showStaticData = isUserWeatherEnabled && isOptInEnabled && staticDataEnabled;
+    const showStaticData = isOptInEnabled && staticWeather;
 
     // Note: The temperature units/display options will become secondary menu items
-    const WEATHER_SOURCE_CONTEXT_MENU_OPTIONS = [...(Prefs.values["weather.locationSearchEnabled"] ? ["ChangeWeatherLocation"] : []), ...(Prefs.values["system.showWeatherOptIn"] ? ["DetectLocation"] : []), ...(Prefs.values["weather.temperatureUnits"] === "f" ? ["ChangeTempUnitCelsius"] : ["ChangeTempUnitFahrenheit"]), ...(Prefs.values["weather.display"] === "simple" ? ["ChangeWeatherDisplayDetailed"] : ["ChangeWeatherDisplaySimple"]), "HideWeather", "OpenLearnMoreURL"];
-    const WEATHER_SOURCE_SHORTENED_CONTEXT_MENU_OPTIONS = [...(Prefs.values["weather.locationSearchEnabled"] ? ["ChangeWeatherLocation"] : []), ...(Prefs.values["system.showWeatherOptIn"] ? ["DetectLocation"] : []), "HideWeather", "OpenLearnMoreURL"];
+    const WEATHER_SOURCE_CONTEXT_MENU_OPTIONS = [...(Prefs.values["weather.locationSearchEnabled"] ? ["ChangeWeatherLocation"] : []), ...(isOptInEnabled ? ["DetectLocation"] : []), ...(Prefs.values["weather.temperatureUnits"] === "f" ? ["ChangeTempUnitCelsius"] : ["ChangeTempUnitFahrenheit"]), ...(Prefs.values["weather.display"] === "simple" ? ["ChangeWeatherDisplayDetailed"] : ["ChangeWeatherDisplaySimple"]), "HideWeather", "OpenLearnMoreURL"];
+    const WEATHER_SOURCE_SHORTENED_CONTEXT_MENU_OPTIONS = [...(Prefs.values["weather.locationSearchEnabled"] ? ["ChangeWeatherLocation"] : []), ...(isOptInEnabled ? ["DetectLocation"] : []), "HideWeather", "OpenLearnMoreURL"];
     const contextMenu = contextOpts => /*#__PURE__*/external_React_default().createElement("div", {
       className: "weatherButtonContextMenuWrapper"
     }, /*#__PURE__*/external_React_default().createElement("button", {
@@ -12082,7 +11300,6 @@ const Weather_Weather = (0,external_ReactRedux_namespaceObject.connect)(state =>
 
 
 
-
 // Prefs
 const CardSections_PREF_SECTIONS_CARDS_ENABLED = "discoverystream.sections.cards.enabled";
 const PREF_SECTIONS_CARDS_THUMBS_UP_DOWN_ENABLED = "discoverystream.sections.cards.thumbsUpDown.enabled";
@@ -12099,13 +11316,9 @@ const CardSections_PREF_LEADERBOARD_ENABLED = "newtabAdSize.leaderboard";
 const CardSections_PREF_LEADERBOARD_POSITION = "newtabAdSize.leaderboard.position";
 const PREF_REFINED_CARDS_ENABLED = "discoverystream.refinedCardsLayout.enabled";
 const PREF_INFERRED_PERSONALIZATION_USER = "discoverystream.sections.personalization.inferred.user.enabled";
-const CardSections_PREF_TRENDING_SEARCH = "trendingSearch.enabled";
-const CardSections_PREF_TRENDING_SEARCH_SYSTEM = "system.trendingSearch.enabled";
-const CardSections_PREF_SEARCH_ENGINE = "trendingSearch.defaultSearchEngine";
-const CardSections_PREF_TRENDING_SEARCH_VARIANT = "trendingSearch.variant";
 const CardSections_PREF_DAILY_BRIEF_SECTIONID = "discoverystream.dailyBrief.sectionId";
 const CardSections_PREF_SPOCS_STARTUPCACHE_ENABLED = "discoverystream.spocs.startupCache.enabled";
-function getLayoutData(responsiveLayouts, index, refinedCardsLayout, sectionKey) {
+function getLayoutData(responsiveLayouts, index, refinedCardsLayout) {
   let layoutData = {
     classNames: [],
     imageSizes: {}
@@ -12113,19 +11326,9 @@ function getLayoutData(responsiveLayouts, index, refinedCardsLayout, sectionKey)
   responsiveLayouts.forEach(layout => {
     layout.tiles.forEach((tile, tileIndex) => {
       if (tile.position === index) {
-        // When trending searches should be placed in the `top_stories_section`,
-        // we update the layout so that the first item is always a medium card to make
-        // room for the trending search widget
-        if (sectionKey === "top_stories_section" && tileIndex === 0) {
-          layoutData.classNames.push(`col-${layout.columnCount}-medium`);
-          layoutData.classNames.push(`col-${layout.columnCount}-position-${tileIndex}`);
-          layoutData.imageSizes[layout.columnCount] = "medium";
-          layoutData.classNames.push(`col-${layout.columnCount}-hide-excerpt`);
-        } else {
-          layoutData.classNames.push(`col-${layout.columnCount}-${tile.size}`);
-          layoutData.classNames.push(`col-${layout.columnCount}-position-${tileIndex}`);
-          layoutData.imageSizes[layout.columnCount] = tile.size;
-        }
+        layoutData.classNames.push(`col-${layout.columnCount}-${tile.size}`);
+        layoutData.classNames.push(`col-${layout.columnCount}-position-${tileIndex}`);
+        layoutData.imageSizes[layout.columnCount] = tile.size;
 
         // The API tells us whether the tile should show the excerpt or not.
         // Apply extra styles accordingly.
@@ -12196,6 +11399,51 @@ function CardSection({
   const {
     isForStartupCache
   } = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.App);
+  const [focusedIndex, setFocusedIndex] = (0,external_React_namespaceObject.useState)(0);
+  const onCardFocus = index => {
+    setFocusedIndex(index);
+  };
+  const handleCardKeyDown = e => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const currentCardEl = e.target.closest("article.ds-card");
+      if (!currentCardEl) {
+        return;
+      }
+      const activeColumn = getActiveColumnLayout(window.innerWidth);
+
+      // Arrow direction should match visual navigation direction in RTL
+      const isRTL = document.dir === "rtl";
+      const navigateToPrevious = isRTL ? e.key === "ArrowRight" : e.key === "ArrowLeft";
+
+      // Extract current position from classList
+      let currentPosition = null;
+      const positionPrefix = `${activeColumn}-position-`;
+      for (let className of currentCardEl.classList) {
+        if (className.startsWith(positionPrefix)) {
+          currentPosition = parseInt(className.substring(positionPrefix.length), 10);
+          break;
+        }
+      }
+      if (currentPosition === null) {
+        return;
+      }
+      const targetPosition = navigateToPrevious ? currentPosition - 1 : currentPosition + 1;
+
+      // Find card with target position
+      const parentEl = currentCardEl.parentElement;
+      if (parentEl) {
+        const targetSelector = `article.ds-card.${activeColumn}-position-${targetPosition}`;
+        const targetCardEl = parentEl.querySelector(targetSelector);
+        if (targetCardEl) {
+          const link = targetCardEl.querySelector("a.ds-card-link");
+          if (link) {
+            link.focus();
+          }
+        }
+      }
+    }
+  };
   const showTopics = prefs[CardSections_PREF_TOPICS_ENABLED];
   const mayHaveSectionsCards = prefs[CardSections_PREF_SECTIONS_CARDS_ENABLED];
   const mayHaveSectionsCardsThumbsUpDown = prefs[PREF_SECTIONS_CARDS_THUMBS_UP_DOWN_ENABLED];
@@ -12204,9 +11452,6 @@ function CardSection({
   const availableTopics = prefs[CardSections_PREF_TOPICS_AVAILABLE];
   const refinedCardsLayout = prefs[PREF_REFINED_CARDS_ENABLED];
   const spocsStartupCacheEnabled = prefs[CardSections_PREF_SPOCS_STARTUPCACHE_ENABLED];
-  const trendingEnabled = prefs[CardSections_PREF_TRENDING_SEARCH] && prefs[CardSections_PREF_TRENDING_SEARCH_SYSTEM] && prefs[CardSections_PREF_SEARCH_ENGINE]?.toLowerCase() === "google";
-  const trendingVariant = prefs[CardSections_PREF_TRENDING_SEARCH_VARIANT];
-  const shouldShowTrendingSearch = trendingEnabled && trendingVariant === "b";
   const mayHaveSectionsPersonalization = prefs[PREF_SECTIONS_PERSONALIZATION_ENABLED];
   const {
     sectionKey,
@@ -12353,9 +11598,10 @@ function CardSection({
   }, subtitle)), showWeather && /*#__PURE__*/external_React_default().createElement(Weather_Weather, {
     isInSection: true
   })), mayHaveSectionsPersonalization ? sectionContextWrapper : null), /*#__PURE__*/external_React_default().createElement("div", {
-    className: `ds-section-grid ds-card-grid`
+    className: `ds-section-grid ds-card-grid`,
+    onKeyDown: handleCardKeyDown
   }, section.data.slice(0, maxTile).map((rec, index) => {
-    const layoutData = getLayoutData(responsiveLayouts, index, refinedCardsLayout, shouldShowTrendingSearch && sectionKey);
+    const layoutData = getLayoutData(responsiveLayouts, index, refinedCardsLayout);
     const {
       classNames,
       imageSizes
@@ -12417,11 +11663,11 @@ function CardSection({
       sectionPosition: sectionPosition,
       sectionFollowed: following,
       sectionLayoutName: layoutName,
-      isTimeSensitive: rec.isTimeSensitive
+      isTimeSensitive: rec.isTimeSensitive,
+      tabIndex: index === focusedIndex ? 0 : -1,
+      onFocus: () => onCardFocus(index)
     });
-    return index === 0 && shouldShowTrendingSearch && sectionKey === "top_stories_section" ? [card, /*#__PURE__*/external_React_default().createElement(TrendingSearches, {
-      key: "trending"
-    })] : [card];
+    return [card];
   })));
 }
 function CardSections({
@@ -12593,7 +11839,8 @@ const PREF_WIDGETS_LISTS_BADGE_ENABLED = "widgets.lists.badge.enabled";
 const PREF_WIDGETS_LISTS_BADGE_LABEL = "widgets.lists.badge.label";
 function Lists({
   dispatch,
-  handleUserInteraction
+  handleUserInteraction,
+  isMaximized
 }) {
   const prefs = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.Prefs.values);
   const {
@@ -12899,7 +12146,28 @@ function Lists({
         ...lists
       };
       delete updatedLists[selected];
+      const listKeys = Object.keys(updatedLists);
+      const key = listKeys[listKeys.length - 1];
+      (0,external_ReactRedux_namespaceObject.batch)(() => {
+        dispatch(actionCreators.AlsoToMain({
+          type: actionTypes.WIDGETS_LISTS_UPDATE,
+          data: {
+            lists: updatedLists
+          }
+        }));
+        dispatch(actionCreators.AlsoToMain({
+          type: actionTypes.WIDGETS_LISTS_CHANGE_SELECTED,
+          data: key
+        }));
+        dispatch(actionCreators.OnlyToMain({
+          type: actionTypes.WIDGETS_LISTS_USER_EVENT,
+          data: {
+            userAction: USER_ACTION_TYPES.LIST_DELETE
+          }
+        }));
+      });
     }
+    handleListInteraction();
   }
   function handleDeleteList() {
     let updatedLists = {
@@ -13037,7 +12305,7 @@ function Lists({
   const badgeEnabled = (nimbusBadgeEnabled || nimbusBadgeTrainhopEnabled) ?? prefs[PREF_WIDGETS_LISTS_BADGE_ENABLED] ?? false;
   const badgeLabel = (nimbusBadgeLabel || nimbusBadgeTrainhopLabel) ?? prefs[PREF_WIDGETS_LISTS_BADGE_LABEL] ?? "";
   return /*#__PURE__*/external_React_default().createElement("article", {
-    className: "lists",
+    className: `lists ${isMaximized ? "is-maximized" : ""}`,
     ref: el => {
       listsRef.current = [el];
     }
@@ -13381,6 +12649,27 @@ const formatTime = seconds => {
 };
 
 /**
+ * Validates that the inputs in the timer only allow numerical digits (0-9)
+ *
+ * @param input - The character being input
+ * @returns boolean - true if valid numeric input, false otherwise
+ */
+const isNumericValue = input => {
+  // Check for null/undefined input or non-numeric characters
+  return input && /^\d+$/.test(input);
+};
+
+/**
+ * Validates if adding a new digit would exceed the 2-character limit
+ *
+ * @param currentValue - The current value in the field
+ * @returns boolean - true if at 2-character limit, false otherwise
+ */
+const isAtMaxLength = currentValue => {
+  return currentValue.length >= 2;
+};
+
+/**
  * Converts a polar coordinate (angle on circle) into a percentage-based [x,y] position for clip-path
  *
  * @param cx
@@ -13417,7 +12706,8 @@ const getClipPath = progress => {
 };
 const FocusTimer = ({
   dispatch,
-  handleUserInteraction
+  handleUserInteraction,
+  isMaximized
 }) => {
   const [timeLeft, setTimeLeft] = (0,external_React_namespaceObject.useState)(0);
   // calculated value for the progress circle; 1 = 100%
@@ -13687,13 +12977,9 @@ const FocusTimer = ({
     const values = e.target.innerText.trim();
 
     // only allow numerical digits 0–9 for time input
-    if (!/^\d+$/.test(input)) {
+    if (!isNumericValue(input)) {
       e.preventDefault();
-    }
-
-    // only allow 2 values each for minutes and seconds
-    if (values.length >= 2) {
-      e.preventDefault();
+      return;
     }
     const selection = window.getSelection();
     const selectedText = selection.toString();
@@ -13711,6 +12997,12 @@ const FocusTimer = ({
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
+      return;
+    }
+
+    // only allow 2 values each for minutes and seconds
+    if (isAtMaxLength(values)) {
+      e.preventDefault();
     }
   };
   const handleFocus = e => {
@@ -13765,7 +13057,7 @@ const FocusTimer = ({
     handleTimerInteraction();
   }
   return timerData ? /*#__PURE__*/external_React_default().createElement("article", {
-    className: "focus-timer",
+    className: `focus-timer ${isMaximized ? "is-maximized" : ""}`,
     ref: el => {
       timerRef.current = [el];
     }
@@ -13936,12 +13228,44 @@ const PREF_WIDGETS_LISTS_ENABLED = "widgets.lists.enabled";
 const PREF_WIDGETS_SYSTEM_LISTS_ENABLED = "widgets.system.lists.enabled";
 const PREF_WIDGETS_TIMER_ENABLED = "widgets.focusTimer.enabled";
 const PREF_WIDGETS_SYSTEM_TIMER_ENABLED = "widgets.system.focusTimer.enabled";
-const PREF_FEEDS_SECTION_TOPSTORIES = "feeds.section.topstories";
+const PREF_WIDGETS_MAXIMIZED = "widgets.maximized";
+const PREF_WIDGETS_SYSTEM_MAXIMIZED = "widgets.system.maximized";
+
+// resets timer to default values (exported for testing)
+// In practice, this logic runs inside a useEffect when
+// the timer widget is disabled (after the pref flips from true to false).
+// Because Enzyme tests cannot reliably simulate that pref update or trigger
+// the related useEffect, we expose this helper to at least just test the reset behavior instead
+
+function resetTimerToDefaults(dispatch, timerType) {
+  const originalTime = timerType === "focus" ? 1500 : 300;
+
+  // Reset both focus and break timers to their initial durations
+  dispatch(actionCreators.AlsoToMain({
+    type: actionTypes.WIDGETS_TIMER_RESET,
+    data: {
+      timerType,
+      duration: originalTime,
+      initialDuration: originalTime
+    }
+  }));
+
+  // Set the timer type back to "focus"
+  dispatch(actionCreators.AlsoToMain({
+    type: actionTypes.WIDGETS_TIMER_SET_TYPE,
+    data: {
+      timerType: "focus"
+    }
+  }));
+}
 function Widgets() {
   const prefs = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.Prefs.values);
   const {
     messageData
   } = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.Messages);
+  const timerType = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.TimerWidget.timerType);
+  const timerData = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.TimerWidget);
+  const isMaximized = prefs[PREF_WIDGETS_MAXIMIZED];
   const dispatch = (0,external_ReactRedux_namespaceObject.useDispatch)();
   const nimbusListsEnabled = prefs.widgetsConfig?.listsEnabled;
   const nimbusTimerEnabled = prefs.widgetsConfig?.timerEnabled;
@@ -13949,7 +13273,53 @@ function Widgets() {
   const nimbusTimerTrainhopEnabled = prefs.trainhopConfig?.widgets?.timerEnabled;
   const listsEnabled = (nimbusListsTrainhopEnabled || nimbusListsEnabled || prefs[PREF_WIDGETS_SYSTEM_LISTS_ENABLED]) && prefs[PREF_WIDGETS_LISTS_ENABLED];
   const timerEnabled = (nimbusTimerTrainhopEnabled || nimbusTimerEnabled || prefs[PREF_WIDGETS_SYSTEM_TIMER_ENABLED]) && prefs[PREF_WIDGETS_TIMER_ENABLED];
-  const recommendedStoriesEnabled = prefs[PREF_FEEDS_SECTION_TOPSTORIES];
+
+  // track previous timerEnabled state to detect when it becomes disabled
+  const prevTimerEnabledRef = (0,external_React_namespaceObject.useRef)(timerEnabled);
+
+  // Reset timer when it becomes disabled
+  (0,external_React_namespaceObject.useEffect)(() => {
+    const wasTimerEnabled = prevTimerEnabledRef.current;
+    const isTimerEnabled = timerEnabled;
+
+    // Only reset if timer was enabled and is now disabled
+    if (wasTimerEnabled && !isTimerEnabled && timerData) {
+      resetTimerToDefaults(dispatch, timerType);
+    }
+
+    // Update the ref to track current state
+    prevTimerEnabledRef.current = isTimerEnabled;
+  }, [timerEnabled, timerData, dispatch, timerType]);
+
+  // Sends a dispatch to disable all widgets
+  function handleHideAllWidgetsClick(e) {
+    e.preventDefault();
+    (0,external_ReactRedux_namespaceObject.batch)(() => {
+      dispatch(actionCreators.SetPref(PREF_WIDGETS_LISTS_ENABLED, false));
+      dispatch(actionCreators.SetPref(PREF_WIDGETS_TIMER_ENABLED, false));
+    });
+  }
+  function handleHideAllWidgetsKeyDown(e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      (0,external_ReactRedux_namespaceObject.batch)(() => {
+        dispatch(actionCreators.SetPref(PREF_WIDGETS_LISTS_ENABLED, false));
+        dispatch(actionCreators.SetPref(PREF_WIDGETS_TIMER_ENABLED, false));
+      });
+    }
+  }
+
+  // Toggles the maximized state of widgets
+  function handleToggleMaximizeClick(e) {
+    e.preventDefault();
+    dispatch(actionCreators.SetPref(PREF_WIDGETS_MAXIMIZED, !isMaximized));
+  }
+  function handleToggleMaximizeKeyDown(e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      dispatch(actionCreators.SetPref(PREF_WIDGETS_MAXIMIZED, !isMaximized));
+    }
+  }
   function handleUserInteraction(widgetName) {
     const prefName = `widgets.${widgetName}.interaction`;
     const hasInteracted = prefs[prefName];
@@ -13964,19 +13334,40 @@ function Widgets() {
   return /*#__PURE__*/external_React_default().createElement("div", {
     className: "widgets-wrapper"
   }, /*#__PURE__*/external_React_default().createElement("div", {
-    className: "widgets-container"
+    className: "widgets-section-container"
+  }, /*#__PURE__*/external_React_default().createElement("div", {
+    className: "widgets-title-container"
+  }, /*#__PURE__*/external_React_default().createElement("h1", {
+    "data-l10n-id": "newtab-widget-section-title"
+  }), prefs[PREF_WIDGETS_SYSTEM_MAXIMIZED] && /*#__PURE__*/external_React_default().createElement("moz-button", {
+    id: "toggle-widgets-size-button",
+    type: "icon ghost",
+    size: "small"
+    // Toggle the icon and hover text
+    ,
+    "data-l10n-id": isMaximized ? "newtab-widget-section-maximize" : "newtab-widget-section-minimize",
+    iconsrc: `chrome://browser/skin/${isMaximized ? "fullscreen" : "fullscreen-exit"}.svg`,
+    onClick: handleToggleMaximizeClick,
+    onKeyDown: handleToggleMaximizeKeyDown
+  }), /*#__PURE__*/external_React_default().createElement("moz-button", {
+    id: "hide-all-widgets-button",
+    type: "icon ghost",
+    size: "small",
+    "data-l10n-id": "newtab-widget-section-hide-all-button",
+    iconsrc: "chrome://global/skin/icons/close.svg",
+    onClick: handleHideAllWidgetsClick,
+    onKeyDown: handleHideAllWidgetsKeyDown
+  })), /*#__PURE__*/external_React_default().createElement("div", {
+    className: `widgets-container ${isMaximized ? "is-maximized" : ""}`
   }, listsEnabled && /*#__PURE__*/external_React_default().createElement(Lists, {
     dispatch: dispatch,
-    handleUserInteraction: handleUserInteraction
+    handleUserInteraction: handleUserInteraction,
+    isMaximized: isMaximized
   }), timerEnabled && /*#__PURE__*/external_React_default().createElement(FocusTimer, {
     dispatch: dispatch,
-    handleUserInteraction: handleUserInteraction
-  })), recommendedStoriesEnabled && /*#__PURE__*/external_React_default().createElement("div", {
-    className: "widgets-scroll-message fade-in",
-    "aria-live": "polite"
-  }, /*#__PURE__*/external_React_default().createElement("p", {
-    "data-l10n-id": "newtab-widget-keep-scrolling"
-  })), messageData?.content?.messageType === "WidgetMessage" && /*#__PURE__*/external_React_default().createElement(MessageWrapper, {
+    handleUserInteraction: handleUserInteraction,
+    isMaximized: isMaximized
+  }))), messageData?.content?.messageType === "WidgetMessage" && /*#__PURE__*/external_React_default().createElement(MessageWrapper, {
     dispatch: dispatch
   }, /*#__PURE__*/external_React_default().createElement(WidgetsFeatureHighlight, {
     dispatch: dispatch
@@ -13987,8 +13378,6 @@ function Widgets() {
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-
 
 
 
@@ -14086,18 +13475,6 @@ class _DiscoveryStreamBase extends (external_React_default()).PureComponent {
           isFixed: true,
           title: component.header?.title
         }));
-      case "TextPromo":
-        return /*#__PURE__*/external_React_default().createElement(DSTextPromo, {
-          dispatch: this.props.dispatch,
-          type: component.type,
-          data: component.data
-        });
-      case "Signup":
-        return /*#__PURE__*/external_React_default().createElement(DSSignup, {
-          dispatch: this.props.dispatch,
-          type: component.type,
-          data: component.data
-        });
       case "Message":
         return /*#__PURE__*/external_React_default().createElement(DSMessage, {
           title: component.header && component.header.title,
@@ -14328,6 +13705,7 @@ const DiscoveryStreamBase = (0,external_ReactRedux_namespaceObject.connect)(stat
   App: state.App
 }))(_DiscoveryStreamBase);
 ;// CONCATENATED MODULE: ./content-src/components/CustomizeMenu/SectionsMgmtPanel/SectionsMgmtPanel.jsx
+function SectionsMgmtPanel_extends() { return SectionsMgmtPanel_extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, SectionsMgmtPanel_extends.apply(null, arguments); }
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14338,7 +13716,9 @@ const DiscoveryStreamBase = (0,external_ReactRedux_namespaceObject.connect)(stat
 // eslint-disable-next-line no-shadow
 
 function SectionsMgmtPanel({
-  exitEventFired
+  exitEventFired,
+  pocketEnabled,
+  onSubpanelToggle
 }) {
   const [showPanel, setShowPanel] = (0,external_React_namespaceObject.useState)(false); // State management with useState
   const {
@@ -14457,6 +13837,13 @@ function SectionsMgmtPanel({
       setShowPanel(false);
     }
   }, [exitEventFired]);
+
+  // Notify parent menu when subpanel opens/closes
+  (0,external_React_namespaceObject.useEffect)(() => {
+    if (onSubpanelToggle) {
+      onSubpanelToggle(showPanel);
+    }
+  }, [showPanel, onSubpanelToggle]);
   const togglePanel = () => {
     setShowPanel(prevShowPanel => !prevShowPanel);
 
@@ -14523,10 +13910,12 @@ function SectionsMgmtPanel({
       "data-l10n-id": "newtab-section-unblock-button"
     }))));
   });
-  return /*#__PURE__*/external_React_default().createElement("div", null, /*#__PURE__*/external_React_default().createElement("moz-box-button", {
+  return /*#__PURE__*/external_React_default().createElement("div", null, /*#__PURE__*/external_React_default().createElement("moz-box-button", SectionsMgmtPanel_extends({
     onClick: togglePanel,
     "data-l10n-id": "newtab-section-manage-topics-button-v2"
-  }), /*#__PURE__*/external_React_default().createElement(external_ReactTransitionGroup_namespaceObject.CSSTransition, {
+  }, !pocketEnabled ? {
+    disabled: true
+  } : {})), /*#__PURE__*/external_React_default().createElement(external_ReactTransitionGroup_namespaceObject.CSSTransition, {
     in: showPanel,
     timeout: 300,
     classNames: "sections-mgmt-panel",
@@ -14774,6 +14163,11 @@ class _WallpaperCategories extends (external_React_default()).PureComponent {
       activeCategory: event.target.id
     });
     this.handleUserEvent(actionTypes.WALLPAPER_CATEGORY_CLICK, event.target.id);
+
+    // Notify parent menu when subpanel opens
+    if (this.props.onSubpanelToggle) {
+      this.props.onSubpanelToggle(true);
+    }
     let fluent_id;
     switch (event.target.id) {
       case "abstracts":
@@ -14871,6 +14265,11 @@ class _WallpaperCategories extends (external_React_default()).PureComponent {
     this.setState({
       activeCategory: null
     }, () => {
+      // Notify parent menu when subpanel closes
+      if (this.props.onSubpanelToggle) {
+        this.props.onSubpanelToggle(false);
+      }
+
       // Wait for the category grid to be back in the DOM
       requestAnimationFrame(() => {
         this.focusCategory(this.state.focusedCategoryIndex);
@@ -14901,6 +14300,22 @@ class _WallpaperCategories extends (external_React_default()).PureComponent {
   }
   isWallpaperColorDark([r, g, b]) {
     return 0.2125 * r + 0.7154 * g + 0.0721 * b <= 110;
+  }
+  sortWallpapersByOrder(wallpapers) {
+    return wallpapers.sort((a, b) => {
+      const aOrder = a.order || 0;
+      const bOrder = b.order || 0;
+      if (aOrder === 0 && bOrder === 0) {
+        return 0;
+      }
+      if (aOrder === 0) {
+        return 1;
+      }
+      if (bOrder === 0) {
+        return -1;
+      }
+      return aOrder - bOrder;
+    });
   }
   render() {
     const prefs = this.props.Prefs.values;
@@ -15002,10 +14417,11 @@ class _WallpaperCategories extends (external_React_default()).PureComponent {
       className: "category-list"
     }, categories.map((category, index) => {
       const filteredList = wallpaperList.filter(wallpaper => wallpaper.category === category);
-      const activeWallpaperObj = activeWallpaper && filteredList.find(wp => wp.title === activeWallpaper);
+      const sortedList = this.sortWallpapersByOrder(filteredList);
+      const activeWallpaperObj = activeWallpaper && sortedList.find(wp => wp.title === activeWallpaper);
       // Detect custom solid color
       const isCustomSolidColor = category === "solid-colors" && activeWallpaper.startsWith("solid-color-picker");
-      const thumbnail = activeWallpaperObj || filteredList[0];
+      const thumbnail = activeWallpaperObj || sortedList[0];
       let fluent_id;
       switch (category) {
         case "abstracts":
@@ -15030,6 +14446,7 @@ class _WallpaperCategories extends (external_React_default()).PureComponent {
       let style = {};
       if (thumbnail?.wallpaperUrl) {
         style.backgroundImage = `url(${thumbnail.wallpaperUrl})`;
+        style.backgroundPosition = thumbnail.background_position || "center";
       } else {
         style.backgroundColor = thumbnail?.solid_color || "";
       }
@@ -15108,16 +14525,18 @@ class _WallpaperCategories extends (external_React_default()).PureComponent {
     }), /*#__PURE__*/external_React_default().createElement("div", {
       role: "grid",
       "aria-label": "Wallpaper selection. Use arrow keys to navigate."
-    }, /*#__PURE__*/external_React_default().createElement("fieldset", null, filteredWallpapers.map(({
-      title,
-      theme,
+    }, /*#__PURE__*/external_React_default().createElement("fieldset", null, this.sortWallpapersByOrder(filteredWallpapers).map(({
+      background_position,
       fluent_id,
       solid_color,
+      theme,
+      title,
       wallpaperUrl
     }, index) => {
       let style = {};
       if (wallpaperUrl) {
         style.backgroundImage = `url(${wallpaperUrl})`;
+        style.backgroundPosition = background_position || "center";
       } else {
         style.backgroundColor = solid_color || "";
       }
@@ -15184,7 +14603,7 @@ class ContentSection extends (external_React_default()).PureComponent {
     }));
   }
   onPreferenceSelect(e) {
-    // eventSource: WEATHER | TOP_SITES | TOP_STORIES | WIDGET_LISTS | WIDGET_TIMER | TRENDING_SEARCH
+    // eventSource: WEATHER | TOP_SITES | TOP_STORIES | WIDGET_LISTS | WIDGET_TIMER
     const {
       preference,
       eventSource
@@ -15225,7 +14644,9 @@ class ContentSection extends (external_React_default()).PureComponent {
       return;
     }
     if (drawerRef) {
-      let drawerHeight = parseFloat(window.getComputedStyle(drawerRef)?.height) || 0;
+      // Use measured height if valid, otherwise use a large fallback
+      // since overflow:hidden on the parent safely hides the drawer
+      let drawerHeight = parseFloat(window.getComputedStyle(drawerRef)?.height) || 100;
       if (isOpen) {
         drawerRef.style.marginTop = "var(--space-small)";
       } else {
@@ -15240,7 +14661,6 @@ class ContentSection extends (external_React_default()).PureComponent {
       pocketRegion,
       mayHaveInferredPersonalization,
       mayHaveWeather,
-      mayHaveTrendingSearch,
       mayHaveWidgets,
       mayHaveTimerWidget,
       mayHaveListsWidget,
@@ -15249,13 +14669,13 @@ class ContentSection extends (external_React_default()).PureComponent {
       activeWallpaper,
       setPref,
       mayHaveTopicSections,
-      exitEventFired
+      exitEventFired,
+      onSubpanelToggle
     } = this.props;
     const {
       topSitesEnabled,
       pocketEnabled,
       weatherEnabled,
-      trendingSearchEnabled,
       showInferredPersonalizationEnabled,
       topSitesRowsCount
     } = enabledSections;
@@ -15270,7 +14690,8 @@ class ContentSection extends (external_React_default()).PureComponent {
     }, /*#__PURE__*/external_React_default().createElement(WallpaperCategories, {
       setPref: setPref,
       activeWallpaper: activeWallpaper,
-      exitEventFired: exitEventFired
+      exitEventFired: exitEventFired,
+      onSubpanelToggle: onSubpanelToggle
     })), !mayHaveWidgets && /*#__PURE__*/external_React_default().createElement("span", {
       className: "divider",
       role: "separator"
@@ -15312,16 +14733,6 @@ class ContentSection extends (external_React_default()).PureComponent {
       "data-preference": "widgets.focusTimer.enabled",
       "data-eventSource": "WIDGET_TIMER",
       "data-l10n-id": "newtab-custom-widget-timer-toggle"
-    })), mayHaveTrendingSearch && /*#__PURE__*/external_React_default().createElement("div", {
-      id: "trending-search-section",
-      className: "section"
-    }, /*#__PURE__*/external_React_default().createElement("moz-toggle", {
-      id: "trending-search-toggle",
-      pressed: trendingSearchEnabled || null,
-      onToggle: this.onPreferenceSelect,
-      "data-preference": "trendingSearch.enabled",
-      "data-eventSource": "TRENDING_SEARCH",
-      "data-l10n-id": "newtab-custom-widget-trending-search-toggle"
     })), /*#__PURE__*/external_React_default().createElement("span", {
       className: "divider",
       role: "separator"
@@ -15337,16 +14748,6 @@ class ContentSection extends (external_React_default()).PureComponent {
       "data-preference": "showWeather",
       "data-eventSource": "WEATHER",
       "data-l10n-id": "newtab-custom-weather-toggle"
-    })), !mayHaveWidgets && mayHaveTrendingSearch && /*#__PURE__*/external_React_default().createElement("div", {
-      id: "trending-search-section",
-      className: "section"
-    }, /*#__PURE__*/external_React_default().createElement("moz-toggle", {
-      id: "trending-search-toggle",
-      pressed: trendingSearchEnabled || null,
-      onToggle: this.onPreferenceSelect,
-      "data-preference": "trendingSearch.enabled",
-      "data-eventSource": "TRENDING_SEARCH",
-      "data-l10n-id": "newtab-custom-trending-search-toggle"
     })), /*#__PURE__*/external_React_default().createElement("div", {
       id: "shortcuts-section",
       className: "section"
@@ -15427,7 +14828,9 @@ class ContentSection extends (external_React_default()).PureComponent {
       htmlFor: "inferred-personalization",
       "data-l10n-id": "newtab-custom-stories-personalized-checkbox-label"
     })), mayHaveTopicSections && /*#__PURE__*/external_React_default().createElement(SectionsMgmtPanel, {
-      exitEventFired: exitEventFired
+      exitEventFired: exitEventFired,
+      pocketEnabled: pocketEnabled,
+      onSubpanelToggle: onSubpanelToggle
     }))))))), /*#__PURE__*/external_React_default().createElement("span", {
       className: "divider",
       role: "separator"
@@ -15454,9 +14857,16 @@ class _CustomizeMenu extends (external_React_default()).PureComponent {
     super(props);
     this.onEntered = this.onEntered.bind(this);
     this.onExited = this.onExited.bind(this);
+    this.onSubpanelToggle = this.onSubpanelToggle.bind(this);
     this.state = {
-      exitEventFired: false
+      exitEventFired: false,
+      subpanelOpen: false
     };
+  }
+  onSubpanelToggle(isOpen) {
+    this.setState({
+      subpanelOpen: isOpen
+    });
   }
   onEntered() {
     this.setState({
@@ -15490,12 +14900,12 @@ class _CustomizeMenu extends (external_React_default()).PureComponent {
         }
       },
       ref: c => this.openButton = c
-    }, /*#__PURE__*/external_React_default().createElement("div", null, /*#__PURE__*/external_React_default().createElement("img", {
+    }, /*#__PURE__*/external_React_default().createElement("label", {
+      "data-l10n-id": "newtab-customize-panel-icon-button-label"
+    }), /*#__PURE__*/external_React_default().createElement("div", null, /*#__PURE__*/external_React_default().createElement("img", {
       role: "presentation",
       src: "chrome://global/skin/icons/edit-outline.svg"
-    })), /*#__PURE__*/external_React_default().createElement("label", {
-      "data-l10n-id": "newtab-customize-panel-icon-button-label"
-    }))), /*#__PURE__*/external_React_default().createElement(external_ReactTransitionGroup_namespaceObject.CSSTransition, {
+    })))), /*#__PURE__*/external_React_default().createElement(external_ReactTransitionGroup_namespaceObject.CSSTransition, {
       timeout: 250,
       classNames: "customize-animate",
       in: this.props.showing,
@@ -15503,7 +14913,9 @@ class _CustomizeMenu extends (external_React_default()).PureComponent {
       onExited: this.onExited,
       appear: true
     }, /*#__PURE__*/external_React_default().createElement("div", {
-      className: "customize-menu",
+      className: "customize-menu-animate-wrapper"
+    }, /*#__PURE__*/external_React_default().createElement("div", {
+      className: `customize-menu ${this.state.subpanelOpen ? "subpanel-open" : ""}`,
       role: "dialog",
       "data-l10n-id": "newtab-settings-dialog-label"
     }, /*#__PURE__*/external_React_default().createElement("div", {
@@ -15526,13 +14938,13 @@ class _CustomizeMenu extends (external_React_default()).PureComponent {
       mayHaveTopicSections: this.props.mayHaveTopicSections,
       mayHaveInferredPersonalization: this.props.mayHaveInferredPersonalization,
       mayHaveWeather: this.props.mayHaveWeather,
-      mayHaveTrendingSearch: this.props.mayHaveTrendingSearch,
       mayHaveWidgets: this.props.mayHaveWidgets,
       mayHaveTimerWidget: this.props.mayHaveTimerWidget,
       mayHaveListsWidget: this.props.mayHaveListsWidget,
       dispatch: this.props.dispatch,
-      exitEventFired: this.state.exitEventFired
-    }))));
+      exitEventFired: this.state.exitEventFired,
+      onSubpanelToggle: this.onSubpanelToggle
+    })))));
   }
 }
 const CustomizeMenu = (0,external_ReactRedux_namespaceObject.connect)(state => ({
@@ -15604,7 +15016,6 @@ function Logo() {
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* globals ContentSearchUIController, ContentSearchHandoffUIController */
-
 
 
 
@@ -15726,9 +15137,6 @@ class _Search extends (external_React_default()).PureComponent {
    */
   render() {
     const wrapperClassName = ["search-wrapper", this.props.disable && "search-disabled", this.props.fakeFocus && "fake-focus"].filter(v => v).join(" ");
-    const prefs = this.props.Prefs.values;
-    const trendingSearchEnabled = prefs["trendingSearch.enabled"] && prefs["system.trendingSearch.enabled"] && prefs["trendingSearch.defaultSearchEngine"]?.toLowerCase() === "google";
-    const trendingSearchVariant = this.props.Prefs.values["trendingSearch.variant"];
     return /*#__PURE__*/external_React_default().createElement((external_React_default()).Fragment, null, /*#__PURE__*/external_React_default().createElement("div", {
       className: wrapperClassName
     }, this.props.showLogo && /*#__PURE__*/external_React_default().createElement(Logo, null), !this.props.handoffEnabled && /*#__PURE__*/external_React_default().createElement("div", {
@@ -15744,7 +15152,7 @@ class _Search extends (external_React_default()).PureComponent {
       className: "search-button",
       "data-l10n-id": "newtab-search-box-search-button",
       onClick: this.onSearchClick
-    }), trendingSearchEnabled && (trendingSearchVariant === "a" || trendingSearchVariant === "c") && /*#__PURE__*/external_React_default().createElement(TrendingSearches, null)), this.props.handoffEnabled && /*#__PURE__*/external_React_default().createElement("div", {
+    })), this.props.handoffEnabled && /*#__PURE__*/external_React_default().createElement("div", {
       className: "search-inner-wrapper"
     }, /*#__PURE__*/external_React_default().createElement("button", {
       className: "search-handoff-button",
@@ -15766,7 +15174,7 @@ class _Search extends (external_React_default()).PureComponent {
       ref: el => {
         this.fakeCaret = el;
       }
-    })), trendingSearchEnabled && (trendingSearchVariant === "a" || trendingSearchVariant === "c") && /*#__PURE__*/external_React_default().createElement(TrendingSearches, null))));
+    })))));
   }
 }
 const Search_Search = (0,external_ReactRedux_namespaceObject.connect)(state => ({
@@ -16651,11 +16059,11 @@ class BaseContent extends (external_React_default()).PureComponent {
     const CSS_VAR_SPACE_XXLARGE = 32.04; // Custom Acorn themed variable (8 * 0.267rem);
 
     let layout = {
-      outerWrapperPaddingTop: 24,
-      searchWrapperPaddingTop: 16,
+      outerWrapperPaddingTop: 32.04,
+      searchWrapperPaddingTop: 16.02,
       searchWrapperPaddingBottom: CSS_VAR_SPACE_XXLARGE,
-      searchWrapperFixedScrollPaddingTop: 27,
-      searchWrapperFixedScrollPaddingBottom: 27,
+      searchWrapperFixedScrollPaddingTop: 24.03,
+      searchWrapperFixedScrollPaddingBottom: 24.03,
       searchInnerWrapperMinHeight: 52,
       logoAndWordmarkWrapperHeight: 0,
       logoAndWordmarkWrapperMarginBottom: 0
@@ -16780,11 +16188,13 @@ class BaseContent extends (external_React_default()).PureComponent {
     let url = "";
     let color = "transparent";
     let newTheme = colorMode;
+    let backgroundPosition = "center";
 
     // if no selected wallpaper fallback to browser/theme styles
     if (!selectedWallpaper) {
       __webpack_require__.g.document?.body.style.removeProperty("--newtab-wallpaper");
       __webpack_require__.g.document?.body.style.removeProperty("--newtab-wallpaper-color");
+      __webpack_require__.g.document?.body.style.removeProperty("--newtab-wallpaper-backgroundPosition");
       __webpack_require__.g.document?.body.classList.remove("lightWallpaper", "darkWallpaper");
       return;
     }
@@ -16793,6 +16203,8 @@ class BaseContent extends (external_React_default()).PureComponent {
     if (selectedWallpaper === "custom" && uploadedWallpaperUrl) {
       url = uploadedWallpaperUrl;
       color = "transparent";
+      // Note: There is no method to set a specific background position for custom wallpapers
+      backgroundPosition = "center";
       newTheme = uploadedWallpaperTheme || colorMode;
     } else if (wallpaperList) {
       const wallpaper = wallpaperList.find(wp => wp.title === selectedWallpaper);
@@ -16807,6 +16219,7 @@ class BaseContent extends (external_React_default()).PureComponent {
         // standard wallpaper & solid colors
       } else if (selectedWallpaper) {
         url = wallpaper?.wallpaperUrl || "";
+        backgroundPosition = wallpaper?.background_position || "center";
         color = wallpaper?.solid_color || "transparent";
         newTheme = wallpaper?.theme || colorMode;
         // if a solid color, determine if dark or light
@@ -16818,6 +16231,7 @@ class BaseContent extends (external_React_default()).PureComponent {
       }
     }
     __webpack_require__.g.document?.body.style.setProperty("--newtab-wallpaper", `url(${url})`);
+    __webpack_require__.g.document?.body.style.setProperty("--newtab-wallpaper-backgroundPosition", backgroundPosition);
     __webpack_require__.g.document?.body.style.setProperty("--newtab-wallpaper-color", color || "transparent");
     __webpack_require__.g.document?.body.classList.remove("lightWallpaper", "darkWallpaper");
     __webpack_require__.g.document?.body.classList.add(newTheme === "dark" ? "darkWallpaper" : "lightWallpaper");
@@ -16919,12 +16333,11 @@ class BaseContent extends (external_React_default()).PureComponent {
       pocketEnabled: prefs["feeds.section.topstories"],
       showInferredPersonalizationEnabled: prefs[Base_PREF_INFERRED_PERSONALIZATION_USER],
       topSitesRowsCount: prefs.topSitesRows,
-      weatherEnabled: prefs.showWeather,
-      trendingSearchEnabled: prefs["trendingSearch.enabled"]
+      weatherEnabled: prefs.showWeather
     };
     const pocketRegion = prefs["feeds.system.topstories"];
     const mayHaveInferredPersonalization = prefs[PREF_INFERRED_PERSONALIZATION_SYSTEM];
-    const mayHaveWeather = prefs["system.showWeather"];
+    const mayHaveWeather = prefs["system.showWeather"] || prefs.trainhopConfig?.weather?.enabled;
     const supportUrl = prefs["support.url"];
 
     // Weather can be enabled and not rendered in the top right corner
@@ -16945,12 +16358,8 @@ class BaseContent extends (external_React_default()).PureComponent {
     const enabledWidgets = {
       listsEnabled: prefs["widgets.lists.enabled"],
       timerEnabled: prefs["widgets.focusTimer.enabled"],
-      trendingSearchEnabled: prefs["trendingSearch.enabled"],
       weatherEnabled: prefs.showWeather
     };
-
-    // Trending Searches experiment pref check
-    const mayHaveTrendingSearch = prefs["system.trendingSearch.enabled"] && prefs["trendingSearch.defaultSearchEngine"].toLowerCase() === "google";
 
     // Mobile Download Promo Pref Checks
     const mobileDownloadPromoEnabled = prefs["mobileDownloadModal.enabled"];
@@ -16983,32 +16392,7 @@ class BaseContent extends (external_React_default()).PureComponent {
     const shouldShowDownloadHighlight = this.state.showDownloadHighlightOverride ?? this.shouldShowOMCHighlight("DownloadMobilePromoHighlight");
     return /*#__PURE__*/external_React_default().createElement("div", {
       className: featureClassName
-    }, /*#__PURE__*/external_React_default().createElement("menu", {
-      className: "personalizeButtonWrapper"
-    }, /*#__PURE__*/external_React_default().createElement(CustomizeMenu, {
-      onClose: this.closeCustomizationMenu,
-      onOpen: this.openCustomizationMenu,
-      openPreferences: this.openPreferences,
-      setPref: this.setPref,
-      enabledSections: enabledSections,
-      enabledWidgets: enabledWidgets,
-      wallpapersEnabled: wallpapersEnabled,
-      activeWallpaper: activeWallpaper,
-      pocketRegion: pocketRegion,
-      mayHaveTopicSections: mayHavePersonalizedTopicSections,
-      mayHaveInferredPersonalization: mayHaveInferredPersonalization,
-      mayHaveWeather: mayHaveWeather,
-      mayHaveTrendingSearch: mayHaveTrendingSearch,
-      mayHaveWidgets: mayHaveWidgets,
-      mayHaveTimerWidget: mayHaveTimerWidget,
-      mayHaveListsWidget: mayHaveListsWidget,
-      showing: customizeMenuVisible
-    }), this.shouldShowOMCHighlight("CustomWallpaperHighlight") && /*#__PURE__*/external_React_default().createElement(MessageWrapper, {
-      dispatch: this.props.dispatch
-    }, /*#__PURE__*/external_React_default().createElement(WallpaperFeatureHighlight, {
-      position: "inset-block-start inset-inline-start",
-      dispatch: this.props.dispatch
-    }))), /*#__PURE__*/external_React_default().createElement("div", {
+    }, /*#__PURE__*/external_React_default().createElement("div", {
       className: "weatherWrapper"
     }, shouldDisplayWeather && /*#__PURE__*/external_React_default().createElement(ErrorBoundary, null, /*#__PURE__*/external_React_default().createElement(Weather_Weather, null))), /*#__PURE__*/external_React_default().createElement("div", {
       className: `mobileDownloadPromoWrapper ${mobileDownloadPromoWrapperHeightModifier}`
@@ -17045,7 +16429,31 @@ class BaseContent extends (external_React_default()).PureComponent {
       dispatch: this.props.dispatch
     }))), mayShowTopicSelection && pocketEnabled && /*#__PURE__*/external_React_default().createElement(TopicSelection, {
       supportUrl: supportUrl
-    })));
+    })), /*#__PURE__*/external_React_default().createElement("menu", {
+      className: "personalizeButtonWrapper"
+    }, /*#__PURE__*/external_React_default().createElement(CustomizeMenu, {
+      onClose: this.closeCustomizationMenu,
+      onOpen: this.openCustomizationMenu,
+      openPreferences: this.openPreferences,
+      setPref: this.setPref,
+      enabledSections: enabledSections,
+      enabledWidgets: enabledWidgets,
+      wallpapersEnabled: wallpapersEnabled,
+      activeWallpaper: activeWallpaper,
+      pocketRegion: pocketRegion,
+      mayHaveTopicSections: mayHavePersonalizedTopicSections,
+      mayHaveInferredPersonalization: mayHaveInferredPersonalization,
+      mayHaveWeather: mayHaveWeather,
+      mayHaveWidgets: mayHaveWidgets,
+      mayHaveTimerWidget: mayHaveTimerWidget,
+      mayHaveListsWidget: mayHaveListsWidget,
+      showing: customizeMenuVisible
+    }), this.shouldShowOMCHighlight("CustomWallpaperHighlight") && /*#__PURE__*/external_React_default().createElement(MessageWrapper, {
+      dispatch: this.props.dispatch
+    }, /*#__PURE__*/external_React_default().createElement(WallpaperFeatureHighlight, {
+      position: "inset-block-start inset-inline-start",
+      dispatch: this.props.dispatch
+    }))));
   }
 }
 BaseContent.defaultProps = {

@@ -50,7 +50,9 @@ val Context.metrics: MetricController
 fun Context.asActivity() = (this as? ContextThemeWrapper)?.baseContext as? Activity
     ?: this as? Activity
 
-fun Context.getPreferenceKey(@StringRes resourceId: Int): String =
+fun Context.getPreferenceKey(
+    @StringRes resourceId: Int,
+): String =
     resources.getString(resourceId)
 
 /**
@@ -69,7 +71,10 @@ fun Context.settings() = components.settings
  *
  * @return the formatted string in locale language or English as a fallback
  */
-fun Context.getStringWithArgSafe(@StringRes resId: Int, formatArg: String): String {
+fun Context.getStringWithArgSafe(
+    @StringRes resId: Int,
+    formatArg: String,
+): String {
     return try {
         format(getString(resId), formatArg)
     } catch (e: IllegalArgumentException) {
@@ -146,6 +151,17 @@ fun Context.tabClosedUndoMessage(private: Boolean): String =
     }
 
 /**
+ * Returns the message to be shown when multiple tabs are closed based on whether the tabs were all private or not.
+ * @param private true if the tab was private, false otherwise.
+ */
+fun Context.tabsClosedUndoMessage(private: Boolean): String =
+    if (private) {
+        getString(R.string.snackbar_private_data_deleted)
+    } else {
+        getString(R.string.snackbar_tabs_closed)
+    }
+
+/**
  * Helper function used to determine whether the app's total *window* size is at least that of a tablet.
  * This relies on the window size check from [AcornWindowSize]. To determine whether the device's
  * *physical* size is at least the size of a tablet, use [Context.isLargeScreenSize] instead.
@@ -153,6 +169,35 @@ fun Context.tabClosedUndoMessage(private: Boolean): String =
  * @return true if the app has a large window size akin to a tablet.
  */
 fun Context.isLargeWindow(): Boolean = AcornWindowSize.isLargeWindow(this)
+
+internal const val TALL_SCREEN_HEIGHT_DP = 480
+internal const val WIDE_SCREEN_WIDTH_DP = 600
+
+/**
+ * Helper function to determine whether the app's current window height
+ * is at least more than [TALL_SCREEN_HEIGHT_DP].
+ *
+ * This is useful when navigation bar should only be enabled on
+ * taller screens (e.g., to avoid crowding content vertically).
+ *
+ * @return true if the window height size is more than [TALL_SCREEN_HEIGHT_DP].
+ */
+fun Context.isTallWindow(): Boolean {
+    return resources.configuration.screenHeightDp > TALL_SCREEN_HEIGHT_DP
+}
+
+/**
+ * Helper function to determine whether the app's current window width
+ * is at least more than [WIDE_SCREEN_WIDTH_DP].
+ *
+ * This is useful when navigation bar should only be enabled on
+ * wider screens (e.g., to avoid crowding content horizontally).
+ *
+ * @return true if the window width size is more than [WIDE_SCREEN_WIDTH_DP].
+ */
+fun Context.isWideWindow(): Boolean {
+    return resources.configuration.screenWidthDp > WIDE_SCREEN_WIDTH_DP
+}
 
 /**
  *  This will record an event in the Nimbus internal event store. Used for behavioral targeting.
@@ -174,4 +219,6 @@ fun Context.isToolbarAtBottom() =
  * @param resId Resource ID of the dimension.
  * @return The pixel size corresponding to the given dimension resource.
  */
-fun Context.pixelSizeFor(@DimenRes resId: Int) = resources.getDimensionPixelSize(resId)
+fun Context.pixelSizeFor(
+    @DimenRes resId: Int,
+) = resources.getDimensionPixelSize(resId)

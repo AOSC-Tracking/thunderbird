@@ -1,6 +1,5 @@
 [DEFAULT]
 head = "head.js"
-prefs = ["experimental.mail.ews.enabled=true"]
 support-files = ["data/*"]
 
 ["test_delete_model_trash_path.js"]
@@ -10,6 +9,13 @@ support-files = ["data/*"]
 ["test_ewsFilters.js"]
 
 ["test_ewsFolder.js"]
+
+["test_folderNamesEws.js"]
+tags = ["foldernames"]
+
+["test_folderNamesEws_preffedOff.js"]
+prefs = ["mail.useLocalizedFolderNames=false"]
+tags = ["foldernames"]
 
 ["test_folder_operations.js"]
 

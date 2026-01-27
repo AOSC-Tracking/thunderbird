@@ -1,7 +1,8 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
 
 /* global MozXULElement */
 
@@ -68,6 +69,15 @@ customElements.whenDefined("autocomplete-input").then(() => {
           this.clearSearch();
           event.preventDefault();
           event.stopPropagation();
+        }
+      });
+
+      window.addEventListener("unload", () => {
+        if (this.hasConnected) {
+          Services.obs.removeObserver(
+            this.textObserver,
+            "autocomplete-did-enter-text"
+          );
         }
       });
     }

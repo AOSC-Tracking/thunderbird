@@ -17,7 +17,7 @@
   <meta charset="utf-8" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src chrome:; script-src chrome: about: moz-src: 'unsafe-inline'; style-src about: 'unsafe-inline'; img-src moz-icon: chrome: moz-src:;"
+    content="default-src chrome:; script-src chrome: about: moz-src: 'unsafe-inline'; style-src about: 'unsafe-inline'; img-src moz-icon: chrome: moz-src: data:;"
   />
 
   <link rel="icon" href="chrome://messenger/skin/icons/new/compact/folder.svg" />
@@ -238,7 +238,7 @@
       <td class="subjectcol-column" data-column-name="subjectcol">
         <div class="thread-container">
           <button type="button"
-                  class="button button-flat button-reset twisty"
+                  class="button button-flat twisty"
                   aria-hidden="hidden"
                   tabindex="-1">
             <img src="" alt="" class="twisty-icon" />
@@ -319,7 +319,7 @@
             <div class="thread-card-dynamic-row">
               <span class="sort-header-details"></span>
               <button type="button"
-                      class="button button-flat button-reset twisty thread-card-button"
+                      class="button button-flat twisty thread-card-button"
                       aria-hidden="hidden"
                       tabindex="-1">
                 <img src="" alt="" class="replies-icon" />
@@ -432,8 +432,10 @@
     </menu>
     <menuseparator/>
     <menuitem id="folderPaneContext-compact"
-              label="&folderContextCompact.label;"
-              accesskey="&folderContextCompact.accesskey;"/>
+              data-l10n-id="folder-pane-context-compact"
+              data-l10n-args='{"count": 1}'/>
+    <menuitem id="folderPaneContext-compactAll"
+              data-l10n-id="folder-pane-context-compact-all"/>
     <menuitem id="folderPaneContext-markMailFolderAllRead"
               data-l10n-id="folder-pane-context-mark-folder-read"
               data-l10n-args='{"count": 1}'/>
@@ -572,6 +574,12 @@
               closemenu="none"
               data-l10n-id="folder-pane-header-toggle-folder-size"
               oncommand="folderPane.toggleFolderSize(event);"/>
+    <menuitem id="folderPaneHeaderToggleFullPath"
+              class="folder-pane-option"
+              type="checkbox"
+              closemenu="none"
+              data-l10n-id="folder-pane-header-toggle-full-path"
+              oncommand="folderPane.toggleFullPath(event);"/>
     <menuitem id="folderPaneHeaderToggleLocalFolders"
               class="folder-pane-option"
               type="checkbox"

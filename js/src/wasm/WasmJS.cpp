@@ -2599,7 +2599,6 @@ size_t WasmMemoryObject::boundsCheckLimit() const {
 #endif
   MOZ_ASSERT(mappedSize % wasm::PageSize == 0);
   MOZ_ASSERT(mappedSize >= wasm::GuardSize);
-  MOZ_ASSERT(wasm::IsValidBoundsCheckImmediate(mappedSize - wasm::GuardSize));
   size_t limit = mappedSize - wasm::GuardSize;
   MOZ_ASSERT(limit <= MaxMemoryBoundsCheckLimit(addressType()));
   return limit;
@@ -4372,6 +4371,12 @@ static bool Reject(JSContext* cx, const CompileArgs& args,
   return PromiseObject::reject(cx, promise, rejectionValue);
 }
 
+static bool RejectWithOutOfMemory(JSContext* cx,
+                                  Handle<PromiseObject*> promise) {
+  ReportOutOfMemory(cx);
+  return RejectWithPendingException(cx, promise);
+}
+
 static void LogAsync(JSContext* cx, const char* funcName,
                      const Module& module) {
   Log(cx, "async %s succeeded%s", funcName,
@@ -4450,7 +4455,7 @@ static bool AsyncInstantiate(JSContext* cx, const Module& module,
                              Handle<PromiseObject*> promise) {
   auto task = js::MakeUnique<AsyncInstantiateTask>(cx, module, ret, promise);
   if (!task || !task->init(cx)) {
-    return false;
+    return RejectWithOutOfMemory(cx, promise);
   }
 
   if (!GetImports(cx, module, importObj, &task->imports())) {
@@ -5174,12 +5179,6 @@ static ResolveResponseClosure* ToResolveResponseClosure(const CallArgs& args) {
 static bool RejectWithErrorNumber(JSContext* cx, uint32_t errorNumber,
                                   Handle<PromiseObject*> promise) {
   JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, errorNumber);
-  return RejectWithPendingException(cx, promise);
-}
-
-static bool RejectWithOutOfMemory(JSContext* cx,
-                                  Handle<PromiseObject*> promise) {
-  ReportOutOfMemory(cx);
   return RejectWithPendingException(cx, promise);
 }
 

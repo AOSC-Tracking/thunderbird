@@ -9,23 +9,17 @@ import { IMServices } from "resource:///modules/IMServices.sys.mjs";
 import { MailNotificationManager } from "resource:///modules/MailNotificationManager.sys.mjs";
 import { PluralForm } from "resource:///modules/PluralForm.sys.mjs";
 
+const AlertNotification = Components.Constructor(
+  "@mozilla.org/alert-notification;1",
+  "nsIAlertNotification",
+  "initWithObject"
+);
+
 // Time in seconds: it is the minimum time of inactivity
 // needed to show the bundled notification.
 var kTimeToWaitForMoreMsgs = 3;
 
 export var Notifications = {
-  get ellipsis() {
-    let ellipsis = "[\u2026]";
-
-    try {
-      ellipsis = Services.prefs.getComplexValue(
-        "intl.ellipsis",
-        Ci.nsIPrefLocalizedString
-      ).data;
-    } catch (e) {}
-    return ellipsis;
-  },
-
   // Holds the first direct message of a bundle while we wait for further
   // messages from the same sender to arrive.
   _heldMessage: null,
@@ -88,7 +82,7 @@ export var Notifications = {
         if (messageText.length > 50) {
           messageText = messageText.substr(0, 50);
           if (aCounter == 0) {
-            messageText = messageText + this.ellipsis;
+            messageText = messageText + Services.locale.ellipsis;
           }
         }
 
@@ -135,16 +129,13 @@ export var Notifications = {
       }
     }
 
-    const alert = Cc["@mozilla.org/alert-notification;1"].createInstance(
-      Ci.nsIAlertNotification
-    );
-    alert.init(
-      "", // name
-      icon,
-      name, // title
-      messageText,
-      true // clickable
-    );
+    const alert = new AlertNotification({
+      imageURL: icon,
+      title: name,
+      text: messageText,
+      textClickable: true,
+    });
+
     // Show the notification!
     Cc["@mozilla.org/alerts-service;1"]
       .getService(Ci.nsIAlertsService)

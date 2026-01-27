@@ -16,7 +16,7 @@
 #include "nsCOMPtr.h"
 #include "nsURLHelper.h"
 #include "nsISizeOf.h"
-#include "mozilla/Attributes.h"
+#include "mozilla/Atomics.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/MemoryReporting.h"
 #include "nsISensitiveInfoHiddenURI.h"
@@ -133,7 +133,6 @@ class nsStandardURL : public nsIFileURL,
   NS_DECL_NSISENSITIVEINFOHIDDENURI
 
   // nsISizeOf
-  virtual size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const override;
   virtual size_t SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const override;
 
   static void InitGlobalObjects();

@@ -8,6 +8,7 @@
 :host,
 :root {
   --button-height: 2.2em;
+  --border-color: color-mix(in srgb, currentColor 46%, transparent);
   --button-border-radius: 3px;
   --button-border-color: color-mix(in srgb, currentColor 9%, transparent);
   --button-border-color-hover: color-mix(in srgb, currentColor 17%, transparent);
@@ -23,10 +24,10 @@
     --button-background-color-active: light-dark(var(--grey-90-a30), rgba(249, 249, 250, 0.2));
     --in-content-categories-background: var(--layout-background-2);
     --in-content-categories-border: var(--in-content-categories-background);
-    --in-content-item-selected-unfocused: light-dark(var(--color-gray-20), rgba(249, 249, 250, 0.05));
+    --color-accent-primary-selected-unfocused: light-dark(var(--color-gray-20), rgba(249, 249, 250, 0.05));
     --in-content-item-hover: color-mix(in srgb, currentColor 12%, transparent);
-    --in-content-item-selected: color-mix(in srgb, currentColor 20%, transparent);
-    --in-content-item-selected-text: var(--text-color);
+    --color-accent-primary-selected: color-mix(in srgb, currentColor 20%, transparent);
+    --text-color-accent-primary-selected: var(--text-color);
     --button-background-color-primary: AccentColor;
     --button-background-color-primary-hover: color-mix(in srgb, AccentColor 80%, black);
     --button-background-color-primary-active: color-mix(in srgb, AccentColor 70%, black);
@@ -41,6 +42,7 @@
     --in-content-box-info-border: currentColor;
     --in-content-categories-background: transparent;
     --in-content-categories-border: currentColor;
+    --border-color: -moz-DialogText;
     --button-background-color-primary: SelectedItem;
     --button-background-color-primary-hover: SelectedItem;
     --button-background-color-primary-active: SelectedItem;
@@ -56,6 +58,18 @@
   &:not(.system-font-size) {
     font: message-box;
   }
+}
+
+h1 {
+  font-size: 2em;
+}
+
+h2 {
+  font-size: 1.5em;
+}
+
+body table {
+  font-size: 1em;
 }
 
 #categories {
@@ -76,8 +90,8 @@
 
     &[keyboard-navigation="true"]:focus-visible > .category[current],
     & > .category:focus-visible {
-      background-color: var(--in-content-item-selected) !important;
-      color: var(--in-content-item-selected-text);
+      background-color: var(--color-accent-primary-selected) !important;
+      color: var(--text-color-accent-primary-selected);
       outline: none;
     }
   }
@@ -113,7 +127,7 @@ menulist > menupopup {
 
 menupopup {
   @media not (-moz-windows-mica-popups) {
-    --panel-border-color: var(--in-content-box-border-color);
+    --panel-border-color: var(--border-color);
     --panel-background: var(--background-color-box);
     --panel-color: var(--text-color);
   }
@@ -131,7 +145,7 @@ menupopup {
 
   @media (-moz-windows-mica-popups) {
     & menupopup {
-      --panel-border-color: var(--in-content-box-border-color);
+      --panel-border-color: var(--border-color);
     }
   }
 }

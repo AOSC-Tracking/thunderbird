@@ -226,7 +226,6 @@ export const PREFS = Object.freeze({
   "browser.startup.page": PREF_INT,
   "browser.toolbars.bookmarks.visibility": PREF_STRING,
   "browser.urlbar.lastUrlbarSearchSeconds": PREF_INT,
-  "browser.urlbar.quicksuggest.dataCollection.enabled": PREF_BOOL,
   "browser.urlbar.showSearchSuggestionsFirst": PREF_BOOL,
   "browser.urlbar.suggest.quicksuggest.sponsored": PREF_BOOL,
   "media.videocontrols.picture-in-picture.enabled": PREF_BOOL,
@@ -237,6 +236,7 @@ export const PREFS = Object.freeze({
   "nimbus.qa.pref-1": PREF_STRING,
   "nimbus.qa.pref-2": PREF_STRING,
   "security.sandbox.content.level": PREF_INT,
+  "termsofuse.acceptedDate": PREF_STRING,
   "trailhead.firstrun.didSeeAboutWelcome": PREF_BOOL,
 });
 

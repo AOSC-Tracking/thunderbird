@@ -71,6 +71,25 @@ OAuth2Module.prototype = {
     }
 
     const { issuer, allScopes, requiredScopes } = details;
+
+    // Set pref for Yahoo/AOL/AT&T users if applicable
+    // TODO: Remove this when PKCE is fully rolled out for Yahoo/AOL/AT&T
+    const yahooLikeIssuer = ["login.yahoo.com", "login.aol.com"].includes(
+      details.issuer
+    );
+    if (
+      yahooLikeIssuer &&
+      !Services.prefs.getBoolPref(
+        "mail.inappnotifications.pkceUpgradeForYahooAol",
+        false
+      )
+    ) {
+      Services.prefs.setBoolPref(
+        "mail.inappnotifications.pkceUpgradeForYahooAol",
+        true
+      );
+    }
+
     // Find the app key we need for the OAuth2 string. Eventually, this should
     // be using dynamic client registration, but there are no current
     // implementations that we can test this with.
@@ -134,6 +153,13 @@ OAuth2Module.prototype = {
     return true;
   },
 
+  /**
+   * Get a refresh token that matches this object from the login manager, if
+   * one exists. May set `this._scope` if the scope of the token is wider than
+   * `this._requiredScopes`.
+   *
+   * @returns {string} - A refresh token, or an empty string.
+   */
   getRefreshToken() {
     for (const login of Services.logins.findLogins(
       this._loginOrigin,
@@ -151,7 +177,18 @@ OAuth2Module.prototype = {
     }
     return "";
   },
+  /**
+   * Set the refresh token in the login manager, modifying any existing logins
+   * that this token supersedes, or adding a new login if none exists.
+   *
+   * @param {string} token
+   */
   async setRefreshToken(token) {
+    // This might seem unnecessary, given that `setRefreshToken` gets called
+    // because of a change in `this._oauth.refreshToken`, but we also might
+    // be here because of an external caller, e.g. an add-on.
+    this._oauth.refreshToken = token;
+
     const scope = this._oauth.scope ?? this._scope;
     const grantedScopes = scopeSet(scope);
 
@@ -165,7 +202,7 @@ OAuth2Module.prototype = {
 
       const loginScopes = scopeSet(login.httpRealm);
       if (grantedScopes.isSupersetOf(loginScopes)) {
-        if (grantedScopes.size == loginScopes.size) {
+        if (grantedScopes.size == loginScopes.size && token) {
           // The scope matches, just update the token...
           if (login.password != token) {
             // ... but only if it actually changed.
@@ -200,6 +237,42 @@ OAuth2Module.prototype = {
       );
       login.init(this._loginOrigin, null, scope, this._username, token, "", "");
       await Services.logins.addLoginAsync(login);
+    }
+  },
+  /**
+   * Clear the access token in memory, so that the next attempt to access it
+   * must query the server.
+   */
+  clearAccessToken() {
+    this._oauth.accessToken = null;
+  },
+  /**
+   * Clear the refresh and access tokens in memory, and the refresh token from
+   * the login manager, so the the next attempt to use this object must
+   * re-authenticate.
+   */
+  clearTokens() {
+    this._oauth.refreshToken = null;
+    this._oauth.accessToken = null;
+
+    const scope = this._oauth.scope ?? this._scope;
+    const grantedScopes = scopeSet(scope);
+
+    // Update any existing logins matching this origin, username, and scope.
+    const logins = Services.logins.findLogins(this._loginOrigin, null, "");
+    for (const login of logins) {
+      if (login.username != this._username) {
+        continue;
+      }
+
+      const loginScopes = scopeSet(login.httpRealm);
+      if (grantedScopes.isSupersetOf(loginScopes)) {
+        // We've got a new token for this scope, remove the existing one.
+        log.debug(
+          `Removing obsolete token for ${this._loginOrigin} with scope "${login.httpRealm}"`
+        );
+        Services.logins.removeLogin(login);
+      }
     }
   },
 

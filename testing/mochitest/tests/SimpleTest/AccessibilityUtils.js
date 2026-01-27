@@ -134,7 +134,7 @@ this.AccessibilityUtils = (function () {
    * @param   {nsIAccessible} accessible
    *          Accessible for which to determine its role attribute value.
    *
-   * @returns {String}
+   * @returns {string}
    *          Role attribute value if specified.
    */
   function getAriaRoles(accessible) {
@@ -151,6 +151,7 @@ this.AccessibilityUtils = (function () {
   /**
    * Get related accessible objects that are targets of labelled by relation e.g.
    * labels.
+   *
    * @param   {nsIAccessible} accessible
    *          Accessible objects to get labels for.
    *
@@ -405,15 +406,7 @@ this.AccessibilityUtils = (function () {
       node.previousElementSibling,
       node.nextElementSibling,
     ]) {
-      if (!sibling) {
-        continue;
-      }
-      const siblingAcc = getAccessible(sibling);
-      if (
-        siblingAcc &&
-        siblingAcc.role == Ci.nsIAccessibleRole.ROLE_SPINBUTTON &&
-        matchState(siblingAcc, STATE_FOCUSABLE)
-      ) {
+      if (sibling && sibling.tabIndex >= 0 && sibling.role == "spinbutton") {
         return true;
       }
     }
@@ -740,7 +733,7 @@ this.AccessibilityUtils = (function () {
    * @param   {nsIAccessible} accessible
    *          Accessible for which to determine if it is keyboard focusable.
    *
-   * @returns {Boolean}
+   * @returns {boolean}
    *          True if focusable with the keyboard.
    */
   function isKeyboardFocusable(accessible) {
@@ -797,7 +790,7 @@ this.AccessibilityUtils = (function () {
    * accessibility failure that prevents UI from being accessible to keyboard/AT
    * users.
    *
-   * @param {String} message
+   * @param {string} message
    * @param {nsIAccessible} accessible
    *        Accessible to log along with the failure message.
    */
@@ -810,7 +803,8 @@ this.AccessibilityUtils = (function () {
    * accessible object. This is used for cases where accessibility best
    * practices are not followed or for something that is not as severe to be
    * considered a failure.
-   * @param {String} message
+   *
+   * @param {string} message
    * @param {nsIAccessible} accessible
    *        Accessible to log along with the todo message.
    */
@@ -1063,6 +1057,7 @@ this.AccessibilityUtils = (function () {
 
   /**
    * Walk node ancestry and force refresh driver tick in every document.
+   *
    * @param {DOMNode} node
    *        Node for traversing the ancestry.
    */

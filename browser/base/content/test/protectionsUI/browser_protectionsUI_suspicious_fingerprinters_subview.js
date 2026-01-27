@@ -34,8 +34,8 @@ const FINGERPRINT_PROTECTION_PBM_PREF =
 /**
  * A helper function to check whether or not an element has "notFound" class.
  *
- * @param {String} id The id of the testing element.
- * @returns {Boolean} true when the element has "notFound" class.
+ * @param {string} id The id of the testing element.
+ * @returns {boolean} true when the element has "notFound" class.
  */
 function notFound(id) {
   return document.getElementById(id).classList.contains("notFound");
@@ -92,9 +92,9 @@ async function openTestPage(urls, usePrivateWin, testFn) {
           await new content.Promise(resolve => {
             let ifr = content.document.createElement("iframe");
             ifr.onload = resolve;
+            ifr.src = testUrl;
 
             content.document.body.appendChild(ifr);
-            ifr.src = testUrl;
           });
         });
       }

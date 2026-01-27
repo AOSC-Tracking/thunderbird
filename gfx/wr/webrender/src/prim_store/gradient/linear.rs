@@ -111,6 +111,7 @@ impl PatternBuilder for LinearGradientTemplate {
         } else {
             (self.start_point, self.end_point)
         };
+
         linear_gradient_pattern(
             start,
             end,
@@ -797,7 +798,7 @@ pub fn linear_gradient_pattern(
     _is_software: bool,
     gpu_buffer_builder: &mut GpuBufferBuilder
 ) -> Pattern {
-    let num_blocks = 2 + gpu_gradient_stops_blocks(stops.len(), true);
+    let num_blocks = 2 + gpu_gradient_stops_blocks(stops.len());
     let mut writer = gpu_buffer_builder.f32.write_blocks(num_blocks);
     writer.push_one([
         start.x,
@@ -813,6 +814,7 @@ pub fn linear_gradient_pattern(
     ]);
 
     let is_opaque = write_gpu_gradient_stops_tree(stops, GradientKind::Linear, extend_mode, &mut writer);
+
     let gradient_address = writer.finish();
 
     Pattern {

@@ -1,7 +1,8 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
 
 /* This is where functions related to the standalone message window are kept */
 
@@ -398,6 +399,11 @@ function HideMenus() {
   var compactFolderMenu = document.getElementById("menu_compactFolder");
   if (compactFolderMenu) {
     compactFolderMenu.toggleAttribute("hidden", true);
+  }
+
+  var compactFolderAllMenu = document.getElementById("menu_compactFolderAll");
+  if (compactFolderAllMenu) {
+    compactFolderAllMenu.toggleAttribute("hidden", true);
   }
 
   const trashSeparator = document.getElementById("trashMenuSeparator");

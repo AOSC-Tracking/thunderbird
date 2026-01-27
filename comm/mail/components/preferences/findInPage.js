@@ -271,6 +271,7 @@ var gSearchResultsPane = {
 
       let ts = performance.now();
       const FRAME_THRESHOLD = 10;
+      let underFoundSubcategory = false;
 
       // Showing or Hiding specific section depending on if words in query are found.
       for (const child of rootPreferencesChildren) {
@@ -285,6 +286,25 @@ var gSearchResultsPane = {
           if (query !== this.query) {
             return;
           }
+        }
+
+        if (underFoundSubcategory) {
+          if (!child.classList.contains("subcategory")) {
+            await this.searchWithinNode(child, this.query);
+            child.classList.remove("visually-hidden");
+            continue;
+          }
+          underFoundSubcategory = false;
+        }
+
+        if (
+          child.classList.contains("subcategory") &&
+          (await this.searchWithinNode(child, this.query))
+        ) {
+          child.classList.remove("visually-hidden");
+          underFoundSubcategory = true;
+          resultsFound = true;
+          continue;
         }
 
         if (
@@ -341,6 +361,16 @@ var gSearchResultsPane = {
   },
 
   /**
+   * Determine if the given element is an anchor tag.
+   *
+   * @param {HTMLElement} el The element.
+   * @returns {boolean} Whether or not the element is an anchor tag.
+   */
+  _isAnchor(el) {
+    return (el.prefix === null || el.prefix === "html") && el.localName === "a";
+  },
+
+  /**
    * Finding leaf nodes and checking their content for words to search,
    * It is a recursive function.
    *
@@ -353,6 +383,8 @@ var gSearchResultsPane = {
     let matchesFound = false;
     if (
       nodeObject.childElementCount == 0 ||
+      (typeof nodeObject.children !== "undefined" &&
+        Array.prototype.every.call(nodeObject.children, this._isAnchor)) ||
       nodeObject.tagName == "button" ||
       nodeObject.tagName == "label" ||
       nodeObject.tagName == "description" ||

@@ -5,6 +5,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsBaseParentChannel.h"
 #include "nsHttp.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/Components.h"
@@ -17,7 +18,6 @@
 #include "mozilla/net/CookieServiceParent.h"
 #include "mozilla/net/WebSocketChannelParent.h"
 #include "mozilla/net/WebSocketEventListenerParent.h"
-#include "mozilla/net/DataChannelParent.h"
 #ifdef MOZ_WIDGET_GTK
 #  include "mozilla/net/GIOChannelParent.h"
 #endif
@@ -25,10 +25,7 @@
 #  include "mozilla/net/GeckoViewContentChannelParent.h"
 #endif
 #include "mozilla/net/DocumentChannelParent.h"
-#include "mozilla/net/SimpleChannelParent.h"
 #include "mozilla/net/AltDataOutputStreamParent.h"
-#include "mozilla/Unused.h"
-#include "mozilla/net/FileChannelParent.h"
 #include "mozilla/net/DNSRequestParent.h"
 #include "mozilla/net/IPCTransportProvider.h"
 #include "mozilla/net/RemoteStreamGetter.h"
@@ -58,6 +55,7 @@
 #include "nsINetworkPredictor.h"
 #include "nsINetworkPredictorVerifier.h"
 #include "nsISpeculativeConnect.h"
+#include "nsFileChannel.h"
 #include "nsHttpHandler.h"
 #include "nsNetUtil.h"
 #include "nsIOService.h"
@@ -263,7 +261,7 @@ mozilla::ipc::IPCResult NeckoParent::RecvPDocumentChannelConstructor(
   DocumentChannelParent* p = static_cast<DocumentChannelParent*>(aActor);
 
   if (aContext.IsNullOrDiscarded()) {
-    Unused << p->SendFailedAsyncOpen(NS_ERROR_FAILURE);
+    (void)p->SendFailedAsyncOpen(NS_ERROR_FAILURE);
     return IPC_OK();
   }
 
@@ -319,17 +317,13 @@ bool NeckoParent::DeallocPWebSocketEventListenerParent(
   return true;
 }
 
-already_AddRefed<PDataChannelParent> NeckoParent::AllocPDataChannelParent(
+mozilla::ipc::IPCResult NeckoParent::RecvConnectBaseChannel(
     const uint32_t& channelId) {
-  RefPtr<DataChannelParent> p = new DataChannelParent();
-  return p.forget();
-}
+  RefPtr<nsBaseParentChannel> parentChannel =
+      new nsBaseParentChannel(ContentParent::Cast(Manager())->GetRemoteType());
 
-mozilla::ipc::IPCResult NeckoParent::RecvPDataChannelConstructor(
-    PDataChannelParent* actor, const uint32_t& channelId) {
-  DataChannelParent* p = static_cast<DataChannelParent*>(actor);
-  DebugOnly<bool> rv = p->Init(channelId);
-  MOZ_ASSERT(rv);
+  nsCOMPtr<nsIChannel> channel;
+  NS_LinkRedirectChannels(channelId, parentChannel, getter_AddRefs(channel));
   return IPC_OK();
 }
 
@@ -418,32 +412,10 @@ mozilla::ipc::IPCResult NeckoParent::RecvPGeckoViewContentChannelConstructor(
 }
 #endif
 
-PSimpleChannelParent* NeckoParent::AllocPSimpleChannelParent(
-    const uint32_t& channelId) {
-  RefPtr<SimpleChannelParent> p = new SimpleChannelParent();
-  return p.forget().take();
-}
-
-bool NeckoParent::DeallocPSimpleChannelParent(PSimpleChannelParent* actor) {
-  RefPtr<SimpleChannelParent> p =
-      dont_AddRef(actor).downcast<SimpleChannelParent>();
-  return true;
-}
-
-mozilla::ipc::IPCResult NeckoParent::RecvPSimpleChannelConstructor(
-    PSimpleChannelParent* actor, const uint32_t& channelId) {
-  SimpleChannelParent* p = static_cast<SimpleChannelParent*>(actor);
-  MOZ_ALWAYS_TRUE(p->Init(channelId));
-  return IPC_OK();
-}
-
-already_AddRefed<PFileChannelParent> NeckoParent::AllocPFileChannelParent() {
-  RefPtr<FileChannelParent> p = new FileChannelParent();
-  return p.forget();
-}
-
-mozilla::ipc::IPCResult NeckoParent::RecvPFileChannelConstructor(
-    PFileChannelParent* actor) {
+mozilla::ipc::IPCResult NeckoParent::RecvNotifyFileChannelOpened(
+    const FileChannelInfo& aInfo) {
+  nsFileChannel::DoNotifyFileChannelOpened(
+      ContentParent::Cast(Manager())->GetRemoteType(), aInfo);
   return IPC_OK();
 }
 
@@ -838,7 +810,7 @@ mozilla::ipc::IPCResult NeckoParent::RecvGetPageThumbStream(
         // If NewStream failed, we send back an invalid stream to the child so
         // it can handle the error. MozPromise rejection is reserved for channel
         // errors/disconnects.
-        Unused << NS_WARN_IF(NS_FAILED(aRv));
+        (void)NS_WARN_IF(NS_FAILED(aRv));
         aResolver(Nothing());
       });
 
@@ -887,7 +859,7 @@ mozilla::ipc::IPCResult NeckoParent::RecvGetPageIconStream(
         // If NewStream failed, we send back an invalid stream to the child so
         // it can handle the error. MozPromise rejection is reserved for channel
         // errors/disconnects.
-        Unused << NS_WARN_IF(NS_FAILED(aRv));
+        (void)NS_WARN_IF(NS_FAILED(aRv));
         aResolver(Nothing());
       });
 

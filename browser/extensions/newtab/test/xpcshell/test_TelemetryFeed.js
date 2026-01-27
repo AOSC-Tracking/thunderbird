@@ -17,6 +17,7 @@ ChromeUtils.defineESModuleGetters(this, {
   HomePage: "resource:///modules/HomePage.sys.mjs",
   JsonSchemaValidator:
     "resource://gre/modules/components-utils/JsonSchemaValidator.sys.mjs",
+  NewTabContentPing: "resource://newtab/lib/NewTabContentPing.sys.mjs",
   sinon: "resource://testing-common/Sinon.sys.mjs",
   TelemetryController: "resource://gre/modules/TelemetryController.sys.mjs",
   TelemetryFeed: "resource://newtab/lib/TelemetryFeed.sys.mjs",
@@ -1820,6 +1821,8 @@ add_task(
       source: "newtab",
       position: 0,
       isPinned: false,
+      smartScores: { moo: 1 },
+      smartWeights: { moo: 0 },
     };
     const SESSION_ID = "decafc0ffee";
     sandbox.stub(instance.sessions, "get").returns({ session_id: SESSION_ID });
@@ -1833,6 +1836,8 @@ add_task(
       newtab_visit_id: SESSION_ID,
       is_sponsored: String(false),
       position: String(0),
+      smart_scores: JSON.stringify({ moo: 1 }),
+      smart_weights: JSON.stringify({ moo: 0 }),
     });
 
     sandbox.restore();
@@ -1855,6 +1860,8 @@ add_task(
       source: "newtab",
       position: 0,
       isPinned: false,
+      smartScores: { moo: 1 },
+      smartWeights: { moo: 0 },
     };
     const SESSION_ID = "decafc0ffee";
     sandbox.stub(instance.sessions, "get").returns({ session_id: SESSION_ID });
@@ -1868,6 +1875,8 @@ add_task(
       is_sponsored: String(false),
       position: String(0),
       is_pinned: String(false),
+      smart_scores: JSON.stringify({ moo: 1 }),
+      smart_weights: JSON.stringify({ moo: 0 }),
     });
 
     sandbox.restore();
@@ -2684,6 +2693,44 @@ add_task(async function test_handleBlockUrl_no_record_dismiss_on_no_session() {
     !Glean.topsites.dismiss.testGetValue(),
     "Should not have recorded a dismiss"
   );
+
+  sandbox.restore();
+});
+
+add_task(function test_randomizeOrganicContentEvent() {
+  info(
+    "TelemetryFeed._randomizeOrganicContentEvent should return true or false" +
+      " based on the given probability"
+  );
+  let sandbox = sinon.createSandbox();
+  let instance = new TelemetryFeed();
+
+  const computeRec = id => ({
+    corpus_item_id: `item-${id}`,
+    topic: "a",
+    is_sponsored: false,
+    section_id: "section",
+    section_position: 3,
+  });
+  const allRecs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(computeRec);
+  sandbox.stub(instance, "getRecommendationCount").returns(allRecs.length);
+  sandbox.stub(instance, "getAllRecommendations").returns(allRecs);
+  instance._privateRandomContentTelemetryProbablityValues = { epsilon: 30 };
+  let decideStub = sandbox.stub(NewTabContentPing, "decideWithProbability");
+  decideStub.returns(true);
+  let result = instance.randomizeOrganicContentEvent(allRecs[0]);
+  Assert.equal(result, allRecs[0]);
+  Assert.ok(decideStub.calledOnce, "decideWithProbability was called once");
+  const [probUsed] = decideStub.firstCall.args;
+  Assert.greater(probUsed, 0.9); // Epsilon 30 is very high probability
+  Assert.less(probUsed, 1.01);
+
+  // Run again - randomization kicks in
+  decideStub.returns(false);
+  sandbox.stub(NewTabContentPing, "secureRandIntInRange").returns(3);
+  result = instance.randomizeOrganicContentEvent(allRecs[0]);
+  Assert.equal(probUsed, decideStub.lastCall.args[0]);
+  Assert.deepEqual(result, allRecs[3]);
 
   sandbox.restore();
 });

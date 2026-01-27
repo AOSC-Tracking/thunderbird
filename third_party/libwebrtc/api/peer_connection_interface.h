@@ -228,6 +228,10 @@ class RTC_EXPORT PeerConnectionInterface : public RefCountInterface {
     kIceConnectionMax,
   };
   static constexpr absl::string_view AsString(IceConnectionState state);
+  template <typename Sink>
+  void AbslStringify(Sink& sink, IceConnectionState state) {
+    sink.Append(AsString(state));
+  }
 
   // TLS certificate policy.
   enum TlsCertPolicy {
@@ -651,9 +655,8 @@ class RTC_EXPORT PeerConnectionInterface : public RefCountInterface {
     bool active_reset_srtp_params = false;
 
     // Defines advanced optional cryptographic settings related to SRTP and
-    // frame encryption for native WebRTC. Setting this will overwrite any
-    // settings set in PeerConnectionFactory (which is deprecated).
-    std::optional<CryptoOptions> crypto_options;
+    // frame encryption for native WebRTC.
+    CryptoOptions crypto_options;
 
     // Configure if we should include the SDP attribute extmap-allow-mixed in
     // our offer on session level.
@@ -1120,8 +1123,9 @@ class RTC_EXPORT PeerConnectionInterface : public RefCountInterface {
   virtual bool AddIceCandidate(const IceCandidate* candidate) = 0;
   // TODO(hbos): Remove default implementation once implemented by downstream
   // projects.
-  virtual void AddIceCandidate(std::unique_ptr<IceCandidate> /* candidate */,
-                               std::function<void(RTCError)> /* callback */) {}
+  virtual void AddIceCandidate(std::unique_ptr<IceCandidate> candidate,
+                               std::function<void(RTCError)> callback) {}
+  virtual bool RemoveIceCandidate(const IceCandidate* candidate) = 0;
 
   // Removes a group of remote candidates from the ICE agent. Needed mainly for
   // continual gathering, to avoid an ever-growing list of candidates as
@@ -1129,8 +1133,8 @@ class RTC_EXPORT PeerConnectionInterface : public RefCountInterface {
   // to the MID of the m= section that generated the candidate.
   // TODO(bugs.webrtc.org/8395): Use IceCandidate instead of
   // Candidate, which would avoid the transport_name oddity.
-  virtual bool RemoveIceCandidates(
-      const std::vector<Candidate>& candidates) = 0;
+  [[deprecated("Use IceCandidate version")]]
+  virtual bool RemoveIceCandidates(const std::vector<Candidate>& candidates);
 
   // SetBitrate limits the bandwidth allocated for all RTP streams sent by
   // this PeerConnection. Other limitations might affect these limits and
@@ -1312,10 +1316,22 @@ class PeerConnectionObserver {
                                    const std::string& /* error_text */) {}
 
   // Ice candidates have been removed.
-  // TODO(honghaiz): Make this a pure virtual method when all its subclasses
-  // implement it.
+  [[deprecated("Implement OnIceCandidateRemoved")]]
   virtual void OnIceCandidatesRemoved(
       const std::vector<Candidate>& /* candidates */) {}
+
+  // Fired when an IceCandidate has been removed.
+  // TODO(tommi): Make pure virtual when `OnIceCandidatesRemoved` can be
+  // removed.
+  virtual void OnIceCandidateRemoved(const IceCandidate* candidate) {
+    // Backwards compatibility stub implementation while downstream code is
+    // migrated over to `OnIceCandidateRemoved` and away from
+    // `OnIceCandidatesRemoved`.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    OnIceCandidatesRemoved({candidate->candidate()});
+#pragma clang diagnostic pop
+  }
 
   // Called when the ICE connection receiving status changes.
   virtual void OnIceConnectionReceivingChange(bool /* receiving */) {}
@@ -1520,9 +1536,6 @@ class RTC_EXPORT PeerConnectionFactoryInterface : public RefCountInterface {
     // supported by both ends will be used for the connection, i.e. if one
     // party supports DTLS 1.0 and the other DTLS 1.2, DTLS 1.0 will be used.
     SSLProtocolVersion ssl_max_version = SSL_PROTOCOL_DTLS_12;
-
-    // Sets crypto related options, e.g. enabled cipher suites.
-    CryptoOptions crypto_options = {};
   };
 
   // Set the options to be used for subsequently created PeerConnections.
@@ -1558,13 +1571,6 @@ class RTC_EXPORT PeerConnectionFactoryInterface : public RefCountInterface {
   virtual scoped_refptr<VideoTrackInterface> CreateVideoTrack(
       scoped_refptr<VideoTrackSourceInterface> source,
       absl::string_view label) = 0;
-  ABSL_DEPRECATED("Use version with scoped_refptr")
-  virtual scoped_refptr<VideoTrackInterface> CreateVideoTrack(
-      const std::string& label,
-      VideoTrackSourceInterface* source) {
-    return CreateVideoTrack(scoped_refptr<VideoTrackSourceInterface>(source),
-                            label);
-  }
 
   // Creates an new AudioTrack. At the moment `source` can be null.
   virtual scoped_refptr<AudioTrackInterface> CreateAudioTrack(
@@ -1593,26 +1599,6 @@ class RTC_EXPORT PeerConnectionFactoryInterface : public RefCountInterface {
   PeerConnectionFactoryInterface() {}
   ~PeerConnectionFactoryInterface() override = default;
 };
-
-// CreateModularPeerConnectionFactory is implemented in the "peerconnection"
-// build target, which doesn't pull in the implementations of every module
-// webrtc may use.
-//
-// If an application knows it will only require certain modules, it can reduce
-// webrtc's impact on its binary size by depending only on the "peerconnection"
-// target and the modules the application requires, using
-// CreateModularPeerConnectionFactory. For example, if an application
-// only uses WebRTC for audio, it can pass in null pointers for the
-// video-specific interfaces, and omit the corresponding modules from its
-// build.
-//
-// If `network_thread` or `worker_thread` are null, the PeerConnectionFactory
-// will create the necessary thread internally. If `signaling_thread` is null,
-// the PeerConnectionFactory will use the thread on which this method is called
-// as the signaling thread, wrapping it in an Thread object if needed.
-RTC_EXPORT scoped_refptr<PeerConnectionFactoryInterface>
-CreateModularPeerConnectionFactory(
-    PeerConnectionFactoryDependencies dependencies);
 
 // https://w3c.github.io/webrtc-pc/#dom-rtcsignalingstate
 inline constexpr absl::string_view PeerConnectionInterface::AsString(

@@ -4,7 +4,7 @@
 
 package org.mozilla.fenix.utils
 
-import android.content.res.Configuration
+import android.content.pm.PackageInfo
 import androidx.core.content.edit
 import io.mockk.every
 import io.mockk.spyk
@@ -29,9 +29,12 @@ import org.mozilla.fenix.components.toolbar.ToolbarPosition
 import org.mozilla.fenix.nimbus.DefaultBrowserPrompt
 import org.mozilla.fenix.nimbus.FakeNimbusEventStore
 import org.mozilla.fenix.settings.PhoneFeature
+import org.mozilla.fenix.settings.ShortcutType
 import org.mozilla.fenix.settings.deletebrowsingdata.DeleteBrowsingDataOnQuitType
 import org.robolectric.RobolectricTestRunner
 import java.util.Calendar
+
+private const val TOU_VERSION = 5
 
 @RunWith(RobolectricTestRunner::class)
 class SettingsTest {
@@ -1114,39 +1117,6 @@ class SettingsTest {
     }
 
     @Test
-    fun `GIVEN recent search is enable THEN should show recent searches only if recent search is visible`() {
-        val settings = spyk(settings)
-        every { settings.recentSearchSuggestionsEnabled } returns true
-        every { settings.isRecentSearchesVisible } returns true
-
-        assertTrue(settings.shouldShowRecentSearchSuggestions)
-
-        every { settings.isRecentSearchesVisible } returns false
-        every { settings.recentSearchSuggestionsEnabled } returns true
-        assertFalse(settings.shouldShowRecentSearchSuggestions)
-
-        every { settings.isRecentSearchesVisible } returns true
-        every { settings.recentSearchSuggestionsEnabled } returns false
-        assertFalse(settings.shouldShowRecentSearchSuggestions)
-    }
-
-    @Test
-    fun `GIVEN shortcut suggestions is enable THEN should show shortcut suggestions only if shortcut suggestions is visible`() {
-        val settings = spyk(settings)
-        every { settings.shortcutSuggestionsEnabled } returns true
-        every { settings.isShortcutSuggestionsVisible } returns true
-        assertTrue(settings.shouldShowShortcutSuggestions)
-
-        every { settings.shortcutSuggestionsEnabled } returns true
-        every { settings.isShortcutSuggestionsVisible } returns false
-        assertFalse(settings.shouldShowShortcutSuggestions)
-
-        every { settings.shortcutSuggestionsEnabled } returns false
-        every { settings.isShortcutSuggestionsVisible } returns true
-        assertFalse(settings.shouldShowShortcutSuggestions)
-    }
-
-    @Test
     fun `GIVEN the conditions to show a prompt are not met WHEN checking prompt eligibility THEN shouldShowSetAsDefaultPrompt is false`() {
         settings.numberOfSetAsDefaultPromptShownTimes = 0
         settings.lastSetAsDefaultPromptShownTimeInMillis = System.currentTimeMillis()
@@ -1300,5 +1270,89 @@ class SettingsTest {
 
         assertFalse(settings.preferences.contains(oldKey))
         eventStore.assertNoPastEvents()
+    }
+
+    @Test
+    fun `WHEN user has accepted the ToU THEN termsOfUseAcceptedTimeInMillis returns the app installed time`() {
+        val installTime = 12345L
+        val settings = Settings(
+            appContext = testContext,
+            packageName = "test",
+            packageManagerCompatHelper = FakePackageManagerCompatHelper(
+                packageInfo = PackageInfo().apply { firstInstallTime = installTime },
+            ),
+        )
+        settings.hasAcceptedTermsOfService = true
+
+        val result = settings.termsOfUseAcceptedTimeInMillis
+
+        assertEquals(installTime, result)
+    }
+
+    @Test
+    fun `WHEN user has not accepted the ToU THEN termsOfUseAcceptedTimeInMillis returns 0L`() {
+        val installTime = 12345L
+        val settings = Settings(
+            appContext = testContext,
+            packageName = "test",
+            packageManagerCompatHelper = FakePackageManagerCompatHelper(
+                packageInfo = PackageInfo().apply { firstInstallTime = installTime },
+            ),
+        )
+        settings.hasAcceptedTermsOfService = false
+
+        val result = settings.termsOfUseAcceptedTimeInMillis
+
+        assertEquals(0L, result)
+    }
+
+    @Test
+    fun `WHEN user has accepted the ToU THEN termsOfUseAcceptedVersion returns the ToU version`() {
+        settings.hasAcceptedTermsOfService = true
+
+        val result = settings.termsOfUseAcceptedVersion
+        assertEquals(TOU_VERSION, result)
+    }
+
+    @Test
+    fun `WHEN user has not accepted the ToU THEN termsOfUseAcceptedVersion returns 0`() {
+        settings.hasAcceptedTermsOfService = false
+
+        val result = settings.termsOfUseAcceptedVersion
+        assertEquals(0, result)
+    }
+
+    @Test
+    fun `GIVEN toolbar customization is disabled WHEN reading toolbarSimpleShortcut THEN NEW_TAB is returned regardless of stored key`() {
+        settings.toolbarSimpleShortcutKey = ShortcutType.SHARE.value
+
+        val result = settings.toolbarSimpleShortcut
+        assertEquals(ShortcutType.NEW_TAB.value, result)
+    }
+
+    @Test
+    fun `GIVEN toolbar customization is enabled WHEN reading toolbarSimpleShortcut THEN stored key is returned`() {
+        settings.shouldShowToolbarCustomization = true
+        settings.toolbarSimpleShortcutKey = ShortcutType.SHARE.value
+
+        val result = settings.toolbarSimpleShortcut
+        assertEquals(ShortcutType.SHARE.value, result)
+    }
+
+    @Test
+    fun `GIVEN toolbar customization is disabled WHEN reading toolbarExpandedShortcut THEN BOOKMARK is returned regardless of stored key`() {
+        settings.toolbarExpandedShortcutKey = ShortcutType.NEW_TAB.value
+
+        val result = settings.toolbarExpandedShortcut
+        assertEquals(ShortcutType.BOOKMARK.value, result)
+    }
+
+    @Test
+    fun `GIVEN toolbar customization is enabled WHEN reading toolbarExpandedShortcut THEN stored key is returned`() {
+        settings.shouldShowToolbarCustomization = true
+        settings.toolbarExpandedShortcutKey = ShortcutType.TRANSLATE.value
+
+        val result = settings.toolbarExpandedShortcut
+        assertEquals(ShortcutType.TRANSLATE.value, result)
     }
 }

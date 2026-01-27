@@ -140,16 +140,14 @@
         color: var(--button-primary-text-color);
         border-color: var(--button-primary-border-color);
 
+        @media (prefers-contrast) {
+          border-color: var(--button-primary-hover-border-color);
+        }
+
         &:active {
           background-color: var(--button-primary-active-background-color);
           border-color: var(--button-primary-border-color);
         }
-      }
-    }
-
-    @media (prefers-contrast) {
-      :root:not([lwtheme]) &:hover {
-        border-color: var(--button-primary-hover-border-color);
       }
     }
   }
@@ -468,6 +466,26 @@
   content: var(--icon-close-lg);
 }
 
+.icon-minimize {
+  -moz-context-properties: stroke;
+  stroke: currentColor;
+  content: var(--icon-minimize-sm);
+
+  &:dir(rtl) {
+    transform: scaleX(-1);
+  }
+}
+
+.icon-maximize {
+  -moz-context-properties: stroke;
+  stroke: currentColor;
+  content: var(--icon-maximize-sm);
+
+  &:dir(rtl) {
+    transform: scaleX(-1);
+  }
+}
+
 .toggle-label {
   display: inline-block;
   line-height: 1;
@@ -590,7 +608,7 @@
 /* menupopup */
 
 .menupopup {
-  --panel-border-color: var(--in-content-box-border-color);
+  --panel-border-color: var(--border-color);
   appearance: none;
 }
 

@@ -263,7 +263,6 @@ mail-tagfield[collapsed] {
 
 #expandedsubjectBox {
   font-weight: 700;
-  flex: 1;
   margin-inline-start: calc(var(--message-header-field-offset) * -1);
   padding-inline: var(--message-header-field-offset);
   /* IMPORTANT! Keep these to avoid issues with very long subjects. Bug 77806 */
@@ -271,6 +270,19 @@ mail-tagfield[collapsed] {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow-y: auto;
+}
+
+#expandedButtonsBox {
+  align-self: normal;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+#buttonsBox {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
 }
 
 /* ::::: attachment view ::::: */
@@ -533,6 +545,7 @@ button.email-action-button {
 }
 
 .crypto-button {
+  min-width: initial;
   margin-block: 0;
   margin-inline-end: 3px;
   fill: currentColor;

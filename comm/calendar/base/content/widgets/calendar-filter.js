@@ -150,23 +150,6 @@ calFilterProperties.prototype = {
 
     return cloned;
   },
-
-  LOG(aString) {
-    cal.LOG(
-      "[calFilterProperties] " +
-        (aString || "") +
-        " start=" +
-        this.start +
-        " end=" +
-        this.end +
-        " status=" +
-        this.status +
-        " due=" +
-        this.due +
-        " category=" +
-        this.category
-    );
-  },
 };
 
 /**
@@ -767,9 +750,8 @@ calFilter.prototype = {
 
     if (this.mFilterProperties) {
       this.updateFilterDates();
-      // this.mFilterProperties.LOG("Applying filter:");
     } else {
-      cal.WARN("[calFilter] Unable to apply filter " + aFilter);
+      console.warn("Unable to apply filter " + aFilter);
     }
   },
 
@@ -870,7 +852,7 @@ calFilter.prototype = {
       }
 
       // we've hit the maximum number of iterations without finding a match
-      cal.WARN("[calFilter] getNextOccurrence: reached maximum iterations for " + aItem.title);
+      console.warn("getNextOccurrence: reached maximum iterations for " + aItem.title);
       return null;
     }
     // the parent item doesn't match the filter, we can return the first future exception
@@ -1061,6 +1043,13 @@ let CalendarFilteredViewMixin = Base =>
 
       this.#filter = new calFilter();
       this.#filter.itemType = 0;
+
+      if ("addEventListener" in this) {
+        // If we're not in an XPCShell test environment, make sure we clean up.
+        addEventListener("unload", () =>
+          cal.manager.removeCalendarObserver(this.#calendarObserver)
+        );
+      }
     }
 
     /**

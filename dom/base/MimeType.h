@@ -7,7 +7,6 @@
 #ifndef mozilla_dom_MimeType_h
 #define mozilla_dom_MimeType_h
 
-#include "mozilla/TextUtils.h"
 #include "nsTArray.h"
 #include "nsTHashMap.h"
 
@@ -88,6 +87,8 @@ class TMimeType final {
   // @param aValue - the value of the parameter
   void SetParameterValue(const nsTSubstring<char_type>& aName,
                          const nsTSubstring<char_type>& aValue);
+
+  size_t GetParameterCount() const { return mParameterNames.Length(); }
 
   NS_INLINE_DECL_REFCOUNTING(TMimeType)
 };

@@ -1,7 +1,8 @@
 /**
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
 
 /* global MozElements MozXULElement */
 
@@ -691,6 +692,7 @@
 
     connectedCallback() {
       this.classList.add("input-container");
+      MozXULElement.insertFTLIfNeeded("messenger/searchWidgets.ftl");
     }
 
     static get stringBundle() {
@@ -788,20 +790,50 @@
             break;
           case "priority":
             input = this.constructor._createMenulist([
-              { stringId: "priorityHighest", value: Ci.nsMsgPriority.highest },
-              { stringId: "priorityHigh", value: Ci.nsMsgPriority.high },
-              { stringId: "priorityNormal", value: Ci.nsMsgPriority.normal },
-              { stringId: "priorityLow", value: Ci.nsMsgPriority.low },
-              { stringId: "priorityLowest", value: Ci.nsMsgPriority.lowest },
+              {
+                l10nID: "search-val-priority-highest",
+                value: Ci.nsMsgPriority.highest,
+              },
+              {
+                l10nID: "search-val-priority-high",
+                value: Ci.nsMsgPriority.high,
+              },
+              {
+                l10nID: "search-val-priority-normal",
+                value: Ci.nsMsgPriority.normal,
+              },
+              {
+                l10nID: "search-val-priority-low",
+                value: Ci.nsMsgPriority.low,
+              },
+              {
+                l10nID: "search-val-priority-lowest",
+                value: Ci.nsMsgPriority.lowest,
+              },
             ]);
             break;
           case "status":
             input = this.constructor._createMenulist([
-              { stringId: "replied", value: Ci.nsMsgMessageFlags.Replied },
-              { stringId: "read", value: Ci.nsMsgMessageFlags.Read },
-              { stringId: "new", value: Ci.nsMsgMessageFlags.New },
-              { stringId: "forwarded", value: Ci.nsMsgMessageFlags.Forwarded },
-              { stringId: "flagged", value: Ci.nsMsgMessageFlags.Marked },
+              {
+                l10nID: "search-val-flag-replied",
+                value: Ci.nsMsgMessageFlags.Replied,
+              },
+              {
+                l10nID: "search-val-flag-read",
+                value: Ci.nsMsgMessageFlags.Read,
+              },
+              {
+                l10nID: "search-val-flag-new",
+                value: Ci.nsMsgMessageFlags.New,
+              },
+              {
+                l10nID: "search-val-flag-forwarded",
+                value: Ci.nsMsgMessageFlags.Forwarded,
+              },
+              {
+                l10nID: "search-val-flag-starred",
+                value: Ci.nsMsgMessageFlags.Marked,
+              },
             ]);
             break;
           case "addressbook":
@@ -827,7 +859,7 @@
             input = this.constructor._createMenulist([
               {
                 value: Ci.nsIJunkMailPlugin.JUNK,
-                l10nID: "menuitem-label-spam",
+                l10nID: "search-val-spam",
               },
             ]);
             break;

@@ -18,7 +18,7 @@ const EventEmitter = require("resource://devtools/shared/event-emitter.js");
  *
  * @param {XULTab} tab
  *        The tab for which we want to get the list of supported toolIds
- * @return {Array<String>} array of tool ids
+ * @return {Array<string>} array of tool ids
  */
 async function getSupportedToolIds(tab) {
   info("Getting the entire list of tools supported in this tab");
@@ -65,14 +65,15 @@ async function getParentProcessActors(callback) {
   callback(commands.client, mainProcessTargetFront);
 }
 
-function getSourceActor(aSources, aURL) {
-  const item = aSources.getItemForAttachment(a => a.source.url === aURL);
+function getSourceActor(sources, url) {
+  const item = sources.getItemForAttachment(a => a.source.url === url);
   return item && item.value;
 }
 
 /**
  * Synthesize a keypress from a <key> element, taking into account
  * any modifiers.
+ *
  * @param {Element} el the <key> element to synthesize
  */
 function synthesizeKeyElement(el) {
@@ -85,8 +86,10 @@ function synthesizeKeyElement(el) {
   EventUtils.synthesizeKey(key, mod, el.ownerDocument.defaultView);
 }
 
-/* Check the toolbox host type and prefs to make sure they match the
+/**
+ * Check the toolbox host type and prefs to make sure they match the
  * expected values
+ *
  * @param {Toolbox}
  * @param {HostType} hostType
  *        One of {SIDE, BOTTOM, WINDOW} from Toolbox.HostType
@@ -111,7 +114,8 @@ function checkHostType(toolbox, hostType, previousHostType) {
 /**
  * Create a new <script> referencing URL.  Return a promise that
  * resolves when this has happened
- * @param {String} url
+ *
+ * @param {string} url
  *        the url
  * @return {Promise} a promise that resolves when the element has been created
  */
@@ -128,15 +132,16 @@ function createScript(url) {
 
 /**
  * Wait for the toolbox to notice that a given source is loaded
+ *
  * @param {Toolbox} toolbox
- * @param {String} url
+ * @param {string} url
  *        the url to wait for
  * @return {Promise} a promise that is resolved when the source is loaded
  */
 function waitForSourceLoad(toolbox, url) {
   info(`Waiting for source ${url} to be available...`);
   return new Promise(resolve => {
-    const { resourceCommand } = toolbox;
+    const { resourceCommand } = toolbox.commands;
 
     function onAvailable(sources) {
       for (const source of sources) {
@@ -367,7 +372,7 @@ function getElementByToolIdOrExtensionIdOrSelector(toolbox, idOrSelector) {
 
 /**
  * Returns a toolbox tab element, even if it's overflowed
- **/
+ */
 function getToolboxTab(doc, toolId) {
   return (
     doc.getElementById(`toolbox-tab-${toolId}`) ||
@@ -422,7 +427,7 @@ async function openAboutToolbox(params) {
  *
  * @param {Toolbox} toolbox
  *        Toolbox instance.
- * @param {String} path
+ * @param {string} path
  *        Path to the FTL file.
  */
 function loadFTL(toolbox, path) {
@@ -437,7 +442,7 @@ function loadFTL(toolbox, path) {
  * Emit a reload key shortcut from a given toolbox, and wait for the reload to
  * be completed.
  *
- * @param {String} shortcut
+ * @param {string} shortcut
  *        The key shortcut to send, as expected by the devtools shortcuts
  *        helpers (eg. "CmdOrCtrl+F5").
  * @param {Toolbox} toolbox

@@ -172,8 +172,9 @@ function allAccountsSorted(aExcludeIMAccounts) {
  *   for recent folders.
  * @param {integer} aMaxHits - How many folders to return.
  * @param {"MRMTime"|"MRUTime"} aTimeProperty - Which folder time property to
- *   use. Use "MRMTime" for most recently modified time.
- *   Use "MRUTime" for most recently used time.
+ *   use. Use "MRMTime" for "most recently moved to" time, which is set when
+ *   messages are moved or copied by the user into that folder or when a folder
+ *   is manually created. Use "MRUTime" for "most recently used" time.
  */
 function getMostRecentFolders(aFolderList, aMaxHits, aTimeProperty) {
   const recentFolders = [];
@@ -327,7 +328,9 @@ function isSmartTagsFolder(folder) {
 }
 
 /**
- * Checks if the configured junk mail can be renamed or deleted.
+ * Checks if the configured junk mail can be renamed or deleted. In practice
+ * we no longer permit renaming folders with the Junk flag as the name is
+ * overridden by a localised name.
  *
  * @param {string} aFolderUri
  */

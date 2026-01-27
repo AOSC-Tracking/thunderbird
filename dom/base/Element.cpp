@@ -15,7 +15,6 @@
 #include <inttypes.h>
 
 #include <cstddef>
-#include <initializer_list>
 #include <utility>
 
 #include "DOMMatrix.h"
@@ -69,8 +68,6 @@
 #include "mozilla/TextEditor.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/Try.h"
-#include "mozilla/TypedEnumBits.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/AnimatableBinding.h"
 #include "mozilla/dom/Animation.h"
 #include "mozilla/dom/Attr.h"
@@ -138,6 +135,7 @@
 #include "nsCOMPtr.h"
 #include "nsCSSPseudoElements.h"
 #include "nsCompatibility.h"
+#include "nsComputedDOMStyle.h"
 #include "nsContainerFrame.h"
 #include "nsContentList.h"
 #include "nsContentListDeclarations.h"
@@ -203,7 +201,6 @@
 #include "nsTArray.h"
 #include "nsTextNode.h"
 #include "nsThreadUtils.h"
-#include "nsViewManager.h"
 #include "nsWindowSizes.h"
 #include "nsXULElement.h"
 
@@ -291,6 +288,56 @@ nsIFrame* nsIContent::GetPrimaryFrame(mozilla::FlushType aType) {
   return frame;
 }
 
+bool nsIContent::IsSelectable() const {
+  if (!IsInComposedDoc() ||
+      // Generated content is not selectable.
+      IsGeneratedContentContainerForBefore() ||
+      IsGeneratedContentContainerForAfter() ||
+      // Fully invisible nodes like `Comment` should not be selectable.
+      (!IsElement() && !IsText() && !IsShadowRoot())) {
+    return false;
+  }
+  // If this is editable, this should be selectable even if `user-select` is set
+  // to `none`.
+  if (IsEditable()) {
+    return true;
+  }
+  // ...and same if this is a text control.
+  if (const auto* const textControlElement =
+          mozilla::TextControlElement::FromNode(this)) {
+    if (textControlElement->IsSingleLineTextControlOrTextArea()) {
+      return true;
+    }
+  }
+  // Otherwise, check `user-select` style with the layout if there is.
+  for (const nsIContent* content = this; content;
+       content = content->GetFlattenedTreeParent()) {
+    // First, ask the primary frame.
+    if (nsIFrame* const frame = content->GetPrimaryFrame()) {
+      // FYI: This does the same checks which were done before this loop so that
+      // return true for editable content or text control.
+      return frame->IsSelectable();
+    }
+    if (!content->IsElement()) {
+      // Okay, we're a `Text` or `ShadowRoot` in a `display:none` element. Let's
+      // check the frame or style of the ancestors in the flattened tree.
+      continue;
+    }
+    // Okay, we're an element whose `display` is `contents` or `none` or which
+    // is in a `display:none` ancestors, we should check whether this element is
+    // directly specified the `user-select` style and if it's not `auto`,
+    // consider whether this is selectable not unselectable.
+    const RefPtr<const mozilla::ComputedStyle> elementStyle =
+        nsComputedDOMStyle::GetComputedStyleNoFlush(content->AsElement());
+    if (elementStyle &&
+        elementStyle->UserSelect() != mozilla::StyleUserSelect::Auto) {
+      return elementStyle->UserSelect() != mozilla::StyleUserSelect::None;
+    }
+    // Finally, if `user-select:auto`, let's check the parent.
+  }
+  return false;
+}
+
 namespace mozilla::dom {
 
 const DOMTokenListSupportedToken Element::sSupportedBlockingValues[] = {
@@ -306,11 +353,6 @@ nsDOMAttributeMap* Element::Attributes() {
 }
 
 void Element::SetPointerCapture(int32_t aPointerId, ErrorResult& aError) {
-  if (OwnerDoc()->ShouldResistFingerprinting(RFPTarget::PointerId) &&
-      aPointerId != PointerEventHandler::GetSpoofedPointerIdForRFP()) {
-    aError.ThrowNotFoundError("Invalid pointer id");
-    return;
-  }
   const PointerInfo* pointerInfo =
       PointerEventHandler::GetPointerInfo(aPointerId);
   if (!pointerInfo) {
@@ -337,11 +379,6 @@ void Element::SetPointerCapture(int32_t aPointerId, ErrorResult& aError) {
 }
 
 void Element::ReleasePointerCapture(int32_t aPointerId, ErrorResult& aError) {
-  if (OwnerDoc()->ShouldResistFingerprinting(RFPTarget::PointerId) &&
-      aPointerId != PointerEventHandler::GetSpoofedPointerIdForRFP()) {
-    aError.ThrowNotFoundError("Invalid pointer id");
-    return;
-  }
   if (!PointerEventHandler::GetPointerInfo(aPointerId)) {
     aError.ThrowNotFoundError("Invalid pointer id");
     return;
@@ -862,9 +899,7 @@ void Element::ScrollTo(const ScrollToOptions& aOptions) {
     scrollPos.y = ToZeroIfNonfinite(
         frame->Style()->EffectiveZoom().Zoom(aOptions.mTop.Value()));
   }
-  ScrollMode scrollMode = sf->IsSmoothScroll(aOptions.mBehavior)
-                              ? ScrollMode::SmoothMsd
-                              : ScrollMode::Instant;
+  ScrollMode scrollMode = sf->ScrollModeForScrollBehavior(aOptions.mBehavior);
   sf->ScrollToCSSPixels(scrollPos, scrollMode);
 }
 
@@ -893,9 +928,7 @@ void Element::ScrollBy(const ScrollToOptions& aOptions) {
         frame->Style()->EffectiveZoom().Zoom(aOptions.mTop.Value()));
   }
 
-  auto scrollMode = sf->IsSmoothScroll(aOptions.mBehavior)
-                        ? ScrollMode::SmoothMsd
-                        : ScrollMode::Instant;
+  auto scrollMode = sf->ScrollModeForScrollBehavior(aOptions.mBehavior);
   sf->ScrollByCSSPixels(scrollDelta, scrollMode);
 }
 
@@ -1024,12 +1057,8 @@ nsRect Element::GetClientAreaRect() {
   if (presContext && presContext->UseOverlayScrollbars() &&
       !doc->StyleOrLayoutObservablyDependsOnParentDocumentLayout() &&
       doc->IsScrollingElement(this)) {
-    if (PresShell* presShell = doc->GetPresShell()) {
-      // Ensure up to date dimensions, but don't reflow
-      if (RefPtr<nsViewManager> viewManager = presShell->GetViewManager()) {
-        viewManager->FlushDelayedResize();
-      }
-      return nsRect(nsPoint(), presContext->GetVisibleArea().Size());
+    if (RefPtr ps = doc->GetPresShell()) {
+      return nsRect(nsPoint(), ps->MaybePendingLayoutViewportSize());
     }
   }
 
@@ -1081,7 +1110,7 @@ int32_t Element::ScreenY() {
 already_AddRefed<nsIScreen> Element::GetScreen() {
   // Flush layout to guarantee that frames are created if needed, and preserve
   // behavior.
-  Unused << GetPrimaryFrame(FlushType::Frames);
+  (void)GetPrimaryFrame(FlushType::Frames);
   if (nsIWidget* widget = nsContentUtils::WidgetForContent(this)) {
     return widget->GetWidgetScreen();
   }
@@ -1507,7 +1536,7 @@ void Element::NotifyUAWidgetTeardown(UnattachShadowRoot aUnattachShadowRoot) {
           return;
         }
 
-        Unused << nsContentUtils::DispatchChromeEvent(
+        (void)nsContentUtils::DispatchChromeEvent(
             doc, self, u"UAWidgetTeardown"_ns, CanBubble::eYes,
             Cancelable::eNo);
       }));
@@ -2846,7 +2875,40 @@ nsresult Element::SetAttr(int32_t aNamespaceID, nsAtom* aName, nsAtom* aPrefix,
                           nsIPrincipal* aSubjectPrincipal, bool aNotify) {
   // Keep this in sync with SetParsedAttr below and SetSingleClassFromParser
   // above.
+  const nsAttrValueOrString valueForComparison(aValue);
+  return SetAttrInternal(aNamespaceID, aName, aPrefix, valueForComparison,
+                         aSubjectPrincipal, aNotify,
+                         [&](nsAttrValue& attrValue) {
+                           if (!ParseAttribute(aNamespaceID, aName, aValue,
+                                               aSubjectPrincipal, attrValue)) {
+                             attrValue.SetTo(aValue);
+                           }
+                         });
+}
 
+nsresult Element::SetAttr(int32_t aNamespaceID, nsAtom* aName, nsAtom* aPrefix,
+                          nsAtom* aValue, nsIPrincipal* aSubjectPrincipal,
+                          bool aNotify) {
+  // Keep this in sync with SetParsedAttr below and SetSingleClassFromParser
+  // above.
+  const nsDependentAtomString valueString(aValue);
+  const nsAttrValueOrString valueForComparison(valueString);
+  return SetAttrInternal(aNamespaceID, aName, aPrefix, valueForComparison,
+                         aSubjectPrincipal, aNotify,
+                         [&](nsAttrValue& attrValue) {
+                           if (!ParseAttribute(aNamespaceID, aName, valueString,
+                                               aSubjectPrincipal, attrValue)) {
+                             attrValue.SetTo(aValue);
+                           }
+                         });
+}
+
+template <typename ParseFunc>
+nsresult Element::SetAttrInternal(int32_t aNamespaceID, nsAtom* aName,
+                                  nsAtom* aPrefix,
+                                  const nsAttrValueOrString& aValue,
+                                  nsIPrincipal* aSubjectPrincipal, bool aNotify,
+                                  ParseFunc&& aParseFn) {
   NS_ENSURE_ARG_POINTER(aName);
   NS_ASSERTION(aNamespaceID != kNameSpaceID_Unknown,
                "Don't call SetAttr with unknown namespace");
@@ -2855,13 +2917,10 @@ nsresult Element::SetAttr(int32_t aNamespaceID, nsAtom* aName, nsAtom* aPrefix,
   nsAttrValue oldValue;
   bool oldValueSet;
 
-  {
-    const nsAttrValueOrString value(aValue);
-    if (OnlyNotifySameValueSet(aNamespaceID, aName, aPrefix, value, aNotify,
-                               oldValue, &modType, &oldValueSet)) {
-      OnAttrSetButNotChanged(aNamespaceID, aName, value, aNotify);
-      return NS_OK;
-    }
+  if (OnlyNotifySameValueSet(aNamespaceID, aName, aPrefix, aValue, aNotify,
+                             oldValue, &modType, &oldValueSet)) {
+    OnAttrSetButNotChanged(aNamespaceID, aName, aValue, aNotify);
+    return NS_OK;
   }
 
   // Hold a script blocker while calling ParseAttribute since that can call
@@ -2875,10 +2934,7 @@ nsresult Element::SetAttr(int32_t aNamespaceID, nsAtom* aName, nsAtom* aPrefix,
   }
 
   nsAttrValue attrValue;
-  if (!ParseAttribute(aNamespaceID, aName, aValue, aSubjectPrincipal,
-                      attrValue)) {
-    attrValue.SetTo(aValue);
-  }
+  aParseFn(attrValue);
 
   BeforeSetAttr(aNamespaceID, aName, &attrValue, aNotify);
 
@@ -4149,27 +4205,68 @@ static void GetAnimationsUnsorted(const Element* aElement,
   }
 }
 
-// This traverses all the view transition pseudo-elements and get all of the
-// animations on them.
-static void GetAnimationsOfViewTransitionTree(
-    const Element* aOriginatingElement,
-    nsTArray<RefPtr<Animation>>& aAnimations) {
-  if (!aOriginatingElement->IsRootElement()) {
+static inline bool IsSupportedForGetAnimationsSubtree(PseudoStyleType aType) {
+  return aType == PseudoStyleType::NotPseudo ||
+         aType == PseudoStyleType::mozSnapshotContainingBlock ||
+         PseudoStyle::IsViewTransitionPseudoElement(aType);
+}
+
+// This traverses the subtree from the root, |aRootElement|, to get the
+// animations.
+static void GetAnimationsUnsortedForSubtree(
+    const Element* aRootElement, nsTArray<RefPtr<Animation>>& aAnimations) {
+  const PseudoStyleType type = aRootElement->GetPseudoElementType();
+  // Only elements and view transition pseudo-elements get handled in this
+  // function.
+  if (MOZ_UNLIKELY(!IsSupportedForGetAnimationsSubtree(type))) {
     return;
   }
 
-  const Document* doc = aOriginatingElement->OwnerDoc();
-  const ViewTransition* vt = doc->GetActiveViewTransition();
-  if (!vt) {
+  // For non pseudo-elements, we have to get the animations on the element
+  // itself, ::before, ::after, and ::marker.
+  if (type == PseudoStyleType::NotPseudo) {
+    for (const nsIContent* node = aRootElement; node;
+         node = node->GetNextNode(aRootElement)) {
+      if (!node->IsElement()) {
+        continue;
+      }
+      const Element* element = node->AsElement();
+      GetAnimationsUnsorted(element, PseudoStyleRequest::NotPseudo(),
+                            aAnimations);
+      GetAnimationsUnsorted(element, PseudoStyleRequest::Before(), aAnimations);
+      GetAnimationsUnsorted(element, PseudoStyleRequest::After(), aAnimations);
+      GetAnimationsUnsorted(element, PseudoStyleRequest::Marker(), aAnimations);
+    }
+  }
+
+  // If |aRootElement| is the document element, or it is a view transition
+  // pseudo-element (including the snapshot containing block), we have to
+  // traverse the view transition subtree. Otherwise, we can skip the traversal.
+  if (!aRootElement->IsRootElement() && type == PseudoStyleType::NotPseudo) {
     return;
   }
 
-  Element* root = vt->GetViewTransitionTreeRoot();
-  if (!root) {
+  const Document* doc = aRootElement->OwnerDoc();
+  const Element* originatingElement = doc->GetRootElement();
+  if (!originatingElement) {
     return;
   }
 
-  for (const nsIContent* node = root; node; node = node->GetNextNode(root)) {
+  const Element* rootForTraversal = [&]() -> const Element* {
+    if (!aRootElement->IsRootElement()) {
+      // It is in the view transition pseudo-element tree already, so we use it
+      // directly.
+      return aRootElement;
+    }
+    // View transition pseudo-elements cannot be accessed directly from the
+    // document element, so we have to retrieve its tree root from the active
+    // view transition object.
+    const ViewTransition* vt = doc->GetActiveViewTransition();
+    return vt ? vt->GetViewTransitionTreeRoot() : nullptr;
+  }();
+
+  for (const nsIContent* node = rootForTraversal; node;
+       node = node->GetNextNode(rootForTraversal)) {
     if (!node->IsElement()) {
       continue;
     }
@@ -4179,7 +4276,7 @@ static void GetAnimationsOfViewTransitionTree(
         pseudo->HasName()
             ? pseudo->GetParsedAttr(nsGkAtoms::name)->GetAtomValue()
             : nullptr);
-    GetAnimationsUnsorted(aOriginatingElement, request, aAnimations);
+    GetAnimationsUnsorted(originatingElement, request, aAnimations);
   }
 }
 
@@ -4209,20 +4306,16 @@ void Element::GetAnimationsWithoutFlush(
   if (!aOptions.mSubtree || (pseudoRequest.mType == PseudoStyleType::before ||
                              pseudoRequest.mType == PseudoStyleType::after ||
                              pseudoRequest.mType == PseudoStyleType::marker)) {
+    // Case 1: Non-subtree, or |this| is ::before, ::after, or ::marker.
+    //
+    // ::before, ::after, and ::marker doesn't have subtree on themself, so we
+    // just simply get the animations of the element itself even if mSubtree is
+    // true.
     GetAnimationsUnsorted(elem, pseudoRequest, aAnimations);
   } else {
-    for (nsIContent* node = this; node; node = node->GetNextNode(this)) {
-      if (!node->IsElement()) {
-        continue;
-      }
-      Element* element = node->AsElement();
-      GetAnimationsUnsorted(element, PseudoStyleRequest::NotPseudo(),
-                            aAnimations);
-      GetAnimationsUnsorted(element, PseudoStyleRequest::Before(), aAnimations);
-      GetAnimationsUnsorted(element, PseudoStyleRequest::After(), aAnimations);
-      GetAnimationsUnsorted(element, PseudoStyleRequest::Marker(), aAnimations);
-    }
-    GetAnimationsOfViewTransitionTree(this, aAnimations);
+    // Case 2: Subtree. |this| is an element or a view transition
+    // pseudo-element.
+    GetAnimationsUnsortedForSubtree(elem, aAnimations);
   }
   aAnimations.Sort(AnimationPtrComparator<RefPtr<Animation>>());
 }

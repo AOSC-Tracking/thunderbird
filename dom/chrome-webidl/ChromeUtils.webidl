@@ -274,6 +274,18 @@ namespace ChromeUtils {
   undefined clearResourceCache(optional ClearResourceCacheOptions options = {});
 
   /**
+   * Invalidates the resource cache which supports invalidation.
+   *
+   * In contrast to the clearResourceCache, this doesn't immediately clear
+   * the cache.  It can validate the cache entry on the next request and
+   * revive if the cache is confirmed to be still valid.
+   *
+   * Currently only JavaScripts supports.
+   */
+  [Throws]
+  undefined invalidateResourceCache();
+
+  /**
    * Clears the bfcache (backward-forward cache)
    */
   [Throws]
@@ -440,6 +452,20 @@ namespace ChromeUtils {
    * changing its meaning.
    */
   UTF8String encodeURIForSrcset(UTF8String uri);
+
+  /**
+   * Returns, in bytes, a platform-normalized estimate of the process's private physical memory usage.
+   * Any error when calling the underlying platform-specific API will be thrown.
+   */
+  [Throws]
+  readonly attribute unsigned long long currentProcessMemoryUsage;
+
+  /**
+   * Return the number of milliseconds of CPU time used since process start.
+   * Any error when calling the underlying platform-specific API will be thrown.
+   */
+  [Throws]
+  readonly attribute unsigned long long cpuTimeSinceProcessStart;
 
   /**
    * IF YOU ADD NEW METHODS HERE, MAKE SURE THEY ARE THREAD-SAFE.

@@ -26,6 +26,7 @@ tasks-from:
 
 # These apply to all included test yml files listed in tasks-from
 task-defaults:
+    run-on-repo-type: [hg]
     attributes:
         retrigger: true
     use-python: default
@@ -37,6 +38,10 @@ task-defaults:
                 skip-unless-backstop: null
             default:
                 never: null
+    docker-image:
+        by-test-platform:
+            linux2404-.*: {in-tree: ubuntu2404-test}
+            default: {in-tree: ubuntu1804-test}
     mozharness:
         requires-signed-builds:
             by-test-platform:

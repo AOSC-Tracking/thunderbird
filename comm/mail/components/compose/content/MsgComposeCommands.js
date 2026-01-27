@@ -24,6 +24,20 @@
  * Commands for the message composition window.
  */
 
+/*
+ * On the mozilla/no-more-globals eslint rule:
+ * Adding new globals to this file is discouraged by eslint. This file is
+ * already massive. Consider if you couldn't provide what you need with a system
+ * module, a custom element of if need be some other form of separated script.
+ *
+ * Rule documentation: https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/no-more-globals.html
+ * As it says: DO NOT JUST ADD ITEMS TO THE ALLOWLIST
+ *
+ * If you're lazy loading something, we already have a `lazy` object in this
+ * scope, so you can simply avoid adding a global for that by defining the
+ * getter on `lazy` instead of `this`.
+ */
+
 // Ensure the activity modules are loaded for this window.
 ChromeUtils.importESModule(
   "resource:///modules/activity/activityModules.sys.mjs"
@@ -5168,10 +5182,6 @@ async function ComposeStartup() {
     attachmentItem.attachment.sendViaCloud = false;
   }
 
-  if (Services.prefs.getBoolPref("mail.compose.show_attachment_pane")) {
-    toggleAttachmentPane("show");
-  }
-
   // Fill custom headers.
   const otherHeaders = Services.prefs
     .getCharPref("mail.compose.other.header", "")
@@ -6448,11 +6458,11 @@ async function GenericSendMessage(msgType) {
     }
 
     await CompleteGenericSendMessage(msgType);
-    window.dispatchEvent(new CustomEvent("compose-prepare-message-success"));
+    window.dispatchEvent(new CustomEvent("compose-prepare-message-completed"));
   } catch (exception) {
     console.error(exception);
     window.dispatchEvent(
-      new CustomEvent("compose-prepare-message-failure", {
+      new CustomEvent("compose-prepare-message-completed", {
         detail: { exception },
       })
     );
@@ -6566,11 +6576,14 @@ async function CompleteGenericSendMessage(msgType) {
     }
     msgWindow.domWindow = window;
     msgWindow.rootDocShell.allowAuth = true;
+    // This doesn't look great, but the purpose of `progress.msgWindow` is to
+    // clear `msgWindow.statusFeedback` when the progress ends.
+    msgWindow.statusFeedback = progress;
+    progress.msgWindow = msgWindow;
     await gMsgCompose.sendMsg(
       msgType,
       gCurrentIdentity,
       getCurrentAccountKey(),
-      msgWindow,
       progress
     );
   } catch (ex) {
@@ -8265,7 +8278,9 @@ async function AddAttachments(aAttachments, aContentChanged = true) {
     }
 
     if (!attachment.name) {
-      attachment.name = gMsgCompose.AttachmentPrettyName(attachment.url, null);
+      attachment.name = attachment.url.startsWith("file://")
+        ? decodeURIComponent(attachment.url.split("/").pop())
+        : attachment.url;
     }
 
     // For security reasons, don't allow *-message:// uris to leak out.
@@ -8590,18 +8605,6 @@ async function RemoveAllAttachments() {
 }
 
 /**
- * Show or hide the attachment pane after updating its header bar information
- * (number and total file size of attachments) and tooltip.
- *
- * @param {boolean} aShowBucket - Show bucket or not:
- *   - true: show the attachment pane
- *   - false (or omitted): hide the attachment pane
- */
-function UpdateAttachmentBucket(aShowBucket) {
-  updateAttachmentPane(aShowBucket ? "show" : "hide");
-}
-
-/**
  * Update the header bar information (number and total file size of attachments)
  * and tooltip of attachment pane, then (optionally) show or hide the pane.
  *
@@ -8630,7 +8633,7 @@ function updateAttachmentPane(aShowPane) {
   }
 
   document.getElementById("attachmentBucketSize").textContent =
-    count > 0 ? gMessenger.formatFileSize(attachmentsSize) : "";
+    gMessenger.formatFileSize(attachmentsSize);
 
   document
     .getElementById("composeContentBox")
@@ -9216,24 +9219,6 @@ function reorderAttachmentsPanelOnPopupShowing() {
   // don't change after the panel is shown, and also because focus is still
   // in attachment bucket right now, which is required for updating them.
   updateReorderAttachmentsItems();
-}
-
-function attachmentHeaderContextOnPopupShowing() {
-  const initiallyShowItem = document.getElementById(
-    "attachmentHeaderContext_initiallyShowItem"
-  );
-
-  initiallyShowItem.setAttribute(
-    "checked",
-    Services.prefs.getBoolPref("mail.compose.show_attachment_pane")
-  );
-}
-
-function toggleInitiallyShowAttachmentPane(aMenuItem) {
-  Services.prefs.setBoolPref(
-    "mail.compose.show_attachment_pane",
-    aMenuItem.getAttribute("checked")
-  );
 }
 
 /**
@@ -10261,7 +10246,9 @@ var envelopeDragObserver = {
       link.setAttribute("href", attachment.url);
       link.textContent =
         attachment.name ||
-        gMsgCompose.AttachmentPrettyName(attachment.url, null);
+        (attachment.url.startsWith("file://")
+          ? decodeURIComponent(attachment.url.split("/").pop())
+          : attachment.url);
       editor.insertElementAtSelection(link, true);
     }
   },
@@ -10287,7 +10274,7 @@ var envelopeDragObserver = {
     // and we're not dragging a supported data type.
     if (
       !event.dataTransfer.files.length &&
-      !DROP_FLAVORS.some(f => event.dataTransfer.types.includes(f))
+      !DROP_FLAVORS.some(f => event.dataTransfer.mozTypesAt(0).contains(f))
     ) {
       return;
     }
@@ -10406,7 +10393,7 @@ var envelopeDragObserver = {
     // Excluding dragged address book entries, check for valid attachments.
     if (
       !event.dataTransfer.mozTypesAt(0).contains("text/x-moz-address") &&
-      DROP_FLAVORS.some(f => event.dataTransfer.types.includes(f))
+      DROP_FLAVORS.some(f => event.dataTransfer.mozTypesAt(0).contains(f))
     ) {
       // Show the drop overlay only if we dragged files or supported types.
       const attachments = this.getValidAttachments(event);

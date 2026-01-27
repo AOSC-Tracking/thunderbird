@@ -28,9 +28,6 @@ keywords = ["graphics"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/gfx-rs/wgpu"
 
-[package.metadata.cargo-machete]
-ignored = ["cfg_aliases"]
-
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = [
@@ -43,6 +40,9 @@ targets = [
     "x86_64-pc-windows-msvc",
     "wasm32-unknown-unknown",
 ]
+
+[package.metadata.cargo-machete]
+ignored = ["cfg_aliases"]
 
 [features]
 angle = ["wgpu-core-deps-apple/angle"]
@@ -79,6 +79,8 @@ serde = [
     "wgpu-types/serde",
     "arrayvec/serde",
     "hashbrown/serde",
+    "smallvec/serde",
+    "macro_rules_attribute",
 ]
 spirv = ["naga/spv-in"]
 static-dxc = ["wgpu-hal/static-dxc"]
@@ -142,6 +144,10 @@ default-features = false
 
 [dependencies.log]
 version = "0.4.21"
+
+[dependencies.macro_rules_attribute]
+version = "0.2"
+optional = true
 
 [dependencies.naga]
 version = "27.0.0"

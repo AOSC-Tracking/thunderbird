@@ -36,7 +36,6 @@
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/ProfilerMarkers.h"
 #include "mozilla/RemoteMediaManagerChild.h"
-#include "mozilla/ResultExtensions.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/ScrollingMetrics.h"
 #include "mozilla/SharedStyleSheetCache.h"
@@ -1695,6 +1694,11 @@ void ChromeUtils::ClearResourceCache(
   }
 }
 
+void ChromeUtils::InvalidateResourceCache(GlobalObject& aGlobal,
+                                          ErrorResult& aRv) {
+  SharedScriptCache::Invalidate();
+}
+
 void ChromeUtils::ClearBfcacheByPrincipal(GlobalObject& aGlobal,
                                           nsIPrincipal* aPrincipal,
                                           ErrorResult& aRv) {
@@ -2052,6 +2056,28 @@ already_AddRefed<Promise> ChromeUtils::RequestProcInfo(GlobalObject& aGlobal,
 
   // sending back the promise instance
   return domPromise.forget();
+}
+
+/* static */
+uint64_t ChromeUtils::GetCurrentProcessMemoryUsage(GlobalObject& aGlobal,
+                                                   ErrorResult& aRv) {
+  uint64_t retVal = 0;
+  nsresult rv = mozilla::GetCurrentProcessMemoryUsage(&retVal);
+  if (NS_FAILED(rv)) {
+    aRv.Throw(rv);
+  }
+  return retVal;
+}
+
+/* static */
+uint64_t ChromeUtils::GetCpuTimeSinceProcessStart(GlobalObject& aGlobal,
+                                                  ErrorResult& aRv) {
+  uint64_t retVal = 0;
+  nsresult rv = mozilla::GetCpuTimeSinceProcessStartInMs(&retVal);
+  if (NS_FAILED(rv)) {
+    aRv.Throw(rv);
+  }
+  return retVal;
 }
 
 /* static */

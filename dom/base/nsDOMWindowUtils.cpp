@@ -24,7 +24,6 @@
 #include "mozilla/PresShellInlines.h"
 #include "mozilla/ScrollContainerFrame.h"
 #include "mozilla/ServoStyleSet.h"
-#include "mozilla/Span.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPrefs_test.h"
 #include "mozilla/StyleAnimationValue.h"
@@ -43,6 +42,7 @@
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/FileBinding.h"
 #include "mozilla/dom/FunctionBinding.h"
+#include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/Touch.h"
 #include "mozilla/dom/UserActivation.h"
 #include "mozilla/layers/APZCCallbackHelper.h"
@@ -56,6 +56,7 @@
 #include "nsComputedDOMStyle.h"
 #include "nsContentList.h"
 #include "nsContentUtils.h"
+#include "nsDeviceContext.h"
 #include "nsError.h"
 #include "nsFocusManager.h"
 #include "nsFrameManager.h"
@@ -67,12 +68,12 @@
 #include "nsJSEnvironment.h"
 #include "nsJSUtils.h"
 #include "nsLayoutUtils.h"
+#include "nsMenuPopupFrame.h"
 #include "nsPresContext.h"
 #include "nsQueryContentEventResult.h"
 #include "nsQueryObject.h"
 #include "nsRefreshDriver.h"
 #include "nsStyleUtil.h"
-#include "nsViewManager.h"
 
 #if defined(MOZ_WIDGET_GTK)
 #  include <gdk/gdk.h>
@@ -100,7 +101,7 @@
 // #include "nsWidgetsCID.h"
 #include "HTMLCanvasElement.h"
 #include "HTMLImageElement.h"
-#include "mozilla/AnimatedPropertyID.h"
+#include "mozilla/CSSPropertyId.h"
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/DisplayPortUtils.h"
 #include "mozilla/IMEContentObserver.h"
@@ -110,7 +111,6 @@
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/ProfilerMarkers.h"
 #include "mozilla/RDDProcessManager.h"
-#include "mozilla/ResultExtensions.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/ViewportUtils.h"
@@ -422,14 +422,12 @@ nsDOMWindowUtils::GetDocumentMetadata(const nsAString& aName,
 NS_IMETHODIMP
 nsDOMWindowUtils::UpdateLayerTree() {
   FlushLayoutWithoutThrottledAnimations();
-  if (RefPtr<PresShell> presShell = GetPresShell()) {
-    RefPtr<nsViewManager> vm = presShell->GetViewManager();
-    if (nsView* view = vm->GetRootView()) {
-      nsAutoScriptBlocker scriptBlocker;
-      presShell->PaintAndRequestComposite(view,
-                                          PaintFlags::PaintSyncDecodeImages);
-      presShell->GetWindowRenderer()->WaitOnTransactionProcessed();
-    }
+  if (RefPtr<PresShell> ps = GetPresShell()) {
+    nsAutoScriptBlocker scriptBlocker;
+    RefPtr renderer = ps->GetWindowRenderer();
+    ps->PaintAndRequestComposite(ps->GetRootFrame(), renderer,
+                                 PaintFlags::PaintSyncDecodeImages);
+    renderer->WaitOnTransactionProcessed();
   }
   return NS_OK;
 }
@@ -768,9 +766,7 @@ nsDOMWindowUtils::SendWheelEvent(float aX, float aY, double aDeltaX,
       StaticPrefs::test_events_async_enabled()) {
     widget->DispatchInputEvent(&wheelEvent);
   } else {
-    nsEventStatus status = nsEventStatus_eIgnore;
-    nsresult rv = widget->DispatchEvent(&wheelEvent, status);
-    NS_ENSURE_SUCCESS(rv, rv);
+    widget->DispatchEvent(&wheelEvent);
   }
 
   // The callback ID may be cleared when the event also needs to be dispatched
@@ -933,24 +929,15 @@ nsresult nsDOMWindowUtils::SendTouchEventCommon(
 
   nsEventStatus status = nsEventStatus_eIgnore;
   if (aToWindow) {
-    RefPtr<PresShell> presShell;
-    nsView* view = nsContentUtils::GetViewToDispatchEvent(
-        presContext, getter_AddRefs(presShell));
-    if (!presShell || !view) {
-      return NS_ERROR_FAILURE;
-    }
-    *aPreventDefault = (status == nsEventStatus_eConsumeNoDefault);
-    return presShell->HandleEvent(view->GetFrame(), &event, false, &status);
-  }
-
-  if (aAsyncEnabled == AsyncEnabledOption::ASYNC_ENABLED ||
-      StaticPrefs::test_events_async_enabled()) {
+    RefPtr<PresShell> presShell = presContext->PresShell();
+    MOZ_TRY(presShell->HandleEvent(presShell->GetRootFrame(), &event, false,
+                                   &status));
+  } else if (aAsyncEnabled == AsyncEnabledOption::ASYNC_ENABLED ||
+             StaticPrefs::test_events_async_enabled()) {
     status = widget->DispatchInputEvent(&event).mContentStatus;
   } else {
-    nsresult rv = widget->DispatchEvent(&event, status);
-    NS_ENSURE_SUCCESS(rv, rv);
+    status = widget->DispatchEvent(&event);
   }
-
   if (aPreventDefault) {
     *aPreventDefault = (status == nsEventStatus_eConsumeNoDefault);
   }
@@ -1287,8 +1274,12 @@ nsDOMWindowUtils::GetParsedStyleSheets(uint32_t* aSheets) {
   if (!doc) {
     return NS_ERROR_UNEXPECTED;
   }
-
-  *aSheets = doc->CSSLoader()->ParsedSheetCount();
+  css::Loader* cssLoader = doc->GetExistingCSSLoader();
+  if (cssLoader) {
+    *aSheets = cssLoader->ParsedSheetCount();
+  } else {
+    *aSheets = 0;
+  }
   return NS_OK;
 }
 
@@ -1472,8 +1463,8 @@ nsDOMWindowUtils::SendSimpleGestureEvent(const nsAString& aType, float aX,
   event.mRefPoint =
       nsContentUtils::ToWidgetPoint(CSSPoint(aX, aY), offset, presContext);
 
-  nsEventStatus status;
-  return widget->DispatchEvent(&event, status);
+  widget->DispatchEvent(&event);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1794,6 +1785,10 @@ nsDOMWindowUtils::ScrollToVisual(float aOffsetX, float aOffsetY,
   NS_ENSURE_TRUE(presContext->IsRootContentDocumentCrossProcess(),
                  NS_ERROR_INVALID_ARG);
 
+  ScrollContainerFrame* sf =
+      presContext->PresShell()->GetRootScrollContainerFrame();
+  NS_ENSURE_TRUE(sf, NS_ERROR_NOT_AVAILABLE);
+
   FrameMetrics::ScrollOffsetUpdateType updateType;
   switch (aUpdateType) {
     case UPDATE_TYPE_RESTORE:
@@ -1806,13 +1801,13 @@ nsDOMWindowUtils::ScrollToVisual(float aOffsetX, float aOffsetY,
       return NS_ERROR_INVALID_ARG;
   }
 
-  ScrollMode scrollMode;
+  ScrollBehavior scrollBehavior;
   switch (aScrollMode) {
     case SCROLL_MODE_INSTANT:
-      scrollMode = ScrollMode::Instant;
+      scrollBehavior = ScrollBehavior::Instant;
       break;
     case SCROLL_MODE_SMOOTH:
-      scrollMode = ScrollMode::SmoothMsd;
+      scrollBehavior = ScrollBehavior::Smooth;
       break;
     default:
       return NS_ERROR_INVALID_ARG;
@@ -1820,7 +1815,7 @@ nsDOMWindowUtils::ScrollToVisual(float aOffsetX, float aOffsetY,
 
   presContext->PresShell()->ScrollToVisual(
       CSSPoint::ToAppUnits(CSSPoint(aOffsetX, aOffsetY)), updateType,
-      scrollMode);
+      sf->ScrollModeForScrollBehavior(scrollBehavior));
 
   return NS_OK;
 }
@@ -1936,8 +1931,8 @@ Result<mozilla::LayoutDeviceRect, nsresult> nsDOMWindowUtils::ConvertTo(
 NS_IMETHODIMP
 nsDOMWindowUtils::ToScreenRectInCSSUnits(float aX, float aY, float aWidth,
                                          float aHeight, DOMRect** aResult) {
-  LayoutDeviceRect devRect;
-  MOZ_TRY_VAR(devRect, ConvertTo(aX, aY, aWidth, aHeight, CoordsType::Screen));
+  LayoutDeviceRect devRect =
+      MOZ_TRY(ConvertTo(aX, aY, aWidth, aHeight, CoordsType::Screen));
 
   nsPresContext* presContext = GetPresContext();
   MOZ_ASSERT(presContext);
@@ -1960,9 +1955,8 @@ nsDOMWindowUtils::ToScreenRectInCSSUnits(float aX, float aY, float aWidth,
 NS_IMETHODIMP
 nsDOMWindowUtils::ToScreenRect(float aX, float aY, float aWidth, float aHeight,
                                DOMRect** aResult) {
-  LayoutDeviceRect devPixelsRect;
-  MOZ_TRY_VAR(devPixelsRect,
-              ConvertTo(aX, aY, aWidth, aHeight, CoordsType::Screen));
+  LayoutDeviceRect devPixelsRect =
+      MOZ_TRY(ConvertTo(aX, aY, aWidth, aHeight, CoordsType::Screen));
 
   ScreenRect rect = ViewAs<ScreenPixel>(
       devPixelsRect, PixelCastJustification::ScreenIsParentLayerForRoot);
@@ -1976,9 +1970,8 @@ nsDOMWindowUtils::ToScreenRect(float aX, float aY, float aWidth, float aHeight,
 NS_IMETHODIMP
 nsDOMWindowUtils::ToTopLevelWidgetRect(float aX, float aY, float aWidth,
                                        float aHeight, DOMRect** aResult) {
-  LayoutDeviceRect rect;
-  MOZ_TRY_VAR(rect,
-              ConvertTo(aX, aY, aWidth, aHeight, CoordsType::TopLevelWidget));
+  LayoutDeviceRect rect =
+      MOZ_TRY(ConvertTo(aX, aY, aWidth, aHeight, CoordsType::TopLevelWidget));
 
   RefPtr<DOMRect> outRect = new DOMRect(mWindow);
   outRect->SetRect(rect.x, rect.y, rect.width, rect.height);
@@ -2531,9 +2524,7 @@ nsDOMWindowUtils::SendQueryContentEvent(uint32_t aType, int64_t aOffset,
       break;
   }
 
-  nsEventStatus status;
-  nsresult rv = targetWidget->DispatchEvent(&queryEvent, status);
-  NS_ENSURE_SUCCESS(rv, rv);
+  targetWidget->DispatchEvent(&queryEvent);
 
   auto* result = new nsQueryContentEventResult(std::move(queryEvent));
   result->SetEventResult(widget);
@@ -2562,9 +2553,7 @@ nsDOMWindowUtils::SendSelectionSetEvent(uint32_t aOffset, uint32_t aLength,
   selectionEvent.mUseNativeLineBreak =
       !(aAdditionalFlags & SELECTION_SET_FLAG_USE_XP_LINE_BREAK);
 
-  nsEventStatus status;
-  nsresult rv = widget->DispatchEvent(&selectionEvent, status);
-  NS_ENSURE_SUCCESS(rv, rv);
+  widget->DispatchEvent(&selectionEvent);
 
   *aResult = selectionEvent.mSucceeded;
   return NS_OK;
@@ -2617,8 +2606,8 @@ nsDOMWindowUtils::SendContentCommandEvent(const nsAString& aType,
     event.mTransferable = aTransferable;
   }
 
-  nsEventStatus status;
-  return widget->DispatchEvent(&event, status);
+  widget->DispatchEvent(&event);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -3056,6 +3045,12 @@ nsDOMWindowUtils::DisableApzForElement(Element* aElement) {
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsDOMWindowUtils::IsApzDisabledForElement(Element* aElement, bool* aOutResult) {
+  *aOutResult = nsLayoutUtils::ShouldDisableApzForElement(aElement);
+  return NS_OK;
+}
+
 static nsTArray<ScrollContainerFrame*> CollectScrollableAncestors(
     nsIFrame* aStart) {
   nsTArray<ScrollContainerFrame*> result;
@@ -3174,7 +3169,7 @@ nsDOMWindowUtils::ZoomToFocusedInput() {
         caretInfo.frame, caretInfo.caretRectRelativeToTextFrame,
         ScrollAxis(WhereToScroll::Center, WhenToScroll::IfNotVisible),
         ScrollAxis(WhereToScroll::Center, WhenToScroll::IfNotVisible),
-        ScrollFlags::ScrollOverflowHidden);
+        ScrollFlags::ForZoomToFocusedInput);
   }
 
   RefPtr<Document> document = presShell->GetDocument();
@@ -3255,16 +3250,15 @@ nsDOMWindowUtils::ComputeAnimationDistance(Element* aElement,
                                            double* aResult) {
   NS_ENSURE_ARG_POINTER(aElement);
 
-  nsCSSPropertyID propertyID =
-      nsCSSProps::LookupProperty(NS_ConvertUTF16toUTF8(aProperty));
-  if (propertyID == eCSSProperty_UNKNOWN ||
-      nsCSSProps::IsShorthand(propertyID)) {
+  NS_ConvertUTF16toUTF8 prop(aProperty);
+
+  NonCustomCSSPropertyId propertyId = nsCSSProps::LookupProperty(prop);
+  if (propertyId == eCSSProperty_UNKNOWN ||
+      nsCSSProps::IsShorthand(propertyId)) {
     return NS_ERROR_ILLEGAL_VALUE;
   }
 
-  AnimatedPropertyID property = propertyID == eCSSPropertyExtra_variable
-                                    ? AnimatedPropertyID(NS_Atomize(aProperty))
-                                    : AnimatedPropertyID(propertyID);
+  auto property = CSSPropertyId::FromIdOrCustomProperty(propertyId, prop);
 
   AnimationValue v1 = AnimationValue::FromString(
       property, NS_ConvertUTF16toUTF8(aValue1), aElement);
@@ -3288,17 +3282,15 @@ nsDOMWindowUtils::GetUnanimatedComputedStyle(Element* aElement,
     return NS_ERROR_INVALID_ARG;
   }
 
-  nsCSSPropertyID propertyID =
-      nsCSSProps::LookupProperty(NS_ConvertUTF16toUTF8(aProperty));
-  if (propertyID == eCSSProperty_UNKNOWN ||
-      nsCSSProps::IsShorthand(propertyID)) {
+  NS_ConvertUTF16toUTF8 prop(aProperty);
+
+  NonCustomCSSPropertyId propertyId = nsCSSProps::LookupProperty(prop);
+  if (propertyId == eCSSProperty_UNKNOWN ||
+      nsCSSProps::IsShorthand(propertyId)) {
     return NS_ERROR_INVALID_ARG;
   }
-  AnimatedPropertyID property =
-      propertyID == eCSSPropertyExtra_variable
-          ? AnimatedPropertyID(
-                NS_Atomize(Substring(aProperty, 2, aProperty.Length() - 2)))
-          : AnimatedPropertyID(propertyID);
+
+  auto property = CSSPropertyId::FromIdOrCustomProperty(propertyId, prop);
 
   switch (aFlushType) {
     case FLUSH_NONE:
@@ -3518,8 +3510,8 @@ nsDOMWindowUtils::GetFileReferences(const nsAString& aDatabaseName, int64_t aId,
   nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryReferent(mWindow);
   NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
 
-  quota::PrincipalMetadata principalMetadata;
-  MOZ_TRY_VAR(principalMetadata, quota::GetInfoFromWindow(window));
+  quota::PrincipalMetadata principalMetadata =
+      MOZ_TRY(quota::GetInfoFromWindow(window));
 
   RefPtr<IndexedDatabaseManager> mgr = IndexedDatabaseManager::Get();
   if (mgr) {
@@ -3845,8 +3837,8 @@ nsDOMWindowUtils::AddSheet(nsIPreloadedStyleSheet* aSheet,
   nsCOMPtr<Document> doc = GetDocument();
   NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
 
-  StyleSheet* sheet = nullptr;
-  MOZ_TRY_VAR(sheet, static_cast<PreloadedStyleSheet*>(aSheet)->GetSheet());
+  StyleSheet* sheet =
+      MOZ_TRY(static_cast<PreloadedStyleSheet*>(aSheet)->GetSheet());
 
   Document::additionalSheetType type = convertSheetType(aSheetType);
   return doc->AddAdditionalStyleSheet(type, sheet);

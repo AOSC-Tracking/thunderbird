@@ -33,11 +33,15 @@ tags = ["oauth"]
 ["browser_cardDAV_sync.js"]
 
 ["browser_contact_sidebar.js"]
-skip-if = ["headless && os == 'linux'"]  # See bug 1806870.
+skip-if = [
+  "headless && os == 'linux'", # See bug 1806870.
+]
+tags = ["dataadapter"]
 
 ["browser_contact_sidebar_keyboard.js"]
 
 ["browser_contact_tree.js"]
+tags = ["dataadapter"]
 
 ["browser_directory_tree.js"]
 
@@ -46,14 +50,18 @@ skip-if = ["headless && os == 'linux'"]  # See bug 1806870.
 ["browser_display_multiple.js"]
 
 ["browser_drag_drop.js"]
-skip-if = ["headless && os == 'linux'"]  # See bug 1806870.
+skip-if = [
+  "headless && os == 'linux'", # See bug 1806870.
+]
 
 ["browser_edit_async.js"]
 
 ["browser_edit_card.js"]
 
 ["browser_edit_photo.js"]
-skip-if = ["headless && os == 'linux'"]  # See bug 1806870.
+skip-if = [
+  "headless && os == 'linux'", # See bug 1806870.
+]
 
 ["browser_export.js"]
 
@@ -72,5 +80,6 @@ support-files = ["../../../../../mailnews/addrbook/test/unit/data/ldap_contacts.
 ["browser_search.js"]
 
 ["browser_search_dialog.js"]
+tags = ["dataadapter"]
 
 ["browser_telemetry.js"]

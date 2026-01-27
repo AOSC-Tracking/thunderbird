@@ -7,15 +7,32 @@
 // This is loaded into chrome windows with the subscript loader. Wrap in
 // a block to prevent accidentally leaking globals onto `window`.
 {
+  ChromeUtils.defineESModuleGetters(this, {
+    DeferredTask: "resource://gre/modules/DeferredTask.sys.mjs",
+  });
+
+  /**
+   * A shared task which updates the urlbar indicator whenever:
+   * - A split view is activated or deactivated.
+   * - The active tab of a split view changes.
+   * - The order of tabs in a split view changes.
+   *
+   * @type {DeferredTask}
+   */
+  const updateUrlbarButton = new DeferredTask(() => {
+    const { activeSplitView, selectedTab } = gBrowser;
+    const button = document.getElementById("split-view-button");
+    if (activeSplitView) {
+      const activeIndex = activeSplitView.tabs.indexOf(selectedTab);
+      button.hidden = false;
+      button.setAttribute("data-active-index", activeIndex);
+    } else {
+      button.hidden = true;
+      button.removeAttribute("data-active-index");
+    }
+  }, 0);
+
   class MozTabSplitViewWrapper extends MozXULElement {
-    static markup = `
-      <vbox class="tab-split-view-container" pack="center">
-      </vbox>
-      `;
-
-    /** @type {MozXULElement} */
-    #containerElement;
-
     /** @type {MutationObserver} */
     #tabChangeObserver;
 
@@ -27,6 +44,15 @@
      */
     get hasActiveTab() {
       return this.hasAttribute("hasactivetab");
+    }
+
+    /**
+     * @returns {MozTabbrowserGroup}
+     */
+    get group() {
+      return gBrowser.isTabGroup(this.parentElement)
+        ? this.parentElement
+        : null;
     }
 
     /**
@@ -45,6 +71,8 @@
       // removed in disconnectedCallback
       this.ownerGlobal.addEventListener("TabSelect", this);
 
+      this.#observeTabChanges();
+
       if (this._initialized) {
         return;
       }
@@ -52,21 +80,20 @@
       this._initialized = true;
 
       this.textContent = "";
-      this.appendChild(this.constructor.fragment);
-
-      this.#containerElement = this.querySelector(".tab-split-view-container");
-
-      this.#observeTabChanges();
 
       // Mirroring MozTabbrowserTab
-      this.#containerElement.container = gBrowser.tabContainer;
-      this.container = this.#containerElement;
+      this.container = gBrowser.tabContainer;
     }
 
     disconnectedCallback() {
       this.#tabChangeObserver?.disconnect();
       this.ownerGlobal.removeEventListener("TabSelect", this);
       this.#deactivate();
+      this.dispatchEvent(
+        new CustomEvent("SplitViewRemoved", {
+          bubbles: true,
+        })
+      );
     }
 
     #observeTabChanges() {
@@ -89,7 +116,7 @@
           }
         });
       }
-      this.#tabChangeObserver.observe(this.#containerElement, {
+      this.#tabChangeObserver.observe(this, {
         childList: true,
       });
     }
@@ -106,9 +133,7 @@
      * @returns {MozTabbrowserTab[]}
      */
     get tabs() {
-      return Array.from(this.#containerElement.children).filter(node =>
-        node.matches("tab")
-      );
+      return Array.from(this.children).filter(node => node.matches("tab"));
     }
 
     /**
@@ -116,9 +141,10 @@
      */
     #activate() {
       gBrowser.showSplitViewPanels(this.#tabs);
-      this.dispatchEvent(
+      updateUrlbarButton.arm();
+      this.container.dispatchEvent(
         new CustomEvent("TabSplitViewActivate", {
-          detail: { tabs: this.#tabs },
+          detail: { tabs: this.#tabs, splitview: this },
           bubbles: true,
         })
       );
@@ -129,9 +155,10 @@
      */
     #deactivate() {
       gBrowser.hideSplitViewPanels(this.#tabs);
-      this.dispatchEvent(
+      updateUrlbarButton.arm();
+      this.container.dispatchEvent(
         new CustomEvent("TabSplitViewDeactivate", {
-          detail: { tabs: this.#tabs },
+          detail: { tabs: this.#tabs, splitview: this },
           bubbles: true,
         })
       );
@@ -170,6 +197,17 @@
      */
     unsplitTabs() {
       gBrowser.unsplitTabs(this);
+    }
+
+    /**
+     * Reverse order of the tabs in the split view wrapper.
+     */
+    reverseTabs() {
+      const [firstTab, secondTab] = this.#tabs;
+      gBrowser.moveTabBefore(secondTab, firstTab);
+      this.#tabs = [secondTab, firstTab];
+      gBrowser.showSplitViewPanels(this.#tabs);
+      updateUrlbarButton.arm();
     }
 
     /**

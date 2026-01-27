@@ -10,7 +10,13 @@ import { CalAttachment } from "resource:///modules/CalAttachment.sys.mjs";
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
-
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
 ChromeUtils.defineESModuleGetters(lazy, {
   CalAttendee: "resource:///modules/CalAttendee.sys.mjs",
   CalAlarm: "resource:///modules/CalAlarm.sys.mjs",
@@ -39,7 +45,7 @@ XPCOMUtils.defineLazyServiceGetter(
  * @implements {calIItemBase}
  */
 export function calItemBase() {
-  cal.ASSERT(false, "Inheriting objects call initItemBase()!");
+  throw new Error("calIItemBase is abstract");
 }
 
 calItemBase.prototype = {
@@ -624,13 +630,13 @@ calItemBase.prototype = {
   // void addAttendee(in calIAttendee attendee);
   addAttendee(attendee) {
     if (!attendee.id) {
-      cal.LOG("Tried to add invalid attendee");
+      lazy.log.debug("Tried to add invalid attendee");
       return;
     }
     // the duplicate check is migration code for bug 1204255
     const exists = this.getAttendeeById(attendee.id);
     if (exists) {
-      cal.LOG(
+      lazy.log.debug(
         "Ignoring attendee duplicate for item " + this.id + " (" + this.title + "): " + exists.id
       );
       if (
@@ -653,11 +659,8 @@ calItemBase.prototype = {
           if (attendee.isMutable) {
             attendee.commonName = commonName;
           } else {
-            cal.LOG(
-              "Failed to cleanup malformed commonName for immutable attendee " +
-                attendee.toString() +
-                "\n" +
-                cal.STACK(20)
+            lazy.log.warn(
+              `Failed to cleanup malformed commonName for immutable attendee ${attendee.commonName}`
             );
           }
         }
@@ -961,7 +964,7 @@ calItemBase.prototype = {
         alarm.icalComponent = alarmComp;
         this.addAlarm(alarm, true);
       } catch (e) {
-        cal.ERROR(
+        lazy.log.error(
           "Invalid alarm for item: " +
             this.id +
             " (" +

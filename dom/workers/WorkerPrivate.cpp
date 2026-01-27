@@ -1624,6 +1624,10 @@ nsresult WorkerPrivate::DispatchLockHeld(
            this, runnable.get()));
       RefPtr<WorkerThreadRunnable> workerThreadRunnable =
           static_cast<WorkerThreadRunnable*>(runnable.get());
+      PROFILER_MARKER("WorkerPrivate::DispatchLockHeld", OTHER,
+                      {MarkerStack::MaybeCapture(
+                          profiler_feature_active(ProfilerFeature::Flows))},
+                      FlowMarker, Flow::FromPointer(runnable.get()));
       mPreStartRunnables.AppendElement(workerThreadRunnable);
       return NS_OK;
     }
@@ -1653,6 +1657,10 @@ nsresult WorkerPrivate::DispatchLockHeld(
            this, runnable.get()));
       RefPtr<WorkerThreadRunnable> workerThreadRunnable =
           static_cast<WorkerThreadRunnable*>(runnable.get());
+      PROFILER_MARKER("WorkerPrivate::DispatchLockHeld", OTHER,
+                      {MarkerStack::MaybeCapture(
+                          profiler_feature_active(ProfilerFeature::Flows))},
+                      FlowMarker, Flow::FromPointer(runnable.get()));
       mPreStartRunnables.AppendElement(workerThreadRunnable);
     }
 
@@ -1730,7 +1738,7 @@ void WorkerPrivate::CreateRemoteDebuggerEndpoints() {
                               !mDebuggerParentEp.IsValid() &&
                               !mDebuggerChildEp.IsValid());
 
-  Unused << NS_WARN_IF(NS_FAILED(PRemoteWorkerDebugger::CreateEndpoints(
+  (void)NS_WARN_IF(NS_FAILED(PRemoteWorkerDebugger::CreateEndpoints(
       &mDebuggerParentEp, &mDebuggerChildEp)));
 }
 
@@ -1758,7 +1766,7 @@ void WorkerPrivate::SetIsRemoteDebuggerRegistered(const bool& aRegistered) {
       auto pending = std::move(mDelayedDebuggeeRunnables);
       for (uint32_t i = 0; i < pending.Length(); i++) {
         RefPtr<WorkerRunnable> runnable = std::move(pending[i]);
-        Unused << NS_WARN_IF(
+        (void)NS_WARN_IF(
             NS_FAILED(DispatchLockHeld(runnable.forget(), nullptr, lock)));
       }
       MOZ_RELEASE_ASSERT(mDelayedDebuggeeRunnables.IsEmpty());
@@ -1820,7 +1828,7 @@ void WorkerPrivate::SetIsRemoteDebuggerReady(const bool& aReady) {
     auto pending = std::move(mDelayedDebuggeeRunnables);
     for (uint32_t i = 0; i < pending.Length(); i++) {
       RefPtr<WorkerRunnable> runnable = std::move(pending[i]);
-      Unused << NS_WARN_IF(
+      (void)NS_WARN_IF(
           NS_FAILED(DispatchLockHeld(runnable.forget(), nullptr, lock)));
     }
     MOZ_RELEASE_ASSERT(mDelayedDebuggeeRunnables.IsEmpty());
@@ -1881,7 +1889,7 @@ void WorkerPrivate::EnableRemoteDebugger() {
     }
     // Warning the case if the Worker shutdown before remote debugger
     // registration down.
-    Unused << NS_WARN_IF(!mRemoteDebuggerRegistered);
+    (void)NS_WARN_IF(!mRemoteDebuggerRegistered);
   }
 }
 
@@ -2199,7 +2207,7 @@ bool WorkerPrivate::Thaw(const nsPIDOMWindowInner* aWindow) {
       // This can only fail if the ThrottledEventQueue cannot dispatch its
       // executor to the main thread, in which case the main thread was never
       // going to draw runnables from it anyway, so the failure doesn't matter.
-      Unused << mMainThreadDebuggeeEventTarget->SetIsPaused(
+      (void)mMainThreadDebuggeeEventTarget->SetIsPaused(
           IsParentWindowPaused() && !isCanceling);
     }
 
@@ -2261,8 +2269,7 @@ void WorkerPrivate::ParentWindowResumed() {
   // This can only fail if the ThrottledEventQueue cannot dispatch its executor
   // to the main thread, in which case the main thread was never going to draw
   // runnables from it anyway, so the failure doesn't matter.
-  Unused << mMainThreadDebuggeeEventTarget->SetIsPaused(IsFrozen() &&
-                                                        !isCanceling);
+  (void)mMainThreadDebuggeeEventTarget->SetIsPaused(IsFrozen() && !isCanceling);
 }
 
 void WorkerPrivate::PropagateStorageAccessPermissionGranted() {
@@ -2278,7 +2285,7 @@ void WorkerPrivate::PropagateStorageAccessPermissionGranted() {
 
   RefPtr<PropagateStorageAccessPermissionGrantedRunnable> runnable =
       new PropagateStorageAccessPermissionGrantedRunnable(this);
-  Unused << NS_WARN_IF(!runnable->Dispatch(this));
+  (void)NS_WARN_IF(!runnable->Dispatch(this));
 }
 
 void WorkerPrivate::NotifyStorageKeyUsed() {
@@ -2483,7 +2490,7 @@ void WorkerPrivate::MemoryPressure() {
   AssertIsOnParentThread();
 
   RefPtr<MemoryPressureRunnable> runnable = new MemoryPressureRunnable(this);
-  Unused << NS_WARN_IF(!runnable->Dispatch(this));
+  (void)NS_WARN_IF(!runnable->Dispatch(this));
 }
 
 RefPtr<WorkerPrivate::JSMemoryUsagePromise> WorkerPrivate::GetJSMemoryUsage() {
@@ -3359,7 +3366,7 @@ nsresult WorkerPrivate::GetLoadInfo(
     // Make sure that the IndexedDatabaseManager is set up
     IndexedDatabaseManager* idm = IndexedDatabaseManager::GetOrCreate();
     if (idm) {
-      Unused << NS_WARN_IF(NS_FAILED(idm->EnsureLocale()));
+      (void)NS_WARN_IF(NS_FAILED(idm->EnsureLocale()));
     } else {
       NS_WARNING("Failed to get IndexedDatabaseManager!");
     }
@@ -3672,6 +3679,9 @@ void WorkerPrivate::RunLoopNeverRan() {
     if (!mPreStartRunnables.IsEmpty()) {
       for (const RefPtr<WorkerThreadRunnable>& runnable : mPreStartRunnables) {
         runnable->mCleanPreStartDispatching = true;
+        PROFILER_MARKER("WorkerPrivate::RunLoopNeverRan", OTHER, {},
+                        TerminatingFlowMarker,
+                        Flow::FromPointer(runnable.get()));
       }
       mPreStartRunnables.Clear();
     }
@@ -4052,7 +4062,7 @@ void WorkerPrivate::OnProcessNextEvent() {
   // loop, and in that case we must ensure that we continue to process control
   // runnables here.
   if (recursionDepth > 1 && mSyncLoopStack.Length() < recursionDepth - 1) {
-    Unused << ProcessAllControlRunnables();
+    (void)ProcessAllControlRunnables();
     // There's no running JS, and no state to revalidate, so we can ignore the
     // return value.
   }
@@ -4512,7 +4522,7 @@ void WorkerPrivate::ScheduleDeletion(WorkerRanOrNot aRanOrNot) {
     MOZ_ASSERT(currentThread);
     // On the worker thread WorkerRunnable will refuse to run if not nested
     // on top of a WorkerThreadPrimaryRunnable.
-    Unused << NS_WARN_IF(NS_HasPendingEvents(currentThread));
+    (void)NS_WARN_IF(NS_HasPendingEvents(currentThread));
   }
 #endif
 
@@ -5674,7 +5684,7 @@ void WorkerPrivate::PostMessageToDebugger(const nsAString& aMessage) {
     remoteDebugger = mRemoteDebugger;
   }
   MOZ_ASSERT_DEBUG_OR_FUZZING(remoteDebugger);
-  Unused << remoteDebugger->SendPostMessageToDebugger(nsAutoString(aMessage));
+  (void)remoteDebugger->SendPostMessageToDebugger(nsAutoString(aMessage));
 }
 
 void WorkerPrivate::SetDebuggerImmediate(dom::Function& aHandler,
@@ -5702,9 +5712,8 @@ void WorkerPrivate::ReportErrorToDebugger(const nsACString& aFilename,
     remoteDebugger = mRemoteDebugger;
   }
   MOZ_ASSERT_DEBUG_OR_FUZZING(remoteDebugger);
-  Unused << remoteDebugger->SendReportErrorToDebugger(
-      RemoteWorkerDebuggerErrorInfo(nsAutoCString(aFilename), aLineno,
-                                    nsAutoString(aMessage)));
+  (void)remoteDebugger->SendReportErrorToDebugger(RemoteWorkerDebuggerErrorInfo(
+      nsAutoCString(aFilename), aLineno, nsAutoString(aMessage)));
 }
 
 void WorkerPrivate::UpdateWindowIDToDebugger(const uint64_t& aWindowID,
@@ -5723,9 +5732,9 @@ void WorkerPrivate::UpdateWindowIDToDebugger(const uint64_t& aWindowID,
   }
   MOZ_ASSERT_DEBUG_OR_FUZZING(remoteDebugger);
   if (aIsAdd) {
-    Unused << remoteDebugger->SendAddWindowID(aWindowID);
+    (void)remoteDebugger->SendAddWindowID(aWindowID);
   } else {
-    Unused << remoteDebugger->SendRemoveWindowID(aWindowID);
+    (void)remoteDebugger->SendRemoveWindowID(aWindowID);
   }
 }
 

@@ -64,9 +64,15 @@ function convertMailTab(tab, context) {
     windowId: tab.windowId,
     active: tab.active,
     layout: LAYOUTS[gDynamicPaneConfig],
-    folderMode: fixApiModeName(about3Pane.folderTree.selectedRow.modeName),
     folderModesEnabled: about3Pane.folderPane.activeModes.map(fixApiModeName),
   };
+
+  const folderMode = fixApiModeName(
+    about3Pane.folderTree.selectedRow?.modeName
+  );
+  if (folderMode) {
+    mailTabObject.folderMode = folderMode;
+  }
 
   if (context.extension.manifest.manifest_version < 3) {
     mailTabObject.id = tab.id;
@@ -321,7 +327,7 @@ this.mailTabs = class extends ExtensionAPIPersistent {
         folder = getFolder(displayedFolderId || displayedFolder).folder;
       }
 
-      const curFolderMode = about3Pane.folderTree.selectedRow.modeName;
+      const curFolderMode = about3Pane.folderTree.selectedRow?.modeName;
       const curFolderModes = about3Pane.folderPane.activeModes;
       const newFolderMode = folderMode ? fixTbModeName(folderMode) : null;
       let newFolderModes = folderModesEnabled
@@ -629,10 +635,28 @@ this.mailTabs = class extends ExtensionAPIPersistent {
           if (messageIds.length > 0) {
             const getIndices = msgHdrs => {
               try {
+                // getViewIndexForMsgHdr() expands threads, if queried messages
+                // are inside a collapsed thread, which invalidates some of the
+                // already collected indices. To work around this, we re-query
+                // the indices if any thread got expanded.
+                const rowCountAtStart = about3Pane.gViewWrapper.dbView.rowCount;
+                const speculativeIndices = msgHdrs
+                  .map(msgHdr =>
+                    about3Pane.gViewWrapper.getViewIndexForMsgHdr(msgHdr)
+                  )
+                  .filter(idx => idx != nsMsgViewIndex_None);
+
+                // If no threads are expanded, return the already collected indices.
+                if (
+                  about3Pane.gViewWrapper.dbView.rowCount == rowCountAtStart
+                ) {
+                  return speculativeIndices;
+                }
+
+                // Re-query all indices to get the correct ones.
                 return msgHdrs
-                  .map(
-                    about3Pane.gViewWrapper.getViewIndexForMsgHdr,
-                    about3Pane.gViewWrapper
+                  .map(msgHdr =>
+                    about3Pane.gViewWrapper.getViewIndexForMsgHdr(msgHdr)
                   )
                   .filter(idx => idx != nsMsgViewIndex_None);
               } catch (ex) {
@@ -645,6 +669,7 @@ this.mailTabs = class extends ExtensionAPIPersistent {
               .map(id => extension.messageManager.get(id))
               .filter(Boolean);
             const foundIndices = getIndices(msgHdrs);
+
             const allInCurrentView = foundIndices.length == msgHdrs.length;
             const allInSameFolder = msgHdrs.every(
               hdr => hdr.folder == msgHdrs[0].folder
@@ -662,7 +687,7 @@ this.mailTabs = class extends ExtensionAPIPersistent {
               selectedIndices = foundIndices;
             } else {
               // Stay within the current folderMode, if possible.
-              const curFolderMode = about3Pane.folderTree.selectedRow.modeName;
+              const curFolderMode = about3Pane.folderTree.selectedRow?.modeName;
               let row = about3Pane.folderPane.getRowForFolder(
                 msgHdrs[0].folder,
                 curFolderMode

@@ -227,6 +227,11 @@ pref("extensions.autoDisableScopes", 15);
 // Enable add-ons installed and owned by the application, like the default theme.
 pref("extensions.startupScanScopes", 4);
 
+// Explicitely set these to false. Firefox end up using a false default as
+// well since the default value is based on whether add-on signing is required.
+pref("extensions.update.requireBuiltInCerts", false);
+pref("extensions.install.requireBuiltInCerts", false);
+
 // Gecko Profiler
 pref("extensions.geckoProfiler.acceptedExtensionIds", "geckoprofiler@mozilla.com,quantum-foxfooding@mozilla.com,raptor@mozilla.org");
 
@@ -645,8 +650,6 @@ pref("mail.allowed_unc_hosts", "");
 // be located at.
 pref("mail.allowed_attachment_hostnames", "");
 
-// Start compositions with (empty) attachment pane showing
-pref("mail.compose.show_attachment_pane", false);
 // Check for missing attachments?
 pref("mail.compose.attachment_reminder", true);
 // Words that should trigger a missing attachments warning.
@@ -803,6 +806,7 @@ pref("browser.tabs.loadDivertedInBackground", false);
 pref("extensions.webextensions.remote", true);
 
 // Browser icon prefs
+pref("browser.chrome.guess_favicon", true);
 pref("browser.chrome.site_icons", true);
 pref("browser.chrome.favicons", true);
 
@@ -1469,6 +1473,10 @@ pref("dom.disable_window_flip", true);
 // Thunderbird.
 pref("browser.theme.dark-private-windows", true);
 
+// Whether to override themes in forced-colors mode and just use the
+// system theme and forced-colors palette to style the chrome.
+pref("browser.theme.forced-colors-override.enabled", true);
+
 // In-app notifications are disabled while the feature is being implemented.
 pref("mail.inappnotifications.enabled", true);
 // Refresh interval for in-app notifications in ms (6 hours)
@@ -1477,6 +1485,11 @@ pref("mail.inappnotifications.refreshInterval", 21600000);
 
 // Disables all filtering of in-app notifications, useful for testing.
 pref("mail.inappnotifications.bypass-filtering", false);
+
+// Whether Yahoo/AOL/ATT OAuth user is detected.
+// Used to notify about upcoming changes via in-app notification.
+// TODO: Remove this when PKCE is fully rolled out for Yahoo/AOL/AT&T
+pref("mail.inappnotifications.pkceUpgradeForYahooAol", false);
 
 #ifdef NIGHTLY_BUILD
 // Enable the new experimental conversation view based on Gloda.

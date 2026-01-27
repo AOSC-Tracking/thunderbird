@@ -567,9 +567,11 @@ function toSanitize() {
  * @param {string} aPaneID - ID of prefpane to select automatically.
  * @param {string} aScrollPaneTo - ID of the element to scroll into view.
  * @param {*} aOtherArgs - Other prefpane specific arguments
+ * @returns {Promise} - A Promise which resolves with the window object of the
+ *   preferences page, once loaded.
  */
 function openOptionsDialog(aPaneID, aScrollPaneTo, aOtherArgs) {
-  openPreferencesTab(aPaneID, aScrollPaneTo, aOtherArgs);
+  return openPreferencesTab(aPaneID, aScrollPaneTo, aOtherArgs);
 }
 
 function openAddonsMgr(aView) {
@@ -994,12 +996,6 @@ class FlavorDataProvider {
     destFile.append(attachment.name.replace(/(.{74}).*(.{10})$/u, "$1...$2"));
     destFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
     data.value = destFile.QueryInterface(Ci.nsISupports);
-
-    if (AppConstants.platform == "macosx") {
-      // Workaround dnd of multiple attachments creating duplicates.
-      // See bug 1494588.
-      transferable.removeDataFlavor("application/x-moz-file-promise");
-    }
 
     // `saveToFile` is async. We call it in a fire-and-forget manner here
     // so we can return while it runs in the background.

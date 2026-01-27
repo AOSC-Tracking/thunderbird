@@ -27,6 +27,7 @@ export class MessageSend {
   QueryInterface = ChromeUtils.generateQI([
     "nsIMsgSend",
     "nsIWebProgressListener",
+    "nsISupportsWeakReference",
   ]);
   classID = Components.ID("{028b9c1e-8d0a-4518-80c2-842e07846eaa}");
 
@@ -487,9 +488,7 @@ export class MessageSend {
 
             progress.openProgressDialog(
               this._parentWindow,
-              this._sendProgress.msgWindow,
               "chrome://messenger/content/messengercompose/sendProgress.xhtml",
-              false,
               composeParams
             );
 

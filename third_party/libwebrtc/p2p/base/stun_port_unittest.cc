@@ -22,6 +22,7 @@
 #include "absl/strings/string_view.h"
 #include "api/candidate.h"
 #include "api/environment/environment_factory.h"
+#include "api/field_trials.h"
 #include "api/field_trials_view.h"
 #include "api/packet_socket_factory.h"
 #include "api/test/mock_async_dns_resolver.h"
@@ -56,11 +57,12 @@
 #include "rtc_base/thread.h"
 #include "rtc_base/virtual_socket_server.h"
 #include "system_wrappers/include/metrics.h"
+#include "test/create_test_field_trials.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
-#include "test/scoped_key_value_config.h"
 #include "test/wait_until.h"
 
+namespace webrtc {
 namespace {
 
 using ::testing::_;
@@ -70,10 +72,6 @@ using ::testing::IsTrue;
 using ::testing::Return;
 using ::testing::ReturnPointee;
 using ::testing::SetArgPointee;
-using ::webrtc::CreateEnvironment;
-using ::webrtc::IceCandidateType;
-using ::webrtc::ServerAddresses;
-using ::webrtc::SocketAddress;
 
 const SocketAddress kPrivateIP("192.168.1.12", 0);
 const SocketAddress kMsdnAddress("unittest-mdns-host-name.local", 0);
@@ -94,14 +92,12 @@ const SocketAddress kValidHostnameAddr("valid-hostname", 5000);
 const SocketAddress kBadHostnameAddr("not-a-real-hostname", 5000);
 // STUN timeout (with all retries) is webrtc::STUN_TOTAL_TIMEOUT.
 // Add some margin of error for slow bots.
-const int kTimeoutMs = webrtc::STUN_TOTAL_TIMEOUT;
+constexpr int kTimeoutMs = webrtc::STUN_TOTAL_TIMEOUT;
 // stun prio = 100 (srflx) << 24 | 30 (IPv4) << 8 | 256 - 1 (component)
-const uint32_t kStunCandidatePriority = (100 << 24) | (30 << 8) | (256 - 1);
+constexpr uint32_t kStunCandidatePriority = (100 << 24) | (30 << 8) | (256 - 1);
 // stun prio = 100 (srflx) << 24 | 40 (IPv6) << 8 | 256 - 1 (component)
-const uint32_t kIPv6StunCandidatePriority = (100 << 24) | (40 << 8) | (256 - 1);
-const int kInfiniteLifetime = -1;
-const int kHighCostPortKeepaliveLifetimeMs = 2 * 60 * 1000;
-
+constexpr uint32_t kIPv6StunCandidatePriority =
+    (100 << 24) | (40 << 8) | (256 - 1);
 constexpr uint64_t kTiebreakerDefault = 44444;
 
 struct IPAddressTypeTestConfig {
@@ -157,8 +153,7 @@ class StunPortTestBase : public ::testing::Test, public sigslot::has_slots<> {
         nat_server_(CreateNatServer(nat_server_address, webrtc::NAT_OPEN_CONE)),
         done_(false),
         error_(false),
-        stun_keepalive_delay_(1),
-        stun_keepalive_lifetime_(-1) {
+        stun_keepalive_delay_(1) {
     network_ = MakeNetwork(address);
     RTC_CHECK(address.family() == nat_server_address.family());
     for (const auto& addr : stun_server_addresses) {
@@ -211,16 +206,18 @@ class StunPortTestBase : public ::testing::Test, public sigslot::has_slots<> {
         0, 0, stun_servers, std::nullopt);
     stun_port_->SetIceTiebreaker(kTiebreakerDefault);
     stun_port_->set_stun_keepalive_delay(stun_keepalive_delay_);
-    // If `stun_keepalive_lifetime_` is negative, let the stun port
-    // choose its lifetime from the network type.
-    if (stun_keepalive_lifetime_ >= 0) {
-      stun_port_->set_stun_keepalive_lifetime(stun_keepalive_lifetime_);
+    // If `stun_keepalive_lifetime_` is not set, let the stun port choose its
+    // lifetime from the network type.
+    if (stun_keepalive_lifetime_.has_value()) {
+      stun_port_->set_stun_keepalive_lifetime(*stun_keepalive_lifetime_);
     }
     stun_port_->SignalPortComplete.connect(this,
                                            &StunPortTestBase::OnPortComplete);
     stun_port_->SignalPortError.connect(this, &StunPortTestBase::OnPortError);
-    stun_port_->SignalCandidateError.connect(
-        this, &StunPortTestBase::OnCandidateError);
+    stun_port_->SubscribeCandidateError(
+        [this](Port* port, const IceCandidateErrorEvent& event) {
+          OnCandidateError(port, event);
+        });
   }
 
   void CreateSharedUdpPort(
@@ -276,11 +273,6 @@ class StunPortTestBase : public ::testing::Test, public sigslot::has_slots<> {
   }
 
  protected:
-  static void SetUpTestSuite() {
-    // Ensure the RNG is inited.
-    webrtc::InitRandom(nullptr, 0);
-  }
-
   void OnPortComplete(webrtc::Port* /* port */) {
     ASSERT_FALSE(done_);
     done_ = true;
@@ -296,7 +288,7 @@ class StunPortTestBase : public ::testing::Test, public sigslot::has_slots<> {
   }
   void SetKeepaliveDelay(int delay) { stun_keepalive_delay_ = delay; }
 
-  void SetKeepaliveLifetime(int lifetime) {
+  void SetKeepaliveLifetime(TimeDelta lifetime) {
     stun_keepalive_lifetime_ = lifetime;
   }
 
@@ -328,7 +320,7 @@ class StunPortTestBase : public ::testing::Test, public sigslot::has_slots<> {
   bool done_;
   bool error_;
   int stun_keepalive_delay_;
-  int stun_keepalive_lifetime_;
+  std::optional<TimeDelta> stun_keepalive_lifetime_;
 
  protected:
   webrtc::IceCandidateErrorEvent error_event_;
@@ -459,7 +451,7 @@ TEST_F(StunPortWithMockDnsResolverTest, TestPrepareAddressHostname) {
 
 TEST_F(StunPortWithMockDnsResolverTest,
        TestPrepareAddressHostnameWithPriorityAdjustment) {
-  webrtc::test::ScopedKeyValueConfig field_trials(
+  FieldTrials field_trials = CreateTestFieldTrials(
       "WebRTC-IncreaseIceCandidatePriorityHostSrflx/Enabled/");
   SetDnsResolverExpectations(
       [](webrtc::MockAsyncDnsResolver* resolver,
@@ -474,7 +466,7 @@ TEST_F(StunPortWithMockDnsResolverTest,
         EXPECT_CALL(*resolver_result, GetResolvedAddress(AF_INET, _))
             .WillOnce(DoAll(SetArgPointee<1>(kStunServerAddr1), Return(true)));
       });
-  CreateStunPort(kValidHostnameAddr);
+  CreateStunPort(kValidHostnameAddr, &field_trials);
   PrepareAddress();
   EXPECT_THAT(
       webrtc::WaitUntil([&] { return done(); }, IsTrue(),
@@ -657,43 +649,41 @@ TEST_F(StunPortTest, TestTwoCandidatesWithTwoStunServersAcrossNat) {
 // type on a STUN port. Also test that it will be updated if the network type
 // changes.
 TEST_F(StunPortTest, TestStunPortGetStunKeepaliveLifetime) {
-  // Lifetime for the default (unknown) network type is `kInfiniteLifetime`.
+  // Lifetime for the default (unknown) network type is infinite.
   CreateStunPort(kStunServerAddr1);
-  EXPECT_EQ(kInfiniteLifetime, port()->stun_keepalive_lifetime());
-  // Lifetime for the cellular network is `kHighCostPortKeepaliveLifetimeMs`
+  EXPECT_EQ(port()->stun_keepalive_lifetime(), TimeDelta::PlusInfinity());
+  // Lifetime for the cellular network is `kHighCostPortKeepaliveLifetime`
   SetNetworkType(webrtc::ADAPTER_TYPE_CELLULAR);
-  EXPECT_EQ(kHighCostPortKeepaliveLifetimeMs,
-            port()->stun_keepalive_lifetime());
+  EXPECT_EQ(port()->stun_keepalive_lifetime(), kHighCostPortKeepaliveLifetime);
 
-  // Lifetime for the wifi network is `kInfiniteLifetime`.
+  // Lifetime for the wifi network is infinite.
   SetNetworkType(webrtc::ADAPTER_TYPE_WIFI);
   CreateStunPort(kStunServerAddr2);
-  EXPECT_EQ(kInfiniteLifetime, port()->stun_keepalive_lifetime());
+  EXPECT_EQ(port()->stun_keepalive_lifetime(), TimeDelta::PlusInfinity());
 }
 
 // Test that the stun_keepalive_lifetime is set correctly based on the network
 // type on a shared STUN port (UDPPort). Also test that it will be updated
 // if the network type changes.
 TEST_F(StunPortTest, TestUdpPortGetStunKeepaliveLifetime) {
-  // Lifetime for the default (unknown) network type is `kInfiniteLifetime`.
+  // Lifetime for the default (unknown) network type is infinite.
   CreateSharedUdpPort(kStunServerAddr1, nullptr);
-  EXPECT_EQ(kInfiniteLifetime, port()->stun_keepalive_lifetime());
-  // Lifetime for the cellular network is `kHighCostPortKeepaliveLifetimeMs`.
+  EXPECT_EQ(port()->stun_keepalive_lifetime(), TimeDelta::PlusInfinity());
+  // Lifetime for the cellular network is `kHighCostPortKeepaliveLifetime`.
   SetNetworkType(webrtc::ADAPTER_TYPE_CELLULAR);
-  EXPECT_EQ(kHighCostPortKeepaliveLifetimeMs,
-            port()->stun_keepalive_lifetime());
+  EXPECT_EQ(port()->stun_keepalive_lifetime(), kHighCostPortKeepaliveLifetime);
 
-  // Lifetime for the wifi network type is `kInfiniteLifetime`.
+  // Lifetime for the wifi network type is infinite.
   SetNetworkType(webrtc::ADAPTER_TYPE_WIFI);
   CreateSharedUdpPort(kStunServerAddr2, nullptr);
-  EXPECT_EQ(kInfiniteLifetime, port()->stun_keepalive_lifetime());
+  EXPECT_EQ(port()->stun_keepalive_lifetime(), TimeDelta::PlusInfinity());
 }
 
 // Test that STUN binding requests will be stopped shortly if the keep-alive
 // lifetime is short.
 TEST_F(StunPortTest, TestStunBindingRequestShortLifetime) {
   SetKeepaliveDelay(101);
-  SetKeepaliveLifetime(100);
+  SetKeepaliveLifetime(TimeDelta::Millis(100));
   CreateStunPort(kStunServerAddr1);
   PrepareAddress();
   EXPECT_THAT(
@@ -764,10 +754,10 @@ TEST_P(StunPortIPAddressTypeMetricsTest, TestIPAddressTypeMetrics) {
 }
 
 const IPAddressTypeTestConfig kAllIPAddressTypeTestConfigs[] = {
-    {"127.0.0.1", webrtc::IPAddressType::kLoopback},
-    {"localhost", webrtc::IPAddressType::kLoopback},
-    {"10.0.0.3", webrtc::IPAddressType::kPrivate},
-    {"1.1.1.1", webrtc::IPAddressType::kPublic},
+    {.address = "127.0.0.1", .address_type = webrtc::IPAddressType::kLoopback},
+    {.address = "localhost", .address_type = webrtc::IPAddressType::kLoopback},
+    {.address = "10.0.0.3", .address_type = webrtc::IPAddressType::kPrivate},
+    {.address = "1.1.1.1", .address_type = webrtc::IPAddressType::kPublic},
 };
 
 INSTANTIATE_TEST_SUITE_P(All,
@@ -972,7 +962,7 @@ TEST_F(StunIPv6PortTestWithMockDnsResolver, TestPrepareAddressHostname) {
 // Same as before but with a field trial that changes the priority.
 TEST_F(StunIPv6PortTestWithMockDnsResolver,
        TestPrepareAddressHostnameWithPriorityAdjustment) {
-  webrtc::test::ScopedKeyValueConfig field_trials(
+  FieldTrials field_trials = CreateTestFieldTrials(
       "WebRTC-IncreaseIceCandidatePriorityHostSrflx/Enabled/");
   SetDnsResolverExpectations(
       [](webrtc::MockAsyncDnsResolver* resolver,
@@ -1023,9 +1013,11 @@ TEST_P(StunIPv6PortIPAddressTypeMetricsTest, TestIPAddressTypeMetrics) {
 }
 
 const IPAddressTypeTestConfig kAllIPv6AddressTypeTestConfigs[] = {
-    {"::1", webrtc::IPAddressType::kLoopback},
-    {"fd00:4860:4860::8844", webrtc::IPAddressType::kPrivate},
-    {"2001:4860:4860::8888", webrtc::IPAddressType::kPublic},
+    {.address = "::1", .address_type = webrtc::IPAddressType::kLoopback},
+    {.address = "fd00:4860:4860::8844",
+     .address_type = webrtc::IPAddressType::kPrivate},
+    {.address = "2001:4860:4860::8888",
+     .address_type = webrtc::IPAddressType::kPublic},
 };
 
 INSTANTIATE_TEST_SUITE_P(All,
@@ -1033,3 +1025,4 @@ INSTANTIATE_TEST_SUITE_P(All,
                          ::testing::ValuesIn(kAllIPv6AddressTypeTestConfigs));
 
 }  // namespace
+}  // namespace webrtc

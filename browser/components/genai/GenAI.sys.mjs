@@ -108,6 +108,12 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "sidebarTools",
   "sidebar.main.tools"
 );
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "shortcutMouseoverCount",
+  "browser.ml.chat.shortcut.onboardingMouseoverCount",
+  0
+);
 
 export const GenAI = {
   // Cache of potentially localized prompt
@@ -131,6 +137,7 @@ export const GenAI = {
         linksId: "genai-settings-chat-claude-links",
         maxLength: 14150,
         name: "Anthropic Claude",
+        supportAutoSubmit: true,
         tooltipId: "genai-onboarding-claude-tooltip",
       },
     ],
@@ -144,6 +151,7 @@ export const GenAI = {
         linksId: "genai-settings-chat-chatgpt-links",
         maxLength: 9350,
         name: "ChatGPT",
+        supportAutoSubmit: true,
         tooltipId: "genai-onboarding-chatgpt-tooltip",
       },
     ],
@@ -446,12 +454,8 @@ export const GenAI = {
       return mozMessageBarEl;
     };
 
-    // Detect hover to build and open the popup
-    aiActionButton.addEventListener("mouseover", async () => {
-      if (chatShortcutsOptionsPanel.state != "closed") {
-        return;
-      }
-
+    // build the ask popup
+    const buildPopup = async () => {
       aiActionButton.setAttribute("type", buttonActiveState);
       const vbox = chatShortcutsOptionsPanel.querySelector("vbox");
       vbox.innerHTML = "";
@@ -549,6 +553,35 @@ export const GenAI = {
         provider: this.getProviderId(),
         warning: showWarning,
       });
+    };
+
+    // ask popup shows on mouseover only in the first two times
+    const hasMouseoverOnPopup = () => {
+      const mouseoverCounter = lazy.shortcutMouseoverCount;
+      const maxMouseoverCount = 2;
+
+      if (mouseoverCounter >= maxMouseoverCount) {
+        return;
+      }
+
+      if (chatShortcutsOptionsPanel.state == "closed") {
+        Services.prefs.setIntPref(
+          "browser.ml.chat.shortcut.onboardingMouseoverCount",
+          mouseoverCounter + 1
+        );
+        buildPopup();
+      }
+    };
+
+    aiActionButton.addEventListener("mouseover", hasMouseoverOnPopup);
+
+    // Detect click to build and toggle the popup
+    aiActionButton.addEventListener("click", async () => {
+      if (chatShortcutsOptionsPanel.state != "closed") {
+        chatShortcutsOptionsPanel.hidePopup();
+        return;
+      }
+      buildPopup();
     });
   },
 
@@ -1024,6 +1057,91 @@ export const GenAI = {
   },
 
   /**
+   * Set up automatic prompt submission for ChatGPT and Claude
+   *
+   * @param {Browser} browser - current browser
+   * @param {string} prompt - prompt text
+   * @param {object} context of how the prompt should be handled
+   */
+  setupAutoSubmit(browser, prompt, context) {
+    const sendAutoSubmit = (br, promptText) => {
+      const wgp = br.browsingContext?.currentWindowGlobal;
+      const actor = wgp?.getActor("GenAI");
+      if (!actor) {
+        return;
+      }
+
+      try {
+        actor.sendAsyncMessage("AutoSubmit", {
+          promptText,
+        });
+      } catch (e) {
+        console.error("error message: ", e);
+      }
+    };
+
+    if (lazy.chatSidebar) {
+      const injector = {
+        async onStateChange(_wp, _req, flags) {
+          const stopDoc =
+            flags & Ci.nsIWebProgressListener.STATE_STOP &&
+            flags & Ci.nsIWebProgressListener.STATE_IS_DOCUMENT;
+          if (!stopDoc) {
+            return;
+          }
+
+          const wgp = browser.browsingContext?.currentWindowGlobal;
+          if (!wgp || wgp.isInitialDocument) {
+            return;
+          }
+
+          try {
+            browser.webProgress?.removeProgressListener(injector);
+          } catch {}
+          await sendAutoSubmit(browser, prompt);
+        },
+        QueryInterface: ChromeUtils.generateQI([
+          "nsIWebProgressListener",
+          "nsISupportsWeakReference",
+        ]),
+      };
+
+      browser.webProgress?.addProgressListener(
+        injector,
+        Ci.nsIWebProgress.NOTIFY_STATE_DOCUMENT
+      );
+    } else {
+      // Tab mode:
+      const gBrowser = context.window.gBrowser;
+      const targetBrowser = browser;
+
+      const tabListener = {
+        async onLocationChange(br, _wp, _req, location) {
+          if (br !== targetBrowser) {
+            return;
+          }
+
+          const spec = location?.spec || "";
+          if (spec === "about:blank") {
+            return;
+          }
+
+          try {
+            gBrowser.removeTabsProgressListener(tabListener);
+          } catch {}
+          await sendAutoSubmit(browser, prompt);
+        },
+        QueryInterface: ChromeUtils.generateQI([
+          "nsIwebProgressListener",
+          "nsISupportsWeakReference",
+        ]),
+      };
+
+      gBrowser.addTabsProgressListener(tabListener);
+    }
+  },
+
+  /**
    * Handle selected prompt by opening tab or sidebar.
    *
    * @param {object} promptObj to convert to string
@@ -1077,8 +1195,11 @@ export const GenAI = {
     const prompt = this.buildChatPrompt(promptObj, context);
 
     // Pass the prompt via GET url ?q= param or request header
-    const { header, queryParam = "q" } =
-      this.chatProviders.get(lazy.chatProvider) ?? {};
+    const {
+      header,
+      queryParam = "q",
+      supportAutoSubmit,
+    } = this.chatProviders.get(lazy.chatProvider) ?? {};
     const url = new URL(lazy.chatProvider);
     const options = {
       inBackground: false,
@@ -1120,8 +1241,15 @@ export const GenAI = {
     } else {
       browser = context.window.gBrowser.addTab("", options).linkedBrowser;
     }
-
     browser.fixupAndLoadURIString(url, options);
+
+    // Run autosubmit only for chatGPT, Claude, or mochitest
+    if (
+      supportAutoSubmit ||
+      lazy.chatProvider?.includes("file_chat-autosubmit.html")
+    ) {
+      this.setupAutoSubmit(browser, prompt, context);
+    }
   },
 };
 

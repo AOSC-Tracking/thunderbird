@@ -23,6 +23,7 @@ add_setup(async function () {
   subview = tab.browser.contentWindow.document.querySelector(
     "email-manual-incoming-form"
   );
+  EventUtils.synthesizeMouseAtCenter(subview, {}, browser.contentWindow);
 
   registerCleanupFunction(() => {
     tabmail.closeOtherTabs(tabmail.tabInfo[0]);
@@ -61,9 +62,12 @@ add_task(async function test_switchBetweenIMAPAndEWS() {
     false,
     () => usernameField.value == "test@example.com"
   );
+
   let focusEvent = BrowserTestUtils.waitForEvent(usernameField, "focus");
   EventUtils.synthesizeMouseAtCenter(usernameField, {}, browser.contentWindow);
   await focusEvent;
+
+  info("Typing username...");
   EventUtils.sendString("test@example.com", browser.contentWindow);
   let { detail: configUpdatedEvent } = await configUpdatedEventPromise;
 
@@ -183,6 +187,60 @@ add_task(async function test_getEWSConfig() {
     state.config.incoming.ewsURL,
     "https://example.com/",
     "Should include EWS url"
+  );
+
+  subview.resetState();
+});
+
+add_task(async function test_settingStateLeavesConfigIntact() {
+  const config = new AccountConfig();
+  config.incoming.type = "imap";
+  subview.setState(config);
+
+  const protocolSelector = subview.querySelector("#incomingProtocol");
+
+  Assert.equal(
+    protocolSelector.value,
+    "1",
+    "IMAP should be the selected protocol"
+  );
+
+  info("Switch to EWS");
+  const configUpdatedEventPromise = BrowserTestUtils.waitForEvent(
+    subview,
+    "config-updated"
+  );
+  protocolSelector.openMenu(true);
+  await BrowserTestUtils.waitForPopupEvent(protocolSelector.menupopup, "shown");
+  protocolSelector.menupopup.activateItem(
+    protocolSelector.querySelector("#incomingProtocolEWS")
+  );
+  await BrowserTestUtils.waitForPopupEvent(
+    protocolSelector.menupopup,
+    "hidden"
+  );
+  const { detail: configUpdatedEvent } = await configUpdatedEventPromise;
+
+  Assert.ok(!configUpdatedEvent.completed, "Config should be incomplete");
+
+  const updatedConfig = subview.captureState();
+  Assert.equal(
+    updatedConfig.config.incoming.type,
+    "ews",
+    "Should have EWS in the new config"
+  );
+  Assert.equal(
+    config.incoming.type,
+    "imap",
+    "Initial config should still be for IMAP"
+  );
+
+  subview.setState(config);
+
+  Assert.equal(
+    protocolSelector.value,
+    "1",
+    "Setting the state again should select IMAP again"
   );
 
   subview.resetState();

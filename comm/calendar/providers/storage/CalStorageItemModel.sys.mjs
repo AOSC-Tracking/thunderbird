@@ -9,6 +9,13 @@ import { CalReadableStreamFactory } from "resource:///modules/CalReadableStreamF
 import { CalStorageModelBase } from "resource:///modules/calendar/CalStorageModelBase.sys.mjs";
 
 const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
 
 ChromeUtils.defineESModuleGetters(lazy, {
   CalAlarm: "resource:///modules/CalAlarm.sys.mjs",
@@ -63,7 +70,9 @@ export class CalStorageItemModel extends CalStorageModelBase {
    * @param {calIItemBase} oldItem - The previous version of the item.
    */
   async updateItem(item, oldItem) {
-    cal.ASSERT(!item.recurrenceId, "no parent item passed!", true);
+    if (item.recurrenceId) {
+      throw new Error("Updated item should not have recurrenceId");
+    }
     await this.deleteItemById(oldItem.id, true);
     await this.addItem(item);
   }
@@ -531,7 +540,7 @@ export class CalStorageItemModel extends CalStorageModelBase {
           item.addAttendee(attendee);
         }
       } else {
-        cal.WARN(
+        lazy.log.warn(
           "[calStorageCalendar] Skipping invalid attendee for item '" +
             item.title +
             "' (" +
@@ -785,7 +794,7 @@ export class CalStorageItemModel extends CalStorageModelBase {
               item.addAttendee(attendee);
             }
           } else {
-            cal.WARN(
+            lazy.log.warn(
               `[calStorageCalendar] Skipping invalid attendee for item '${item.title}' (${item.id}).`
             );
           }

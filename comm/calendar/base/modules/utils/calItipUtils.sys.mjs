@@ -21,6 +21,13 @@ ChromeUtils.defineESModuleGetters(lazy, {
   CalRelation: "resource:///modules/CalRelation.sys.mjs",
   cal: "resource:///modules/calendar/calUtils.sys.mjs",
 });
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
 ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
 
 export var itip = {
@@ -212,7 +219,7 @@ export var itip = {
       // Fall back to using the one from the itipItem's ICS.
       imipMethod = itipItem.receivedMethod;
     }
-    lazy.cal.LOG("iTIP method: " + imipMethod);
+    lazy.log.debug("iTIP method: " + imipMethod);
 
     const isWritableCalendar = function (aCalendar) {
       /* TODO: missing ACL check for existing items (require callback API) */
@@ -287,7 +294,7 @@ export var itip = {
       case "DECLINECOUNTER":
         return lazy.cal.l10n.getLtnString("imipBarDeclineCounterText");
       default: {
-        lazy.cal.ERROR("Unknown iTIP method: " + method);
+        lazy.log.error("Unknown iTIP method: " + method);
         const appName = lazy.cal.l10n.getAnyString("branding", "brand", "brandShortName");
         return lazy.cal.l10n.getLtnString("imipBarUnsupportedText2", [appName]);
       }
@@ -390,7 +397,7 @@ export var itip = {
         data.label = lazy.cal.l10n.getLtnString("imipBarDeclineCounterText");
       }
     } else if (Components.isSuccessCode(rc)) {
-      lazy.cal.LOG("iTIP options on: " + actionFunc.method);
+      lazy.log.debug("iTIP options on: " + actionFunc.method);
       switch (actionFunc.method) {
         case "PUBLISH:UPDATE":
         case "REQUEST:UPDATE-MINOR":
@@ -515,7 +522,7 @@ export var itip = {
     );
     const addresses = compFields.splitRecipients(author, true);
     if (addresses.length != 1) {
-      lazy.cal.LOG("No unique email address for lookup in message.\r\n" + lazy.cal.STACK(20));
+      lazy.log.debug("No unique email address for lookup in message.");
     }
     return addresses[0] || null;
   },
@@ -688,14 +695,14 @@ export var itip = {
                       }
                     );
                   } catch (e) {
-                    lazy.cal.ERROR(e);
+                    lazy.log.error(e);
                     status = false;
                   }
                 } else {
                   status = false;
                 }
                 if (!status) {
-                  lazy.cal.ERROR("Failed to send DECLINECOUNTER reply!");
+                  lazy.log.error("Failed to send DECLINECOUNTER reply!");
                 }
               });
             }
@@ -773,9 +780,9 @@ export var itip = {
               resetButtons: true,
             });
             if (proposingAttendee) {
-              lazy.cal.LOG(parsedProposal.result.descr);
+              lazy.log.debug(parsedProposal.result.descr);
             } else {
-              lazy.cal.LOG("Failed to identify the sending attendee of the counterproposal.");
+              lazy.log.debug("Failed to identify the sending attendee of the counterproposal.");
             }
 
             return false;
@@ -1110,8 +1117,8 @@ export var itip = {
       // XXX todo: there's still the bug that modifyItem is called with mixed occurrence/parent,
       //           find original occurrence
       oldItem = oldItem.recurrenceInfo.getOccurrenceFor(newItem.recurrenceId);
-      lazy.cal.ASSERT(oldItem, "unexpected!");
       if (!oldItem) {
+        lazy.log.warn(`Could not get occurrence for recurrenceId=${newItem.recurrenceId}`);
         return newItem;
       }
     }
@@ -1366,7 +1373,7 @@ export var itip = {
         }
       });
     } else {
-      lazy.cal.WARN("No unique email address for lookup!");
+      lazy.log.warn("No unique email address for lookup!");
     }
     return attendees;
   },
@@ -1405,7 +1412,8 @@ export var itip = {
   },
 };
 
-/** local to this module file
+/**
+ * local to this module file
  * Sets the received info either on the passed attendee or item object.
  *
  * @param {calIItemBase|calIAttendee} item - The item to set info on
@@ -1426,7 +1434,8 @@ function setReceivedInfo(item, itipItemItem) {
   }
 }
 
-/** local to this module file
+/**
+ * local to this module file
  * Takes over relevant item information from iTIP item and sets received info.
  *
  * @param {calIItemBase} item - The stored calendar item to update
@@ -1462,7 +1471,6 @@ function updateItem(item, itipItemItem) {
     // keep care of installing all overridden items, and mind existing alarms, categories:
     for (const rid of recInfo.getExceptionIds()) {
       const excItem = recInfo.getExceptionFor(rid).clone();
-      lazy.cal.ASSERT(excItem, "unexpected!");
       const newExc = newItem.recurrenceInfo.getOccurrenceFor(rid).clone();
       newExc.icalComponent = excItem.icalComponent;
       setReceivedInfo(newExc, itipItemItem);
@@ -1477,7 +1485,8 @@ function updateItem(item, itipItemItem) {
   return newItem;
 }
 
-/** local to this module file
+/**
+ * local to this module file
  * Copies the provider-specified properties from the itip item to the passed
  * item. Special case property "METHOD" uses the itipItem's receivedMethod.
  *
@@ -1499,7 +1508,8 @@ function copyProviderProperties(itipItem, itipItemItem, item) {
   }
 }
 
-/** local to this module file
+/**
+ * local to this module file
  * Sends an iTIP message using the passed item's calendar transport.
  *
  * @param {calIEvent} aItem - item to be sent
@@ -1518,7 +1528,8 @@ function sendMessage(aItem, aMethod, aRecipientsList, autoResponse) {
   ).send(itip.getImipTransport(aItem));
 }
 
-/** local to this module file
+/**
+ * local to this module file
  * An operation listener that is used on calendar operations which checks and sends further iTIP
  * messages based on the calendar action.
  *
@@ -1541,9 +1552,10 @@ ItipOpListener.prototype = {
   mExtResponse: null,
 
   onOperationComplete(aCalendar, aStatus, aOperationType, aId, aDetail) {
-    lazy.cal.ASSERT(Components.isSuccessCode(aStatus), `iTIP processing failed: ${aDetail}`);
     if (Components.isSuccessCode(aStatus)) {
       itip.checkAndSend(aOperationType, aDetail, this.mOldItem, this.mExtResponse);
+    } else {
+      lazy.log.warn(`iTIP processing failed: ${aDetail}`);
     }
     if (this.mOpListener) {
       this.mOpListener.onOperationComplete(aCalendar, aStatus, aOperationType, aId, aDetail);
@@ -1552,7 +1564,8 @@ ItipOpListener.prototype = {
   onGetResult() {},
 };
 
-/** local to this module file
+/**
+ * local to this module file
  * Add a parameter SCHEDULE-AGENT=CLIENT to the item before it is
  * created or updated so that the providers knows scheduling will
  * be handled by the client.
@@ -1602,7 +1615,8 @@ var ItipItemFinderFactory = {
   },
 };
 
-/** local to this module file
+/**
+ * local to this module file
  * An operation listener triggered by cal.itip.processItipItem() for lookup of the sent iTIP item's UID.
  *
  * @param {string} aId - The search identifier for the item to find
@@ -1710,7 +1724,7 @@ ItipItemFinder.prototype = {
       this.mItipItem.targetCalendar = this.mFoundItems[0].calendar;
       this._observeChanges(this.mItipItem.targetCalendar);
 
-      lazy.cal.LOG("iTIP on " + method + ": found " + this.mFoundItems.length + " items.");
+      lazy.log.debug("iTIP on " + method + ": found " + this.mFoundItems.length + " items.");
       switch (method) {
         // XXX todo: there's still a potential flaw, if multiple PUBLISH/REPLY/REQUEST on
         //           occurrences happen at once; those lead to multiple
@@ -1745,7 +1759,9 @@ ItipItemFinder.prototype = {
                 case "REFRESH": {
                   // xxx todo test
                   const attendees = itipItemItem.getAttendees();
-                  lazy.cal.ASSERT(attendees.length == 1, "invalid number of attendees in REFRESH!");
+                  if (attendees.length != 1) {
+                    lazy.log.warn(`Should not have ${attendees.length} attendees in REFRESH`);
+                  }
                   if (attendees.length > 0) {
                     const action = function () {
                       if (!item.organizer) {
@@ -1767,10 +1783,11 @@ ItipItemFinder.prototype = {
                   break;
                 }
                 case "PUBLISH":
-                  lazy.cal.ASSERT(
-                    itipItemItem.getAttendees().length == 0,
-                    "invalid number of attendees in PUBLISH!"
-                  );
+                  if (itipItemItem.getAttendees().length != 0) {
+                    lazy.log.warn(
+                      `Should not have ${itipItemItem.getAttendees().length} attendees in PUBLISH`
+                    );
+                  }
                   if (
                     item.calendar.getProperty("itip.disableRevisionChecks") ||
                     itip.compare(itipItemItem, item) > 0
@@ -1923,16 +1940,17 @@ ItipItemFinder.prototype = {
                 case "REPLY": {
                   let attendees = itipItemItem.getAttendees();
                   if (method == "REPLY") {
-                    lazy.cal.ASSERT(attendees.length == 1, "invalid number of attendees in REPLY!");
+                    if (attendees.length != 1) {
+                      lazy.log.warn(`Should not have ${attendees.length} attendees in REPLY`);
+                    }
                   } else {
                     attendees = lazy.cal.itip.getAttendeesBySender(
                       attendees,
                       this.mItipItem.sender
                     );
-                    lazy.cal.ASSERT(
-                      attendees.length == 1,
-                      "ambiguous resolution of replying attendee in COUNTER!"
-                    );
+                    if (attendees.length != 1) {
+                      lazy.log.warn(`Should not have ${attendees.length} attendees in COUNTER`);
+                    }
                   }
                   // we get the attendee from the event stored in the calendar
                   let replyer = item.getAttendeeById(attendees[0].id);
@@ -2093,7 +2111,7 @@ ItipItemFinder.prototype = {
       }
     } else {
       // not found:
-      lazy.cal.LOG("iTIP on " + method + ": no existing items.");
+      lazy.log.debug("iTIP on " + method + ": no existing items.");
       // If the item was not found, observe the target calendar anyway.
       // It will likely be the composite calendar, so we should update
       // if an item was added or removed
@@ -2116,17 +2134,18 @@ ItipItemFinder.prototype = {
 
                 const att = itip.getInvitedAttendee(newItem);
                 if (!att) {
-                  lazy.cal.WARN(
+                  lazy.log.warn(
                     `Encountered item without invited attendee! id=${newItem.id}, method=${method} Exiting...`
                   );
                   return null;
                 }
                 att.participationStatus = partStat;
               } else {
-                lazy.cal.ASSERT(
-                  itipItemItem.getAttendees().length == 0,
-                  "invalid number of attendees in PUBLISH!"
-                );
+                if (itipItemItem.getAttendees().length != 0) {
+                  lazy.log.warn(
+                    `Should not have ${itipItemItem.getAttendees().length} attendees in PUBLISH`
+                  );
+                }
                 lazy.cal.alarms.setDefaultValues(newItem);
               }
 
@@ -2167,7 +2186,7 @@ ItipItemFinder.prototype = {
       }
     }
 
-    lazy.cal.LOG("iTIP operations: " + operations.length);
+    lazy.log.debug("iTIP operations: " + operations.length);
     let actionFunc = null;
     if (operations.length > 0) {
       actionFunc = function (opListener, partStat = null, extResponse = null) {
@@ -2175,7 +2194,7 @@ ItipItemFinder.prototype = {
           try {
             operation(opListener, partStat, extResponse);
           } catch (exc) {
-            lazy.cal.ERROR(exc);
+            lazy.log.error(exc);
           }
         }
       };

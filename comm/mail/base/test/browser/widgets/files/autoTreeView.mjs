@@ -61,14 +61,28 @@ class AutoTreeView extends TreeDataAdapter {
   constructor() {
     super();
     for (let i = 0; i < this.data.length; i++) {
-      this._rowMap.push(
-        new TreeDataRow(
-          this.data[i],
-          undefined,
-          this.data[i].continent == "antarctica" ? "uninhabited" : ""
-        )
-      );
+      const row = new TreeDataRow(this.data[i]);
+      row.addProperty(this.data[i].colour);
+      if (this.data[i].continent == "antarctica") {
+        row.addProperty("uninhabited");
+      }
+      this._rowMap.push(row);
     }
+    const australia = this._rowMap[3];
+    australia.children.push(
+      new TreeDataRow({ continent: "australian capital territory" })
+    );
+    australia.children.push(new TreeDataRow({ continent: "new south wales" }));
+    australia.children.push(
+      new TreeDataRow({ continent: "northern territory" })
+    );
+    australia.children.push(new TreeDataRow({ continent: "queensland" }));
+    australia.children.push(new TreeDataRow({ continent: "south australia" }));
+    australia.children.push(new TreeDataRow({ continent: "tasmania" }));
+    australia.children.push(new TreeDataRow({ continent: "victoria" }));
+    australia.children.push(
+      new TreeDataRow({ continent: "western australia" })
+    );
   }
 }
 
@@ -107,6 +121,10 @@ dwarf-header = Dwarf
   .title = Sort by Dwarf
 dwarf-menuitem =
   .label = Dwarf
+selected-header = Selected
+  .title = Selected
+selected-menuitem =
+  .label = Selected
 `,
     },
   ]),
@@ -125,6 +143,7 @@ tree.defaultColumns = [
     },
     width: 150,
     picker: false,
+    cellIcon: true,
   },
   {
     id: "continent",
@@ -133,6 +152,7 @@ tree.defaultColumns = [
       menuitem: "continent-menuitem",
       cell: "continent-cell",
     },
+    twisty: true,
   },
   {
     id: "sin",
@@ -148,6 +168,17 @@ tree.defaultColumns = [
     id: "dwarf",
     l10n: { header: "dwarf-header", menuitem: "dwarf-menuitem" },
     hidden: true,
+  },
+  {
+    id: "selected",
+    l10n: {
+      header: "selected-header",
+      menuitem: "selected-menuitem",
+    },
+    width: 40,
+    picker: false,
+    sortable: false,
+    checkbox: "test",
   },
 ];
 tree.view = new AutoTreeView();

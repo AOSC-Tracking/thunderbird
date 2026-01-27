@@ -131,7 +131,7 @@ static const std::string FormatEGLError(EGLint err) {
   }
 }
 
-MOZ_RUNINIT static RefPtr<GLContext> sSnapshotContext;
+MOZ_CONSTINIT static RefPtr<GLContext> sSnapshotContext;
 static StaticMutex sSnapshotContextMutex MOZ_UNANNOTATED;
 MOZ_RUNINIT static Atomic<int> gNewSurfaceUID(getpid());
 /* Memory reporter stuff */
@@ -554,7 +554,7 @@ void DMABufSurface::FenceWait() {
   }
 
   // syncFd is owned by GLFence so clear local reference to avoid double.
-  Unused << syncFd.release();
+  (void)syncFd.release();
 
   egl->fClientWaitSync(sync, 0, LOCAL_EGL_FOREVER);
   egl->fDestroySync(sync);
@@ -1209,14 +1209,16 @@ void DMABufSurfaceRGBA::ReleaseTextures() {
 #endif
   }
 
-  if (mTexture) {
+  const auto& gle = gl::GLContextEGL::Cast(mGL);
+  const auto& egl = gle->mEgl;
+
+  if (mTexture && mGL->MakeCurrent()) {
     mGL->fDeleteTextures(1, &mTexture);
     mTexture = 0;
   }
 
   if (mEGLImage != LOCAL_EGL_NO_IMAGE) {
-    const auto& gle = gl::GLContextEGL::Cast(mGL);
-    gle->mEgl->fDestroyImage(mEGLImage);
+    egl->fDestroyImage(mEGLImage);
     mEGLImage = LOCAL_EGL_NO_IMAGE;
   }
   mGL = nullptr;

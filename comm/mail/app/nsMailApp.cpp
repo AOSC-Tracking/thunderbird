@@ -55,7 +55,6 @@
 
 #ifdef MOZ_LINUX_32_SSE2_STARTUP_ERROR
 #  include <cpuid.h>
-#  include "mozilla/Unused.h"
 
 static bool IsSSE2Available() {
   // The rest of the app has been compiled to assume that SSE2 is present
@@ -215,6 +214,24 @@ static int do_main(int argc, char* argv[], char* envp[]) {
   //       TB doesn't have that file.
   const char* acceptableParams[] = {"compose", "mail", nullptr};
   EnsureCommandlineSafe(argc, argv, acceptableParams);
+
+#ifdef XP_WIN
+  //  Allow the user to raise the number of files that may be open
+  //  simultaneously by setting an environment variable.
+  const char* mozMaxstdio = getenv("MOZ_MAXSTDIO");
+  if (mozMaxstdio) {
+    int limit = atoi(mozMaxstdio);
+    int newLimit = -1;
+    if (limit >= 3 && limit <= 8192) {
+      newLimit = _setmaxstdio(limit);
+    }
+    if (newLimit != limit) {
+      Output(
+          "The open file limit could not be set from the MOZ_MAXSTDIO "
+          "environment variable.\n");
+    }
+  }
+#endif
 
   return gBootstrap->XRE_main(argc, argv, config);
 }

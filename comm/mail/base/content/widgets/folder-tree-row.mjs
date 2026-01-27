@@ -124,8 +124,16 @@ class FolderTreeRow extends HTMLLIElement {
         this.fullName = this._fullFolderName;
         break;
       case "both":
-        this.name = `${this._folderName} - ${this._serverName}`;
-        this.fullName = `${this._fullFolderName} - ${this._serverName}`;
+        {
+          const folderName = lazy.XULStoreUtils.isItemVisible(
+            "messenger",
+            "folderPaneFullPath"
+          )
+            ? this._fullFolderName
+            : this._folderName;
+          this.name = `${folderName} - ${this._serverName}`;
+          this.fullName = `${this._fullFolderName} - ${this._serverName}`;
+        }
         break;
     }
   }
@@ -423,7 +431,9 @@ class FolderTreeRow extends HTMLLIElement {
    */
   setFolderTypeFromFolder(folder) {
     const folderType = lazy.FolderUtils.getSpecialFolderString(folder);
-    if (folderType != "none") {
+    if (folderType == "none") {
+      delete this.dataset.folderType;
+    } else {
       this.dataset.folderType = folderType.toLowerCase();
     }
   }

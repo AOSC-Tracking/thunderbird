@@ -4,6 +4,15 @@
 
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
 
+const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
+
 function getRidKey(date) {
   if (!date) {
     return null;
@@ -340,7 +349,7 @@ CalRecurrenceInfo.prototype = {
           negMap[getRidKey(rdate)] = true;
         }
       } else {
-        cal.WARN(
+        lazy.log.warn(
           "Item '" +
             this.mBaseItem.title +
             "'" +
@@ -421,7 +430,7 @@ CalRecurrenceInfo.prototype = {
       // hangs", bail out after 100 runs. If this happens, it is most
       // likely a bug.
       if (bailCounter++ > 100) {
-        cal.ERROR("Could not find next occurrence after 100 runs!");
+        lazy.log.error("Could not find next occurrence after 100 runs!");
         return null;
       }
 
@@ -717,12 +726,14 @@ CalRecurrenceInfo.prototype = {
       anItem.parentItem.calendar != this.mBaseItem.calendar &&
       anItem.parentItem.id != this.mBaseItem.id
     ) {
-      cal.ERROR("recurrenceInfo::addException: item parentItem != this.mBaseItem (calendar/id)!");
+      lazy.log.error(
+        "recurrenceInfo::addException: item parentItem != this.mBaseItem (calendar/id)!"
+      );
       throw Components.Exception("", Cr.NS_ERROR_INVALID_ARG);
     }
 
     if (anItem.recurrenceId == null) {
-      cal.ERROR("recurrenceInfo::addException: item with null recurrenceId!");
+      lazy.log.error("recurrenceInfo::addException: item with null recurrenceId!");
       throw Components.Exception("", Cr.NS_ERROR_INVALID_ARG);
     }
 
@@ -772,7 +783,9 @@ CalRecurrenceInfo.prototype = {
   onStartDateChange(aNewStartTime, aOldStartTime) {
     // passing null for the new starttime would indicate an error condition,
     // since having a recurrence without a starttime is invalid.
-    cal.ASSERT(aNewStartTime, "invalid arg!", true);
+    if (!aNewStartTime) {
+      throw new Error("starttime is required");
+    }
 
     // no need to check for changes if there's no previous starttime.
     if (!aOldStartTime) {

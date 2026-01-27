@@ -3,8 +3,19 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
-
 import { CalReadableStreamFactory } from "resource:///modules/CalReadableStreamFactory.sys.mjs";
+
+const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
+ChromeUtils.defineESModuleGetters(lazy, {
+  ConnectionNotifications: "resource:///modules/ConnectionNotifications.sys.mjs",
+});
 
 // This is a non-sync ics file. It reads the file pointer to by uri when set,
 // then writes it on updates. External changes to the file will be
@@ -320,7 +331,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
       channel.asyncOpen(streamLoader);
     } catch (e) {
       // File not found: a new calendar. No problem.
-      cal.LOG("[calICSCalendar] Error occurred opening channel: " + e);
+      lazy.log.debug("[calICSCalendar] Error occurred opening channel: " + e);
       this.#unlock();
     }
   }
@@ -337,14 +348,24 @@ export class CalICSCalendar extends cal.provider.BaseClass {
   onStreamComplete(loader, ctxt, status, resultLength, result) {
     let cont = false;
 
+    const currentStatus = this.getProperty("currentStatus");
     if (Components.isSuccessCode(status)) {
+      if (currentStatus != Cr.NS_OK) {
+        this.setProperty("currentStatus", Cr.NS_OK);
+        lazy.ConnectionNotifications.connectionRestored(this.id);
+      }
       // Allow the hook to get needed data (like an etag) of the channel
       cont = this.#hooks.onAfterGet(loader.request);
-      cal.LOG("[calICSCalendar] Loading ICS succeeded, needs further processing: " + cont);
+      lazy.log.debug("[calICSCalendar] Loading ICS succeeded, needs further processing: " + cont);
     } else {
       // Failure may be due to temporary connection issue, keep old data to
       // prevent potential data loss if it becomes available again.
-      cal.LOG("[calICSCalendar] Unable to load stream - status: " + status);
+      lazy.log.warn(`[calICSCalendar] Unable to load stream - status: 0x${status.toString(16)}`);
+
+      if (currentStatus == Cr.NS_OK) {
+        lazy.ConnectionNotifications.connectionFailed(this.id, status, this.name, this.#uri.host);
+      }
+      this.notifyError(Ci.calIErrors.READ_FAILED, ""); // Sets currentStatus.
 
       // Check for bad server certificates on SSL/TLS connections.
       cal.provider.checkBadCertStatus(loader.request, status, this);
@@ -404,9 +425,9 @@ export class CalICSCalendar extends cal.provider.BaseClass {
           }
           self.#unmappedComponents = parser_.getComponents();
           self.#unmappedProperties = parser_.getProperties();
-          cal.LOG("[calICSCalendar] Parsing ICS succeeded for " + self.uri.spec);
+          lazy.log.debug("[calICSCalendar] Parsing ICS succeeded for " + self.uri.spec);
         } catch (exc) {
-          cal.LOG("[calICSCalendar] Parsing ICS failed for \nException: " + exc);
+          lazy.log.debug("[calICSCalendar] Parsing ICS failed for \nException: " + exc);
           self.#observer.onError(self.superCalendar, exc.result, exc.toString());
           self.#observer.onError(self.superCalendar, Ci.calIErrors.READ_FAILED, "");
         }
@@ -424,7 +445,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
   }
 
   async #writeICS() {
-    cal.LOG("[calICSCalendar] Commencing write of ICS Calendar " + this.name);
+    lazy.log.debug("[calICSCalendar] Commencing write of ICS Calendar " + this.name);
     if (!this.#uri) {
       throw Components.Exception("mUri must be set", Cr.NS_ERROR_FAILURE);
     }
@@ -506,7 +527,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
   }
 
   async #doWriteICS() {
-    cal.LOG("[calICSCalendar] Writing ICS File " + this.uri.spec);
+    lazy.log.debug("[calICSCalendar] Writing ICS File " + this.uri.spec);
 
     const serializer = Cc["@mozilla.org/calendar/ics-serializer;1"].createInstance(
       Ci.calIIcsSerializer
@@ -620,7 +641,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
     }
 
     if (httpChannel) {
-      cal.LOG("[calICSCalendar] channel.requestSucceeded: " + requestSucceeded);
+      lazy.log.debug("[calICSCalendar] channel.requestSucceeded: " + requestSucceeded);
     }
 
     if (
@@ -698,7 +719,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
       }
 
       if (refreshAction) {
-        cal.LOG(
+        lazy.log.debug(
           "[calICSCalendar] Refreshing " +
             this.name +
             (refreshAction.forceRefresh ? " (forced)" : "")
@@ -717,7 +738,9 @@ export class CalICSCalendar extends cal.provider.BaseClass {
   }
 
   #unlock(errCode) {
-    cal.ASSERT(this.#locked, "unexpected!");
+    if (!this.#locked) {
+      lazy.log.warn("Calendar already unlocked.");
+    }
 
     this.#modificationActions.forEach(action => {
       const listener = action.listener;
@@ -725,7 +748,10 @@ export class CalICSCalendar extends cal.provider.BaseClass {
         listener(action.item);
       } else if (listener) {
         const args = action.opCompleteArgs;
-        cal.ASSERT(args, "missing onOperationComplete call!");
+        // FIXME: dead code? opCompleteArgs doesn't seem like its ever set
+        if (!args) {
+          lazy.log.warn("opCompleteArgs missing");
+        }
         if (Components.isSuccessCode(args[1]) && errCode && !Components.isSuccessCode(errCode)) {
           listener.onOperationComplete(args[0], errCode, args[2], args[3], null);
         } else {
@@ -843,7 +869,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
       } catch (e) {
         // Backup dir wasn't found. Likely because we are running in
         // xpcshell. Don't die, but continue the upload.
-        cal.ERROR("[calICSCalendar] Backup failed, no backupdir:" + e);
+        lazy.log.error("[calICSCalendar] Backup failed, no backupdir:" + e);
         resolve();
         return;
       }
@@ -858,7 +884,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
       } catch (e) {
         // calendarmgr not found. Likely because we are running in
         // xpcshell. Don't die, but continue the upload.
-        cal.ERROR("[calICSCalendar] Backup failed, no calendarmanager:" + e);
+        lazy.log.error("[calICSCalendar] Backup failed, no calendarmanager:" + e);
         resolve();
         return;
       }
@@ -932,7 +958,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
       } catch (e) {
         // For local files, asyncOpen throws on new (calendar) files
         // No problem, go and upload something
-        cal.ERROR("[calICSCalendar] Backup failed in asyncOpen:" + e);
+        lazy.log.error("[calICSCalendar] Backup failed in asyncOpen:" + e);
         resolve();
       }
     });
@@ -1061,27 +1087,31 @@ class httpHooks {
     } catch (e) {
       // Error might have been a temporary connection issue, keep old data to
       // prevent potential data loss if it becomes available again.
-      cal.LOG("[calICSCalendar] Unable to get response status.");
+      lazy.log.debug("[calICSCalendar] Unable to get response status.");
       return false;
     }
 
     if (responseStatus == 304) {
       // 304: Not Modified
       // Can use the old data, so tell the caller that it can skip parsing.
-      cal.LOG("[calICSCalendar] Response status 304: Not Modified. Using the existing data.");
+      lazy.log.debug(
+        "[calICSCalendar] Response status 304: Not Modified. Using the existing data."
+      );
       return false;
     } else if (responseStatus == 404) {
       // 404: Not Found
       // This is a new calendar. Shouldn't try to parse it. But it also
       // isn't a failure, so don't throw.
-      cal.LOG("[calICSCalendar] Response status 404: Not Found. This is a new calendar.");
+      lazy.log.debug("[calICSCalendar] Response status 404: Not Found. This is a new calendar.");
       return false;
     } else if (responseStatus == 410) {
-      cal.LOG("[calICSCalendar] Response status 410, calendar is gone. Disabling the calendar.");
+      lazy.log.debug(
+        "[calICSCalendar] Response status 410, calendar is gone. Disabling the calendar."
+      );
       this.#calendar.setProperty("disabled", "true");
       return false;
     } else if (responseStatusCategory == 4 || responseStatusCategory == 5) {
-      cal.LOG(
+      lazy.log.debug(
         "[calICSCalendar] Response status " +
           responseStatus +
           ", temporarily disabling calendar for safety."
@@ -1144,7 +1174,7 @@ class httpHooks {
           const str = new TextDecoder().decode(Uint8Array.from(aResult));
           multistatus = cal.xml.parseString(str);
         } catch (ex) {
-          cal.LOG("[calICSCalendar] Failed to fetch channel etag");
+          lazy.log.debug("[calICSCalendar] Failed to fetch channel etag");
         }
 
         self.#etag = cal.xml.evalXPathFirst(

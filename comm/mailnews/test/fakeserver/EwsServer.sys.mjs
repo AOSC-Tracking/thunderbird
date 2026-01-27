@@ -209,6 +209,16 @@ const DELETE_FOLDER_RESPONSE_BASE = `${EWS_SOAP_HEAD}
   </DeleteFolderResponse>
   ${EWS_SOAP_FOOT}`;
 
+const EMPTY_FOLDER_RESPONSE_BASE = `${EWS_SOAP_HEAD}
+  <EmptyFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                   xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages>
+    </m:ResponseMessages>
+  </EmptyFolderResponse>
+  ${EWS_SOAP_FOOT}`;
+
 const MARK_ALL_ITEMS_AS_READ_RESPONSE_BASE = `${EWS_SOAP_HEAD}
   <m:MarkAllItemsAsReadResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -218,6 +228,21 @@ const MARK_ALL_ITEMS_AS_READ_RESPONSE_BASE = `${EWS_SOAP_HEAD}
     </m:ResponseMessages>
   </m:MarkAllItemsAsReadResponse>
   ${EWS_SOAP_FOOT}`;
+
+const SERVER_BUSY_RESPONSE = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body><s:Fault>
+    <faultcode xmlns:a="http://schemas.microsoft.com/exchange/services/2006/types">a:ErrorServerBusy</faultcode>
+    <faultstring xml:lang="en-US">The server cannot service this request right now. Try again later.</faultstring>
+    <detail>
+        <e:ResponseCode xmlns:e="http://schemas.microsoft.com/exchange/services/2006/errors">ErrorServerBusy</e:ResponseCode>
+        <e:Message xmlns:e="http://schemas.microsoft.com/exchange/services/2006/errors">The server cannot service this request right now. Try again later.</e:Message>
+        <t:MessageXml xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+          <t:Value Name="BackOffMilliseconds">100</t:Value>
+        </t:MessageXml>
+    </detail>
+  </s:Fault></s:Body>
+</s:Envelope>`;
 
 /**
  * A remote folder to sync from the EWS server. While initiating a test, an
@@ -315,6 +340,14 @@ export class EwsServer {
    * @type {integer}
    */
   maxSyncItems = Infinity;
+
+  /**
+   * The number of busy responses the server will send. Usually 0, but can be
+   * set to a positive integer to simulate handling of busy responses.
+   *
+   * @type {integer}
+   */
+  busyResponses = 0;
 
   /**
    * The folders registered on this EWS server.
@@ -722,7 +755,12 @@ export class EwsServer {
 
     // Generate a response based on the operation found in the request.
     let resBytes = "";
-    if (reqDoc.getElementsByTagName("SyncFolderHierarchy").length) {
+    if (this.busyResponses > 0) {
+      // Never mind, act like the server is busy
+      response.setStatusLine("1.1", 500, "ErrorServerBusy");
+      resBytes = SERVER_BUSY_RESPONSE;
+      this.busyResponses -= 1;
+    } else if (reqDoc.getElementsByTagName("SyncFolderHierarchy").length) {
       resBytes = this.#generateSyncFolderHierarchyResponse(reqDoc);
     } else if (reqDoc.getElementsByTagName("GetFolder").length) {
       resBytes = this.#generateGetFolderResponse(reqDoc);
@@ -750,6 +788,8 @@ export class EwsServer {
       resBytes = this.#generateMarkAsJunkResponse(reqDoc);
     } else if (reqDoc.getElementsByTagName("DeleteFolder").length) {
       resBytes = this.#generateDeleteFolderResponse(reqDoc);
+    } else if (reqDoc.getElementsByTagName("EmptyFolder").length) {
+      resBytes = this.#generateEmptyFolderResponse(reqDoc);
     } else if (reqDoc.getElementsByTagName("MarkAllItemsAsRead").length) {
       resBytes = this.#generateMarkAllItemsAsReadResponse(reqDoc);
     } else {
@@ -1617,6 +1657,91 @@ export class EwsServer {
   }
 
   /**
+   * Generate a response to an EmptyFolder operation.
+   *
+   * @see {@link https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/emptyfolder-operation#successful-emptyfolder-response}
+   * @param {XMLDocument} reqDoc - The parsed document for the request to respond to.
+   * @returns {string} A serialized XML document.
+   */
+  #generateEmptyFolderResponse(reqDoc) {
+    // Figure out which folder IDs (or distinguished IDs have been requested).
+    const requestedFolderIds = [
+      ...reqDoc.getElementsByTagName("FolderIds")[0].children,
+    ].map(c => c.getAttribute("Id"));
+
+    // Map the requested IDs to actual folders if we have them. A `null` folder
+    // in the resulting array means the folder couldn't be found on the server,
+    // and the relevant response message should reflect this.
+    const responseFolders = requestedFolderIds.map(id => {
+      // Try to match against a known distinguished ID.
+      if (this.#distinguishedIdToFolder.has(id)) {
+        return this.#distinguishedIdToFolder.get(id);
+      }
+
+      // If that failed, try to match against a known folder ID.=
+      if (this.#idToFolder.has(id)) {
+        return this.#idToFolder.get(id);
+      }
+
+      return null;
+    });
+
+    // Generate a base document for the response.
+    const resDoc = this.#parser.parseFromString(
+      EMPTY_FOLDER_RESPONSE_BASE,
+      "text/xml"
+    );
+
+    this.#setVersion(resDoc);
+
+    const resMsgsEl = resDoc.getElementsByTagName("m:ResponseMessages")[0];
+
+    // Add each folder to the response document.
+    responseFolders.forEach(folder => {
+      if (folder) {
+        // Mark the remote folder as deleted, so that this is represented in the
+        // next sync.
+        this.emptyRemoteFolderById(folder.id);
+
+        // Indicate that no error happened when retrieving this message.
+        const resCodeEl = resDoc.createElement("m:ResponseCode");
+        resCodeEl.appendChild(resDoc.createTextNode("NoError"));
+
+        // Build the m:DeleteFolderResponseMessage element, which is parent to
+        // m:ResponseCode.
+        const messageEl = resDoc.createElement("m:DeleteFolderResponseMessage");
+        messageEl.setAttribute("ResponseClass", "Success");
+        messageEl.appendChild(resCodeEl);
+
+        // Add the message to the document.
+        resMsgsEl.appendChild(messageEl);
+      } else {
+        // We couldn't find a folder with this ID, so format the response
+        // message as an `ErrorFolderNotFound` error.
+        const messageEl = resDoc.createElement("m:DeleteFolderResponseMessage");
+        messageEl.setAttribute("ResponseClass", "Error");
+
+        // Add the response code to the response message.
+        const resCodeEl = resDoc.createElement("m:ResponseCode");
+        resCodeEl.appendChild(resDoc.createTextNode("ErrorItemNotFound"));
+        messageEl.appendChild(resCodeEl);
+
+        // Add a human-readable representation of the error to the response
+        // message.
+        const errMessageEl = resDoc.createElement("m:MessageText");
+        errMessageEl.appendChild(resDoc.createTextNode("Folder not found"));
+        messageEl.appendChild(errMessageEl);
+
+        // Append the message to the document.
+        resMsgsEl.appendChild(messageEl);
+      }
+    });
+
+    // Serialize the response to a string that the consumer can return in a response.
+    return this.#serializer.serializeToString(resDoc);
+  }
+
+  /**
    * Generate a response to a MarkAllItemsAsRead operation.
    *
    * @see {@link https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/markallitemsasread-operation}
@@ -1754,6 +1879,22 @@ export class EwsServer {
       }
       this.deletedFolders.push(folderToDelete);
       this.folderChanges.push(["delete", id]);
+    }
+  }
+
+  /**
+   * Empty a remote folder given its id.
+   *
+   * @param {string} id
+   */
+  emptyRemoteFolderById(id) {
+    const itemsToDelete = this.getItemsInFolder(id);
+    for (const item of itemsToDelete) {
+      this.deleteItem(item.id);
+    }
+    const foldersToDelete = this.folders.filter(value => value.parentId == id);
+    for (const folder of foldersToDelete) {
+      this.deleteRemoteFolderById(folder.id);
     }
   }
 

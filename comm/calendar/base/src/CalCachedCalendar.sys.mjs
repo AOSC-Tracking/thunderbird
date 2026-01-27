@@ -4,6 +4,15 @@
 
 import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
 
+const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
+
 /**
  * Returns true if the exception passed is one that should cause the cache
  * layer to retry the operation. This is usually a network error or other
@@ -289,7 +298,7 @@ calCachedCalendar.prototype = {
     if (this.supportsChangeLog) {
       await new Promise((resolve, reject) => {
         const spec = this.uri.spec;
-        cal.LOG("[calCachedCalendar] Doing changelog based sync for calendar " + spec);
+        lazy.log.debug("[calCachedCalendar] Doing changelog based sync for calendar " + spec);
         const opListener = {
           onResult(operation, result) {
             if (!operation || !operation.isPending) {
@@ -308,7 +317,7 @@ calCachedCalendar.prototype = {
                 );
                 return;
               }
-              cal.LOG("[calCachedCalendar] replayChangesOn finished.");
+              lazy.log.debug("[calCachedCalendar] replayChangesOn finished.");
               resolve();
             }
           },
@@ -318,7 +327,7 @@ calCachedCalendar.prototype = {
       return;
     }
 
-    cal.LOG("[calCachedCalendar] Doing full sync for calendar " + this.uri.spec);
+    lazy.log.debug("[calCachedCalendar] Doing full sync for calendar " + this.uri.spec);
 
     await this.getOfflineAddedItems();
     await this.getOfflineModifiedItems();
@@ -363,7 +372,7 @@ calCachedCalendar.prototype = {
                 // The item is still on the server, we just retrieved it in the listener above.
                 if (item.lastModifiedTime.compare(modifiedTimes[item.id]) < 0) {
                   // The item on the server has been modified, ask to overwrite
-                  cal.WARN(
+                  lazy.log.warn(
                     "[calCachedCalendar] Item '" +
                       item.title +
                       "' at the server seems to be modified recently."
@@ -375,7 +384,7 @@ calCachedCalendar.prototype = {
                 }
               } else {
                 // The item has been deleted from the server, ask if it should be added again
-                cal.WARN(
+                lazy.log.warn(
                   "[calCachedCalendar] Item '" + item.title + "' has been deleted from the server"
                 );
                 if (cal.provider.promptOverwrite("modify", item, null)) {
@@ -388,7 +397,7 @@ calCachedCalendar.prototype = {
                 // The item seems to exist on the server...
                 if (item.lastModifiedTime.compare(modifiedTimes[item.id]) < 0) {
                   // ...and has been modified on the server. Ask to overwrite
-                  cal.WARN(
+                  lazy.log.warn(
                     "[calCachedCalendar] Item '" +
                       item.title +
                       "' at the server seems to be modified recently."
@@ -437,14 +446,14 @@ calCachedCalendar.prototype = {
     }
   },
 
-  /*
+  /**
    * Asynchronously performs playback operations of items added, modified, or deleted offline
    *
-   * @param aPlaybackType     (optional) The starting operation type. This function will be
-   *                          called recursively through playback operations in the order of
-   *                          add, modify, delete. By default playback will start with the add
-   *                          operation. Valid values for this parameter are defined as
-   *                          OFFLINE_FLAG_XXX constants in the calIChangeLog interface.
+   * @param {number} [aPlaybackType=Ci.calIChangeLog.OFFLINE_FLAG_CREATED_RECORD] - (Optional) The starting
+   *   operation type. This function will be called recursively through playback operations in the
+   *   order of add, modify, and delete. By default, playback will start with the add operation.
+   *   Valid values for this parameter are defined as `OFFLINE_FLAG_XXX` constants in the
+   *   `calIChangeLog` interface.
    */
   async playbackOfflineItems(aPlaybackType) {
     const self = this;
@@ -482,7 +491,7 @@ calCachedCalendar.prototype = {
         filter = Ci.calICalendar.ITEM_FILTER_OFFLINE_DELETED;
         break;
       default:
-        cal.ERROR("[calCachedCalendar] Invalid playback type: " + aPlaybackType);
+        lazy.log.error("[calCachedCalendar] Invalid playback type: " + aPlaybackType);
         return;
     }
 
@@ -500,7 +509,7 @@ calCachedCalendar.prototype = {
           await uncachedOp(item);
         } catch (e) {
           error = e;
-          cal.ERROR(
+          lazy.log.error(
             "[calCachedCalendar] Could not perform playback operation " +
               debugOp +
               " for item " +
@@ -519,7 +528,7 @@ calCachedCalendar.prototype = {
           // If the playback action could not be performed, then there
           // is no need for further action. The item still has the
           // offline flag, so it will be taken care of next time.
-          cal.WARN(
+          lazy.log.warn(
             "[calCachedCalendar] Unable to perform playback action " +
               debugOp +
               " to the server, will try again next time (" +
@@ -545,9 +554,9 @@ calCachedCalendar.prototype = {
     );
 
     if (this.offline) {
-      cal.LOG("[calCachedCalendar] back to offline mode, reconciliation aborted");
+      lazy.log.debug("[calCachedCalendar] back to offline mode, reconciliation aborted");
     } else {
-      cal.LOG(
+      lazy.log.debug(
         "[calCachedCalendar] Performing playback operation " +
           debugOp +
           " on " +
@@ -719,7 +728,7 @@ calCachedCalendar.prototype = {
           // The item couldn't be added to the (remote) location,
           // this is like being offline. Add the item to the cached
           // calendar instead.
-          cal.LOG(
+          lazy.log.debug(
             `[calCachedCalendar] Calendar ${calendar.name}' is unavailable, adding item offline`
           );
           await this.adoptOfflineItem(item).then(onSuccess, onError);
@@ -816,7 +825,7 @@ calCachedCalendar.prototype = {
         // The item couldn't be modified at the (remote) location,
         // this is like being offline. Add the item to the cache
         // instead.
-        cal.LOG(
+        lazy.log.debug(
           "[calCachedCalendar] Calendar " +
             calendar.name +
             " is unavailable, modifying item offline"
@@ -915,14 +924,14 @@ calCachedCalendar.prototype = {
           try {
             this.mCachedCalendar.QueryInterface(Ci.calISyncWriteCalendar).deleteMetaData(item.id);
           } catch (e) {
-            cal.LOG("[calCachedCalendar] Offline storage doesn't support metadata");
+            lazy.log.debug("[calCachedCalendar] Offline storage doesn't support metadata");
           }
         } catch (e) {
           if (isUnavailableCode(e.result)) {
             // The item couldn't be deleted at the (remote) location,
             // this is like being offline. Mark the item deleted in the
             // cache instead.
-            cal.LOG(
+            lazy.log.debug(
               "[calCachedCalendar] Calendar " +
                 item.calendar.name +
                 " is unavailable, deleting item offline"

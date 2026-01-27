@@ -23,11 +23,16 @@ support-files = ["messages/**"]
 
 ["test_ext_messages_bug_1918925.js"]
 
+["test_ext_messages_bug_1954372.js"]
+
 ["test_ext_messages_encrypted.js"]
 
 ["test_ext_messages_get.js"] # PGP test disabled for NNTP
 
 ["test_ext_messages_getFull_raw.js"]
+support-files = ["messages/**"]
+
+["test_ext_messages_getHeaders.js"]
 support-files = ["messages/**"]
 
 ["test_ext_messages_id.js"] # Disabled for NNTP (message move not supported)
@@ -40,7 +45,9 @@ support-files = ["messages/**"]
 ["test_ext_messages_onNewMailReceived.js"]
 
 ["test_ext_messages_query.js"]
-skip-if = ["ccov"]  # Bug 1827450.
+skip-if = [
+  "ccov", # Bug 1827450.
+]
 support-files = ["messages/alternative.eml"]
 
 ["test_ext_messages_query_multiple_accounts_folders.js"]

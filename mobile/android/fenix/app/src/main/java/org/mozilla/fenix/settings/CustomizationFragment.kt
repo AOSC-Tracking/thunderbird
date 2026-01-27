@@ -4,10 +4,12 @@
 
 package org.mozilla.fenix.settings
 
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Build.VERSION.SDK_INT
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.navigation.fragment.navArgs
 import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceFragmentCompat
@@ -37,6 +39,7 @@ class CustomizationFragment : PreferenceFragmentCompat() {
     private lateinit var radioDarkTheme: RadioButtonPreference
     private lateinit var radioAutoBatteryTheme: RadioButtonPreference
     private lateinit var radioFollowDeviceTheme: RadioButtonPreference
+    private val args by navArgs<CustomizationFragmentArgs>()
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.customization_preferences, rootKey)
@@ -47,6 +50,9 @@ class CustomizationFragment : PreferenceFragmentCompat() {
     override fun onResume() {
         super.onResume()
         showToolbar(getString(R.string.preferences_customize))
+        args.preferenceToScrollTo?.let {
+            scrollToPreference(it)
+        }
     }
 
     private fun setupPreferences() {
@@ -59,6 +65,7 @@ class CustomizationFragment : PreferenceFragmentCompat() {
         updateToolbarCategoryBasedOnTabStrip(tabletAndTabStripEnabled)
         setupTabStripCategory()
         setupToolbarLayout()
+        updateToolbarShortcut()
 
         // if tab strip is enabled, swipe toolbar to switch tabs should not be enabled so the
         // preference is not shown
@@ -82,6 +89,38 @@ class CustomizationFragment : PreferenceFragmentCompat() {
             bottomPreference.setCheckedWithoutClickListener(false)
         } else {
             setupToolbarCategory()
+        }
+    }
+
+    private fun updateToolbarShortcut() {
+        val category = requirePreference<PreferenceCategory>(
+            R.string.pref_key_customization_category_toolbar_shortcut,
+        )
+        val settings = requireContext().settings()
+        val isExpandedToolbarEnabled = settings.shouldUseExpandedToolbar && isTallWindow() && !isWideWindow()
+        val shouldShowShortcutCategory = settings.shouldShowToolbarCustomization &&
+                settings.shouldUseComposableToolbar &&
+                settings.toolbarRedesignEnabled
+
+        category.isVisible = shouldShowShortcutCategory
+        if (shouldShowShortcutCategory) {
+            val shortcutPreference = if (isExpandedToolbarEnabled) {
+                ToolbarExpandedShortcutPreference(requireContext()).apply {
+                    key = getString(R.string.pref_key_toolbar_expanded_shortcut)
+                    layoutResource = R.layout.preference_toolbar_shortcut
+                }
+            } else {
+                ToolbarSimpleShortcutPreference(requireContext()).apply {
+                    key = getString(R.string.pref_key_toolbar_simple_shortcut)
+                    layoutResource = R.layout.preference_toolbar_shortcut
+                }
+            }
+            category.apply {
+                removeAll()
+                addPreference(shortcutPreference)
+                val shortcutOptions = shortcutPreference.getShortcutOptions()
+                shortcutOptions.forEach(::addPreference)
+            }
         }
     }
 
@@ -193,6 +232,11 @@ class CustomizationFragment : PreferenceFragmentCompat() {
             isVisible = settings.shouldUseComposableToolbar &&
                     settings.toolbarRedesignEnabled && isTallWindow() && !isWideWindow()
         }
+
+        val layoutToggle = requirePreference<ToggleRadioButtonPreference>(R.string.pref_key_toolbar_expanded)
+        layoutToggle.setOnToggleChanged {
+            updateToolbarShortcut()
+        }
         updateToolbarLayoutIcons()
     }
 
@@ -239,6 +283,12 @@ class CustomizationFragment : PreferenceFragmentCompat() {
             }
         }
         return super.onPreferenceTreeClick(preference)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        setupToolbarLayout()
+        updateToolbarShortcut()
     }
 
     companion object {

@@ -28,6 +28,11 @@ tags = ["compact"]
 ["test_filterNeedsBody.js"]
 
 ["test_folderNamesImap.js"]
+tags = ["foldernames"]
+
+["test_folderNamesImap_preffedOff.js"]
+prefs = ["mail.useLocalizedFolderNames=false"]
+tags = ["foldernames"]
 
 ["test_folderOfflineFlags.js"]
 
@@ -84,7 +89,9 @@ tags = ["compact"]
 ["test_imapUrls.js"]
 
 ["test_largeOfflineStore.js"]
-skip-if = ["os == 'mac'"]
+skip-if = [
+  "os == 'mac'",
+]
 
 ["test_listClosesDB.js"]
 

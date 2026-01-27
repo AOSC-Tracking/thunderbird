@@ -7,7 +7,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import eslintConfigPrettier from "eslint-config-prettier";
 import mozilla from "eslint-plugin-mozilla";
-import json from "eslint-plugin-json";
+import json from "@eslint/json";
 import html from "eslint-plugin-html";
 import importPlugin from "eslint-plugin-import";
 import globals from "globals";
@@ -68,7 +68,7 @@ export default [
   },
   {
     name: "source-type-script",
-    files: ["**/*.{js,json,html,sjs,xhtml}"],
+    files: ["**/*.{js,json,html,sjs,xhtml,globals}"],
     languageOptions: {
       sourceType: "script",
     },
@@ -77,7 +77,14 @@ export default [
   {
     name: "json-recommended-with-comments",
     files: ["**/*.json"],
-    ...json.configs["recommended-with-comments"],
+    language: "json/jsonc",
+    ...json.configs.recommended,
+  },
+  {
+    name: "json-recommended-no-comments",
+    files: ["**/package.json", "**/*.globals"],
+    language: "json/json",
+    ...json.configs.recommended,
   },
   {
     name: "eslint-plugin-html",
@@ -442,6 +449,20 @@ export default [
       // these in the sandbox directly as that would potentially mean the
       // imported properties would be instantiated up-front rather than lazily.
       "mozilla/reject-importGlobalProperties": "off",
+    },
+  },
+  {
+    name: "no-more-globals-in-msgcomposecommands",
+    files: ["mail/components/compose/content/MsgComposeCommands.js"],
+    rules: {
+      "mozilla/no-more-globals": "error",
+    },
+  },
+  {
+    name: "redux-immutable-slices",
+    files: ["**/*Slice.mjs"],
+    rules: {
+      "no-param-reassign": ["error", { props: false }],
     },
   },
   /**

@@ -26,6 +26,11 @@ const reducedMotionMedia = matchMedia("(prefers-reduced-motion)");
  * @property {string} id - How this column is referred to by code. Should be
  *   unique to the document containing the TreeView, and avoid characters that
  *   might cause problems for CSS or JS identifiers.
+ * @property {boolean} [cellIcon=false] - Cell content contains an
+ *   <img class="icon"> element as well as any text content.
+ * @property {string} [checkbox] - Cell content is an <input type="checkbox">
+ *   element, which is checked if the row has the named property. Toggling the
+ *   checkbox element adds or removes the row property as appropriate.
  * @property {boolean} [custom=false] - Custom column for about:3pane.
  * @property {boolean} [delete=false] - Column handles delete actions.
  * @property {boolean} [hidden=false] - Column is hidden.
@@ -45,6 +50,8 @@ const reducedMotionMedia = matchMedia("(prefers-reduced-motion)");
  * @property {boolean} [sortable=true] - Whether the column will be sortable.
  * @property {string} [sortKey] - Used for sorting about:3pane message list.
  * @property {boolean} [thread=false] - Column handles thread toggling.
+ * @property {boolean} [twisty=false] - Cell content contains a twisty as well
+ *   as any text content.
  * @property {integer} [width] - Width of the column.
  */
 

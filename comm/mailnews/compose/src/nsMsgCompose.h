@@ -110,12 +110,10 @@ class nsMsgCompose : public nsIMsgCompose, public nsSupportsWeakReference {
   nsCOMPtr<nsIEditor> m_editor;
   mozIDOMWindowProxy* m_window;
   nsCOMPtr<nsIDocShell> mDocShell;
-  nsCOMPtr<nsIBaseWindow> m_baseWindow;
   RefPtr<nsMsgCompFields> m_compFields;
   nsCOMPtr<nsIMsgIdentity> m_identity;
   bool m_composeHTML;
   RefPtr<QuotingOutputStreamListener> mQuoteStreamListener;
-  nsCOMPtr<nsIOutputStream> mBaseStream;
 
   nsCOMPtr<nsIMsgSend> mMsgSend;  // for composition back end
   nsCOMPtr<nsIMsgProgress>
@@ -197,7 +195,8 @@ class QuotingOutputStreamListener : public nsIMsgQuotingOutputStreamListener,
 class nsMsgComposeSendListener : public nsIMsgComposeSendListener,
                                  public nsIMsgSendListener,
                                  public nsIMsgCopyServiceListener,
-                                 public nsIWebProgressListener {
+                                 public nsIWebProgressListener,
+                                 public nsSupportsWeakReference {
  public:
   nsMsgComposeSendListener(void);
 

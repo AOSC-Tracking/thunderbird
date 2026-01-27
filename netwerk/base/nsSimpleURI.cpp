@@ -3,8 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/DebugOnly.h"
-
 #undef LOG
 #include "ipc/IPCMessageUtils.h"
 
@@ -81,7 +79,7 @@ nsresult nsSimpleURI::ReadPrivate(nsIObjectInputStream* aStream) {
   bool isMutable;
   rv = aStream->ReadBoolean(&isMutable);
   if (NS_FAILED(rv)) return rv;
-  Unused << isMutable;
+  (void)isMutable;
 
   nsAutoCString scheme;
   rv = aStream->ReadCString(scheme);
@@ -643,12 +641,9 @@ nsSimpleURI::GetAsciiHost(nsACString& result) {
 // nsSimpleURI::nsISizeOf
 //----------------------------------------------------------------------------
 
-size_t nsSimpleURI::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const {
-  return mSpec.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
-}
-
 size_t nsSimpleURI::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const {
-  return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
+  return aMallocSizeOf(this) +
+         mSpec.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
 }
 
 NS_IMETHODIMP

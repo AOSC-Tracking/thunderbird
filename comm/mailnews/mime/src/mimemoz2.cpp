@@ -43,7 +43,6 @@
 // </for>
 #include "mozilla/Components.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/Unused.h"
 
 using mozilla::Preferences;
 using mozilla::PrefValueKind;
@@ -650,9 +649,9 @@ extern "C" void NotifyEmittersOfAttachmentList(MimeDisplayOptions* opt,
     nsAutoCString spec;
     if (tmp->m_url) {
       if (tmp->m_isExternalLinkAttachment)
-        mozilla::Unused << tmp->m_url->GetAsciiSpec(spec);
+        (void)tmp->m_url->GetAsciiSpec(spec);
       else
-        mozilla::Unused << tmp->m_url->GetSpec(spec);
+        (void)tmp->m_url->GetSpec(spec);
     }
 
     nsAutoCString sizeStr;
@@ -842,7 +841,7 @@ extern "C" void mime_display_stream_complete(nsMIMESession* stream) {
     return;
   }
 
-  MimeObject* obj = (msd ? msd->obj : 0);
+  MimeObject* obj = msd->obj;
   if (obj) {
     int status;
     bool abortNow = false;
@@ -898,7 +897,7 @@ extern "C" void mime_display_stream_abort(nsMIMESession* stream, int status) {
     return;
   }
 
-  MimeObject* obj = (msd ? msd->obj : 0);
+  MimeObject* obj = msd->obj;
   if (obj) {
     if (!obj->closed_p) obj->clazz->parse_eof(obj, true);
     if (!obj->parsed_p) obj->clazz->parse_end(obj, true);
@@ -1167,7 +1166,7 @@ MimeDisplayOptions::MimeDisplayOptions() {
   format_out = 0;  // The format out type
   url = nullptr;
 
-  memset(&headers, 0, sizeof(headers));
+  memset((void*)&headers, 0, sizeof(headers));
   fancy_headers_p = false;
 
   output_vcard_buttons_p = false;
@@ -1216,7 +1215,6 @@ MimeDisplayOptions::MimeDisplayOptions() {
   make_image_html = nullptr;
   state = nullptr;
 
-#ifdef MIME_DRAFTS
   decompose_file_p = false;
   done_parsing_outer_headers = false;
   is_multipart_msg = false;
@@ -1228,7 +1226,6 @@ MimeDisplayOptions::MimeDisplayOptions() {
   decompose_file_init_fn = nullptr;
   decompose_file_output_fn = nullptr;
   decompose_file_close_fn = nullptr;
-#endif /* MIME_DRAFTS */
 
   attachment_icon_layer_id = 0;
 
@@ -1451,7 +1448,7 @@ extern "C" void* mime_bridge_create_display_stream(
     return 0;
   }
 
-  memset(stream, 0, sizeof(*stream));
+  memset((void*)stream, 0, sizeof(*stream));
   stream->name = "MIME Conversion Stream";
   stream->complete = mime_display_stream_complete;
   stream->abort = mime_display_stream_abort;
@@ -1669,12 +1666,12 @@ extern "C" nsresult mimeEmitterEndHeader(MimeDisplayOptions* opt,
         msd->format_out == nsMimeOutput::nsMimeMessageSaveAs ||
         msd->format_out == nsMimeOutput::nsMimeMessagePrintOutput) {
       if (obj->headers) {
-        nsMsgAttachmentData attachment;
+        nsMsgAttachmentData attachments[1];
         attIndex = 0;
         nsresult rv = GenerateAttachmentData(obj, msd->url_name, opt, false, 0,
-                                             &attachment);
+                                             attachments);
 
-        if (NS_SUCCEEDED(rv)) name.Assign(attachment.m_realName);
+        if (NS_SUCCEEDED(rv)) name.Assign(attachments[0].m_realName);
       }
     }
 

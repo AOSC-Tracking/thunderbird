@@ -23,7 +23,6 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/TextUtils.h"
-#include <algorithm>
 #include "nsContentUtils.h"
 #include "prprf.h"
 #include "nsReadableUtils.h"
@@ -350,7 +349,7 @@ void nsStandardURL::InitGlobalObjects() {
   // Make sure nsURLHelper::InitGlobals() gets called on the main thread
   nsCOMPtr<nsIURLParser> parser = net_GetStdURLParser();
   MOZ_DIAGNOSTIC_ASSERT(parser);
-  Unused << parser;
+  (void)parser;
 }
 
 void nsStandardURL::ShutdownGlobalObjects() {
@@ -1717,7 +1716,7 @@ nsresult nsStandardURL::SetPassword(const nsACString& input) {
     if (password.IsEmpty()) {
       MOZ_DIAGNOSTIC_ASSERT(this->Password().IsEmpty());
     }
-    Unused << this;  // silence compiler -Wunused-lambda-capture
+    (void)this;  // silence compiler -Wunused-lambda-capture
   });
 
   auto onExitGuard = MakeScopeExit([&] { SanityCheck(); });
@@ -1873,7 +1872,7 @@ nsresult nsStandardURL::SetHostPort(const nsACString& aValue) {
     return NS_OK;
   }
 
-  Unused << SetPort(port);
+  (void)SetPort(port);
   return NS_OK;
 }
 
@@ -3391,7 +3390,7 @@ nsresult nsStandardURL::ReadPrivate(nsIObjectInputStream* stream) {
   if (NS_FAILED(rv)) {
     return rv;
   }
-  Unused << isMutable;
+  (void)isMutable;
 
   bool supportsFileURL;
   rv = stream->ReadBoolean(&supportsFileURL);
@@ -3692,18 +3691,15 @@ bool nsStandardURL::Deserialize(const URIParams& aParams) {
 // nsStandardURL::nsISizeOf
 //----------------------------------------------------------------------------
 
-size_t nsStandardURL::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const {
-  return mSpec.SizeOfExcludingThisIfUnshared(aMallocSizeOf) +
+size_t nsStandardURL::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const {
+  return aMallocSizeOf(this) +
+         mSpec.SizeOfExcludingThisIfUnshared(aMallocSizeOf) +
          mDisplayHost.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
 
-  // Measurement of the following members may be added later if DMD finds it is
-  // worthwhile:
+  // Measurement of the following members may be added later if DMD finds it
+  // is worthwhile:
   // - mParser
   // - mFile
-}
-
-size_t nsStandardURL::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const {
-  return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
 }
 
 }  // namespace net

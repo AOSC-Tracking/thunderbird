@@ -21,6 +21,13 @@ export function CalCalendarManager() {
   this.providerImplementations = {};
 }
 const lazy = {};
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "calendar",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "calendar.loglevel",
+  });
+});
 ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
 
 var calCalendarManagerClassID = Components.ID("{f42585e7-e736-4600-985d-9624c1c51992}");
@@ -176,7 +183,7 @@ CalCalendarManager.prototype = {
       });
 
       // Log the original exception via error console to provide more debug info
-      cal.ERROR(ex);
+      lazy.log.error(ex);
 
       // Log the possibly translated message via the UI.
       const paramBlock = Cc["@mozilla.org/embedcomp/dialogparam;1"].createInstance(
@@ -278,8 +285,9 @@ CalCalendarManager.prototype = {
         this.setupCalendar(replacement);
         needsRefresh.push(replacement);
       } catch (e) {
-        cal.ERROR(
-          `Can't create calendar for ${calendar.id} (${calendar.type}, ${calendar.uri.spec}): ${e}`
+        lazy.log.error(
+          `Can't create calendar for ${calendar.id} (${calendar.type}, ${calendar.uri.spec}): ${e}`,
+          e
         );
       }
     }
@@ -300,11 +308,9 @@ CalCalendarManager.prototype = {
   registerCalendarProvider(type, impl) {
     this.assureCache();
 
-    cal.ASSERT(
-      !this.providerImplementations.hasOwnProperty(type),
-      "[CalCalendarManager::registerCalendarProvider] provider already exists",
-      true
-    );
+    if (this.providerImplementations.hasOwnProperty(type)) {
+      throw new Error(`Provider already exists; type=${type}`);
+    }
 
     this.providerImplementations[type] = impl;
     this.updateDummyCalendarRegistration(type);
@@ -318,11 +324,9 @@ CalCalendarManager.prototype = {
    * @param {boolean} temporary - If true, cached calendars will not be cleared.
    */
   unregisterCalendarProvider(type, temporary = false) {
-    cal.ASSERT(
-      this.providerImplementations.hasOwnProperty(type),
-      "[CalCalendarManager::unregisterCalendarProvider] provider doesn't exist or is builtin",
-      true
-    );
+    if (!this.providerImplementations.hasOwnProperty(type)) {
+      throw new Error(`Provider doesn't exist or is built-in; type=${type}`);
+    }
     delete this.providerImplementations[type];
     this.updateDummyCalendarRegistration(type, !temporary);
   },
@@ -341,15 +345,12 @@ CalCalendarManager.prototype = {
   registerCalendar(calendar) {
     this.assureCache();
 
-    // If the calendar is already registered, bail out
-    cal.ASSERT(
-      !calendar.id || !(calendar.id in this.mCache),
-      `[CalCalendarManager::registerCalendar] calendar ${calendar.name} - ${calendar.id} - already registered!`,
-      true
-    );
-
     if (!calendar.id) {
       calendar.id = cal.getUUID();
+    }
+
+    if (calendar.id in this.mCache) {
+      throw new Error(`${calendar.name} - ${calendar.id} - already registered!`);
     }
 
     Services.prefs.setStringPref(getPrefBranchFor(calendar.id) + "type", calendar.type);
@@ -541,7 +542,7 @@ CalCalendarManager.prototype = {
         const calendar = this.initializeCalendar(id, ctype, uri);
         this.setupCalendar(calendar);
       } catch (exc) {
-        cal.ERROR(`Can't create calendar for ${id} (${ctype}, ${curi}): ${exc}`);
+        lazy.log.error(`Can't create calendar for ${id} (${ctype}, ${curi}): ${exc}`);
       }
     }
 
@@ -597,7 +598,9 @@ CalCalendarManager.prototype = {
           calendar.type == "caldav" &&
           calendar.uri.prePath == "https://apidata.googleusercontent.com"
         ) {
-          cal.LOG(`CalDAV: Resetting sync token of ${calendar.name} to perform a full resync`);
+          lazy.log.debug(
+            `CalDAV: Resetting sync token of ${calendar.name} to perform a full resync`
+          );
           const calDavCalendar = calendar.wrappedJSObject.mUncachedCalendar.wrappedJSObject;
           calDavCalendar.mWebdavSyncToken = null;
           calDavCalendar.saveCalendarProperties();
@@ -614,9 +617,15 @@ CalCalendarManager.prototype = {
   },
 
   getCalendarPref_(calendar, name) {
-    cal.ASSERT(calendar, "Invalid Calendar!");
-    cal.ASSERT(calendar.id !== null, "Calendar id needs to be set!");
-    cal.ASSERT(name && name.length > 0, "Pref Name must be non-empty!");
+    if (!calendar) {
+      throw new Error("calendar must be set");
+    }
+    if (!calendar.id) {
+      throw new Error("calendar.id must be set");
+    }
+    if (!name) {
+      throw new Error("pref name must be set");
+    }
 
     const branch = getPrefBranchFor(calendar.id) + name;
     let value = Preferences.get(branch, null);
@@ -631,10 +640,15 @@ CalCalendarManager.prototype = {
   },
 
   setCalendarPref_(calendar, name, value) {
-    cal.ASSERT(calendar, "Invalid Calendar!");
-    cal.ASSERT(calendar.id !== null, "Calendar id needs to be set!");
-    cal.ASSERT(name && name.length > 0, "Pref Name must be non-empty!");
-
+    if (!calendar) {
+      throw new Error("calendar must be set");
+    }
+    if (!calendar.id) {
+      throw new Error("calendar.id must be set");
+    }
+    if (!name) {
+      throw new Error("pref name must be set");
+    }
     const branch = getPrefBranchFor(calendar.id) + name;
 
     if (
@@ -654,9 +668,15 @@ CalCalendarManager.prototype = {
   },
 
   deleteCalendarPref_(calendar, name) {
-    cal.ASSERT(calendar, "Invalid Calendar!");
-    cal.ASSERT(calendar.id !== null, "Calendar id needs to be set!");
-    cal.ASSERT(name && name.length > 0, "Pref Name must be non-empty!");
+    if (!calendar) {
+      throw new Error("calendar must be set");
+    }
+    if (!calendar.id) {
+      throw new Error("calendar.id must be set");
+    }
+    if (!name) {
+      throw new Error("pref name must be set");
+    }
     Services.prefs.clearUserPref(getPrefBranchFor(calendar.id) + name);
   },
 
@@ -888,7 +908,7 @@ calMgrCalendarObserver.prototype = {
       console.error(summary);
       this.announceParamBlock(paramBlock);
     } else {
-      cal.WARN(summary);
+      lazy.log.warn(summary);
     }
   },
 

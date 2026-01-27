@@ -5,12 +5,10 @@
 import { DSCard, PlaceholderDSCard } from "../DSCard/DSCard.jsx";
 import { DSEmptyState } from "../DSEmptyState/DSEmptyState.jsx";
 import { TopicsWidget } from "../TopicsWidget/TopicsWidget.jsx";
-import { ListFeed } from "../ListFeed/ListFeed.jsx";
 import { AdBanner } from "../AdBanner/AdBanner.jsx";
 import { FluentOrText } from "../../FluentOrText/FluentOrText.jsx";
 import React, { useEffect, useRef } from "react";
 import { connect } from "react-redux";
-import { TrendingSearches } from "../TrendingSearches/TrendingSearches.jsx";
 const PREF_SECTIONS_CARDS_ENABLED = "discoverystream.sections.cards.enabled";
 const PREF_THUMBS_UP_DOWN_ENABLED = "discoverystream.thumbsUpDown.enabled";
 const PREF_TOPICS_ENABLED = "discoverystream.topicLabels.enabled";
@@ -18,19 +16,10 @@ const PREF_TOPICS_SELECTED = "discoverystream.topicSelection.selectedTopics";
 const PREF_TOPICS_AVAILABLE = "discoverystream.topicSelection.topics";
 const PREF_SPOCS_STARTUPCACHE_ENABLED =
   "discoverystream.spocs.startupCache.enabled";
-const PREF_LIST_FEED_ENABLED = "discoverystream.contextualContent.enabled";
-const PREF_LIST_FEED_SELECTED_FEED =
-  "discoverystream.contextualContent.selectedFeed";
-const PREF_FAKESPOT_ENABLED =
-  "discoverystream.contextualContent.fakespot.enabled";
 const PREF_BILLBOARD_ENABLED = "newtabAdSize.billboard";
 const PREF_BILLBOARD_POSITION = "newtabAdSize.billboard.position";
 const PREF_LEADERBOARD_ENABLED = "newtabAdSize.leaderboard";
 const PREF_LEADERBOARD_POSITION = "newtabAdSize.leaderboard.position";
-const PREF_TRENDING_SEARCH = "trendingSearch.enabled";
-const PREF_TRENDING_SEARCH_SYSTEM = "system.trendingSearch.enabled";
-const PREF_SEARCH_ENGINE = "trendingSearch.defaultSearchEngine";
-const PREF_TRENDING_SEARCH_VARIANT = "trendingSearch.variant";
 const WIDGET_IDS = {
   TOPICS: 1,
 };
@@ -76,6 +65,53 @@ export function IntersectionObserver({
 }
 
 export class _CardGrid extends React.PureComponent {
+  constructor(props) {
+    super(props);
+    this.state = {
+      focusedIndex: 0,
+    };
+    this.onCardFocus = this.onCardFocus.bind(this);
+    this.handleCardKeyDown = this.handleCardKeyDown.bind(this);
+  }
+
+  onCardFocus(index) {
+    this.setState({ focusedIndex: index });
+  }
+
+  handleCardKeyDown(e) {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+
+      const currentCardEl = e.target.closest("article.ds-card");
+      if (!currentCardEl) {
+        return;
+      }
+
+      // Arrow direction should match visual navigation direction in RTL
+      const isRTL = document.dir === "rtl";
+      const navigateToPrevious = isRTL
+        ? e.key === "ArrowRight"
+        : e.key === "ArrowLeft";
+
+      let targetCardEl = currentCardEl;
+
+      // Walk through siblings to find the target card element
+      while (targetCardEl) {
+        targetCardEl = navigateToPrevious
+          ? targetCardEl.previousElementSibling
+          : targetCardEl.nextElementSibling;
+
+        if (targetCardEl && targetCardEl.matches("article.ds-card")) {
+          const link = targetCardEl.querySelector("a.ds-card-link");
+          if (link) {
+            link.focus();
+          }
+          break;
+        }
+      }
+    }
+  }
+
   // eslint-disable-next-line max-statements
   renderCards() {
     const prefs = this.props.Prefs.values;
@@ -94,34 +130,30 @@ export class _CardGrid extends React.PureComponent {
     const selectedTopics = prefs[PREF_TOPICS_SELECTED];
     const availableTopics = prefs[PREF_TOPICS_AVAILABLE];
     const spocsStartupCacheEnabled = prefs[PREF_SPOCS_STARTUPCACHE_ENABLED];
-    const listFeedEnabled = prefs[PREF_LIST_FEED_ENABLED];
-    const listFeedSelectedFeed = prefs[PREF_LIST_FEED_SELECTED_FEED];
     const billboardEnabled = prefs[PREF_BILLBOARD_ENABLED];
     const leaderboardEnabled = prefs[PREF_LEADERBOARD_ENABLED];
-    const trendingEnabled =
-      prefs[PREF_TRENDING_SEARCH] &&
-      prefs[PREF_TRENDING_SEARCH_SYSTEM] &&
-      prefs[PREF_SEARCH_ENGINE]?.toLowerCase() === "google";
-    const trendingVariant = prefs[PREF_TRENDING_SEARCH_VARIANT];
 
-    // filter out recs that should be in ListFeed
-    const recs = this.props.data.recommendations
-      .filter(item => !item.feedName)
-      .slice(0, items);
+    const recs = this.props.data.recommendations.slice(0, items);
     const cards = [];
+    let cardIndex = 0;
 
     for (let index = 0; index < items; index++) {
       const rec = recs[index];
-      cards.push(
+      const isPlaceholder =
         topicsLoading ||
-          this.props.placeholder ||
-          !rec ||
-          rec.placeholder ||
-          (rec.flight_id &&
-            !spocsStartupCacheEnabled &&
-            this.props.App.isForStartupCache.DiscoveryStream) ? (
-          <PlaceholderDSCard key={`dscard-${index}`} />
-        ) : (
+        this.props.placeholder ||
+        !rec ||
+        rec.placeholder ||
+        (rec.flight_id &&
+          !spocsStartupCacheEnabled &&
+          this.props.App.isForStartupCache.DiscoveryStream);
+
+      if (isPlaceholder) {
+        cards.push(<PlaceholderDSCard key={`dscard-${index}`} />);
+      } else {
+        const currentCardIndex = cardIndex;
+        cardIndex++;
+        cards.push(
           <DSCard
             key={`dscard-${rec.id}`}
             pos={rec.pos}
@@ -165,9 +197,11 @@ export class _CardGrid extends React.PureComponent {
             format={rec.format}
             alt_text={rec.alt_text}
             isTimeSensitive={rec.isTimeSensitive}
+            tabIndex={currentCardIndex === this.state.focusedIndex ? 0 : -1}
+            onFocus={() => this.onCardFocus(currentCardIndex)}
           />
-        )
-      );
+        );
+      }
     }
 
     if (widgets?.positions?.length && widgets?.data?.length) {
@@ -203,29 +237,6 @@ export class _CardGrid extends React.PureComponent {
           cards.splice(position.index, 1, widgetComponent);
         }
       }
-    }
-    if (listFeedEnabled) {
-      const isFakespot = listFeedSelectedFeed === "fakespot";
-      const fakespotEnabled = prefs[PREF_FAKESPOT_ENABLED];
-      if (!isFakespot || (isFakespot && fakespotEnabled)) {
-        // Place the list feed as the 3rd element in the card grid
-        cards.splice(
-          2,
-          1,
-          this.renderListFeed(
-            this.props.data.recommendations,
-            listFeedSelectedFeed
-          )
-        );
-      }
-    }
-    if (trendingEnabled && trendingVariant === "b") {
-      const firstSpocPosition = this.props.spocPositions[0]?.index;
-      // double check that a spoc/mrec is actually in the index it should be in
-      const format = cards[firstSpocPosition]?.props?.format;
-      const isSpoc = format === "spoc" || format === "rectangle";
-      // if the spoc is not in its position, place TrendingSearches in the 3rd position
-      cards.splice(isSpoc ? firstSpocPosition + 1 : 2, 1, <TrendingSearches />);
     }
 
     // if a banner ad is enabled and we have any available, place them in the grid
@@ -297,26 +308,14 @@ export class _CardGrid extends React.PureComponent {
     const gridClassName = this.renderGridClassName();
 
     return (
-      <>{cards?.length > 0 && <div className={gridClassName}>{cards}</div>}</>
+      <>
+        {cards?.length > 0 && (
+          <div className={gridClassName} onKeyDown={this.handleCardKeyDown}>
+            {cards}
+          </div>
+        )}
+      </>
     );
-  }
-
-  renderListFeed(recommendations, selectedFeed) {
-    const recs = recommendations.filter(item => item.feedName === selectedFeed);
-    const isFakespot = selectedFeed === "fakespot";
-    // remove duplicates from category list
-    const categories = [...new Set(recs.map(({ category }) => category))];
-    const listFeed = (
-      <ListFeed
-        // only display recs that match selectedFeed for ListFeed
-        recs={recs}
-        categories={isFakespot ? categories : []}
-        firstVisibleTimestamp={this.props.firstVisibleTimestamp}
-        type={this.props.type}
-        dispatch={this.props.dispatch}
-      />
-    );
-    return listFeed;
   }
 
   renderGridClassName() {
