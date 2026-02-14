@@ -1114,9 +1114,18 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
   }
 
   if (StaticPrefs::security_sandbox_content_close_ksecdd_handle()) {
-    result = config->AddKernelObjectToClose(L"File", L"\\Device\\KsecDD");
-    MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
-                       "AddKernelObjectToClose should never fail.");
+    // bug 2006941 and bug 2008739 - Trellix DLP uses these functions, so don't
+    // do this if their DLLs are loaded
+#if defined(_M_X64)
+    const wchar_t* trellixDllName = L"fcagff64.dll";
+#else
+    const wchar_t* trellixDllName = L"fcagff.dll";
+#endif
+    if (!::GetModuleHandleW(trellixDllName)) {
+      result = config->AddKernelObjectToClose(L"File", L"\\Device\\KsecDD");
+      MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
+                         "AddKernelObjectToClose should never fail.");
+    }
   }
 
   sandbox::MitigationFlags mitigations =
@@ -1362,8 +1371,9 @@ void SandboxBroker::SetSecurityLevelForGPUProcess(int32_t aSandboxLevel) {
   config->AddRestrictingRandomSid();
 
   // Policy wrapper to keep track of available rule space. The full policy has
-  // 14 pages, so 13 allows one page for generic process rules.
-  sandboxing::SizeTrackingConfig trackingConfig(config, 13);
+  // 14 pages, so 12 allows two pages for generic process rules and to allow for
+  // padding that occurs in LowLevelPolicy::Done. See bug 2009140.
+  sandboxing::SizeTrackingConfig trackingConfig(config, 12);
 
   if (StaticPrefs::security_sandbox_chrome_pipe_rule_enabled()) {
     // Add the policy for the client side of a pipe. It is just a file
