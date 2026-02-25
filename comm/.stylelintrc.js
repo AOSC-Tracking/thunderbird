@@ -14,7 +14,12 @@ function readFile(filePath) {
     .readFileSync(filePath, { encoding: "utf-8" })
     .split("\n")
     .filter(p => p && !p.startsWith("#"))
-    .map(p => p.replace(/^comm\//, ""));
+    .map(p => p.replace(/^comm\//, ""))
+    .map(p =>
+      !path.basename(p).includes(".") && !p.includes("*")
+        ? path.join(p, "**")
+        : p
+    );
 }
 
 const ignoreFiles = [
@@ -24,7 +29,7 @@ const ignoreFiles = [
 
 module.exports = {
   extends: ["stylelint-config-recommended"],
-  plugins: ["@stylistic/stylelint-plugin"],
+  plugins: ["stylelint-use-logical"],
   ignoreFiles,
   rules: {
     /* Disabled because of `-moz-element(#foo)` which gets misparsed. */
@@ -257,12 +262,6 @@ module.exports = {
     "media-feature-name-value-no-unknown": true,
     "max-nesting-depth": 5,
 
-    "@stylistic/color-hex-case": "lower",
-    "@stylistic/selector-list-comma-newline-after": "always",
-    "@stylistic/selector-max-empty-lines": 0,
-    // attribute selector should "look like html"
-    "@stylistic/selector-attribute-operator-space-before": "never",
-    "@stylistic/selector-attribute-operator-space-after": "never",
-    "@stylistic/selector-attribute-brackets-space-inside": "never",
+    "csstools/use-logical": "always",
   },
 };

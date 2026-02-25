@@ -70,7 +70,7 @@ if (CRYPTO_BACKEND_BOTAN3)
   find_package(Botan 3.0.0 REQUIRED)
 elseif (CRYPTO_BACKEND_BOTAN)
   find_package(Botan 2.14.0 REQUIRED)
-  if(BOTAN_VERSION VERSION_GREATER_EQUAL 3.0.0)
+  if(Botan_VERSION VERSION_GREATER_EQUAL 3.0.0)
     set(CRYPTO_BACKEND_BOTAN3 1)
   endif()
 endif()
@@ -78,15 +78,17 @@ if (CRYPTO_BACKEND_LOWERCASE STREQUAL "openssl")
   find_package(OpenSSL 1.1.1 REQUIRED)
 endif()
 
-if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER "4.8.5")
-  set(CMAKE_CXX_STANDARD 14)
+if(NOT CMAKE_CXX_STANDARD OR CMAKE_CXX_STANDARD LESS 14)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER "4.8.5")
+    set(CMAKE_CXX_STANDARD 14)
+  endif()
 endif()
 
 if(CRYPTO_BACKEND_BOTAN3)
   set(CMAKE_CXX_STANDARD 20)
 endif()
 
-add_executable(rnp_tests
+set(RNP_TEST_SOURCES
   ../rnp/rnpcfg.cpp
   ../rnp/fficli.cpp
   ../rnp/rnp.cpp
@@ -125,6 +127,7 @@ add_executable(rnp_tests
   large-mpi.cpp
   load-g10.cpp
   load-g23.cpp
+  load-kbx.cpp
   load-pgp.cpp
   log-switch.cpp
   partial-length.cpp
@@ -137,6 +140,7 @@ add_executable(rnp_tests
   user-prefs.cpp
   utils-hex2bin.cpp
   utils-rnpcfg.cpp
+  exdsa_ecdhkem.cpp
   issues/1030.cpp
   issues/1115.cpp
   issues/1171.cpp
@@ -149,11 +153,23 @@ add_executable(rnp_tests
   fuzz_dump.cpp
   fuzz_verify_detached.cpp
   fuzz_verify.cpp
-)
+  )
+
+if(ENABLE_CRYPTO_REFRESH)
+  list(APPEND RNP_TEST_SOURCES
+    hkdf.cpp)
+endif()
+if(ENABLE_PQC)
+  list(APPEND RNP_TEST_SOURCES
+    pqc.cpp)
+endif()
+
+add_executable(rnp_tests ${RNP_TEST_SOURCES})
+
 if(MSVC)
   find_package(WindowsSDK)
   GetUMWindowsSDKLibraryDir(WIN_LIBRARY_DIR)
-  message (STATUS "WIN_LIBRARY_DIR: ${WIN_LIBRARY_DIR}")
+  message (STATUS "Using Windows SDK library directory: ${WIN_LIBRARY_DIR}")
   find_library(SHLWAPI_LIBRARY
     PATHS
        ${WIN_LIBRARY_DIR}
@@ -178,6 +194,9 @@ if(MSVC)
       "${SHLWAPI_LIBRARY}"
       "${GETOPT_LIBRARY}"
     )
+endif()
+if (CRYPTO_BACKEND_BOTAN)
+  get_target_property(BOTAN_INCLUDE_DIRS Botan::Botan INTERFACE_INCLUDE_DIRECTORIES)
 endif()
 target_include_directories(rnp_tests
   PRIVATE

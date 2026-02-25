@@ -16,8 +16,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
   CalRecurrenceRule: "resource:///modules/CalRecurrenceRule.sys.mjs",
 });
 
-ChromeUtils.defineLazyGetter(lazy, "l10n", () => new Localization(["calendar/calendar.ftl"], true));
-
 export const cal = {
   // These functions exist to reduce boilerplate code for creating instances
   // as well as getting services and other (cached) objects.
@@ -48,18 +46,6 @@ export const cal = {
       instance.icalString = value;
     }
     return instance;
-  },
-
-  /**
-   * Uses the prompt service to display an error message. Use this sparingly,
-   * as it interrupts the user.
-   *
-   * @param {string} aMsg - The message to be shown
-   * @param {?nsIWindow} aWindow - The window to show the message in, or null
-   *   for any window.
-   */
-  showError(aMsg, aWindow = null) {
-    Services.prompt.alert(aWindow, lazy.l10n.formatValueSync("generic-error-title"), aMsg);
   },
 
   /**
@@ -127,63 +113,6 @@ export const cal = {
   },
 
   /**
-   * Create an adapter for the given interface. If passed, methods will be
-   * added to the template object, otherwise a new object will be returned.
-   *
-   * @param {(object|string)} iface - The interface to adapt, either using
-   *   Components.interfaces or the name as a string.
-   * @param {?object} template - (optional) A template object to extend.
-   * @returns {object} If passed the adapted template object, otherwise a clean
-   *   adapter.
-   *
-   * Currently supported interfaces are:
-   *  - calIObserver
-   *  - calICalendarManagerObserver
-   *  - calIOperationListener
-   *  - calICompositeObserver
-   */
-  createAdapter(iface, template) {
-    let methods;
-    const adapter = template || {};
-    switch (iface.name || iface) {
-      case "calIObserver":
-        methods = [
-          "onStartBatch",
-          "onEndBatch",
-          "onLoad",
-          "onAddItem",
-          "onModifyItem",
-          "onDeleteItem",
-          "onError",
-          "onPropertyChanged",
-          "onPropertyDeleting",
-        ];
-        break;
-      case "calICalendarManagerObserver":
-        methods = ["onCalendarRegistered", "onCalendarUnregistering", "onCalendarDeleting"];
-        break;
-      case "calIOperationListener":
-        methods = ["onGetResult", "onOperationComplete"];
-        break;
-      case "calICompositeObserver":
-        methods = ["onCalendarAdded", "onCalendarRemoved", "onDefaultCalendarChanged"];
-        break;
-      default:
-        methods = [];
-        break;
-    }
-
-    for (const method of methods) {
-      if (!(method in template)) {
-        adapter[method] = function () {};
-      }
-    }
-    adapter.QueryInterface = ChromeUtils.generateQI([iface]);
-
-    return adapter;
-  },
-
-  /**
    * Make a UUID, without enclosing brackets, e.g. 0d3950fd-22e5-4508-91ba-0489bdac513f
    *
    * @returns {string} The generated UUID
@@ -193,101 +122,7 @@ export const cal = {
     // CalDAV servers that don't support filenames with {}
     return Services.uuid.generateUUID().toString().replace(/[{}]/g, "");
   },
-
-  /**
-   * Adds an observer listening for the topic.
-   *
-   * @param {Function} func - Function to execute on topic.
-   * @param {string} topic - Topic to listen for.
-   * @param {boolean} oneTime - Whether to listen only once.
-   */
-  addObserver(func, topic, oneTime) {
-    const observer = {
-      // nsIObserver:
-      observe(subject, topic_, data) {
-        if (topic == topic_) {
-          if (oneTime) {
-            Services.obs.removeObserver(this, topic);
-          }
-          func(subject, topic, data);
-        }
-      },
-    };
-    Services.obs.addObserver(observer, topic);
-  },
-
-  /**
-   * Wraps an instance, making sure the xpcom wrapped object is used.
-   *
-   * @param {object} aObj - The object under consideration.
-   * @param {object} aInterface - The interface to be wrapped.
-   *
-   * Use this function to QueryInterface the object to a particular interface.
-   * You may only expect the return value to be wrapped, not the original passed
-   * object.
-   *
-   * For example:
-   *
-   * // BAD USAGE:
-   * if (cal.wrapInstance(foo, Ci.nsIBar)) {
-   *   foo.barMethod();
-   * }
-   *
-   * // GOOD USAGE:
-   * foo = cal.wrapInstance(foo, Ci.nsIBar);
-   * if (foo) {
-   *   foo.barMethod();
-   * }
-   */
-  wrapInstance(aObj, aInterface) {
-    if (!aObj) {
-      return null;
-    }
-
-    try {
-      return aObj.QueryInterface(aInterface);
-    } catch (e) {
-      return null;
-    }
-  },
-
-  /**
-   * Tries to get rid of wrappers, if this is not possible then return the
-   * passed object.
-   *
-   * @param {object} aObj - The object under consideration.
-   * @returns {object} The possibly unwrapped object.
-   */
-  unwrapInstance(aObj) {
-    return aObj && aObj.wrappedJSObject ? aObj.wrappedJSObject : aObj;
-  },
-
-  /**
-   * Adds an xpcom shutdown observer.
-   *
-   * @param {Function} func - Function to execute.
-   */
-  addShutdownObserver(func) {
-    cal.addObserver(func, "xpcom-shutdown", true /* one time */);
-  },
-
-  /**
-   * Due to wrapped JS objects, some objects may have cyclic references.
-   * You can register properties of objects to be cleaned up on XPCOM-shutdown.
-   *
-   * @param {object} obj - Object.
-   * @param {?object} prop - Property to be deleted on shutdown (if null,
-   *   |object| will be deleted).
-   */
-  registerForShutdownCleanup: shutdownCleanup,
 };
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  cal,
-  "threadingEnabled",
-  "calendar.threading.disabled",
-  false
-);
 
 // Services
 XPCOMUtils.defineLazyServiceGetter(
@@ -320,12 +155,6 @@ XPCOMUtils.defineLazyServiceGetter(
   "@mozilla.org/calendar/weekinfo-service;1",
   Ci.calIWeekInfoService
 );
-XPCOMUtils.defineLazyServiceGetter(
-  cal,
-  "dragService",
-  "@mozilla.org/widget/dragservice;1",
-  Ci.nsIDragService
-);
 
 // Sub-modules for calUtils
 // XXX: https://bugzilla.mozilla.org/show_bug.cgi?id=1745807 should drop the
@@ -353,25 +182,6 @@ ChromeUtils.defineESModuleGetters(cal, {
   window: "resource:///modules/calendar/utils/calWindowUtils.sys.mjs",
   xml: "resource:///modules/calendar/utils/calXMLUtils.sys.mjs",
 });
-
-// will be used to clean up global objects on shutdown
-// some objects have cyclic references due to wrappers
-function shutdownCleanup(obj, prop) {
-  if (!shutdownCleanup.mEntries) {
-    shutdownCleanup.mEntries = [];
-    cal.addShutdownObserver(() => {
-      for (const entry of shutdownCleanup.mEntries) {
-        if (entry.mProp) {
-          delete entry.mObj[entry.mProp];
-        } else {
-          delete entry.mObj;
-        }
-      }
-      delete shutdownCleanup.mEntries;
-    });
-  }
-  shutdownCleanup.mEntries.push({ mObj: obj, mProp: prop });
-}
 
 /**
  * This is the makeQI function from XPCOMUtils.sys.mjs, it is separate to avoid

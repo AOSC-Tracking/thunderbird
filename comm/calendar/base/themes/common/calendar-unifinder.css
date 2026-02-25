@@ -3,13 +3,32 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 :root[lwt-tree-brighttext] #unifinder-searchBox {
-  --toolbarbutton-hover-background: var(--lwt-toolbarbutton-hover-background, rgba(255, 255, 255, .25));
-  --toolbarbutton-hover-bordercolor: var(--lwt-toolbarbutton-hover-background, rgba(255, 255, 255, .5));
-  --toolbarbutton-header-bordercolor: var(--lwt-toolbarbutton-hover-background, rgba(255, 255, 255, .25));
-  --toolbarbutton-active-background: var(--lwt-toolbarbutton-active-background, rgba(255, 255, 255, .4));
-  --toolbarbutton-active-bordercolor: var(--lwt-toolbarbutton-active-background, rgba(255, 255, 255, .7));
-  --toolbarbutton-active-boxshadow: 0 0 0 1px var(--lwt-toolbarbutton-active-background, rgba(255, 255, 255, .4)) inset;
-  --toolbarbutton-checked-background: var(--lwt-toolbarbutton-hover-background, rgba(255, 255, 255, .3));
+  --toolbarbutton-hover-background: var(
+    --lwt-toolbarbutton-hover-background,
+    rgba(255, 255, 255, 0.25)
+  );
+  --toolbarbutton-hover-bordercolor: var(
+    --lwt-toolbarbutton-hover-background,
+    rgba(255, 255, 255, 0.5)
+  );
+  --toolbarbutton-header-bordercolor: var(
+    --lwt-toolbarbutton-hover-background,
+    rgba(255, 255, 255, 0.25)
+  );
+  --toolbarbutton-active-background: var(
+    --lwt-toolbarbutton-active-background,
+    rgba(255, 255, 255, 0.4)
+  );
+  --toolbarbutton-active-bordercolor: var(
+    --lwt-toolbarbutton-active-background,
+    rgba(255, 255, 255, 0.7)
+  );
+  --toolbarbutton-active-boxshadow: 0 0 0 1px
+    var(--lwt-toolbarbutton-active-background, rgba(255, 255, 255, 0.4)) inset;
+  --toolbarbutton-checked-background: var(
+    --lwt-toolbarbutton-hover-background,
+    rgba(255, 255, 255, 0.3)
+  );
 }
 
 #unifinder-search-field {
@@ -40,20 +59,20 @@
 }
 
 :root[lwtheme] #unifinder-searchBox {
-  border-bottom-color: var(--splitter-color);
+  border-block-end-color: var(--splitter-color);
 }
 
 #bottom-events-box {
-  min-height: 100px;
+  min-block-size: 100px;
 }
 
 #view-box {
-  min-height: 30vh;
+  min-block-size: 30vh;
 }
 
 #calendar-deactivated-notification-location-events {
   flex: 0;
 }
 #calendar-deactivated-notification-location-events:has(notification-message) {
-  min-height: 40px;
+  min-block-size: 40px;
 }

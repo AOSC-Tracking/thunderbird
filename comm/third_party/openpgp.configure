@@ -412,11 +412,13 @@ with only_when(in_tree_librnp):
             ]  # Avoid unused argument warnings on Windows
 
             return namespace(
+                botan_version=build_config["version"],
                 libfile=build_config["static_lib_name"],
                 libname=build_config["libname"],
                 cxxflags=cxxflags,
             )
 
+        set_config("BOTAN_VERSION", configure_botan.botan_version, when=configure_botan)
         set_config("BOTAN_LIB_FILE", configure_botan.libfile, when=configure_botan)
         set_config("BOTAN_LIB_NAME", configure_botan.libname, when=configure_botan)
         set_config("BOTAN_CXXFLAGS", configure_botan.cxxflags, when=configure_botan)
@@ -594,3 +596,31 @@ with only_when(in_tree_librnp):
             check_symbol_exists("strncasecmp", "strings.h", when=have_strings_h),
         )
         set_define("HAVE_STRDUP", check_symbol_exists("strdup", "string.h", when=have_string_h))
+
+        have_strtoll = check_symbol_exists("strtoll", "stdlib.h", when=have_stdlib_h)
+        have_strtoull = check_symbol_exists("strtoull", "stdlib.h", when=have_stdlib_h)
+        have__strtoi64 = check_symbol_exists("_strtoi64", "stdlib.h", when=have_stdlib_h)
+        have__strtoui64 = check_symbol_exists("_strtoui64", "stdlib.h", when=have_stdlib_h)
+
+        set_define("HAVE_STRTOLL", have_strtoll, when=have_stdlib_h)
+        set_define("HAVE_STRTOULL", have_strtoull, when=have_stdlib_h)
+        set_define("HAVE__STRTOI64", have__strtoi64, when=have_stdlib_h)
+        set_define("HAVE__STRTOUI64", have__strtoui64, when=have_stdlib_h)
+
+        @depends(have_strtoll, have__strtoi64, when=have_stdlib_h)
+        def json_c_strtoll(_have_strtoll, _have__strtoi64):
+            if _have_strtoll:
+                return "strtoll"
+            elif _have__strtoi64:
+                return "_strtoi64"
+
+        set_config("JSON_C_STRTOLL", json_c_strtoll, when=have_stdlib_h)
+
+        @depends(have_strtoull, have__strtoui64, when=have_stdlib_h)
+        def json_c_strtoull(_have_strtoull, _have__strtoui64):
+            if _have_strtoull:
+                return "strtoull"
+            elif _have__strtoui64:
+                return "_strtoui64"
+
+        set_config("JSON_C_STRTOULL", json_c_strtoull, when=have_stdlib_h)

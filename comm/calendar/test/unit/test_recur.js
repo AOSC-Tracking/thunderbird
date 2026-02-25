@@ -33,9 +33,6 @@ function test_rules() {
   function check_recur(event, expected, endDate, ignoreNextOccCheck) {
     dump("Checking '" + event.getProperty("DESCRIPTION") + "'\n");
 
-    // Immutability is required for testing the recurrenceEndDate property.
-    event.makeImmutable();
-
     // Get recurrence dates
     const start = createDate(1990, 0, 1);
     const end = createDate(2020, 0, 1);
@@ -104,11 +101,6 @@ function test_rules() {
         equal(prevOcc, null);
       }
     }
-
-    if (typeof endDate == "string") {
-      endDate = cal.createDateTime(endDate).nativeTime;
-    }
-    equal(event.recurrenceInfo.recurrenceEndDate, endDate);
 
     //  Make sure recurrenceInfo.clone works correctly
     test_clone(event);
@@ -1087,8 +1079,9 @@ function test_startdate_change() {
 
   // Event with an exception item
   item = makeRecEvent("RRULE:FREQ=DAILY\r\n");
-  let occ = item.recurrenceInfo.getOccurrenceFor(cal.createDateTime("20020406T114500Z"));
-  occ.QueryInterface(Ci.calIEvent);
+  let occ = item.recurrenceInfo
+    .getOccurrenceFor(cal.createDateTime("20020406T114500Z"))
+    .QueryInterface(Ci.calIEvent);
   occ.startDate = cal.createDateTime("20020406T124500Z");
   item.recurrenceInfo.modifyException(occ, true);
   changeBy(item, "PT3H"); // Change series by 3h.

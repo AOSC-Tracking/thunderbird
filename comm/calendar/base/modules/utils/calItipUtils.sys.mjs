@@ -711,7 +711,7 @@ export var itip = {
             aUpdateFunction({ label });
 
             if (!Components.isSuccessCode(aStatus)) {
-              lazy.cal.showError(label);
+              Services.prompt.alert(null, lazy.l10n.formatValueSync("generic-error-title"), label);
               return;
             }
 
@@ -1338,7 +1338,10 @@ export var itip = {
   getInvitedAttendee(aItem, aCalendar) {
     const id = aItem.getProperty("X-MOZ-INVITED-ATTENDEE");
     if (id) {
-      return aItem.getAttendeeById(id);
+      const attendee = aItem.getAttendeeById(id);
+      if (attendee) {
+        return attendee;
+      }
     }
     if (!aCalendar) {
       aCalendar = aItem.calendar;

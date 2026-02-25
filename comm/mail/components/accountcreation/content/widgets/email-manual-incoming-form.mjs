@@ -77,7 +77,7 @@ class EmailIncomingForm extends AccountHubStep {
    *
    * @type {HTMLInputElement}
    */
-  #incomingEwsUrl;
+  #incomingExchangeUrl;
 
   /**
    * The current email incoming config form inputs.
@@ -117,7 +117,7 @@ class EmailIncomingForm extends AccountHubStep {
       "#incomingAuthMethod"
     );
     this.#incomingUsername = this.querySelector("#incomingUsername");
-    this.#incomingEwsUrl = this.querySelector("#incomingEwsUrl");
+    this.#incomingExchangeUrl = this.querySelector("#incomingExchangeUrl");
     this.setupEventListeners();
     this.#currentConfig = {};
     this.#edited = false;
@@ -150,15 +150,15 @@ class EmailIncomingForm extends AccountHubStep {
     });
 
     this.#incomingProtocol.addEventListener("command", () => {
-      this.#updateConfigInputsVisibility(this.#incomingProtocol.value == 4);
+      this.#updateConfigInputsVisibility(this.#incomingProtocol.value >= 4);
       this.#configChanged();
       this.#adjustPortToSSLAndProtocol();
     });
 
-    this.#incomingEwsUrl.addEventListener("input", () => {
+    this.#incomingExchangeUrl.addEventListener("input", () => {
       // Skip validation while there isn't a URL with a full host in the field
       // to avoid inserting a slash into the host through the validation.
-      if (/^[^/]+\/\/[^/]+$/.test(this.#incomingEwsUrl.value)) {
+      if (/^[^/]+\/\/[^/]+$/.test(this.#incomingExchangeUrl.value)) {
         return;
       }
       this.#configChanged();
@@ -276,20 +276,28 @@ class EmailIncomingForm extends AccountHubStep {
     // Get current config.
     const config = accountConfig || this.getIncomingUserConfig();
 
-    const host =
-      config.incoming.type === "ews"
-        ? URL.parse(config.incoming.ewsURL)?.hostname
-        : config.incoming.hostname;
+    // If it's an exchange account and the experimental pref to allow
+    // OAuth customization is enabled, always allow OAuth since they
+    // will be able to customize the account later.
+    const oauthCustomizationEnabled = Services.prefs.getBoolPref(
+      "experimental.mail.ews.overrideOAuth.enabled",
+      false
+    );
+    if (oauthCustomizationEnabled && config.isExchangeConfig()) {
+      this.querySelector("#incomingAuthMethodOAuth2").hidden = false;
+    } else {
+      const host = config.getConfiguredHost();
 
-    // If the incoming server hostname supports OAuth2, enable it.
-    const incomingDetails =
-      host && OAuth2Providers.getHostnameDetails(host, config.incoming.type);
+      // If the incoming server hostname supports OAuth2, enable it.
+      const incomingDetails =
+        host && OAuth2Providers.getHostnameDetails(host, config.incoming.type);
 
-    this.querySelector("#incomingAuthMethodOAuth2").hidden = !incomingDetails;
-    if (incomingDetails) {
-      gAccountSetupLogger.debug(
-        `OAuth2 details for incoming server ${config.incoming.hostname} is ${incomingDetails}`
-      );
+      this.querySelector("#incomingAuthMethodOAuth2").hidden = !incomingDetails;
+      if (incomingDetails) {
+        gAccountSetupLogger.debug(
+          `OAuth2 details for incoming server ${config.incoming.hostname} is ${incomingDetails}`
+        );
+      }
     }
 
     this.#currentConfig = config;
@@ -415,15 +423,16 @@ class EmailIncomingForm extends AccountHubStep {
       2: "pop3",
       3: "exchange",
       4: "ews",
+      5: "graph",
       0: null,
     });
 
     // An EWS configuration won't have any of the default fields available to
     // edit.
-    if (config.incoming.type != "ews") {
-      config = this.#getDefaultConfigValues(config);
+    if (config.isExchangeConfig()) {
+      config = this.#getExchangeConfigValues(config);
     } else {
-      config = this.#getEwsConfigValues(config);
+      config = this.#getDefaultConfigValues(config);
     }
 
     config.incoming.auth = Sanitizer.integer(
@@ -452,11 +461,11 @@ class EmailIncomingForm extends AccountHubStep {
    */
   updateFields(config) {
     assert(config instanceof AccountConfig);
-    this.#updateConfigInputsVisibility(config.incoming.type === "ews");
+    this.#updateConfigInputsVisibility(config.isExchangeConfig());
 
     this.#incomingProtocol.value = Sanitizer.translate(
       config.incoming.type,
-      { imap: 1, pop3: 2, exchange: 3, ews: 4 },
+      { imap: 1, pop3: 2, exchange: 3, ews: 4, graph: 5 },
       1
     );
     this.#incomingHostname.value = config.incoming.hostname;
@@ -473,8 +482,8 @@ class EmailIncomingForm extends AccountHubStep {
       this.#adjustPortToSSLAndProtocol(config);
     }
 
-    this.#incomingEwsUrl.value =
-      config.incoming.ewsURL ||
+    this.#incomingExchangeUrl.value =
+      config.incoming.exchangeURL ||
       (config.incoming.hostname &&
         config.incoming.hostname[0] != "." &&
         `https://${config.incoming.hostname}`) ||
@@ -543,25 +552,31 @@ class EmailIncomingForm extends AccountHubStep {
   }
 
   /**
-   * Captures and sanitizes the incoming config fields that are for an ews
+   * Captures and sanitizes the incoming config fields that are for an exchange
    * (configuration), and then returns the updated config.
    *
    * @param {AccountConfig} config - The current account config.
    * @returns {AccountConfig}
    */
-  #getEwsConfigValues(config) {
+  #getExchangeConfigValues(config) {
     try {
-      const inEwsUrl = this.#incomingEwsUrl.value;
-      config.incoming.ewsURL = Sanitizer.url(inEwsUrl);
-      this.#incomingEwsUrl.value = config.incoming.ewsURL;
-      this.#incomingEwsUrl.setCustomValidity("");
-      this.#incomingEwsUrl.setAttribute("aria-invalid", false);
-      this.#incomingEwsUrl.removeAttribute("aria-describedby");
+      const inExchangeUrl = this.#incomingExchangeUrl.value;
+      config.incoming.exchangeURL = Sanitizer.url(inExchangeUrl);
+      this.#incomingExchangeUrl.value = config.incoming.exchangeURL;
+      this.#incomingExchangeUrl.setCustomValidity("");
+      this.#incomingExchangeUrl.setAttribute("aria-invalid", false);
+      this.#incomingExchangeUrl.removeAttribute("aria-describedby");
+
+      // For Exchange, the hostname should be set from the Exchange URL.
+      const hostname = URL.parse(config.incoming.exchangeURL)?.hostname;
+      if (hostname) {
+        config.incoming.hostname = hostname;
+      }
     } catch (error) {
       gAccountSetupLogger.warn(error);
-      this.#incomingEwsUrl.setCustomValidity(error._message);
-      this.#incomingEwsUrl.setAttribute("aria-invalid", true);
-      this.#incomingEwsUrl.setAttribute(
+      this.#incomingExchangeUrl.setCustomValidity(error._message);
+      this.#incomingExchangeUrl.setAttribute("aria-invalid", true);
+      this.#incomingExchangeUrl.setAttribute(
         "aria-describedby",
         "incomingEwsUrlErrorMessage"
       );
@@ -579,12 +594,11 @@ class EmailIncomingForm extends AccountHubStep {
   #updateConfigInputsVisibility(isExchange) {
     const configOptions = {
       "#incomingHostnameFormGroup": isExchange,
-      "#incomingEwsUrlFormGroup": !isExchange,
+      "#incomingExchangeUrlFormGroup": !isExchange,
       "#nonEwsFormRow": isExchange,
       "#incomingAuthMethodAutodetect": isExchange,
       "#incomingAuthMethodEncrypted": isExchange,
       "#incomingAuthMethodKerbos": isExchange,
-      "#incomingAuthMethodNtlm": isExchange,
     };
 
     for (const [optionID, hide] of Object.entries(configOptions)) {
@@ -609,7 +623,7 @@ class EmailIncomingForm extends AccountHubStep {
     // is selected.
     if (
       isExchange &&
-      !["3", "10"].includes(this.#incomingAuthenticationMethod.value)
+      !["3", "6", "10"].includes(this.#incomingAuthenticationMethod.value)
     ) {
       this.#incomingAuthenticationMethod.value = "3";
     }

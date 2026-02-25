@@ -4,6 +4,9 @@
 
 "use strict";
 
+var { clearStatusBar } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/CleanupHelpers.sys.mjs"
+);
 var { MailConsts } = ChromeUtils.importESModule(
   "resource:///modules/MailConsts.sys.mjs"
 );
@@ -52,6 +55,8 @@ requestLongerTimeout = factor => {
 };
 requestLongerTimeout(1);
 
+let openedMsgWindowCount = 0;
+
 add_setup(async () => {
   await check3PaneState(true, true);
   const tabmail = document.getElementById("tabmail");
@@ -62,6 +67,14 @@ add_setup(async () => {
     }
     is(tabmail.tabInfo.length, 1, "One tab open from start");
   }
+  // Remove state information (for example position and size) for the compose and
+  // message window, which might have leaked in from previous tests.
+  Services.xulStore.removeDocument(
+    "chrome://messenger/content/messengercompose/messengercompose.xhtml"
+  );
+  Services.xulStore.removeDocument(
+    "chrome://messenger/content/messageWindow.xhtml"
+  );
 });
 
 // Keep tack of the origial value of the pref extensions.webextensions.uuids to
@@ -69,7 +82,7 @@ add_setup(async () => {
 const webextensions_uuids = Services.prefs.getStringPref(
   "extensions.webextensions.uuids"
 );
-registerCleanupFunction(() => {
+registerCleanupFunction(async () => {
   const tabmail = document.getElementById("tabmail");
   is(tabmail.tabInfo.length, 1, "Only one tab open at end of test");
 
@@ -77,9 +90,12 @@ registerCleanupFunction(() => {
     tabmail.closeTab(tabmail.tabInfo[1]);
   }
 
+  await clearStatusBar(window);
+
   // Some tests that open new windows don't return focus to the main window
   // in a way that satisfies mochitest, and the test times out.
   Services.focus.focusedWindow = window;
+
   // Focus an element in the main window, then blur it again to avoid it
   // hijacking keypresses.
   const mainWindowElement = document.getElementById("button-appmenu");
@@ -324,11 +340,20 @@ async function createMessages(folder, makeMessagesArg) {
 }
 
 async function createMessageFromFile(folder, path) {
-  let message = await IOUtils.readUTF8(path);
+  const message = await IOUtils.readUTF8(path);
+  await addGeneratedMessage(folder, message);
+}
 
+async function createMessageFromString(folder, message) {
+  await addGeneratedMessage(folder, message);
+}
+
+async function addGeneratedMessage(folder, message) {
   // A cheap hack to make this acceptable to addMessageBatch. It works for
   // existing uses but may not work for future uses.
-  const fromAddress = message.match(/From: .* <(.*@.*)>/)[0];
+  const fromAddress = message.match(
+    /From:\s*(?:.*<)?([^\s<>]+@[^\s<>]+)(?:>)?/i
+  )[0];
   message = `From ${fromAddress}\r\n${message}`;
 
   if (folder.server.type == "imap" && gIMAPServers.has(folder.server.key)) {
@@ -505,6 +530,23 @@ async function openMessageInWindow(msgHdr) {
     throw new Error("No message passed to openMessageInWindow");
   }
 
+  // Temporary logging
+  dump(
+    ` ---- A - ${openedMsgWindowCount} ${JSON.stringify(
+      ["chrome://messenger/content/messageWindow.xhtml"].map(url =>
+        Array.from(Services.xulStore.getIDsEnumerator(url)).map(id => ({
+          [id]: Array.from(
+            Services.xulStore.getAttributeEnumerator(url, id)
+          ).map(attr => ({
+            [attr]: Services.xulStore.getValue(url, id, attr),
+          })),
+        }))
+      ),
+      null,
+      2
+    )}`
+  );
+
   const messageWindowPromise = BrowserTestUtils.domWindowOpenedAndLoaded(
     undefined,
     async win =>
@@ -515,6 +557,25 @@ async function openMessageInWindow(msgHdr) {
 
   const messageWindow = await messageWindowPromise;
   await BrowserTestUtils.waitForEvent(messageWindow, "MsgLoaded");
+  openedMsgWindowCount++;
+
+  // Temporary logging
+  dump(
+    ` ---- B - ${openedMsgWindowCount} ${JSON.stringify(
+      ["chrome://messenger/content/messageWindow.xhtml"].map(url =>
+        Array.from(Services.xulStore.getIDsEnumerator(url)).map(id => ({
+          [id]: Array.from(
+            Services.xulStore.getAttributeEnumerator(url, id)
+          ).map(attr => ({
+            [attr]: Services.xulStore.getValue(url, id, attr),
+          })),
+        }))
+      ),
+      null,
+      2
+    )}`
+  );
+
   return messageWindow;
 }
 
@@ -1869,12 +1930,12 @@ async function testThemeIcons(button, uuid) {
     BrowserTestUtils.waitForEvent(win, "windowlwthemeupdate"),
     lightBuiltInTheme.enable(),
   ]);
-  await checkIcons("Light built-in theme", "default");
+  await checkIcons("Light built-in theme", "light");
 
   // Disabling a theme will enable the default theme.
   await Promise.all([
     BrowserTestUtils.waitForEvent(win, "windowlwthemeupdate"),
     lightBuiltInTheme.disable(),
   ]);
-  await checkIcons("Default theme", "default");
+  await checkIcons("Default theme", "light");
 }

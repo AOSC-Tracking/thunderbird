@@ -26,8 +26,8 @@ form {
 
   input[type="checkbox"]:not(.toggle-checkbox) {
     box-sizing: border-box;
-    width: 16px;
-    height: 16px;
+    inline-size: 16px;
+    block-size: 16px;
     border: 1px solid var(--color-surface-border-intense);
     border-radius: 4px;
     appearance: none;
@@ -37,7 +37,7 @@ form {
       border: 1px solid var(--color-surface-border);
       background-color: var(--color-surface-subtle);
 
-      &+.checkbox-label {
+      & + .checkbox-label {
         color: var(--color-text-muted);
       }
     }
@@ -84,12 +84,16 @@ form {
       cursor: text;
 
       @media (prefers-reduced-motion: no-preference) {
-        transition: transform 200ms, color 200ms, font-weight 200ms, background-color 200ms;
+        transition:
+          transform 200ms,
+          color 200ms,
+          font-weight 200ms,
+          background-color 200ms;
       }
     }
   }
 
-  label:has(+ .input-control input:required)::after ,
+  label:has(+ .input-control input:required)::after,
   input:required + label::after {
     content: "*";
     color: var(--color-text-critical);
@@ -122,7 +126,7 @@ form {
     border-radius: var(--button-border-radius);
     background-color: var(--hub-input-bg-color);
     font-weight: 200;
-    max-width: 100%;
+    max-inline-size: 100%;
 
     &[type="password"] {
       padding-inline-end: 9px;
@@ -165,8 +169,8 @@ form {
       border-width: 1px;
 
       &::-moz-number-spin-box {
-        height: 100%;
-        width: 22px;
+        block-size: 100%;
+        inline-size: 22px;
         border-inline-start: 1px solid var(--color-surface-border);
         border-inline-end: 0;
         background: var(--color-surface-subtle);
@@ -176,7 +180,7 @@ form {
 
       &::-moz-number-spin-up,
       &::-moz-number-spin-down {
-        height: 8px;
+        block-size: 8px;
         appearance: none;
         padding: 5px 2px;
         -moz-context-properties: stroke;
@@ -224,21 +228,21 @@ form {
 
   .menulist,
   .input-field {
-     & ~ .input-error-message {
+    & ~ .input-error-message {
       color: light-dark(var(--color-critical-default), var(--color-critical-pressed));
       display: none;
       position: absolute;
-      bottom: calc(-1 * var(--hub-form-input-line-height) - 5px);
+      inset-block-end: calc(-1 * var(--hub-form-input-line-height) - 5px);
       white-space: nowrap;
       text-overflow: ellipsis;
       overflow: hidden;
-      width: -moz-available;
+      inline-size: -moz-available;
 
       &.security-warning {
         white-space: normal;
         position: relative;
         font-size: 1rem;
-        bottom: 0;
+        inset-block-end: 0;
         margin-block: 2px -15px;
 
         & #moreInfoLink {
@@ -340,8 +344,8 @@ div:has(legend) {
 }
 
 .form-icon {
-  width: 16px;
-  height: 16px;
+  inline-size: 16px;
+  block-size: 16px;
 
   input:is(:user-invalid, :invalid) ~ & {
     display: none;
@@ -363,7 +367,7 @@ div:has(legend) {
   padding: 6px 12px;
   margin-block-start: var(--hub-notification-bar-margin-block-start);
   margin-inline: auto;
-  width: var(--hub-width);
+  inline-size: var(--hub-width);
   text-align: start;
   border: 1px solid;
   border-radius: 3px;
@@ -378,7 +382,7 @@ div:has(legend) {
     }
 
     span:last-of-type {
-      display: flex
+      display: flex;
     }
   }
 
@@ -416,7 +420,7 @@ div:has(legend) {
   .notification-title {
     font-size: 1.1rem;
     font-weight: 700;
-    width: 100%;
+    inline-size: 100%;
     text-align: center;
     margin-block: 0;
   }
@@ -518,7 +522,7 @@ div:has(legend) {
     }
 
     & .config-title {
-      color: light-dark( var(--color-primary-default), #feffff);
+      color: light-dark(var(--color-primary-default), #feffff);
       display: flex;
       align-items: center;
       flex-wrap: wrap;
@@ -535,8 +539,8 @@ div:has(legend) {
         appearance: none;
         background-color: transparent;
         margin-inline-end: 8px;
-        width: 15px;
-        height: 15px;
+        inline-size: 15px;
+        block-size: 15px;
         border: 1px solid var(--color-surface-border-intense);
         border-radius: 50%;
         display: grid;
@@ -544,8 +548,8 @@ div:has(legend) {
 
         &::before {
           content: "";
-          width: 5px;
-          height: 5px;
+          inline-size: 5px;
+          block-size: 5px;
           border-radius: 50%;
           transform: scale(0);
           box-shadow: inset 1em 1em var(--color-surface-base);
@@ -564,7 +568,6 @@ div:has(legend) {
       padding-inline: var(--hub-config-option-padding-inline);
       font-size: 1.1rem;
     }
-
 
     &.selected {
       border-color: var(--color-primary-default);
@@ -596,7 +599,7 @@ div:has(legend) {
 
 .form-selection {
   position: sticky;
-  top: 0;
+  inset-block-start: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -606,8 +609,8 @@ div:has(legend) {
   border-radius: 10px;
 
   &.credentials-confirmation {
-    width: fit-content;
-    min-width: 380px;
+    inline-size: fit-content;
+    min-inline-size: 380px;
     margin-inline: auto;
   }
 
@@ -639,8 +642,8 @@ div:has(legend) {
   }
 
   & .config-item-icon {
-    height: 18px;
-    width: 18px;
+    block-size: 18px;
+    inline-size: 18px;
     -moz-context-properties: fill, stroke, stroke-opacity;
     fill: light-dark(color-mix(in srgb, #bdbdbd 20%, transparent), color-mix(in srgb, #3d4d67 20%, transparent));
     stroke: light-dark(#bdbdbd, #3d4d67);
@@ -650,8 +653,8 @@ div:has(legend) {
     }
 
     .config-protocols & {
-      height: 30px;
-      width: 30px;
+      block-size: 30px;
+      inline-size: 30px;
     }
   }
 
@@ -745,19 +748,19 @@ div:has(legend) {
 }
 
 .sync-type-container {
-  width: 100%;
+  inline-size: 100%;
   position: relative;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-surface-border);
   border-radius: 8px;
-  height: 240px;
+  block-size: 240px;
   font-size: 1.1rem;
   margin: 0;
   padding: 0;
   background-color: var(--color-surface-base);
   overflow: hidden;
-  min-width: 0;
+  min-inline-size: 0;
 
   & .sync-title {
     display: flex;
@@ -767,7 +770,7 @@ div:has(legend) {
     padding: var(--hub-sync-list-title-padding);
     font-weight: bold;
     background-color: var(--color-surface-lower);
-    border-bottom: 1px solid var(--color-surface-border);
+    border-block-end: 1px solid var(--color-surface-border);
     border-radius: 8px 8px 0 0;
 
     & .sync-details {
@@ -790,8 +793,8 @@ div:has(legend) {
     }
 
     & .sync-icon {
-      width: var(--hub-sync-list-icon-size);
-      height: var(--hub-sync-list-icon-size);
+      inline-size: var(--hub-sync-list-icon-size);
+      block-size: var(--hub-sync-list-icon-size);
 
       &.calendar {
         content: var(--hub-sync-list-calendar-icon);
@@ -883,8 +886,9 @@ button.account-hub-option-button {
   margin: 0;
   border: none;
   background-color: var(--color-surface-base);
-  width: 100%;
-  box-shadow: 0 12px 10px -10px rgba(0, 79, 155, 0.25),
+  inline-size: 100%;
+  box-shadow:
+    0 12px 10px -10px rgba(0, 79, 155, 0.25),
     0 0 5px 0 rgba(23, 95, 182, 0.1);
   overflow: hidden;
   flex-shrink: 0;
@@ -894,7 +898,9 @@ button.account-hub-option-button {
   }
 
   @media (prefers-reduced-motion: no-preference) {
-    transition: background-color 220ms ease, box-shadow 220ms ease;
+    transition:
+      background-color 220ms ease,
+      box-shadow 220ms ease;
   }
 
   &:enabled {
@@ -908,12 +914,15 @@ button.account-hub-option-button {
     }
 
     &:hover {
-      box-shadow: 0 25px 10px -20px rgba(0, 79, 155, 0.35),
+      box-shadow:
+        0 25px 10px -20px rgba(0, 79, 155, 0.35),
         0 0 5px 0 rgba(23, 95, 182, 0.2);
     }
 
     &:hover:active {
-      box-shadow: 0 5px 5px -5px rgba(0, 79, 155, 0.35), 0 0 5px 0 rgba(23, 95, 182, 0.2);
+      box-shadow:
+        0 5px 5px -5px rgba(0, 79, 155, 0.35),
+        0 0 5px 0 rgba(23, 95, 182, 0.2);
     }
   }
 
@@ -953,7 +962,9 @@ button.account-hub-option-button {
     &.address-book-option-icon {
       padding: 6px;
       background-color: var(--color-primary-default);
-      box-shadow: 0 3px 4px -2px rgba(25, 81, 143, 0.5), 0 -2px 0 0 rgb(0, 0, 0, 0.25) inset;
+      box-shadow:
+        0 3px 4px -2px rgba(25, 81, 143, 0.5),
+        0 -2px 0 0 rgb(0, 0, 0, 0.25) inset;
       border-radius: 5px;
     }
 
@@ -1061,8 +1072,12 @@ button.account-hub-option-button {
 }
 
 @keyframes spinning-animation {
-  0% { transform: rotate(0); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 #advancedConfigurationLdap,

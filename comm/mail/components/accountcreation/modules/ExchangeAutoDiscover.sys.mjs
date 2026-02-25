@@ -14,6 +14,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   FetchHTTP: "resource:///modules/accountcreation/FetchHTTP.sys.mjs",
   GuessConfig: "resource:///modules/accountcreation/GuessConfig.sys.mjs",
   Sanitizer: "resource:///modules/accountcreation/Sanitizer.sys.mjs",
+  OAuth2Providers: "resource:///modules/OAuth2Providers.sys.mjs",
 });
 
 const {
@@ -83,7 +84,7 @@ function startFetchWithAuth(call, url, username, password, callArgs) {
   // associated with the provided domain.
   const uri = Services.io.newURI(url);
   call.setAbortable(new OAuthAbortable(oauth2Module));
-  const isOAuth2Available = oauth2Module.initFromHostname(
+  let isOAuth2Available = oauth2Module.initFromHostname(
     uri.host,
     username,
     // We pretend to be an IMAP server so we don't try to request unnecessary
@@ -93,6 +94,13 @@ function startFetchWithAuth(call, url, username, password, callArgs) {
     // restrict the use of scopes like the EWS ones to a small allow-list of
     // clients for security reasons.
     "imap"
+  );
+  // Using the actual exchange type for the check so we only get positive
+  // feedback if the provider is expected to support exchange in the first
+  // place.
+  isOAuth2Available &&= lazy.OAuth2Providers.getHostnameDetails(
+    uri.host,
+    "exchange"
   );
   if (isOAuth2Available) {
     oauth2Module.getAccessToken({
@@ -509,7 +517,10 @@ function readAutoDiscoverXML(autoDiscoverXML, username) {
   config.incoming.socketType = Ci.nsMsgSocketType.SSL; // only https supported
   config.incoming.port = 443;
   config.incoming.auth = Ci.nsMsgAuthMethod.passwordCleartext;
-  config.incoming.authAlternatives = [Ci.nsMsgAuthMethod.OAuth2];
+  config.incoming.authAlternatives = [
+    Ci.nsMsgAuthMethod.OAuth2,
+    Ci.nsMsgAuthMethod.NTLM,
+  ];
   config.outgoing.addThisServer = false;
   config.outgoing.useGlobalPreferredServer = true;
 
@@ -530,11 +541,13 @@ function readAutoDiscoverXML(autoDiscoverXML, username) {
         if (urlsX) {
           config.incoming.owaURL = lazy.Sanitizer.url(urlsX.OWAUrl.value);
           if (
-            !config.incoming.ewsURL &&
+            !config.incoming.exchangeURL &&
             "Protocol" in urlsX &&
             "ASUrl" in urlsX.Protocol
           ) {
-            config.incoming.ewsURL = lazy.Sanitizer.url(urlsX.Protocol.ASUrl);
+            config.incoming.exchangeURL = lazy.Sanitizer.url(
+              urlsX.Protocol.ASUrl
+            );
           }
           config.incoming.type = "exchange";
           const parsedURL = new URL(config.incoming.owaURL);
@@ -546,12 +559,12 @@ function readAutoDiscoverXML(autoDiscoverXML, username) {
           }
         }
       } else if (type == "EXHTTP" || type == "EXCH") {
-        config.incoming.ewsURL = lazy.Sanitizer.url(protocolX.EwsUrl);
-        if (!config.incoming.ewsURL) {
-          config.incoming.ewsURL = lazy.Sanitizer.url(protocolX.ASUrl);
+        config.incoming.exchangeURL = lazy.Sanitizer.url(protocolX.EwsUrl);
+        if (!config.incoming.exchangeURL) {
+          config.incoming.exchangeURL = lazy.Sanitizer.url(protocolX.ASUrl);
         }
         config.incoming.type = "exchange";
-        const parsedURL = new URL(config.incoming.ewsURL);
+        const parsedURL = new URL(config.incoming.exchangeURL);
         config.incoming.hostname = lazy.Sanitizer.hostname(parsedURL.hostname);
         if (parsedURL.port) {
           config.incoming.port = lazy.Sanitizer.integer(parsedURL.port);
@@ -667,7 +680,7 @@ export function getAddonsList(config, successCallback, errorCallback) {
         addon.useType = addon.supportedTypes.find(
           type =>
             (incoming.owaURL && type.protocolType == "owa") ||
-            (incoming.ewsURL && type.protocolType == "ews") ||
+            (incoming.exchangeURL && type.protocolType == "ews") ||
             (incoming.easURL && type.protocolType == "eas")
         );
         return !!addon.useType;

@@ -1066,6 +1066,7 @@ function toggleKeepDuration() {
   // To make the "keep" attribute persistent, it mustn't be removed when in
   // false state (bug 15232).
   kdb.setAttribute("keep", keepAttribute ? "false" : "true");
+  kdb.setAttribute("aria-pressed", keepAttribute ? "false" : "true");
   document.getElementById("link-image-top").setAttribute("keep", !keepAttribute);
 }
 
@@ -1363,7 +1364,7 @@ function getRepeatTypeAndUntilDate() {
       }
     }
     if (rules.length == 1) {
-      const rule = cal.wrapInstance(rules[0], Ci.calIRecurrenceRule);
+      const rule = rules[0]?.QueryInterface(Ci.calIRecurrenceRule);
       if (rule) {
         switch (rule.type) {
           case "DAILY": {
@@ -3695,8 +3696,10 @@ function showOrHideItemURL(url) {
   }
   // Only show if its either an internal protocol handler, or its external
   // and there is an external app for the scheme
-  handler = cal.wrapInstance(handler, Ci.nsIExternalProtocolHandler);
-  return !handler || handler.externalAppExistsForScheme(uri.scheme);
+  return (
+    !(handler instanceof Ci.nsIExternalProtocolHandler) ||
+    handler.externalAppExistsForScheme(uri.scheme)
+  );
 }
 
 /**

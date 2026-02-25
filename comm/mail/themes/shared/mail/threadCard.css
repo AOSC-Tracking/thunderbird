@@ -30,10 +30,7 @@
   }
 
   @media not (prefers-contrast) {
-    --tree-card-border: light-dark(
-      color-mix(in srgb, var(--tree-card-background) 90%, black),
-      color-mix(in srgb, var(--tree-card-background) 90%, white)
-    );
+    --tree-card-border: light-dark(color-mix(in srgb, var(--tree-card-background) 90%, black), color-mix(in srgb, var(--tree-card-background) 90%, white));
     --read-status-fill: transparent;
     --read-status-stroke: transparent;
     --new-subject-color: light-dark(var(--color-blue-60), var(--color-blue-40));
@@ -124,7 +121,6 @@
     }
 
     &[data-properties~="hasUnread"] {
-
       & .replies-icon,
       & .thread-replies {
         font-weight: bold;
@@ -169,7 +165,6 @@
 
       /* hasNew shouldn't affect any style unless we also have hasUnread. */
       &[data-properties~="hasNew"] {
-
         & .replies-icon,
         & .thread-replies {
           color: var(--new-color);
@@ -188,7 +183,6 @@
     }
 
     &[data-properties~="replied"] {
-
       & .state.replied {
         display: inline-flex;
       }
@@ -213,8 +207,7 @@
         stroke: var(--color-purple-50);
       }
 
-      &[data-properties~="forwarded"][data-properties~="redirected"]
-        .subject-line img {
+      &[data-properties~="forwarded"][data-properties~="redirected"] .subject-line img {
         visibility: initial;
         content: var(--icon-reply-forward-redirect-col);
         fill: var(--color-blue-50);
@@ -223,7 +216,6 @@
     }
 
     &[data-properties~="forwarded"] {
-
       & .state.forwarded {
         display: inline-flex;
       }
@@ -244,7 +236,6 @@
     }
 
     &[data-properties~="redirected"] {
-
       & .state.redirected {
         display: inline-flex;
       }
@@ -258,10 +249,9 @@
     }
 
     & td {
-
       & button {
-        min-height: 16px;
-        min-width: 16px;
+        min-block-size: 16px;
+        min-inline-size: 16px;
         opacity: 0.7;
 
         &:hover {
@@ -269,10 +259,10 @@
         }
 
         &.twisty {
-          width: auto;
-          height: auto;
-          min-width: 12px;
-          min-height: 13px;
+          inline-size: auto;
+          block-size: auto;
+          min-inline-size: 12px;
+          min-block-size: 13px;
           padding: 0;
           border: 1px solid transparent;
           position: relative;
@@ -305,8 +295,8 @@
           }
 
           & .replies-icon {
-            height: 12px;
-            width: 12px;
+            block-size: 12px;
+            inline-size: 12px;
             margin: 1px;
             content: var(--icon-replies-xs);
           }
@@ -316,8 +306,8 @@
           }
 
           & .twisty-icon {
-            height: 10px;
-            width: 10px;
+            block-size: 10px;
+            inline-size: 10px;
           }
         }
       }
@@ -358,9 +348,10 @@
 
         & .thread-card-dynamic-row {
           display: grid;
-          grid-template: "subject subject" max-content
-                         "button info" minmax(auto, 1fr)
-                         / auto 1fr;
+          grid-template:
+            "subject subject" max-content
+            "button info" minmax(auto, 1fr)
+            / auto 1fr;
           gap: var(--thread-card-content-gap);
           align-items: center;
           padding: 0;
@@ -377,8 +368,8 @@
 
         & .read-status {
           content: var(--read-status-icon);
-          height: var(--read-status-size);
-          width: var(--read-status-size);
+          block-size: var(--read-status-size);
+          inline-size: var(--read-status-size);
           -moz-context-properties: fill, stroke;
           fill: var(--read-status-fill);
           stroke: var(--read-status-stroke);
@@ -415,8 +406,8 @@
           background-color: var(--account-color);
           border: 1px solid color-mix(in srgb, var(--account-color) 80%, black);
           border-radius: 4px;
-          width: 4px;
-          height: 12px;
+          inline-size: 4px;
+          block-size: 12px;
           margin-inline-end: -3px;
         }
 
@@ -443,7 +434,7 @@
         & .tree-button-more {
           --button-padding: 0;
           color: inherit;
-          opacity: .5;
+          opacity: 0.5;
           background-image: var(--icon-kebab);
           -moz-context-properties: fill, stroke;
           fill: currentColor;
@@ -475,7 +466,7 @@
 
           &:dir(rtl) {
             background-image: var(--icon-nav-back);
-            background-position-x: 100%
+            background-position-x: 100%;
           }
         }
       }
@@ -499,8 +490,9 @@
   /* 2 Rows cards variation */
   &.cards-row-compact td .card-container {
     & .thread-card-dynamic-row {
-        grid-template: "button subject info" max-content
-                       / auto 1fr auto;
+      grid-template:
+        "button subject info" max-content
+        / auto 1fr auto;
     }
 
     & .thread-card-subject-container {
@@ -510,8 +502,8 @@
     & button.twisty::before {
       inset-inline-start: -2px;
       inset-block-start: -2px;
-      width: 12px;
-      height: 12px;
+      inline-size: 12px;
+      block-size: 12px;
     }
 
     & .replies-icon,
@@ -529,8 +521,8 @@
       &::after {
         position: absolute;
         content: var(--icon-dot-xs);
-        height: var(--circle-size);
-        width: var(--circle-size);
+        block-size: var(--circle-size);
+        inline-size: var(--circle-size);
         inset-block: calc(50% - var(--circle-size) / 2);
         inset-inline-start: calc((var(--tree-card-inline) * 2) - var(--circle-size) / 2);
         -moz-context-properties: fill, stroke;
@@ -543,9 +535,9 @@
         display: block;
         content: "";
         position: absolute;
-        height: var(--thread-line-height);
+        block-size: var(--thread-line-height);
         --line-width: 1px;
-        width: var(--line-width);
+        inline-size: var(--line-width);
         border-inline-start: var(--line-width) dashed var(--thread-line-color);
         inset-inline-start: calc((var(--tree-card-inline) * 2) - var(--line-width) / 2);
         inset-block: 0;
@@ -564,10 +556,10 @@
       content: "";
       display: block;
       position: absolute;
-      height: 0;
-      width: 100%;
-      border-top: 1px solid light-dark(var(--color-gray-20), var(--color-gray-80));
-      margin-top: -3px;
+      block-size: 0;
+      inline-size: 100%;
+      border-block-start: 1px solid light-dark(var(--color-gray-20), var(--color-gray-80));
+      margin-block-start: -3px;
       opacity: 0;
     }
 
@@ -588,7 +580,6 @@
 
   /* Grouped By Sort */
   &[data-show-grouped-by-sort~="true"] {
-
     & button.twisty :is(.replies-icon, .thread-replies) {
       display: none;
     }
@@ -631,9 +622,10 @@
         grid-template-columns: 1fr;
 
         & .thread-card-dynamic-row {
-          grid-template: "subject subject" max-content
-                         "sort button" minmax(auto, 1fr)
-                         / 1fr auto;
+          grid-template:
+            "subject subject" max-content
+            "sort button" minmax(auto, 1fr)
+            / 1fr auto;
         }
 
         & .thread-card-subject-container {

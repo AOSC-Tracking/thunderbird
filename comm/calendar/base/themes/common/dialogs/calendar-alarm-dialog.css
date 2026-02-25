@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#calendar-alarm-dialog[lwt-tree]  {
+#calendar-alarm-dialog[lwt-tree] {
   background-color: var(--lwt-accent-color);
   color: var(--lwt-text-color);
 }
@@ -14,13 +14,13 @@
 }
 
 #alarm-actionbar {
-  min-width: 1px;
+  min-inline-size: 1px;
   margin: 0 5px 10px;
 }
 
 /* Alarm widget specific styles */
 richlistitem[is="calendar-alarm-widget-richlistitem"] {
-  border-bottom: 1px dotted ThreeDShadow;
+  border-block-end: 1px dotted ThreeDShadow;
   padding: 6px 7px;
 }
 
@@ -68,7 +68,7 @@ richlistitem[is="calendar-alarm-widget-richlistitem"][selected="true"] .action-b
 .alarm-calendar-image {
   -moz-context-properties: fill;
   fill: currentColor;
-  margin-top: 2px;
+  margin-block-start: 2px;
 }
 
 richlistitem[is="calendar-alarm-widget-richlistitem"]:not([selected="true"]) .alarm-calendar-image {
@@ -76,7 +76,7 @@ richlistitem[is="calendar-alarm-widget-richlistitem"]:not([selected="true"]) .al
 }
 
 .snooze-popup-button {
-  min-width: 0;
+  min-inline-size: 0;
   appearance: none;
   margin-inline-end: 2px;
   -moz-context-properties: fill;

@@ -65,11 +65,11 @@
 }
 
 html {
-  height: 100%;
+  block-size: 100%;
 }
 
 body {
-  height: 100%;
+  block-size: 100%;
   margin: 0;
   text-shadow: none;
 
@@ -80,37 +80,37 @@ body {
 
   /* Classic layout: folder tree on the left, thread tree and message browser on the right. */
   &.layout-classic {
-    grid-template: "folders folderPaneSplitter threads" minmax(auto, 1fr)
-                   "folders folderPaneSplitter messagePaneSplitter" min-content
-                   "folders folderPaneSplitter message" minmax(auto, var(--messagePaneSplitter-height))
-                   / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr);
+    grid-template:
+      "folders folderPaneSplitter threads" minmax(auto, 1fr)
+      "folders folderPaneSplitter messagePaneSplitter" min-content
+      "folders folderPaneSplitter message" minmax(auto, var(--messagePaneSplitter-height))
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr);
   }
 
   /* Vertical layout: three columns. */
   &.layout-vertical {
-    grid-template: "folders folderPaneSplitter threads messagePaneSplitter message" auto
-                   / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--messagePaneSplitter-width));
+    grid-template:
+      "folders folderPaneSplitter threads messagePaneSplitter message" auto
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr) min-content minmax(auto, var(--messagePaneSplitter-width));
   }
 
   /* Wide layout: folder tree and thread tree on the top, and message browser on the bottom. */
   &.layout-wide {
-    grid-template: "folders folderPaneSplitter threads" minmax(auto, 1fr)
-                   "messagePaneSplitter messagePaneSplitter messagePaneSplitter" min-content
-                   "message message message" minmax(auto, var(--messagePaneSplitter-height))
-                   / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr);
+    grid-template:
+      "folders folderPaneSplitter threads" minmax(auto, 1fr)
+      "messagePaneSplitter messagePaneSplitter messagePaneSplitter" min-content
+      "message message message" minmax(auto, var(--messagePaneSplitter-height))
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr);
   }
 
   /* If Account Central is shown, it overrides the layout setting. */
   &.account-central {
-    grid-template: "folders folderPaneSplitter account-central" auto
-                   / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr);
+    grid-template:
+      "folders folderPaneSplitter account-central" auto
+      / minmax(auto, var(--folderPaneSplitter-width)) min-content minmax(auto, 1fr);
   }
 
-  &.account-central :is(
-    #threadPane,
-    #messagePaneSplitter,
-    #messagePane,
-  ) {
+  &.account-central :is(#threadPane, #messagePaneSplitter, #messagePane, ) {
     display: none;
   }
 
@@ -125,7 +125,7 @@ body {
   grid-area: folders;
   box-sizing: border-box;
   /* Matches the collapse-width on the splitter. */
-  min-width: 100px;
+  min-inline-size: 100px;
   overflow: hidden;
   background-color: var(--sidebar-background);
   color: var(--sidebar-text-color, var(--layout-color-1));
@@ -144,8 +144,8 @@ body {
   container-type: inline-size;
   grid-area: threads;
   box-sizing: border-box;
-  min-height: 110px;
-  min-width: 300px;
+  min-block-size: 110px;
+  min-inline-size: 300px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -161,8 +161,8 @@ body {
   box-sizing: border-box;
   background-color: var(--layout-background-1);
   /* Matches the collapse-height and collapse-width on the splitter. */
-  min-height: 100px;
-  min-width: 300px;
+  min-block-size: 100px;
+  min-inline-size: 300px;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -172,13 +172,10 @@ body {
 #accountCentralBrowser {
   grid-area: account-central;
   box-sizing: border-box;
-  min-width: 400px;
+  min-inline-size: 400px;
 }
 
-:is(
-  #messagePane,
-  #folderPane
-).collapsed-by-splitter {
+:is(#messagePane, #folderPane).collapsed-by-splitter {
   /* NOTE: We use "display: none" rather than "visibility: collapse". In the
    * latter case, the min-width of min-height of the element would still
    * influence the "auto" track sizing in the grid layout. In the former case
@@ -239,7 +236,7 @@ body {
 
   & ul {
     overflow: hidden;
-    height: auto;
+    block-size: auto;
   }
 
   &:focus-visible {
@@ -247,18 +244,18 @@ body {
   }
 
   & li[data-mode] {
-    margin-bottom: 3px;
+    margin-block-end: 3px;
   }
 
   #folderPaneHeaderBar[hidden] + & > li.unselectable:first-of-type > .mode-container {
-    border-top-style: none;
+    border-block-start-style: none;
   }
 
   & .icon {
     position: relative;
-    width: 16px;
-    height: 16px;
-    background-image: var(--icon-folder);
+    inline-size: 16px;
+    block-size: 16px;
+    content: var(--icon-folder);
     background-repeat: no-repeat;
     --icon-color: var(--folder-color-folder);
     -moz-context-properties: fill, stroke;
@@ -292,28 +289,27 @@ body {
     }
 
     &:is([data-server-type="imap"], [data-server-type="pop3"], [data-server-type="ews"]) > .container > .icon {
-      background-image: var(--icon-mail);
+      content: var(--icon-mail);
     }
 
-    &:is([data-server-type="imap"], [data-server-type="pop3"], [data-server-type="ews"])[data-server-secure="true"]
-      > .container > .icon {
-      background-image: var(--icon-mail-secure);
+    &:is([data-server-type="imap"], [data-server-type="pop3"], [data-server-type="ews"])[data-server-secure="true"] > .container > .icon {
+      content: var(--icon-mail-secure);
     }
 
     &[data-server-type="none"] > .container > .icon {
-      background-image: var(--icon-folder);
+      content: var(--icon-folder);
     }
 
     &[data-server-type="nntp"] > .container > .icon {
-      background-image: var(--icon-globe);
+      content: var(--icon-globe);
     }
 
     &[data-server-type="nntp"][data-server-secure="true"] > .container > .icon {
-      background-image: var(--icon-globe-secure);
+      content: var(--icon-globe-secure);
     }
 
     &[data-server-type="rss"] > .container > .icon {
-      background-image: var(--icon-rss);
+      content: var(--icon-rss);
     }
 
     &[data-server-type="rss"] > ul > li:not([data-folder-type], [data-is-busy="true"], [data-has-error="true"]) .icon {
@@ -322,52 +318,52 @@ body {
     }
 
     &[data-folder-type="archive"] > .container > .icon {
-      background-image: var(--icon-archive);
+      content: var(--icon-archive);
       --icon-color: var(--folder-color-archive);
     }
 
     &[data-folder-type="drafts"] > .container > .icon {
-      background-image: var(--icon-draft);
+      content: var(--icon-draft);
       --icon-color: var(--folder-color-draft);
     }
 
     &[data-folder-type="inbox"] > .container > .icon {
-      background-image: var(--icon-inbox);
+      content: var(--icon-inbox);
       --icon-color: var(--folder-color-inbox);
     }
 
     &[data-folder-type="junk"] > .container > .icon {
-      background-image: var(--icon-spam);
+      content: var(--icon-spam);
       --icon-color: var(--folder-color-spam);
     }
 
     &[data-folder-type="outbox"] > .container > .icon {
-      background-image: var(--icon-outbox);
+      content: var(--icon-outbox);
       --icon-color: var(--folder-color-outbox);
     }
 
     &[data-folder-type="sent"] > .container > .icon {
-      background-image: var(--icon-sent);
+      content: var(--icon-sent);
       --icon-color: var(--folder-color-sent);
     }
 
     &[data-folder-type="templates"] > .container > .icon {
-      background-image: var(--icon-template);
+      content: var(--icon-template);
       --icon-color: var(--folder-color-template);
     }
 
     &[data-folder-type="trash"] > .container > .icon {
-      background-image: var(--icon-trash);
+      content: var(--icon-trash);
       --icon-color: var(--folder-color-trash);
     }
 
     &[data-folder-type="virtual"] > .container > .icon {
-      background-image: var(--icon-folder-filter);
+      content: var(--icon-folder-filter);
       --icon-color: var(--folder-color-folder-filter);
     }
 
     &[data-server-type="nntp"] ul .icon {
-      background-image: var(--icon-newsletter);
+      content: var(--icon-newsletter);
       --icon-color: var(--folder-color-newsletter);
     }
 
@@ -380,7 +376,6 @@ body {
 
     &[data-is-busy="true"] > .container > .icon {
       content: var(--icon-clock) !important;
-      background-image: none;
       --icon-color: var(--primary) !important;
 
       @media (prefers-reduced-motion: no-preference) {
@@ -393,12 +388,11 @@ body {
 
     &[data-has-error="true"] > .container > .icon {
       content: var(--icon-warning) !important;
-      background-image: none;
       --icon-color: var(--folder-color-warning) !important;
     }
 
     &[data-tag-key] > .container > .icon {
-      background-image: var(--icon-tag);
+      content: var(--icon-tag);
     }
 
     &[data-server-type] > .container > .name {
@@ -420,9 +414,7 @@ body {
   }
 
   &:focus-within li {
-
     &.selected > .container {
-
       & > .folder-size {
         color: currentColor;
       }
@@ -450,18 +442,16 @@ body {
     }
 
     @media (prefers-contrast) {
-
       &.selected.new-messages > .container > .name {
         color: currentColor;
       }
     }
-
   }
 
   & > li {
     &:not(:first-of-type) > .mode-container {
       justify-content: space-between;
-      border-top: 1px solid var(--sidebar-border-color, var(--splitter-color));
+      border-block-start: 1px solid var(--sidebar-border-color, var(--splitter-color));
     }
 
     &.unselectable > .mode-container {
@@ -477,7 +467,7 @@ body {
       & > .mode-name {
         font-weight: 600;
         font-size: 1.1rem;
-        min-height: initial;
+        min-block-size: initial;
         padding-block: var(--folder-mode-name-padding);
         padding-inline-start: 12px;
         flex: 1;
@@ -490,9 +480,11 @@ body {
   }
 
   @media (prefers-reduced-motion: no-preference) {
-     .icon {
-       transition: fill 300ms ease, stroke 300ms ease;
-     }
+    .icon {
+      transition:
+        fill 300ms ease,
+        stroke 300ms ease;
+    }
   }
 }
 
@@ -523,7 +515,9 @@ body {
 }
 
 @keyframes activity-indicator-3pane {
-  100% { object-position: -480px 0; }
+  100% {
+    object-position: -480px 0;
+  }
 }
 
 .name {
@@ -580,7 +574,7 @@ body {
   font-size: 0.85em;
   font-weight: bold;
   font-variant-numeric: tabular-nums;
-  min-width: 16px;
+  min-inline-size: 16px;
   text-align: center;
   line-height: initial;
   box-sizing: border-box;
@@ -622,7 +616,7 @@ body {
 }
 
 .folder-size {
-  font-size: .8rem;
+  font-size: 0.8rem;
   font-weight: bold;
   color: var(--layout-color-3);
   margin-inline-end: 6px;

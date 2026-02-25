@@ -31,16 +31,15 @@
 
 .in-app-notification-container {
   position: relative;
-  width: 288px;
+  inline-size: 288px;
   background: var(--container-background);
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   border: 1px solid var(--container-border);
   border-radius: 6px;
-  box-shadow: 0 2px 6px -2px rgba(0,0,0,0.25);
+  box-shadow: 0 2px 6px -2px rgba(0, 0, 0, 0.25);
   overflow: clip;
-
 
   & .in-app-notification-content {
     position: relative;
@@ -77,7 +76,7 @@
     text-wrap: nowrap;
     overflow: clip;
     text-overflow: ellipsis;
-    max-width: calc(100% - 52px);
+    max-inline-size: calc(100% - 52px);
 
     &:hover,
     &:focus {
@@ -107,8 +106,8 @@
     border: 1px solid var(--close-button-border);
     border-radius: 50%;
     color: var(--close-button-text);
-    height: 20px;
-    width: 20px;
+    block-size: 20px;
+    inline-size: 20px;
     margin: 0;
     padding: 0;
     -moz-context-properties: fill, stroke;
@@ -153,10 +152,10 @@
   & .in-app-notification-description {
     color: var(--text);
     font-size: 0.9rem;
-    min-height: 2lh;
+    min-block-size: 2lh;
     margin: 0;
     hyphens: auto;
-    max-height: 20lh;
+    max-block-size: 20lh;
     overflow: auto;
   }
 
@@ -191,7 +190,7 @@
     padding: 1px;
 
     & .in-app-notification-content::before {
-      content: '';
+      content: "";
       position: absolute;
       inset: 0;
       background-color: light-dark(var(--color-white), var(--color-gray-90));
@@ -351,7 +350,6 @@
       --content-background: var(--color-gray-90);
     }
   }
-
 
   &.in-app-notification-blog,
   &.in-app-notification-message,

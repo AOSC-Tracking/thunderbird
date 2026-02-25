@@ -11,18 +11,18 @@
   color: -moz-DialogText;
   text-shadow: none;
 
-  --button-background: rgba(128, 128, 128, .15);
-  --button-background-hover: rgba(128, 128, 128, .25);
-  --button-background-active: rgba(128, 128, 128, .35);
-  --button-border-color: rgba(128, 128, 128, .4);
+  --button-background: rgba(128, 128, 128, 0.15);
+  --button-background-hover: rgba(128, 128, 128, 0.25);
+  --button-background-active: rgba(128, 128, 128, 0.35);
+  --button-border-color: rgba(128, 128, 128, 0.4);
   --box-text-color: MenuText;
   --box-background-color: Menu;
   --box-border-color: ThreeDShadow;
   --field-text-color: FieldText;
   --field-background-color: Field;
-  --field-border-color: rgba(128, 128, 128, .6);
-  --field-border-hover-color: rgba(128, 128, 128, .8);
-  --popup-item-hover: rgba(128, 128, 128, .2);
+  --field-border-color: rgba(128, 128, 128, 0.6);
+  --field-border-hover-color: rgba(128, 128, 128, 0.8);
+  --popup-item-hover: rgba(128, 128, 128, 0.2);
   --popup-item-hover-text: MenuText;
   --popup-item-selected: var(--selected-item-color);
   --popup-selected-text: var(--selected-item-text-color);
@@ -30,20 +30,20 @@
 }
 
 #filterListGrid {
-  min-height: 0;
+  min-block-size: 0;
 }
 
 #filterListBox {
-  min-width: 0;
-  min-height: 0;
+  min-inline-size: 0;
+  min-block-size: 0;
 }
 
 #filterList {
-  height: 340px;
+  block-size: 340px;
 }
 
 #searchBox {
-  max-width: 30ch;
+  max-inline-size: 30ch;
   --input-text-max-width: none;
 }
 
@@ -57,8 +57,8 @@ richlistitem {
   padding-block: 1px;
 
   & > checkbox {
-    width: 100px;
-    min-width: 100px;
+    inline-size: 100px;
+    min-inline-size: 100px;
     margin: 0;
     -moz-user-focus: none;
   }
@@ -73,7 +73,7 @@ checkbox:not([label]) .checkbox-label-box {
 }
 
 .search-value-input {
-  width: -moz-available;
+  inline-size: -moz-available;
 }
 
 .search-menulist[unavailable="true"] {
@@ -81,21 +81,21 @@ checkbox:not([label]) .checkbox-label-box {
 }
 
 .ruleactionitem {
-  min-width: 20em;
+  min-inline-size: 20em;
 }
 
 .ruleaction-type {
-  min-width: 15em;
+  min-inline-size: 15em;
 }
 
 #statusbar {
-  height: 1.8em;
+  block-size: 1.8em;
   padding: 2px 4px;
 }
 
 toolbarbutton[is="toolbarbutton-menu-button"] {
   appearance: none;
-  min-height: 24px;
+  min-block-size: 24px;
   margin: 4px;
   color: inherit !important;
   background-color: var(--button-background-color);
@@ -122,7 +122,7 @@ toolbarbutton[is="toolbarbutton-menu-button"] {
 
   & > dropmarker {
     appearance: none;
-    width: 22px;
+    inline-size: 22px;
     background-image: var(--icon-nav-down-sm);
     background-repeat: no-repeat;
     background-position: center;

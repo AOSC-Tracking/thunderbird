@@ -24,13 +24,14 @@ var { delete_messages, make_message_sets_in_folders } =
   );
 var {
   assert_results_label_count,
+  assert_tag_mode,
   assert_text_constraints_checked,
   clear_constraints,
   set_filter_text,
   toggle_boolean_constraints,
   toggle_quick_filter_bar,
   toggle_tag_constraints,
-  toggle_tag_mode,
+  switch_tag_mode,
   toggle_text_constraints,
   cleanup_qfb_button,
 } = ChromeUtils.importESModule(
@@ -59,6 +60,42 @@ add_setup(async function () {
     await toggle_quick_filter_bar();
   });
 });
+
+/**
+ * Assert that the tags selection elements have the expected class and
+ * visibility state after a mode change.
+ *
+ * @param {boolean} isVisible - The visibility state in which the buttons should
+ * be.
+ */
+function subtest_assert_tags_visibility(isVisible) {
+  const about3Pane = get_about_3pane();
+
+  Assert.equal(
+    about3Pane.document
+      .getElementById("quickFilterBarTagsContainer")
+      .classList.contains("none-mode-selected"),
+    !isVisible,
+    "The .none-mode-selected class should be applied to the tags container"
+  );
+  for (const button of [
+    ...about3Pane.document.querySelectorAll(
+      "#quickFilterBarTagsContainer button.qfb-tag-button"
+    ),
+  ]) {
+    if (isVisible) {
+      Assert.ok(
+        BrowserTestUtils.isVisible(button),
+        "The tags button of the quick filter bar should be visible"
+      );
+    } else {
+      Assert.ok(
+        BrowserTestUtils.isHidden(button),
+        "The tags button of the quick filter bar should be hidden"
+      );
+    }
+  }
+}
 
 add_task(async function test_filter_unread() {
   const folder = await create_folder("QuickFilterBarFilterUnread");
@@ -191,6 +228,7 @@ add_task(async function test_filter_tags() {
 
   await be_in_folder(folder);
   await toggle_boolean_constraints("tags"); // must have a tag
+  assert_tag_mode("OR");
   assert_messages_in_view([setTagA, setTagB, setTagAB, setTagC]);
 
   await toggle_tag_constraints(tagA); // must have tag A
@@ -200,7 +238,7 @@ add_task(async function test_filter_tags() {
   // mode is OR by default -> must have tag A or tag B
   assert_messages_in_view([setTagA, setTagB, setTagAB]);
 
-  await toggle_tag_mode();
+  await switch_tag_mode("AND");
   // mode is now AND -> must have tag A and tag B
   assert_messages_in_view([setTagAB]);
 
@@ -210,6 +248,11 @@ add_task(async function test_filter_tags() {
   await toggle_tag_constraints(tagB); // have have a tag
   assert_messages_in_view([setTagA, setTagB, setTagAB, setTagC]);
 
+  await switch_tag_mode("NONE");
+  // mode is now NONE -> must have no tags
+  assert_messages_in_view([setNoTag]);
+  subtest_assert_tags_visibility(false);
+
   await toggle_boolean_constraints("tags"); // no constraints
   assert_messages_in_view([setNoTag, setTagA, setTagB, setTagAB, setTagC]);
 
@@ -217,6 +260,12 @@ add_task(async function test_filter_tags() {
   // entirely, make sure that when we turn it back on we are just back to "any
   // tag".
   await toggle_boolean_constraints("tags");
+  // The tags filter should be back to "OR" and any tags should be shown.
+  assert_tag_mode("OR");
+  assert_messages_in_view([setTagA, setTagB, setTagAB, setTagC]);
+
+  await switch_tag_mode("AND");
+  subtest_assert_tags_visibility(true);
   await toggle_tag_constraints(tagC);
   assert_messages_in_view(setTagC);
 

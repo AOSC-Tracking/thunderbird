@@ -1157,7 +1157,6 @@ export async function press_delete(aWin = mc, aModifiers) {
     "DeleteOrMoveMsgCompleted",
     "DeleteOrMoveMsgFailed"
   );
-
   EventUtils.synthesizeKey("VK_DELETE", aModifiers || {}, aWin);
   await wait_for_folder_events();
 }
@@ -1303,7 +1302,11 @@ export async function wait_for_message_display_completion(aWin, aLoadDemanded) {
     }
   }
 
-  await TestUtils.waitForCondition(() => win.document.readyState == "complete");
+  await TestUtils.waitForCondition(
+    () =>
+      win.document.readyState == "complete" &&
+      win.location.href == "about:message"
+  );
 
   const messagePaneBrowser = win.getMessagePaneBrowser();
 

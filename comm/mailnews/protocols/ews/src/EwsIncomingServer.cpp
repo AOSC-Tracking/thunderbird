@@ -493,7 +493,7 @@ nsresult EwsIncomingServer::SyncFolderList(
 
   // Sync the folder tree for the whole account.
   RefPtr<IEwsClient> client;
-  MOZ_TRY(CreateProtocolClient(getter_AddRefs(client)));
+  MOZ_TRY(GetProtocolClient(getter_AddRefs(client)));
   return client->SyncFolderHierarchy(listener, syncStateToken);
 }
 
@@ -549,8 +549,13 @@ NS_IMETHODIMP EwsIncomingServer::GetPassword(nsAString& password) {
 
 NS_IMETHODIMP EwsIncomingServer::GetLocalStoreType(
     nsACString& aLocalStoreType) {
-  aLocalStoreType.AssignLiteral("ews");
+  if (StaticPrefs::mail_graph_enabled()) {
+    // For EWS and graph, the local store type is the same value as the server
+    // type.
+    return GetType(aLocalStoreType);
+  }
 
+  aLocalStoreType.Assign("ews");
   return NS_OK;
 }
 
@@ -660,7 +665,7 @@ EwsIncomingServer::VerifyLogon(nsIUrlListener* aUrlListener,
   // only be doing `nsIMsgMailNewsUrl`-related operations to it, which doesn't
   // apply to us.
   RefPtr<IEwsClient> client;
-  MOZ_TRY(CreateProtocolClient(getter_AddRefs(client)));
+  MOZ_TRY(GetProtocolClient(getter_AddRefs(client)));
   return client->CheckConnectivity(aUrlListener, _retval);
 }
 
@@ -668,41 +673,44 @@ EwsIncomingServer::VerifyLogon(nsIUrlListener* aUrlListener,
  * Creates an instance of the EWS client interface, allowing us to perform
  * operations against the relevant EWS instance.
  */
-NS_IMETHODIMP EwsIncomingServer::CreateProtocolClient(IEwsClient** ewsClient) {
+NS_IMETHODIMP EwsIncomingServer::GetProtocolClient(IEwsClient** ewsClient) {
   NS_ENSURE_ARG_POINTER(ewsClient);
 
-  nsresult rv = NS_OK;
+  // Only create a new client if we don't already have one - otherwise reuse the
+  // one we have.
+  if (!mClient) {
+    nsresult rv = NS_OK;
 
-  nsCOMPtr<IEwsClient> client;
-  if (StaticPrefs::mail_graph_enabled()) {
-    nsAutoCString type;
-    rv = GetType(type);
+    if (StaticPrefs::mail_graph_enabled()) {
+      nsAutoCString type;
+      rv = GetType(type);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsAutoCString contractId{"@mozilla.org/messenger/"};
+      contractId.Append(type);
+      contractId.Append("-client;1");
+
+      mClient = do_CreateInstance(contractId.Data(), &rv);
+      NS_ENSURE_SUCCESS(rv, rv);
+    } else {
+      mClient = do_CreateInstance("@mozilla.org/messenger/ews-client;1", &rv);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    nsAutoCString endpoint;
+    rv = GetEwsUrl(endpoint);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsAutoCString contractId{"@mozilla.org/messenger/"};
-    contractId.Append(type);
-    contractId.Append("-client;1");
-
-    client = do_CreateInstance(contractId.Data(), &rv);
+    bool overrideOAuth;
+    rv = GetEwsOverrideOAuthDetails(&overrideOAuth);
     NS_ENSURE_SUCCESS(rv, rv);
-  } else {
-    client = do_CreateInstance("@mozilla.org/messenger/ews-client;1", &rv);
+
+    // Set up the client object with access details.
+    rv = mClient->Initialize(endpoint, this);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  nsAutoCString endpoint;
-  rv = GetEwsUrl(endpoint);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  bool overrideOAuth;
-  rv = GetEwsOverrideOAuthDetails(&overrideOAuth);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Set up the client object with access details.
-  rv = client->Initialize(endpoint, this);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  client.forget(ewsClient);
+  NS_IF_ADDREF(*ewsClient = mClient);
 
   return NS_OK;
 }
@@ -827,6 +835,45 @@ NS_IMETHODIMP EwsIncomingServer::GetEwsUrl(nsACString& value) {
 
 NS_IMETHODIMP EwsIncomingServer::SetEwsUrl(const nsACString& value) {
   return SetStringValue("ews_url", value);
+}
+
+NS_IMETHODIMP EwsIncomingServer::Shutdown() {
+  if (mClient) {
+    // The server is being removed, either because the user has removed the
+    // account, or because Thunderbird is shutting down. If we have a client, we
+    // need to let it know it must shut down as well.
+    //
+    // We're not doing this in `CloseCachedConnections()` because the
+    // expectation (at least from tests) is that the server/client can be reused
+    // afterwards. To illustrate with the case of EWS, this would be closer to
+    // stopping all of the operation queue's runners but not stopping the queue
+    // itself (so more runners can be started afterwards).
+    return mClient->Shutdown();
+  }
+
+  return nsMsgIncomingServer::Shutdown();
+}
+
+NS_IMETHODIMP EwsIncomingServer::GetProtocolClientRunning(bool* running) {
+  NS_ENSURE_ARG_POINTER(running);
+
+  if (!mClient) {
+    *running = false;
+    return NS_OK;
+  }
+
+  return mClient->GetRunning(running);
+}
+
+NS_IMETHODIMP EwsIncomingServer::GetProtocolClientIdle(bool* idle) {
+  NS_ENSURE_ARG_POINTER(idle);
+
+  if (!mClient) {
+    *idle = false;
+    return NS_OK;
+  }
+
+  return mClient->GetIdle(idle);
 }
 
 namespace {

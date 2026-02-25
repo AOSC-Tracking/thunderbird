@@ -7,6 +7,7 @@ import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
 import { CAL_ITEM_FLAG, newDateTime } from "resource:///modules/calendar/calStorageHelpers.sys.mjs";
 import { CalReadableStreamFactory } from "resource:///modules/CalReadableStreamFactory.sys.mjs";
 import { CalStorageModelBase } from "resource:///modules/calendar/CalStorageModelBase.sys.mjs";
+import { setTimeout } from "resource://gre/modules/Timer.sys.mjs";
 
 const lazy = {};
 ChromeUtils.defineLazyGetter(lazy, "log", () => {
@@ -177,6 +178,16 @@ export class CalStorageItemModel extends CalStorageModelBase {
       {
         async start(controller) {
           await startupPromise;
+          let lastYield = Date.now();
+          async function yieldIfNecessary() {
+            const now = Date.now();
+            if (now - lastYield > 15) {
+              // Yield the event loop to keep the program responsive. Try to maintain 60 FPS.
+              await new Promise(resolve => setTimeout(resolve));
+              lastYield = now;
+            }
+          }
+
           // first get non-recurring events that happen to fall within the range
           try {
             self.db.prepareStatement(self.statements.mSelectNonRecurringEventsByRange);
@@ -192,12 +203,12 @@ export class CalStorageItemModel extends CalStorageModelBase {
               async row => {
                 const event = self.#expandOccurrences(
                   await self.getEventFromRow(row),
-                  startTime,
                   rangeStart,
                   rangeEnd,
                   filters
                 );
                 controller.enqueue(event);
+                await yieldIfNecessary();
               }
             );
           } catch (e) {
@@ -216,12 +227,11 @@ export class CalStorageItemModel extends CalStorageModelBase {
                   cachedJournalFlag != Ci.calIChangeLog.OFFLINE_FLAG_DELETED_RECORD) ||
                 (requestedOfflineJournal != null && cachedJournalFlag == requestedOfflineJournal)
               ) {
-                controller.enqueue(
-                  self.#expandOccurrences(evitem, startTime, rangeStart, rangeEnd, filters)
-                );
+                controller.enqueue(self.#expandOccurrences(evitem, rangeStart, rangeEnd, filters));
                 if (controller.maxTotalItemsReached) {
                   break;
                 }
+                await yieldIfNecessary();
               }
             }
           }
@@ -272,6 +282,16 @@ export class CalStorageItemModel extends CalStorageModelBase {
       {
         async start(controller) {
           await startupPromise;
+          let lastYield = Date.now();
+          async function yieldIfNecessary() {
+            const now = Date.now();
+            if (now - lastYield > 15) {
+              // Yield the event loop to keep the program responsive.
+              await new Promise(resolve => setTimeout(resolve));
+              lastYield = now;
+            }
+          }
+
           // first get non-recurring todos that happen to fall within the range
           try {
             self.db.prepareStatement(self.statements.mSelectNonRecurringTodosByRange);
@@ -287,13 +307,13 @@ export class CalStorageItemModel extends CalStorageModelBase {
               async row => {
                 const todo = self.#expandOccurrences(
                   await self.getTodoFromRow(row),
-                  startTime,
                   rangeStart,
                   rangeEnd,
                   filters,
                   checkCompleted
                 );
                 controller.enqueue(todo);
+                await yieldIfNecessary();
               }
             );
           } catch (e) {
@@ -317,18 +337,12 @@ export class CalStorageItemModel extends CalStorageModelBase {
                 (requestedOfflineJournal != null && cachedJournalFlag == requestedOfflineJournal)
               ) {
                 controller.enqueue(
-                  self.#expandOccurrences(
-                    todoitem,
-                    startTime,
-                    rangeStart,
-                    rangeEnd,
-                    filters,
-                    checkCompleted
-                  )
+                  self.#expandOccurrences(todoitem, rangeStart, rangeEnd, filters, checkCompleted)
                 );
                 if (controller.maxTotalItemsReached) {
                   break;
                 }
+                await yieldIfNecessary();
               }
             }
           }
@@ -343,11 +357,7 @@ export class CalStorageItemModel extends CalStorageModelBase {
     return att && att.participationStatus == "NEEDS-ACTION";
   }
 
-  #expandOccurrences(item, startTime, rangeStart, rangeEnd, filters, optionalFilterFunc) {
-    if (item.recurrenceInfo && item.recurrenceInfo.recurrenceEndDate < startTime) {
-      return [];
-    }
-
+  #expandOccurrences(item, rangeStart, rangeEnd, filters, optionalFilterFunc) {
     let expandedItems = [];
     if (item.recurrenceInfo && filters.asOccurrences) {
       // If the item is recurring, get all occurrences that fall in
@@ -1188,9 +1198,8 @@ export class CalStorageItemModel extends CalStorageModelBase {
     const array = this.db.prepareAsyncStatement(stmts, this.statements.mInsertProperty);
     const params = this.db.prepareAsyncParams(array);
     params.bindByName("key", propName);
-    const wPropValue = cal.wrapInstance(propValue, Ci.calIDateTime);
-    if (wPropValue) {
-      params.bindByName("value", wPropValue.nativeTime);
+    if (propValue instanceof Ci.calIDateTime) {
+      params.bindByName("value", propValue.nativeTime);
     } else {
       try {
         params.bindByName("value", propValue);
@@ -1214,9 +1223,8 @@ export class CalStorageItemModel extends CalStorageModelBase {
     const params = this.db.prepareAsyncParams(array);
     params.bindByName("key1", propName);
     params.bindByName("key2", paramName);
-    const wPropValue = cal.wrapInstance(propValue, Ci.calIDateTime);
-    if (wPropValue) {
-      params.bindByName("value", wPropValue.nativeTime);
+    if (propValue instanceof Ci.calIDateTime) {
+      params.bindByName("value", propValue.nativeTime);
     } else {
       try {
         params.bindByName("value", propValue);

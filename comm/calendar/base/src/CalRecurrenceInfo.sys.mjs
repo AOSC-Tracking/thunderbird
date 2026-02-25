@@ -12,6 +12,10 @@ ChromeUtils.defineLazyGetter(lazy, "log", () => {
     maxLogLevelPref: "calendar.loglevel",
   });
 });
+ChromeUtils.defineESModuleGetters(lazy, {
+  CalRecurrenceDate: "resource:///modules/CalRecurrenceDate.sys.mjs",
+  CalRecurrenceRule: "resource:///modules/CalRecurrenceRule.sys.mjs",
+});
 
 function getRidKey(date) {
   if (!date) {
@@ -134,7 +138,7 @@ CalRecurrenceInfo.prototype = {
   set item(value) {
     this.ensureMutable();
 
-    value = cal.unwrapInstance(value);
+    value = value?.wrappedJSObject || value;
     this.mBaseItem = value;
     // patch exception's parentItem:
     for (const ex in this.mExceptionMap) {
@@ -176,47 +180,6 @@ CalRecurrenceInfo.prototype = {
     return null;
   },
 
-  get recurrenceEndDate() {
-    // The lowest and highest possible values of a PRTime (64-bit integer) when in javascript,
-    // which stores them as floating-point values.
-    const MIN_PRTIME = -9223372036854775000;
-    const MAX_PRTIME = 9223372036854775000;
-
-    // If this object is mutable, skip this optimisation, so that we don't have to work out every
-    // possible modification and invalidate the cached value. Immutable objects are unlikely to
-    // exist for long enough to really benefit anyway.
-    if (this.isMutable) {
-      return MAX_PRTIME;
-    }
-
-    if (this.mEndDate === null) {
-      if (this.isFinite) {
-        this.mEndDate = MIN_PRTIME;
-        const lastOccurrence = this.getPreviousOccurrence(cal.createDateTime("99991231T235959Z"));
-        if (lastOccurrence) {
-          const endingDate = this.getItemEndingDate(lastOccurrence);
-          if (endingDate) {
-            this.mEndDate = endingDate.nativeTime;
-          }
-        }
-
-        // A modified occurrence may have a new ending date positioned after last occurrence one.
-        for (const rid in this.mExceptionMap) {
-          const item = this.mExceptionMap[rid];
-
-          const endingDate = this.getItemEndingDate(item);
-          if (endingDate && this.mEndDate < endingDate.nativeTime) {
-            this.mEndDate = endingDate.nativeTime;
-          }
-        }
-      } else {
-        this.mEndDate = MAX_PRTIME;
-      }
-    }
-
-    return this.mEndDate;
-  },
-
   getRecurrenceItems() {
     this.ensureBaseItem();
 
@@ -254,7 +217,7 @@ CalRecurrenceInfo.prototype = {
     this.ensureMutable();
     this.ensureSortedRecurrenceRules();
 
-    aItem = cal.unwrapInstance(aItem);
+    aItem = aItem?.wrappedJSObject || aItem;
     this.mRecurrenceItems.push(aItem);
     if (aItem.isNegative) {
       this.mNegativeRules.push(aItem);
@@ -281,7 +244,7 @@ CalRecurrenceInfo.prototype = {
   },
 
   deleteRecurrenceItem(aItem) {
-    aItem = cal.unwrapInstance(aItem);
+    aItem = aItem?.wrappedJSObject || aItem;
     const pos = this.mRecurrenceItems.indexOf(aItem);
     if (pos > -1) {
       this.deleteRecurrenceItemAt(pos);
@@ -299,7 +262,7 @@ CalRecurrenceInfo.prototype = {
       throw Components.Exception("", Cr.NS_ERROR_INVALID_ARG);
     }
 
-    aItem = cal.unwrapInstance(aItem);
+    aItem = aItem?.wrappedJSObject || aItem;
     if (aItem.isNegative) {
       this.mNegativeRules.push(aItem);
     } else {
@@ -370,12 +333,11 @@ CalRecurrenceInfo.prototype = {
       // If in a loop at least one rid is valid (i.e not an exception, not
       // an exdate, is after aTime), then remember the lowest one.
       for (let i = 0; i < this.mPositiveRules.length; i++) {
-        const rDateInstance = cal.wrapInstance(this.mPositiveRules[i], Ci.calIRecurrenceDate);
-        const rRuleInstance = cal.wrapInstance(this.mPositiveRules[i], Ci.calIRecurrenceRule);
-        if (rDateInstance) {
+        const rule = this.mPositiveRules[i];
+        if (rule instanceof lazy.CalRecurrenceDate || rule instanceof Ci.calIRecurrenceDate) {
           // RDATEs are special. there is only one date in this rule,
           // so no need to search anything.
-          const rdate = rDateInstance.date;
+          const rdate = rule.date;
           if (!nextOccurrences[i] && rdate.compare(aTime) > 0) {
             // The RDATE falls into range, save it.
             nextOccurrences[i] = rdate;
@@ -385,7 +347,10 @@ CalRecurrenceInfo.prototype = {
             nextOccurrences[i] = null;
             invalidOccurrences++;
           }
-        } else if (rRuleInstance) {
+        } else if (
+          rule instanceof lazy.CalRecurrenceRule ||
+          rule instanceof Ci.calIRecurrenceRule
+        ) {
           // RRULEs must not start searching before |startDate|, since
           // the pattern is only valid afterwards. If an occurrence
           // was found in a previous round, we can go ahead and start
@@ -401,7 +366,7 @@ CalRecurrenceInfo.prototype = {
               ? nextOccurrences[i]
               : aTime;
 
-          nextOccurrences[i] = rRuleInstance.getNextOccurrence(searchStart, searchDate);
+          nextOccurrences[i] = rule.getNextOccurrence(searchStart, searchDate);
         }
 
         // As decided in bug 734245, an EXDATE of type DATE shall also match a DTSTART of type DATE-TIME
@@ -655,28 +620,36 @@ CalRecurrenceInfo.prototype = {
     return proxy;
   },
 
-  removeOccurrenceAt(aRecurrenceId) {
+  /**
+   * @param {calIDateTime} recurrenceId - Needs to be a normal recurrence id, it may not be
+   *   RDATE.
+   */
+  removeOccurrenceAt(recurrenceId) {
     this.ensureBaseItem();
     this.ensureMutable();
 
     const rdate = cal.createRecurrenceDate();
     rdate.isNegative = true;
-    rdate.date = aRecurrenceId.clone();
+    rdate.date = recurrenceId.clone();
 
     this.removeExceptionFor(rdate.date);
 
     this.appendRecurrenceItem(rdate);
   },
 
-  restoreOccurrenceAt(aRecurrenceId) {
+  /**
+   * @param {calIDateTime} recurrenceId - Needs to be a normal recurrence id, it may not be
+   *   RDATE.
+   */
+  restoreOccurrenceAt(recurrenceId) {
     this.ensureBaseItem();
     this.ensureMutable();
     this.ensureSortedRecurrenceRules();
 
     for (let i = 0; i < this.mRecurrenceItems.length; i++) {
-      const rdate = cal.wrapInstance(this.mRecurrenceItems[i], Ci.calIRecurrenceDate);
-      if (rdate) {
-        if (rdate.isNegative && rdate.date.compare(aRecurrenceId) == 0) {
+      const rdate = this.mRecurrenceItems[i];
+      if (rdate instanceof lazy.CalRecurrenceDate || rdate instanceof Ci.calIRecurrenceDate) {
+        if (rdate.isNegative && rdate.date.compare(recurrenceId) == 0) {
           return this.deleteRecurrenceItemAt(i);
         }
       }
@@ -720,7 +693,7 @@ CalRecurrenceInfo.prototype = {
   modifyException(anItem, aTakeOverOwnership) {
     this.ensureBaseItem();
 
-    anItem = cal.unwrapInstance(anItem);
+    anItem = anItem?.wrappedJSObject || anItem;
 
     if (
       anItem.parentItem.calendar != this.mBaseItem.calendar &&
@@ -800,21 +773,19 @@ CalRecurrenceInfo.prototype = {
     const rdates = {};
 
     // take RDATE's and EXDATE's into account.
-    const kCalIRecurrenceDate = Ci.calIRecurrenceDate;
     const ritems = this.getRecurrenceItems();
-    for (let ritem of ritems) {
-      const rDateInstance = cal.wrapInstance(ritem, kCalIRecurrenceDate);
-      const rRuleInstance = cal.wrapInstance(ritem, Ci.calIRecurrenceRule);
-      if (rDateInstance) {
-        ritem = rDateInstance;
+    for (const ritem of ritems) {
+      if (ritem instanceof lazy.CalRecurrenceDate || ritem instanceof Ci.calIRecurrenceDate) {
         const date = ritem.date;
         date.addDuration(timeDiff);
         if (!ritem.isNegative) {
           rdates[getRidKey(date)] = date;
         }
         ritem.date = date;
-      } else if (rRuleInstance) {
-        ritem = rRuleInstance;
+      } else if (
+        ritem instanceof lazy.CalRecurrenceRule ||
+        ritem instanceof Ci.calIRecurrenceRule
+      ) {
         if (!ritem.isByCount) {
           const untilDate = ritem.untilDate;
           if (untilDate) {

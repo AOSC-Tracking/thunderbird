@@ -17,27 +17,27 @@
 }
 
 #tabs-toolbar {
-  --toolbarbutton-hover-background: light-dark(var(--lwt-toolbarbutton-hover-background,
-                                               hsla(240, 5%, 5%, .1)),
-                                               var(--lwt-toolbarbutton-hover-background,
-                                               hsla(0, 0%, 70%, .4)));
-  --toolbarbutton-hover-bordercolor: light-dark(var(--lwt-toolbarbutton-hover-background,
-                                                hsla(240, 5%, 5%, .1)),
-                                                var(--lwt-toolbarbutton-hover-background,
-                                                hsla(0, 0%, 70%, .4)));
-  --toolbarbutton-active-background: light-dark(var(--lwt-toolbarbutton-active-background,
-                                                hsla(240, 5%, 5%, .15)),
-                                                var(--lwt-toolbarbutton-active-background,
-                                                hsla(0, 0%, 70%, .6)));
-  --toolbarbutton-active-bordercolor: light-dark(var(--lwt-toolbarbutton-active-background,
-                                                 hsla(240, 5%, 5%, .15)),
-                                                 var(--lwt-toolbarbutton-active-background,
-                                                 hsla(0, 0%, 70%, .6)));
+  --toolbarbutton-hover-background: light-dark(
+    var(--lwt-toolbarbutton-hover-background, hsla(240, 5%, 5%, 0.1)),
+    var(--lwt-toolbarbutton-hover-background, hsla(0, 0%, 70%, 0.4))
+  );
+  --toolbarbutton-hover-bordercolor: light-dark(
+    var(--lwt-toolbarbutton-hover-background, hsla(240, 5%, 5%, 0.1)),
+    var(--lwt-toolbarbutton-hover-background, hsla(0, 0%, 70%, 0.4))
+  );
+  --toolbarbutton-active-background: light-dark(
+    var(--lwt-toolbarbutton-active-background, hsla(240, 5%, 5%, 0.15)),
+    var(--lwt-toolbarbutton-active-background, hsla(0, 0%, 70%, 0.6))
+  );
+  --toolbarbutton-active-bordercolor: light-dark(
+    var(--lwt-toolbarbutton-active-background, hsla(240, 5%, 5%, 0.15)),
+    var(--lwt-toolbarbutton-active-background, hsla(0, 0%, 70%, 0.6))
+  );
 }
 
 #navigation-toolbox {
   background-color: transparent;
-  border-top: none;
+  border-block-start: none;
 
   :root:not([lwtheme]) & {
     background-color: -moz-headerbar;
@@ -70,15 +70,15 @@
 
       #navigation-toolbox,
       ::backdrop {
-        border-top-left-radius: env(-moz-gtk-csd-titlebar-radius);
-        border-top-right-radius: env(-moz-gtk-csd-titlebar-radius);
+        border-start-start-radius: env(-moz-gtk-csd-titlebar-radius);
+        border-start-end-radius: env(-moz-gtk-csd-titlebar-radius);
       }
 
       /* stylelint-disable-next-line media-query-no-invalid */
       @media -moz-pref("widget.gtk.rounded-bottom-corners.enabled") {
         body {
-          border-bottom-left-radius: env(-moz-gtk-csd-titlebar-radius);
-          border-bottom-right-radius: env(-moz-gtk-csd-titlebar-radius);
+          border-end-start-radius: env(-moz-gtk-csd-titlebar-radius);
+          border-end-end-radius: env(-moz-gtk-csd-titlebar-radius);
         }
       }
     }
@@ -153,9 +153,7 @@
   padding-inline: var(--titlebar-button-spacing);
   padding-inline-end: max(
     var(--titlebar-button-spacing),
-    var(--titlebar-button-end-spacing) *
-    (var(--titlebar-button-position) -
-    var(--max-titlebar-button-position) + 1)
+    var(--titlebar-button-end-spacing) * (var(--titlebar-button-position) - var(--max-titlebar-button-position) + 1)
   );
   order: var(--titlebar-button-position);
   /* In GTK applications, you can drag the window by titlebar buttons */
@@ -169,12 +167,12 @@
     background-repeat: no-repeat;
     -moz-context-properties: stroke;
     stroke: currentColor;
-    width: var(--titlebar-button-size);
-    height: var(--titlebar-button-size);
+    inline-size: var(--titlebar-button-size);
+    block-size: var(--titlebar-button-size);
 
     @media not (-moz-gtk-theme-family: breeze) {
       /* Matches the libadwaita transition */
-      transition: background-color .2s ease;
+      transition: background-color 0.2s ease;
     }
 
     @media (-moz-gtk-theme-family: adwaita) or (-moz-gtk-theme-family: yaru) {
@@ -261,12 +259,12 @@
 .inline-toolbar,
 .contentTabToolbar {
   appearance: none;
-  min-height: 15px;
+  min-block-size: 15px;
   padding: 0;
 }
 
 .inline-toolbar > toolbarseparator {
-  height: 28px;
+  block-size: 28px;
 }
 
 menubar > menu[disabled="true"] {
@@ -282,20 +280,16 @@ menulist {
  * check-marks. radio-marks and folder icons. bug 443516
  */
 .menulist-menupopup > menuitem > .menu-icon,
-menulist > menupopup >
-  menuitem:is(.menuitem-iconic,[type="radio"],[type="checkbox"]) >
-  .menu-icon,
+menulist > menupopup > menuitem:is(.menuitem-iconic, [type="radio"], [type="checkbox"]) > .menu-icon,
 .menulist-menupopup > menu > .menu-icon,
-menulist > menupopup >
-  menu:is(.menuitem-iconic,[type="radio"],[type="checkbox"]) >
-  .menu-icon {
+menulist > menupopup > menu:is(.menuitem-iconic, [type="radio"], [type="checkbox"]) > .menu-icon {
   display: flex;
 }
 
 /* ::::: Toolbar customization ::::: */
 
 toolbarpaletteitem[place="toolbar"] > toolbarspacer {
-  width: 11px;
+  inline-size: 11px;
 }
 
 /* ::::: toolbarbutton menu-button ::::: */
@@ -324,10 +318,10 @@ toolbar[mode="text"] .toolbarbutton-text {
   padding-inline: 2px !important;
 }
 
-.toolbarbutton-1[disabled=true] .toolbarbutton-icon,
-.toolbarbutton-1[disabled=true] .toolbarbutton-text,
-.toolbarbutton-1[disabled=true] > .toolbarbutton-menubutton-dropmarker {
-  opacity: .4;
+.toolbarbutton-1[disabled="true"] .toolbarbutton-icon,
+.toolbarbutton-1[disabled="true"] .toolbarbutton-text,
+.toolbarbutton-1[disabled="true"] > .toolbarbutton-menubutton-dropmarker {
+  opacity: 0.4;
 }
 
 .sidebar-header .toolbarbutton-text:not([value]) {
@@ -341,7 +335,6 @@ button[is="toolbarbutton-menu-button"] > .button-box > button {
 /* message column icons */
 
 .treecol-sortdirection {
-
   treecol[sortDirection="ascending"]:not([hideheader="true"]) > & {
     list-style-image: url("chrome://global/skin/icons/arrow-down-12.svg");
   }
@@ -369,21 +362,21 @@ treechildren::-moz-tree-cell-text {
   padding: 2px 4px;
   background-color: -moz-dialog;
   border: 1px none ThreeDShadow;
-  border-top-style: solid;
+  border-block-start-style: solid;
   color: -moz-dialogText;
   text-shadow: none;
 
   &:-moz-locale-dir(ltr):not([mirror]),
   &:-moz-locale-dir(rtl)[mirror] {
     border-right-style: solid;
-    border-top-right-radius: .3em;
+    border-top-right-radius: 0.3em;
     margin-right: 1em;
   }
 
   &:-moz-locale-dir(rtl):not([mirror]),
   &:-moz-locale-dir(ltr)[mirror] {
     border-left-style: solid;
-    border-top-left-radius: .3em;
+    border-top-left-radius: 0.3em;
     margin-left: 1em;
   }
 }
@@ -405,7 +398,7 @@ fieldset {
   & > hbox,
   & > vbox,
   & > radiogroup {
-    width: -moz-available;
+    inline-size: -moz-available;
   }
 }
 
@@ -416,15 +409,15 @@ legend {
 /* UI Density customization */
 
 treechildren::-moz-tree-row {
-  min-height: 1.6rem;
+  min-block-size: 1.6rem;
 }
 
 :root[uidensity="compact"] treechildren::-moz-tree-row {
-  min-height: 1.3rem;
+  min-block-size: 1.3rem;
 }
 
 :root[uidensity="touch"] treechildren::-moz-tree-row {
-  min-height: 2.4rem;
+  min-block-size: 2.4rem;
 }
 
 /* Infobar styles */
@@ -433,11 +426,11 @@ toolbarbutton.notification-button[is="toolbarbutton-menu-button"] {
   padding-inline: 0 12px;
 
   & > .toolbarbutton-menubutton-button {
-    min-height: calc(1.8em - 2px);
-    padding-top: 1px;
+    min-block-size: calc(1.8em - 2px);
+    padding-block-start: 1px;
   }
 }
 
 #reminderBarPopup {
-  margin-top: -4px;
+  margin-block-start: -4px;
 }

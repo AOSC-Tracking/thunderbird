@@ -2216,10 +2216,10 @@ nsImapMailFolder::DeleteSelf(nsIMsgWindow* msgWindow) {
     rv = IMAPGetStringBundle(getter_AddRefs(bundle));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsAutoCString folderName;
-    rv = GetName(folderName);
+    nsAutoString localizedName;
+    rv = GetLocalizedName(localizedName);
     NS_ENSURE_SUCCESS(rv, rv);
-    AutoTArray<nsString, 1> formatStrings = {NS_ConvertUTF8toUTF16(folderName)};
+    AutoTArray<nsString, 1> formatStrings = {localizedName};
 
     nsAutoString deleteFolderDialogTitle;
     rv = bundle->GetStringFromName("imapDeleteFolderDialogTitle",
@@ -2468,8 +2468,7 @@ NS_IMETHODIMP nsImapMailFolder::UpdateImapMailboxInfo(
   m_uidValidity = folderValidity;
 
   if (imapUIDValidity != folderValidity) {
-    NS_ASSERTION(imapUIDValidity == kUidUnknown,
-                 "uid validity seems to have changed, blowing away db");
+    NS_WARNING("uid validity seems to have changed, blowing away db");
     nsCOMPtr<nsIFile> pathFile;
     rv = GetFilePath(getter_AddRefs(pathFile));
     if (NS_FAILED(rv)) return rv;
@@ -2608,7 +2607,7 @@ NS_IMETHODIMP nsImapMailFolder::UpdateImapMailboxInfo(
     bool gettingNewMessages;
     GetGettingNewMessages(&gettingNewMessages);
     if (gettingNewMessages)
-      ProgressStatusString(aProtocol, "imapNoNewMessages", nullptr);
+      ProgressStatusString(aProtocol, "imapNoNewMessages", EmptyCString());
     SetPerformingBiff(false);
   }
   aSpec->GetNumMessages(&m_numServerTotalMessages);
@@ -5445,12 +5444,10 @@ nsImapMailFolder::HeaderFetchCompleted(nsIImapProtocol* aProtocol) {
         if (MOZ_LOG_TEST(gAutoSyncLog, mozilla::LogLevel::Debug)) {
           int32_t flags = 0;
           GetFlags((uint32_t*)&flags);
-          nsCString folderName;
-          GetName(folderName);
           MOZ_LOG(gAutoSyncLog, mozilla::LogLevel::Debug,
-                  ("%s: foldername=%s, flags=0x%X, "
+                  ("%s: folder=%s, flags=0x%X, "
                    "isOffline=%s, nsMsgFolderFlags::Offline=0x%X",
-                   __func__, folderName.get(), flags,
+                   __func__, mURI.get(), flags,
                    (flags & nsMsgFolderFlags::Offline) ? "true" : "false",
                    nsMsgFolderFlags::Offline));
           MOZ_LOG(gAutoSyncLog, mozilla::LogLevel::Debug,
@@ -6132,15 +6129,14 @@ nsresult nsImapMailFolder::DisplayStatusMsg(nsIImapUrl* aImapUrl,
 NS_IMETHODIMP
 nsImapMailFolder::ProgressStatusString(nsIImapProtocol* aProtocol,
                                        const char* aMsgName,
-                                       const char16_t* extraInfo) {
-  nsString progressMsg;
-
+                                       const nsACString& mailboxName) {
   nsCOMPtr<nsIMsgIncomingServer> server;
   nsresult rv = GetServer(getter_AddRefs(server));
-  if (NS_SUCCEEDED(rv) && server) {
-    nsCOMPtr<nsIImapServerSink> serverSink = do_QueryInterface(server);
-    if (serverSink) serverSink->GetImapStringByName(aMsgName, progressMsg);
-  }
+  NS_ENSURE_STATE(server);
+
+  nsCOMPtr<nsIImapServerSink> serverSink = do_QueryInterface(server);
+  nsString progressMsg;
+  if (serverSink) serverSink->GetImapStringByName(aMsgName, progressMsg);
   if (progressMsg.IsEmpty())
     IMAPGetStringByName(aMsgName, getter_Copies(progressMsg));
 
@@ -6148,16 +6144,33 @@ nsImapMailFolder::ProgressStatusString(nsIImapProtocol* aProtocol,
     nsCOMPtr<nsIImapUrl> imapUrl;
     aProtocol->GetRunningImapURL(getter_AddRefs(imapUrl));
     if (imapUrl) {
-      if (extraInfo) {
+      if (!mailboxName.IsEmpty()) {
+        nsAutoString extraInfo;
+        nsCOMPtr<nsIMsgFolder> rootFolder;
+        server->GetRootFolder(getter_AddRefs(rootFolder));
+        if (rootFolder) {
+          nsCOMPtr<nsIMsgImapMailFolder> imapRootFolder =
+              do_QueryInterface(rootFolder);
+          nsCOMPtr<nsIMsgImapMailFolder> imapActualFolder;
+          imapRootFolder->FindOnlineSubFolder(mailboxName,
+                                              getter_AddRefs(imapActualFolder));
+          if (imapActualFolder) {
+            nsCOMPtr<nsIMsgFolder> actualFolder =
+                do_QueryInterface(imapActualFolder);
+            actualFolder->GetLocalizedName(extraInfo);
+          }
+        }
+
         nsString printfString;
-        nsTextFormatter::ssprintf(printfString, progressMsg.get(), extraInfo);
+        nsTextFormatter::ssprintf(printfString, progressMsg.get(),
+                                  extraInfo.get());
         progressMsg = printfString;
       }
 
       DisplayStatusMsg(imapUrl, progressMsg);
     }
   }
-  return NS_OK;
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -6187,8 +6200,9 @@ nsImapMailFolder::PercentProgress(nsIImapProtocol* aProtocol,
             // Use the localized (pretty) name and not the the standard imap
             // name. I.e., don't use INBOX but use the local name, e.g.,
             // "Bandeja de entrada".
-            AutoTArray<nsString, 3> params = {current, expected,
-                                              NS_ConvertUTF8toUTF16(mName)};
+            nsAutoString localizedName;
+            GetLocalizedName(localizedName);
+            AutoTArray<nsString, 3> params = {current, expected, localizedName};
 
             nsCOMPtr<nsIStringBundle> bundle;
             nsresult rv = IMAPGetStringBundle(getter_AddRefs(bundle));
@@ -6285,7 +6299,7 @@ nsImapMailFolder::SetUrlState(nsIImapProtocol* aProtocol,
   // no point in doing anything...
   if (!mPath) return NS_OK;
   if (!isRunning) {
-    ProgressStatusString(aProtocol, "imapDone", nullptr);
+    ProgressStatusString(aProtocol, "imapDone", EmptyCString());
     m_urlRunning = false;
     // if no protocol, then we're reading from the mem or disk cache
     // and we don't want to end the offline download just yet.
@@ -7413,16 +7427,16 @@ nsresult nsImapMailFolder::CopyStreamMessage(
   if (NS_SUCCEEDED(rv) && m_copyState->m_msgService) {
     // put up status message here, if copying more than one message.
     if (m_copyState->m_messages.Length() > 1) {
-      nsAutoCString dstFolderName;
+      nsAutoString dstFolderName;
       nsString progressText;
-      GetName(dstFolderName);
+      dstFolder->GetLocalizedName(dstFolderName);
       nsAutoString curMsgString;
       nsAutoString totalMsgString;
       totalMsgString.AppendInt((int32_t)m_copyState->m_messages.Length());
       curMsgString.AppendInt(m_copyState->m_curIndex + 1);
 
-      AutoTArray<nsString, 3> formatStrings = {
-          curMsgString, totalMsgString, NS_ConvertUTF8toUTF16(dstFolderName)};
+      AutoTArray<nsString, 3> formatStrings = {curMsgString, totalMsgString,
+                                               dstFolderName};
 
       nsCOMPtr<nsIStringBundle> bundle;
       rv = IMAPGetStringBundle(getter_AddRefs(bundle));
@@ -8620,10 +8634,8 @@ NS_IMETHODIMP nsImapMailFolder::GetAutoSyncStateObj(
 }
 
 NS_IMETHODIMP nsImapMailFolder::InitiateAutoSync(nsIUrlListener* aUrlListener) {
-  nsCString folderName;
-  GetURI(folderName);
   MOZ_LOG(gAutoSyncLog, mozilla::LogLevel::Debug,
-          ("%s: Updating folder: %s", __func__, folderName.get()));
+          ("%s: Updating folder: %s", __func__, mURI.get()));
 
   // HACK: if UpdateFolder finds out that it can't open
   // the folder, it doesn't set the url listener and returns
@@ -8634,7 +8646,7 @@ NS_IMETHODIMP nsImapMailFolder::InitiateAutoSync(nsIUrlListener* aUrlListener) {
 
   if (!canOpenThisFolder) {
     MOZ_LOG(gAutoSyncLog, mozilla::LogLevel::Debug,
-            ("%s: Cannot update folder: %s", __func__, folderName.get()));
+            ("%s: Cannot update folder: %s", __func__, mURI.get()));
     return NS_ERROR_FAILURE;
   }
 

@@ -126,13 +126,10 @@ AccountConfig.prototype = {
 
       // for Microsoft Exchange servers. Optional.
       owaURL: null,
-      ewsURL: null,
+      exchangeURL: null,
       easURL: null,
       // for when an addon overrides the account type. Optional.
       addonAccountType: null,
-
-      // Whether to use this config for the outgoing server as well.
-      handlesOutgoing: false,
     };
   },
   /**
@@ -254,11 +251,11 @@ AccountConfig.prototype = {
 
   isIncomingEditedComplete() {
     return (
-      (this.incoming.type == "ews" &&
-        this.incoming.ewsURL &&
+      (this.isExchangeConfig() &&
+        this.incoming.exchangeURL &&
         this.incoming.username &&
         this.incoming.auth) ||
-      (this.incoming.type != "ews" &&
+      (!this.isExchangeConfig() &&
         !!this.incoming.hostname &&
         !!this.incoming.port &&
         !!this.incoming.username)
@@ -384,7 +381,8 @@ AccountConfig.prototype = {
   isOauthOnly() {
     return (
       this.incoming.auth === Ci.nsMsgAuthMethod.OAuth2 &&
-      this.outgoing.auth === Ci.nsMsgAuthMethod.OAuth2
+      (this.configureOutgoingFromIncoming() ||
+        this.outgoing.auth === Ci.nsMsgAuthMethod.OAuth2)
     );
   },
 
@@ -396,6 +394,49 @@ AccountConfig.prototype = {
    */
   hasPassword() {
     return Boolean(this.incoming.password || this.outgoing.password);
+  },
+
+  /**
+   * Return true if the configuration is for a Microsoft Exchange server (EWS or
+   * Graph).
+   *
+   * @returns {boolean}
+   */
+  isExchangeConfig() {
+    const isGraphEnabled = Services.prefs.getBoolPref(
+      "mail.graph.enabled",
+      false
+    );
+    if (isGraphEnabled) {
+      return this.incoming.type == "ews" || this.incoming.type == "graph";
+    }
+    return this.incoming.type == "ews";
+  },
+
+  /**
+   * Return the host for the current configuration, or null if it is not configured.
+   *
+   * Note that this prefers the computed value from the configured URL for
+   * Exchange servers.
+   *
+   * @returns {?string}
+   */
+  getConfiguredHost() {
+    if (this.isExchangeConfig()) {
+      return URL.parse(this.incoming.exchangeURL)?.hostname;
+    }
+    return this.incoming.hostname;
+  },
+
+  /**
+   * Determine if the outgoing server configuration values should be derived
+   * from the incoming server configuration values for this config.
+   *
+   * @returns {boolean}
+   */
+  configureOutgoingFromIncoming() {
+    // For now this is true if, and only if, the server is an Exchange server.
+    return this.isExchangeConfig();
   },
 };
 

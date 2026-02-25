@@ -24,7 +24,7 @@ p {
   box-shadow: rgba(0, 0, 0, 0.3) 1px 1px 3px;
 }
 
-#ibcontent:not(.log) > #Chat > .bubble:not(.context,.event) {
+#ibcontent:not(.log) > #Chat > .bubble:not(.context, .event) {
   -moz-animation-duration: 0.5s;
   -moz-animation-name: fadein;
   -moz-animation-iteration-count: 1;
@@ -36,7 +36,7 @@ p {
   }
 
   to {
-    opacity: 1.0;
+    opacity: 1;
   }
 }
 
@@ -64,8 +64,8 @@ p {
   padding: 0 15px 1px 15px;
   /* border-top-left-radius = (border-radius - border-width) of div.bubble,
      see bug 1775 for an explanation */
-  border-top-left-radius: 8px;
-  border-bottom-right-radius: 10px;
+  border-start-start-radius: 8px;
+  border-end-end-radius: 10px;
 }
 
 .pseudo > .time {
@@ -79,10 +79,10 @@ p {
 .bubble > .indicator > hr,
 .bubble > hr {
   margin: 3px 0 1px 0;
-  height: 2px;
+  block-size: 2px;
   border-style: none;
-  border-top: 1px solid rgba(0, 0, 0, 0.07);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+  border-block-start: 1px solid rgba(0, 0, 0, 0.07);
+  border-block-end: 1px solid rgba(255, 255, 255, 0.5);
 }
 
 .interval,
@@ -129,21 +129,21 @@ p.event *:any-link:hover {
 }
 
 p *:any-link img {
-  margin-bottom: 1px;
-  border-bottom: solid 1px;
+  margin-block-end: 1px;
+  border-block-end: solid 1px;
 }
 
 #unread-ruler {
-  border-top: 1px solid rgba(0, 0, 0, 0.16) !important;
-  border-bottom: 1px solid rgb(255,255,255) !important;
+  border-block-start: 1px solid rgba(0, 0, 0, 0.16) !important;
+  border-block-end: 1px solid rgb(255, 255, 255) !important;
 }
 
 .sessionstart-ruler {
   margin: 0;
-  width: 100%;
+  inline-size: 100%;
   border: none;
-  min-height: 13px;
-  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(0,0,0,0.18));
+  min-block-size: 13px;
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(0, 0, 0, 0.18));
 }
 
 .ib-sender.message-encrypted {
@@ -153,9 +153,9 @@ p *:any-link img {
 .ib-sender.message-encrypted::after {
   position: relative;
   display: inline-block;
-  content: '';
-  width: 11px;
-  height: 10px;
+  content: "";
+  inline-size: 11px;
+  block-size: 10px;
   background: url("chrome://messenger/skin/icons/connection-secure.svg") no-repeat center;
   background-size: contain;
   margin-inline-start: 4px;
@@ -166,26 +166,26 @@ p *:any-link img {
 /* used by javascript */
 .eventToggle {
   cursor: pointer;
-  min-height: 20px;
-  margin-left: -24px;
-  padding-left: 24px;
-  background: url('Bitmaps/minus.png') no-repeat left top;
-  margin-bottom: -20px;
-  width: 0;
+  min-block-size: 20px;
+  margin-inline-start: -24px;
+  padding-inline-start: 24px;
+  background: url("Bitmaps/minus.png") no-repeat left top;
+  margin-block-end: -20px;
+  inline-size: 0;
 }
 
 .eventToggle:hover {
-  background-image: url('Bitmaps/minus-hover.png');
+  background-image: url("Bitmaps/minus-hover.png");
 }
 
 .hide-children > .eventToggle {
-  width: 100%;
-  margin-bottom: -3px;
-  background-image: url('Bitmaps/plus.png');
+  inline-size: 100%;
+  margin-block-end: -3px;
+  background-image: url("Bitmaps/plus.png");
 }
 
 .hide-children > .eventToggle:hover {
-  background-image: url('Bitmaps/plus-hover.png');
+  background-image: url("Bitmaps/plus-hover.png");
 }
 
 .hide-children > .eventToggle::after {
@@ -193,7 +193,7 @@ p *:any-link img {
   color: hsl(0, 0%, 60%);
 }
 
-.hide-children > :is(p.event,hr):not(:first-of-type,:last-of-type,.no-collapse) {
+.hide-children > :is(p.event, hr):not(:first-of-type, :last-of-type, .no-collapse) {
   display: none;
 }
 

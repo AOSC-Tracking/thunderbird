@@ -65,7 +65,6 @@
 }
 
 :is(ul, ol)[role="tree"] {
-
   & .container {
     display: flex;
     align-items: center;
@@ -89,7 +88,10 @@
           stroke var(--transition-duration) var(--transition-timing);
 
         &::before {
-          transition: transform 200ms ease, background-color 300ms ease, border-color 300ms ease;
+          transition:
+            transform 200ms ease,
+            background-color 300ms ease,
+            border-color 300ms ease;
         }
       }
     }
@@ -102,7 +104,7 @@
       background-color: var(--indicator-background);
       border: 1px solid var(--indicator-border);
       border-radius: var(--indicator-width);
-      width: var(--indicator-width);
+      inline-size: var(--indicator-width);
       box-sizing: border-box;
       transform: translateX(-12px);
     }
@@ -144,8 +146,8 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: var(--list-item-buttons-size);
-      height: var(--list-item-buttons-size);
+      inline-size: var(--list-item-buttons-size);
+      block-size: var(--list-item-buttons-size);
     }
 
     li:not(.children) > & .twisty-icon {
@@ -153,8 +155,8 @@
     }
 
     li.children.collapsed > & .twisty-icon {
-        transform: rotate(-90deg);
-      }
+      transform: rotate(-90deg);
+    }
 
     li.children.collapsed:dir(rtl) > & .twisty-icon {
       transform: rotate(90deg);

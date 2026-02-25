@@ -61,10 +61,7 @@
     --tree-focus-outline: transparent;
     --tree-pane-background: light-dark(var(--color-gray-05), var(--color-black));
     --tree-card-background: var(--layout-background-0);
-    --tree-card-border: light-dark(
-      color-mix(in srgb, var(--tree-view-bg) 90%, black),
-      color-mix(in srgb, var(--tree-view-bg) 90%, white)
-    );
+    --tree-card-border: light-dark(color-mix(in srgb, var(--tree-view-bg) 90%, black), color-mix(in srgb, var(--tree-view-bg) 90%, white));
     --tree-card-border-hover: color-mix(in srgb, var(--selected-item-color) 60%, transparent);
     --tree-card-border-focus: var(--selected-item-color);
     --tree-card-hover: var(--selected-item-color);
@@ -105,10 +102,7 @@
     --indicator-background-selected-unfocused: light-dark(var(--color-gray-30), var(--color-gray-70));
     --indicator-border-selected-unfocused: light-dark(var(--color-gray-40), var(--color-gray-60));
 
-    --listbox-color: light-dark(
-      var(--sidebar-text-color, var(--color-gray-80)),
-      var(--sidebar-text-color, var(--color-gray-05))
-    );
+    --listbox-color: light-dark(var(--sidebar-text-color, var(--color-gray-80)), var(--sidebar-text-color, var(--color-gray-05)));
     --listbox-selected-bg: light-dark(var(--color-gray-30), var(--color-gray-70));
     --listbox-focused-selected-bg: var(--selected-item-color);
     --listbox-selected-color: var(--selected-item-text-color);
@@ -176,7 +170,7 @@
   align-items: start;
   overflow-y: auto;
   overscroll-behavior-y: none;
-  height: 100%;
+  block-size: 100%;
   background-color: var(--tree-view-bg);
 }
 
@@ -187,7 +181,6 @@
 }
 
 [is="tree-view-table-body"] {
-
   &:focus {
     outline: none;
   }
@@ -199,7 +192,6 @@
   /* Table mode */
 
   & > .table-layout {
-
     &:hover {
       background-color: var(--listbox-hover);
 
@@ -222,7 +214,6 @@
   }
 
   &:is(:focus, :focus-within) {
-
     & > .table-layout {
       &.selected {
         color: var(--listbox-selected-color);
@@ -259,11 +250,17 @@
 
     @media (prefers-reduced-motion: no-preference) {
       & .card-container {
-        transition: background-color 300ms ease, color 300ms ease,
-                    border-color 300ms ease, box-shadow 300ms ease;
+        transition:
+          background-color 300ms ease,
+          color 300ms ease,
+          border-color 300ms ease,
+          box-shadow 300ms ease;
 
         &::before {
-          transition: transform 200ms ease, background-color 300ms ease, border-color 300ms;
+          transition:
+            transform 200ms ease,
+            background-color 300ms ease,
+            border-color 300ms;
         }
       }
     }
@@ -281,7 +278,6 @@
 
   /* Selection */
   &:is(:focus, :focus-within) .card-layout {
-
     &.current {
       --tree-card-background: var(--tree-card-background-current);
       --tree-card-border: var(--tree-card-focus);
@@ -312,7 +308,6 @@
 
   /* Unfocused */
   &:not(:focus, :focus-within) .card-layout {
-
     &.current {
       --tree-card-background: var(--tree-card-background-current-unfocused);
     }
@@ -354,7 +349,7 @@
     }
 
     & > .card-container {
-      height: 100%;
+      block-size: 100%;
       background-color: var(--tree-card-background);
       border: 1px solid var(--tree-card-border);
       border-radius: var(--tree-card-content-radius);
@@ -368,7 +363,7 @@
         background-color: var(--indicator-background);
         border: 1px solid var(--indicator-border);
         border-radius: var(--indicator-width);
-        width: var(--indicator-width);
+        inline-size: var(--indicator-width);
         box-sizing: border-box;
         transform: translateX(calc(var(--tree-card-inline) * -1));
       }
@@ -397,43 +392,33 @@ table[is="tree-view-table"] {
 }
 
 thead[is="tree-view-table-header"] {
-  height: var(--tree-header-table-height);
+  block-size: var(--tree-header-table-height);
   position: sticky;
   inset-inline: 0;
   inset-block-start: 0;
   z-index: 1;
 
   &::after {
-    content: '';
+    content: "";
     position: absolute;
     inset-inline: 0;
-    height: 0;
+    block-size: 0;
     z-index: 1;
-    border-bottom: 1px solid var(--sidebar-border-color, var(--tree-view-header-border-color));
-  }
-
-  & hr[is="pane-splitter"] {
-    position: absolute;
-    inset-inline-end: 4px;
-    inset-block: 3px;
-
-    &:hover:not(:active,[disabled]) {
-      background-color: var(--selected-item-color);
-    }
+    border-block-end: 1px solid var(--sidebar-border-color, var(--tree-view-header-border-color));
   }
 }
 
 th[is="tree-view-table-header-cell"] {
-  height: var(--tree-header-table-height);
-  min-width: 5ch;
+  block-size: var(--tree-header-table-height);
+  min-inline-size: 5ch;
   padding: 0;
   position: relative;
   overflow: hidden;
   background-color: var(--tree-view-bg);
 
   &[data-type="icon"] {
-    width: var(--table-header-cell-icon-width);
-    min-width: var(--table-header-cell-icon-min-width);
+    inline-size: var(--table-header-cell-icon-width);
+    min-inline-size: var(--table-header-cell-icon-min-width);
 
     & button {
       padding: var(--table-header-cell-icon-button-padding, var(--tree-header-cell-padding));
@@ -443,11 +428,52 @@ th[is="tree-view-table-header-cell"] {
       display: block;
       margin-inline: auto;
     }
+
+    &.last-column {
+      inline-size: calc(2 * var(--table-header-cell-icon-width));
+      min-inline-size: calc(2 * var(--table-header-cell-icon-min-width));
+    }
+  }
+
+  & .button-column-picker {
+    display: none;
+    inset-inline-start: auto;
+    inline-size: auto;
+
+    & img {
+      content: var(--icon-column-menu);
+      margin-inline: 0;
+    }
+
+    @media (-moz-overlay-scrollbars) {
+      padding-inline-end: env(scrollbar-inline-size);
+    }
+  }
+
+  &.last-column:not(.column-dragging, .column-moved-by-dragging) .button-column-picker {
+    display: unset;
   }
 
   & hr[is="pane-splitter"] {
+    position: absolute;
+    inset-inline-end: 4px;
+    inset-block: 3px;
     border-inline-start-style: none !important;
     border-inline-end-style: solid;
+
+    &:hover:not(:active, [disabled]) {
+      background-color: var(--selected-item-color);
+    }
+  }
+
+  &:is(.last-column, .column-dragging) hr {
+    display: none;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    &.column-moved-by-dragging {
+      transition: transform 200ms ease;
+    }
   }
 }
 
@@ -466,10 +492,8 @@ th[is="tree-view-table-header-cell"] {
   stroke-opacity: 0;
 }
 
-[is="tree-view-table-body"]:is(:focus, :focus-within) >
-  .selected :is(.tree-view-header-select, .tree-view-row-select) img,
-[is="tree-view-table-body"] > .selected:focus-within
-  :is(.tree-view-header-select, .tree-view-row-select) img {
+[is="tree-view-table-body"]:is(:focus, :focus-within) > .selected :is(.tree-view-header-select, .tree-view-row-select) img,
+[is="tree-view-table-body"] > .selected:focus-within :is(.tree-view-header-select, .tree-view-row-select) img {
   color: currentColor;
 }
 
@@ -518,6 +542,7 @@ th[is="tree-view-table-header-cell"] {
   position: absolute;
   inset-block: 0;
   inset-inline: 0 1px;
+  display: flex;
 
   th[data-resizable="false"] & {
     inset-inline: 0;
@@ -534,10 +559,8 @@ th[is="tree-view-table-header-cell"] {
   text-align: start;
   padding: var(--tree-header-cell-padding);
   margin: 0;
-  width: 100%;
-  height: 100%;
-  min-width: auto;
-  min-height: auto;
+  min-inline-size: auto;
+  min-block-size: auto;
   color: inherit;
   border: none;
   border-radius: 0;
@@ -546,6 +569,10 @@ th[is="tree-view-table-header-cell"] {
   background-repeat: no-repeat;
   -moz-context-properties: stroke;
   stroke: currentColor;
+
+  &:first-child {
+    flex: 1;
+  }
 
   &:dir(rtl) {
     background-position-x: left 3px;
@@ -584,28 +611,6 @@ th[is="tree-view-table-header-cell"] {
   }
 }
 
-th[is="tree-view-table-column-picker"] {
-  position: relative;
-  width: 25px;
-  min-width: 25px;
-  padding: 0;
-  background-color: var(--tree-view-bg);
-
-  @media (-moz-overlay-scrollbars) {
-    padding-inline-end: env(scrollbar-inline-size);
-  }
-}
-
-.button-column-picker {
-  position: absolute;
-  inset: 0;
-
-  & img {
-    content: var(--icon-column-menu);
-    margin-inline: 0;
-  }
-}
-
 /* Table body */
 
 table[is="tree-view-table"] tr.selected td.current-cell {
@@ -614,13 +619,13 @@ table[is="tree-view-table"] tr.selected td.current-cell {
 
 table[is="tree-view-table"] {
   tbody .table-layout td:not([colspan="2"]) button:not(.twisty) {
-    height: 100%;
-    width: 100%;
+    block-size: 100%;
+    inline-size: 100%;
   }
 
   td {
-    max-width: 0;
-    height: inherit;
+    max-inline-size: 0;
+    block-size: inherit;
     overflow-x: clip;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -665,7 +670,7 @@ table[is="tree-view-table"] {
       inset: 0;
       display: flex;
       align-items: center;
-      max-height: inherit;
+      max-block-size: inherit;
       box-sizing: border-box;
 
       tr:not(.children) & .twisty {
@@ -673,10 +678,10 @@ table[is="tree-view-table"] {
       }
 
       & .twisty {
-        width: 16px;
-        height: 16px;
-        min-height: auto;
-        min-width: auto;
+        inline-size: 16px;
+        block-size: 16px;
+        min-block-size: auto;
+        min-inline-size: auto;
         flex-shrink: 0;
         padding: 0;
         margin: 0;
@@ -688,8 +693,8 @@ table[is="tree-view-table"] {
       }
 
       & .twisty-icon {
-        width: 12px;
-        height: 12px;
+        inline-size: 12px;
+        block-size: 12px;
         content: var(--icon-nav-down-sm);
 
         @media (prefers-reduced-motion: no-preference) {
@@ -743,7 +748,7 @@ slot[name="placeholders"] {
   & div::before {
     content: "";
     display: block;
-    height: 32px;
+    block-size: 32px;
     margin-block-end: 9px;
     background-position: center top;
     background-size: contain;
@@ -780,8 +785,8 @@ slot[name="placeholders"] {
   }
 }
 
-:is(ul, ol):is([role="tree"],[role="treegrid"],[role="group"]) li > div {
-  min-height: var(--list-item-min-height);
+:is(ul, ol):is([role="tree"], [role="treegrid"], [role="group"]) li > div {
+  min-block-size: var(--list-item-min-height);
 }
 
 /* Drag and Drop */

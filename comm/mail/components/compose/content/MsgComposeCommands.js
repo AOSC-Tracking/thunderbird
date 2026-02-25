@@ -113,6 +113,7 @@ XPCOMUtils.defineLazyScriptGetter(
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  ComposeUtils: "resource:///modules/ComposeUtils.sys.mjs",
   MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
 });
 
@@ -4768,7 +4769,17 @@ async function ComposeStartup() {
         composeFields.subject = args.subject;
       }
       if (args.attachment && window.arguments[1] instanceof Ci.nsICommandLine) {
-        const attachmentList = args.attachment.split(",");
+        // Workaround to support 'file:' URIs for attachments with commas in
+        // their paths.
+        // Note: Per RFC 3986, commas are 'sub-delimiters' and are technically
+        // legal in 'file:' URIs without encoding. Consequently, utilities like
+        // xdg-email pass literal commas in URIs, for example for the 'Send
+        // To/Mail Recipient' action in file managers.
+        const isUriMode = args.attachment.toLowerCase().startsWith("file:");
+        const processedAttachments = isUriMode
+          ? args.attachment.replace(/,(?!file:)/gi, "%2C")
+          : args.attachment;
+        const attachmentList = processedAttachments.split(",");
         for (const attachmentName of attachmentList) {
           // resolveURI does all the magic around working out what the
           // attachment is, including web pages, and generating the correct uri.
@@ -6253,7 +6264,10 @@ async function GenericSendMessage(msgType) {
         );
         // Opening a dialog as dependent doesn't wait until it's closed again,
         // so we have to do that explicitly.
-        if (spellCheckDialog.document.readyState != "complete") {
+        if (
+          spellCheckDialog.document.readyState != "complete" ||
+          spellCheckDialog.location.href == "about:blank"
+        ) {
           await new Promise(resolve =>
             spellCheckDialog.addEventListener("load", resolve, { once: true })
           );
@@ -10550,8 +10564,10 @@ var envelopeDragObserver = {
 
       editor.insertElementAtSelection(imageElement, true);
 
+      imageElement.classList.add("loading-internal");
       try {
-        loadBlockedImage(src);
+        imageElement.src = lazy.ComposeUtils.loadBlockedImage(src);
+        imageElement.classList.remove("loading-internal");
       } catch (e) {
         dump("Failed to load the appended image!\n");
         console.error(e);
@@ -11198,25 +11214,8 @@ function InitEditor() {
   window.content.browsingContext.allowJavascript = false;
   window.content.browsingContext.docShell.allowAuth = false;
   window.content.browsingContext.docShell.allowMetaRedirects = false;
-  gMsgCompose.initEditor(editor, window.content);
 
-  if (!editor.document.doctype) {
-    editor.document.insertBefore(
-      editor.document.implementation.createDocumentType("html", "", ""),
-      editor.document.firstChild
-    );
-  }
-
-  // Then, we enable related UI entries.
-  enableInlineSpellCheck(Services.prefs.getBoolPref("mail.spellcheck.inline"));
-  gAttachmentNotifier.init(editor.document);
-
-  // Listen for spellchecker changes, set document language to
-  // dictionary picked by the user via the right-click menu in the editor.
-  document.addEventListener("spellcheck-changed", updateDocumentLanguage);
-
-  // XXX: the error event fires twice for each load. Why??
-  editor.document.body.addEventListener(
+  editor.document.addEventListener(
     "error",
     function (event) {
       if (event.target.localName != "img") {
@@ -11274,7 +11273,8 @@ function InitEditor() {
           // now.
           event.target.classList.add("loading-internal");
           try {
-            loadBlockedImage(src);
+            event.target.src = lazy.ComposeUtils.loadBlockedImage(src);
+            event.target.classList.remove("loading-internal");
           } catch (e) {
             // Couldn't load the referenced image.
             console.error(e);
@@ -11292,6 +11292,23 @@ function InitEditor() {
     true
   );
 
+  gMsgCompose.initEditor(editor, window.content);
+
+  if (!editor.document.doctype) {
+    editor.document.insertBefore(
+      editor.document.implementation.createDocumentType("html", "", ""),
+      editor.document.firstChild
+    );
+  }
+
+  // Then, we enable related UI entries.
+  enableInlineSpellCheck(Services.prefs.getBoolPref("mail.spellcheck.inline"));
+  gAttachmentNotifier.init(editor.document);
+
+  // Listen for spellchecker changes, set document language to
+  // dictionary picked by the user via the right-click menu in the editor.
+  document.addEventListener("spellcheck-changed", updateDocumentLanguage);
+
   // Convert mailnews URL back to data: URL.
   const background = editor.document.body.background;
   if (background && gOriginalMsgURI) {
@@ -11307,7 +11324,8 @@ function InitEditor() {
       )
     ) {
       try {
-        editor.document.body.background = loadBlockedImage(background, true);
+        editor.document.body.background =
+          lazy.ComposeUtils.loadBlockedImage(background);
       } catch (e) {
         // Couldn't load the referenced image.
         console.error(e);
@@ -11599,7 +11617,13 @@ function onBlockedContentOptionsShowing(aEvent) {
  */
 function onUnblockResource(aURL, aNode) {
   try {
-    loadBlockedImage(aURL);
+    const dataUrl = lazy.ComposeUtils.loadBlockedImage(aURL);
+    const editor = GetCurrentEditor();
+    for (const img of editor.document.images) {
+      if (img.src == aURL) {
+        img.src = dataUrl;
+      }
+    }
   } catch (e) {
     // Couldn't load the referenced image.
     console.error(e);
@@ -11617,91 +11641,6 @@ function onUnblockResource(aURL, aNode) {
       }
     }
   }
-}
-
-/**
- * Convert the blocked content to a data URL and swap the src to that for the
- * elements that were using it.
- *
- * @param {string} aURL - (necko) URL to unblock.
- * @param {boolean} aReturnDataURL - Return data: URL instead of processing image.
- * @returns {string} the image as data: URL.
- * @throws Error() if reading the data failed.
- */
-function loadBlockedImage(aURL, aReturnDataURL = false) {
-  let filename;
-  if (/^(file|chrome|moz-extension):/i.test(aURL)) {
-    filename = aURL.substr(aURL.lastIndexOf("/") + 1);
-  } else {
-    const fnMatch = /[?&;]filename=([^?&]+)/.exec(aURL);
-    filename = (fnMatch && fnMatch[1]) || "";
-  }
-  filename = decodeURIComponent(filename);
-  const uri = Services.io.newURI(aURL);
-  let contentType;
-  if (filename) {
-    try {
-      contentType = Cc["@mozilla.org/mime;1"]
-        .getService(Ci.nsIMIMEService)
-        .getTypeFromURI(uri);
-    } catch (ex) {
-      contentType = "image/png";
-    }
-
-    if (!contentType.startsWith("image/")) {
-      // Unsafe to unblock this. It would just be garbage either way.
-      throw new Error(
-        "Won't unblock; URL=" + aURL + ", contentType=" + contentType
-      );
-    }
-  } else {
-    // Assuming image/png is the best we can do.
-    contentType = "image/png";
-  }
-  const channel = Services.io.newChannelFromURI(
-    uri,
-    null,
-    Services.scriptSecurityManager.getSystemPrincipal(),
-    null,
-    Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
-    Ci.nsIContentPolicy.TYPE_OTHER
-  );
-  const inputStream = channel.open();
-  const stream = Cc["@mozilla.org/binaryinputstream;1"].createInstance(
-    Ci.nsIBinaryInputStream
-  );
-  stream.setInputStream(inputStream);
-  let streamData = "";
-  try {
-    while (stream.available() > 0) {
-      streamData += stream.readBytes(stream.available());
-    }
-  } catch (e) {
-    stream.close();
-    throw new Error("Couldn't read all data from URL=" + aURL + " (" + e + ")");
-  }
-  stream.close();
-  const encoded = btoa(streamData);
-  const dataURL =
-    "data:" +
-    contentType +
-    (filename ? ";filename=" + encodeURIComponent(filename) : "") +
-    ";base64," +
-    encoded;
-
-  if (aReturnDataURL) {
-    return dataURL;
-  }
-
-  const editor = GetCurrentEditor();
-  for (const img of editor.document.images) {
-    if (img.src == aURL) {
-      img.src = dataURL; // Swap to data URL.
-      img.classList.remove("loading-internal");
-    }
-  }
-
-  return null;
 }
 
 /**

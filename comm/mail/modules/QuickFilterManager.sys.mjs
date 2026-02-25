@@ -705,8 +705,22 @@ var TagFacetingFilter = {
     }
 
     let term, value;
+    const mode = aFilterValue.mode;
 
-    // just the true/false case
+    // Show only messages that have no tags assigned.
+    if (mode === "NONE") {
+      term = aTermCreator.createTerm();
+      term.attrib = Ci.nsMsgSearchAttrib.Keywords;
+      value = term.value;
+      value.str = "";
+      term.value = value;
+      term.op = Ci.nsMsgSearchOp.IsEmpty;
+      term.booleanAnd = true;
+      aTerms.push(term);
+      return null;
+    }
+
+    // Just the true/false case.
     if (this.isSimple(aFilterValue)) {
       term = aTermCreator.createTerm();
       term.attrib = Ci.nsMsgSearchAttrib.Keywords;
@@ -731,7 +745,6 @@ var TagFacetingFilter = {
 
       const excludeTerms = [];
 
-      const mode = aFilterValue.mode;
       for (const key in aFilterValue.tags) {
         const shouldFilter = aFilterValue.tags[key];
         if (shouldFilter !== null) {
@@ -860,16 +873,25 @@ var TagFacetingFilter = {
   },
 
   domBindExtra(aDocument, aMuxer) {
-    // Tag filtering mode menu (All of/Any of)
+    // Tag filtering mode menu: All of/Any of/None.
     function commandHandler(aEvent) {
       const filterValue = aMuxer.getFilterValueForMutation(
         TagFacetingFilter.name
       );
+      // The search was triggered when the filter was being cleared, no need
+      // to do anything.
+      if (!filterValue) {
+        return;
+      }
+
       filterValue.mode = aEvent.target.value;
+      aDocument
+        .getElementById("quickFilterBarTagsContainer")
+        .classList.toggle("none-mode-selected", filterValue.mode === "NONE");
       aMuxer.updateSearch();
     }
     aDocument
-      .getElementById("qfb-boolean-mode")
+      .getElementById("qfb-tag-filter-mode")
       .addEventListener("ValueChange", commandHandler);
   },
 
@@ -884,7 +906,13 @@ var TagFacetingFilter = {
     if (aFilterValue != null && typeof aFilterValue == "object") {
       this._populateTagBar(aFilterValue, aDocument, aMuxer);
     } else {
-      aDocument.getElementById("quickFilterBarTagsContainer").hidden = true;
+      // Properly reset the tags container to its initial state since
+      // re-enabling the tags filtering won't account for any previously
+      // modified values.
+      const container = aDocument.getElementById("quickFilterBarTagsContainer");
+      container.hidden = true;
+      container.classList.remove("none-mode-selected");
+      aDocument.getElementById("qfb-tag-filter-mode").selectedIndex = 0;
     }
   },
 
@@ -895,7 +923,7 @@ var TagFacetingFilter = {
     // If we have a mode stored use that. If we don't have a mode, then update
     // our state to agree with what the UI is currently displaying;
     // this will happen for fresh profiles.
-    const qbm = aDocument.getElementById("qfb-boolean-mode");
+    const qbm = aDocument.getElementById("qfb-tag-filter-mode");
     if (aState.mode) {
       qbm.value = aState.mode;
     } else {
