@@ -31,13 +31,13 @@ var {
   countOccurrences,
   hasUnsupported,
 } = ChromeUtils.importESModule("resource:///modules/calendar/calRecurrenceUtils.sys.mjs");
-var { PluralForm } = ChromeUtils.importESModule("resource:///modules/PluralForm.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
 ChromeUtils.defineESModuleGetters(this, {
   CalAttachment: "resource:///modules/CalAttachment.sys.mjs",
   CalAttendee: "resource:///modules/CalAttendee.sys.mjs",
   CalRecurrenceInfo: "resource:///modules/CalRecurrenceInfo.sys.mjs",
+  CalRecurrenceRule: "resource:///modules/CalRecurrenceRule.sys.mjs",
 });
 
 window.addEventListener("load", onLoad);
@@ -820,7 +820,7 @@ function loadCategories(aItem) {
     document.l10n.setAttributes(item, "calendar-none");
     item.setAttribute("type", "radio");
     if (itemCategories.length === 0) {
-      item.setAttribute("checked", "true");
+      item.toggleAttribute("checked", true);
     }
     categoryPopup.appendChild(item);
   }
@@ -831,7 +831,7 @@ function loadCategories(aItem) {
     item.setAttribute("value", cat);
     item.setAttribute("type", maxCount === null || maxCount > 1 ? "checkbox" : "radio");
     if (itemCategories.includes(cat)) {
-      item.setAttribute("checked", "true");
+      item.toggleAttribute("checked", true);
     }
     const cssSafeId = cal.view.formatStringForCSSRule(cat);
     item.style.setProperty("--item-color", `var(--category-${cssSafeId}-color)`);
@@ -947,7 +947,7 @@ function categoryTextboxKeypress(event) {
 
   let newIndex = categories.indexOf(category);
   if (newIndex > -1) {
-    categoryList[newIndex].setAttribute("checked", true);
+    categoryList[newIndex].toggleAttribute("checked", true);
   } else {
     const localeCollator = new Intl.Collator();
     const compare = localeCollator.compare;
@@ -961,7 +961,7 @@ function categoryTextboxKeypress(event) {
     item.setAttribute("label", category);
     item.setAttribute("value", category);
     item.setAttribute("type", maxCount === null || maxCount > 1 ? "checkbox" : "radio");
-    item.setAttribute("checked", true);
+    item.toggleAttribute("checked", true);
     categoryPopup.insertBefore(item, categoryList[newIndex]);
   }
 
@@ -1040,7 +1040,7 @@ function loadDateTime(item) {
     if (hasEntryDate && hasDueDate) {
       duration = endTime.subtractDate(startTime);
     }
-    document.getElementById("cmd_attendees").setAttribute("disabled", true);
+    document.getElementById("cmd_attendees").toggleAttribute("disabled", true);
     document.getElementById("keepduration-button").disabled = !(hasEntryDate && hasDueDate);
     sendMessage({
       command: "updateConfigState",
@@ -1293,11 +1293,7 @@ function updateDateCheckboxes(aDatePickerId, aCheckboxId, aDateTime) {
 
   // first of all disable the datetime picker if we don't have a date
   const hasDate = document.getElementById(aCheckboxId).checked;
-  if (!hasDate) {
-    datePicker.setAttribute("disabled", "true");
-  } else {
-    datePicker.removeAttribute("disabled");
-  }
+  datePicker.toggleAttribute("disabled", !hasDate);
 
   // create a new datetime object if date is now checked for the first time
   if (hasDate && !aDateTime.isValid()) {
@@ -1364,8 +1360,8 @@ function getRepeatTypeAndUntilDate() {
       }
     }
     if (rules.length == 1) {
-      const rule = rules[0]?.QueryInterface(Ci.calIRecurrenceRule);
-      if (rule) {
+      const rule = rules[0];
+      if (rule instanceof CalRecurrenceRule || rule instanceof Ci.calIRecurrenceRule) {
         switch (rule.type) {
           case "DAILY": {
             const byparts = [
@@ -1487,8 +1483,8 @@ function loadRepeat(aRepeatType, aUntilDate, aItem) {
   gLastRepeatSelection = repeatMenu.selectedIndex;
 
   if (aItem.parentItem != aItem) {
-    document.getElementById("item-repeat").setAttribute("disabled", "true");
-    document.getElementById("repeat-until-datepicker").setAttribute("disabled", "true");
+    document.getElementById("item-repeat").toggleAttribute("disabled", true);
+    document.getElementById("repeat-until-datepicker").toggleAttribute("disabled", true);
   }
   // Show the repeat-until-datepicker and set its date
   document.getElementById("repeat-untilDate").hidden = false;
@@ -2419,31 +2415,25 @@ function deleteAttachment() {
  */
 function deleteAllAttachments() {
   const documentLink = document.getElementById("attachment-link");
-  const itemCount = documentLink.getRowCount();
-  let canRemove = itemCount < 2;
-
-  if (itemCount > 1) {
-    const removeText = PluralForm.get(
-      itemCount,
-      cal.l10n.getString("calendar-event-dialog", "removeAttachmentsText")
-    );
-    const removeTitle = cal.l10n.getString("calendar-event-dialog", "removeCalendarsTitle");
-    canRemove = Services.prompt.confirm(
-      window,
-      removeTitle,
-      removeText.replace("#1", itemCount),
-      {}
-    );
+  const count = documentLink.getRowCount();
+  if (count == 0) {
+    return;
   }
 
-  if (canRemove) {
+  if (
+    Services.prompt.confirm(
+      window,
+      this.l10n.formatValueSync("prompt-remove-attachments-title"),
+      this.l10n.formatValueSync("prompt-remove-attachments-text", { count })
+    )
+  ) {
     while (documentLink.lastChild) {
       documentLink.lastChild.attachment = null;
       documentLink.lastChild.remove();
     }
     gAttachMap = {};
+    updateAttachment();
   }
-  updateAttachment();
 }
 
 /**
@@ -2591,8 +2581,8 @@ function updateCalendar() {
     document.getElementById("notify-attendees-checkbox").removeAttribute("disabled");
     document.getElementById("undisclose-attendees-checkbox").removeAttribute("disabled");
   } else {
-    document.getElementById("notify-attendees-checkbox").setAttribute("disabled", "true");
-    document.getElementById("undisclose-attendees-checkbox").setAttribute("disabled", "true");
+    document.getElementById("notify-attendees-checkbox").toggleAttribute("disabled", true);
+    document.getElementById("undisclose-attendees-checkbox").toggleAttribute("disabled", true);
   }
 
   // update the accept button
@@ -2608,11 +2598,7 @@ function updateCalendar() {
   if (gIsReadOnly) {
     const disableElements = document.getElementsByAttribute("disable-on-readonly", "true");
     for (const element of disableElements) {
-      if (element.namespaceURI == "http://www.w3.org/1999/xhtml") {
-        element.setAttribute("disabled", "disabled");
-      } else {
-        element.setAttribute("disabled", "true");
-      }
+      element.toggleAttribute("disabled", true);
 
       // we mark link-labels with the hyperlink attribute, since we need
       // to remove their class in case they get disabled. TODO: it would
@@ -2656,13 +2642,13 @@ function updateCalendar() {
     // disable repeat menupopup if this is an occurrence
     item = window.calendarItem;
     if (item.parentItem != item) {
-      document.getElementById("item-repeat").setAttribute("disabled", "true");
-      document.getElementById("repeat-until-datepicker").setAttribute("disabled", "true");
+      document.getElementById("item-repeat").toggleAttribute("disabled", true);
+      document.getElementById("repeat-until-datepicker").toggleAttribute("disabled", true);
       const repeatDetails = document.getElementById("repeat-details");
       const numChilds = repeatDetails.children.length;
       for (let i = 0; i < numChilds; i++) {
         const node = repeatDetails.children[i];
-        node.setAttribute("disabled", "true");
+        node.toggleAttribute("disabled", true);
         node.removeAttribute("class");
         node.removeAttribute("onclick");
       }
@@ -2671,7 +2657,7 @@ function updateCalendar() {
     // If the item is a proxy occurrence/instance, a few things aren't
     // valid.
     if (item.parentItem != item) {
-      document.getElementById("item-calendar").setAttribute("disabled", "true");
+      document.getElementById("item-calendar").toggleAttribute("disabled", true);
 
       // don't allow to revoke the entrydate of recurring todo's.
       disableElementWithLock("todo-has-entrydate", "permanent-lock");
@@ -3003,13 +2989,13 @@ function updateToDoStatus(aStatus, aCompletedDate = null) {
     case "NONE":
       oldPercentComplete = 0;
       document.getElementById("todo-status").selectedIndex = 0;
-      document.getElementById("percent-complete-textbox").setAttribute("disabled", "true");
-      document.getElementById("percent-complete-label").setAttribute("disabled", "true");
+      document.getElementById("percent-complete-textbox").toggleAttribute("disabled", true);
+      document.getElementById("percent-complete-label").toggleAttribute("disabled", true);
       break;
     case "CANCELLED":
       document.getElementById("todo-status").selectedIndex = 4;
-      document.getElementById("percent-complete-textbox").setAttribute("disabled", "true");
-      document.getElementById("percent-complete-label").setAttribute("disabled", "true");
+      document.getElementById("percent-complete-textbox").toggleAttribute("disabled", true);
+      document.getElementById("percent-complete-label").toggleAttribute("disabled", true);
       break;
     case "COMPLETED":
       document.getElementById("todo-status").selectedIndex = 3;
@@ -3022,7 +3008,7 @@ function updateToDoStatus(aStatus, aCompletedDate = null) {
       break;
     case "IN-PROCESS":
       document.getElementById("todo-status").selectedIndex = 2;
-      document.getElementById("completed-date-picker").setAttribute("disabled", "true");
+      document.getElementById("completed-date-picker").toggleAttribute("disabled", true);
       document.getElementById("percent-complete-textbox").removeAttribute("disabled");
       document.getElementById("percent-complete-label").removeAttribute("disabled");
       break;
@@ -3037,7 +3023,7 @@ function updateToDoStatus(aStatus, aCompletedDate = null) {
   if ((aStatus == "IN-PROCESS" || aStatus == "NEEDS-ACTION") && oldPercentComplete == 100) {
     newPercentComplete = 0;
     document.getElementById("completed-date-picker").value = oldCompletedDate;
-    document.getElementById("completed-date-picker").setAttribute("disabled", "true");
+    document.getElementById("completed-date-picker").toggleAttribute("disabled", true);
   } else if (aStatus == "COMPLETED") {
     newPercentComplete = 100;
     document.getElementById("completed-date-picker").value = aCompletedDate;
@@ -3045,7 +3031,7 @@ function updateToDoStatus(aStatus, aCompletedDate = null) {
   } else {
     newPercentComplete = oldPercentComplete;
     document.getElementById("completed-date-picker").value = oldCompletedDate;
-    document.getElementById("completed-date-picker").setAttribute("disabled", "true");
+    document.getElementById("completed-date-picker").toggleAttribute("disabled", true);
   }
 
   gConfig.percentComplete = newPercentComplete;
@@ -3619,7 +3605,7 @@ function updateTimezone() {
           element.setAttribute("onclick-on-enabled", element.getAttribute("onclick"));
           element.removeAttribute("onclick");
         }
-        element.setAttribute("disabled", "true");
+        element.toggleAttribute("disabled", true);
       } else {
         if (element.hasAttribute("class-on-enabled")) {
           element.setAttribute("class", element.getAttribute("class-on-enabled"));
@@ -3653,7 +3639,7 @@ function updateTimezone() {
  */
 function updateAttachment() {
   const hasAttachments = capSupported("attachments");
-  document.getElementById("cmd_attach_url").setAttribute("disabled", !hasAttachments);
+  document.getElementById("cmd_attach_url").toggleAttribute("disabled", !hasAttachments);
 
   // update the attachment tab label to make the number of (uri) attachments visible
   // even if another tab is displayed
@@ -3923,7 +3909,7 @@ function setAttendeeContext(aEvent) {
     if (window.attendees.some(isAttendeeUndecided)) {
       document.getElementById("cmd_email_undecided").removeAttribute("disabled");
     } else {
-      document.getElementById("cmd_email_undecided").setAttribute("disabled", "true");
+      document.getElementById("cmd_email_undecided").toggleAttribute("disabled", true);
     }
   }
 }

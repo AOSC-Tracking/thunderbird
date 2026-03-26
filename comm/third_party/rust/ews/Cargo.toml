@@ -35,10 +35,6 @@ thiserror = "1.0.57"
 [dependencies.ews_proc_macros]
 path = "../ews_proc_macros"
 
-[dependencies.log]
-version = "0.4.21"
-features = ["std"]
-
 [dependencies.quick-xml]
 version = "0.31.0"
 features = [
@@ -61,4 +57,4 @@ features = [
 [dependencies.xml_struct]
 version = "0.1.0"
 git = "https://github.com/thunderbird/xml-struct-rs.git"
-rev = "87723b90425d474fd29095d8b710baefd7c9b13a"
+rev = "9ebff0dfc395f417bef0e7dca9b1fceb25cea2e3"

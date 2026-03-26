@@ -27,7 +27,6 @@ ChromeUtils.defineESModuleGetters(this, {
     "resource://devtools/client/framework/browser-toolbox/Launcher.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   MimeParser: "resource:///modules/mimeParser.sys.mjs",
-  PluralForm: "resource:///modules/PluralForm.sys.mjs",
   UIDensity: "resource:///modules/UIDensity.sys.mjs",
   UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
   XULStoreUtils: "resource:///modules/XULStoreUtils.sys.mjs",
@@ -64,17 +63,17 @@ function menu_new_init() {
   if (Services.prefs.prefIsLocked("mail.disable_new_account_addition")) {
     document
       .getElementById("newNewsgroupAccountMenuItem")
-      .setAttribute("disabled", "true");
+      .toggleAttribute("disabled", true);
     document
       .getElementById("appmenu_newNewsgroupAccountMenuItem")
-      .setAttribute("disabled", "true");
+      .toggleAttribute("disabled", true);
   }
 
   var isInbox = folder.isSpecialFolder(Ci.nsMsgFolderFlags.Inbox);
   var showNew =
     (folder.canCreateSubfolders ||
       (isInbox && !folder.getFlag(Ci.nsMsgFolderFlags.Virtual))) &&
-    document.getElementById("cmd_newFolder").getAttribute("disabled") != "true";
+    !document.getElementById("cmd_newFolder").hasAttribute("disabled");
   ShowMenuItem("menu_newFolder", showNew);
   ShowMenuItem("menu_newVirtualFolder", showNew);
   ShowMenuItem("newAccountPopupMenuSeparator", showNew);
@@ -130,24 +129,23 @@ function updateCheckedStateForIgnoreAndWatchThreadCmds() {
 
   const folder = message?.folder;
 
-  const killThreadItem = document.getElementById("cmd_killThread");
-  if (folder?.msgDatabase.isIgnored(message.messageKey)) {
-    killThreadItem.setAttribute("checked", "true");
-  } else {
-    killThreadItem.removeAttribute("checked");
-  }
-  const killSubthreadItem = document.getElementById("cmd_killSubthread");
-  if (folder && message.flags & Ci.nsMsgMessageFlags.Ignored) {
-    killSubthreadItem.setAttribute("checked", "true");
-  } else {
-    killSubthreadItem.removeAttribute("checked");
-  }
-  const watchThreadItem = document.getElementById("cmd_watchThread");
-  if (folder?.msgDatabase.isWatched(message.messageKey)) {
-    watchThreadItem.setAttribute("checked", "true");
-  } else {
-    watchThreadItem.removeAttribute("checked");
-  }
+  const killThreadItem = document.getElementById("killThread");
+  killThreadItem.toggleAttribute(
+    "checked",
+    Boolean(folder?.msgDatabase.isIgnored(message.messageKey))
+  );
+
+  const killSubthreadItem = document.getElementById("killSubthread");
+  killSubthreadItem.toggleAttribute(
+    "checked",
+    Boolean(folder && message.flags & Ci.nsMsgMessageFlags.Ignored)
+  );
+
+  const watchThreadItem = document.getElementById("watchThread");
+  watchThreadItem.toggleAttribute(
+    "checked",
+    Boolean(folder?.msgDatabase.isWatched(message.messageKey))
+  );
 }
 
 function file_init() {
@@ -217,11 +215,10 @@ function InitEditMessagesMenu() {
 
   // Initialize the Favorite Folder checkbox in the Edit menu.
   const favoriteFolderMenu = document.getElementById("menu_favoriteFolder");
-  if (folder?.getFlag(Ci.nsMsgFolderFlags.Favorite)) {
-    favoriteFolderMenu.setAttribute("checked", "true");
-  } else {
-    favoriteFolderMenu.removeAttribute("checked");
-  }
+  favoriteFolderMenu.toggleAttribute(
+    "checked",
+    folder?.getFlag(Ci.nsMsgFolderFlags.Favorite)
+  );
 
   const propertiesController = getEnabledControllerForCommand("cmd_properties");
   const propertiesMenuItem = document.getElementById("menu_properties");
@@ -293,22 +290,16 @@ function view_init(event) {
     "view_toolbars_popup_quickFilterBar"
   );
   if (qfbMenuItem) {
-    qfbMenuItem.setAttribute("checked", quickFilterBarVisible);
+    qfbMenuItem.toggleAttribute("checked", quickFilterBarVisible);
   }
 
   const qfbAppMenuItem = document.getElementById("appmenu_quickFilterBar");
-  if (qfbAppMenuItem) {
-    if (quickFilterBarVisible) {
-      qfbAppMenuItem.setAttribute("checked", "true");
-    } else {
-      qfbAppMenuItem.removeAttribute("checked");
-    }
-  }
+  qfbAppMenuItem?.toggleAttribute("checked", quickFilterBarVisible);
 
   const messagePaneMenuItem = document.getElementById("menu_showMessage");
   if (!messagePaneMenuItem.hidden) {
     // Hidden in the standalone msg window.
-    messagePaneMenuItem.setAttribute(
+    messagePaneMenuItem.toggleAttribute(
       "checked",
       accountCentralVisible ? false : messagePaneVisible
     );
@@ -318,7 +309,7 @@ function view_init(event) {
   const messagePaneAppMenuItem = document.getElementById("appmenu_showMessage");
   if (messagePaneAppMenuItem && !messagePaneAppMenuItem.hidden) {
     // Hidden in the standalone msg window.
-    messagePaneAppMenuItem.setAttribute(
+    messagePaneAppMenuItem.toggleAttribute(
       "checked",
       accountCentralVisible ? false : messagePaneVisible
     );
@@ -328,7 +319,7 @@ function view_init(event) {
   const folderPaneMenuItem = document.getElementById("menu_showFolderPane");
   if (!folderPaneMenuItem.hidden) {
     // Hidden in the standalone msg window.
-    folderPaneMenuItem.setAttribute("checked", folderPaneVisible);
+    folderPaneMenuItem.toggleAttribute("checked", folderPaneVisible);
   }
 
   const folderPaneAppMenuItem = document.getElementById(
@@ -336,13 +327,13 @@ function view_init(event) {
   );
   if (folderPaneAppMenuItem && !folderPaneAppMenuItem.hidden) {
     // Hidden in the standalone msg window.
-    folderPaneAppMenuItem.setAttribute("checked", folderPaneVisible);
+    folderPaneAppMenuItem.toggleAttribute("checked", folderPaneVisible);
   }
 
   const threadPaneMenuItem = document.getElementById(
     "menu_toggleThreadPaneHeader"
   );
-  threadPaneMenuItem.setAttribute("disabled", !threadPaneHeaderVisible);
+  threadPaneMenuItem.toggleAttribute("disabled", !threadPaneHeaderVisible);
 
   const threadPaneAppMenuItem = document.getElementById(
     "appmenu_toggleThreadPaneHeader"
@@ -377,7 +368,7 @@ function view_init(event) {
   );
   document
     .getElementById("viewAttachmentsInlineMenuitem")
-    .setAttribute("checked", viewAttachmentInline);
+    .toggleAttribute("checked", viewAttachmentInline);
 
   document.commandDispatcher.updateCommands("create-menu-view");
 
@@ -390,7 +381,7 @@ function view_init(event) {
     spacesToolbarMenu.checked = isSpacesVisible;
     document
       .getElementById("viewToolbarsPopupSpacesToolbar")
-      .setAttribute("checked", isSpacesVisible);
+      .toggleAttribute("checked", isSpacesVisible);
   }
 }
 
@@ -409,7 +400,7 @@ function initUiDensityMenu(event) {
 
   for (const item of event.target.querySelectorAll("menuitem")) {
     if (item.mode == currentDensity) {
-      item.setAttribute("checked", "true");
+      item.toggleAttribute("checked", true);
       break;
     }
   }
@@ -433,11 +424,7 @@ function initUiDensityAppMenu() {
   for (const item of document.querySelectorAll(
     "#appMenu-uiDensity-controls > toolbarbutton"
   )) {
-    if (item.mode == currentDensity) {
-      item.setAttribute("checked", "true");
-    } else {
-      item.removeAttribute("checked");
-    }
+    item.toggleAttribute("checked", item.mode == currentDensity);
   }
 }
 
@@ -452,16 +439,14 @@ function InitViewLayoutStyleMenu(event, appmenu) {
     : event.target;
 
   const layoutStyleMenuitem = parent.children[paneConfig];
-  if (layoutStyleMenuitem) {
-    layoutStyleMenuitem.setAttribute("checked", "true");
-  }
+  layoutStyleMenuitem?.toggleAttribute("checked", true);
 
   if (XULStoreUtils.isItemHidden("messenger", "threadPaneHeader")) {
     parent.querySelector(`[name="threadheader"]`).removeAttribute("checked");
   } else {
     parent
       .querySelector(`[name="threadheader"]`)
-      .setAttribute("checked", "true");
+      .toggleAttribute("checked", true);
   }
 }
 
@@ -502,7 +487,7 @@ function InitViewSortByMenu() {
 
   const setSortItemAttrs = function (id, sortKey) {
     const menuItem = document.getElementById(id);
-    menuItem.setAttribute(
+    menuItem.toggleAttribute(
       "checked",
       primarySortType == Ci.nsMsgViewSortType[sortKey]
     );
@@ -526,28 +511,30 @@ function InitViewSortByMenu() {
 
   document
     .getElementById("sortAscending")
-    .setAttribute(
+    .toggleAttribute(
       "checked",
       primarySortOrder == Ci.nsMsgViewSortOrder.ascending
     );
   document
     .getElementById("sortDescending")
-    .setAttribute(
+    .toggleAttribute(
       "checked",
       primarySortOrder == Ci.nsMsgViewSortOrder.descending
     );
 
-  document.getElementById("sortThreaded").setAttribute("checked", showThreaded);
+  document
+    .getElementById("sortThreaded")
+    .toggleAttribute("checked", showThreaded);
   document
     .getElementById("sortUnthreaded")
-    .setAttribute("checked", !showThreaded && !showGroupedBySort);
+    .toggleAttribute("checked", !showThreaded && !showGroupedBySort);
 
   const groupBySortOrderMenuItem = document.getElementById("groupBySort");
-  groupBySortOrderMenuItem.setAttribute(
+  groupBySortOrderMenuItem.toggleAttribute(
     "disabled",
     !isSortTypeValidForGrouping
   );
-  groupBySortOrderMenuItem.setAttribute("checked", showGroupedBySort);
+  groupBySortOrderMenuItem.toggleAttribute("checked", showGroupedBySort);
 }
 
 function InitViewMessagesMenu() {
@@ -560,29 +547,29 @@ function InitViewMessagesMenu() {
 
   document
     .getElementById("viewAllMessagesMenuItem")
-    .setAttribute(
+    .toggleAttribute(
       "checked",
       !viewWrapper || (!viewWrapper.showUnreadOnly && !viewWrapper.specialView)
     );
 
   document
     .getElementById("viewUnreadMessagesMenuItem")
-    .setAttribute("checked", !!viewWrapper?.showUnreadOnly);
+    .toggleAttribute("checked", !!viewWrapper?.showUnreadOnly);
 
   document
     .getElementById("viewThreadsWithUnreadMenuItem")
-    .setAttribute("checked", !!viewWrapper?.specialViewThreadsWithUnread);
+    .toggleAttribute("checked", !!viewWrapper?.specialViewThreadsWithUnread);
 
   document
     .getElementById("viewWatchedThreadsWithUnreadMenuItem")
-    .setAttribute(
+    .toggleAttribute(
       "checked",
       !!viewWrapper?.specialViewWatchedThreadsWithUnread
     );
 
   document
     .getElementById("viewIgnoredThreadsMenuItem")
-    .setAttribute("checked", !!viewWrapper?.showIgnored);
+    .toggleAttribute("checked", !!viewWrapper?.showIgnored);
 }
 
 function InitMessageMenu() {
@@ -659,7 +646,7 @@ function InitMessageMenu() {
   const index = FeedMessageHandler.onOpenPref;
   document
     .getElementById("menu_openFeedMessage")
-    .children[index].setAttribute("checked", true);
+    .children[index].toggleAttribute("checked", true);
 
   const openRssMenu = document.getElementById("openFeedMessage");
   openRssMenu.hidden = !isFeed;
@@ -671,16 +658,6 @@ function InitMessageMenu() {
   document.getElementById("markMenu").disabled = !folder || folder.isServer;
 
   document.commandDispatcher.updateCommands("create-menu-message");
-
-  for (const id of ["killThread", "killSubthread", "watchThread"]) {
-    const item = document.getElementById(id);
-    const command = document.getElementById(item.getAttribute("command"));
-    if (command.hasAttribute("checked")) {
-      item.setAttribute("checked", command.getAttribute("checked"));
-    } else {
-      item.removeAttribute("checked");
-    }
-  }
 }
 
 /**
@@ -737,16 +714,19 @@ function initMoveToFolderAgainMenu(aMenuItem) {
   if (!destMsgFolder) {
     return;
   }
-  const bundle = document.getElementById("bundle_messenger");
-  const isMove = Services.prefs.getBoolPref("mail.last_msg_movecopy_was_move");
-  const stringName = isMove ? "moveToFolderAgain" : "copyToFolderAgain";
-  aMenuItem.label = bundle.getFormattedString(
-    stringName,
-    [destMsgFolder.localizedName],
-    1
+  document.l10n.setAttributes(
+    aMenuItem,
+    Services.prefs.getBoolPref("mail.last_msg_movecopy_was_move")
+      ? "menu-move-to-folder-again"
+      : "menu-copy-to-folder-again",
+    {
+      folderName: destMsgFolder.localizedName,
+    }
   );
-  // This gives us moveToFolderAgainAccessKey and copyToFolderAgainAccessKey.
-  aMenuItem.accesskey = bundle.getString(stringName + "AccessKey");
+  aMenuItem.setAttribute(
+    "tooltiptext",
+    `${destMsgFolder.prettyPath} – ${destMsgFolder.server.prettyName}`
+  );
 }
 
 /**
@@ -755,14 +735,14 @@ function initMoveToFolderAgainMenu(aMenuItem) {
 function InitViewHeadersMenu() {
   const headerchoice = Services.prefs.getIntPref("mail.show_headers");
   document
-    .getElementById("cmd_viewAllHeader")
-    .setAttribute(
+    .getElementById("viewallheaders")
+    .toggleAttribute(
       "checked",
       headerchoice == Ci.nsMimeHeaderDisplayTypes.AllHeaders
     );
   document
-    .getElementById("cmd_viewNormalHeader")
-    .setAttribute(
+    .getElementById("viewnormalheaders")
+    .toggleAttribute(
       "checked",
       headerchoice == Ci.nsMimeHeaderDisplayTypes.NormalHeaders
     );
@@ -819,28 +799,28 @@ function InitViewBodyMenu() {
     !disallow_classes &&
     AllowHTML_menuitem
   ) {
-    AllowHTML_menuitem.setAttribute("checked", true);
+    AllowHTML_menuitem.toggleAttribute("checked", true);
   } else if (
     !prefer_plaintext &&
     html_as == 3 &&
     disallow_classes > 0 &&
     Sanitized_menuitem
   ) {
-    Sanitized_menuitem.setAttribute("checked", true);
+    Sanitized_menuitem.toggleAttribute("checked", true);
   } else if (
     prefer_plaintext &&
     html_as == 1 &&
     disallow_classes > 0 &&
     AsPlaintext_menuitem
   ) {
-    AsPlaintext_menuitem.setAttribute("checked", true);
+    AsPlaintext_menuitem.toggleAttribute("checked", true);
   } else if (
     !prefer_plaintext &&
     html_as == 4 &&
     !disallow_classes &&
     AllBodyParts_menuitem
   ) {
-    AllBodyParts_menuitem.setAttribute("checked", true);
+    AllBodyParts_menuitem.toggleAttribute("checked", true);
   }
   // else (the user edited prefs/user.js) check none of the radio menu items
 
@@ -852,7 +832,7 @@ function InitViewBodyMenu() {
     ];
     const checked = FeedMessageHandler.onSelectPref;
     for (const [index, id] of viewRssMenuItemIds.entries()) {
-      document.getElementById(id).setAttribute("checked", index == checked);
+      document.getElementById(id).toggleAttribute("checked", index == checked);
     }
     const hideOptions = checked == FeedMessageHandler.kSelectOverrideWebPage;
     AllowHTML_menuitem.hidden = hideOptions;
@@ -946,7 +926,7 @@ function InitMessageTags(parent, elementName = "menuitem", classes) {
     SetMessageTagLabel(item, index + 1, tagInfo.tag);
 
     if (removeKey) {
-      item.setAttribute("checked", "true");
+      item.toggleAttribute("checked", true);
     }
     item.setAttribute("value", tagInfo.key);
     item.setAttribute("type", "checkbox");
@@ -971,11 +951,7 @@ function getMsgToolbarMenu_init() {
 function InitMessageMark() {
   const tab = document.getElementById("tabmail")?.currentTabInfo;
   const flaggedItem = document.getElementById("markFlaggedMenuItem");
-  if (tab?.message?.isFlagged) {
-    flaggedItem.setAttribute("checked", "true");
-  } else {
-    flaggedItem.removeAttribute("checked");
-  }
+  flaggedItem.toggleAttribute("checked", Boolean(tab?.message?.isFlagged));
 
   document.commandDispatcher.updateCommands("create-menu-mark");
 }
@@ -1415,7 +1391,7 @@ function ToggleInlineAttachment(target) {
     "mail.inline_attachments"
   );
   Services.prefs.setBoolPref("mail.inline_attachments", viewAttachmentInline);
-  target.setAttribute("checked", viewAttachmentInline ? "true" : "false");
+  target.toggleAttribute("checked", viewAttachmentInline);
 }
 
 function IsGetNewMessagesEnabled() {
@@ -1438,17 +1414,13 @@ function IsGetNextNMessagesEnabled() {
     !folder.isServer &&
     folder.server instanceof Ci.nsINntpIncomingServer
   ) {
-    menuItem.label = PluralForm.get(
-      folder.server.maxArticles,
-      document
-        .getElementById("bundle_messenger")
-        .getString("getNextNewsMessages")
-    ).replace("#1", folder.server.maxArticles);
-    menuItem.removeAttribute("hidden");
+    document.l10n.setAttributes(menuItem, "menu-file-get-next-n-news-msgs", {
+      count: folder.server.maxArticles,
+    });
+    menuItem.hidden = false;
     return true;
   }
-
-  menuItem.toggleAttribute("hidden", true);
+  menuItem.hidden = true;
   return false;
 }
 
@@ -1969,7 +1941,7 @@ function addAttachmentToPopup(
   );
   menuitem.setAttribute("label", getString("openLabel"));
   menuitem.setAttribute("accesskey", getString("openLabelAccesskey"));
-  menuitem.setAttribute("disabled", deleted);
+  menuitem.toggleAttribute("disabled", deleted);
   menuitem = menupopup.appendChild(menuitem);
 
   // Create the "save" menu item
@@ -1980,7 +1952,7 @@ function addAttachmentToPopup(
   );
   menuitem.setAttribute("label", getString("saveLabel"));
   menuitem.setAttribute("accesskey", getString("saveLabelAccesskey"));
-  menuitem.setAttribute("disabled", deleted);
+  menuitem.toggleAttribute("disabled", deleted);
   menuitem = menupopup.appendChild(menuitem);
 
   // Create the "detach" menu item
@@ -1991,7 +1963,7 @@ function addAttachmentToPopup(
   );
   menuitem.setAttribute("label", getString("detachLabel"));
   menuitem.setAttribute("accesskey", getString("detachLabelAccesskey"));
-  menuitem.setAttribute("disabled", !canDetach);
+  menuitem.toggleAttribute("disabled", !canDetach);
   menuitem = menupopup.appendChild(menuitem);
 
   // Create the "delete" menu item
@@ -2002,7 +1974,7 @@ function addAttachmentToPopup(
   );
   menuitem.setAttribute("label", getString("deleteLabel"));
   menuitem.setAttribute("accesskey", getString("deleteLabelAccesskey"));
-  menuitem.setAttribute("disabled", !canDetach);
+  menuitem.toggleAttribute("disabled", !canDetach);
   menuitem = menupopup.appendChild(menuitem);
 
   // Create the "open containing folder" menu item, for existing detached only.
@@ -2014,7 +1986,7 @@ function addAttachmentToPopup(
     menuitem.setAttribute("oncommand", "this.attachment.openFolder();");
     menuitem.setAttribute("label", getString("openFolderLabel"));
     menuitem.setAttribute("accesskey", getString("openFolderLabelAccesskey"));
-    menuitem.setAttribute("disabled", !attachment.hasFile);
+    menuitem.toggleAttribute("disabled", !attachment.hasFile);
     menuitem = menupopup.appendChild(menuitem);
   }
 }

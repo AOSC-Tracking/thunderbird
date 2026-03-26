@@ -32,6 +32,7 @@
  *
  * Rule documentation: https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/no-more-globals.html
  * As it says: DO NOT JUST ADD ITEMS TO THE ALLOWLIST
+ * When you must, adjust mail/components/compose/content/MsgComposeCommands.js.globals
  *
  * If you're lazy loading something, we already have a `lazy` object in this
  * scope, so you can simply avoid adding a global for that by defining the
@@ -50,9 +51,6 @@ var { MimeParser } = ChromeUtils.importESModule(
 );
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
-);
-var { PluralForm } = ChromeUtils.importESModule(
-  "resource:///modules/PluralForm.sys.mjs"
 );
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
@@ -77,26 +75,6 @@ ChromeUtils.defineESModuleGetters(this, {
   UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
 });
 
-ChromeUtils.defineLazyGetter(
-  this,
-  "l10nCompose",
-  () =>
-    new Localization([
-      "branding/brand.ftl",
-      "messenger/messengercompose/messengercompose.ftl",
-    ])
-);
-
-ChromeUtils.defineLazyGetter(
-  this,
-  "l10nComposeSync",
-  () =>
-    new Localization(
-      ["branding/brand.ftl", "messenger/messengercompose/messengercompose.ftl"],
-      true
-    )
-);
-
 XPCOMUtils.defineLazyServiceGetter(
   this,
   "gMIMEService",
@@ -111,7 +89,6 @@ XPCOMUtils.defineLazyScriptGetter(
 );
 
 const lazy = {};
-
 ChromeUtils.defineESModuleGetters(lazy, {
   ComposeUtils: "resource:///modules/ComposeUtils.sys.mjs",
   MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
@@ -1059,7 +1036,7 @@ var defaultController = {
     cmd_attachVCard: {
       isEnabled() {
         const cmd = document.getElementById("cmd_attachVCard");
-        cmd.setAttribute("checked", gMsgCompose.compFields.attachVCard);
+        cmd.toggleAttribute("checked", gMsgCompose.compFields.attachVCard);
         return !!gCurrentIdentity?.escapedVCard;
       },
       doCommand() {},
@@ -1068,7 +1045,7 @@ var defaultController = {
     cmd_attachPublicKey: {
       isEnabled() {
         const cmd = document.getElementById("cmd_attachPublicKey");
-        cmd.setAttribute("checked", gAttachMyPublicPGPKey);
+        cmd.toggleAttribute("checked", gAttachMyPublicPGPKey);
         return isPgpConfigured();
       },
       doCommand() {},
@@ -1214,13 +1191,10 @@ var defaultController = {
 
     cmd_delete: {
       isEnabled() {
-        const cmdDelete = document.getElementById("cmd_delete");
-        const textValue = cmdDelete.getAttribute("valueDefault");
-        const accesskeyValue = cmdDelete.getAttribute("valueDefaultAccessKey");
-
-        cmdDelete.setAttribute("label", textValue);
-        cmdDelete.setAttribute("accesskey", accesskeyValue);
-
+        document.l10n.setAttributes(
+          document.getElementById("cmd_delete"),
+          "default-delete-cmd"
+        );
         return false;
       },
       doCommand() {},
@@ -1363,15 +1337,11 @@ var attachmentBucketController = {
 
     cmd_delete: {
       isEnabled() {
-        const cmdDelete = document.getElementById("cmd_delete");
-        let textValue = getComposeBundle().getString("removeAttachmentMsgs");
-        textValue = PluralForm.get(gAttachmentBucket.selectedCount, textValue);
-        const accesskeyValue = cmdDelete.getAttribute(
-          "valueRemoveAttachmentAccessKey"
+        document.l10n.setAttributes(
+          document.getElementById("cmd_delete"),
+          "remove-attachment-cmd",
+          { count: gAttachmentBucket.selectedCount }
         );
-        cmdDelete.setAttribute("label", textValue);
-        cmdDelete.setAttribute("accesskey", accesskeyValue);
-
         return gAttachmentBucket.selectedCount;
       },
       doCommand() {
@@ -1773,10 +1743,6 @@ function updateComposeItems() {
  *   items to the state stored before disabling them.
  */
 function updateAllItems(disable) {
-  function isDisabled(i) {
-    return i.hasAttribute("disabled") && i.getAttribute("disabled") !== "false";
-  }
-
   for (const item of document.querySelectorAll(
     "menu, toolbarbutton, [command], [oncommand]"
   )) {
@@ -1790,7 +1756,7 @@ function updateAllItems(disable) {
         continue;
       }
 
-      if (isDisabled(item)) {
+      if (item.hasAttribute("disabled")) {
         // This item is already disabled, do not touch it.
         continue;
       }
@@ -1804,7 +1770,7 @@ function updateAllItems(disable) {
       }
 
       // Disable.
-      item.setAttribute("disabled", "true");
+      item.toggleAttribute("disabled", true);
       item.setAttribute("disabledForSend", "true");
     } else {
       if (!item.hasAttribute("disabledForSend")) {
@@ -1822,13 +1788,13 @@ function updateAllItems(disable) {
 function InitFileSaveAsMenu() {
   document
     .getElementById("cmd_saveAsFile")
-    .setAttribute("checked", defaultSaveOperation == "file");
+    .toggleAttribute("checked", defaultSaveOperation == "file");
   document
     .getElementById("cmd_saveAsDraft")
-    .setAttribute("checked", defaultSaveOperation == "draft");
+    .toggleAttribute("checked", defaultSaveOperation == "draft");
   document
     .getElementById("cmd_saveAsTemplate")
-    .setAttribute("checked", defaultSaveOperation == "template");
+    .toggleAttribute("checked", defaultSaveOperation == "template");
 }
 
 function isSmimeSigningConfigured() {
@@ -1882,8 +1848,8 @@ function toggleEncryptMessage() {
 }
 
 function toggleAttachMyPublicKey(target) {
-  gAttachMyPublicPGPKey = target.getAttribute("checked") != "true";
-  target.setAttribute("checked", gAttachMyPublicPGPKey);
+  gAttachMyPublicPGPKey = !target.hasAttribute("checked");
+  target.toggleAttribute("checked", gAttachMyPublicPGPKey);
   gUserTouchedAttachMyPubKey = true;
 }
 
@@ -1915,7 +1881,7 @@ function toggleEncryptedSubject() {
  */
 function setSecuritySettings(menu_id) {
   const encItem = document.getElementById("menu_securityEncrypt" + menu_id);
-  encItem.setAttribute("checked", gSendEncrypted);
+  encItem.toggleAttribute("checked", gSendEncrypted);
 
   let disableSig = false;
   let disableEnc = false;
@@ -1935,7 +1901,7 @@ function setSecuritySettings(menu_id) {
   }
 
   const sigItem = document.getElementById("menu_securitySign" + menu_id);
-  sigItem.setAttribute("checked", gSendSigned && !disableSig);
+  sigItem.toggleAttribute("checked", gSendSigned && !disableSig);
 
   // The radio button to disable encryption is always active.
   // This is necessary, even if the current identity doesn't have
@@ -1956,13 +1922,13 @@ function setSecuritySettings(menu_id) {
     `menu_securityEncryptSubject${menu_id}`
   );
 
-  pgpItem.setAttribute("checked", gSelectedTechnologyIsPGP);
-  smimeItem.setAttribute("checked", !gSelectedTechnologyIsPGP);
-  encryptSubjectItem.setAttribute(
+  pgpItem.toggleAttribute("checked", gSelectedTechnologyIsPGP);
+  smimeItem.toggleAttribute("checked", !gSelectedTechnologyIsPGP);
+  encryptSubjectItem.toggleAttribute(
     "checked",
     !disableEnc && gSelectedTechnologyIsPGP && gSendEncrypted && gEncryptSubject
   );
-  encryptSubjectItem.setAttribute(
+  encryptSubjectItem.toggleAttribute(
     "disabled",
     disableEnc || !gSelectedTechnologyIsPGP || !gSendEncrypted
   );
@@ -2028,7 +1994,7 @@ function msgComposeContextOnShowing(event) {
   document.getElementById("spellCheckEnable").hidden = !canSpell;
   document
     .getElementById("spellCheckEnable")
-    .setAttribute("checked", canSpell && gSpellCheckingEnabled);
+    .toggleAttribute("checked", canSpell && gSpellCheckingEnabled);
 
   document.getElementById("spellCheckAddToDictionary").hidden = !onMisspelling;
   document.getElementById("spellCheckUndoAddToDictionary").hidden = !showUndo;
@@ -2328,7 +2294,7 @@ function addConvertCloudMenuItems(aParentMenu, aAfterNodeId, aRadioGroup) {
     const item = document.getElementById(
       "convertCloudMenuItems_popup_convertAttachment"
     );
-    item.setAttribute("checked", "true");
+    item.toggleAttribute("checked", true);
   }
 
   for (const account of cloudFileAccounts.configuredAccounts) {
@@ -2344,7 +2310,7 @@ function addConvertCloudMenuItems(aParentMenu, aAfterNodeId, aRadioGroup) {
       gAttachmentBucket.selectedItem.cloudFileAccount.accountKey ==
         account.accountKey
     ) {
-      item.setAttribute("checked", "true");
+      item.toggleAttribute("checked", true);
     } else if (iconURL) {
       item.setAttribute("class", "menu-iconic");
       item.setAttribute("image", iconURL);
@@ -2485,15 +2451,11 @@ async function showLocalizedCloudFileAlert(
       );
       break;
     case cloudFileAccounts.constants.offlineErr:
-      localizedTitle = await l10nCompose.formatValue(
-        "cloud-file-connection-error-title"
-      );
-      localizedMessage = await l10nCompose.formatValue(
-        "cloud-file-connection-error",
-        {
-          provider,
-        }
-      );
+      // eslint-disable-next-line mozilla/prefer-formatValues
+      [localizedTitle, localizedMessage] = await document.l10n.formatValues([
+        "cloud-file-connection-error-title",
+        { id: "cloud-file-connection-error", args: { provider } },
+      ]);
       break;
     case cloudFileAccounts.constants.authErr:
       localizedTitle = bundle.getString("errorCloudFileAuth.title");
@@ -2503,7 +2465,8 @@ async function showLocalizedCloudFileAlert(
       );
       break;
     case cloudFileAccounts.constants.uploadErrWithCustomMessage:
-      localizedTitle = await l10nCompose.formatValue(
+      // eslint-disable-next-line mozilla/prefer-formatValues
+      localizedTitle = await document.l10n.formatValue(
         "cloud-file-upload-error-with-custom-message-title",
         {
           provider,
@@ -2534,18 +2497,15 @@ async function showLocalizedCloudFileAlert(
       );
       break;
     case cloudFileAccounts.constants.renameNotSupported:
-      localizedTitle = await l10nCompose.formatValue(
-        "cloud-file-rename-error-title"
-      );
-      localizedMessage = await l10nCompose.formatValue(
-        "cloud-file-rename-not-supported",
-        {
-          provider,
-        }
-      );
+      // eslint-disable-next-line mozilla/prefer-formatValues
+      [localizedTitle, localizedMessage] = await document.l10n.formatValues([
+        "cloud-file-rename-error-title",
+        { id: "cloud-file-rename-not-supported", args: { provider } },
+      ]);
       break;
     case cloudFileAccounts.constants.renameErrWithCustomMessage:
-      localizedTitle = await l10nCompose.formatValue(
+      // eslint-disable-next-line mozilla/prefer-formatValues
+      localizedTitle = await document.l10n.formatValue(
         "cloud-file-rename-error-with-custom-message-title",
         {
           provider,
@@ -2555,38 +2515,25 @@ async function showLocalizedCloudFileAlert(
       localizedMessage = ex.message;
       break;
     case cloudFileAccounts.constants.renameErr:
-      localizedTitle = await l10nCompose.formatValue(
-        "cloud-file-rename-error-title"
-      );
-      localizedMessage = await l10nCompose.formatValue(
-        "cloud-file-rename-error",
-        {
-          provider,
-          filename,
-        }
-      );
+      // eslint-disable-next-line mozilla/prefer-formatValues
+      [localizedTitle, localizedMessage] = await document.l10n.formatValues([
+        "cloud-file-rename-error-title",
+        { id: "cloud-file-rename-error", args: { provider, filename } },
+      ]);
       break;
     case cloudFileAccounts.constants.attachmentErr:
-      localizedTitle = await l10nCompose.formatValue(
-        "cloud-file-attachment-error-title"
-      );
-      localizedMessage = await l10nCompose.formatValue(
-        "cloud-file-attachment-error",
-        {
-          filename,
-        }
+      // eslint-disable-next-line mozilla/prefer-formatValues
+      [localizedTitle, localizedMessage] = await document.l10n.formatValue(
+        "cloud-file-attachment-error-title",
+        { id: "cloud-file-attachment-error", args: { filename } }
       );
       break;
     case cloudFileAccounts.constants.accountErr:
-      localizedTitle = await l10nCompose.formatValue(
-        "cloud-file-account-error-title"
-      );
-      localizedMessage = await l10nCompose.formatValue(
-        "cloud-file-account-error",
-        {
-          filename,
-        }
-      );
+      // eslint-disable-next-line mozilla/prefer-formatValues
+      [localizedTitle, localizedMessage] = await document.l10n.formatValues([
+        "cloud-file-account-error-title",
+        { id: "cloud-file-account-error", args: { filename } },
+      ]);
       break;
     default:
       localizedTitle = bundle.getString("errorCloudFileOther.title");
@@ -3386,21 +3333,15 @@ function manageAttachmentNotification(force = false) {
     return;
   }
 
-  let textValue = getComposeBundle().getString(
-    "attachmentReminderKeywordsMsgs"
-  );
-  textValue = PluralForm.get(keywordsCount, textValue).replace(
-    "#1",
-    keywordsCount
-  );
   // If the notification already exists, we simply add the new attachment
   // specific keywords to the existing notification instead of creating it
   // from scratch.
   if (notification) {
-    const msgContainer = notification.messageText.querySelector(
-      "#attachmentReminderText"
+    document.l10n.setAttributes(
+      notification.messageText.querySelector("#attachmentReminderText"),
+      "attachment-reminder-keywords-msg",
+      { count: keywordsCount }
     );
-    msgContainer.textContent = textValue;
     const keywordsContainer = notification.messageText.querySelector(
       "#attachmentKeywords"
     );
@@ -3416,10 +3357,17 @@ function manageAttachmentNotification(force = false) {
     });
   };
 
-  const msgText = document.createElement("span");
-  msg.appendChild(msgText);
-  msgText.id = "attachmentReminderText";
-  msgText.textContent = textValue;
+  const attachmentReminderText = document.createElement("span");
+  attachmentReminderText.id = "attachmentReminderText";
+  document.l10n.setAttributes(
+    attachmentReminderText,
+    "attachment-reminder-keywords-msg",
+    {
+      count: keywordsCount,
+    }
+  );
+  msg.appendChild(attachmentReminderText);
+
   const msgKeywords = document.createElement("span");
   msg.appendChild(msgKeywords);
   msgKeywords.id = "attachmentKeywords";
@@ -3479,6 +3427,11 @@ function manageAttachmentNotification(force = false) {
       notification2.setAttribute("id", "attachmentNotificationBox");
       notification2.messageText.appendChild(msg);
       notification2.buttonContainer.appendChild(remindButton);
+      notification2.shadowRoot
+        .querySelector(".close")
+        .addEventListener("click", () => {
+          focusMsgBody();
+        });
     }, console.warn);
 }
 
@@ -3502,9 +3455,6 @@ function getEncryptionCompatibleRecipients() {
   ];
   return recipients;
 }
-
-const PRErrorCodeSuccess = 0;
-const certificateUsageEmailRecipient = 0x0020;
 
 var gEmailsWithMissingKeys = [];
 var gEmailsWithMissingCerts = [];
@@ -5045,13 +4995,13 @@ async function ComposeStartup() {
 
   document
     .getElementById("dsnMenu")
-    .setAttribute("checked", gMsgCompose.compFields.DSN);
+    .toggleAttribute("checked", gMsgCompose.compFields.DSN);
   document
     .getElementById("cmd_attachVCard")
-    .setAttribute("checked", gMsgCompose.compFields.attachVCard);
+    .toggleAttribute("checked", gMsgCompose.compFields.attachVCard);
   document
     .getElementById("cmd_attachPublicKey")
-    .setAttribute("checked", gAttachMyPublicPGPKey);
+    .toggleAttribute("checked", gAttachMyPublicPGPKey);
   toggleAttachmentReminder(gMsgCompose.compFields.attachmentReminder);
   initSendFormatMenu();
 
@@ -5779,7 +5729,7 @@ function setComposeLabelsAndMenuItems() {
  * Add a keydown document event listener for international keyboard shortcuts.
  */
 async function setKeyboardShortcuts() {
-  const [filePickerKey, toggleBucketKey] = await l10nCompose.formatValues([
+  const [filePickerKey, toggleBucketKey] = await document.l10n.formatValues([
     { id: "trigger-attachment-picker-key" },
     { id: "toggle-attachment-pane-key" },
   ]);
@@ -6021,7 +5971,7 @@ async function updateAriaLabelsOfAddressRow(row) {
 
   input.setAttribute(
     "aria-label",
-    await l10nCompose.formatValue("address-input-type-aria-label", {
+    await document.l10n.formatValue("address-input-type-aria-label", {
       type,
       count: pills.length,
     })
@@ -6030,7 +5980,7 @@ async function updateAriaLabelsOfAddressRow(row) {
   for (const pill of pills) {
     pill.setAttribute(
       "aria-label",
-      await l10nCompose.formatValue("pill-aria-label", {
+      await document.l10n.formatValue("pill-aria-label", {
         email: pill.fullAddress,
         count: pills.length,
       })
@@ -6371,7 +6321,7 @@ async function GenericSendMessage(msgType) {
           Services.prompt.BUTTON_POS_0 *
             Services.prompt.BUTTON_TITLE_IS_STRING +
           Services.prompt.BUTTON_POS_1 * Services.prompt.BUTTON_TITLE_IS_STRING;
-        const [title, msg, cancel, send] = l10nComposeSync.formatValuesSync([
+        const [title, msg, cancel, send] = await document.l10n.formatValues([
           "many-public-recipients-prompt-title",
           {
             id: "many-public-recipients-prompt-msg",
@@ -7268,11 +7218,7 @@ function updateOptionsMenu() {
   setSecuritySettings("_Menubar");
 
   const menuItem = document.getElementById("menu_inlineSpellCheck");
-  if (gSpellCheckingEnabled) {
-    menuItem.setAttribute("checked", "true");
-  } else {
-    menuItem.removeAttribute("checked");
-  }
+  menuItem.toggleAttribute("checked", gSpellCheckingEnabled);
 }
 
 function updatePriorityMenu() {
@@ -7280,10 +7226,10 @@ function updatePriorityMenu() {
     var msgCompFields = gMsgCompose.compFields;
     if (msgCompFields && msgCompFields.priority) {
       var priorityMenu = document.getElementById("priorityMenu");
-      priorityMenu.querySelector('[checked="true"]').removeAttribute("checked");
+      priorityMenu.querySelector("[checked]").removeAttribute("checked");
       priorityMenu
         .querySelector('[value="' + msgCompFields.priority + '"]')
-        .setAttribute("checked", "true");
+        .toggleAttribute("checked", true);
     }
   }
 }
@@ -7339,11 +7285,7 @@ function initSendFormatMenu() {
   for (const [format, id] of formatToId.entries()) {
     const menuitem = document.getElementById(id);
     menuitem.value = String(format);
-    if (format == sendFormat) {
-      menuitem.setAttribute("checked", "true");
-    } else {
-      menuitem.removeAttribute("checked");
-    }
+    menuitem.toggleAttribute("checked", format == sendFormat);
   }
 
   document
@@ -7577,7 +7519,7 @@ function OnShowDictionaryMenu(aTarget) {
   InitLanguageMenu();
 
   for (const item of aTarget.children) {
-    item.setAttribute(
+    item.toggleAttribute(
       "checked",
       gActiveDictionaries.has(item.getAttribute("value"))
     );
@@ -7783,7 +7725,7 @@ function ToggleReturnReceipt(forcedState) {
   }
   for (const item of document.querySelectorAll(`menuitem[command="cmd_toggleReturnReceipt"],
                                               toolbarbutton[command="cmd_toggleReturnReceipt"]`)) {
-    item.setAttribute("checked", msgCompFields.returnReceipt);
+    item.toggleAttribute("checked", msgCompFields.returnReceipt);
   }
 }
 
@@ -7791,7 +7733,7 @@ function ToggleDSN(target) {
   const msgCompFields = gMsgCompose.compFields;
   if (msgCompFields) {
     msgCompFields.DSN = !msgCompFields.DSN;
-    target.setAttribute("checked", msgCompFields.DSN);
+    target.toggleAttribute("checked", msgCompFields.DSN);
     gDSNOptionChanged = true;
   }
 }
@@ -7800,7 +7742,7 @@ function ToggleAttachVCard(target) {
   var msgCompFields = gMsgCompose.compFields;
   if (msgCompFields) {
     msgCompFields.attachVCard = !msgCompFields.attachVCard;
-    target.setAttribute("checked", msgCompFields.attachVCard);
+    target.toggleAttribute("checked", msgCompFields.attachVCard);
     gAttachVCardOptionChanged = true;
   }
 }
@@ -7818,7 +7760,7 @@ function ToggleAttachVCard(target) {
  */
 function toggleAttachmentReminder(aState = !gManualAttachmentReminder) {
   gManualAttachmentReminder = aState;
-  document.getElementById("cmd_remindLater").setAttribute("checked", aState);
+  document.getElementById("cmd_remindLater").toggleAttribute("checked", aState);
   gMsgCompose.compFields.attachmentReminder = aState;
 
   // If we enabled manual reminder, the reminder can't be turned off.
@@ -8383,7 +8325,6 @@ async function AddAttachments(aAttachments, aContentChanged = true) {
       tooltiptext = attachment.url;
     }
     item.setAttribute("tooltiptext", tooltiptext);
-    item.addEventListener("command", OpenSelectedAttachment);
     items.push(item);
   }
 
@@ -9087,11 +9028,7 @@ function attachmentAreaOnToggle() {
   for (const menuitem of document.querySelectorAll(
     'menuitem[command="cmd_toggleAttachmentPane"]'
   )) {
-    if (attachmentArea.open) {
-      menuitem.setAttribute("checked", "true");
-      continue;
-    }
-    menuitem.removeAttribute("checked");
+    menuitem.toggleAttribute("checked", attachmentArea.open);
   }
 
   // Update the title based on the collapsed status of the bucket.
@@ -9654,7 +9591,7 @@ function LoadIdentity(startup) {
       msgCompFields.DSN = newDSN;
       document
         .getElementById("dsnMenu")
-        .setAttribute("checked", msgCompFields.DSN);
+        .toggleAttribute("checked", msgCompFields.DSN);
     }
 
     if (
@@ -9665,7 +9602,7 @@ function LoadIdentity(startup) {
       msgCompFields.attachVCard = newAttachVCard;
       document
         .getElementById("cmd_attachVCard")
-        .setAttribute("checked", msgCompFields.attachVCard);
+        .toggleAttribute("checked", msgCompFields.attachVCard);
     }
 
     if (newReplyTo != prevReplyTo) {
@@ -9831,7 +9768,7 @@ function MakeFromFieldEditable(ignoreWarning) {
   }
 
   const customizeMenuitem = document.getElementById("cmd_customizeFromAddress");
-  customizeMenuitem.setAttribute("disabled", "true");
+  customizeMenuitem.toggleAttribute("disabled", true);
   const identityElement = document.getElementById("msgIdentity");
   const identityElementWidth = `${
     identityElement.getBoundingClientRect().width
@@ -10846,9 +10783,9 @@ function setContactsSidebarVisibility(show, focus) {
 
   if (show) {
     contactsSplitter.expand();
-    sidebarAddrMenu.setAttribute("checked", "true");
+    sidebarAddrMenu.toggleAttribute("checked", true);
     if (contactsButton) {
-      contactsButton.setAttribute("checked", "true");
+      contactsButton.toggleAttribute("checked", true);
     }
 
     const contactsBrowser = document.getElementById("contactsBrowser");
@@ -11442,7 +11379,7 @@ function enableInlineSpellCheck(aEnableInlineSpellCheck) {
 /** Update state of zoom type (text vs. full) menu item. */
 function UpdateFullZoomMenu() {
   const menuItem = document.getElementById("menu_fullZoomToggle");
-  menuItem.setAttribute("checked", !ZoomManager.useFullZoom);
+  menuItem.toggleAttribute("checked", !ZoomManager.useFullZoom);
 }
 
 /**
@@ -11474,7 +11411,6 @@ var gComposeNotificationBar = {
   },
 
   async setBlockedContent(aBlockedURI) {
-    const brandName = this.brandBundle.getString("brandShortName");
     const buttonLabel = getComposeBundle().getString(
       AppConstants.platform == "win"
         ? "blockedContentPrefLabel"
@@ -11505,25 +11441,24 @@ var gComposeNotificationBar = {
     }
     popup.value = urls.join(" ");
 
-    let msg = getComposeBundle().getFormattedString("blockedContentMessage", [
-      brandName,
-      brandName,
-    ]);
-    msg = PluralForm.get(urls.length, msg);
-
     if (!this.isShowingBlockedContentNotification()) {
       await gComposeNotification.appendNotification(
         "blockedContent",
         {
-          label: msg,
+          label: {
+            "l10n-id": "blocked-content-message",
+            "l10n-args": { count: urls.length },
+          },
           priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
         },
         buttons
       );
     } else {
-      gComposeNotification
-        .getNotificationWithValue("blockedContent")
-        .setAttribute("label", msg);
+      document.l10n.setAttributes(
+        gComposeNotification.getNotificationWithValue("blockedContent"),
+        "blocked-content-message",
+        { count: urls.length }
+      );
     }
   },
 
@@ -11648,22 +11583,9 @@ function onUnblockResource(aURL, aNode) {
  */
 function showSendEncryptedAndSigned() {
   const encToggle = document.getElementById("button-encryption");
-  if (encToggle) {
-    if (gSendEncrypted) {
-      encToggle.setAttribute("checked", "true");
-    } else {
-      encToggle.removeAttribute("checked");
-    }
-  }
-
+  encToggle?.toggleAttribute("checked", gSendEncrypted);
   const sigToggle = document.getElementById("button-signing");
-  if (sigToggle) {
-    if (gSendSigned) {
-      sigToggle.setAttribute("checked", "true");
-    } else {
-      sigToggle.removeAttribute("checked");
-    }
-  }
+  sigToggle?.toggleAttribute("checked", gSendSigned);
 
   // Should button remain enabled? Identity might be unable to
   // encrypt, but we might have kept button enabled after identity change.

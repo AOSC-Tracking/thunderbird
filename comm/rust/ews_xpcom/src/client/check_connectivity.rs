@@ -4,32 +4,35 @@
 
 use std::sync::Arc;
 
-use ews::{get_folder::GetFolderResponse, Operation, OperationResponse};
-
-use super::{
-    process_response_message_class, single_response_or_error, validate_get_folder_response_message,
-    BaseFolderId, BaseShape, DoOperation, FolderShape, GetFolder, OperationRequestOptions,
-    ServerType, XpComEwsClient, XpComEwsError, EWS_ROOT_FOLDER,
-};
-
-use crate::{
-    macros::queue_operation,
-    operation_sender::AuthFailureBehavior,
+use ews::{Operation, OperationResponse};
+use protocol_shared::{
+    EXCHANGE_ROOT_FOLDER,
+    client::DoOperation,
     safe_xpcom::{SafeUri, SafeUrlListener},
 };
+
+use super::{
+    BaseFolderId, BaseShape, FolderShape, GetFolder, OperationRequestOptions, ServerType,
+    XpComEwsClient, XpComEwsError, process_response_message_class, single_response_or_error,
+    validate_get_folder_response_message,
+};
+
+use crate::operation_sender::AuthFailureBehavior;
 
 struct DoCheckConnectivity<'a> {
     pub listener: &'a SafeUrlListener,
     pub uri: SafeUri,
 }
 
-impl DoOperation for DoCheckConnectivity<'_> {
+impl<ServerT: ServerType> DoOperation<XpComEwsClient<ServerT>, XpComEwsError>
+    for DoCheckConnectivity<'_>
+{
     // the connectivity check is ad hoc, not an operation, so this "name" is more a description
     const NAME: &'static str = "check connectivity";
     type Okay = ();
     type Listener = SafeUrlListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {
@@ -40,23 +43,21 @@ impl DoOperation for DoCheckConnectivity<'_> {
                 base_shape: BaseShape::IdOnly,
             },
             folder_ids: vec![BaseFolderId::DistinguishedFolderId {
-                id: EWS_ROOT_FOLDER.to_string(),
+                id: EXCHANGE_ROOT_FOLDER.to_string(),
                 change_key: None,
             }],
         };
 
-        let rcv = queue_operation!(
-            client,
-            GetFolder,
-            get_root_folder,
-            // Make authentication failure silent, since all we want to know is
-            // whether our credentials are valid.
-            OperationRequestOptions {
-                auth_failure_behavior: AuthFailureBehavior::Silent,
-                ..Default::default()
-            }
-        );
-        let response_messages = rcv.await??.into_response_messages();
+        let response_messages = client
+            .enqueue_and_send(
+                get_root_folder,
+                OperationRequestOptions {
+                    auth_failure_behavior: AuthFailureBehavior::Silent,
+                    ..Default::default()
+                },
+            )
+            .await?
+            .into_response_messages();
 
         // Get the first (and only) response message so we can inspect it.
         let response_class = single_response_or_error(response_messages)?;

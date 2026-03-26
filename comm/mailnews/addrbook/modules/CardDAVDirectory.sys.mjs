@@ -114,6 +114,13 @@ export class CardDAVDirectory extends SQLiteDirectory {
     return false;
   }
 
+  addCard(card, withNewUID) {
+    // Ideally, we'd not add the card until it was on the server, but we have
+    // to return newCard synchronously.
+    const newCard = super.addCard(card, withNewUID);
+    this._sendCardToServer(newCard).catch(console.error);
+    return newCard;
+  }
   modifyCard(card) {
     // Well this is awkward. Because it's defined in nsIAbDirectory,
     // modifyCard must not be async, but we need to do async operations.
@@ -149,13 +156,6 @@ export class CardDAVDirectory extends SQLiteDirectory {
       this._uidsToSync.delete(card.UID);
     }
   }
-  dropCard(card, needToCopyCard) {
-    // Ideally, we'd not add the card until it was on the server, but we have
-    // to return newCard synchronously.
-    const newCard = super.dropCard(card, needToCopyCard);
-    this._sendCardToServer(newCard).catch(console.error);
-    return newCard;
-  }
   addMailList() {
     throw Components.Exception(
       "CardDAVDirectory does not implement addMailList",
@@ -183,6 +183,12 @@ export class CardDAVDirectory extends SQLiteDirectory {
   }
   set _syncToken(value) {
     this.setStringValue("carddav.token", value);
+  }
+  get _multigetBatchSize() {
+    return Math.max(
+      Services.prefs.getIntPref("carddav.multiget.batchSize", 500),
+      1
+    );
   }
 
   /**
@@ -279,6 +285,7 @@ export class CardDAVDirectory extends SQLiteDirectory {
   }
 
   _multigetRequest(hrefsToFetch) {
+    log.debug(`Making a multiget request for ${hrefsToFetch.length} cards`);
     hrefsToFetch = hrefsToFetch.map(
       href => `      <d:href>${xmlEncode(href)}</d:href>`
     );
@@ -314,37 +321,35 @@ export class CardDAVDirectory extends SQLiteDirectory {
 
     const response = await this._multigetRequest(hrefsToFetch);
 
-    // If this directory is set to read-only, the following operations would
-    // throw NS_ERROR_FAILURE, but sync operations are allowed on a read-only
-    // directory, so set this._overrideReadOnly to avoid the exception.
-    //
-    // Do not use await while it is set, and use a try/finally block to ensure
-    // it is cleared.
-
-    try {
-      this._overrideReadOnly = true;
-      for (const { href, properties } of this._readResponse(response.dom)) {
-        if (!properties) {
-          continue;
-        }
-
-        const etag = properties.querySelector("getetag")?.textContent;
-        const vCard = normalizeLineEndings(
-          properties.querySelector("address-data")?.textContent
-        );
-
-        const abCard = lazy.VCardUtils.vCardToAbCard(vCard);
-        abCard.setProperty("_etag", etag);
-        abCard.setProperty("_href", href);
-
-        if (!this.cards.has(abCard.UID)) {
-          super.dropCard(abCard, false);
-        } else if (this.loadCardProperties(abCard.UID).get("_etag") != etag) {
-          super.modifyCard(abCard);
-        }
+    const cardsToAdd = [];
+    for (const { href, properties } of this._readResponse(response.dom)) {
+      if (!properties) {
+        continue;
       }
-    } finally {
-      this._overrideReadOnly = false;
+
+      const etag = properties.querySelector("getetag")?.textContent;
+      const vCard = normalizeLineEndings(
+        properties.querySelector("address-data")?.textContent
+      );
+
+      const abCard = lazy.VCardUtils.vCardToAbCard(vCard);
+      abCard.setProperty("_etag", etag);
+      abCard.setProperty("_href", href);
+
+      if (!this.cards.has(abCard.UID)) {
+        cardsToAdd.push(abCard);
+      } else if (this.loadCardProperties(abCard.UID).get("_etag") != etag) {
+        super.modifyCardInternal(abCard);
+      }
+    }
+    if (cardsToAdd.length > 25) {
+      // Don't make observers work too hard, especially if the book is
+      // currently displayed in the address book tab.
+      await super.bulkAddCardsInternal(cardsToAdd);
+    } else {
+      for (const abCard of cardsToAdd) {
+        super.addCardInternal(abCard);
+      }
     }
   }
 
@@ -481,7 +486,7 @@ export class CardDAVDirectory extends SQLiteDirectory {
         // Add a property so the UI can work out if it's still displaying the
         // old card and respond appropriately.
         abCard.setProperty("_originalUID", card.UID);
-        super.dropCard(abCard, false);
+        super.addCard(abCard);
         super.deleteCards([card]);
       }
     }
@@ -535,6 +540,26 @@ export class CardDAVDirectory extends SQLiteDirectory {
   }
 
   /**
+   * Get a map of all known cards, indexed by their hrefs. The map's values
+   * are objects containing the UID and etag of the card. The returned map is
+   * not updated when cards change, so it should not be stored.
+   *
+   * @returns {Map<string, object>}
+   */
+  _getCardsByHref() {
+    const cardsByHref = new Map();
+    for (const [uid, properties] of this.cards) {
+      if (properties.has("_href")) {
+        cardsByHref.set(properties.get("_href"), {
+          uid,
+          etag: properties.get("_etag"),
+        });
+      }
+    }
+    return cardsByHref;
+  }
+
+  /**
    * Get all cards on the server and add them to this directory.
    *
    * This is usually used for the initial population of a directory, but it
@@ -563,12 +588,7 @@ export class CardDAVDirectory extends SQLiteDirectory {
 
     // A map of all existing hrefs and etags. If the etag for an href matches
     // what we already have, we won't fetch it.
-    const currentHrefs = new Map(
-      Array.from(
-        this.cards.values().filter(c => c.get("_href")),
-        c => [c.get("_href"), c.get("_etag")]
-      )
-    );
+    const currentHrefs = this._getCardsByHref();
 
     const hrefsToFetch = [];
     for (const { href, properties } of this._readResponse(response.dom)) {
@@ -576,11 +596,11 @@ export class CardDAVDirectory extends SQLiteDirectory {
         continue;
       }
 
-      const currentEtag = currentHrefs.get(href);
+      const cardByHref = currentHrefs.get(href);
       currentHrefs.delete(href);
 
       const etag = properties.querySelector("getetag")?.textContent;
-      if (etag && currentEtag == etag) {
+      if (etag && cardByHref?.etag == etag) {
         continue;
       }
 
@@ -589,17 +609,19 @@ export class CardDAVDirectory extends SQLiteDirectory {
 
     // Delete any existing cards we didn't see. They're not on the server so
     // they shouldn't be on the client.
-    const cardsToDelete = [];
-    for (const href of currentHrefs.keys()) {
-      cardsToDelete.push(this.getCardFromProperty("_href", href, true));
-    }
-    if (cardsToDelete.length > 0) {
-      super.deleteCards(cardsToDelete);
+    if (currentHrefs.size > 0) {
+      super.deleteCards(
+        Array.from(currentHrefs.values(), cardByHref =>
+          this.getCard(cardByHref.uid)
+        )
+      );
     }
 
     // Fetch any cards we don't already have, or that have changed.
-    if (hrefsToFetch.length > 0) {
-      response = await this._multigetRequest(hrefsToFetch);
+    while (hrefsToFetch.length > 0) {
+      response = await this._multigetRequest(
+        hrefsToFetch.splice(0, this._multigetBatchSize)
+      );
 
       const abCards = [];
 
@@ -617,14 +639,18 @@ export class CardDAVDirectory extends SQLiteDirectory {
           const abCard = lazy.VCardUtils.vCardToAbCard(vCard);
           abCard.setProperty("_etag", etag);
           abCard.setProperty("_href", href);
-          abCards.push(abCard);
+          if (abCard.UID && this.cards.has(abCard.UID)) {
+            super.modifyCard(abCard);
+          } else {
+            abCards.push(abCard);
+          }
         } catch (ex) {
           log.error(`Error parsing: ${vCard}`);
           console.error(ex);
         }
       }
 
-      await this.bulkAddCards(abCards);
+      await this.bulkAddCardsInternal(abCards);
     }
 
     await this._getSyncToken();
@@ -752,23 +778,15 @@ export class CardDAVDirectory extends SQLiteDirectory {
       }
     }
 
-    // If this directory is set to read-only, the following operations would
-    // throw NS_ERROR_FAILURE, but sync operations are allowed on a read-only
-    // directory, so set this._overrideReadOnly to avoid the exception.
-    //
-    // Do not use await while it is set, and use a try/finally block to ensure
-    // it is cleared.
-
     if (cardsToDelete.length > 0) {
-      this._overrideReadOnly = true;
-      try {
-        super.deleteCards(cardsToDelete);
-      } finally {
-        this._overrideReadOnly = false;
-      }
+      super.deleteCardsInternal(cardsToDelete);
     }
 
-    await this._fetchAndStore(hrefsToFetch);
+    while (hrefsToFetch.length > 0) {
+      await this._fetchAndStore(
+        hrefsToFetch.splice(0, this._multigetBatchSize)
+      );
+    }
 
     log.log("Sync with server completed successfully.");
     Services.obs.notifyObservers(this, "addrbook-directory-synced");
@@ -852,63 +870,68 @@ export class CardDAVDirectory extends SQLiteDirectory {
       return;
     }
 
+    const currentHrefs = this._getCardsByHref();
     const dom = response.dom;
 
-    // If this directory is set to read-only, the following operations would
-    // throw NS_ERROR_FAILURE, but sync operations are allowed on a read-only
-    // directory, so set this._overrideReadOnly to avoid the exception.
-    //
-    // Do not use await while it is set, and use a try/finally block to ensure
-    // it is cleared.
-
     const hrefsToFetch = [];
-    try {
-      this._overrideReadOnly = true;
-      const cardsToDelete = [];
-      for (const { href, notFound, properties } of this._readResponse(dom)) {
-        const card = this.getCardFromProperty("_href", href, true);
-        if (notFound) {
-          if (card) {
-            cardsToDelete.push(card);
-          }
-          continue;
+    const cardsToAdd = [];
+    const cardsToDelete = [];
+    for (const { href, notFound, properties } of this._readResponse(dom)) {
+      const cardByHref = currentHrefs.get(href);
+      if (notFound) {
+        if (cardByHref) {
+          cardsToDelete.push(cardByHref);
         }
-        if (!properties) {
-          continue;
-        }
-
-        const etag = properties.querySelector("getetag")?.textContent;
-        if (!etag) {
-          continue;
-        }
-        let vCard = properties.querySelector("address-data")?.textContent;
-        if (!vCard) {
-          hrefsToFetch.push(href);
-          continue;
-        }
-        vCard = normalizeLineEndings(vCard);
-
-        const abCard = lazy.VCardUtils.vCardToAbCard(vCard);
-        abCard.setProperty("_etag", etag);
-        abCard.setProperty("_href", href);
-
-        if (card) {
-          if (card.getProperty("_etag", "") != etag) {
-            super.modifyCard(abCard);
-          }
-        } else {
-          super.dropCard(abCard, false);
-        }
+        continue;
+      }
+      if (!properties) {
+        continue;
       }
 
-      if (cardsToDelete.length > 0) {
-        super.deleteCards(cardsToDelete);
+      const etag = properties.querySelector("getetag")?.textContent;
+      if (!etag) {
+        continue;
       }
-    } finally {
-      this._overrideReadOnly = false;
+      let vCard = properties.querySelector("address-data")?.textContent;
+      if (!vCard) {
+        hrefsToFetch.push(href);
+        continue;
+      }
+      vCard = normalizeLineEndings(vCard);
+
+      const abCard = lazy.VCardUtils.vCardToAbCard(vCard);
+      abCard.setProperty("_etag", etag);
+      abCard.setProperty("_href", href);
+
+      if (cardByHref) {
+        if (cardByHref.etag != etag) {
+          super.modifyCardInternal(abCard);
+        }
+      } else {
+        cardsToAdd.push(abCard);
+      }
     }
 
-    await this._fetchAndStore(hrefsToFetch);
+    if (cardsToDelete.length > 0) {
+      super.deleteCardsInternal(
+        cardsToDelete.map(cardByHref => this.getCard(cardByHref.uid))
+      );
+    }
+    if (cardsToAdd.length > 25) {
+      // Don't make observers work too hard, especially if the book is
+      // currently displayed in the address book tab.
+      await super.bulkAddCardsInternal(cardsToAdd);
+    } else {
+      for (const abCard of cardsToAdd) {
+        super.addCardInternal(abCard);
+      }
+    }
+
+    while (hrefsToFetch.length > 0) {
+      await this._fetchAndStore(
+        hrefsToFetch.splice(0, this._multigetBatchSize)
+      );
+    }
 
     this._syncToken = dom.querySelector("sync-token").textContent;
 

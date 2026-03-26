@@ -11,38 +11,40 @@ use ews::move_item::MoveItem;
 use firefox_on_glean::metrics::mailnews_ews as glean_ews;
 use mailnews_ui_glue::UserInteractiveServer;
 use nserror::{
-    nsresult, NS_ERROR_ALREADY_INITIALIZED, NS_ERROR_INVALID_ARG, NS_ERROR_NOT_INITIALIZED, NS_OK,
+    NS_ERROR_ALREADY_INITIALIZED, NS_ERROR_INVALID_ARG, NS_ERROR_NOT_INITIALIZED, NS_OK, nsresult,
 };
 use nsstring::{nsACString, nsCString};
-use protocol_shared::ExchangeConnectionDetails;
+use protocol_shared::{
+    ExchangeConnectionDetails,
+    safe_xpcom::{
+        SafeEwsFolderListener, SafeEwsMessageCreateListener, SafeEwsMessageFetchListener,
+        SafeEwsMessageSyncListener, SafeEwsSimpleOperationListener, SafeUrlListener, uri::SafeUri,
+    },
+};
 use std::{cell::OnceCell, ffi::c_void, sync::Arc};
 use thin_vec::ThinVec;
 use url::Url;
 use xpcom::{
+    RefPtr,
     interfaces::{
-        nsIInputStream, nsIMsgIncomingServer, nsIURI, nsIUrlListener, IEwsFolderListener,
-        IEwsMessageCreateListener, IEwsMessageFetchListener, IEwsMessageSyncListener,
-        IEwsSimpleOperationListener,
+        IEwsFolderListener, IEwsMessageCreateListener, IEwsMessageFetchListener,
+        IEwsMessageSyncListener, IEwsSimpleOperationListener, nsIInputStream, nsIMsgIncomingServer,
+        nsIURI, nsIUrlListener,
     },
-    nsIID, xpcom_method, RefPtr,
+    nsIID, xpcom_method,
 };
 
 use client::XpComEwsClient;
-use safe_xpcom::{
-    SafeEwsFolderListener, SafeEwsMessageCreateListener, SafeEwsMessageFetchListener,
-    SafeEwsMessageSyncListener, SafeEwsSimpleOperationListener, SafeUri, SafeUrlListener,
-};
 
-mod cancellable_request;
 mod client;
 mod error;
+mod headerblock;
 mod headers;
-mod macros;
+mod line_token;
 mod observers;
 mod operation_queue;
 mod operation_sender;
 mod outgoing;
-mod safe_xpcom;
 mod server_version;
 mod xpcom_io;
 
@@ -65,7 +67,7 @@ const OFFICE365_BASE_DOMAINS: [&str; 4] = [
 /// valid memory, and `result` must not be used until the return value is
 /// checked.
 #[allow(non_snake_case)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn NS_CreateEwsClient(iid: &nsIID, result: *mut *mut c_void) -> nsresult {
     let instance = XpcomEwsBridge::allocate(InitXpcomEwsBridge {
         server: OnceCell::default(),
@@ -73,7 +75,7 @@ pub unsafe extern "C" fn NS_CreateEwsClient(iid: &nsIID, result: *mut *mut c_voi
         client: OnceCell::default(),
     });
 
-    instance.QueryInterface(iid, result)
+    unsafe { instance.QueryInterface(iid, result) }
 }
 
 /// `XpcomEwsBridge` provides an XPCOM interface implementation for mediating
@@ -438,6 +440,34 @@ impl XpcomEwsBridge {
                 SafeEwsSimpleOperationListener::new(listener),
                 message_ids.clone(),
                 is_read,
+            ),
+        )
+        .detach();
+
+        Ok(())
+    }
+
+    xpcom_method!(change_flag_status => ChangeFlagStatus(
+        listener: *const IEwsSimpleOperationListener,
+        message_ids: *const ThinVec<nsCString>,
+        is_flagged: bool
+    ));
+    fn change_flag_status(
+        &self,
+        listener: &IEwsSimpleOperationListener,
+        message_ids: &ThinVec<nsCString>,
+        is_flagged: bool,
+    ) -> Result<(), nsresult> {
+        let client = self.client()?;
+
+        // The client operation is async and we want it to survive the end of
+        // this scope, so spawn it as a detached `moz_task`.
+        moz_task::spawn_local(
+            "change_flag_status",
+            client.change_flag_status(
+                SafeEwsSimpleOperationListener::new(listener),
+                message_ids.clone(),
+                is_flagged,
             ),
         )
         .detach();

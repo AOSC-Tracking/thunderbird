@@ -39,10 +39,6 @@ skip-if = [
 
 ["test_migrateTryStartTLS.js"]
 
-["test_pluralForm-english.js"]
-
-["test_pluralForm-irish.js"]
-
 ["test_qrExport.js"]
 
 ["test_state_preferenceSlice.js"]
@@ -62,8 +58,9 @@ run-sequentially = true  # Avoid bustage.
 ["test_viewWrapper_logic.js"]
 
 ["test_viewWrapper_realFolder.js"]
-skip-if = [
-  "os == 'mac' && !debug",
+run-if = [
+  "os != 'mac'",
+  "debug"
 ]
 reason = "osx shippable perma failures"
 

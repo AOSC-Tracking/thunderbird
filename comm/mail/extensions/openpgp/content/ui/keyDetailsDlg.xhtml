@@ -194,15 +194,17 @@
           <!-- Acceptance Tab -->
           <vbox id="acceptancePanel" flex="1">
             <description id="acceptanceIntro" />
+            <description id="revocationReasonCode" />
+            <description id="revocationReasonReason" />
             <separator class="thin" />
 
-            <html:div>
+            <html:div id="acceptanceSelection">
               <html:fieldset>
                 <radiogroup
                   id="acceptanceRadio"
                   hidden="hidden"
                   class="indent"
-                  oncommand="onAcceptanceChanged();"
+                  oncommand="onAcceptanceChanged()"
                 >
                   <radio
                     id="acceptRejected"
@@ -278,7 +280,7 @@
                   id="passwordInput"
                   type="password"
                   class="input-inline"
-                  oninput="onPasswordInput();"
+                  oninput="onPasswordInput()"
                 />
               </hbox>
               <hbox>
@@ -287,12 +289,12 @@
                   id="passwordConfirm"
                   type="password"
                   class="input-inline"
-                  oninput="onPasswordInput();"
+                  oninput="onPasswordInput()"
                 />
                 <button
                   id="setPassphrase"
-                  disabled="true"
-                  oncommand="setPassphrase();"
+                  disabled=""
+                  oncommand="setPassphrase()"
                 />
               </hbox>
               <separator class="thin" />

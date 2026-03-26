@@ -83,6 +83,7 @@
           class="menulist-menupopup"
           mode="newFolder"
           oncommand="onFolderSelect(event)"
+          native="false"
         />
       </menulist>
 
@@ -95,9 +96,9 @@
         <separator class="thin" />
 
         <radiogroup id="folderGroup" orient="horizontal" class="indent">
-          <radio oncommand="onFoldersOnly();" label="&foldersOnly.label;" />
+          <radio oncommand="onFoldersOnly()" label="&foldersOnly.label;" />
           <radio
-            oncommand="onMessagesOnly();"
+            oncommand="onMessagesOnly()"
             label="&messagesOnly.label;"
             selected="true"
           />

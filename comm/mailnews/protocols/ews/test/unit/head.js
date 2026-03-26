@@ -14,8 +14,16 @@ var { localAccountUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/LocalAccountUtils.sys.mjs"
 );
 
-var { EwsServer, RemoteFolder } = ChromeUtils.importESModule(
+var { EwsServer } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/EwsServer.sys.mjs"
+);
+
+var { RemoteFolder } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MockServer.sys.mjs"
+);
+
+var { GraphServer } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/GraphServer.sys.mjs"
 );
 
 /**
@@ -67,4 +75,37 @@ function setupBasicEwsTestServer({ version = "Exchange2013" }) {
   });
 
   return [ewsServer, incomingServer];
+}
+
+/**
+ * Set up an incoming server connected to a Graph test server.
+ *
+ * @returns {[GraphServer, nsIMsgIncomingServer]}
+ */
+function setupBasicGraphTestServer() {
+  // Ensure we have an on-disk profile.
+  do_get_profile();
+
+  // Create a new mock Graph server, and start it.
+  const graphServer = new GraphServer();
+  graphServer.start();
+
+  // Create and configure the Graph incoming server.
+  const incomingServer = localAccountUtils.create_incoming_server(
+    "graph",
+    graphServer.port,
+    "user",
+    "password"
+  );
+  incomingServer.setStringValue(
+    "ews_url",
+    `http://127.0.0.1:${graphServer.port}/`
+  );
+
+  registerCleanupFunction(async () => {
+    incomingServer.shutdown();
+    graphServer.stop();
+  });
+
+  return [graphServer, incomingServer];
 }

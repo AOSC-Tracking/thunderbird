@@ -19,6 +19,7 @@ const { PermissionTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/PermissionTestUtils.sys.mjs"
 );
 ChromeUtils.defineESModuleGetters(lazy, {
+  SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
   SearchTestUtils: "resource://testing-common/SearchTestUtils.sys.mjs",
 });
 const { EnterprisePolicyTesting } = ChromeUtils.importESModule(
@@ -59,7 +60,7 @@ async function setupPolicyEngineWithJson(json, customSchema) {
  *   enterprise policy.
  */
 async function setupPolicyEngineWithJsonWithSearch(json, customSchema) {
-  Services.search.wrappedJSObject.reset();
+  lazy.SearchService.reset();
   if (typeof json != "object") {
     const filePath = do_get_file(json ? json : "non-existing-file.json").path;
     await EnterprisePolicyTesting.setupPolicyEngineWithJson(
@@ -72,34 +73,16 @@ async function setupPolicyEngineWithJsonWithSearch(json, customSchema) {
   const settingsWritten = lazy.SearchTestUtils.promiseSearchNotification(
     "write-settings-to-disk-complete"
   );
-  await Services.search.init();
+  await lazy.SearchService.init();
   return settingsWritten;
 }
 
 function checkLockedPref(prefName, prefValue) {
-  equal(
-    Preferences.locked(prefName),
-    true,
-    `Pref ${prefName} is correctly locked`
-  );
-  equal(
-    Preferences.get(prefName),
-    prefValue,
-    `Pref ${prefName} has the correct value`
-  );
+  EnterprisePolicyTesting.checkPolicyPref(prefName, prefValue, true);
 }
 
 function checkUnlockedPref(prefName, prefValue) {
-  equal(
-    Preferences.locked(prefName),
-    false,
-    `Pref ${prefName} is correctly unlocked`
-  );
-  equal(
-    Preferences.get(prefName),
-    prefValue,
-    `Pref ${prefName} has the correct value`
-  );
+  EnterprisePolicyTesting.checkPolicyPref(prefName, prefValue, false);
 }
 
 function checkUserPref(prefName, prefValue) {

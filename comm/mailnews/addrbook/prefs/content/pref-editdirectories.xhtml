@@ -49,29 +49,29 @@
         <richlistbox
           id="directoriesList"
           flex="1"
-          onselect="selectDirectory();"
-          ondblclick="dblClickDirectory(event);"
+          onselect="selectDirectory()"
+          ondblclick="dblClickDirectory(event)"
         />
         <vbox>
           <button
             id="addButton"
             label="&addDirectory.label;"
             accesskey="&addDirectory.accesskey;"
-            oncommand="addDirectory();"
+            oncommand="addDirectory()"
           />
           <button
             id="editButton"
             label="&editDirectory.label;"
             accesskey="&editDirectory.accesskey;"
-            disabled="true"
-            oncommand="editDirectory();"
+            disabled=""
+            oncommand="editDirectory()"
           />
           <button
             id="removeButton"
             label="&deleteDirectory.label;"
             accesskey="&deleteDirectory.accesskey;"
-            disabled="true"
-            oncommand="removeDirectory();"
+            disabled=""
+            oncommand="removeDirectory()"
           />
         </vbox>
       </hbox>

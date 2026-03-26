@@ -1,6 +1,7 @@
 [DEFAULT]
 head = "head.js"
 support-files = ["data/*"]
+prefs = ["mail.graph.enabled=true"]
 
 ["test_delete_model_trash_path.js"]
 
@@ -27,6 +28,8 @@ tags = ["foldernames"]
 
 ["test_saveDraft.js"]
 
+["test_save_to_file.js"]
+
 ["test_send.js"]
 
 ["test_server_version.js"]
@@ -36,3 +39,5 @@ tags = ["foldernames"]
 ["test_syncMessagesForFolder.js"]
 
 ["test_undo.js"]
+
+["test_verifyLogon.js"]

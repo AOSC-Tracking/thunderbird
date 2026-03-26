@@ -40,6 +40,16 @@ var { FeedUtils } = ChromeUtils.importESModule(
   "resource:///modules/FeedUtils.sys.mjs"
 );
 
+ChromeUtils.defineESModuleGetters(
+  this,
+  {
+    FolderReorderListener:
+      "chrome://messenger/content/FolderReorderListener.mjs",
+    UserFeedbackListener: "chrome://messenger/content/UserFeedbackListener.mjs",
+  },
+  { global: "current" }
+);
+
 ChromeUtils.defineESModuleGetters(this, {
   CalMetronome: "resource:///modules/CalMetronome.sys.mjs",
   FolderPaneUtils: "resource:///modules/FolderPaneUtils.sys.mjs",
@@ -214,7 +224,7 @@ window.addEventListener("DOMContentLoaded", async event => {
 window.addEventListener("unload", () => {
   CalMetronome.off("day", refreshGroupedBySortView);
   MailServices.mailSession.RemoveFolderListener(folderListener);
-  MailServices.mailSession.removeUserFeedbackListener(userFeedbackListener);
+  MailServices.mailSession.removeUserFeedbackListener(UserFeedbackListener);
   gViewWrapper?.close();
   folderPane.uninit();
   threadPane.uninit();
@@ -407,13 +417,9 @@ var folderPaneContextMenu = {
     let isNNTP;
     let isJunk;
     let isVirtual;
-    let isInbox;
-    let isSpecialUse;
-    let canRenameDeleteJunkMail;
     let isSmartTagsFolder;
     let deletable;
     let server;
-    let URI;
     let flags;
     let online;
 
@@ -423,8 +429,6 @@ var folderPaneContextMenu = {
       canCreateSubfolders = false;
       canRename = false;
       isSmartTagsFolder = false;
-      isSpecialUse = true;
-      isInbox = false;
 
       // Set some variables to TRUE to help during the folder lookup loop.
       online = true;
@@ -435,7 +439,6 @@ var folderPaneContextMenu = {
       isVirtual = true;
       isCompactEnabled = true;
       isJunk = true;
-      canRenameDeleteJunkMail = true;
 
       for (const row of folderTree.selection.values()) {
         const folder = MailServices.folderLookup.getFolderForURL(row.uri);
@@ -450,9 +453,6 @@ var folderPaneContextMenu = {
         isNNTP &&= folder.server.type == "nntp";
         isVirtual &&= folder.flags & Ci.nsMsgFolderFlags.Virtual;
         isJunk &&= folder.flags & Ci.nsMsgFolderFlags.Junk;
-        canRenameDeleteJunkMail &&= FolderUtils.canRenameDeleteJunkMail(
-          folder.URI
-        );
         isCompactEnabled &&= folder.isCommandEnabled("cmd_compactFolder");
 
         // Tiny performance failsafe in case all of the variables are already
@@ -464,7 +464,6 @@ var folderPaneContextMenu = {
           !isNNTP &&
           !isVirtual &&
           !isJunk &&
-          !canRenameDeleteJunkMail &&
           !isCompactEnabled
         ) {
           break;
@@ -479,7 +478,6 @@ var folderPaneContextMenu = {
         flags,
         isServer,
         server,
-        URI,
       } = this.activeFolder);
       online =
         !Services.io.offline || !this.activeFolder.server.offlineSupportLevel;
@@ -488,9 +486,6 @@ var folderPaneContextMenu = {
       isNNTP = server.type == "nntp";
       isJunk = flags & Ci.nsMsgFolderFlags.Junk;
       isVirtual = flags & Ci.nsMsgFolderFlags.Virtual;
-      isInbox = flags & Ci.nsMsgFolderFlags.Inbox;
-      isSpecialUse = flags & Ci.nsMsgFolderFlags.SpecialUse;
-      canRenameDeleteJunkMail = FolderUtils.canRenameDeleteJunkMail(URI);
       isSmartTagsFolder = FolderUtils.isSmartTagsFolder(this.activeFolder);
     }
 
@@ -501,11 +496,9 @@ var folderPaneContextMenu = {
 
     // Sets the boolean state for each command type.
     this._commandStates = {
-      cmd_newFolder: online && ((!isNNTP && canCreateSubfolders) || isInbox),
-      cmd_deleteFolder:
-        online && (isJunk ? canRenameDeleteJunkMail : deletable),
-      cmd_renameFolder:
-        online && ((!isServer && canRename && !isSpecialUse) || isVirtual),
+      cmd_newFolder: online && canCreateSubfolders,
+      cmd_deleteFolder: online && deletable,
+      cmd_renameFolder: online && canRename,
       cmd_compactFolder:
         !isVirtual && !isNNTP && (isServer || canCompact) && isCompactEnabled,
       cmd_emptyTrash: online && !isNNTP,
@@ -539,7 +532,7 @@ var folderPaneContextMenu = {
     const item = document.getElementById(id);
     if (item) {
       // Always convert truthy/falsy to boolean before string.
-      item.setAttribute("checked", !!checked);
+      item.toggleAttribute("checked", !!checked);
     }
   },
 
@@ -637,10 +630,7 @@ var folderPaneContextMenu = {
       isRealFolder && serverType == "nntp"
     );
 
-    const showNewFolderItem =
-      (serverType != "nntp" && canCreateSubfolders) ||
-      flags & Ci.nsMsgFolderFlags.Inbox;
-    if (showNewFolderItem) {
+    if (canCreateSubfolders) {
       document
         .getElementById("folderPaneContext-new")
         .setAttribute(
@@ -846,6 +836,20 @@ var folderPaneContextMenu = {
    * @param {nsIMsgCopyServiceListener} [listener]
    */
   transferFolder(isMove, sourceFolder, targetFolder, listener = null) {
+    // Listen for any event coming from the nsIMsgCopyServiceListener and
+    // trigger the needed operations after the copy service did its job.
+    if (listener) {
+      listener.target.addEventListener(
+        "insert-folder",
+        event =>
+          folderPane.insertFolder(
+            event.detail.movedFolder,
+            event.detail.targetFolder,
+            event.detail.insertAfter
+          ),
+        { once: true }
+      );
+    }
     // Do the transfer. A slight delay in calling copyFolder() helps the
     // folder-menupopup chain of items get properly closed so the next folder
     // context popup can occur.
@@ -902,13 +906,13 @@ var folderPaneContextMenu = {
       case "folderPaneContext-pauseAllUpdates":
         topChromeWindow.MsgPauseUpdates(
           [folder],
-          event.target.getAttribute("checked") == "true"
+          event.target.hasAttribute("checked")
         );
         break;
       case "folderPaneContext-pauseUpdates":
         topChromeWindow.MsgPauseUpdates(
           [folder],
-          event.target.getAttribute("checked") == "true"
+          event.target.hasAttribute("checked")
         );
         break;
       case "folderPaneContext-openNewTab":
@@ -1707,7 +1711,8 @@ var folderPane = {
       folderListener,
       Ci.nsIFolderListener.all
     );
-    MailServices.mailSession.addUserFeedbackListener(userFeedbackListener);
+    MailServices.mailSession.addUserFeedbackListener(UserFeedbackListener);
+    UserFeedbackListener.target.addEventListener("show-tls-error", this);
 
     Services.prefs.addObserver("mail.accountmanager.accounts", this);
     Services.prefs.addObserver("mailnews.tags.", this);
@@ -1784,6 +1789,7 @@ var folderPane = {
     if (!this._initialized) {
       return;
     }
+    UserFeedbackListener.target.removeEventListener("show-tls-error", this);
     Services.prefs.removeObserver("mail.accountmanager.accounts", this);
     Services.prefs.removeObserver("mailnews.tags.", this);
     Services.obs.removeObserver(this, "folder-color-changed");
@@ -1799,6 +1805,21 @@ var folderPane = {
 
   handleEvent(event) {
     switch (event.type) {
+      case "show-tls-error":
+        window.MozXULElement.insertFTLIfNeeded("messenger/certError.ftl");
+        this._changeRows(event.detail.server.rootFolder, row => {
+          row.classList.add("tls-error");
+          document.l10n.setAttributes(
+            row.statusIcon,
+            event.detail.errorString,
+            event.detail.errorArgs
+          );
+          // Click handler set directly (rather than as a listener) so that we
+          // don't have to mess around clearing previous handlers.
+          row.statusIcon.onclick = () =>
+            top.MsgAccountManager("am-server.xhtml", event.detail.server);
+        });
+        break;
       case "select":
         this._onSelect(event);
         break;
@@ -1889,7 +1910,7 @@ var folderPane = {
           console.error(ex);
           return;
         }
-        folderPane._changeRows(server.rootFolder, row =>
+        this._changeRows(server.rootFolder, row =>
           row.classList.remove("tls-error")
         );
         break;
@@ -1974,7 +1995,7 @@ var folderPane = {
       subMenuCompactBtn.removeAttribute("disabled");
       return;
     }
-    subMenuCompactBtn.setAttribute("disabled", "true");
+    subMenuCompactBtn.toggleAttribute("disabled", true);
   },
 
   toggleFullPathMenuItem() {
@@ -1984,7 +2005,7 @@ var folderPane = {
     if (this.canBeCompact && this.isCompact) {
       fullPathBtn.removeAttribute("disabled");
     } else {
-      fullPathBtn.setAttribute("disabled", "true");
+      fullPathBtn.toggleAttribute("disabled", true);
     }
   },
 
@@ -1995,7 +2016,7 @@ var folderPane = {
   updateContextCheckedFolderMode() {
     for (const item of document.querySelectorAll(".folder-pane-mode")) {
       if (this.activeModes.includes(item.value)) {
-        item.setAttribute("checked", true);
+        item.toggleAttribute("checked", true);
         continue;
       }
       item.removeAttribute("checked");
@@ -2020,7 +2041,7 @@ var folderPane = {
     // Apply attribute mode to context menu option to allow
     // for sorting later
     if (this.activeModes.at(0) == this.mode) {
-      moveUpMenuItem.setAttribute("disabled", "true");
+      moveUpMenuItem.toggleAttribute("disabled", true);
     }
 
     // If folder mode is at the bottom or the only one,
@@ -2032,7 +2053,7 @@ var folderPane = {
     // Apply attribute mode to context menu option to allow
     // for sorting later
     if (this.activeModes.at(-1) == this.mode) {
-      moveDownMenuItem.setAttribute("disabled", "true");
+      moveDownMenuItem.toggleAttribute("disabled", true);
     }
 
     const compactMenuItem = this.folderPaneModeContext.querySelector(
@@ -2041,11 +2062,11 @@ var folderPane = {
     compactMenuItem.removeAttribute("checked");
     compactMenuItem.removeAttribute("disabled");
     if (!this.canModeBeCompact(this.mode)) {
-      compactMenuItem.setAttribute("disabled", "true");
+      compactMenuItem.toggleAttribute("disabled", true);
       return;
     }
     if (this.isCompact) {
-      compactMenuItem.setAttribute("checked", true);
+      compactMenuItem.toggleAttribute("checked", true);
     }
   },
 
@@ -3423,7 +3444,7 @@ var folderPane = {
     };
   },
 
-  _onDrop(event) {
+  async _onDrop(event) {
     this._timedExpand();
     this._clearDropTarget();
     this._clearDragTarget();
@@ -3539,7 +3560,7 @@ var folderPane = {
             sourceFolder,
             destinationFolder,
             isReordering
-              ? new ReorderFolderListener(
+              ? new FolderReorderListener(
                   sourceFolder,
                   targetFolder,
                   insertAfter
@@ -3592,22 +3613,24 @@ var folderPane = {
       }
       this.swapFolderSelection(rows);
     } else if (types.includes("application/x-moz-file")) {
+      const files = [];
       for (let i = 0; i < event.dataTransfer.mozItemCount; i++) {
         const extFile = event.dataTransfer
           .mozGetDataAt("application/x-moz-file", i)
           .QueryInterface(Ci.nsIFile);
         if (extFile.isFile() && /\.eml$/i.test(extFile.leafName)) {
-          MailServices.copy.copyFileMessage(
-            extFile,
-            targetFolder,
-            null,
-            false,
-            1,
-            "",
-            null,
-            top.msgWindow
-          );
+          files.push(extFile);
         }
+      }
+      if (files.length) {
+        for (const file of files) {
+          await MailUtils.copyFileMessageAsync(
+            file,
+            targetFolder,
+            top.msgWindow
+          ).catch(console.warn);
+        }
+        await MailUtils.updateFolderAsync(targetFolder).catch(console.warn);
       }
     } else if (
       types.includes("text/x-moz-url-data") ||
@@ -3879,11 +3902,7 @@ var folderPane = {
       return;
     }
 
-    const canDelete = folder.isSpecialFolder(Ci.nsMsgFolderFlags.Junk, false)
-      ? FolderUtils.canRenameDeleteJunkMail(folder.URI)
-      : folder.deletable;
-
-    if (!canDelete) {
+    if (!folder.deletable) {
       throw new Error("Can't delete folder: " + folder.localizedName);
     }
 
@@ -4182,38 +4201,38 @@ var folderPane = {
         case "folderPaneHeaderToggleGetMessages":
           XULStoreUtils.isItemHidden("messenger", "folderPaneGetMessages")
             ? item.removeAttribute("checked")
-            : item.setAttribute("checked", true);
+            : item.toggleAttribute("checked", true);
           break;
         case "folderPaneHeaderToggleNewMessage":
           XULStoreUtils.isItemHidden("messenger", "folderPaneWriteMessage")
             ? item.removeAttribute("checked")
-            : item.setAttribute("checked", true);
+            : item.toggleAttribute("checked", true);
           break;
         case "folderPaneHeaderToggleTotalCount":
           XULStoreUtils.isItemVisible("messenger", "totalMsgCount")
-            ? item.setAttribute("checked", true)
+            ? item.toggleAttribute("checked", true)
             : item.removeAttribute("checked");
           break;
         case "folderPaneMoreContextCompactToggle":
           this.isCompact
-            ? item.setAttribute("checked", true)
+            ? item.toggleAttribute("checked", true)
             : item.removeAttribute("checked");
           this.toggleCompactViewMenuItem();
           break;
         case "folderPaneHeaderToggleFolderSize":
           XULStoreUtils.isItemVisible("messenger", "folderPaneFolderSize")
-            ? item.setAttribute("checked", true)
+            ? item.toggleAttribute("checked", true)
             : item.removeAttribute("checked");
           break;
         case "folderPaneHeaderToggleFullPath":
           XULStoreUtils.isItemVisible("messenger", "folderPaneFullPath")
-            ? item.setAttribute("checked", true)
+            ? item.toggleAttribute("checked", true)
             : item.removeAttribute("checked");
           this.toggleFullPathMenuItem();
           break;
         case "folderPaneHeaderToggleLocalFolders":
           XULStoreUtils.isItemHidden("messenger", "folderPaneLocalFolders")
-            ? item.setAttribute("checked", true)
+            ? item.toggleAttribute("checked", true)
             : item.removeAttribute("checked");
           break;
         default:
@@ -4599,27 +4618,6 @@ var folderPane = {
 };
 
 /**
- * Class responsible for the the UI reorder of the folders after the backend
- * operation has been completed.
- */
-class ReorderFolderListener {
-  constructor(sourceFolder, targetFolder, insertAfter) {
-    this.sourceFolder = sourceFolder;
-    this.targetFolder = targetFolder;
-    this.insertAfter = insertAfter;
-  }
-
-  onStopCopy() {
-    // Do reorder within new siblings (all children of new parent).
-    const movedFolder = MailServices.copy.getArrivedFolder(this.sourceFolder);
-    if (!movedFolder) {
-      return;
-    }
-    folderPane.insertFolder(movedFolder, this.targetFolder, this.insertAfter);
-  }
-}
-
-/**
  * Header area of the message list pane.
  */
 var threadPaneHeader = {
@@ -4715,7 +4713,7 @@ var threadPaneHeader = {
           ? "threadPaneTableView"
           : "threadPaneCardsView"
       )
-      .setAttribute("checked", "true");
+      .toggleAttribute("checked", true);
   },
 
   /**
@@ -4731,7 +4729,7 @@ var threadPaneHeader = {
     // Update menuitem to reflect sort key.
     for (const menuitem of event.target.querySelectorAll(`[name="sortby"]`)) {
       const sortKey = menuitem.getAttribute("value");
-      menuitem.setAttribute(
+      menuitem.toggleAttribute(
         "checked",
         gViewWrapper.primarySortColumnId == sortKey
       );
@@ -4740,21 +4738,21 @@ var threadPaneHeader = {
     // Update sort direction menu items.
     event.target
       .querySelector(`[value="ascending"]`)
-      .setAttribute("checked", gViewWrapper.isSortedAscending);
+      .toggleAttribute("checked", gViewWrapper.isSortedAscending);
     event.target
       .querySelector(`[value="descending"]`)
-      .setAttribute("checked", !gViewWrapper.isSortedAscending);
+      .toggleAttribute("checked", !gViewWrapper.isSortedAscending);
 
     // Update the threaded and groupedBy menu items.
     event.target
       .querySelector(`[value="threaded"]`)
-      .setAttribute("checked", gViewWrapper.showThreaded);
+      .toggleAttribute("checked", gViewWrapper.showThreaded);
     event.target
       .querySelector(`[value="unthreaded"]`)
-      .setAttribute("checked", gViewWrapper.showUnthreaded);
+      .toggleAttribute("checked", gViewWrapper.showUnthreaded);
     event.target
       .querySelector(`[value="group"]`)
-      .setAttribute("checked", gViewWrapper.showGroupedBySort);
+      .toggleAttribute("checked", gViewWrapper.showGroupedBySort);
   },
 
   /**
@@ -5483,27 +5481,29 @@ var threadPane = {
   /**
    * Handle threadPane drop events.
    */
-  _onDrop(event) {
+  async _onDrop(event) {
     if (event.target.closest("thead")) {
       return; // Only allow dropping in the body.
     }
     event.preventDefault();
+    const files = [];
     for (let i = 0; i < event.dataTransfer.mozItemCount; i++) {
       const extFile = event.dataTransfer
         .mozGetDataAt("application/x-moz-file", i)
         .QueryInterface(Ci.nsIFile);
       if (extFile.isFile() && /\.eml$/i.test(extFile.leafName)) {
-        MailServices.copy.copyFileMessage(
-          extFile,
-          gFolder,
-          null,
-          false,
-          1,
-          "",
-          null,
-          top.msgWindow
-        );
+        files.push(extFile);
       }
+    }
+    if (files.length) {
+      for (const file of files) {
+        await MailUtils.copyFileMessageAsync(
+          file,
+          gFolder,
+          top.msgWindow
+        ).catch(console.warn);
+      }
+      await MailUtils.updateFolderAsync(gFolder).catch(console.warn);
     }
   },
 
@@ -6248,7 +6248,8 @@ var threadPane = {
     let msgDatabase;
     try {
       msgDatabase = gFolder.msgDatabase;
-    } catch {
+    } catch (e) {
+      console.error(`Persisting column state for ${gFolder.URI} FAILED!`, e);
       return;
     }
 
@@ -6549,45 +6550,23 @@ var threadPane = {
       },
     ];
 
-    if (threadIds.size == 1) {
-      const ignoredThreadText = messengerBundle.GetStringFromName(
-        !subthreadOnly ? "ignoredThreadFeedback" : "ignoredSubthreadFeedback"
-      );
-      let subj = messages[0].mime2DecodedSubject || "";
-      if (subj.length > 45) {
-        subj = subj.substring(0, 45) + "…";
-      }
-      const text = ignoredThreadText.replace("#1", subj);
-
-      await this.notificationBox.appendNotification(
-        "ignoreThreadInfo",
-        {
-          label: text,
-          priority: this.notificationBox.PRIORITY_INFO_MEDIUM,
-        },
-        buttons
-      );
-    } else {
-      const ignoredThreadText = messengerBundle.GetStringFromName(
-        !subthreadOnly ? "ignoredThreadsFeedback" : "ignoredSubthreadsFeedback"
-      );
-
-      const { PluralForm } = ChromeUtils.importESModule(
-        "resource:///modules/PluralForm.sys.mjs"
-      );
-      const text = PluralForm.get(threadIds.size, ignoredThreadText).replace(
-        "#1",
-        threadIds.size
-      );
-      await this.notificationBox.appendNotification(
-        "ignoreThreadsInfo",
-        {
-          label: text,
-          priority: this.notificationBox.PRIORITY_INFO_MEDIUM,
-        },
-        buttons
-      );
+    let subject = messages[0].mime2DecodedSubject || "";
+    if (subject.length > 45) {
+      subject = subject.substring(0, 45) + "…";
     }
+    await this.notificationBox.appendNotification(
+      "ignoreThreadsInfo",
+      {
+        label: {
+          "l10n-id": !subthreadOnly
+            ? "ignored-theads-feedback"
+            : "ignored-subtheads-feedback",
+          "l10n-args": { count: threadIds.size, subject },
+        },
+        priority: this.notificationBox.PRIORITY_INFO_MEDIUM,
+      },
+      buttons
+    );
   },
 
   /**
@@ -6912,60 +6891,6 @@ var folderListener = {
         folderPane.addFolder(f.parent, f);
       }
     }
-  },
-};
-
-var userFeedbackListener = {
-  QueryInterface: ChromeUtils.generateQI(["nsIMsgUserFeedbackListener"]),
-  onAlert() {
-    return false;
-  },
-  async onCertError(securityInfo, uri) {
-    let server;
-    try {
-      server = MailServices.accounts.findServerByURI(uri);
-    } catch (ex) {
-      console.error(ex);
-      return;
-    }
-
-    let errorString;
-    const errorArgs = { hostname: uri.host };
-
-    switch (securityInfo?.overridableErrorCategory) {
-      case Ci.nsITransportSecurityInfo.ERROR_DOMAIN:
-        errorString = "cert-error-inline-domain-mismatch";
-        break;
-      case Ci.nsITransportSecurityInfo.ERROR_TIME: {
-        const cert = securityInfo.serverCert;
-        const notBefore = cert.validity.notBefore / 1000;
-        const notAfter = cert.validity.notAfter / 1000;
-        const formatter = new Intl.DateTimeFormat();
-
-        if (notBefore && Date.now() < notAfter) {
-          errorString = "cert-error-inline-not-yet-valid";
-          errorArgs["not-before"] = formatter.format(new Date(notBefore));
-        } else {
-          errorString = "cert-error-inline-expired";
-          errorArgs["not-after"] = formatter.format(new Date(notAfter));
-        }
-        break;
-      }
-      default:
-        errorString = "cert-error-inline-untrusted-default";
-        break;
-    }
-
-    window.MozXULElement.insertFTLIfNeeded("messenger/certError.ftl");
-
-    folderPane._changeRows(server.rootFolder, row => {
-      row.classList.add("tls-error");
-      document.l10n.setAttributes(row.statusIcon, errorString, errorArgs);
-      // Click handler set directly (rather than as a listener) so that we
-      // don't have to mess around clearing previous handlers.
-      row.statusIcon.onclick = () =>
-        top.MsgAccountManager("am-server.xhtml", server);
-    });
   },
 };
 

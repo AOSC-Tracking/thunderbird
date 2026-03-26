@@ -120,6 +120,7 @@
   skin/classic/messenger/abSearchDialog.css                   (../shared/mail/abSearchDialog.css)
   skin/classic/messenger/accountHub.css                       (../shared/mail/accountHub.css)
   skin/classic/messenger/accountHubForms.css                  (../shared/mail/accountHubForms.css)
+  skin/classic/messenger/accountHubSelect.css                 (../shared/mail/accountHubSelect.css)
   skin/classic/messenger/accountSetup.css                     (../shared/mail/accountSetup.css)
   skin/classic/messenger/accountWizard.css                    (../shared/mail/accountWizard.css)
   skin/classic/messenger/activity.css                         (../shared/mail/activity/activity.css)
@@ -469,6 +470,7 @@
 
 # Calendar
   skin/classic/messenger/calendar/calendarDialog.css            (../shared/mail/calendar/calendarDialog.css)
+  skin/classic/messenger/calendar/calendarDialogAcceptance.css  (../shared/mail/calendar/calendarDialogAcceptance.css)
   skin/classic/messenger/calendar/calendarDialogCategories.css  (../shared/mail/calendar/calendarDialogCategories.css)
   skin/classic/messenger/calendar/calendarDialogRow.css         (../shared/mail/calendar/calendarDialogRow.css)
 
@@ -502,6 +504,7 @@
   skin/classic/messenger/splitter.css                         (../shared/mail/splitter.css)
   skin/classic/messenger/widgets.css                          (../shared/mail/widgets.css)
 
+# The "new" folder in the path of these icons is actually old now, too.
   skin/classic/messenger/icons/new/compact/account-settings.svg (../shared/mail/icons/new/compact/account-settings.svg)
   skin/classic/messenger/icons/new/compact/add.svg            (../shared/mail/icons/new/compact/add.svg)
   skin/classic/messenger/icons/new/compact/add-circle.svg     (../shared/mail/icons/new/compact/add-circle.svg)
@@ -781,6 +784,7 @@
   skin/classic/messenger/icons/new/activity/info.svg           (../shared/mail/icons/new/activity/info.svg)
   skin/classic/messenger/icons/new/activity/error.svg          (../shared/mail/icons/new/activity/error.svg)
 
+# Icons should be registered below here, organized by icon size.
 # XS - 12x12px icons
   skin/classic/messenger/icons/xs/ascending.svg                (../shared/mail/icons/xs/ascending.svg)
   skin/classic/messenger/icons/xs/close.svg                    (../shared/mail/icons/xs/close.svg)
@@ -791,6 +795,8 @@
 
 # SM - 16x16px icons
   skin/classic/messenger/icons/sm/circle-question.svg          (../shared/mail/icons/sm/circle-question.svg)
+  skin/classic/messenger/icons/sm/circle-check.svg             (../shared/mail/icons/sm/circle-check.svg)
+  skin/classic/messenger/icons/sm/circle-close.svg             (../shared/mail/icons/sm/circle-close.svg)
   skin/classic/messenger/icons/sm/date-time.svg                (../shared/mail/icons/sm/date-time.svg)
   skin/classic/messenger/icons/sm/dot.svg                      (../shared/mail/icons/sm/dot.svg)
   skin/classic/messenger/icons/sm/folder-compact.svg           (../shared/mail/icons/sm/folder-compact.svg)

@@ -36,7 +36,7 @@ var { add_message_to_folder, create_message, msgGen } =
   ChromeUtils.importESModule(
     "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
   );
-var { promise_modal_dialog, promise_new_window } = ChromeUtils.importESModule(
+var { promise_new_window } = ChromeUtils.importESModule(
   "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 const { storeState } = ChromeUtils.importESModule(
@@ -328,7 +328,7 @@ add_task(async function test_attached_message_attachments() {
   Assert.equal(msgc.document.getElementById("attachmentList").itemCount, 1);
 
   await BrowserTestUtils.closeWindow(msgc);
-}).skip();
+}).skip(); // supernova - bug 1787094
 
 add_task(async function test_attachment_name_click() {
   await be_in_folder(folder);
@@ -346,12 +346,17 @@ add_task(async function test_attachment_name_click() {
 
   // Ensure the open dialog appears when clicking on the attachment name and
   // that the attachment list doesn't expand.
-  const dialogPromise = promise_modal_dialog(
-    "unknownContentTypeWindow",
-    function (win) {
-      win.close();
+
+  const dialogPromise = BrowserTestUtils.promiseAlertDialog(
+    null,
+    "chrome://mozapps/content/downloads/unknownContentType.xhtml",
+    {
+      async callback(win) {
+        win.close();
+      },
     }
   );
+
   EventUtils.synthesizeMouseAtCenter(
     aboutMessage.document.getElementById("attachmentName"),
     { clickCount: 1 },
@@ -517,7 +522,7 @@ add_task(async function test_attachment_list_expansion() {
     aboutMessage.document.getElementById("attachmentList").collapsed,
     "Attachment list should be collapsed after clicking save button!"
   );
-}).skip();
+}).skip(); // supernova - bug 1787094
 
 add_task(async function test_attachment_list_starts_expanded() {
   ensure_starts_expanded(true);
@@ -654,7 +659,7 @@ add_task(async function test_delete_attachment_key() {
   firstAttachment.focus();
   EventUtils.synthesizeKey("VK_DELETE", { shiftKey: true }, aboutMessage);
   await dialogPromise;
-}).skip();
+}).skip(); // supernova - bug 1787094
 
 add_task(async function test_attachments_compose_menu() {
   await be_in_folder(folder);
@@ -699,6 +704,9 @@ add_task(async function test_attachments_compose_menu() {
   // attachment should be selected since we don't handle any action on an empty
   // bucket, and we always ensure that the last attached file is visible.
   force_focus("attachmentBucket");
+  if (cwc.document.hasPendingL10nMutations) {
+    await BrowserTestUtils.waitForEvent(cwc.document, "L10nMutationsFinished");
+  }
 
   Assert.equal(
     "Remove Attachment",
@@ -713,6 +721,9 @@ add_task(async function test_attachments_compose_menu() {
   // focus the subject to see the label change and to execute isCommandEnabled
   attachment.selectedIndex = 0;
   force_focus("msgSubject");
+  if (cwc.document.hasPendingL10nMutations) {
+    await BrowserTestUtils.waitForEvent(cwc.document, "L10nMutationsFinished");
+  }
   Assert.equal(
     "Delete",
     cwc.document.getElementById("cmd_delete").getAttribute("label"),
@@ -721,6 +732,9 @@ add_task(async function test_attachments_compose_menu() {
 
   // Focus back to the attachmentBucket
   force_focus("attachmentBucket");
+  if (cwc.document.hasPendingL10nMutations) {
+    await BrowserTestUtils.waitForEvent(cwc.document, "L10nMutationsFinished");
+  }
   Assert.equal(
     "Remove Attachment",
     cwc.document.getElementById("cmd_delete").getAttribute("label"),
@@ -730,6 +744,9 @@ add_task(async function test_attachments_compose_menu() {
   // Select multiple attachments, and focus the identity for the same purpose
   attachment.selectAll();
   force_focus("msgIdentity");
+  if (cwc.document.hasPendingL10nMutations) {
+    await BrowserTestUtils.waitForEvent(cwc.document, "L10nMutationsFinished");
+  }
   Assert.equal(
     "Delete",
     cwc.document.getElementById("cmd_delete").getAttribute("label"),
@@ -738,6 +755,9 @@ add_task(async function test_attachments_compose_menu() {
 
   // Focus back to the attachmentBucket
   force_focus("attachmentBucket");
+  if (cwc.document.hasPendingL10nMutations) {
+    await BrowserTestUtils.waitForEvent(cwc.document, "L10nMutationsFinished");
+  }
   Assert.equal(
     "Remove Attachments",
     cwc.document.getElementById("cmd_delete").getAttribute("label"),

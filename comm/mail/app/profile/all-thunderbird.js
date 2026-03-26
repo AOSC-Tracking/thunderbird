@@ -1491,6 +1491,12 @@ pref("mail.inappnotifications.bypass-filtering", false);
 // TODO: Remove this when PKCE is fully rolled out for Yahoo/AOL/AT&T
 pref("mail.inappnotifications.pkceUpgradeForYahooAol", false);
 
+// Whether Thunderbird is running under Flatpak or Snap.
+// These are set at startup each run so they reflect the current runtime.
+// Used to notify about upcoming changes via in-app notification.
+pref("mail.inappnotifications.isFlatpak", false);
+pref("mail.inappnotifications.isSnap", false);
+
 #ifdef NIGHTLY_BUILD
 // Enable the new experimental conversation view based on Gloda.
 pref("mail.thread.conversation.enabled", false);
@@ -1504,11 +1510,7 @@ pref("mail.dark-reader.show-toggle", true);
 pref("mail.accounthub.enabled", true);
 
 // Enable address book setup via account hub
-#if defined(EARLY_BETA_OR_EARLIER)
 pref("mail.accounthub.addressbook.enabled", true);
-#else
-pref("mail.accounthub.addressbook.enabled", false);
-#endif
 
 // Export to mobile logging level.
 pref("mail.qrexport.loglevel", "Warn");

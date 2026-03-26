@@ -148,10 +148,10 @@
               <vbox>
                 <menulist
                   id="smtp.socketType"
-                  oncommand="sslChanged(true);"
+                  oncommand="sslChanged(true)"
                   prefstring="mail.smtpserver.%serverkey%.try_ssl"
                 >
-                  <menupopup id="smtp.socketTypePopup">
+                  <menupopup id="smtp.socketTypePopup" native="false">
                     <menuitem
                       value="0"
                       label="&connectionSecurityType-0.label;"
@@ -168,7 +168,7 @@
                 </menulist>
                 <menulist
                   id="smtp.authMethod"
-                  oncommand="authMethodChanged(true);"
+                  oncommand="authMethodChanged(true)"
                   wsm_persist="true"
                   preftype="int"
                   prefstring="mail.smtpserver.%serverkey%.authMethod"
@@ -176,6 +176,7 @@
                   <menupopup
                     id="smtp.authMethodPopup"
                     onpopupshowing="onAuthMethodPopupShowing();"
+                    native="false"
                   >
                     <menuitem id="authMethod-no" value="1" />
                     <menuitem id="authMethod-password-cleartext" value="3" />

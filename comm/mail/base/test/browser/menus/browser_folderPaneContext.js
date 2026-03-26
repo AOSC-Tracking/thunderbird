@@ -31,7 +31,6 @@ const folderPaneContextData = {
   "folderPaneContext-new": ["server", "rssRoot", ...realFolders],
   "folderPaneContext-remove": [
     "plain",
-    "junk",
     ...virtualFolders,
     "nntpGroup",
     "rssFeed",
@@ -57,6 +56,7 @@ const folderPaneContextData = {
     "multiselect",
     "multiselect-plain",
     "multiselect-minimal",
+    "unified",
   ],
   "folderPaneContext-markNewsgroupAllRead": ["nntpGroup"],
   "folderPaneContext-emptyTrash": ["trash"],
@@ -66,11 +66,13 @@ const folderPaneContextData = {
     ...realFolders,
     ...virtualFolders,
     "nntpGroup",
+    "unified",
   ],
   "folderPaneContext-properties": [
     ...realFolders,
     ...virtualFolders,
     "nntpGroup",
+    "unified",
   ],
   "folderPaneContext-markAllFoldersRead": [...servers],
   "folderPaneContext-settings": [...servers],
@@ -98,6 +100,7 @@ let rootFolder,
 let nntpRootFolder, nntpGroupFolder;
 let rssRootFolder, rssFeedFolder, rssTrashFolder;
 let tagsFolder;
+let unifiedFolder;
 
 add_setup(async function () {
   account = MailServices.accounts.createAccount();
@@ -193,9 +196,11 @@ add_setup(async function () {
     .getFolderWithFlags(Ci.nsMsgFolderFlags.Trash)
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
 
-  about3Pane.folderPane.activeModes = ["all", "tags"];
+  about3Pane.folderPane.activeModes = ["all", "tags", "smart"];
   tagsFolder =
     about3Pane.folderPane._modes.tags._smartMailbox.tagsFolder.subFolders[0];
+  unifiedFolder =
+    about3Pane.folderPane._modes.smart._smartMailbox.getSmartFolder("Inbox");
 
   registerCleanupFunction(() => {
     MailServices.accounts.removeAccount(account, false);
@@ -235,6 +240,8 @@ add_task(async function testShownItems() {
   await rightClickOn(rssFeedFolder, "rssFeed");
   leftClickOn(tagsFolder);
   await rightClickOn(tagsFolder, "tags");
+  leftClickOn(unifiedFolder);
+  await rightClickOn(unifiedFolder, "unified");
 
   // Check the menu has the right items when the selected folder is not the
   // folder that was right-clicked on.
@@ -248,6 +255,7 @@ add_task(async function testShownItems() {
   await rightClickOn(rssRootFolder, "rssRoot");
   await rightClickOn(rssFeedFolder, "rssFeed");
   await rightClickOn(tagsFolder, "tags");
+  await rightClickOn(unifiedFolder, "unified");
 
   // Check the menu has the right items when multiple folders are selected.
   leftClickOn(inboxFolder);
@@ -279,6 +287,17 @@ add_task(async function testNewRenameDelete() {
         const nameInput = doc.getElementById("name");
         const parentInput = doc.getElementById("msgNewFolderPicker");
         const acceptButton = doc.querySelector("dialog").getButton("accept");
+
+        Assert.greaterOrEqual(
+          win.innerWidth,
+          300,
+          "new folder dialog should have reasonable width"
+        );
+        Assert.greaterOrEqual(
+          win.innerHeight,
+          120,
+          "new folder dialog should have reasonable height"
+        );
 
         Assert.equal(
           doc.activeElement.id,

@@ -272,7 +272,7 @@ const RecurrencePreview = {
     const activeMinimonth = this.node.querySelector(`calendar-minimonth[active-month="true"]`);
 
     if (activeMinimonth.getAttribute("initial-month") == "true") {
-      document.getElementById("recurrencePrevious").setAttribute("disabled", "true");
+      document.getElementById("recurrencePrevious").toggleAttribute("disabled", true);
     } else {
       document.getElementById("recurrencePrevious").removeAttribute("disabled");
     }
@@ -310,7 +310,7 @@ const DaypickerWeekday = {
     const days = [];
     for (let i = 0; i < numChilds; i++) {
       const child = mainbox.children[i];
-      if (child.getAttribute("checked") == "true") {
+      if (child.hasAttribute("checked")) {
         let index = i + this.weekStartOffset;
         if (index >= 7) {
           index -= 7;
@@ -336,7 +336,7 @@ const DaypickerWeekday = {
       if (index < 0) {
         index += 7;
       }
-      mainbox.children[index].setAttribute("checked", "true");
+      mainbox.children[index].toggleAttribute("checked", true);
     }
   },
 };
@@ -373,7 +373,7 @@ const DaypickerMonthday = {
     for (const i in val) {
       const lastDayOffset = val[i] == -1 ? 0 : -1;
       const index = val[i] < 0 ? val[i] + days.length + lastDayOffset : val[i] - 1;
-      days[index].setAttribute("checked", "true");
+      days[index].toggleAttribute("checked", true);
     }
   },
   /**
@@ -384,7 +384,7 @@ const DaypickerMonthday = {
     const days = [];
     for (const row of mainbox.children) {
       for (const child of row.children) {
-        if (child.getAttribute("checked") == "true") {
+        if (child.hasAttribute("checked")) {
           days.push(Number(child.label) ? Number(child.label) : -1);
         }
       }
@@ -398,7 +398,7 @@ const DaypickerMonthday = {
     const mainbox = document.querySelector(".daypicker-monthday-mainbox");
     for (const row of mainbox.children) {
       for (const child of row.children) {
-        child.setAttribute("disabled", "true");
+        child.toggleAttribute("disabled", true);
       }
     }
   },
@@ -901,7 +901,7 @@ function disableOrEnable(item) {
 function disableRecurrenceFields(aAttributeName) {
   const disableElements = document.getElementsByAttribute(aAttributeName, "true");
   for (let i = 0; i < disableElements.length; i++) {
-    disableElements[i].setAttribute("disabled", "true");
+    disableElements[i].toggleAttribute("disabled", true);
   }
 }
 
@@ -959,13 +959,13 @@ function updateRecurrenceRange() {
   if (durationSelection == "ntimes") {
     rangeTimesCount.removeAttribute("disabled");
   } else {
-    rangeTimesCount.setAttribute("disabled", "true");
+    rangeTimesCount.toggleAttribute("disabled", true);
   }
 
   if (durationSelection == "until") {
     rangeUntilDate.removeAttribute("disabled");
   } else {
-    rangeUntilDate.setAttribute("disabled", "true");
+    rangeUntilDate.toggleAttribute("disabled", true);
   }
 }
 
@@ -1153,7 +1153,7 @@ function updateRecurrencePattern() {
       const dailyDays = document.getElementById("daily-days");
       dailyDays.removeAttribute("disabled");
       if (dailyGroup.selectedIndex == 1) {
-        dailyDays.setAttribute("disabled", "true");
+        dailyDays.toggleAttribute("disabled", true);
       }
       break;
     }
@@ -1173,8 +1173,8 @@ function updateRecurrencePattern() {
       if (monthlyGroup.selectedIndex == 0) {
         monthlyDays.disable();
       } else {
-        monthlyOrdinal.setAttribute("disabled", "true");
-        monthlyWeekday.setAttribute("disabled", "true");
+        monthlyOrdinal.toggleAttribute("disabled", true);
+        monthlyWeekday.toggleAttribute("disabled", true);
       }
       break;
     }
@@ -1196,14 +1196,14 @@ function updateRecurrencePattern() {
       yearlyPeriodOfLabel.removeAttribute("disabled");
       yearlyPeriodOfMonthLabel.removeAttribute("disabled");
       if (yearlyGroup.selectedIndex == 0) {
-        yearlyOrdinal.setAttribute("disabled", "true");
-        yearlyWeekday.setAttribute("disabled", "true");
-        yearlyMonthRule.setAttribute("disabled", "true");
-        yearlyPeriodOfLabel.setAttribute("disabled", "true");
+        yearlyOrdinal.toggleAttribute("disabled", true);
+        yearlyWeekday.toggleAttribute("disabled", true);
+        yearlyMonthRule.toggleAttribute("disabled", true);
+        yearlyPeriodOfLabel.toggleAttribute("disabled", true);
       } else {
-        yearlyDays.setAttribute("disabled", "true");
-        yearlyMonthOrdinal.setAttribute("disabled", "true");
-        yearlyPeriodOfMonthLabel.setAttribute("disabled", "true");
+        yearlyDays.toggleAttribute("disabled", true);
+        yearlyMonthOrdinal.toggleAttribute("disabled", true);
+        yearlyPeriodOfMonthLabel.toggleAttribute("disabled", true);
       }
       break;
     }

@@ -22,7 +22,11 @@
   ChromeUtils.defineLazyGetter(
     this,
     "l10n",
-    () => new Localization(["messenger/searchWidgets.ftl"], true)
+    () =>
+      new Localization(
+        ["messenger/searchWidgets.ftl", "messenger/filterEditor.ftl"],
+        true
+      )
   );
 
   const updateParentNode = parentNode => {
@@ -65,7 +69,7 @@
         MozXULElement.parseXULToFragment(
           `
           <menulist class="ruleactionitem" flex="1">
-            <menupopup>
+            <menupopup native="false">
               <menuitem value="6" label="&highestPriorityCmd.label;"></menuitem>
               <menuitem value="5" label="&highPriorityCmd.label;"></menuitem>
               <menuitem value="4" label="&normalPriorityCmd.label;"></menuitem>
@@ -88,7 +92,7 @@
         MozXULElement.parseXULToFragment(
           `
           <menulist class="ruleactionitem" flex="1">
-            <menupopup>
+            <menupopup native="false">
               <menuitem value="100" data-l10n-id="rule-menuitem-spam"/>
               <menuitem value="0" data-l10n-id="rule-menuitem-not-spam"/>
             </menupopup>
@@ -140,6 +144,8 @@
 
   class MozRuleactiontargetFolder extends MozXULElement {
     connectedCallback() {
+      // For the 'Recent Destinations' label.
+      document.l10n.addResourceIds(["messenger/messenger.ftl"]);
       this.appendChild(
         MozXULElement.parseXULToFragment(
           `
@@ -151,12 +157,11 @@
                        mode="filing"
                        class="menulist-menupopup"
                        showRecent="true"
-                       recentLabel="&recentFolders.label;"
-                       showFileHereLabel="true">
+                       showFileHereLabel="true"
+                       native="false">
             </menupopup>
           </menulist>
-          `,
-          ["chrome://messenger/locale/messenger.dtd"]
+          `
         )
       );
 
@@ -306,11 +311,7 @@
       } else {
         this.menulist.removeAttribute("flex");
       }
-      if (this.hasAttribute("disabled")) {
-        this.menulist.setAttribute("disabled", this.getAttribute("disabled"));
-      } else {
-        this.menulist.removeAttribute("disabled");
-      }
+      this.menulist.toggleAttribute("disabled", this.hasAttribute("disabled"));
     }
 
     set searchScope(val) {
@@ -469,8 +470,18 @@
       this.menulist.selectedItem = this.validMenuitem;
     }
 
-    onSelect() {
+    async onSelect() {
       if (this.menulist.value == Ci.nsMsgSearchAttrib.OtherHeader) {
+        // Wait for the menupopup to finish closing to have the pointer capture
+        // released before opening the modal dialog.
+        if (this.menupopup.state != "closed") {
+          await new Promise(resolve => {
+            this.menupopup.addEventListener("popuphidden", resolve, {
+              once: true,
+            });
+          });
+        }
+
         // Customize menuitem selected.
         const args = {};
         window.openDialog(
@@ -1025,11 +1036,7 @@
       if (!this.input) {
         return;
       }
-      if (this.hasAttribute("disabled")) {
-        this.input.setAttribute("disabled", this.getAttribute("disabled"));
-      } else {
-        this.input.removeAttribute("disabled");
-      }
+      this.input.toggleAttribute("disabled", this.hasAttribute("disabled"));
     }
 
     /**
@@ -1266,7 +1273,7 @@
           const unavailableActions = this.usedActionsList();
           for (let index = 0; index < this.menuitems.length; index++) {
             const menu = this.menuitems[index];
-            menu.setAttribute("disabled", menu.value in unavailableActions);
+            menu.toggleAttribute("disabled", menu.value in unavailableActions);
           }
         });
 
@@ -1529,7 +1536,7 @@
         MozXULElement.parseXULToFragment(
           `
           <menulist is="ruleactiontype-menulist" style="flex: &filterActionTypeFlexValue;">
-            <menupopup>
+            <menupopup native="false">
               <menuitem label="&moveMessage.label;"
                         value="movemessage"
                         enablefornews="false"></menuitem>
@@ -1654,9 +1661,9 @@
           }
           if (needCustomLabel) {
             const menuitem = document.createXULElement("menuitem");
-            menuitem.setAttribute(
-              "label",
-              gFilterBundle.getString("filterMissingCustomAction")
+            document.l10n.setAttributes(
+              menuitem,
+              "filter-missing-custom-action"
             );
             menuitem.setAttribute("value", filterActionStr);
             menuitem.disabled = true;
@@ -1730,16 +1737,15 @@
             gFilterType & Ci.nsMsgFilterType.NewsRule &&
             !(gFilterType & Ci.nsMsgFilterType.PostPlugin)
           ) {
-            // TODO: This should be replaced by a more concise error message
-            // when migrating to Fluent.
-            errorString = "filterFailureAction";
+            // TODO: This could be replaced by a more concise error message.
+            errorString = "filter-failure-action";
             break;
           }
           const msgFolder = actionTargetLabel
             ? MailUtils.getOrCreateFolder(actionTargetLabel)
             : null;
           if (!msgFolder || !msgFolder.canFileMessages) {
-            errorString = "mustSelectFolder";
+            errorString = "filter-editor-must-select-target-folder";
           }
           break;
         }
@@ -1748,12 +1754,12 @@
             actionTargetLabel.length < 3 ||
             actionTargetLabel.indexOf("@") < 1
           ) {
-            errorString = "enterValidEmailAddress";
+            errorString = "filter-editor-enter-valid-email-forward";
           }
           break;
         case "replytomessage":
           if (!actionTarget.ruleactiontargetElement.children[0].selectedItem) {
-            errorString = "pickTemplateToReplyWith";
+            errorString = "filter-editor-pick-template-reply";
           }
           break;
         default:
@@ -1772,7 +1778,7 @@
       }
 
       errorString = errorString
-        ? gFilterBundle.getString(errorString)
+        ? l10n.formatValueSync(errorString)
         : customError;
       if (errorString) {
         Services.prompt.alert(window, null, errorString);

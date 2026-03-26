@@ -6,19 +6,28 @@
 
 #![doc = "Provides operations to manage the user singleton.\n\nAuto-generated from [Microsoft OpenAPI metadata](https://github.com/microsoftgraph/msgraph-metadata/blob/master/openapi/v1.0/openapi.yaml) via `ms_graph_tb_extract openapi.yaml ms_graph_tb/`."]
 use crate::types::user::*;
-use crate::{Operation, Select, Selection};
+use crate::*;
 use form_urlencoded::Serializer;
 use http::method::Method;
-use std::str::FromStr;
-const PATH: &str = "/me";
+#[derive(Debug)]
+struct TemplateExpressions {
+    endpoint: String,
+}
+fn format_path(template_expressions: &TemplateExpressions) -> String {
+    let TemplateExpressions { endpoint } = template_expressions;
+    let endpoint = endpoint.trim_end_matches('/');
+    format!("{endpoint}/me")
+}
 #[doc = "Get a user\n\nRetrieve the properties and relationships of user object. This operation returns by default only a subset of the more commonly used properties for each user. These default properties are noted in the Properties section. To get properties that are not returned by default, do a GET operation for the user and specify the properties in a `$select` OData query option. Because the user resource supports extensions, you can also use the GET operation to get custom properties and extension data in a user instance. Customers through Microsoft Entra ID for customers can also use this API operation to retrieve their details.\n\nMore information available via [Microsoft documentation](https://learn.microsoft.com/graph/api/user-get?view=graph-rest-1.0)."]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Get {
+    template_expressions: TemplateExpressions,
     selection: Selection<UserSelection>,
 }
 impl Get {
-    pub fn new() -> Self {
+    pub fn new(endpoint: String) -> Self {
         Self {
+            template_expressions: TemplateExpressions { endpoint },
             selection: Selection::default(),
         }
     }
@@ -26,14 +35,18 @@ impl Get {
 impl Operation for Get {
     const METHOD: Method = Method::GET;
     type Body = ();
+    type Response<'response> = User<'response>;
     fn build(&self) -> http::Request<Self::Body> {
         let mut params = Serializer::new(String::new());
         let (select, selection) = self.selection.pair();
         params.append_pair(select, &selection);
         let params = params.finish();
-        let p_and_q = http::uri::PathAndQuery::from_str(&format!("{PATH}?{params}")).unwrap();
+        let path = format_path(&self.template_expressions);
+        let uri = format!("{path}?{params}")
+            .parse::<http::uri::Uri>()
+            .unwrap();
         http::Request::builder()
-            .uri(p_and_q)
+            .uri(uri)
             .method(Self::METHOD)
             .body(())
             .unwrap()
@@ -49,22 +62,29 @@ impl Select for Get {
     }
 }
 #[doc = "Update user\n\nUpdate the properties of a user object.\n\nMore information available via [Microsoft documentation](https://learn.microsoft.com/graph/api/user-update?view=graph-rest-1.0)."]
-#[derive(Debug, Default)]
-pub struct Patch<'a> {
-    body: User<'a>,
+#[derive(Debug)]
+pub struct Patch<'body> {
+    template_expressions: TemplateExpressions,
+    body: User<'body>,
 }
-impl<'a> Patch<'a> {
-    pub fn new(body: User<'a>) -> Self {
-        Self { body }
+impl<'body> Patch<'body> {
+    pub fn new(endpoint: String, body: User<'body>) -> Self {
+        Self {
+            template_expressions: TemplateExpressions { endpoint },
+            body,
+        }
     }
 }
-impl<'a> Operation for Patch<'a> {
+impl<'body> Operation for Patch<'body> {
     const METHOD: Method = Method::PATCH;
-    type Body = User<'a>;
+    type Body = User<'body>;
+    type Response<'response> = User<'response>;
     fn build(&self) -> http::Request<Self::Body> {
-        let p_and_q = PATH;
+        let uri = format_path(&self.template_expressions)
+            .parse::<http::uri::Uri>()
+            .unwrap();
         http::Request::builder()
-            .uri(p_and_q)
+            .uri(uri)
             .method(Self::METHOD)
             .body(self.body.clone())
             .unwrap()

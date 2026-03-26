@@ -61,7 +61,7 @@ function openChatContextMenu(popup) {
 
   document
     .getElementById("spellCheckEnable")
-    .setAttribute("checked", spellchecker.enabled);
+    .toggleAttribute("checked", spellchecker.enabled);
   document
     .getElementById("spellCheckDictionaries")
     .toggleAttribute("hidden", !spellchecker.enabled);
@@ -106,7 +106,7 @@ function enableInlineSpellCheck(aEnableInlineSpellCheck) {
   gChatSpellChecker.enabled = aEnableInlineSpellCheck;
   document
     .getElementById("spellCheckEnable")
-    .setAttribute("checked", aEnableInlineSpellCheck);
+    .toggleAttribute("checked", aEnableInlineSpellCheck);
   document
     .getElementById("spellCheckDictionaries")
     .toggleAttribute("hidden", !aEnableInlineSpellCheck);
@@ -1207,13 +1207,7 @@ var chatHandler = {
     }
 
     const chatStatusCmd = document.getElementById("cmd_chatStatus");
-    if (chatStatusCmd) {
-      if (hasAccount) {
-        chatStatusCmd.removeAttribute("disabled");
-      } else {
-        chatStatusCmd.setAttribute("disabled", true);
-      }
-    }
+    chatStatusCmd?.toggleAttribute("disabled", !hasAccount);
 
     const addBuddyButton = document.getElementById("button-add-buddy");
     if (addBuddyButton) {
@@ -1221,13 +1215,7 @@ var chatHandler = {
     }
 
     const addBuddyCmd = document.getElementById("cmd_addChatBuddy");
-    if (addBuddyCmd) {
-      if (connected) {
-        addBuddyCmd.removeAttribute("disabled");
-      } else {
-        addBuddyCmd.setAttribute("disabled", true);
-      }
-    }
+    addBuddyCmd?.toggleAttribute("disabled", !connected);
 
     const joinChatButton = document.getElementById("button-join-chat");
     if (joinChatButton) {
@@ -1235,13 +1223,7 @@ var chatHandler = {
     }
 
     const joinChatCmd = document.getElementById("cmd_joinChat");
-    if (joinChatCmd) {
-      if (canJoinChat) {
-        joinChatCmd.removeAttribute("disabled");
-      } else {
-        joinChatCmd.setAttribute("disabled", true);
-      }
-    }
+    joinChatCmd?.toggleAttribute("disabled", !canJoinChat);
 
     const groupIds = ["conversations", "onlinecontacts", "offlinecontacts"];
     const contactlist = document.getElementById("contactlistbox");

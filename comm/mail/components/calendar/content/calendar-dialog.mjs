@@ -3,10 +3,12 @@
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { PositionedDialog } from "./positioned-dialog.mjs";
+import "./calendar-dialog-acceptance.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./calendar-dialog-subview-manager.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./calendar-dialog-date-row.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./calendar-dialog-description-row.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./calendar-dialog-categories.mjs"; // eslint-disable-line import/no-unassigned-import
+import "./calendar-dialog-reminders-row.mjs"; // eslint-disable-line import/no-unassigned-import
 
 // Eagerly loading modules, since we assume that an event will be displayed soon
 // after this is loaded. Any module in an optional path for displaying an event
@@ -74,6 +76,7 @@ export class CalendarDialog extends PositionedDialog {
       this.#subviewManager.addEventListener("subviewchanged", this);
       this.querySelector(".back-button").addEventListener("click", this);
       this.querySelector("#expandDescription").addEventListener("click", this);
+      this.#subviewManager.addEventListener("toggleRowVisibility", this);
 
       this.querySelector(".back-button").hidden =
         this.#subviewManager.isDefaultSubviewVisible();
@@ -123,6 +126,12 @@ export class CalendarDialog extends PositionedDialog {
         this.querySelector(".back-button").hidden =
           this.#subviewManager.isDefaultSubviewVisible();
         break;
+      case "toggleRowVisibility": {
+        event.target
+          .closest(".hideable-row")
+          .toggleAttribute("hidden", event.detail.isHidden);
+        break;
+      }
     }
   }
 
@@ -221,6 +230,8 @@ export class CalendarDialog extends PositionedDialog {
 
     this.querySelector(".event-title").textContent = event.title;
     this.querySelector(".calendar-name").textContent = calendar.name;
+    this.querySelector(".calendar-dialog-title").title =
+      `${calendar.name} - ${event.title}`;
 
     const dateRow = this.querySelector("calendar-dialog-date-row");
     const startDate = cal.dtz.dateTimeToJsDate(event.startDate);
@@ -230,8 +241,7 @@ export class CalendarDialog extends PositionedDialog {
 
     const recurrence = recurrenceStringFromItem(
       event,
-      "calendar-event-dialog",
-      "ruleTooComplexSummary"
+      "recurrence-rule-too-complex"
     );
     if (recurrence) {
       dateRow.setAttribute("repeats", recurrence);
@@ -245,6 +255,17 @@ export class CalendarDialog extends PositionedDialog {
     );
 
     this.#setLocation(event.getProperty("LOCATION") ?? "");
+
+    // Sort the reminders by offset from event date.
+    const reminders = event
+      .getAlarms()
+      .sort((a, b) =>
+        cal.alarms
+          .calculateAlarmDate(event, b)
+          .compare(cal.alarms.calculateAlarmDate(event, a))
+      );
+
+    this.querySelector("calendar-dialog-reminders-row").setReminders(reminders);
 
     const plainDescriptionPromise = this.querySelector(
       "#expandingDescription"
@@ -262,6 +283,8 @@ export class CalendarDialog extends PositionedDialog {
     this.#subviewManager.showDefaultSubview();
     this.querySelector(".event-title").textContent = "";
     this.querySelector(".calendar-name").textContent = "";
+    this.querySelector(".calendar-dialog-title").title = "";
+
     // Only clearing the repeats attribute, the dates are expected to always
     // have a value.
     this.querySelector("calendar-dialog-date-row").removeAttribute("repeats");
@@ -270,6 +293,7 @@ export class CalendarDialog extends PositionedDialog {
     this.style.removeProperty("--calendar-bar-color");
     await this.querySelector("#expandingDescription").setDescription("");
     await this.querySelector("#expandedDescription").setDescription("");
+    this.querySelector("calendar-dialog-reminders-row").setReminders([]);
   }
 
   /**
@@ -283,6 +307,10 @@ export class CalendarDialog extends PositionedDialog {
     const locationText = this.querySelector("#locationText");
     locationLink.hidden = !parsedURL;
     locationText.hidden = parsedURL || !eventLocation;
+    this.querySelector("#locationRow").toggleAttribute(
+      "hidden",
+      !eventLocation
+    );
 
     if (parsedURL) {
       locationLink.textContent = eventLocation;

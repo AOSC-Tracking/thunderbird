@@ -3,19 +3,17 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use ews::{
-    copy_item::{CopyItem, CopyItemResponse},
-    move_item::{MoveItem, MoveItemResponse},
-    server_version::ExchangeServerVersion,
     BaseItemId, CopyMoveItemData, ItemResponseMessage, Operation, OperationResponse,
+    copy_item::CopyItem, move_item::MoveItem, server_version::ExchangeServerVersion,
 };
+use protocol_shared::client::DoOperation;
+use protocol_shared::safe_xpcom::{SafeEwsSimpleOperationListener, SafeListener};
 use std::{marker::PhantomData, sync::Arc};
 
 use crate::client::copy_move_operations::move_generic::{
-    move_generic, CopyMoveOperation, CopyMoveSuccess, RequiresResync,
+    CopyMoveOperation, CopyMoveSuccess, RequiresResync, move_generic,
 };
-use crate::client::{DoOperation, ServerType, XpComEwsClient, XpComEwsError};
-use crate::macros::queue_operation;
-use crate::safe_xpcom::{SafeEwsSimpleOperationListener, SafeListener};
+use crate::client::{ServerType, XpComEwsClient, XpComEwsError};
 
 struct DoCopyMoveItem<RequestT> {
     destination_folder_id: String,
@@ -23,16 +21,17 @@ struct DoCopyMoveItem<RequestT> {
     _request_type: PhantomData<RequestT>,
 }
 
-impl<RequestT> DoOperation for DoCopyMoveItem<RequestT>
+impl<ServerT: ServerType, RequestT> DoOperation<XpComEwsClient<ServerT>, XpComEwsError>
+    for DoCopyMoveItem<RequestT>
 where
-    RequestT: CopyMoveOperation + From<CopyMoveItemData> + Into<CopyMoveItemData>,
+    RequestT: CopyMoveOperation + From<CopyMoveItemData> + Into<CopyMoveItemData> + 'static,
     <RequestT as Operation>::Response: OperationResponse<Message = ItemResponseMessage>,
 {
     const NAME: &'static str = <RequestT as Operation>::NAME;
     type Okay = CopyMoveSuccess;
     type Listener = SafeEwsSimpleOperationListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {
@@ -69,7 +68,7 @@ impl<ServerT: ServerType> XpComEwsClient<ServerT> {
         destination_folder_id: String,
         item_ids: Vec<String>,
     ) where
-        RequestT: CopyMoveOperation + From<CopyMoveItemData> + Into<CopyMoveItemData>,
+        RequestT: CopyMoveOperation + From<CopyMoveItemData> + Into<CopyMoveItemData> + 'static,
         <RequestT as Operation>::Response: OperationResponse<Message = ItemResponseMessage>,
     {
         let operation = DoCopyMoveItem::<RequestT> {
@@ -103,11 +102,10 @@ impl<ServerT: ServerType> XpComEwsClient<ServerT> {
         item_ids: Vec<String>,
     ) -> Result<CopyMoveSuccess, XpComEwsError>
     where
-        RequestT: CopyMoveOperation + From<CopyMoveItemData> + Into<CopyMoveItemData>,
+        RequestT: CopyMoveOperation + From<CopyMoveItemData> + Into<CopyMoveItemData> + 'static,
         <RequestT as Operation>::Response: OperationResponse<Message = ItemResponseMessage>,
     {
-        let result = move_generic::<_, RequestT>(self, destination_folder_id, item_ids).await;
-        result
+        move_generic::<_, RequestT>(self, destination_folder_id, item_ids).await
     }
 }
 
@@ -161,20 +159,22 @@ fn get_new_ews_ids_from_response(response: Vec<ItemResponseMessage>) -> Vec<Stri
 }
 
 impl CopyMoveOperation for CopyItem {
-    async fn queue_operation<ServerT: ServerType>(
-        client: &XpComEwsClient<ServerT>,
-        destination_folder_id: String,
-        ids: Vec<String>,
-    ) -> Result<(Self::Response, RequiresResync), XpComEwsError> {
-        let op: Self = construct_request(client, destination_folder_id, ids);
-        let requires_resync = if let Some(true) = op.inner.return_new_item_ids {
+    fn requires_resync(&self) -> RequiresResync {
+        // If we don't expect the response to give us the new IDs for the items
+        // we've copied, we should get them by syncing again.
+        if let Some(true) = self.inner.return_new_item_ids {
             RequiresResync::No
         } else {
             RequiresResync::Yes
-        };
+        }
+    }
 
-        let rcv = queue_operation!(client, CopyItem, op, Default::default());
-        rcv.await?.map(|resp| (resp, requires_resync))
+    fn operation_builder<ServerT: ServerType>(
+        client: &XpComEwsClient<ServerT>,
+        destination_folder_id: String,
+        ids: Vec<String>,
+    ) -> Self {
+        construct_request(client, destination_folder_id, ids)
     }
 
     fn response_to_ids(
@@ -185,20 +185,22 @@ impl CopyMoveOperation for CopyItem {
 }
 
 impl CopyMoveOperation for MoveItem {
-    async fn queue_operation<ServerT: ServerType>(
-        client: &XpComEwsClient<ServerT>,
-        destination_folder_id: String,
-        ids: Vec<String>,
-    ) -> Result<(Self::Response, RequiresResync), XpComEwsError> {
-        let op: Self = construct_request(client, destination_folder_id, ids);
-        let requires_resync = if let Some(true) = op.inner.return_new_item_ids {
+    fn requires_resync(&self) -> RequiresResync {
+        // If we don't expect the response to give us the new IDs for the items
+        // we've copied, we should get them by syncing again.
+        if let Some(true) = self.inner.return_new_item_ids {
             RequiresResync::No
         } else {
             RequiresResync::Yes
-        };
+        }
+    }
 
-        let rcv = queue_operation!(client, MoveItem, op, Default::default());
-        rcv.await?.map(|resp| (resp, requires_resync))
+    fn operation_builder<ServerT: ServerType>(
+        client: &XpComEwsClient<ServerT>,
+        destination_folder_id: String,
+        ids: Vec<String>,
+    ) -> Self {
+        construct_request(client, destination_folder_id, ids)
     }
 
     fn response_to_ids(

@@ -88,7 +88,7 @@ function ValidateNumber(
       SwitchToValidatePanel();
 
       // Error - shift to offending input widget
-      SetTextboxFocus(inputWidget);
+      inputWidget.focus();
       gValidationError = true;
     } else {
       if (isPercent) {
@@ -164,16 +164,6 @@ function ValidateNumberRange(value, minValue, maxValue, mustHaveValue) {
   // Return an empty string to indicate error
   gValidationError = true;
   return "";
-}
-
-function SetTextboxFocusById(id) {
-  SetTextboxFocus(document.getElementById(id));
-}
-
-function SetTextboxFocus(input) {
-  if (input) {
-    input.focus();
-  }
 }
 
 function ShowInputErrorMessage(message) {
@@ -560,7 +550,7 @@ function FillLinkMenulist(linkMenulist, headingsArray) {
         return;
       }
       const item = createMenuItem(GetString("NoNamedAnchorsOrHeadings"));
-      item.setAttribute("disabled", "true");
+      item.toggleAttribute("disabled", true);
       menuItems.push(item);
     }
     window.addEventListener("contextmenu", () => {

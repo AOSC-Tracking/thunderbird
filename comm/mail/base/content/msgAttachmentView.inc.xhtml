@@ -15,7 +15,8 @@
                               <html:img id="attachmentIcon"
                                         src="chrome://messenger/skin/icons/attach.svg"
                                         alt="" />
-                              <label id="attachmentCount"/>
+                              <label id="attachmentCount" data-l10n-id="attachment-view-attachment-count" data-l10n-args='{ "count": 0 }' />
+                              <html:span id="attachmentNameSep">: </html:span>
                               <label id="attachmentName" crop="center"
                                      role="button"
                                      tooltiptext="&openAttachment.tooltip;"
@@ -41,7 +42,8 @@
                                                  oncommand="TryHandleAllAttachments('saveAs');"
                                                  hidden="hidden">
                                     <menupopup id="attachmentSaveAllSingleMenu"
-                                               onpopupshowing="onShowSaveAttachmentMenuSingle();">
+                                               onpopupshowing="onShowSaveAttachmentMenuSingle();"
+                                               native="false">
                                       <menuitem id="button-openAttachment"
                                                 oncommand="TryHandleAllAttachments('open'); event.stopPropagation();"
                                                 label="&openAttachmentCmd.label;"
@@ -69,7 +71,8 @@
                                                  onclick="event.stopPropagation();"
                                                  oncommand="TryHandleAllAttachments('save');">
                                     <menupopup id="attachmentSaveAllMultipleMenu"
-                                               onpopupshowing="onShowSaveAttachmentMenuMultiple();">
+                                               onpopupshowing="onShowSaveAttachmentMenuMultiple();"
+                                               native="false">
                                       <menuitem id="button-openAllAttachments"
                                                 oncommand="TryHandleAllAttachments('open'); event.stopPropagation();"
                                                 label="&openAllAttachmentsCmd.label;"

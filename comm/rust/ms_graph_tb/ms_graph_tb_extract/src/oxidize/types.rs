@@ -3,9 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 
-use super::{Composed, Reference, RustType};
+use super::{Reference, RustType, return_type};
 use crate::extract::schema::Property;
 use crate::naming::{pascalize, snakeify};
 use crate::oxidize::markup_doc_comment;
@@ -73,7 +73,7 @@ impl ToTokens for GraphType {
             }
 
             impl<'a> #name<'a> {
-                /// Internal constructor.
+                ///Internal constructor.
                 // Don't make this pub or implement public traits (`Map` is an externally defined
                 // type used internally, and may change).
                 #[allow(dead_code)]
@@ -162,7 +162,7 @@ fn function_defs(properties: &[Property]) -> Vec<FunctionDef> {
         .iter()
         .map(|p| {
             let fn_name = format_ident!("{}", snakeify(&p.name));
-            let ret_type = return_type(p, Reference::Ref);
+            let ret_type = return_type(p, Reference::Ref, None);
             let doc_comment = if let Some(doc) = &p.description {
                 let doc = markup_doc_comment(doc.clone());
                 Some(quote!(#[doc = #doc]))
@@ -189,39 +189,6 @@ fn function_defs(properties: &[Property]) -> Vec<FunctionDef> {
     function_defs
 }
 
-fn return_type(prop: &Property, refers: Reference) -> TokenStream {
-    let base = &prop.rust_type.base_token(prop.nullable, refers);
-
-    let mut ty: TokenStream = if matches!(prop.rust_type, RustType::Custom(_)) {
-        quote!(#base<'a>)
-    } else {
-        quote!(#base)
-    };
-
-    let composed = prop.rust_type.composed();
-    if refers == Reference::Ref
-        && composed != Composed::Copy
-        && (!prop.is_collection || composed == Composed::Slice)
-        && !matches!(prop.rust_type, RustType::Custom(_))
-    {
-        ty = quote!(&#ty);
-    }
-
-    if prop.is_collection {
-        ty = quote!(Vec<#ty>);
-    }
-
-    if prop.nullable {
-        ty = quote!(Option<#ty>);
-    }
-
-    if !prop.is_ref {
-        ty = quote!(Result<#ty, Error>);
-    }
-
-    ty
-}
-
 fn fn_body(prop: &Property) -> TokenStream {
     if prop.is_ref {
         // refs are actually flattened in responses, but we want them abstracted,
@@ -233,7 +200,7 @@ fn fn_body(prop: &Property) -> TokenStream {
         else {
             panic!("Reference to non-custom type: {prop:?}");
         };
-        let ident = format_ident!("{typ}");
+        let ident = format_ident!("{}", typ.as_pascal_case());
 
         return quote! {
             #ident {
@@ -298,7 +265,7 @@ fn fn_body(prop: &Property) -> TokenStream {
                 .as_array()
                 .ok_or_else(|| Error::UnexpectedResponse(format!("{:?}", val)))?
                 .iter()
-                .map(|v| Ok(#ret))
+                .map(|v| Ok::<_, Error>(#ret))
                 .collect::<Result<_, _>>()?
         };
     }

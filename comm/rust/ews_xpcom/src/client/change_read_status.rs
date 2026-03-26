@@ -5,23 +5,22 @@
 use std::sync::Arc;
 
 use ews::{
+    BaseItemId, Message, MessageDisposition, Operation, OperationResponse, PathToElement,
     update_item::{
         ConflictResolution, ItemChange, ItemChangeDescription, ItemChangeInner, UpdateItem, Updates,
     },
-    BaseItemId, Message, MessageDisposition, Operation, OperationResponse, PathToElement,
 };
 use nsstring::nsCString;
-use thin_vec::ThinVec;
-
-use crate::{
-    client::{
-        process_response_message_class, DoOperation, ServerType, XpComEwsClient, XpComEwsError,
-    },
+use protocol_shared::{
+    client::DoOperation,
     safe_xpcom::{
-        handle_error, SafeEwsSimpleOperationListener, SafeListener, SimpleOperationSuccessArgs,
-        UseLegacyFallback,
+        SafeEwsSimpleOperationListener, SafeListener, SimpleOperationSuccessArgs,
+        UseLegacyFallback, handle_error,
     },
 };
+use thin_vec::ThinVec;
+
+use crate::client::{ServerType, XpComEwsClient, XpComEwsError, process_response_message_class};
 
 struct DoChangeReadStatus<'a> {
     listener: &'a SafeEwsSimpleOperationListener,
@@ -29,12 +28,14 @@ struct DoChangeReadStatus<'a> {
     is_read: bool,
 }
 
-impl DoOperation for DoChangeReadStatus<'_> {
+impl<ServerT: ServerType> DoOperation<XpComEwsClient<ServerT>, XpComEwsError>
+    for DoChangeReadStatus<'_>
+{
     const NAME: &'static str = "change read status";
     type Okay = ();
     type Listener = SafeEwsSimpleOperationListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {
@@ -115,7 +116,9 @@ impl DoOperation for DoChangeReadStatus<'_> {
                 .as_ref()
                 .expect_err("partition should only populate this with errs");
             return Err(XpComEwsError::Processing {
-                message: format!("response contained {num_errs} errors; the first error (at index {index}) was: {first_error:?}"),
+                message: format!(
+                    "response contained {num_errs} errors; the first error (at index {index}) was: {first_error:?}"
+                ),
             });
         }
 
@@ -132,7 +135,7 @@ impl DoOperation for DoChangeReadStatus<'_> {
     /// This uses a custom implementation, since this operation has the unusual
     /// behavior of returning any successful responses to the success listener,
     /// even if the operation had failures.
-    async fn handle_operation<ServerT: ServerType>(
+    async fn handle_operation(
         mut self,
         client: &XpComEwsClient<ServerT>,
         listener: &Self::Listener,
@@ -142,7 +145,8 @@ impl DoOperation for DoChangeReadStatus<'_> {
                 // the operation has already called on_success
             }
             Err(err) => {
-                handle_error(listener, Self::NAME, &err, ());
+                let name = <Self as DoOperation<XpComEwsClient<ServerT>, _>>::NAME;
+                handle_error(listener, name, &err, ());
             }
         }
     }

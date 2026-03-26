@@ -54,10 +54,9 @@ var {
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/NotificationBoxHelpers.sys.mjs"
 );
-var { click_menus_in_sequence, promise_modal_dialog } =
-  ChromeUtils.importESModule(
-    "resource://testing-common/mail/WindowHelpers.sys.mjs"
-  );
+var { click_menus_in_sequence } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
+);
 
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
@@ -197,6 +196,15 @@ var msgBodyStart =
 var msgBodyEnd = "</body>\n</html>\n";
 
 add_setup(async () => {
+  // Remove state information (for example position and size) for the compose and
+  // message window, which might have leaked in from previous tests.
+  Services.xulStore.removeDocument(
+    "chrome://messenger/content/messengercompose/messengercompose.xhtml"
+  );
+  Services.xulStore.removeDocument(
+    "chrome://messenger/content/messageWindow.xhtml"
+  );
+
   requestLongerTimeout(3);
   folder = await create_folder("generalContentPolicy");
   Assert.ok(folder, "folder should be set up");
@@ -360,6 +368,17 @@ async function checkStandaloneMessageWindow(test, loadAllowed) {
   const win = await winPromise;
   await BrowserTestUtils.waitForEvent(win, "MsgLoaded");
   await TestUtils.waitForCondition(() => Services.focus.activeWindow == win);
+
+  Assert.greaterOrEqual(
+    win.innerWidth,
+    700,
+    "standalone msg win should have reasonable width"
+  );
+  Assert.greaterOrEqual(
+    win.innerHeight,
+    600,
+    "standalone msg win should have reasonable height"
+  );
 
   if (
     (await test.checkForAllowed(
@@ -676,6 +695,13 @@ add_task(async function test_generalContentPolicy() {
   await assert_nothing_selected();
 
   for (let i = 0; i < TESTS.length; ++i) {
+    Services.xulStore.removeDocument(
+      "chrome://messenger/content/messengercompose/messengercompose.xhtml"
+    );
+    Services.xulStore.removeDocument(
+      "chrome://messenger/content/messageWindow.xhtml"
+    );
+
     // Check for denied in mail
     info("Doing test: " + TESTS[i].description + " ...\n");
     await addMsgToFolderAndCheckContent(folder, TESTS[i]);
@@ -877,22 +903,25 @@ async function subtest_insertImageIntoReplyForward(aReplyType) {
   replyWindow.document.getElementById("messageEditor").focus();
 
   // Now open the image window
-  const dialogPromise = promise_modal_dialog(
-    "Mail:image",
-    async function (mwc) {
-      // Insert the url of the image.
-      const srcloc = mwc.document.getElementById("srcInput");
-      srcloc.focus();
+  const dialogPromise = BrowserTestUtils.promiseAlertDialog(
+    null,
+    "chrome://messenger/content/messengercompose/EdImageProps.xhtml",
+    {
+      async callback(mwc) {
+        // Insert the url of the image.
+        const srcloc = mwc.document.getElementById("srcInput");
+        srcloc.focus();
 
-      input_value(mwc, url + "pass.png");
+        input_value(mwc, url + "pass.png");
 
-      // Don't add alternate text
-      const noAlt = mwc.document.getElementById("noAltTextRadio");
-      EventUtils.synthesizeMouseAtCenter(noAlt, {}, noAlt.ownerGlobal);
-      await new Promise(resolve => setTimeout(resolve));
+        // Don't add alternate text
+        const noAlt = mwc.document.getElementById("noAltTextRadio");
+        EventUtils.synthesizeMouseAtCenter(noAlt, {}, noAlt.ownerGlobal);
+        await new Promise(resolve => setTimeout(resolve));
 
-      // Accept the dialog
-      mwc.document.querySelector("dialog").acceptDialog();
+        // Accept the dialog
+        mwc.document.querySelector("dialog").acceptDialog();
+      },
     }
   );
 

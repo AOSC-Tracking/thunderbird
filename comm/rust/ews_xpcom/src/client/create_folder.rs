@@ -4,19 +4,15 @@
 
 use std::sync::Arc;
 
-use ews::{
-    create_folder::{CreateFolder, CreateFolderResponse},
-    BaseFolderId, Folder, Operation, OperationResponse,
-};
-
-use crate::{
-    macros::queue_operation,
-    safe_xpcom::{SafeEwsSimpleOperationListener, SafeListener, UseLegacyFallback},
+use ews::{BaseFolderId, Folder, Operation, OperationResponse, create_folder::CreateFolder};
+use protocol_shared::client::DoOperation;
+use protocol_shared::safe_xpcom::{
+    SafeEwsSimpleOperationListener, SafeListener, UseLegacyFallback,
 };
 
 use super::{
-    process_response_message_class, single_response_or_error, DoOperation, ServerType,
-    XpComEwsClient, XpComEwsError,
+    ServerType, XpComEwsClient, XpComEwsError, process_response_message_class,
+    single_response_or_error,
 };
 
 struct DoCreateFolder {
@@ -24,12 +20,12 @@ struct DoCreateFolder {
     name: String,
 }
 
-impl DoOperation for DoCreateFolder {
+impl<ServerT: ServerType> DoOperation<XpComEwsClient<ServerT>, XpComEwsError> for DoCreateFolder {
     const NAME: &'static str = CreateFolder::NAME;
     type Okay = String;
     type Listener = SafeEwsSimpleOperationListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {
@@ -50,8 +46,7 @@ impl DoOperation for DoCreateFolder {
             }],
         };
 
-        let rcv = queue_operation!(client, CreateFolder, op, Default::default());
-        let response = rcv.await??;
+        let response = client.enqueue_and_send(op, Default::default()).await?;
 
         // Validate the response against our request params and known/assumed
         // constraints on response shape.

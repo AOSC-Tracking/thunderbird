@@ -188,8 +188,8 @@ function onAdaptiveJunkToggle() {
 
   for (let i = 0; i < wList.getRowCount(); i++) {
     const item = wList.getItemAtIndex(i);
-    item.setAttribute("disabled", wListDisabled);
-    item.firstElementChild.setAttribute("disabled", wListDisabled);
+    item.toggleAttribute("disabled", wListDisabled);
+    item.firstElementChild.toggleAttribute("disabled", wListDisabled);
   }
 }
 
@@ -242,7 +242,7 @@ function onSaveWhiteList() {
     // as they may not return the right value or may even not exist.
     // Always get the attributes only.
     var wlNode = wList.getItemAtIndex(i);
-    if (wlNode.firstElementChild.getAttribute("checked") == "true") {
+    if (wlNode.firstElementChild.hasAttribute("checked")) {
       const abURI = wlNode.getAttribute("value");
       wlArray.push(abURI);
     }
@@ -257,11 +257,20 @@ function onSaveWhiteList() {
 /**
  * Called when a new value is chosen in one of the junk target folder pickers.
  * Sets the menu label according to the folder name.
+ *
+ * @param {Event} event - The event that we're responding to.
+ * @param {"Account"|"Folder"} type - "Account" for the account picker or
+ *   "Folder" for the folder picker.
  */
-function onActionTargetChange(aEvent, aWSMElementId) {
-  const folder = aEvent.target._folder;
-  document.getElementById(aWSMElementId).value = folder.URI;
-  document.getElementById("actionFolderPopup").selectFolder(folder);
+function onActionTargetChange(event, type) {
+  // folder-menupopup generates internal sub-menus for subfolders. We only
+  // want to process the event when it reaches our specific top-level popup.
+  if (event.currentTarget.id != `action${type}Popup`) {
+    return;
+  }
+  const folder = event.target._folder;
+  document.getElementById(`server.spamActionTarget${type}`).value = folder.URI;
+  event.currentTarget.selectFolder(folder);
 }
 
 /**

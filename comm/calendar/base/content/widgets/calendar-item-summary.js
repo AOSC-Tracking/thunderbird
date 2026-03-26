@@ -196,7 +196,7 @@
           `<hbox align="center">
             <menulist class="item-alarm"
                       disable-on-readonly="true">
-              <menupopup>
+              <menupopup native="false">
                 <menuitem label="&event.reminder.none.label;"
                           selected="true"
                           value="none"/>
@@ -458,11 +458,7 @@
         this.querySelector(".reminder-row").removeAttribute("hidden");
       }
 
-      const recurrenceDetails = recurrenceStringFromItem(
-        item,
-        "calendar-event-dialog",
-        "ruleTooComplexSummary"
-      );
+      const recurrenceDetails = recurrenceStringFromItem(item, "recurrence-rule-too-complex");
       this.updateRecurrenceDetails(recurrenceDetails);
       this.updateAttendees(item);
 

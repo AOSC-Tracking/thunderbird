@@ -228,6 +228,7 @@ async function subtest() {
     });
   } catch (ex) {
     Assert.ok(directory.readOnly, "read-write directory should not throw");
+    observer.pendingPromise = null;
   }
 
   // Change a card on the client, but this time only non-vCard properties.
@@ -267,6 +268,7 @@ async function subtest() {
     cardMap.set("change-me", changeMeCard);
   } catch (ex) {
     Assert.ok(directory.readOnly, "read-write directory should not throw");
+    observer.pendingPromise = null;
   }
 
   // Add a new card on the client.
@@ -324,6 +326,7 @@ async function subtest() {
     });
   } catch (ex) {
     Assert.ok(directory.readOnly, "read-write directory should not throw");
+    observer.pendingPromise = null;
   }
 
   info("Fourth sync with server. No changes expected.");
@@ -361,6 +364,14 @@ add_task(async function testReadOnly() {
   Services.prefs.setBoolPref("ldap_2.servers.carddav.readOnly", true);
   await subtest();
   Services.prefs.clearUserPref("ldap_2.servers.carddav.readOnly");
+});
+
+add_task(async function testMultigetBatchSize() {
+  // Limit multiget requests to 1 card at a time. This test doesn't really
+  // prove that multiple requests occur, but the logs will show that they do.
+  Services.prefs.setIntPref("carddav.multiget.batchSize", 1);
+  await subtest();
+  Services.prefs.clearUserPref("carddav.multiget.batchSize");
 });
 
 add_task(async function testExpiredToken() {
@@ -424,16 +435,15 @@ add_task(async function testExpiredToken() {
   info("Sync with server.");
 
   const notificationPromise = TestUtils.topicObserved(
-    "addrbook-directory-invalidated"
+    "addrbook-contacts-created"
   );
   observer.init();
   await directory.updateAllFromServerV2();
-  // Check what notifications were fired. There should be an "invalidated"
-  // notification, making the others redundant, but the "deleted"
-  // notification is hard to avoid.
+  // Check what notifications were fired. As well as the "contacts-created"
+  // notification, there should be "updated" and "deleted" notifications.
   observer.checkAndClearNotifications({
     "addrbook-contact-created": [],
-    "addrbook-contact-updated": [],
+    "addrbook-contact-updated": ["second"],
     "addrbook-contact-deleted": ["first"],
   });
   await notificationPromise;

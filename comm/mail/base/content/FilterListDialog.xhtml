@@ -57,7 +57,8 @@
                  expandFolders="nntp"
                  showFileHereLabel="true"
                  showAccountsFileHere="true"
-                 oncommand="setFilterFolder(event.target._folder);"/>
+                 oncommand="setFilterFolder(event.target._folder);"
+                 native="false"/>
     </menulist>
     <html:input type="search"
                 id="searchBox"
@@ -72,7 +73,7 @@
         <label id="filterListLabel" control="filterList" flex="1">
           &filterHeader.label;
         </label>
-        <label id="countBox"/>
+        <html:div id="countBox"></html:div>
       </hbox>
       <richlistbox id="filterList" flex="1" onselect="updateButtons();"
                    seltype="multiple"
@@ -87,20 +88,21 @@
           <hbox align="center">
             <label id="folderPickerPrefix" value="&folderPickerPrefix.label;"
                    accesskey="&folderPickerPrefix.accesskey;"
-                   disabled="true" control="runFiltersFolder"/>
-            <menulist id="runFiltersFolder" disabled="true" flex="1"
+                   disabled="" control="runFiltersFolder"/>
+            <menulist id="runFiltersFolder" disabled="" flex="1"
                       class="folderMenuItem"
                       displayformat="verbose">
               <menupopup is="folder-menupopup" id="runFiltersPopup"
                          class="menulist-menupopup"
                          showFileHereLabel="true"
                          showAccountsFileHere="false"
-                         oncommand="setRunFolder(event.target._folder);"/>
+                         oncommand="setRunFolder(event.target._folder);"
+                         native="false"/>
             </menulist>
           <button id="runFiltersButton"
                   label="&runFilters.label;"
                   accesskey="&runFilters.accesskey;"
-                  oncommand="runSelectedFilters();" disabled="true"/>
+                  oncommand="runSelectedFilters();" disabled=""/>
           </hbox>
         </vbox>
     </vbox>
@@ -111,7 +113,7 @@
                      label="&newButton.label;"
                      accesskey="&newButton.accesskey;"
                      oncommand="onNewFilter();">
-        <menupopup id="newFilterMenupopup">
+        <menupopup id="newFilterMenupopup" native="false">
           <menuitem label="&newButton.label;"
                     accesskey="&newButton.accesskey;"/>
           <menuitem id="copyToNewButton"

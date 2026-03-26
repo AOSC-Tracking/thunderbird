@@ -41,14 +41,10 @@ var {
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/NotificationBoxHelpers.sys.mjs"
 );
-var {
-  click_menus_in_sequence,
-  promise_modal_dialog,
-  promise_new_window,
-  wait_for_window_focused,
-} = ChromeUtils.importESModule(
-  "resource://testing-common/mail/WindowHelpers.sys.mjs"
-);
+var { click_menus_in_sequence, promise_new_window } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/WindowHelpers.sys.mjs"
+  );
 
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
@@ -128,10 +124,9 @@ function assert_manual_reminder_state(aCwc, aChecked) {
     remindCommand
   );
 
-  const checkedValue = aChecked ? "true" : "false";
   Assert.equal(
-    aCwc.document.getElementById(remindCommand).getAttribute("checked"),
-    checkedValue
+    aCwc.document.getElementById(remindCommand).hasAttribute("checked"),
+    aChecked
   );
 }
 
@@ -360,7 +355,12 @@ add_task(async function test_no_send_now_sends() {
  *   menuitem after the click.
  */
 async function click_manual_reminder(aCwc, aExpectedState) {
-  await wait_for_window_focused(aCwc);
+  if (Services.focus.activeWindow != aCwc) {
+    await new Promise(resolve =>
+      aCwc.addEventListener("activate", resolve, { once: true })
+    );
+  }
+
   const button = aCwc.document.getElementById("button-attach");
 
   const popup = aCwc.document.getElementById("button-attachPopup");
@@ -376,7 +376,6 @@ async function click_manual_reminder(aCwc, aExpectedState) {
     aCwc.document.getElementById("button-attachPopup_remindLaterItem")
   );
   await hiddenPromise;
-  await wait_for_window_focused(aCwc);
   assert_manual_reminder_state(aCwc, aExpectedState);
 }
 
@@ -400,9 +399,12 @@ add_task(async function test_manual_attachment_reminder() {
   assert_automatic_reminder_state(cwc, false);
 
   // Now close the message with saving it as draft.
-  let dialogPromise = promise_modal_dialog(
-    "commonDialogWindow",
-    click_save_message
+  let dialogPromise = BrowserTestUtils.promiseAlertDialog(
+    null,
+    "chrome://global/content/commonDialog.xhtml",
+    {
+      callback: click_save_message,
+    }
   );
   cwc.goDoCommand("cmd_close");
   await dialogPromise;
@@ -454,8 +456,7 @@ add_task(async function test_manual_attachment_reminder() {
   await dialogPromise;
   await TestUtils.waitForCondition(
     () =>
-      cwc.document.getElementById("cmd_remindLater").getAttribute("checked") ==
-      "false",
+      !cwc.document.getElementById("cmd_remindLater").hasAttribute("checked"),
     "The manual reminder should get disabled"
   );
 
@@ -466,8 +467,7 @@ add_task(async function test_manual_attachment_reminder() {
   await click_manual_reminder(cwc, true);
   await TestUtils.waitForCondition(
     () =>
-      cwc.document.getElementById("cmd_remindLater").getAttribute("checked") ==
-      "true",
+      cwc.document.getElementById("cmd_remindLater").hasAttribute("checked"),
     "The manual reminder should get enabled"
   );
 
@@ -850,9 +850,12 @@ add_task(async function test_disabling_attachment_reminder() {
  *   triggered by other means.
  */
 async function click_send_and_handle_send_error(aWin, aAlreadySending) {
-  const dialogPromise = promise_modal_dialog(
-    "commonDialogWindow",
-    click_ok_on_send_error
+  const dialogPromise = BrowserTestUtils.promiseAlertDialog(
+    null,
+    "chrome://global/content/commonDialog.xhtml",
+    {
+      callback: click_ok_on_send_error,
+    }
   );
   if (!aAlreadySending) {
     const buttonSend = aWin.document.getElementById("button-send");

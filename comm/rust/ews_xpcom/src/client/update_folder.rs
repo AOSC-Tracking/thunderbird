@@ -5,18 +5,17 @@
 use std::sync::Arc;
 
 use ews::{
-    update_folder::{FolderChange, FolderChanges, UpdateFolder, UpdateFolderResponse, Updates},
     BaseFolderId, Folder, Operation, OperationResponse, PathToElement,
+    update_folder::{FolderChange, FolderChanges, UpdateFolder, Updates},
+};
+use protocol_shared::client::DoOperation;
+use protocol_shared::safe_xpcom::{
+    SafeEwsSimpleOperationListener, SafeListener, UseLegacyFallback,
 };
 
 use super::{
-    process_response_message_class, single_response_or_error, DoOperation, ServerType,
-    XpComEwsClient, XpComEwsError,
-};
-
-use crate::{
-    macros::queue_operation,
-    safe_xpcom::{SafeEwsSimpleOperationListener, UseLegacyFallback},
+    ServerType, XpComEwsClient, XpComEwsError, process_response_message_class,
+    single_response_or_error,
 };
 
 struct DoUpdateFolder {
@@ -24,12 +23,12 @@ struct DoUpdateFolder {
     pub folder_name: String,
 }
 
-impl DoOperation for DoUpdateFolder {
+impl<ServerT: ServerType> DoOperation<XpComEwsClient<ServerT>, XpComEwsError> for DoUpdateFolder {
     const NAME: &'static str = UpdateFolder::NAME;
     type Okay = ();
     type Listener = SafeEwsSimpleOperationListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {
@@ -59,20 +58,19 @@ impl DoOperation for DoUpdateFolder {
             },
         };
 
-        let rcv = queue_operation!(client, UpdateFolder, update_folder, Default::default());
-        let response = rcv.await??;
+        let response = client
+            .enqueue_and_send(update_folder, Default::default())
+            .await?;
 
         let response_messages = response.into_response_messages();
         let response_message = single_response_or_error(response_messages)?;
-        process_response_message_class(Self::NAME, response_message)?;
+        let name = <Self as DoOperation<XpComEwsClient<ServerT>, _>>::NAME;
+        process_response_message_class(name, response_message)?;
 
         Ok(())
     }
 
-    fn into_success_arg(
-        self,
-        _ok: Self::Okay,
-    ) -> <Self::Listener as crate::safe_xpcom::SafeListener>::OnSuccessArg {
+    fn into_success_arg(self, _ok: Self::Okay) -> <Self::Listener as SafeListener>::OnSuccessArg {
         (std::iter::empty::<String>(), UseLegacyFallback::No).into()
     }
 

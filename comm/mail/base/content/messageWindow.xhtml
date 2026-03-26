@@ -143,10 +143,6 @@
       <command id="cmd_deleteAllAttachments"
                oncommand="goDoCommand('cmd_deleteAllAttachments');"/>
     </commandset>
-    <commandset id="tasksCommands">
-      <command id="cmd_newMessage" oncommand="goOpenNewMessage();"/>
-      <command id="cmd_newCard" oncommand="goDoCommand('cmd_newCard')"/>
-    </commandset>
     <commandset id="commandKeys"/>
     <command id="cmd_close" oncommand="window.close();"/>
   </commandset>
@@ -154,19 +150,6 @@
   <keyset id="mailKeys">
     <key keycode="VK_ESCAPE" oncommand="window.close();"/>
 #include mainKeySet.inc.xhtml
-    <keyset id="tasksKeys">
-#ifdef XP_MACOSX
-      <key id="key_newMessage" key="&newMessageCmd.key;" command="cmd_newMessage"
-           modifiers="accel,shift"/>
-      <key id="key_newMessage2" key="&newMessageCmd2.key;" command="cmd_newMessage"
-           modifiers="accel"/>
-#else
-      <key id="key_newMessage"  key="&newMessageCmd.key;" command="cmd_newMessage"
-           modifiers="accel"/>
-      <key id="key_newMessage2" key="&newMessageCmd2.key;" command="cmd_newMessage"
-           modifiers="accel"/>
-#endif
-    </keyset>
   </keyset>
 
   <popupset id="mainPopupSet">
@@ -232,7 +215,8 @@
                    onpopupshowing="getMsgToolbarMenu_init();"
                    oncommand="MsgGetMessagesForAccount(event.target._folder); event.stopPropagation();"
                    expandFolders="false"
-                   mode="getMail">
+                   mode="getMail"
+                   native="false">
           <menuitem id="button-getAllNewMsg"
                     class="menuitem-iconic folderMenuItem"
                     label="&getAllNewMsgCmd.label;"
@@ -257,11 +241,8 @@
                    mode="filing"
                    showFileHereLabel="true"
                    showRecent="true"
-                   recentLabel="&contextMoveCopyMsgRecentDestinationMenu.label;"
-                   recentAccessKey="&contextMoveCopyMsgRecentDestinationMenu.accesskey;"
                    showFavorites="true"
-                   favoritesLabel="&contextMoveCopyMsgFavoritesMenu.label;"
-                   favoritesAccessKey="&contextMoveCopyMsgFavoritesMenu.accesskey;"/>
+                   native="false"/>
 
       </toolbarbutton>
       <toolbarbutton id="button-showconversation"
@@ -275,7 +256,7 @@
                      label="&backButton1.label;"
                      command="cmd_goBack"
                      tooltiptext="&goBackButton.tooltip;">
-        <menupopup id="button-goBackPopup" onpopupshowing="backToolbarMenu_init(this)">
+        <menupopup id="button-goBackPopup" onpopupshowing="backToolbarMenu_init(this)" native="false">
           <menuitem id="button-goBack" label="&goBackCmd.label;" command="cmd_goBack"/>
           <menuseparator id="button-goBackSeparator"/>
         </menupopup>
@@ -286,7 +267,7 @@
                      label="&goForwardButton1.label;"
                      command="cmd_goForward"
                      tooltiptext="&goForwardButton.tooltip;">
-        <menupopup id="button-goForwardPopup" onpopupshowing="forwardToolbarMenu_init(this)">
+        <menupopup id="button-goForwardPopup" onpopupshowing="forwardToolbarMenu_init(this)" native="false">
           <menuitem id="button-goForward"
                     label="&goForwardCmd.label;"
                     command="cmd_goForward"/>
@@ -333,7 +314,7 @@
                      class="toolbarbutton-1"
                      label="&markButton.label;"
                      tooltiptext="&markButton.tooltip;">
-        <menupopup id="button-markPopup" onpopupshowing="InitMessageMark()">
+        <menupopup id="button-markPopup" onpopupshowing="InitMessageMark()" native="false">
           <menuitem id="markReadToolbarItem"
                     label="&markAsReadCmd.label;"
                     accesskey="&markAsReadCmd.accesskey;"
@@ -376,7 +357,8 @@
                      tooltiptext="&tagButton.tooltip;"
                      command="cmd_tag">
         <menupopup id="button-tagpopup"
-                   onpopupshowing="InitMessageTags(this);">
+                   onpopupshowing="InitMessageTags(this);"
+                   native="false">
           <menuitem id="button-addNewTag"
                     label="&addNewTag.label;"
                     accesskey="&addNewTag.accesskey;"

@@ -62,11 +62,11 @@
           <vbox flex="1">
             <menulist
               id="period-list"
-              oncommand="updateRecurrenceBox();"
+              oncommand="updateRecurrenceBox()"
               disable-on-readonly="true"
               disable-on-occurrence="true"
             >
-              <menupopup id="period-list-menupopup">
+              <menupopup id="period-list-menupopup" native="false">
                 <menuitem
                   id="period-list-day-menuitem"
                   label="&event.recurrence.day.label;"
@@ -90,7 +90,7 @@
               </menupopup>
             </menulist>
             <html:input id="week-start" type="hidden" value="1" />
-            <hbox id="period-box" oncommand="updateRecurrenceControls();">
+            <hbox id="period-box" oncommand="updateRecurrenceControls()">
               <!-- Daily -->
               <box id="period-box-daily-box" orient="vertical" align="start">
                 <radiogroup id="daily-group">
@@ -109,7 +109,7 @@
                       min="1"
                       max="32767"
                       value="1"
-                      oninput="updateRecurrenceControls();"
+                      oninput="updateRecurrenceControls()"
                       disable-on-readonly="true"
                       disable-on-occurrence="true"
                     />
@@ -146,7 +146,7 @@
                     min="1"
                     max="32767"
                     value="1"
-                    oninput="updateRecurrenceControls();"
+                    oninput="updateRecurrenceControls()"
                     disable-on-readonly="true"
                     disable-on-occurrence="true"
                   />
@@ -249,7 +249,7 @@
                     min="1"
                     max="32767"
                     value="1"
-                    oninput="updateRecurrenceControls();"
+                    oninput="updateRecurrenceControls()"
                     disable-on-readonly="true"
                     disable-on-occurrence="true"
                   />
@@ -273,7 +273,7 @@
                       disable-on-readonly="true"
                       disable-on-occurrence="true"
                     >
-                      <menupopup id="montly-ordinal-menupopup">
+                      <menupopup id="montly-ordinal-menupopup" native="false">
                         <menuitem
                           id="monthly-ordinal-every-label"
                           label="&event.recurrence.monthly.every.label;"
@@ -316,7 +316,7 @@
                       disable-on-readonly="true"
                       disable-on-occurrence="true"
                     >
-                      <menupopup id="monthly-weekday-menupopup">
+                      <menupopup id="monthly-weekday-menupopup" native="false">
                         <!-- Filled dynamically. -->
                         <menuitem
                           id="monthly-weekday-dayofmonth"
@@ -655,7 +655,7 @@
                     min="1"
                     max="32767"
                     value="1"
-                    oninput="updateRecurrenceControls();"
+                    oninput="updateRecurrenceControls()"
                     disable-on-readonly="true"
                     disable-on-occurrence="true"
                   />
@@ -678,7 +678,7 @@
                           class="size3 input-inline"
                           min="1"
                           value="1"
-                          oninput="checkYearlyAbsoluteDate();"
+                          oninput="checkYearlyAbsoluteDate()"
                           disable-on-readonly="true"
                           disable-on-occurrence="true"
                         />
@@ -693,7 +693,7 @@
                           disable-on-readonly="true"
                           disable-on-occurrence="true"
                         >
-                          <menupopup id="yearly-month-ordinal-menupopup">
+                          <menupopup id="yearly-month-ordinal-menupopup" native="false">
                             <!-- Filled dynamically. -->
                           </menupopup>
                         </menulist>
@@ -717,7 +717,7 @@
                               disable-on-readonly="true"
                               disable-on-occurrence="true"
                             >
-                              <menupopup id="yearly-ordinal-menupopup">
+                              <menupopup id="yearly-ordinal-menupopup" native="false">
                                 <menuitem
                                   id="yearly-ordinal-every"
                                   label="&event.recurrence.yearly.every.label;"
@@ -760,7 +760,7 @@
                               disable-on-readonly="true"
                               disable-on-occurrence="true"
                             >
-                              <menupopup id="yearly-weekday-menupopup">
+                              <menupopup id="yearly-weekday-menupopup" native="false">
                                 <!-- Filled dynamically. -->
                                 <menuitem
                                   id="yearly-weekday--1"
@@ -783,7 +783,7 @@
                             disable-on-readonly="true"
                             disable-on-occurrence="true"
                           >
-                            <menupopup id="yearly-month-rule-menupopup">
+                            <menupopup id="yearly-month-rule-menupopup" native="false">
                               <!-- Filled dynamically. -->
                             </menupopup>
                           </menulist>
@@ -826,7 +826,7 @@
                 min="1"
                 max="32767"
                 value="5"
-                oninput="updateRecurrenceControls();"
+                oninput="updateRecurrenceControls()"
                 disable-on-readonly="true"
                 disable-on-occurrence="true"
               />
@@ -848,7 +848,7 @@
               />
               <datepicker
                 id="repeat-until-date"
-                onchange="checkUntilDate();"
+                onchange="checkUntilDate()"
                 disable-on-readonly="true"
                 disable-on-occurrence="true"
               />

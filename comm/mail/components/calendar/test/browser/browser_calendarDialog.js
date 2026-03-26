@@ -535,11 +535,7 @@ add_task(async function test_dialogDate() {
 
   Assert.equal(
     dateRow.getAttribute("repeats"),
-    recurrenceStringFromItem(
-      calendarEvent,
-      "calendar-event-dialog",
-      "ruleTooComplexSummary"
-    ),
+    recurrenceStringFromItem(calendarEvent, "recurrence-rule-too-complex"),
     "The repeat instructions should be transferred to the date row"
   );
 
@@ -600,4 +596,210 @@ add_task(async function test_calendarDailogName() {
   Assert.equal(nameElement.textContent, "", "Calendar name gets cleared");
 
   dialog.close();
+});
+
+add_task(async function test_calendarDailogTitleTooltip() {
+  dialog.show();
+  dialog.setCalendarEvent(calendarEvent);
+  const titleElement = dialog.querySelector(".calendar-dialog-title");
+
+  await new Promise(requestAnimationFrame);
+
+  Assert.equal(
+    titleElement.title,
+    `TB CAL TEST - ${calendarEvent.title}`,
+    "Dialog has correct calendar title tooltip"
+  );
+
+  resetDialog();
+  Assert.equal(titleElement.title, "", "Calendar title tooltop gets cleared");
+
+  dialog.close();
+});
+
+add_task(async function test_dialogReminders() {
+  dialog.show();
+  const remindersRow = dialog.querySelector("calendar-dialog-reminders-row");
+  const reminderLabel = remindersRow.querySelector("#reminderCount");
+  const reminderList = remindersRow.querySelector("#reminderList");
+
+  const hourReminder = createAlarmFromDuration("-PT1H");
+  const alarms = [hourReminder];
+  const oneReminder = await createEvent({
+    name: "One Alarm",
+    calendar,
+    offset: 7,
+    alarms,
+  });
+  dialog.setCalendarEvent(oneReminder);
+
+  await BrowserTestUtils.waitForMutationCondition(
+    reminderList,
+    {
+      childList: true,
+      subtree: true,
+    },
+    () =>
+      reminderList.childNodes.length == 1 &&
+      reminderList.childNodes[0].textContent == hourReminder.toString()
+  );
+  let fluentData = document.l10n.getAttributes(reminderLabel);
+
+  Assert.equal(
+    fluentData.id,
+    "calendar-dialog-reminder-count",
+    "Reminder count label should be set"
+  );
+
+  Assert.equal(
+    fluentData.args.count,
+    1,
+    "Reminder count label should have the right count"
+  );
+
+  const dayReminder = createAlarmFromDuration("-P1D");
+  const sixDayReminder = createAlarmFromDuration("-P6D");
+  alarms.push(sixDayReminder);
+  alarms.push(dayReminder);
+
+  // Setting multiple reminders should show the load more text.
+  const multipleReminders = await createEvent({
+    name: "Multiple Alarms",
+    calendar,
+    offset: 7,
+    alarms,
+  });
+
+  dialog.setCalendarEvent(multipleReminders);
+
+  await BrowserTestUtils.waitForMutationCondition(
+    reminderList,
+    {
+      childList: true,
+      subtree: true,
+    },
+    () => reminderList.childNodes.length == 3
+  );
+
+  fluentData = document.l10n.getAttributes(reminderLabel);
+  Assert.equal(
+    fluentData.args.count,
+    3,
+    "Reminder count label should have the right count"
+  );
+
+  // Reminders should be in sequential order.
+  Assert.equal(
+    reminderList.childNodes[0].textContent,
+    hourReminder.toString(),
+    "First reminder should be in correct order"
+  );
+  Assert.equal(
+    reminderList.childNodes[1].textContent,
+    dayReminder.toString(),
+    "Second reminder should be in correct order"
+  );
+  Assert.equal(
+    reminderList.childNodes[2].textContent,
+    sixDayReminder.toString(),
+    "Third reminder should be in correct order"
+  );
+
+  resetDialog();
+  await BrowserTestUtils.waitForMutationCondition(
+    reminderList,
+    {
+      childList: true,
+      subtree: true,
+    },
+    () => reminderList.childNodes.length == 0
+  );
+
+  fluentData = document.l10n.getAttributes(reminderLabel);
+  Assert.equal(
+    fluentData.args.count,
+    0,
+    "Reminder count label should have the right count"
+  );
+});
+
+add_task(async function test_toggleRowVisibilty() {
+  dialog.show();
+  let calendarEventData = {
+    location: "foobar",
+    name: "Physical location",
+    description: "Foo",
+    categories: ["TEST"],
+    calendar,
+  };
+  let calEvent = await createEvent(calendarEventData);
+  dialog.setCalendarEvent(calEvent);
+
+  // Test row visibility.
+  const descriptionRow = dialog.querySelector("#descriptionRow");
+  const calendarPlainTextDescription = dialog.querySelector(
+    "#expandingDescription .plain-text-description"
+  );
+  const categoriesRow = dialog.querySelector("calendar-dialog-categories");
+  const locationRow = dialog.querySelector("#locationRow");
+
+  // Wait for calendar dialog data to be updated.
+  await BrowserTestUtils.waitForMutationCondition(
+    calendarPlainTextDescription,
+    {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    },
+    () => calendarPlainTextDescription.textContent.trim()
+  );
+
+  Assert.ok(
+    BrowserTestUtils.isVisible(descriptionRow),
+    "Description row should be visible"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(categoriesRow),
+    "Categories row should be visible"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(locationRow),
+    "Location row should be visible"
+  );
+
+  const descriptionEventPromise = BrowserTestUtils.waitForEvent(
+    descriptionRow.querySelector("calendar-dialog-description-row"),
+    "toggleRowVisibility"
+  );
+  const categoriesEventPromise = BrowserTestUtils.waitForEvent(
+    categoriesRow,
+    "toggleRowVisibility"
+  );
+
+  // Remove event properties to hide the rows.
+  calendarEventData = {
+    name: "Physical location",
+    calendar,
+  };
+  calEvent = await createEvent(calendarEventData);
+  dialog.setCalendarEvent(calEvent);
+
+  // The toggleRowVisibility event should have fired from each component.
+  await descriptionEventPromise;
+  await categoriesEventPromise;
+
+  Assert.ok(
+    BrowserTestUtils.isHidden(descriptionRow),
+    "Description row should be hidden"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(categoriesRow),
+    "Categories row should be hidden"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(locationRow),
+    "Location row should be hidden"
+  );
+
+  resetDialog();
 });

@@ -38,6 +38,7 @@
 #include "nsURLHelper.h"  // For net_ParseContentType().
 #include "mozilla/Span.h"
 #include "HeaderReader.h"
+#include "IHeaderBlock.h"
 #include "nsIMimeConverter.h"
 #include "mozilla/Components.h"
 #include "mozilla/Preferences.h"
@@ -266,6 +267,17 @@ RawHdr ParseMsgHeaders(mozilla::Span<const char> raw) {
 
   // TODO: custom header storage
   return out;
+}
+
+RawHdr ParseHeaderBlock(IHeaderBlock* headers) {
+  nsCString raw;
+  nsresult rv = headers->AsRaw(raw);
+  if (NS_FAILED(rv)) {
+    // Should never happen, but XPCOM doesn't really do infallible methods :-(
+    NS_WARNING("IHeaderBlock.asRaw() failed.");
+    return RawHdr{};  // Blank.
+  }
+  return ParseMsgHeaders(raw);
 }
 
 NS_IMETHODIMP
@@ -1590,7 +1602,7 @@ NS_IMETHODIMP nsParseNewMailState::ApplyFilterHit(nsIMsgFilter* filter,
                 // XXX: Invoke MSG_LOG_TO_CONSOLE once bug 1135265 lands.
                 if (loggingEnabled) {
                   (void)filter->LogRuleHitFail(filterAction, msgHdr, rv,
-                                               "filterFailureMoveFailed"_ns);
+                                               "filter-failure-move-failed"_ns);
                 }
               }
             }
@@ -1629,7 +1641,7 @@ NS_IMETHODIMP nsParseNewMailState::ApplyFilterHit(nsIMsgFilter* filter,
               // XXX: Invoke MSG_LOG_TO_CONSOLE once bug 1135265 lands.
               if (loggingEnabled) {
                 (void)filter->LogRuleHitFail(filterAction, msgHdr, rv,
-                                             "filterFailureCopyFailed"_ns);
+                                             "filter-failure-copy-failed"_ns);
               }
             } else
               m_msgCopiedByFilter = true;
@@ -1778,7 +1790,7 @@ NS_IMETHODIMP nsParseNewMailState::ApplyFilterHit(nsIMsgFilter* filter,
                static_cast<uint32_t>(rv)));
       if (loggingEnabled) {
         (void)filter->LogRuleHitFail(filterAction, msgHdr, rv,
-                                     "filterFailureAction"_ns);
+                                     "filter-failure-action"_ns);
       }
     } else {
       MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
@@ -1861,11 +1873,11 @@ nsresult nsParseNewMailState::ApplyForwardAndReplyFilter(
           if (rv == NS_ERROR_ABORT) {
             (void)m_filter->LogRuleHitFail(
                 m_ruleAction, m_msgToForwardOrReply, rv,
-                "filterFailureSendingReplyAborted"_ns);
+                "filter-failure-sending-reply-aborted"_ns);
           } else {
-            (void)m_filter->LogRuleHitFail(m_ruleAction, m_msgToForwardOrReply,
-                                           rv,
-                                           "filterFailureSendingReplyError"_ns);
+            (void)m_filter->LogRuleHitFail(
+                m_ruleAction, m_msgToForwardOrReply, rv,
+                "filter-failure-sending-reply-error"_ns);
           }
         }
       }

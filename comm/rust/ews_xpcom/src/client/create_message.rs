@@ -4,18 +4,18 @@
 
 use std::sync::Arc;
 
-use base64::prelude::{Engine, BASE64_STANDARD};
+use base64::prelude::{BASE64_STANDARD, Engine};
 use ews::{
-    create_item::CreateItem, BaseFolderId, ExtendedFieldURI, ExtendedProperty, Message,
-    MessageDisposition, MimeContent, Operation, RealItem,
+    BaseFolderId, ExtendedFieldURI, ExtendedProperty, Message, MessageDisposition, MimeContent,
+    Operation, RealItem, create_item::CreateItem,
 };
+use protocol_shared::client::DoOperation;
+use protocol_shared::safe_xpcom::SafeEwsMessageCreateListener;
 
 use super::{
-    create_and_populate_header_from_create_response, DoOperation, ServerType, XpComEwsClient,
-    XpComEwsError, MSGFLAG_READ, MSGFLAG_UNMODIFIED, MSGFLAG_UNSENT,
+    MSGFLAG_READ, MSGFLAG_UNMODIFIED, MSGFLAG_UNSENT, ServerType, XpComEwsClient, XpComEwsError,
+    create_and_populate_header_from_create_response,
 };
-
-use crate::safe_xpcom::SafeEwsMessageCreateListener;
 
 struct DoCreateMessage<'a> {
     pub listener: &'a SafeEwsMessageCreateListener,
@@ -25,12 +25,14 @@ struct DoCreateMessage<'a> {
     pub content: Vec<u8>,
 }
 
-impl DoOperation for DoCreateMessage<'_> {
+impl<ServerT: ServerType> DoOperation<XpComEwsClient<ServerT>, XpComEwsError>
+    for DoCreateMessage<'_>
+{
     const NAME: &'static str = CreateItem::NAME;
     type Okay = ();
     type Listener = SafeEwsMessageCreateListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {
@@ -66,7 +68,7 @@ impl DoOperation for DoCreateMessage<'_> {
 
                 // 3591 (0x0E07) is the `PR_MESSAGE_FLAGS` MAPI property.
                 property_tag: Some("3591".into()),
-                property_type: ews::PropertyType::Integer,
+                property_type: Some(ews::PropertyType::Integer),
             },
             value: mapi_flags.to_string(),
         }]);

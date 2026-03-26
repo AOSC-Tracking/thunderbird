@@ -3,11 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use ews::{Operation, OperationResponse};
+use protocol_shared::safe_xpcom::{SimpleOperationSuccessArgs, UseLegacyFallback};
 
-use crate::{
-    client::{response_into_messages, ServerType, XpComEwsClient, XpComEwsError},
-    safe_xpcom::UseLegacyFallback,
-};
+use crate::client::{ServerType, XpComEwsClient, XpComEwsError, response_into_messages};
 
 /// Whether the EWS copy/move operation should be followed by a resync to pick
 /// up updated IDs.
@@ -32,17 +30,18 @@ impl From<RequiresResync> for UseLegacyFallback {
 
 /// An EWS operation that copies or moves folders or items.
 pub(crate) trait CopyMoveOperation: Operation + Clone {
-    /// Pushes a new copy/move operation with the given parameters to the back
-    /// of the client's queue and waits for a response.
-    ///
-    /// The success return value is the operation's response, as well as an
-    /// indication of whether a resync is needed to pick up the new IDs of the
-    /// copied/moved elements.
-    async fn queue_operation<ServerT: ServerType>(
+    /// Whether the consumer should sync the folder or account again after this
+    /// operation has completed.
+    fn requires_resync(&self) -> RequiresResync;
+
+    /// Specifies the mapping from the available input data, including the EWS
+    /// client, the destination EWS ID, and the input collection of EWS IDs to
+    /// be moved, to the input to the EWS operation.
+    fn operation_builder<ServerT: ServerType>(
         client: &XpComEwsClient<ServerT>,
         destination_folder_id: String,
         ids: Vec<String>,
-    ) -> Result<(Self::Response, RequiresResync), XpComEwsError>;
+    ) -> Self;
 
     /// Maps from the EWS response object to the collection of EWS IDs for the
     /// moved objects.
@@ -55,6 +54,17 @@ pub(crate) trait CopyMoveOperation: Operation + Clone {
 pub(crate) struct CopyMoveSuccess {
     pub new_ids: Vec<String>,
     pub requires_resync: RequiresResync,
+}
+
+impl From<CopyMoveSuccess> for SimpleOperationSuccessArgs {
+    fn from(
+        CopyMoveSuccess {
+            new_ids,
+            requires_resync,
+        }: CopyMoveSuccess,
+    ) -> Self {
+        (new_ids, requires_resync.into()).into()
+    }
 }
 
 /// Perform a generic copy/move operation.
@@ -78,10 +88,14 @@ pub(super) async fn move_generic<ServerT, OperationDataT>(
 ) -> Result<CopyMoveSuccess, XpComEwsError>
 where
     ServerT: ServerType,
-    OperationDataT: CopyMoveOperation,
+    OperationDataT: CopyMoveOperation + 'static,
 {
-    let (resp, requires_resync) =
-        OperationDataT::queue_operation(client, destination_folder_id, ids).await?;
+    let operation_data = OperationDataT::operation_builder(client, destination_folder_id, ids);
+    let requires_resync = operation_data.requires_resync();
+
+    let resp = client
+        .enqueue_and_send(operation_data, Default::default())
+        .await?;
 
     let messages = response_into_messages(resp)?;
     let new_ids = OperationDataT::response_to_ids(messages);

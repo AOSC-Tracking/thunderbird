@@ -2,8 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { EwsServer, RemoteFolder } = ChromeUtils.importESModule(
+var { EwsServer } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/EwsServer.sys.mjs"
+);
+var { RemoteFolder } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MockServer.sys.mjs"
 );
 var { localAccountUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/LocalAccountUtils.sys.mjs"
@@ -88,6 +91,36 @@ add_task(async function testSimpleSync() {
     "all folders should have synced"
   );
   Assert.ok(listener._syncStateToken, "sync token should exist");
+});
+
+/**
+ * Test sync when a folder does not have a folder class.
+ *
+ * These should be created even though they don't have a class.
+ * See https://bugzilla.mozilla.org/show_bug.cgi?id=2009429
+ */
+add_task(async function testSyncClasslessFolder() {
+  ewsServer.appendRemoteFolder(
+    new RemoteFolder("classless", "root", "classless", "classless", null)
+  );
+
+  const listener = new EwsFolderCallbackListener();
+  client.syncFolderHierarchy(listener, null);
+  await listener._deferred.promise;
+
+  Assert.deepEqual(
+    [...listener._createdFolderIds],
+    [
+      "inbox",
+      "deleteditems",
+      "drafts",
+      "outbox",
+      "sentitems",
+      "junkemail",
+      "archive",
+      "classless",
+    ]
+  );
 });
 
 /**

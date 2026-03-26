@@ -59,7 +59,6 @@
 #include "nsIMsgFolderNotificationService.h"
 #include "prprf.h"
 #include "nsIMsgFilterCustomAction.h"
-#include "nsStringEnumerator.h"
 #include "nsIMsgStatusFeedback.h"
 #include "nsIMsgThread.h"
 #include "nsMsgLineBuffer.h"
@@ -3327,7 +3326,7 @@ NS_IMETHODIMP nsImapMailFolder::ApplyFilterHit(nsIMsgFilter* filter,
             } else {
               if (loggingEnabled) {
                 (void)filter->LogRuleHitFail(filterAction, msgHdr, rv,
-                                             "filterFailureMoveFailed"_ns);
+                                             "filter-failure-move-failed"_ns);
               }
             }
           }
@@ -3362,7 +3361,7 @@ NS_IMETHODIMP nsImapMailFolder::ApplyFilterHit(nsIMsgFilter* filter,
             if (NS_FAILED(rv)) {
               if (loggingEnabled) {
                 (void)filter->LogRuleHitFail(filterAction, msgHdr, rv,
-                                             "filterFailureCopyFailed"_ns);
+                                             "filter-failure-copy-failed"_ns);
               }
             }
           }
@@ -3491,11 +3490,11 @@ NS_IMETHODIMP nsImapMailFolder::ApplyFilterHit(nsIMsgFilter* filter,
               if (rv == NS_ERROR_ABORT) {
                 (void)filter->LogRuleHitFail(
                     filterAction, msgHdr, rv,
-                    "filterFailureSendingReplyAborted"_ns);
+                    "filter-failure-sending-reply-aborted"_ns);
               } else {
                 (void)filter->LogRuleHitFail(
                     filterAction, msgHdr, rv,
-                    "filterFailureSendingReplyError"_ns);
+                    "filter-failure-sending-reply-error"_ns);
               }
             }
           }
@@ -3536,7 +3535,7 @@ NS_IMETHODIMP nsImapMailFolder::ApplyFilterHit(nsIMsgFilter* filter,
                static_cast<uint32_t>(rv)));
       if (loggingEnabled) {
         (void)filter->LogRuleHitFail(filterAction, msgHdr, rv,
-                                     "filterFailureAction"_ns);
+                                     "filter-failure-action"_ns);
       }
     } else {
       MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
@@ -5070,7 +5069,9 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
                   }
                 }
                 (void)OnCopyCompleted(m_copyState->m_srcSupport, aExitCode);
-                UpdateFolderWithListener(msgWindow, m_urlListener);
+                if (imapAction == nsIImapUrl::nsImapAppendDraftFromFile) {
+                  UpdateFolderWithListener(msgWindow, m_urlListener);
+                }
               }
             } else {
               // clear the copyState if copy has failed
@@ -5875,11 +5876,11 @@ bool nsMsgIMAPFolderACL::SetFolderRightsForUser(const nsACString& userName,
 }
 
 NS_IMETHODIMP nsImapMailFolder::GetOtherUsersWithAccess(
-    nsIUTF8StringEnumerator** aResult) {
-  return GetFolderACL()->GetOtherUsers(aResult);
+    nsTArray<nsCString>& users) {
+  return GetFolderACL()->GetOtherUsers(users);
 }
 
-nsresult nsMsgIMAPFolderACL::GetOtherUsers(nsIUTF8StringEnumerator** aResult) {
+nsresult nsMsgIMAPFolderACL::GetOtherUsers(nsTArray<nsCString>& users) {
   nsCString myUserName;
   nsCOMPtr<nsIMsgIncomingServer> server;
   nsresult rv = m_folder->GetServer(getter_AddRefs(server));
@@ -5887,13 +5888,14 @@ nsresult nsMsgIMAPFolderACL::GetOtherUsers(nsIUTF8StringEnumerator** aResult) {
   server->GetUsername(myUserName);
 
   // We need to filter out myUserName from m_rightsHash.
-  nsTArray<nsCString>* resultArray = new nsTArray<nsCString>;
+  users.Clear();
   for (auto iter = m_rightsHash.Iter(); !iter.Done(); iter.Next()) {
-    if (!iter.Key().Equals(myUserName)) resultArray->AppendElement(iter.Key());
+    if (!iter.Key().Equals(myUserName)) {
+      users.AppendElement(iter.Key());
+    }
   }
 
-  // enumerator will free resultArray
-  return NS_NewAdoptingUTF8StringEnumerator(aResult, resultArray);
+  return NS_OK;
 }
 
 nsresult nsImapMailFolder::GetPermissionsForUser(const nsACString& otherUser,

@@ -12,7 +12,7 @@ menupopup {
     margin: 1px;
   }
 
-  & > :is(menu, menuitem)[disabled="true"][_moz-menuactive="true"] {
+  & > :is(menu, menuitem)[disabled][_moz-menuactive="true"] {
     background-color: transparent !important;
   }
 
@@ -30,7 +30,7 @@ menupopup {
       content: var(--menuitem-icon);
     }
 
-    &[checked="true"] > .menu-icon {
+    &[checked] > .menu-icon {
       visibility: inherit;
     }
   }
@@ -80,7 +80,7 @@ menupopup {
       display: none;
     }
 
-    &[checked="true"] > .menu-icon {
+    &[checked] > .menu-icon {
       visibility: inherit;
     }
 
@@ -100,8 +100,8 @@ menupopup {
     margin-inline-end: 0;
   }
 
-  menuitem:not([disabled="true"]):hover &,
-  menuitem:not([disabled="true"]):focus & {
+  menuitem:not([disabled]):hover &,
+  menuitem:not([disabled]):focus & {
     opacity: 1;
   }
 }

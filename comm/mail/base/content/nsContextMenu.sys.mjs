@@ -11,6 +11,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   E10SUtils: "resource://gre/modules/E10SUtils.sys.mjs",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.sys.mjs",
+  SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
 });
 
 var gSpellChecker;
@@ -242,7 +243,7 @@ export class nsContextMenu {
     this.showItem("browserContext-spell-separator", canSpell);
     this.document
       .getElementById("browserContext-spell-check-enabled")
-      .setAttribute("checked", canSpell && gSpellChecker.enabled);
+      .toggleAttribute("checked", canSpell && gSpellChecker.enabled);
 
     this.showItem("browserContext-spell-add-to-dictionary", onMisspelling);
     this.showItem("browserContext-spell-undo-add-to-dictionary", showUndo);
@@ -347,7 +348,7 @@ export class nsContextMenu {
       }
 
       searchTheWeb.label = bundle.getFormattedString(key, [
-        Services.search.defaultEngine.name,
+        lazy.SearchService.defaultEngine.name,
         abbrSelection,
       ]);
       searchTheWeb.value = selection;

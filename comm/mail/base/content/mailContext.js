@@ -29,6 +29,7 @@ ChromeUtils.defineESModuleGetters(this, {
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   nsContextMenu: "chrome://messenger/content/nsContextMenu.sys.mjs",
   PhishingDetector: "resource:///modules/PhishingDetector.sys.mjs",
+  SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
   TagUtils: "resource:///modules/TagUtils.sys.mjs",
 });
 
@@ -287,7 +288,7 @@ var mailContextMenu = {
       }
 
       searchTheWeb.label = messengerBundle.formatStringFromName(key, [
-        Services.search.defaultEngine.name,
+        SearchService.defaultEngine.name,
         abbrSelection,
       ]);
     }
@@ -309,8 +310,7 @@ var mailContextMenu = {
     function checkItem(id, checked) {
       const item = document.getElementById(id);
       if (item) {
-        // Convert truthy/falsy to boolean before string.
-        item.setAttribute("checked", !!checked);
+        item.toggleAttribute("checked", Boolean(checked));
       }
     }
 
@@ -783,13 +783,13 @@ var mailContextMenu = {
       );
       item.setAttribute("type", "checkbox");
       if (msgHasTag) {
-        item.setAttribute("checked", "true");
+        item.toggleAttribute("checked", true);
       }
       item.value = tagInfo.key;
       item.addEventListener("command", () =>
         commandController._toggleMessageTag(
           tagInfo.key,
-          item.getAttribute("checked") == "true"
+          item.hasAttribute("checked")
         )
       );
       if (tagInfo.color) {

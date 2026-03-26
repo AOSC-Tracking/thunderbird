@@ -23,9 +23,17 @@ registerCleanupFunction(function () {
 // add_task(async function test_account_hub_opening_at_startup() {});
 
 add_task(async function test_account_hub_opening() {
+  Services.fog.testResetFOG();
   // TODO: Use an actual button once it's implemented in the UI.
   // Open the dialog.
   await window.openAccountHub();
+
+  let events = Glean.mail.accountHubLoaded.testGetValue();
+  Assert.equal(events.length, 2);
+  Assert.deepEqual(
+    events.map(v => v.extra.view_name),
+    ["MAIL", "autoConfigSubview"]
+  );
 
   const hub = document.querySelector("account-hub-container");
   await BrowserTestUtils.waitForMutationCondition(
@@ -45,6 +53,9 @@ add_task(async function test_account_hub_opening() {
     !dialog.open,
     "The dialog element should close when pressing Escape"
   );
+
+  events = Glean.mail.accountHubLoaded.testGetValue();
+  Assert.equal(events.length, 2, "should still have 2 events after reopen");
 
   // Open the dialog again.
   await window.openAccountHub();
@@ -238,6 +249,7 @@ add_task(async function test_account_email_step() {
 });
 
 add_task(async function test_account_email_config_found() {
+  Services.fog.testResetFOG();
   const dialog = await subtest_open_account_hub_dialog();
   await subtest_fill_initial_config_fields(dialog);
   const configFoundTemplate = dialog.querySelector("email-config-found");
@@ -358,6 +370,24 @@ add_task(async function test_account_email_config_found() {
     "The config found template should be hidden"
   );
 
+  const events = Glean.mail.accountHubLoaded.testGetValue();
+  Assert.equal(events.length, 7);
+  Assert.deepEqual(
+    events.map(v => v.extra.view_name),
+    [
+      // Initial load.
+      "MAIL",
+      // Found config.
+      "emailConfigFoundSubview",
+      // Then we went back.
+      "autoConfigSubview",
+      "emailConfigFoundSubview",
+      "emailPasswordSubview",
+      "emailConfigFoundSubview",
+      "incomingConfigSubview",
+    ]
+  );
+
   await subtest_close_account_hub_dialog(dialog, incomingConfigTemplate);
 });
 
@@ -407,7 +437,7 @@ add_task(async function test_cancel_finding_config() {
   Assert.equal(
     document.l10n.getAttributes(footerBack).id,
     "account-hub-email-cancel-button",
-    "Should cancel text on the back button."
+    "Should show cancel text on the back button."
   );
 
   // Clicking cancel should stop loading and hide the back button again.

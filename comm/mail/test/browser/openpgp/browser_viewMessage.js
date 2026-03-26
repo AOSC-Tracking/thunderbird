@@ -17,10 +17,9 @@ const {
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-const { promise_new_window, wait_for_window_focused } =
-  ChromeUtils.importESModule(
-    "resource://testing-common/mail/WindowHelpers.sys.mjs"
-  );
+const { promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
+);
 const { OpenPGPTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
@@ -243,7 +242,11 @@ add_task(async function testOpenForwardedEncrypted() {
   );
   const mc2 = await newWindowPromise;
   await wait_for_message_display_completion(mc2, true);
-  await wait_for_window_focused(mc2);
+  if (Services.focus.activeWindow != mc2) {
+    await new Promise(resolve =>
+      mc2.addEventListener("activate", resolve, { once: true })
+    );
+  }
   const aboutMessage2 = get_about_message(mc2);
 
   // Check properties of the opened attachment window.
@@ -260,8 +263,6 @@ add_task(async function testOpenForwardedEncrypted() {
     "encrypted icon should be shown"
   );
   await BrowserTestUtils.closeWindow(mc2);
-
-  await wait_for_window_focused(msgc);
 
   // Ensure there were no side effects for the primary window.
   Assert.ok(
@@ -313,7 +314,6 @@ add_task(async function testOpenForwardedSigned() {
   );
   const mc2 = await newWindowPromise;
   await wait_for_message_display_completion(mc2, true);
-  await wait_for_window_focused(mc2);
   const aboutMessage2 = get_about_message(mc2);
 
   // Check properties of the opened attachment window.
@@ -331,8 +331,6 @@ add_task(async function testOpenForwardedSigned() {
   );
 
   await BrowserTestUtils.closeWindow(mc2);
-
-  await wait_for_window_focused(msgc);
 
   // Ensure there were no side effects for the primary window.
   Assert.ok(
@@ -645,6 +643,52 @@ add_task(async function testOpenAndShowAttachedEml() {
   Assert.ok(
     !OpenPGPTestUtils.hasEncryptedIconState(aboutMessage2.document, "ok"),
     "the parts should not show as encrypted"
+  );
+
+  await BrowserTestUtils.closeWindow(win2);
+  await BrowserTestUtils.closeWindow(msgc);
+});
+
+/**
+ * Test that opening a message signed (only) with extra outer layer
+ * renders message content, only, not showing headers (bug 2016119)
+ */
+add_task(async function testOpenAndShowAttachedEmlWithFooter() {
+  const openpgpprocessed = openpgpProcessed();
+  const msgc = await open_message_from_file(
+    new FileUtils.File(
+      getTestFilePath("data/eml/signed-with-mailman-footer.eml")
+    )
+  );
+  const aboutMessage = get_about_message(msgc);
+  await openpgpprocessed;
+  await TestUtils.waitForTick();
+
+  const partsMessageWindowPromise = BrowserTestUtils.domWindowOpenedAndLoaded(
+    undefined,
+    async win =>
+      win.document.documentURI ==
+      "chrome://messenger/content/messageWindow.xhtml"
+  );
+
+  const openpgpprocessed2 = openpgpProcessed();
+  const button = aboutMessage.document.querySelector(
+    `button[data-l10n-id="openpgp-show-signed-parts"]`
+  );
+  EventUtils.synthesizeMouseAtCenter(
+    button,
+    { clickCount: 1 },
+    button.ownerGlobal
+  );
+  const win2 = await partsMessageWindowPromise;
+  await openpgpprocessed2;
+
+  const msgBody = getMsgBodyTxt(win2);
+  Assert.ok(msgBody.includes(MSG_TEXT), "message text is in body");
+
+  Assert.ok(
+    !msgBody.toLowerCase().includes("Content-Type".toLowerCase()),
+    "rendered message must not show content-type header"
   );
 
   await BrowserTestUtils.closeWindow(win2);

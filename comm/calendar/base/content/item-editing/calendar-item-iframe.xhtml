@@ -60,12 +60,12 @@
   </head>
   <html:body xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
     <commandset id="">
-      <command id="cmd_recurrence" oncommand="editRepeat();" />
-      <command id="cmd_attendees" oncommand="editAttendees();" />
-      <command id="cmd_email" oncommand="sendMailToAttendees(window.attendees);" />
+      <command id="cmd_recurrence" oncommand="editRepeat()" />
+      <command id="cmd_attendees" oncommand="editAttendees()" />
+      <command id="cmd_email" oncommand="sendMailToAttendees(window.attendees)" />
       <command
         id="cmd_email_undecided"
-        oncommand="sendMailToUndecidedAttendees(window.attendees);"
+        oncommand="sendMailToUndecidedAttendees(window.attendees)"
       />
       <command id="cmd_attach_url" disable-on-readonly="true" oncommand="attachURL()" />
       <command id="cmd_attach_cloud" disable-on-readonly="true" />
@@ -96,33 +96,28 @@
     <!-- style related commands that update on creation, and on selection change -->
     <!-- not using commandupdater directly, as it has to listen to the parent -->
     <commandset id="styleMenuItems" oncommandupdate="goUpdateComposerMenuItems(this)">
-      <command id="cmd_renderedHTMLEnabler" disabled="true" />
-      <command
-        id="cmd_bold"
-        state="false"
-        oncommand="doStyleUICommand('cmd_bold')"
-        disabled="true"
-      />
+      <command id="cmd_renderedHTMLEnabler" disabled="" />
+      <command id="cmd_bold" state="false" oncommand="doStyleUICommand('cmd_bold')" disabled="" />
       <command
         id="cmd_italic"
         state="false"
         oncommand="doStyleUICommand('cmd_italic')"
-        disabled="true"
+        disabled=""
       />
       <command
         id="cmd_underline"
         state="false"
         oncommand="doStyleUICommand('cmd_underline')"
-        disabled="true"
+        disabled=""
       />
 
-      <command id="cmd_ul" state="false" oncommand="doStyleUICommand('cmd_ul')" disabled="true" />
-      <command id="cmd_ol" state="false" oncommand="doStyleUICommand('cmd_ol')" disabled="true" />
+      <command id="cmd_ul" state="false" oncommand="doStyleUICommand('cmd_ul')" disabled="" />
+      <command id="cmd_ol" state="false" oncommand="doStyleUICommand('cmd_ol')" disabled="" />
 
-      <command id="cmd_indent" oncommand="goDoCommand('cmd_indent')" disabled="true" />
-      <command id="cmd_outdent" oncommand="goDoCommand('cmd_outdent')" disabled="true" />
+      <command id="cmd_indent" oncommand="goDoCommand('cmd_indent')" disabled="" />
+      <command id="cmd_outdent" oncommand="goDoCommand('cmd_outdent')" disabled="" />
 
-      <command id="cmd_align" state="" disabled="true" />
+      <command id="cmd_align" state="" disabled="" />
     </commandset>
 
     <keyset id="editorKeys">
@@ -148,7 +143,11 @@
       />
     </keyset>
 
-    <menupopup id="editorContext" onpopupshowing="goUpdateGlobalEditMenuItems(true);">
+    <menupopup
+      id="editorContext"
+      onpopupshowing="goUpdateGlobalEditMenuItems(true);"
+      native="false"
+    >
       <menuitem data-l10n-id="text-action-undo" command="cmd_undo" />
       <menuseparator />
       <menuitem data-l10n-id="text-action-cut" command="cmd_cut" />
@@ -201,7 +200,7 @@
           crop="end"
           command="cmd_applyOriginal"
           orient="horizontal"
-          disabled="true"
+          disabled=""
           class="counter-buttons"
           accesskey="&counter.button.original.accesskey;"
           tooltip="&counter.button.original.tooltip2;"
@@ -226,7 +225,7 @@
           />
         </html:th>
         <html:td id="event-grid-item-calendar-td">
-          <menulist id="item-calendar" disable-on-readonly="true" oncommand="updateCalendar();" />
+          <menulist id="item-calendar" disable-on-readonly="true" oncommand="updateCalendar()" />
         </html:td>
       </html:tr>
 
@@ -289,13 +288,14 @@
             <menupopup
               id="item-categories-popup"
               onpopuphiding="return categoryPopupHiding(event);"
+              native="false"
             >
               <html:input
                 id="item-categories-textbox"
                 placeholder="&event.categories.textbox.label;"
-                onblur="this.parentNode.removeAttribute('ignorekeys');"
-                onfocus="this.parentNode.setAttribute('ignorekeys', 'true');"
-                onkeypress="categoryTextboxKeypress(event);"
+                onblur="this.parentNode.removeAttribute('ignorekeys')"
+                onfocus="this.parentNode.setAttribute('ignorekeys', 'true')"
+                onkeypress="categoryTextboxKeypress(event)"
               />
               <menuseparator />
             </menupopup>
@@ -316,7 +316,7 @@
             disable-on-readonly="true"
             label="&event.alldayevent.label;"
             accesskey="&event.alldayevent.accesskey;"
-            oncommand="onUpdateAllDay();"
+            oncommand="onUpdateAllDay()"
           />
         </html:td>
       </html:tr>
@@ -347,19 +347,19 @@
               id="event-starttime"
               class="event-only"
               disable-on-readonly="true"
-              onchange="dateTimeControls2State(true);"
+              onchange="dateTimeControls2State(true)"
             />
             <checkbox
               id="todo-has-entrydate"
               class="todo-only checkbox-no-label"
               disable-on-readonly="true"
-              oncommand="updateEntryDate();"
+              oncommand="updateEntryDate()"
             />
             <datetimepicker
               id="todo-entrydate"
               class="todo-only"
               disable-on-readonly="true"
-              onchange="dateTimeControls2State(true);"
+              onchange="dateTimeControls2State(true)"
             />
             <vbox>
               <hbox>
@@ -375,7 +375,7 @@
               <toolbarbutton
                 id="keepduration-button"
                 accesskey="&event.dialog.keepDurationButton.accesskey;"
-                oncommand="toggleKeepDuration();"
+                oncommand="toggleKeepDuration()"
                 persist="keep"
                 keep="false"
                 aria-pressed="false"
@@ -390,7 +390,13 @@
                 crop="end"
                 disable-on-readonly="true"
                 hyperlink="true"
-                onclick="showTimezonePopup(event, gStartTime.getInTimezone(gStartTimezone), editStartTimezone)"
+                onclick="
+                  showTimezonePopup(
+                    event,
+                    gStartTime.getInTimezone(gStartTimezone),
+                    editStartTimezone
+                  )
+                "
               />
             </hbox>
           </hbox>
@@ -424,19 +430,19 @@
                 id="event-endtime"
                 class="event-only"
                 disable-on-readonly="true"
-                onchange="dateTimeControls2State(false);"
+                onchange="dateTimeControls2State(false)"
               />
               <checkbox
                 id="todo-has-duedate"
                 class="todo-only checkbox-no-label"
                 disable-on-readonly="true"
-                oncommand="updateDueDate();"
+                oncommand="updateDueDate()"
               />
               <datetimepicker
                 id="todo-duedate"
                 class="todo-only"
                 disable-on-readonly="true"
-                onchange="dateTimeControls2State(false);"
+                onchange="dateTimeControls2State(false)"
               />
               <vbox pack="end">
                 <html:img
@@ -455,7 +461,9 @@
                   disable-on-readonly="true"
                   flex="1"
                   hyperlink="true"
-                  onclick="showTimezonePopup(event, gEndTime.getInTimezone(gEndTimezone), editEndTimezone)"
+                  onclick="
+                    showTimezonePopup(event, gEndTime.getInTimezone(gEndTimezone), editEndTimezone)
+                  "
                 />
               </hbox>
             </hbox>
@@ -479,9 +487,9 @@
               id="todo-status"
               class="todo-only"
               disable-on-readonly="true"
-              oncommand="updateToDoStatus(this.value);"
+              oncommand="updateToDoStatus(this.value)"
             >
-              <menupopup id="todo-status-menupopup">
+              <menupopup id="todo-status-menupopup" native="false">
                 <menuitem
                   id="todo-status-none-menuitem"
                   label="&newevent.todoStatus.none.label;"
@@ -513,7 +521,7 @@
               id="completed-date-picker"
               class="todo-only"
               disable-on-readonly="true"
-              disabled="true"
+              disabled=""
               value=""
             />
             <html:input
@@ -553,7 +561,7 @@
               disable-on-readonly="true"
               oncommand="updateRepeat(null, true)"
             >
-              <menupopup id="item-repeat-menupopup">
+              <menupopup id="item-repeat-menupopup" native="false">
                 <menuitem
                   id="repeat-none-menuitem"
                   label="&event.repeat.does.not.repeat.label;"
@@ -610,7 +618,11 @@
                 flex="1"
                 type="forever"
                 disable-on-readonly="true"
-                onchange="if (onLoad.hasLoaded) { checkUntilDate(); }"
+                onchange="
+                  if (onLoad.hasLoaded) {
+                    checkUntilDate();
+                  }
+                "
                 value=""
               />
             </hbox>
@@ -622,7 +634,11 @@
                 disable-on-readonly="true"
                 hyperlink="true"
                 flex="1"
-                onclick="if (onLoad.hasLoaded) { updateRepeat(); }"
+                onclick="
+                  if (onLoad.hasLoaded) {
+                    updateRepeat();
+                  }
+                "
               />
             </vbox>
           </hbox>
@@ -651,7 +667,7 @@
               disable-on-readonly="true"
               oncommand="updateReminder()"
             >
-              <menupopup id="item-alarm-menupopup">
+              <menupopup id="item-alarm-menupopup" native="false">
                 <menuitem
                   id="reminder-none-menuitem"
                   label="&event.reminder.none.label;"
@@ -834,10 +850,10 @@
                     wantdropmarker="true"
                     class="formatting-button"
                     tooltiptext="&ParagraphSelect.tooltip;"
-                    oncommand="goDoCommandParams('cmd_paragraphState', event.target.value);"
+                    oncommand="goDoCommandParams('cmd_paragraphState', event.target.value)"
                     observes="cmd_renderedHTMLEnabler"
                   >
-                    <menupopup id="paragraphPopup">
+                    <menupopup id="paragraphPopup" native="false">
                       <menuitem id="toolbarmenu_bodyText" label="&bodyTextCmd.label;" value="" />
                       <menuitem id="toolbarmenu_h1" label="&heading1Cmd.label;" value="h1" />
                       <menuitem id="toolbarmenu_h2" label="&heading2Cmd.label;" value="h2" />
@@ -917,7 +933,7 @@
                     tooltiptext="&AlignPopupButton.tooltip;"
                     observes="cmd_align"
                   >
-                    <menupopup id="AlignPopup">
+                    <menupopup id="AlignPopup" native="false">
                       <menuitem
                         id="AlignLeftItem"
                         class="menuitem-iconic"
@@ -952,7 +968,7 @@
                     id="linkButton"
                     class="formatting-button"
                     tooltiptext="&linkToolbarCmd.label;"
-                    oncommand="insertLink();"
+                    oncommand="insertLink()"
                     observes="cmd_renderedHTMLEnabler"
                   />
                   <toolbarbutton
@@ -963,7 +979,7 @@
                     tooltiptext="&SmileButton.tooltip;"
                     observes="cmd_renderedHTMLEnabler"
                   >
-                    <menupopup id="smileyPopup" class="no-icon-menupopup">
+                    <menupopup id="smileyPopup" class="no-icon-menupopup" native="false">
                       <menuitem
                         id="smileySmile"
                         class="menuitem-iconic"
@@ -1069,7 +1085,7 @@
                 type="content"
                 primary="true"
                 editortype="html"
-                oncontextmenu="openEditorContextMenu(event);"
+                oncontextmenu="openEditorContextMenu(event)"
                 disable-on-readonly="true"
                 flex="1"
               />
@@ -1084,7 +1100,7 @@
                   flex="1"
                   disable-on-readonly="true"
                   onkeypress="attachmentLinkKeyPress(event)"
-                  ondblclick="attachmentDblClick(event);"
+                  ondblclick="attachmentDblClick(event)"
                 />
               </vbox>
             </tabpanel>
@@ -1115,7 +1131,7 @@
               id="notify-attendees-checkbox"
               label="&event.attendees.notify.label;"
               accesskey="&event.attendees.notify.accesskey;"
-              oncommand="changeUndiscloseCheckboxStatus();"
+              oncommand="changeUndiscloseCheckboxStatus()"
               pack="start"
             />
             <checkbox
@@ -1138,7 +1154,7 @@
     </vbox>
 
     <popupset id="event-dialog-popupset">
-      <menupopup id="attendee-popup">
+      <menupopup id="attendee-popup" native="false">
         <menuitem
           id="attendee-popup-invite-menuitem"
           label="&event.invite.attendees.label;"
@@ -1181,7 +1197,7 @@
           crop="end"
         />
       </menupopup>
-      <menupopup id="attachment-popup" onpopupshowing="attachmentClick(event)">
+      <menupopup id="attachment-popup" onpopupshowing="attachmentClick(event)" native="false">
         <menuitem
           id="attachment-popup-open"
           label="&event.attachments.popup.open.label;"
@@ -1213,7 +1229,12 @@
           command="cmd_attach_url"
         />
       </menupopup>
-      <menupopup id="timezone-popup" position="after_start" oncommand="chooseRecentTimezone(event)">
+      <menupopup
+        id="timezone-popup"
+        position="after_start"
+        oncommand="chooseRecentTimezone(event)"
+        native="false"
+      >
         <menuitem id="timezone-popup-defaulttz" />
         <menuseparator id="timezone-popup-menuseparator" />
         <menuitem

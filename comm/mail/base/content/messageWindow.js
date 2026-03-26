@@ -386,13 +386,13 @@ function HideMenus() {
 
   var favoriteFolder = document.getElementById("menu_favoriteFolder");
   if (favoriteFolder) {
-    favoriteFolder.setAttribute("disabled", "true");
+    favoriteFolder.toggleAttribute("disabled", true);
     favoriteFolder.toggleAttribute("hidden", true);
   }
 
   favoriteFolder = document.getElementById("appmenu_favoriteFolder");
   if (favoriteFolder) {
-    favoriteFolder.setAttribute("disabled", "true");
+    favoriteFolder.toggleAttribute("disabled", true);
     favoriteFolder.toggleAttribute("hidden", true);
   }
 
@@ -714,7 +714,7 @@ function messageHistoryMenu_init(popup) {
       commandEvent.stopPropagation();
     });
     if (relativePosition === 0 && !messageHistory.canPop(0)) {
-      newMenuItem.setAttribute("checked", true);
+      newMenuItem.toggleAttribute("checked", true);
       newMenuItem.setAttribute("type", "radio");
     }
     items.push(newMenuItem);

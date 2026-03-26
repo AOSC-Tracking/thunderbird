@@ -3,8 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* import-globals-from ../../../../toolkit/content/preferencesBindings.js */
-/* import-globals-from ../../../mailnews/base/prefs/content/am-identity-edit.js */
-
+/* global gAccount * / // From mailnews/base/prefs/content/am-identity-edit.js
 /* global EnigRevokeKey */
 
 var { MailServices } = ChromeUtils.importESModule(
@@ -453,26 +452,21 @@ async function smimeGenCSR() {
         return;
       }
 
-      filePicker = Cc["@mozilla.org/filepicker;1"]
-        .createInstance()
-        .QueryInterface(Ci.nsIFilePicker);
+      filePicker = Cc["@mozilla.org/filepicker;1"].createInstance(
+        Ci.nsIFilePicker
+      );
       filePicker.init(
-        window.browsingContext,
+        window.browsingContext.topChromeWindow.browsingContext,
         csrTitle,
         Ci.nsIFilePicker.modeSave
       );
       filePicker.defaultExtension = "txt";
-      filePicker.defaultString = "CSR-" + gIdentity.email + ".txt";
-
+      filePicker.defaultString = `CSR-${gIdentity.email}.txt`;
       filePicker.appendFilter(textFileInfo, "*.txt");
       filePicker.appendFilters(Ci.nsIFilePicker.filterAll);
 
-      const goodResults = [
-        Ci.nsIFilePicker.returnOK,
-        Ci.nsIFilePicker.returnReplace,
-      ];
       const rv = await new Promise(resolve => filePicker.open(resolve));
-      if (!goodResults.includes(rv) || !filePicker.file) {
+      if (rv == Ci.nsIFilePicker.returnCancel || !filePicker.file) {
         return;
       }
 
@@ -1238,7 +1232,7 @@ async function reloadOpenPgpUI() {
 
         dateButton.removeAttribute("hidden");
         // This key is expired, so make it unselectable.
-        radio.setAttribute("disabled", "true");
+        radio.toggleAttribute("disabled", true);
       } else {
         // If the key expires in less than 6 months.
         const sixMonths = new Date();
@@ -1385,6 +1379,7 @@ async function reloadOpenPgpUI() {
     document.l10n.setAttributes(more, "openpgp-key-man-key-more");
 
     const menupopup = document.createXULElement("menupopup");
+    menupopup.setAttribute("native", "false");
     menupopup.classList.add("more-button-menupopup");
 
     const copyItem = document.createXULElement("menuitem");

@@ -717,14 +717,14 @@ customElements.whenDefined("tree-listbox").then(() => {
     /**
      * Export the selected address book to a file.
      */
-    exportSelected() {
+    async exportSelected() {
       if (this.selectedIndex == 0) {
         return;
       }
 
       const row = this.getRowAtIndex(this.selectedIndex);
       const directory = row._book || row._list;
-      AddrBookUtils.exportDirectory(directory);
+      await AddrBookUtils.exportCards(directory.childCards, directory.dirName);
     }
 
     /**
@@ -840,7 +840,7 @@ customElements.whenDefined("tree-listbox").then(() => {
       }
       const bookUID = row.dataset.book ?? row.dataset.uid;
       const book = MailServices.ab.getDirectoryFromUID(bookUID);
-      return !book.readOnly;
+      return book && !book.readOnly;
     }
 
     /**
@@ -857,7 +857,7 @@ customElements.whenDefined("tree-listbox").then(() => {
       }
       const bookUID = row.dataset.book ?? row.dataset.uid;
       const book = MailServices.ab.getDirectoryFromUID(bookUID);
-      return !book.readOnly && book.supportsMailingLists;
+      return book && !book.readOnly && book.supportsMailingLists;
     }
 
     _onSelect() {
@@ -991,7 +991,7 @@ customElements.whenDefined("tree-listbox").then(() => {
         }
       } else if (event.dataTransfer.dropEffect == "copy") {
         for (const card of cards) {
-          row._book.dropCard(card, true);
+          row._book.addCard(card, true);
         }
       } else {
         const booksMap = new Map();
@@ -1000,7 +1000,7 @@ customElements.whenDefined("tree-listbox").then(() => {
           if (bookUID == card.directoryUID) {
             continue;
           }
-          row._book.dropCard(card, false);
+          row._book.addCard(card);
           let bookSet = booksMap.get(card.directoryUID);
           if (!bookSet) {
             bookSet = new Set();
@@ -1077,11 +1077,7 @@ customElements.whenDefined("tree-listbox").then(() => {
             directory.URI;
       }
 
-      if (isDefault) {
-        startupDefaultItem.setAttribute("checked", "true");
-      } else {
-        startupDefaultItem.removeAttribute("checked");
-      }
+      startupDefaultItem.toggleAttribute("checked", isDefault);
 
       if (event.type == "contextmenu" && event.button == 2) {
         // This is a right-click. Open where it happened.
@@ -1157,7 +1153,7 @@ customElements.whenDefined("tree-listbox").then(() => {
             break;
           }
           case "addrbook-directory-deleted": {
-            this.getRowForUID(subject.UID).remove();
+            this.getRowForUID(subject.UID)?.remove();
             break;
           }
           case "addrbook-directory-request-start":
@@ -1270,7 +1266,7 @@ customElements.whenDefined("tree-view-table-row").then(() => {
         document
           .getElementById("sortContext")
           .querySelector(`menuitem[value="addrbook"]`)
-          .getAttribute("checked") === "true"
+          .hasAttribute("checked")
       ) {
         let addressBookName = this.querySelector(".address-book-name");
         if (!addressBookName) {
@@ -1489,7 +1485,7 @@ var cardsPane = {
     );
     this.sortContext
       .querySelector(`[name="format"][value="${nameFormat}"]`)
-      ?.setAttribute("checked", "true");
+      ?.toggleAttribute("checked", true);
 
     let columns = XULStoreUtils.getValue("addressBook", "cards", "columns");
     if (columns) {
@@ -1517,7 +1513,7 @@ var cardsPane = {
       document.l10n.setAttributes(menuitem, abColumn.l10n.menuitem);
     }
     if (!abColumn.hidden) {
-      menuitem.setAttribute("checked", "true");
+      menuitem.toggleAttribute("checked", true);
     }
 
     menuitem.addEventListener("command", () =>
@@ -1672,7 +1668,7 @@ var cardsPane = {
     if (isTableLayout) {
       this.sortContext
         .querySelector("#sortContextTableLayout")
-        .setAttribute("checked", "true");
+        .toggleAttribute("checked", true);
     } else {
       this.sortContext
         .querySelector("#sortContextTableLayout")
@@ -1846,7 +1842,7 @@ var cardsPane = {
       ?.removeAttribute("checked");
     this.sortContext
       .querySelector(`[name="sort"][value="${column} ${direction}"]`)
-      ?.setAttribute("checked", "true");
+      ?.toggleAttribute("checked", true);
 
     // Unmark the header of previously sorted column, then mark the header of
     // the column to be sorted.
@@ -1938,13 +1934,23 @@ var cardsPane = {
   /**
    * Export the selected mailing list to a file.
    */
-  exportSelected() {
-    const card = this.selectedCards[0];
-    if (!card || !card.isMailList) {
-      return;
+  async exportSelected() {
+    const selectedCards = this.selectedCards;
+    if (selectedCards.length == 1 && selectedCards[0].isMailList) {
+      const row = booksList.getRowForUID(selectedCards[0].UID);
+      await AddrBookUtils.exportCards(
+        row._list.childCards,
+        selectedCards[0].displayName
+      );
+    } else {
+      const suggestedName =
+        selectedCards.length == 1
+          ? selectedCards[0].displayName
+          : await document.l10n.formatValue(
+              "about-addressbook-export-selected-filename"
+            );
+      await AddrBookUtils.exportCards(selectedCards, suggestedName);
     }
-    const row = booksList.getRowForUID(card.UID);
-    AddrBookUtils.exportDirectory(row._list);
   },
 
   _canModifySelected() {
@@ -2102,10 +2108,10 @@ var cardsPane = {
       "about-addressbook-books-context-edit"
     );
     const exportItem = document.getElementById("cardContextExport");
-    if (this.cardsList.selectedIndices.length == 1) {
-      const card = this.cardsList.view.getCardFromRow(
-        this.cardsList.selectedIndex
-      );
+
+    const selectedCards = this.selectedCards;
+    if (selectedCards.length == 1) {
+      const card = selectedCards[0];
       if (card.isMailList) {
         writeMenuItem.hidden = writeMenuSeparator.hidden = false;
         writeMenu.hidden = true;
@@ -2148,13 +2154,13 @@ var cardsPane = {
         }
 
         editItem.hidden = !this._canModifySelected();
-        exportItem.hidden = true;
+        exportItem.hidden = false;
       }
     } else {
       writeMenuItem.hidden = false;
       writeMenu.hidden = true;
       editItem.hidden = true;
-      exportItem.hidden = true;
+      exportItem.hidden = selectedCards.some(card => card.isMailList);
     }
 
     const deleteItem = document.getElementById("cardContextDelete");
@@ -2195,7 +2201,7 @@ var cardsPane = {
   _onCommand(event) {
     switch (event.target.id) {
       case "sortContextTableLayout":
-        this.toggleLayout(event.target.getAttribute("checked") === "true");
+        this.toggleLayout(event.target.hasAttribute("checked"));
         break;
       case "cardContextWrite":
         this.writeToSelected();

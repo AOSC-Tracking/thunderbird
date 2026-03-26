@@ -168,11 +168,7 @@ var TodayPane = {
     document
       .querySelectorAll("#task-context-menu-filter-todaypane-popup > menuitem")
       .forEach(item => {
-        if (item.getAttribute("value") == filter) {
-          item.setAttribute("checked", "true");
-        } else {
-          item.removeAttribute("checked");
-        }
+        item.toggleAttribute("checked", item.getAttribute("value") == filter);
       });
 
     const showCompleted = document.getElementById("show-completed-checkbox").checked;
@@ -429,9 +425,11 @@ var TodayPane = {
 
     if (!aDontUpdateMinimonth) {
       try {
+        const jsStart = cal.dtz.dateTimeToJsDate(this.start);
         // The minimonth code sometimes throws an exception as a result of this call. Bug 1560547.
         // As there's no known plausible explanation, just catch the exception and carry on.
-        document.getElementById("today-minimonth").value = cal.dtz.dateTimeToJsDate(this.start);
+        document.getElementById("today-minimonth").value = jsStart;
+        document.getElementById("miniday-dropdown-minimonth").value = jsStart;
       } catch (ex) {
         console.error(ex);
       }

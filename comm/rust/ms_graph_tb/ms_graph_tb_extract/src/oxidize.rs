@@ -5,9 +5,11 @@
 //! Modules for turning our representation of the Graph API into Rust code
 //! (specifically, a [`proc_macro2::TokenStream`]).
 
-use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use proc_macro2::{Ident, TokenStream};
+use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 use std::{collections::HashSet, fmt};
+
+use crate::{extract::schema::Property, naming};
 
 pub mod paths;
 pub mod types;
@@ -16,9 +18,17 @@ fn imports(properties: &[crate::extract::schema::Property]) -> TokenStream {
     let mut imports = properties
         .iter()
         .filter_map(|p| {
-            let name = p.name.as_str();
-            if crate::SUPPORTED_TYPES.contains(&name) {
-                Some(crate::naming::snakeify(name))
+            if let RustType::Custom(custom_rust_type) = &p.rust_type {
+                let original_name = custom_rust_type.original_name();
+                if crate::SUPPORTED_TYPES.contains(&original_name.as_str()) {
+                    Some(custom_rust_type.as_snake_case())
+                } else {
+                    println!(
+                        "not generating imports for property of unsupported custom type {}",
+                        original_name
+                    );
+                    None
+                }
             } else {
                 None
             }
@@ -31,6 +41,67 @@ fn imports(properties: &[crate::extract::schema::Property]) -> TokenStream {
     let imports = imports.iter().map(|s| format_ident!("{s}"));
 
     quote!(#( use crate::types::#imports::*; )*)
+}
+
+/// Represents the information necessary to produce the tokens of a module file.
+pub struct ModuleFile {
+    /// Clippy lints we want to allow for this entire module.
+    allowed_lints: Vec<Ident>,
+    /// Clippy lints we want to disallow for this entire module.
+    denied_lints: Vec<Ident>,
+    /// Identifiers of the modules to make public.
+    modules: Vec<Ident>,
+}
+
+impl ModuleFile {
+    /// Construct a new `ModuleFile`. Modules should be sorted before calling.
+    pub fn new(modules: &[impl AsRef<str>]) -> Self {
+        let modules = modules
+            .iter()
+            .map(|id| format_ident!("{}", id.as_ref()))
+            .collect();
+        Self {
+            allowed_lints: vec![],
+            denied_lints: vec![],
+            modules,
+        }
+    }
+
+    /// Allow the given Clippy lints for the entire module.
+    pub fn allow_lints(mut self, allowed_lints: &[impl AsRef<str>]) -> Self {
+        let allowed_lints = allowed_lints
+            .iter()
+            .map(|id| format_ident!("{}", id.as_ref()))
+            .collect();
+        self.allowed_lints = allowed_lints;
+        self
+    }
+
+    /// Deny the given Clippy lints for the entire module.
+    pub fn deny_lints(mut self, denied_lints: &[impl AsRef<str>]) -> Self {
+        let denied_lints = denied_lints
+            .iter()
+            .map(|id| format_ident!("{}", id.as_ref()))
+            .collect();
+        self.denied_lints = denied_lints;
+        self
+    }
+}
+
+impl ToTokens for &ModuleFile {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let ModuleFile {
+            allowed_lints,
+            denied_lints,
+            modules,
+        } = self;
+        tokens.append_all(quote! {
+            #( #![allow(clippy::#allowed_lints)] )*
+            #( #![deny(clippy::#denied_lints)] )*
+
+            #( pub mod #modules; )*
+        });
+    }
 }
 
 /// Does some (very) basic clean up of descriptions to make them better
@@ -112,10 +183,10 @@ fn markup_doc_comment(mut doc_comment: String) -> String {
 
     // if the doc comment doesn't have a summary line, turn the first sentence
     // into one
-    if !doc_comment.contains("\n\n") {
-        if let Some(idx) = doc_comment.find(". ") {
-            doc_comment.insert_str(idx + 1, "\n\n");
-        }
+    if !doc_comment.contains("\n\n")
+        && let Some(idx) = doc_comment.find(". ")
+    {
+        doc_comment.insert_str(idx + 1, "\n\n");
     }
 
     doc_comment
@@ -166,7 +237,7 @@ pub enum RustType {
     F64,
     String,
     _Bytes, // FIXME: will be needed once we add byte and binary support
-    Custom(String),
+    Custom(CustomRustType),
 }
 
 impl RustType {
@@ -204,7 +275,7 @@ impl RustType {
             Self::F64 => "f64",
             Self::String => string,
             Self::_Bytes => bytes,
-            Self::Custom(s) => s,
+            Self::Custom(s) => s.as_pascal_case(),
         }
     }
 
@@ -224,11 +295,98 @@ impl RustType {
             Self::_Bytes if !sliced => quote!(Vec<u8>),
             Self::_Bytes => quote!([u8]),
             Self::Custom(name) => {
-                let ident = format_ident!("{name}");
+                let ident = format_ident!("{}", name.as_pascal_case());
                 quote!(#ident)
             }
         }
     }
+}
+
+/// A custom Rust type that doesn't fit in any of the [`RustType`] variants.
+///
+/// This struct holds both the PascalCase and original versions of the type's
+/// name. Ideally we'd generate the PascalCase version upon request (e.g. when
+/// `as_pascal_case` is called), but this causes ownership issues further down
+/// the line.
+#[derive(Debug, Clone)]
+pub struct CustomRustType {
+    pascal_case: String,
+    original_name: String,
+}
+
+impl From<String> for CustomRustType {
+    fn from(value: String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
+impl From<&str> for CustomRustType {
+    fn from(value: &str) -> Self {
+        CustomRustType {
+            pascal_case: crate::naming::pascalize(value),
+            original_name: value.to_string(),
+        }
+    }
+}
+
+impl CustomRustType {
+    /// Returns the type's name in PascalCase.
+    pub fn as_pascal_case(&self) -> &String {
+        &self.pascal_case
+    }
+
+    /// Returns the type's name in snake_case.
+    pub fn as_snake_case(&self) -> String {
+        naming::snakeify(&self.original_name)
+    }
+
+    /// Returns the type's name as it was written in the OpenAPI spec.
+    pub fn original_name(&self) -> &String {
+        &self.original_name
+    }
+}
+
+/// Given the propeperty and whether it should be a reference, produce a
+/// `TokenStream` that can be used as a return type representing it.
+///
+/// `lifetime_name` defaults to `'a`. Note that any name *must* include the
+/// leading `'`.
+fn return_type(prop: &Property, refers: Reference, lifetime_name: Option<&str>) -> TokenStream {
+    let base = &prop.rust_type.base_token(prop.nullable, refers);
+
+    let mut ty: TokenStream = if matches!(prop.rust_type, RustType::Custom(_)) {
+        // The format_ident! macro doesn't like lifetime names, so we do this manually.
+        let lifetime_name: TokenStream = lifetime_name
+            .unwrap_or("'a")
+            .parse()
+            .expect("should be a valid lifetime ident");
+        quote!(#base<#lifetime_name>)
+    } else {
+        quote!(#base)
+    };
+
+    let composed = prop.rust_type.composed();
+    if refers == Reference::Ref
+        && composed != Composed::Copy
+        && (!prop.is_collection || composed == Composed::Slice)
+        && !matches!(prop.rust_type, RustType::Custom(_))
+    {
+        ty = quote!(&#ty);
+    }
+
+    if prop.is_collection {
+        ty = quote!(Vec<#ty>);
+    }
+
+    if prop.nullable {
+        ty = quote!(Option<#ty>);
+    }
+
+    if !prop.is_ref {
+        ty = quote!(Result<#ty, Error>);
+    }
+
+    ty
 }
 
 /// Returns true if the given string is a reserved Rust keyword.

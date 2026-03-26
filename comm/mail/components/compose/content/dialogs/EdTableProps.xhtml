@@ -228,7 +228,7 @@
                 accesskey="&tableAlignment.accessKey;"
               />
               <menulist id="TableAlignList">
-                <menupopup>
+                <menupopup native="false">
                   <menuitem label="&AlignLeft.label;" value="left" />
                   <menuitem label="&AlignCenter.label;" value="center" />
                   <menuitem label="&AlignRight.label;" value="right" />
@@ -241,7 +241,7 @@
                 accesskey="&tableCaption.accessKey;"
               />
               <menulist id="TableCaptionList">
-                <menupopup>
+                <menupopup native="false">
                   <menuitem label="&tableCaptionNone.label;" value="" />
                   <menuitem label="&tableCaptionAbove.label;" value="top" />
                   <menuitem label="&tableCaptionBelow.label;" value="bottom" />
@@ -256,7 +256,7 @@
               <button
                 id="tableBackground"
                 class="color-button"
-                oncommand="GetColorAndUpdate('tableBackgroundCW');"
+                oncommand="GetColorAndUpdate('tableBackgroundCW')"
               >
                 <spacer id="tableBackgroundCW" class="color-well" />
               </button>
@@ -272,7 +272,7 @@
               <spacer flex="1" />
               <button
                 id="AdvancedEditButton"
-                oncommand="onAdvancedEdit();"
+                oncommand="onAdvancedEdit()"
                 label="&AdvancedEditButton.label;"
                 accesskey="&AdvancedEditButton.accessKey;"
                 tooltiptext="&AdvancedEditButton.tooltip;"
@@ -290,7 +290,7 @@
                   id="SelectionList"
                   oncommand="ChangeSelection(event.target.value)"
                 >
-                  <menupopup>
+                  <menupopup native="false">
                     <!-- JS code assumes order is Cell, Row, Column -->
                     <menuitem label="&cellSelectCell.label;" value="1" />
                     <menuitem label="&cellSelectRow.label;" value="2" />
@@ -343,7 +343,7 @@
                         id="CellHeightInput"
                         type="number"
                         class="narrow input-inline"
-                        onchange="ChangeIntTextbox('CellHeightCheckbox');"
+                        onchange="ChangeIntTextbox('CellHeightCheckbox')"
                         aria-labelledby="CellHeightCheckbox"
                       />
                     </hbox>
@@ -352,7 +352,7 @@
                         id="CellWidthInput"
                         type="number"
                         class="narrow input-inline"
-                        onchange="ChangeIntTextbox('CellWidthCheckbox');"
+                        onchange="ChangeIntTextbox('CellWidthCheckbox')"
                         aria-labelledby="CellWidthCheckbox"
                       />
                     </hbox>
@@ -361,13 +361,13 @@
                     <hbox flex="1" align="center">
                       <menulist
                         id="CellHeightUnits"
-                        oncommand="SetCheckbox('CellHeightCheckbox');"
+                        oncommand="SetCheckbox('CellHeightCheckbox')"
                       />
                     </hbox>
                     <hbox flex="1" align="center">
                       <menulist
                         id="CellWidthUnits"
-                        oncommand="SetCheckbox('CellWidthCheckbox');"
+                        oncommand="SetCheckbox('CellWidthCheckbox')"
                       />
                     </hbox>
                   </vbox>
@@ -395,9 +395,9 @@
                   <vbox flex="1">
                     <menulist
                       id="CellVAlignList"
-                      oncommand="SetCheckbox('CellVAlignCheckbox');"
+                      oncommand="SetCheckbox('CellVAlignCheckbox')"
                     >
-                      <menupopup>
+                      <menupopup native="false">
                         <menuitem label="&cellAlignTop.label;" value="top" />
                         <menuitem
                           label="&cellAlignMiddle.label;"
@@ -413,7 +413,7 @@
                       id="CellHAlignList"
                       oncommand="SelectCellHAlign()"
                     >
-                      <menupopup>
+                      <menupopup native="false">
                         <menuitem label="&AlignLeft.label;" value="left" />
                         <menuitem label="&AlignCenter.label;" value="center" />
                         <menuitem label="&AlignRight.label;" value="right" />
@@ -436,9 +436,9 @@
               />
               <menulist
                 id="CellStyleList"
-                oncommand="SetCheckbox('CellStyleCheckbox');"
+                oncommand="SetCheckbox('CellStyleCheckbox')"
               >
-                <menupopup>
+                <menupopup native="false">
                   <menuitem label="&cellNormal.label;" value="td" />
                   <menuitem label="&cellHeader.label;" value="th" />
                 </menupopup>
@@ -451,9 +451,9 @@
               />
               <menulist
                 id="TextWrapList"
-                oncommand="SetCheckbox('TextWrapCheckbox');"
+                oncommand="SetCheckbox('TextWrapCheckbox')"
               >
-                <menupopup>
+                <menupopup native="false">
                   <menuitem label="&cellWrap.label;" value="wrap" />
                   <menuitem label="&cellNoWrap.label;" value="nowrap" />
                 </menupopup>
@@ -468,7 +468,7 @@
               />
               <button
                 class="color-button"
-                oncommand="GetColorAndUpdate('cellBackgroundCW');"
+                oncommand="GetColorAndUpdate('cellBackgroundCW')"
               >
                 <spacer id="cellBackgroundCW" class="color-well" />
               </button>

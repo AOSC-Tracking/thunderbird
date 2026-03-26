@@ -154,7 +154,8 @@ static int MimeMultipart_parse_line(const char* line, int32_t length,
       if (!mult->hdrs) return MIME_OUT_OF_MEMORY;
       if (obj->options && obj->options->state &&
           obj->options->state->partsToStrip.Length() > 0) {
-        nsAutoCString newPart(mime_part_address(obj));
+        nsAutoCString newPart;
+        newPart.Adopt(mime_part_address(obj));
         newPart.Append('.');
         newPart.AppendInt(container->nchildren + 1);
         obj->options->state->strippingPart = false;
@@ -413,10 +414,8 @@ static int MimeMultipart_create_child(MimeObject* obj) {
    multipart, but only for untyped children of message/rfc822.
    */
 
-  const char* my_address = mime_part_address(obj);
   body = mime_create(((ct && *ct) ? ct : (dct ? dct : TEXT_PLAIN)), mult->hdrs,
-                     obj->options, false, my_address, obj->content_type);
-  PR_Free((void*)my_address);
+                     obj->options, false, obj);
   PR_FREEIF(ct);
   if (!body) return MIME_OUT_OF_MEMORY;
   status = ((MimeContainerClass*)obj->clazz)->add_child(obj, body);

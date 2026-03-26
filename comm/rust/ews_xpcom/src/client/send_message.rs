@@ -4,15 +4,15 @@
 
 use std::sync::Arc;
 
-use base64::prelude::{Engine, BASE64_STANDARD};
+use base64::prelude::{BASE64_STANDARD, Engine};
 use ews::{
-    create_item::CreateItem, ArrayOfRecipients, Message, MessageDisposition, MimeContent,
-    Operation, RealItem, Recipient,
+    ArrayOfRecipients, Message, MessageDisposition, MimeContent, Operation, RealItem, Recipient,
+    create_item::CreateItem,
 };
+use protocol_shared::client::DoOperation;
+use protocol_shared::safe_xpcom::{SafeListener, SafeMsgOutgoingListener, uri::SafeUri};
 
-use super::{DoOperation, ServerType, TransportSecFailureBehavior, XpComEwsClient, XpComEwsError};
-
-use crate::safe_xpcom::{SafeListener, SafeMsgOutgoingListener, SafeUri};
+use super::{ServerType, TransportSecFailureBehavior, XpComEwsClient, XpComEwsError};
 
 struct DoSendMessage<'a> {
     listener: &'a SafeMsgOutgoingListener,
@@ -23,12 +23,14 @@ struct DoSendMessage<'a> {
     server_uri: SafeUri,
 }
 
-impl DoOperation for DoSendMessage<'_> {
+impl<ServerT: ServerType> DoOperation<XpComEwsClient<ServerT>, XpComEwsError>
+    for DoSendMessage<'_>
+{
     const NAME: &'static str = CreateItem::NAME;
     type Okay = ();
     type Listener = SafeMsgOutgoingListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {

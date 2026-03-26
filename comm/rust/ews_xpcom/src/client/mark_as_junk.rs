@@ -5,22 +5,18 @@
 use std::sync::Arc;
 
 use ews::{
-    mark_as_junk::{MarkAsJunk, MarkAsJunkResponse},
-    move_item::MoveItem,
+    BaseItemId, Operation, OperationResponse, mark_as_junk::MarkAsJunk, move_item::MoveItem,
     server_version::ExchangeServerVersion,
-    BaseItemId, Operation, OperationResponse,
 };
 use nsstring::nsCString;
+use protocol_shared::client::DoOperation;
+use protocol_shared::safe_xpcom::{SafeEwsSimpleOperationListener, SafeListener};
 use thin_vec::ThinVec;
 
-use crate::{
-    client::{
-        copy_move_operations::move_generic::{CopyMoveSuccess, RequiresResync},
-        process_response_message_class, validate_response_message_count, DoOperation, ServerType,
-        XpComEwsClient, XpComEwsError,
-    },
-    macros::queue_operation,
-    safe_xpcom::{SafeEwsSimpleOperationListener, SafeListener},
+use crate::client::{
+    ServerType, XpComEwsClient, XpComEwsError,
+    copy_move_operations::move_generic::{CopyMoveSuccess, RequiresResync},
+    process_response_message_class, validate_response_message_count,
 };
 
 struct DoMarkAsJunk {
@@ -29,12 +25,12 @@ struct DoMarkAsJunk {
     legacy_destination_folder_id: String,
 }
 
-impl DoOperation for DoMarkAsJunk {
+impl<ServerT: ServerType> DoOperation<XpComEwsClient<ServerT>, XpComEwsError> for DoMarkAsJunk {
     const NAME: &'static str = MarkAsJunk::NAME;
     type Okay = Option<ThinVec<nsCString>>;
     type Listener = SafeEwsSimpleOperationListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {
@@ -59,8 +55,9 @@ impl DoOperation for DoMarkAsJunk {
                 item_ids,
             };
 
-            let rcv = queue_operation!(client, MarkAsJunk, mark_as_junk, Default::default());
-            let response = rcv.await??;
+            let response = client
+                .enqueue_and_send(mark_as_junk, Default::default())
+                .await?;
 
             let response_messages = response.into_response_messages();
             validate_response_message_count(&response_messages, self.ews_ids.len())?;

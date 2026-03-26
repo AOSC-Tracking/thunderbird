@@ -905,7 +905,7 @@ function rebuildAccountTree() {
  */
 function onSetDefault(event) {
   // Make sure this function was not called while the control item is disabled
-  if (event.target.getAttribute("disabled") == "true") {
+  if (event.target.hasAttribute("disabled")) {
     return;
   }
 
@@ -920,7 +920,7 @@ function onSetDefault(event) {
 }
 
 function onRemoveAccount(event) {
-  if (event.target.getAttribute("disabled") == "true") {
+  if (event.target.hasAttribute("disabled")) {
     return;
   }
 
@@ -1143,23 +1143,8 @@ function updateBlockedItems(aItems, aMustBeTrue) {
       Services.prefs.prefIsLocked(prefstring) &&
       (!aMustBeTrue || Services.prefs.getBoolPref(prefstring))
     ) {
-      item.setAttribute("disabled", true);
+      item.toggleAttribute("disabled", true);
     }
-  }
-}
-
-/**
- * Set enabled/disabled state for the control.
- */
-function setEnabled(control, enabled) {
-  if (!control) {
-    return;
-  }
-
-  if (enabled) {
-    control.removeAttribute("disabled");
-  } else {
-    control.setAttribute("disabled", true);
   }
 }
 
@@ -1502,7 +1487,7 @@ function restorePage(pageId, account) {
             break;
         }
         var isLocked = getAccountValueIsLocked(pageElements[i]);
-        setEnabled(pageElements[i], !isLocked);
+        pageElements[i]?.toggleAttribute("disabled", isLocked);
       }
     }
   }

@@ -5,8 +5,8 @@
 // EDITS TO THIS FILE WILL BE OVERWRITTEN
 
 #![doc = "Types related to DirectoryObject. Auto-generated from [Microsoft OpenAPI metadata](https://github.com/microsoftgraph/msgraph-metadata/blob/master/openapi/v1.0/openapi.yaml) via `ms_graph_tb_extract openapi.yaml ms_graph_tb/`."]
-use crate::types::entity::*;
 use crate::Error;
+use crate::types::entity::*;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::borrow::Cow;
@@ -23,7 +23,7 @@ pub struct DirectoryObject<'a> {
     pub(crate) properties: Cow<'a, Map<String, Value>>,
 }
 impl<'a> DirectoryObject<'a> {
-    #[doc = r" Internal constructor."]
+    #[doc = r"Internal constructor."]
     #[allow(dead_code)]
     pub(super) fn new(properties: &'a Map<String, Value>) -> Self {
         DirectoryObject {

@@ -173,7 +173,7 @@
             flex="1"
             orient="horizontal"
             amsa_persist="true"
-            onselect="updateInboxAccount(this.selectedIndex == 1);"
+            onselect="updateInboxAccount(this.selectedIndex == 1)"
           >
             <vbox flex="1">
               <hbox>
@@ -204,7 +204,8 @@
                       id="deferredServerPopup"
                       expandFolders="false"
                       mode="deferred"
-                      oncommand="this.selectFolder(event.target._folder);"
+                      oncommand="this.selectFolder(event.target._folder)"
+                      native="false"
                     />
                   </menulist>
                 </hbox>
@@ -245,7 +246,7 @@
             id="ewsOverrideOAuthDetails"
             amsa_persist="true"
             data-l10n-id="ews-override-oauth-details"
-            onclick="onChangeOverrideOAuthSelection(this)"
+            oncommand="onChangeOverrideOAuthSelection(this)"
           />
           <hbox class="indent">
             <!-- Labels -->

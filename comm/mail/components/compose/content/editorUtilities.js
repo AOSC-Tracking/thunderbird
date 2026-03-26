@@ -318,27 +318,6 @@ function EditorRemoveTextProperty(property, attribute) {
   } catch (e) {}
 }
 
-/** *********** Element enabling/disabling */
-
-// this function takes an elementID and a flag
-// if the element can be found by ID, then it is either enabled (by removing "disabled" attr)
-// or disabled (setAttribute) as specified in the "doEnable" parameter
-function SetElementEnabledById(elementID, doEnable) {
-  SetElementEnabled(document.getElementById(elementID), doEnable);
-}
-
-function SetElementEnabled(element, doEnable) {
-  if (element) {
-    if (doEnable) {
-      element.removeAttribute("disabled");
-    } else {
-      element.setAttribute("disabled", "true");
-    }
-  } else {
-    dump("Element  not found in SetElementEnabled\n");
-  }
-}
-
 /** *********** Services / Prefs */
 
 function GetFileProtocolHandler() {
@@ -611,23 +590,6 @@ function StripPassword(urlspec, passwordObj) {
           // Include the "@"
           return urlspec.slice(0, colon) + urlspec.slice(atIndex);
         }
-      }
-    } catch (e) {}
-  }
-  return urlspec;
-}
-
-// Version to use when you have an nsIURI object
-function StripUsernamePasswordFromURI(uri) {
-  var urlspec = "";
-  if (uri) {
-    try {
-      urlspec = uri.spec;
-      var userPass = uri.userPass;
-      if (userPass) {
-        const start = urlspec.indexOf(userPass);
-        urlspec =
-          urlspec.slice(0, start) + urlspec.slice(start + userPass.length + 1);
       }
     } catch (e) {}
   }

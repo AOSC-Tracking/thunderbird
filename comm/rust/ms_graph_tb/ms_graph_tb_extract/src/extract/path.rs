@@ -8,7 +8,7 @@ use crate::extract::schema::Property;
 use crate::naming::simple_name;
 use crate::openapi::path::{OaBody, OaParameter, OaPath};
 use crate::openapi::schema::OaSchema;
-use crate::oxidize::RustType;
+use crate::oxidize::{CustomRustType, RustType};
 
 use super::schema::extract_from_schema;
 
@@ -18,8 +18,18 @@ use super::schema::extract_from_schema;
 /// of operations using the same HTTP path.
 #[derive(Debug, Clone)]
 pub struct Path {
+    /// The full, unedited path name (e.g., `/me`).
     pub name: String,
+
+    /// A list of OpenAPI [path template expressions] in the path.
+    ///
+    /// [path template expressions]: https://spec.openapis.org/oas/latest.html#path-templating
+    pub template_expressions: Vec<String>,
+
+    /// A description of the path.
     pub description: Option<String>,
+
+    /// All supported HTTP operations for this path.
     pub operations: Vec<Operation>,
 }
 
@@ -30,6 +40,8 @@ pub struct Operation {
     pub summary: Option<String>,
     pub description: Option<String>,
     pub external_docs: Option<String>,
+    pub pageable: bool,
+    pub delta: bool,
     pub parameters: Option<Vec<Parameter>>,
     pub body: Option<RequestBody>,
     pub success: Success,
@@ -87,9 +99,9 @@ impl From<&OaParameter> for Parameter {
     fn from(value: &OaParameter) -> Self {
         let typ = match &value.schema {
             None => None,
-            Some(OaSchema::Ref { reference }) => {
-                Some(RustType::Custom(simple_name(reference).to_string()))
-            }
+            Some(OaSchema::Ref { reference }) => Some(RustType::Custom(CustomRustType::from(
+                simple_name(reference).to_string(),
+            ))),
             Some(schema) => {
                 let (_, properties) = extract_from_schema(schema);
                 assert_eq!(
@@ -119,11 +131,13 @@ pub struct RequestBody {
 
 impl From<&OaBody> for RequestBody {
     fn from(value: &OaBody) -> Self {
-        assert_eq!(
-            value.application_type.as_deref(),
-            Some("application/json"),
-            "non-json body: {value:?}"
-        );
+        if let OaSchema::Obj { .. } = &value.schema {
+            assert_eq!(
+                value.application_type.as_deref(),
+                Some("application/json"),
+                "non-json body: {value:?}"
+            );
+        }
         let (_, properties) = extract_from_schema(&value.schema);
         assert_eq!(
             properties.len(),
@@ -147,6 +161,28 @@ pub enum Success {
     WithBody(RequestBody),
 }
 
+fn schema_has_delta_base_ref(schema: &OaSchema) -> bool {
+    match schema {
+        OaSchema::Ref { reference } => {
+            reference == "#/components/schemas/BaseDeltaFunctionResponse"
+        }
+        OaSchema::Obj { items, all_of, .. } => {
+            items.as_deref().is_some_and(schema_has_delta_base_ref)
+                || all_of
+                    .as_ref()
+                    .is_some_and(|schemas| schemas.iter().any(schema_has_delta_base_ref))
+        }
+    }
+}
+
+fn template_expressions_from_path_name(name: &str) -> impl Iterator<Item = &str> {
+    name.split('{').skip(1).map(|s| {
+        s.split_once('}')
+            .expect("all path template expressions should have matched braces")
+            .0
+    })
+}
+
 /// For the given OpenAPI path, extract its Graph API description and supported
 /// requests.
 pub fn extract_from_oa_path(name: String, oa_path: &OaPath) -> Path {
@@ -155,6 +191,10 @@ pub fn extract_from_oa_path(name: String, oa_path: &OaPath) -> Path {
         operations,
     } = oa_path;
     let description = description.clone();
+
+    let template_expressions = template_expressions_from_path_name(&name)
+        .map(String::from)
+        .collect();
 
     let operations = operations
         .iter()
@@ -166,15 +206,23 @@ pub fn extract_from_oa_path(name: String, oa_path: &OaPath) -> Path {
             let summary = request.summary.clone();
             let description = request.description.clone();
             let external_docs = request.external_docs.clone();
+            let pageable = request.pageable;
             let parameters = request
                 .parameters
                 .as_ref()
                 .map(|p| p.iter().map(Parameter::from).collect());
             let body = request.body.as_ref().map(RequestBody::from);
+            let delta = request
+                .responses
+                .get("2XX")
+                .and_then(|body| body.as_ref())
+                .is_some_and(|body| schema_has_delta_base_ref(&body.schema));
             let success = if request.responses.contains_key("204") {
                 Success::NoBody
             } else if let Some(Some(two_hundred)) = request.responses.get("2XX") {
-                Success::WithBody(two_hundred.into())
+                let mut body: RequestBody = two_hundred.into();
+                body.property.is_ref |= delta;
+                Success::WithBody(body)
             } else {
                 todo!("success response: {:?}", request.responses);
             };
@@ -184,6 +232,8 @@ pub fn extract_from_oa_path(name: String, oa_path: &OaPath) -> Path {
                 summary,
                 description,
                 external_docs,
+                pageable,
+                delta,
                 parameters,
                 body,
                 success,
@@ -192,6 +242,7 @@ pub fn extract_from_oa_path(name: String, oa_path: &OaPath) -> Path {
         .collect();
     Path {
         name,
+        template_expressions,
         description,
         operations,
     }

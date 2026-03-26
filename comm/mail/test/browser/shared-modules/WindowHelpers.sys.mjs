@@ -7,11 +7,6 @@ import { NetUtil } from "resource://gre/modules/NetUtil.sys.mjs";
 import * as EventUtils from "resource://testing-common/mail/EventUtils.sys.mjs";
 import { TestUtils } from "resource://testing-common/TestUtils.sys.mjs";
 
-/**
- * Timeout for focusing a window.  Only really an issue on linux.
- */
-var WINDOW_FOCUS_TIMEOUT_MS = 10000;
-
 function getWindowTypeOrID(win) {
   const docElement = win.document.documentElement;
   return docElement.getAttribute("windowtype") || docElement.id;
@@ -35,69 +30,6 @@ export async function promise_new_window(aWindowType) {
   await new Promise(resolve => domWindow.setTimeout(resolve));
 
   return domWindow;
-}
-
-/**
- * Plan for the imminent display of a modal dialog.  Modal dialogs spin their
- *  own event loop which means that either that control flow will not return
- *  to the caller until the modal dialog finishes running.  This means that
- *  you need to provide a sub-test function to be run inside the modal dialog
- *  (and it should not start with "test" or mozmill will also try and run it.)
- *
- * @param {string} aWindowType - The window type that you expect the modal
- *   dialog to have or the ID of the window if there is no window type available.
- * @param {Function} aSubTestFunction - The sub-test function that will be run
- *   once the modal dialog appears and is loaded. This function should take one
- *   argument, the modal dialog.
- */
-export async function promise_modal_dialog(aWindowType, aSubTestFunction) {
-  const domWindow = await BrowserTestUtils.domWindowOpenedAndLoaded(
-    null,
-    win => getWindowTypeOrID(win) == aWindowType
-  );
-  await aSubTestFunction(domWindow);
-  await BrowserTestUtils.windowClosed(domWindow);
-}
-
-/**
- * Wait for the window to be focused.
- *
- * @param {Window} aWindow - The window to be focused.
- */
-export async function wait_for_window_focused(aWindow) {
-  let targetWindow = {};
-
-  Services.focus.getFocusedElementForWindow(aWindow, true, targetWindow);
-  targetWindow = targetWindow.value;
-
-  let focusedWindow = {};
-  if (Services.focus.activeWindow) {
-    Services.focus.getFocusedElementForWindow(
-      Services.focus.activeWindow,
-      true,
-      focusedWindow
-    );
-    focusedWindow = focusedWindow.value;
-  }
-
-  let focused = false;
-  if (focusedWindow == targetWindow) {
-    focused = true;
-  } else {
-    targetWindow.addEventListener("focus", () => (focused = true), {
-      capture: true,
-      once: true,
-    });
-    targetWindow.focus();
-  }
-
-  await TestUtils.waitForCondition(
-    () => focused,
-    "Timeout waiting for window to be focused.",
-    WINDOW_FOCUS_TIMEOUT_MS,
-    100,
-    this
-  );
 }
 
 /**

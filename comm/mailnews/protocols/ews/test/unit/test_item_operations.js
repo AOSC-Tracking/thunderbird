@@ -2,8 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { EwsServer, RemoteFolder } = ChromeUtils.importESModule(
+var { EwsServer } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/EwsServer.sys.mjs"
+);
+var { RemoteFolder } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MockServer.sys.mjs"
 );
 var { localAccountUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/LocalAccountUtils.sys.mjs"
@@ -724,4 +727,88 @@ add_task(async function test_mark_as_junk() {
     1,
     "Should still be one junked message in junk folder."
   );
+});
+
+add_task(async function test_change_flag_status() {
+  const rootFolder = incomingServer.rootFolder;
+  await syncFolder(incomingServer, rootFolder);
+
+  const inboxFolder = rootFolder.getChildNamed("Inbox");
+  Assert.ok(!!inboxFolder, "Inbox folder should exist.");
+
+  // Add messages to the inbox.
+  const message = generator.makeMessages({ count: 1 })[0];
+  ewsServer.addNewItemOrMoveItemToFolder("message", "inbox", message);
+
+  await syncFolder(incomingServer, inboxFolder);
+
+  // Get the message header.
+  const messageHeaders = [...inboxFolder.messages].filter(
+    header => header.getStringProperty("ewsId") == "message"
+  );
+
+  Assert.equal(messageHeaders.length, 1, "Should have one message to flag.");
+  const messageHeader = messageHeaders[0];
+
+  const serverItem = ewsServer.getItemInfo("message");
+  Assert.ok(!!serverItem, "Message should exist on server.");
+  const serverMessage = serverItem.syntheticMessage;
+  Assert.ok(!!serverMessage, "Synthetic message should exist.");
+
+  // Flag the message.
+  inboxFolder.markMessagesFlagged([messageHeader], true);
+  TestUtils.waitForCondition(
+    () => serverMessage.metaState.flagged,
+    "Waiting for message to be flagged."
+  );
+
+  // Unflag the message.
+  inboxFolder.markMessagesFlagged([messageHeader], false);
+  TestUtils.waitForCondition(
+    () => !serverMessage.metaState.flagged,
+    "Waiting for message to be unflagged."
+  );
+});
+
+add_task(async function test_hard_delete_item() {
+  const rootFolder = incomingServer.rootFolder;
+  await syncFolder(incomingServer, rootFolder);
+
+  const inboxFolder = rootFolder.getChildNamed("Inbox");
+  Assert.ok(!!inboxFolder, "Inbox folder should exist.");
+
+  const message = generator.makeMessages({ count: 1 })[0];
+  ewsServer.addNewItemOrMoveItemToFolder("message_to_delete", "inbox", message);
+
+  await syncFolder(incomingServer, inboxFolder);
+
+  const messageHeaders = [...inboxFolder.messages].filter(
+    header => header.getStringProperty("ewsId") == "message_to_delete"
+  );
+
+  Assert.equal(
+    messageHeaders.length,
+    1,
+    "Should be one message to delete in the inbox."
+  );
+
+  const eventPromise = PromiseTestUtils.promiseFolderEvent(
+    inboxFolder,
+    "DeleteOrMoveMsgCompleted"
+  );
+  inboxFolder.deleteMessages(
+    [messageHeaders[0]],
+    null,
+    true,
+    false,
+    null,
+    false
+  );
+  await eventPromise;
+
+  // Message should no longer be in the inbox.
+  const matchingMessages = [...inboxFolder.messages].filter(
+    header => header.getStringProperty("ewsId") == "message_to_delete"
+  );
+  Assert.equal(matchingMessages.length, 0, "Message should have been deleted.");
 });

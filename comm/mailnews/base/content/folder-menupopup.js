@@ -22,6 +22,10 @@
     MailUtils: "resource:///modules/MailUtils.sys.mjs",
   });
 
+  ChromeUtils.defineLazyGetter(lazy, "l10n", () => {
+    return new Localization(["messenger/folderWidgets.ftl"], true);
+  });
+
   /**
    * Creates an element, sets attributes on it, including always setting the
    * "generated" attribute to "true", and returns the element. The "generated"
@@ -72,10 +76,6 @@
         // populate this menu.  If this is null, the menu will be populated
         // using the root-folders for all accounts.
         this._parentFolder = null;
-
-        this._stringBundle = Services.strings.createBundle(
-          "chrome://messenger/locale/folderWidgets.properties"
-        );
 
         // Various filtering modes can be used with this menu-binding. To use
         // one of them, append the mode="foo" attribute to the element. When
@@ -478,8 +478,7 @@
           this.childWrapper.appendChild(
             this._buildSpecialMenu({
               special: "recent",
-              label: this.getAttribute("recentLabel"),
-              accessKey: this.getAttribute("recentAccessKey"),
+              "data-l10n-id": "menu-move-copy-recent-destinations",
             })
           );
         }
@@ -487,8 +486,7 @@
           this.childWrapper.appendChild(
             this._buildSpecialMenu({
               special: "favorites",
-              label: this.getAttribute("favoritesLabel"),
-              accessKey: this.getAttribute("favoritesAccessKey"),
+              "data-l10n-id": "menu-move-copy-favorites",
             })
           );
         }
@@ -614,7 +612,7 @@
         for (const folderItem of specialFoldersMap) {
           const attributes = {
             label: folderItem.label,
-            tooltiptext: `${folderItem.folderPath} - ${folderItem.serverName}`,
+            tooltiptext: `${folderItem.folderPath} – ${folderItem.serverName}`,
             crop: "start",
             ...this._getCssSelectorAttributes(folderItem.folder),
           };
@@ -623,9 +621,7 @@
           );
         }
 
-        if (specialFoldersMap.length == 0) {
-          menu.setAttribute("disabled", "true");
-        }
+        menu.toggleAttribute("disabled", specialFoldersMap.length == 0);
 
         this._initializedSpecials.add(specialType);
       }
@@ -667,7 +663,7 @@
 
             if (this.hasAttribute("fileHereLabel")) {
               attributes.label = this.getAttribute("fileHereLabel");
-              attributes.accesskey = this.getAttribute("fileHereAccessKey");
+              attributes.accessKey = this.getAttribute("fileHereAccessKey");
             } else {
               attributes.label = folder.localizedName;
               Object.assign(attributes, this._getCssSelectorAttributes(folder));
@@ -786,9 +782,9 @@
           folder.isServer &&
           folder.server.rootFolder == globalInboxFolder
         ) {
-          return this._stringBundle.formatStringFromName("globalInbox", [
-            folder.localizedName,
-          ]);
+          return lazy.l10n.formatValueSync("folder-widgets-global-inbox", {
+            name: folder.localizedName,
+          });
         }
         return folder.localizedName;
       }
@@ -887,7 +883,7 @@
        * attribute of the folderpicker's <menulist>, one of:
        * 'name' (default) - Folder
        * 'verbose'        - Folder on Account
-       * 'path'           - Account/Folder/Subfolder
+       * 'path'           - Folder/Subfolder on Account
        *
        * @param {nsIMsgFolder} folder - The folder that corresponds to the menu/menuitem.
        * @returns {string} The display name.
@@ -897,16 +893,16 @@
           return folder.localizedName;
         }
 
-        if (this._displayformat == "verbose") {
-          return this._stringBundle.formatStringFromName(
-            "verboseFolderFormat",
-            [folder.localizedName, folder.server.prettyName]
-          );
-        }
-
-        if (this._displayformat == "path") {
-          return (
-            lazy.FeedUtils.getFolderPrettyPath(folder) || folder.localizedName
+        if (this._displayformat == "verbose" || this._displayformat == "path") {
+          return lazy.l10n.formatValueSync(
+            "folder-widgets-verbose-folder-format",
+            {
+              folder:
+                this._displayformat == "path"
+                  ? folder.prettyPath
+                  : folder.localizedName,
+              server: folder.server.prettyName,
+            }
           );
         }
 
@@ -928,24 +924,31 @@
         // Set the label of the menulist element as if folder had been selected.
         function setupParent(folder, menulist, noFolders) {
           const menupopup = menulist.menupopup;
+          let label;
+          let tooltiptext = "";
           if (folder) {
-            menulist.setAttribute("label", menupopup.getDisplayName(folder));
-          } else if (noFolders) {
-            menulist.setAttribute(
-              "label",
-              menupopup._stringBundle.GetStringFromName("noFolders")
-            );
-          } else if (menupopup._serversOnly) {
-            menulist.setAttribute(
-              "label",
-              menupopup._stringBundle.GetStringFromName("chooseAccount")
-            );
+            label = menupopup.getDisplayName(folder);
+            const prettyPath = folder.prettyPath;
+            if (prettyPath) {
+              tooltiptext = lazy.l10n.formatValueSync(
+                "folder-widgets-verbose-folder-format",
+                {
+                  folder: prettyPath,
+                  server: folder.server.prettyName,
+                }
+              );
+            }
           } else {
-            menulist.setAttribute(
-              "label",
-              menupopup._stringBundle.GetStringFromName("chooseFolder")
-            );
+            let l10nId = "folder-widgets-choose-folder";
+            if (noFolders) {
+              l10nId = "folder-widgets-no-folders";
+            } else if (menupopup._serversOnly) {
+              l10nId = "folder-widgets-choose-account";
+            }
+            label = lazy.l10n.formatValueSync(l10nId);
           }
+          menulist.setAttribute("label", label);
+          menulist.setAttribute("tooltiptext", tooltiptext);
           menulist.setAttribute("value", folder ? folder.URI : "");
           menulist.setAttribute("IsServer", folder ? folder.isServer : false);
           menulist.setAttribute(
@@ -993,14 +996,8 @@
         // select a valid folder per the filter for this picker. If there are
         // no children, then no folder passed the filter; disable the menulist
         // as there's nothing to choose from.
-        let noFolders;
-        if (!this.childElementCount) {
-          this.parentNode.setAttribute("disabled", true);
-          noFolders = true;
-        } else {
-          this.parentNode.removeAttribute("disabled");
-          noFolders = false;
-        }
+        const noFolders = !this.childElementCount;
+        this.parentNode.toggleAttribute("disabled", noFolders);
 
         setupParent(folder, this.parentNode, noFolders);
         return !!folder;

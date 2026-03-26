@@ -17,9 +17,6 @@ var {
 } = ChromeUtils.importESModule(
   "resource://testing-common/mail/AddressBookHelpers.sys.mjs"
 );
-var { promise_content_tab_load } = ChromeUtils.importESModule(
-  "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
-);
 var {
   assert_selected_and_displayed,
   be_in_folder,
@@ -320,7 +317,7 @@ add_task(async function enter_msg_hdr_toolbar() {
     aboutMessage.document.getElementById("hdrArchiveButton");
   archiveButton.disabled = true;
 
-  const BUTTONS_SELECTOR = `toolbarbutton:not([hidden],[disabled="true"],[is="toolbarbutton-menu-button"]), toolbaritem[id="hdrSmartReplyButton"]>toolbarbutton:not([hidden])>dropmarker, button:not([hidden])`;
+  const BUTTONS_SELECTOR = `toolbarbutton:not([hidden],[disabled],[is="toolbarbutton-menu-button"]), toolbaritem[id="hdrSmartReplyButton"]>toolbarbutton:not([hidden])>dropmarker, button:not([hidden])`;
   const headerToolbar = aboutMessage.document.getElementById(
     "header-view-toolbar"
   );
@@ -593,12 +590,28 @@ add_task(async function test_clicking_ab_button_opens_inline_contact_editor() {
   EventUtils.synthesizeMouseAtCenter(recipient.abIndicator, {}, aboutMessage);
   await panelOpened;
 
+  const addressBookReady = (async () => {
+    const tabEvent = await BrowserTestUtils.waitForEvent(
+      document.getElementById("tabmail").tabContainer,
+      "TabOpen",
+      false,
+      event => event.detail.tabInfo.mode.type == "addressBookTab"
+    );
+    await BrowserTestUtils.waitForEvent(
+      tabEvent.detail.tabInfo.browser,
+      "about-addressbook-ready",
+      true
+    );
+  })();
+
   EventUtils.synthesizeMouseAtCenter(
     aboutMessage.document.getElementById("editContactPanelEditDetailsButton"),
     {},
     aboutMessage
   );
-  await promise_content_tab_load(undefined, "about:addressbook");
+
+  await addressBookReady;
+
   // TODO check the card.
   document.getElementById("tabmail").closeTab();
 });
@@ -731,7 +744,7 @@ add_task(
     // Add the card to a new address book, and insert it into a mailing list
     // under that address book.
     const ab = create_address_book(ADDRESS_BOOK_NAME);
-    ab.dropCard(cards[0], false);
+    ab.addCard(cards[0]);
     let ml = create_mailing_list(MAILING_LIST_DIRNAME);
     ab.addMailList(ml);
 

@@ -59,7 +59,8 @@ class MailGoButton extends MailTabButton {
 
     const tabmail = document.getElementById("tabmail");
     const currentWindow = tabmail.currentTabInfo.chromeBrowser.contentWindow;
-    const { messageHistory } = tabmail.currentAboutMessage;
+    const { messageHistory } =
+      tabmail.currentAboutMessage ?? currentWindow.messageBrowser.contentWindow;
     const { entries, currentIndex } = messageHistory.getHistory();
 
     // For populating the back menu, we want the most recently visited
@@ -121,7 +122,7 @@ class MailGoButton extends MailTabButton {
         commandEvent.stopPropagation();
       });
       if (relativePosition === 0 && !messageHistory.canPop(0)) {
-        newMenuItem.setAttribute("checked", true);
+        newMenuItem.toggleAttribute("checked", true);
         newMenuItem.setAttribute("type", "radio");
       }
       items.push(newMenuItem);
@@ -148,7 +149,8 @@ class MailGoButton extends MailTabButton {
     const historyIndex = Number.parseInt(target.getAttribute("value"), 10);
     const tabmail = document.getElementById("tabmail");
     const currentWindow = tabmail.currentTabInfo.chromeBrowser.contentWindow;
-    const messageHistory = tabmail.currentAboutMessage.messageHistory;
+    const { messageHistory } =
+      tabmail.currentAboutMessage ?? currentWindow.messageBrowser.contentWindow;
     if (!messageHistory || !messageHistory.canPop(historyIndex)) {
       return;
     }

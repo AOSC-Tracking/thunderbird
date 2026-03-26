@@ -5,20 +5,19 @@
 use std::sync::Arc;
 
 use ews::{
-    mark_all_read::{MarkAllItemsAsRead, MarkAllItemsAsReadResponse},
+    BaseFolderId, Operation, OperationResponse, mark_all_read::MarkAllItemsAsRead,
     server_version::ExchangeServerVersion,
-    BaseFolderId, Operation, OperationResponse,
 };
 use nsstring::nsCString;
+use protocol_shared::client::DoOperation;
+use protocol_shared::safe_xpcom::{
+    SafeEwsSimpleOperationListener, SimpleOperationSuccessArgs, UseLegacyFallback,
+};
 use thin_vec::ThinVec;
 
-use crate::{
-    client::{
-        process_response_message_class, single_response_or_error, DoOperation, ServerType,
-        XpComEwsClient, XpComEwsError,
-    },
-    macros::queue_operation,
-    safe_xpcom::{SafeEwsSimpleOperationListener, SimpleOperationSuccessArgs, UseLegacyFallback},
+use crate::client::{
+    ServerType, XpComEwsClient, XpComEwsError, process_response_message_class,
+    single_response_or_error,
 };
 
 struct DoChangeReadStatusAll {
@@ -27,12 +26,14 @@ struct DoChangeReadStatusAll {
     suppress_read_receipts: bool,
 }
 
-impl DoOperation for DoChangeReadStatusAll {
+impl<ServerT: ServerType> DoOperation<XpComEwsClient<ServerT>, XpComEwsError>
+    for DoChangeReadStatusAll
+{
     const NAME: &'static str = MarkAllItemsAsRead::NAME;
     type Okay = UseLegacyFallback;
     type Listener = SafeEwsSimpleOperationListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {
@@ -40,9 +41,10 @@ impl DoOperation for DoChangeReadStatusAll {
 
         // The `MarkAllItemsAsRead` operation was added in Exchange2013
         if server_version < ExchangeServerVersion::Exchange2013 {
+            let name = <Self as DoOperation<XpComEwsClient<ServerT>, _>>::NAME;
             log::warn!(
                 "Skipping {} operation with unsupported server version {server_version:?}",
-                Self::NAME
+                name
             );
             return Ok(UseLegacyFallback::Yes);
         }
@@ -62,13 +64,9 @@ impl DoOperation for DoChangeReadStatusAll {
             folder_ids,
         };
 
-        let rcv = queue_operation!(
-            client,
-            MarkAllItemsAsRead,
-            mark_all_items,
-            Default::default()
-        );
-        let response = rcv.await??;
+        let response = client
+            .enqueue_and_send(mark_all_items, Default::default())
+            .await?;
 
         // Validate the response against our request params and known/assumed
         // constraints on response shape.

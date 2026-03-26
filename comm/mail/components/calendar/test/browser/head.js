@@ -20,6 +20,9 @@ const { DEFAULT_DIALOG_MARGIN } = ChromeUtils.importESModule(
   "chrome://messenger/content/calendar-dialog.mjs",
   { global: "current" }
 );
+const { CalAlarm } = ChromeUtils.importESModule(
+  "resource:///modules/CalAlarm.sys.mjs"
+);
 
 const { weekView } = CalendarTestUtils;
 const SCREEN_MARGIN = 10;
@@ -139,7 +142,7 @@ function createCalendar({
  * @param {string} [options.description=""] - Description for the event.
  * @param {string} [options.descriptionHTML] - HTML version of the
  *   description. Overrides description if truthy.
- *
+ * @param {CalAlarm[]} [options.alarms=[]] - Calendar alarms.
  * @returns {CalEvent} - The created event.
  */
 async function createEvent({
@@ -153,6 +156,7 @@ async function createEvent({
   location,
   description = "",
   descriptionHTML,
+  alarms = [],
 } = {}) {
   let start = new Date(baseDate);
   start.setDate(baseDate.getDate() + offset);
@@ -182,11 +186,17 @@ async function createEvent({
 
   event.setCategories(categories);
 
+  alarms.forEach(alarm => {
+    event.addAlarm(alarm);
+  });
+
   if (location) {
     event.setProperty("LOCATION", location);
   }
 
-  return calendar.addItem(event);
+  const returnEvent = await calendar.addItem(event);
+
+  return returnEvent;
 }
 
 /**
@@ -309,7 +319,7 @@ async function waitForCalendarReady() {
  * @param {HTMLElement} target - The target element to compare against.
  * @param {string} message - The assertion message to display.
  */
-function checkTollerance(target, message) {
+function checkTolerance(target, message) {
   const targetRect = target.getBoundingClientRect();
   const dialogRect = document
     .querySelector('[is="calendar-dialog"]')
@@ -489,7 +499,7 @@ async function positionTest({ calendar, duration = 1, offset, hour, size }) {
       offset,
     });
 
-    checkTollerance(
+    checkTolerance(
       eventBox,
       `Duration: ${duration} - Offset: ${offset} - Hour: ${hour} - Window ${size.name} - Position ${JSON.stringify(position)}`
     );
@@ -513,6 +523,10 @@ async function setupPositioning() {
   document.head.appendChild(style);
 
   await CalendarTestUtils.setCalendarView(window, "week");
+
+  registerCleanupFunction(() => {
+    style.remove();
+  });
 }
 
 /**
@@ -559,4 +573,19 @@ async function runPositioningTest(windowSizes) {
   }
 
   CalendarTestUtils.removeCalendar(calendar);
+}
+
+/**
+ * Creates a calendar alarm.
+ *
+ * @param {string} offset - Offset string code.
+ * @returns {CalAlarm}
+ */
+function createAlarmFromDuration(offset) {
+  const alarm = new CalAlarm();
+
+  alarm.related = Ci.calIAlarm.ALARM_RELATED_START;
+  alarm.offset = cal.createDuration(offset);
+
+  return alarm;
 }

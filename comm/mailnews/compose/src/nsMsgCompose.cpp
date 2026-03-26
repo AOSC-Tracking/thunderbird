@@ -1260,11 +1260,12 @@ NS_IMETHODIMP nsMsgCompose::SendMsg(MSG_DeliverMode deliverMode,
     if (self->mMsgSend)
       self->mMsgSend->GetSendReport(getter_AddRefs(sendReport));
     if (sendReport) {
-      nsresult theError;
-      sendReport->DisplayReport(self->m_window, true, true, &theError);
+      sendReport->DisplayReport(self->m_window);
     } else {
       // If we come here it's because we got an error before we could initialize
       // a send report! Let's try our best...
+      // Seems we only get here by "silent" send such as forward/reply
+      // filter actions or MAPI. Should those alert? Consider reworking.
       switch (deliverMode) {
         case nsIMsgCompDeliverMode::Later:
           nsMsgDisplayMessageByName(self->m_window, "unableToSendLater");

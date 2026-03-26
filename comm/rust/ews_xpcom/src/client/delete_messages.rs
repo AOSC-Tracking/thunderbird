@@ -5,33 +5,32 @@
 use std::sync::Arc;
 
 use ews::{
-    delete_item::{DeleteItem, DeleteItemResponse},
-    response::{ResponseCode, ResponseError},
     BaseItemId, DeleteType, Operation, OperationResponse,
+    delete_item::DeleteItem,
+    response::{ResponseCode, ResponseError},
 };
 use nsstring::nsCString;
+use protocol_shared::client::DoOperation;
+use protocol_shared::safe_xpcom::{
+    SafeEwsSimpleOperationListener, SafeListener, UseLegacyFallback,
+};
 use thin_vec::ThinVec;
 
 use super::{
-    process_response_message_class, validate_response_message_count, DoOperation, ServerType,
-    XpComEwsClient, XpComEwsError,
-};
-
-use crate::{
-    macros::queue_operation,
-    safe_xpcom::{SafeEwsSimpleOperationListener, SafeListener, UseLegacyFallback},
+    ServerType, XpComEwsClient, XpComEwsError, process_response_message_class,
+    validate_response_message_count,
 };
 
 struct DoDeleteMessages {
     pub ews_ids: ThinVec<nsCString>,
 }
 
-impl DoOperation for DoDeleteMessages {
+impl<ServerT: ServerType> DoOperation<XpComEwsClient<ServerT>, XpComEwsError> for DoDeleteMessages {
     const NAME: &'static str = DeleteItem::NAME;
     type Okay = ();
     type Listener = SafeEwsSimpleOperationListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {
@@ -52,8 +51,9 @@ impl DoOperation for DoDeleteMessages {
             suppress_read_receipts: None,
         };
 
-        let rcv = queue_operation!(client, DeleteItem, delete_item, Default::default());
-        let response = rcv.await??;
+        let response = client
+            .enqueue_and_send(delete_item, Default::default())
+            .await?;
 
         // Make sure we got the amount of response messages matches the amount
         // of messages we requested to have deleted.

@@ -25,6 +25,26 @@ about-rights-notification-text = { -brand-short-name } is free and open source s
 
 ## Content tabs
 
+open-windows-warning-confirmation-title = Confirm
+
+# Variables:
+#   $count - number of messages to open
+open-windows-warning-confirmation = {
+    $count ->
+       [one] Opening { $count } message may be slow. Continue?
+      *[other] Opening { $count } messages may be slow. Continue?
+    }
+
+open-tabs-warning-confirmation-title = Confirm
+
+# Variables:
+#   $count - number of messages to open
+open-tabs-warning-confirmation = {
+    $count ->
+       [one] Opening { $count } message may be slow. Continue?
+      *[other] Opening { $count } messages may be slow. Continue?
+    }
+
 content-tab-page-loading-icon =
     .alt = The page is loading
 content-tab-security-high-icon =
@@ -159,6 +179,14 @@ menu-file-save-as-file =
     .accesskey = F
 
 # Variables:
+#   $count - number of messages to get
+menu-file-get-next-n-news-msgs = {
+    $count ->
+        [one] Get Next { $count } News Message
+        *[other] Get Next { $count } News Messages
+    }
+
+# Variables:
 # $count (Number) - One or more than one folder selected for compacting
 menu-file-compact =
   .label =
@@ -221,6 +249,44 @@ menu-edit-newsgroup-properties =
 redirect-msg-menuitem =
     .label = Redirect
     .accesskey = D
+
+## Shared Menu Items
+
+menu-move-again =
+    .label = Move Again
+
+move-to-folder-again-key =
+    .key = m
+
+# Variables:
+# $folderName (String) - The name of the folder to which the message(s) will be moved.
+# Note: The access key should be a letter that occurs before $folderName in the translated string.
+menu-move-to-folder-again =
+    .label = Move to "{ $folderName }" Again
+    .accesskey = t
+
+# Variables:
+# $folderName (String) - The name of the folder to which the message(s) will be copied.
+# Note: The access key should be a letter that occurs before $folderName in the translated string.
+menu-copy-to-folder-again =
+    .label = Copy to "{ $folderName }" Again
+    .accesskey = t
+
+menu-move-to =
+    .label = Move To
+    .accesskey = M
+
+menu-copy-to =
+    .label = Copy To
+    .accesskey = C
+
+menu-move-copy-recent-destinations =
+    .label = Recent Destinations
+    .accesskey = R
+
+menu-move-copy-favorites =
+    .label = Favorites
+    .accesskey = F
 
 ## AppMenu
 
@@ -715,3 +781,49 @@ prompt-dont-ask-again = Do not ask again.
 spam-analysis-percentage = Spam analysis { NUMBER($percentage, maximumSignificantDigits: 2, style: "percent") } completed
 
 spam-processing-message = Processing spam messages
+
+## Ignore threads
+
+# Variables:
+#    $count - the number of threads that were selected
+#    $subject - the message thread title (subject)
+ignored-theads-feedback = {
+    $count ->
+        [one] Replies to the thread "{ $subject }" will not be shown.
+        *[other] Replies to the { $count } threads that were selected will not be shown.
+    }
+
+# Variables:
+#    $count - the number of threads that were selected
+#    $subject - the message thread title (subject)
+ignored-subtheads-feedback = {
+    $count ->
+        [one] Replies to the subthread "{ $subject }" will not be shown.
+        *[other] Replies to the { $count } subthreads that were selected will not be shown.
+    }
+
+## Attachments
+
+# Variables:
+#    $count - the number of attachments
+attachment-view-attachment-count = {
+    $count ->
+        [one] { $count } attachment
+        *[other] { $count } attachments
+    }
+
+## Remote content blocking
+
+# Variables:
+#    $origin - origin of the remote content to allow
+allow-remote-content-resource =
+    .label = Allow remote content from { $origin }
+
+# Variables:
+#    $count - the number of origins to allow
+remote-content-option-allow-all =
+    .label = {
+        $count ->
+            [one] Allow remote content from the { $count } origin listed above
+            *[other] Allow remote content from all { $count } origins listed above
+        }

@@ -213,6 +213,7 @@ async function subtest() {
     });
   } catch (ex) {
     Assert.ok(directory.readOnly, "read-write directory should not throw");
+    observer.pendingPromise = null;
   }
 
   // Change a card on the client, but this time only non-vCard properties.
@@ -252,6 +253,7 @@ async function subtest() {
     cardMap.set("change-me", changeMeCard);
   } catch (ex) {
     Assert.ok(directory.readOnly, "read-write directory should not throw");
+    observer.pendingPromise = null;
   }
 
   // Add a new card on the client.
@@ -309,6 +311,7 @@ async function subtest() {
     });
   } catch (ex) {
     Assert.ok(directory.readOnly, "read-write directory should not throw");
+    observer.pendingPromise = null;
   }
 
   info("Fourth sync with server. No changes expected.");
@@ -339,4 +342,12 @@ add_task(async function testReadOnly() {
   Services.prefs.setBoolPref("ldap_2.servers.carddav.readOnly", true);
   await subtest();
   Services.prefs.clearUserPref("ldap_2.servers.carddav.readOnly");
+});
+
+add_task(async function testMultigetBatchSize() {
+  // Limit multiget requests to 1 card at a time. This test doesn't really
+  // prove that multiple requests occur, but the logs will show that they do.
+  Services.prefs.setIntPref("carddav.multiget.batchSize", 1);
+  await subtest();
+  Services.prefs.clearUserPref("carddav.multiget.batchSize");
 });

@@ -39,7 +39,7 @@ function addCalendarNames(aEvent) {
       "contextChangeTaskCalendar(event);"
     );
     if (tasks.every(task => task.calendar == tasks[0].calendar) && selIndex > -1) {
-      calendarMenuPopup.children[selIndex].setAttribute("checked", "true");
+      calendarMenuPopup.children[selIndex].toggleAttribute("checked", true);
     }
   }
 }
@@ -98,8 +98,10 @@ function changeContextMenuForTask(aEvent) {
     document.getElementById("calendar_new_todo_command").removeAttribute("disabled");
     document.getElementById("calendar_new_todo_todaypane_command").removeAttribute("disabled");
   } else {
-    document.getElementById("calendar_new_todo_command").setAttribute("disabled", "true");
-    document.getElementById("calendar_new_todo_todaypane_command").setAttribute("disabled", "true");
+    document.getElementById("calendar_new_todo_command").toggleAttribute("disabled", true);
+    document
+      .getElementById("calendar_new_todo_todaypane_command")
+      .toggleAttribute("disabled", true);
   }
 
   // make sure the "Paste" and "Cut" menu items are enabled
@@ -330,12 +332,8 @@ function tasksToEvents() {
 /**
  * Toggle the completed state on selected tasks.
  *
- * @param {?Event} aEvent - The originating event, can be null.
+ * @param {Event} aEvent - The originating event.
  */
 function toggleCompleted(aEvent) {
-  if (aEvent.target.getAttribute("checked") == "true") {
-    contextChangeTaskProgress(0);
-  } else {
-    contextChangeTaskProgress(100);
-  }
+  contextChangeTaskProgress(aEvent.target.hasAttribute("checked") ? 0 : 100);
 }

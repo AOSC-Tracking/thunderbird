@@ -26,7 +26,6 @@ var { AppConstants } = ChromeUtils.importESModule(
 ChromeUtils.defineESModuleGetters(this, {
   DownloadUtils: "resource://gre/modules/DownloadUtils.sys.mjs",
   PlacesDBUtils: "resource://gre/modules/PlacesDBUtils.sys.mjs",
-  PluralForm: "resource:///modules/PluralForm.sys.mjs",
   ProcessType: "resource://gre/modules/ProcessType.sys.mjs",
 });
 
@@ -1581,7 +1580,7 @@ function populateActionBox() {
     $("safe-mode-box").hidden = false;
 
     if (Services.policies && !Services.policies.isAllowed("safeMode")) {
-      $("restart-in-safe-mode-button").setAttribute("disabled", "true");
+      $("restart-in-safe-mode-button").toggleAttribute("disabled", true);
     }
   }
 }

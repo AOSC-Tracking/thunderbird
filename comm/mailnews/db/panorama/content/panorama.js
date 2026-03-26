@@ -8,7 +8,8 @@ const {
   LiveViewGroupedDataAdapter,
   LiveViewThreadedDataAdapter,
 } = ChromeUtils.importESModule(
-  "chrome://messenger/content/LiveViewDataAdapter.mjs"
+  "chrome://messenger/content/LiveViewDataAdapter.mjs",
+  { global: "current" }
 );
 const { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
@@ -70,7 +71,7 @@ window.addEventListener("load", async function () {
     } else if (tag) {
       liveView.initWithTag(tag);
     }
-    name.textContent += ` (${liveView.countUnreadMessages()}/${liveView.countMessages()})`;
+    name.textContent += ` (${await liveView.countUnreadMessages()}/${await liveView.countMessages()})`;
   }
 
   const messageList = document.body.querySelector("auto-tree-view#messageList");

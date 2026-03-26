@@ -43,11 +43,11 @@
     <dialog>
       <hbox align="center">
         <spacer flex="1" />
-        <datetimepicker id="timezone-time" disabled="true" />
+        <datetimepicker id="timezone-time" disabled="" />
       </hbox>
 
       <menulist id="timezone-menulist" oncommand="updateTimezone()">
-        <menupopup id="timezone-menupopup" style="height: 460px" />
+        <menupopup id="timezone-menupopup" style="height: 460px" native="false" />
       </menulist>
 
       <stack id="timezone-stack">

@@ -145,16 +145,12 @@ class MenuTestHelper {
     }
     if (expected.checked) {
       Assert.equal(
-        actual.getAttribute("checked"),
-        "true",
+        actual.hasAttribute("checked"),
+        true,
         `${actual.id} checked`
       );
     } else if (["checkbox", "radio"].includes(actual.getAttribute("type"))) {
-      Assert.ok(
-        !actual.hasAttribute("checked") ||
-          actual.getAttribute("checked") == "false",
-        `${actual.id} not checked`
-      );
+      Assert.ok(!actual.hasAttribute("checked"), `${actual.id} not checked`);
     }
     if (expected.l10nID) {
       const attributes = actual.ownerDocument.l10n.getAttributes(actual);
@@ -326,6 +322,17 @@ async function promiseServerIdle(server) {
 
   await clearStatusBar(window);
 }
+
+add_setup(async () => {
+  // Remove state information (for example position and size) for the compose and
+  // message window, which might have leaked in from previous tests.
+  Services.xulStore.removeDocument(
+    "chrome://messenger/content/messengercompose/messengercompose.xhtml"
+  );
+  Services.xulStore.removeDocument(
+    "chrome://messenger/content/messageWindow.xhtml"
+  );
+});
 
 // Report and remove any remaining accounts/servers. If we register a cleanup
 // function here, it will run before any other cleanup function has had a

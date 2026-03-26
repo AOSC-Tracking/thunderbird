@@ -2,22 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import {
-  get_about_3pane,
-  right_click_on_folder,
-} from "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs";
+import { get_about_3pane } from "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs";
 
 import {
   input_value,
   delete_all_existing,
 } from "resource://testing-common/mail/KeyboardHelpers.sys.mjs";
 
-import {
-  click_menus_in_sequence,
-  promise_modal_dialog,
-} from "resource://testing-common/mail/WindowHelpers.sys.mjs";
-
+import { click_menus_in_sequence } from "resource://testing-common/mail/WindowHelpers.sys.mjs";
+import * as EventUtils from "resource://testing-common/mail/EventUtils.sys.mjs";
 import { TestUtils } from "resource://testing-common/TestUtils.sys.mjs";
+import { BrowserTestUtils } from "resource://testing-common/BrowserTestUtils.sys.mjs";
 
 /**
  * Open a subscribe dialog from the context menu.
@@ -31,8 +26,18 @@ export async function open_subscribe_window_from_context_menu(
   aFunction
 ) {
   const win = get_about_3pane();
+  const folderTree = win.document.getElementById("folderTree");
+  const row = folderTree.rows.find(treeRow => treeRow.uri == aFolder.URI);
+  EventUtils.synthesizeMouseAtCenter(
+    row.querySelector(".container"),
+    { type: "contextmenu" },
+    win
+  );
+  await BrowserTestUtils.waitForPopupEvent(
+    win.document.getElementById("folderPaneContext"),
+    "shown"
+  );
 
-  await right_click_on_folder(aFolder);
   const callback = async function (dialogWindow) {
     // When the "stop button" is disabled, the panel is populated.
     await TestUtils.waitForCondition(
@@ -41,7 +46,13 @@ export async function open_subscribe_window_from_context_menu(
     await aFunction(dialogWindow);
     dialogWindow.close();
   };
-  const dialogPromise = promise_modal_dialog("mailnews:subscribe", callback);
+  const dialogPromise = BrowserTestUtils.promiseAlertDialog(
+    null,
+    "chrome://messenger/content/subscribe.xhtml",
+    {
+      callback,
+    }
+  );
   await click_menus_in_sequence(
     win.document.getElementById("folderPaneContext"),
     [{ id: "folderPaneContext-subscribe" }]

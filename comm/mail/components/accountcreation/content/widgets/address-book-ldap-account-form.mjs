@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { AccountHubStep } from "./account-hub-step.mjs";
+import "./account-hub-select.mjs"; // eslint-disable-line import/no-unassigned-import
 
 const { Sanitizer } = ChromeUtils.importESModule(
   "resource:///modules/accountcreation/Sanitizer.sys.mjs"
@@ -98,9 +99,9 @@ class AddressBookLdapAccountForm extends AccountHubStep {
     if (this.hasConnected) {
       return;
     }
+    this.hasConnected = true;
 
     super.connectedCallback();
-    this.hasConnected = true;
 
     const template = document
       .getElementById("accountHubAddressBookLdapAccountFormTemplate")

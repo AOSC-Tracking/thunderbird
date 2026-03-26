@@ -107,6 +107,7 @@
         <div class="twisty">
           <img class="twisty-icon" src="chrome://global/skin/icons/arrow-down-12.svg" alt="" />
         </div>
+        <img class="new-icon" alt="" />
         <img class="icon" alt="" />
         <span class="name" tabindex="-1"></span>
         <span class="folder-count-badge unread-count"></span>
@@ -167,14 +168,15 @@
       <xul:menu class="applyTo-menu"
                 data-l10n-id="apply-columns-to-menu"
                 xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
-        <menupopup>
+        <menupopup native="false">
           <menu class="applyToFolder-menu"
                 data-l10n-id="apply-current-view-to-folder"
                 oncommand="threadPane.confirmApplyColumns(event.target._folder);">
             <menupopup is="folder-menupopup"
                        class="applyToFolder"
                        showFileHereLabel="false"
-                       position="start_before"></menupopup>
+                       position="start_before"
+                       native="false"></menupopup>
           </menu>
           <menu class="applyToFolderAndChildren-menu"
                 data-l10n-id="apply-current-view-to-folder-children"
@@ -183,7 +185,8 @@
                        class="applyToFolderAndChildren"
                        showFileHereLabel="true"
                        showAccountsFileHere="true"
-                       position="start_before"></menupopup>
+                       position="start_before"
+                       native="false"></menupopup>
           </menu>
         </menupopup>
       </xul:menu>
@@ -192,14 +195,15 @@
       <xul:menu class="applyViewTo-menu"
                 data-l10n-id="apply-current-view-to-menu"
                 xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
-        <menupopup>
+        <menupopup native="false">
           <menu class="applyViewToFolder-menu"
                 data-l10n-id="apply-current-view-to-folder"
                 oncommand="threadPane.confirmApplyView(event.target._folder);">
             <menupopup is="folder-menupopup"
                        class="applyViewToFolder"
                        showFileHereLabel="true"
-                       position="start_before"></menupopup>
+                       position="start_before"
+                       native="false"></menupopup>
           </menu>
           <menu class="applyViewToFolderAndChildren-menu"
                 data-l10n-id="apply-current-view-to-folder-children"
@@ -208,7 +212,8 @@
                        class="applyViewToFolderAndChildren"
                        showFileHereLabel="true"
                        showAccountsFileHere="true"
-                       position="start_before"></menupopup>
+                       position="start_before"
+                       native="false"></menupopup>
           </menu>
         </menupopup>
       </xul:menu>
@@ -361,7 +366,7 @@
 #include templates/conversationViewTemplate.inc.xhtml
 </body>
 <popupset xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
-  <menupopup id="folderPaneContext" class="gutter-popup">
+  <menupopup id="folderPaneContext" class="gutter-popup" native="false">
     <menuitem id="folderPaneContext-getMessages"
               label="&folderContextGetMessages.label;"
               accesskey="&folderContextGetMessages.accesskey;"/>
@@ -401,34 +406,26 @@
               accesskey="&folderContextRename.accesskey;"/>
     <menuseparator/>
     <menu id="folderPaneContext-moveMenu"
-              label="&moveMsgToMenu.label;"
-              accesskey="&moveMsgToMenu.accesskey;">
+          data-l10n-id="menu-move-to">
       <menupopup is="folder-menupopup" id="folderContext-movePopup"
                  mode="filing"
                  showAccountsFileHere="true"
                  showFileHereLabel="true"
                  showRecent="true"
-                 recentLabel="&contextMoveCopyMsgRecentDestinationMenu.label;"
-                 recentAccessKey="&contextMoveCopyMsgRecentDestinationMenu.accesskey;"
                  showFavorites="true"
-                 favoritesLabel="&contextMoveCopyMsgFavoritesMenu.label;"
-                 favoritesAccessKey="&contextMoveCopyMsgFavoritesMenu.accesskey;"
-                 showLast="true"/>
+                 showLast="true"
+                 native="false"/>
     </menu>
     <menu id="folderPaneContext-copyMenu"
-          label="&copyMsgToMenu.label;"
-          accesskey="&copyMsgToMenu.accesskey;">
+          data-l10n-id="menu-copy-to">
       <menupopup is="folder-menupopup" id="folderContext-copyPopup"
                  mode="filing"
                  showAccountsFileHere="true"
                  showFileHereLabel="true"
                  showRecent="true"
-                 recentLabel="&contextMoveCopyMsgRecentDestinationMenu.label;"
-                 recentAccessKey="&contextMoveCopyMsgRecentDestinationMenu.accesskey;"
                  showFavorites="true"
-                 favoritesLabel="&contextMoveCopyMsgFavoritesMenu.label;"
-                 favoritesAccessKey="&contextMoveCopyMsgFavoritesMenu.accesskey;"
-                 showLast="true"/>
+                 showLast="true"
+                 native="false"/>
     </menu>
     <menuseparator/>
     <menuitem id="folderPaneContext-compact"
@@ -488,12 +485,14 @@
   <menupopup id="folderPaneMoreContext"
              class="no-accel-menupopup"
              position="bottomleft topleft"
-             onpopupshowing="folderPane.updateContextMenuCheckedItems();">
+             onpopupshowing="folderPane.updateContextMenuCheckedItems();"
+             native="false">
     <menu id="folderModesContextMenu"
           data-l10n-id="folder-pane-header-folder-modes"
           position="bottomleft topleft">
       <menupopup id="folderModesContextMenuPopup"
-                 onpopupshowing="folderPane.updateContextCheckedFolderMode();">
+                 onpopupshowing="folderPane.updateContextCheckedFolderMode();"
+                 native="false">
         <menuitem id="folderPaneMoreContextAllFolders"
                   class="folder-pane-mode"
                   value="all"
@@ -593,7 +592,8 @@
   </menupopup>
   <menupopup id="folderPaneModeContext"
              class="no-accel-menupopup"
-             position="bottomleft topleft">
+             position="bottomleft topleft"
+             native="false">
     <menuitem id="folderPaneModeMoveUp"
              class="folder-pane-mode"
              value="moveup"
@@ -615,7 +615,8 @@
   <menupopup id="threadPaneDisplayContext"
              class="no-accel-menupopup"
              position="bottomleft topleft"
-             onpopupshowing="threadPaneHeader.updateDisplayContextMenu(event);">
+             onpopupshowing="threadPaneHeader.updateDisplayContextMenu(event);"
+             native="false">
     <menuitem id="threadPaneTableView"
               class="thread-view-option"
               type="radio"
@@ -638,7 +639,8 @@
           label="&sortMenu.label;">
       <menupopup id="menu_threadPaneSortPopup"
                  oncommand="goDoCommand('cmd_sort', event);"
-                 onpopupshowing="threadPaneHeader.updateThreadPaneSortMenu(event);">
+                 onpopupshowing="threadPaneHeader.updateThreadPaneSortMenu(event);"
+                 native="false">
         <menuitem id="threadPaneSortByDateMenuitem"
                   type="radio"
                   name="sortby"
@@ -769,7 +771,8 @@
   <menupopup id="folderPaneGetMessagesContext"
              class="no-accel-menupopup"
              position="bottomleft topleft"
-             onpopupshowing="folderPane.updateGetMessagesContextMenu();">
+             onpopupshowing="folderPane.updateGetMessagesContextMenu();"
+             native="false">
     <menuitem id="itemGetAllNewMessages"
               class="menuitem-iconic"
               data-l10n-id="folder-pane-get-all-messages-menuitem"

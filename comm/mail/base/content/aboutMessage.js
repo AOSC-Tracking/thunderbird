@@ -10,9 +10,10 @@
 /* globals gDBView: true, gFolder: true, gViewWrapper: true */
 
 // msgHdrView.js
-/* globals AdjustHeaderView ClearCurrentHeaders ClearPendingReadTimer
-   HideMessageHeaderPane initFolderDBListener OnLoadMsgHeaderPane OnTagsChange
-   OnUnloadMsgHeaderPane HandleAllAttachments AttachmentMenuController */
+/* globals AdjustHeaderView AttachmentMenuController ClearCurrentHeaders
+     ClearPendingReadTimer HandleAllAttachments HandleSelectedAttachments
+     HideMessageHeaderPane initFolderDBListener OnLoadMsgHeaderPane
+     OnTagsChange OnUnloadMsgHeaderPane */
 
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
@@ -112,6 +113,7 @@ function ReloadMessage() {
 }
 
 function MailSetCharacterSet() {
+  ClearCurrentHeaders();
   const messageService = MailServices.messageServiceFromURI(gMessageURI);
   gMessage = messageService.messageURIToMsgHdr(gMessageURI);
   messageService.loadMessage(
@@ -752,6 +754,12 @@ commandController.registerCallback("cmd_fullZoomToggle", () => {
 });
 
 // Attachments commands.
+commandController.registerCallback(
+  "cmd_openAttachment",
+  () => HandleSelectedAttachments("open"),
+  () => AttachmentMenuController.someFilesAvailable()
+);
+
 commandController.registerCallback(
   "cmd_openAllAttachments",
   () => HandleAllAttachments("open"),

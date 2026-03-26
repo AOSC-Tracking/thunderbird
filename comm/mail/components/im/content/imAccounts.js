@@ -9,7 +9,6 @@
 var { DownloadUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/DownloadUtils.sys.mjs"
 );
-
 var { IMServices } = ChromeUtils.importESModule(
   "resource:///modules/IMServices.sys.mjs"
 );
@@ -19,9 +18,6 @@ var { MailServices } = ChromeUtils.importESModule(
 var { UIFontSize } = ChromeUtils.importESModule(
   "resource:///modules/UIFontSize.sys.mjs"
 );
-ChromeUtils.defineESModuleGetters(this, {
-  PluralForm: "resource:///modules/PluralForm.sys.mjs",
-});
 
 // This is the list of notifications that the account manager window observes
 var events = [
@@ -369,8 +365,8 @@ var gAccountManager = {
    * the state of the buttons.
    */
   temporarilyDisableButtons() {
-    document.getElementById("cmd_disconnect").setAttribute("disabled", "true");
-    document.getElementById("cmd_connect").setAttribute("disabled", "true");
+    document.getElementById("cmd_disconnect").toggleAttribute("disabled", true);
+    document.getElementById("cmd_connect").toggleAttribute("disabled", true);
     clearTimeout(this.disableTimerID);
     this.accountList.focus();
     this.disableTimerID = setTimeout(
@@ -446,11 +442,7 @@ var gAccountManager = {
     const disabledItems = ["connect", "disconnect"];
     for (const name of disabledItems) {
       const elt = document.getElementById("cmd_" + name);
-      if (isCommandDisabled) {
-        elt.setAttribute("disabled", "true");
-      } else {
-        elt.removeAttribute("disabled");
-      }
+      elt.toggleAttribute("disabled", isCommandDisabled);
     }
   },
   onContextMenuShowing(event) {
@@ -602,15 +594,12 @@ var gAccountManager = {
         prio = box.PRIORITY_WARNING_MEDIUM;
         break;
 
-      /* One or more accounts made the application crash during their connection.
-         If none, this function has already returned */
+      // One or more accounts made the application crash during their connection.
+      // If none, this function has already returned.
       case IMServices.accounts.AUTOLOGIN.ENABLED:
-        barLabel = bundle.getString(
-          "accountsManager.notification.singleCrash.label"
-        );
-        barLabel = PluralForm.get(crashCount, barLabel).replace(
-          "#1",
-          crashCount
+        barLabel = this.l10n.formatValueSync(
+          "notification-single-crash-label",
+          { count: crashCount }
         );
         prio = box.PRIORITY_WARNING_MEDIUM;
         connectNowButton.callback = this.processCrashedAccountsLogin;
@@ -671,6 +660,12 @@ var gAccountManager = {
     this.disableCommandItems();
   },
 };
+
+ChromeUtils.defineLazyGetter(
+  gAccountManager,
+  "l10n",
+  () => new Localization(["messenger/imAccounts.ftl"], true)
+);
 
 window.addEventListener("DOMContentLoaded", () => {
   gAccountManager.load();

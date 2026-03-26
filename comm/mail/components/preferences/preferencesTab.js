@@ -105,7 +105,6 @@ var preferencesTabType = {
     aTab.browser.addEventListener(
       "paneSelected",
       function (event) {
-        aTab.pageLoading = false;
         aTab.pageLoaded = true;
 
         if ("onLoad" in aArgs) {
@@ -116,14 +115,13 @@ var preferencesTabType = {
             if (aTab.panel) {
               aArgs.onLoad(event, aTab.browser);
             }
-          }, 0);
+          });
         }
       },
       { once: true }
     );
 
     // Initialize our unit testing variables.
-    aTab.pageLoading = true;
     aTab.pageLoaded = false;
 
     // Now start loading the content.

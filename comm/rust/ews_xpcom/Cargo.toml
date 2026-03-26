@@ -1,17 +1,18 @@
 [package]
 name = "ews_xpcom"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 rust-version.workspace = true
 
 [dependencies]
 async-channel = "2.5.0"
 base64 = "0.21.3"
 cstr = "0.2"
-ews = { git = "https://github.com/thunderbird/ews-rs.git", rev = "397aea31b0401c482b9a463d372d2c0a0651602f", version = "0.1.0", features = [
+ews = { git = "https://github.com/thunderbird/ews-rs.git", rev = "3553c0b35b78c4e529cf8f563e0b3220f9edabed", version = "0.1.0", features = [
     "interop",
 ] }
 firefox-on-glean = { version = "0.1.0", path = "../../../toolkit/components/glean/api" }
+futures = "0.3.28"
 fxhash = "0.2.1"
 log = "0.4.21"
 mail-parser = "0.9.3"
@@ -29,6 +30,7 @@ serde_json = "1.0.140"
 serde_path_to_error = "0.1.11"
 thin-vec = { version = "0.2.12", features = ["gecko-ffi"] }
 thiserror = "1.0.56"
+time = { version = "0.3.36", features = ["formatting", "parsing", "serde"] }
 url = "2.5.0"
 uuid = { version = "1.3.0", features = ["v4"] }
 xpcom = { version = "0.1.0", path = "../../../xpcom/rust/xpcom" }

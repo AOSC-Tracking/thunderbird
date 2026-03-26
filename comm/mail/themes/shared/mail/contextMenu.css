@@ -27,6 +27,7 @@ menupopup {
   --arrowpanel-padding: 4px 0;
   --panel-border-radius: var(--arrowpanel-border-radius);
   --panel-padding: var(--arrowpanel-padding);
+  --menuitem-icon-fill: color-mix(in srgb, currentColor 20%, transparent);
   font: menu;
   font-size: inherit;
   text-align: start;
@@ -56,7 +57,7 @@ menupopup {
       outline: 0;
     }
 
-    &[checked="true"],
+    &[checked],
     &[selected="true"] {
       --menuitem-icon: var(--icon-check);
       -moz-context-properties: fill, stroke;
@@ -64,21 +65,21 @@ menupopup {
       color: inherit;
     }
 
-    &:not([disabled="true"], :active)[_moz-menuactive] {
+    &:not([disabled], :active)[_moz-menuactive] {
       color: inherit;
       background-color: var(--arrowpanel-dimmed);
     }
 
-    &:not([disabled="true"])[_moz-menuactive]:active {
+    &:not([disabled])[_moz-menuactive]:active {
       color: inherit;
       background-color: var(--arrowpanel-dimmed-further);
       box-shadow: 0 1px 0 hsla(210, 4%, 10%, 0.03) inset;
     }
 
-    &[disabled="true"],
-    &[disabled="true"]:hover,
-    &[checked="true"][disabled="true"],
-    &[checked="true"][disabled="true"]:hover {
+    &[disabled],
+    &[disabled]:hover,
+    &[checked][disabled],
+    &[checked][disabled]:hover {
       color: var(--text-color-disabled);
       background-color: transparent;
     }
@@ -89,7 +90,7 @@ menupopup {
     }
   }
 
-  :root:not([lwtheme]) menubar > menu & > :is(menu, menuitem):not([disabled="true"])[_moz-menuactive] {
+  :root:not([lwtheme]) menubar > menu & > :is(menu, menuitem):not([disabled])[_moz-menuactive] {
     color: -moz-MenuHoverText;
     background-color: -moz-MenuHover;
 
@@ -193,11 +194,11 @@ menupopup {
 
     &[_moz-menuactive] {
       /* Override the menu-shared.css rule. */
-      &[disabled="true"] {
+      &[disabled] {
         background-color: transparent;
       }
 
-      &:not([disabled="true"]) {
+      &:not([disabled]) {
         color: inherit;
         background-color: var(--arrowpanel-dimmed);
       }
@@ -208,7 +209,6 @@ menupopup {
       padding: 0;
       margin: 7px;
       -moz-context-properties: fill, stroke;
-      fill: color-mix(in srgb, currentColor 20%, transparent);
       stroke: currentColor;
 
       &::after {
@@ -238,7 +238,7 @@ menupopup {
 #navContext-markUnread {
   --menuitem-icon: var(--icon-unread);
 
-  &[disabled="true"] {
+  &[disabled] {
     display: none;
   }
 }
@@ -255,7 +255,7 @@ menupopup {
 #navContext-markAsNotJunk {
   --menuitem-icon: var(--icon-spam);
 
-  &[disabled="true"] {
+  &[disabled] {
     display: none;
   }
 }

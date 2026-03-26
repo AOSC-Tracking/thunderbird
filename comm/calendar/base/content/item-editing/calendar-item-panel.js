@@ -440,11 +440,11 @@ function onCommandDeleteItem() {
 function disableSaving(disabled) {
   const cmdSave = document.getElementById("cmd_save");
   if (cmdSave) {
-    cmdSave.setAttribute("disabled", disabled);
+    cmdSave.toggleAttribute("disabled", disabled);
   }
   const cmdAccept = document.getElementById("cmd_accept");
   if (cmdAccept) {
-    cmdAccept.setAttribute("disabled", disabled);
+    cmdAccept.toggleAttribute("disabled", disabled);
   }
 }
 
@@ -566,12 +566,7 @@ function updatePrivacy(aArg) {
             node.removeAttribute("collapsed");
           }
 
-          // Checked state
-          if (aArg.privacy == currentPrivacyValue) {
-            node.setAttribute("checked", "true");
-          } else {
-            node.removeAttribute("checked");
-          }
+          node.toggleAttribute("checked", aArg.privacy == currentPrivacyValue);
         }
       }
     }
@@ -596,12 +591,7 @@ function updatePrivacy(aArg) {
             node.removeAttribute("collapsed");
           }
 
-          // Checked state
-          if (aArg.privacy == currentPrivacyValue) {
-            node.setAttribute("checked", "true");
-          } else {
-            node.removeAttribute("checked");
-          }
+          node.toggleAttribute("checked", aArg.privacy == currentPrivacyValue);
         }
       }
     }
@@ -690,23 +680,25 @@ function updatePriority(aArg) {
     const priorityNormal = document.getElementById("cmd_priority_normal");
     const priorityHigh = document.getElementById("cmd_priority_high");
 
-    priorityNone.setAttribute("checked", priorityLevel == "none" ? "true" : "false");
-    priorityLow.setAttribute("checked", priorityLevel == "low" ? "true" : "false");
-    priorityNormal.setAttribute("checked", priorityLevel == "normal" ? "true" : "false");
-    priorityHigh.setAttribute("checked", priorityLevel == "high" ? "true" : "false");
+    priorityNone.toggleAttribute("checked", priorityLevel == "none");
+    priorityLow.toggleAttribute("checked", priorityLevel == "low");
+    priorityNormal.toggleAttribute("checked", priorityLevel == "normal");
+    priorityHigh.toggleAttribute("checked", priorityLevel == "high");
 
     // Status bar panel
     const priorityPanel = document.getElementById("status-priority");
     const image = priorityPanel.querySelector("img");
-    if (priorityLevel === "none") {
-      // If the priority is none, don't show the status bar panel
-      priorityPanel.toggleAttribute("collapsed", true);
+    // If the priority is none, don't show the status bar panel
+    priorityPanel.toggleAttribute("collapsed", priorityLevel == "none");
+    if (priorityLevel == "none") {
       image.removeAttribute("data-l10n-id");
       image.setAttribute("alt", "");
       image.removeAttribute("src");
     } else {
-      priorityPanel.removeAttribute("collapsed");
-      image.setAttribute("alt", this.l10n.formatValueSync(`${priorityLevel}-priority`));
+      // status-priority-img-high-priority
+      // status-priority-img-normal-priority
+      // status-priority-img-low-priority
+      document.l10n.setAttributes(image, `status-priority-img-${priorityLevel}-priority`);
       image.setAttribute(
         "src",
         `chrome://calendar/skin/shared/statusbar-priority-${priorityLevel}.svg`
@@ -750,7 +742,7 @@ function updateStatus(aArg) {
     const matches = node.getAttribute("value") == aArg.status;
     found = found || matches;
 
-    node.setAttribute("checked", matches ? "true" : "false");
+    node.toggleAttribute("checked", matches);
 
     if (aIndex > 0) {
       statusLabels[aIndex - 1].hidden = !matches;
@@ -786,8 +778,8 @@ function updateShowTimeAs(aArg) {
   const showAsBusy = document.getElementById("cmd_showtimeas_busy");
   const showAsFree = document.getElementById("cmd_showtimeas_free");
 
-  showAsBusy.setAttribute("checked", aArg.showTimeAs == "OPAQUE" ? "true" : "false");
-  showAsFree.setAttribute("checked", aArg.showTimeAs == "TRANSPARENT" ? "true" : "false");
+  showAsBusy.toggleAttribute("checked", aArg.showTimeAs == "OPAQUE");
+  showAsFree.toggleAttribute("checked", aArg.showTimeAs == "TRANSPARENT");
 
   document.getElementById("status-freebusy").collapsed =
     aArg.showTimeAs != "OPAQUE" && aArg.showTimeAs != "TRANSPARENT";
@@ -816,7 +808,7 @@ function updateMarkCompletedMenuItem(aArg) {
   if (gTabmail) {
     const completedCommand = document.getElementById("calendar_toggle_completed_command");
     const isCompleted = aArg.percentComplete == 100;
-    completedCommand.setAttribute("checked", isCompleted);
+    completedCommand.toggleAttribute("checked", isCompleted);
   }
 }
 
@@ -839,7 +831,7 @@ function postponeTask(aDuration) {
  */
 function getTimezoneCommandState() {
   const cmdTimezone = document.getElementById("cmd_timezone");
-  return cmdTimezone.getAttribute("checked") == "true";
+  return cmdTimezone.hasAttribute("checked");
 }
 
 /**
@@ -851,7 +843,7 @@ function getTimezoneCommandState() {
  */
 function updateTimezoneCommand(aArg) {
   const cmdTimezone = document.getElementById("cmd_timezone");
-  cmdTimezone.setAttribute("checked", aArg.timezonesEnabled);
+  cmdTimezone.toggleAttribute("checked", aArg.timezonesEnabled);
   gConfig.timezonesEnabled = aArg.timezonesEnabled;
 }
 
@@ -861,7 +853,7 @@ function updateTimezoneCommand(aArg) {
 function toggleTimezoneLinks() {
   const cmdTimezone = document.getElementById("cmd_timezone");
   const currentState = getTimezoneCommandState();
-  cmdTimezone.setAttribute("checked", currentState ? "false" : "true");
+  cmdTimezone.toggleAttribute("checked", !currentState);
   gConfig.timezonesEnabled = !currentState;
   sendMessage({ command: "toggleTimezoneLinks", checked: !currentState });
 }
@@ -880,7 +872,7 @@ function attachURL() {
  * @param {boolean} aArg.attachUrlCommand - Enable the attach url command?
  */
 function updateAttachment(aArg) {
-  document.getElementById("cmd_attach_url").setAttribute("disabled", !aArg.attachUrlCommand);
+  document.getElementById("cmd_attach_url").toggleAttribute("disabled", !aArg.attachUrlCommand);
 }
 
 /**
@@ -890,7 +882,7 @@ function updateAttachment(aArg) {
  * @param {boolean} aArg.attendeesCommand - Enable the attendees command?
  */
 function updateAttendeesCommand(aArg) {
-  document.getElementById("cmd_attendees").setAttribute("disabled", !aArg.attendeesCommand);
+  document.getElementById("cmd_attendees").toggleAttribute("disabled", !aArg.attendeesCommand);
 }
 
 /**
@@ -900,8 +892,8 @@ function updateAttendeesCommand(aArg) {
  * @param {boolean} aEnable - Enable the commands?
  */
 function enableAcceptCommand(aEnable) {
-  document.getElementById("cmd_accept").setAttribute("disabled", !aEnable);
-  document.getElementById("cmd_save").setAttribute("disabled", !aEnable);
+  document.getElementById("cmd_accept").toggleAttribute("disabled", !aEnable);
+  document.getElementById("cmd_save").toggleAttribute("disabled", !aEnable);
 }
 
 /**
@@ -935,10 +927,7 @@ function onCommandViewToolbar(aToolbarId, aMenuItemId) {
 
   const toolbarCollapsed = toolbar.collapsed;
 
-  // toggle the checkbox
-  menuItem.setAttribute("checked", toolbarCollapsed);
-
-  // toggle visibility of the toolbar
+  menuItem.toggleAttribute("checked", toolbarCollapsed);
   toolbar.collapsed = !toolbarCollapsed;
 
   Services.xulStore.persist(toolbar, "collapsed");
@@ -984,11 +973,11 @@ function onCommandCustomize() {
   const menubarId = gTabmail ? "mail-menubar" : "event-menubar";
   const menubar = document.getElementById(menubarId);
   for (const menuitem of menubar.children) {
-    menuitem.setAttribute("disabled", true);
+    menuitem.toggleAttribute("disabled", true);
   }
 
   // Disable the toolbar context menu items
-  document.getElementById("cmd_customize").setAttribute("disabled", "true");
+  document.getElementById("cmd_customize").toggleAttribute("disabled", true);
 
   let wintype = document.documentElement.getAttribute("windowtype");
   wintype = wintype.replace(/:/g, "");

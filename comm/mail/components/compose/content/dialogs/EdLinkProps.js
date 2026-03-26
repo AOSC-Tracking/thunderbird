@@ -217,7 +217,7 @@ function doEnabling() {
   var dialogNode = document.getElementById("linkDlg");
   dialogNode.getButton("accept").disabled = !enable;
 
-  SetElementEnabledById("AdvancedEditButton1", enable);
+  document.getElementById("AdvancedEditButton1").disabled = !enable;
 }
 
 function ChangeLinkLocation() {
@@ -249,7 +249,7 @@ function ValidateData() {
         newLinkText = href;
       } else {
         ShowInputErrorMessage(GetString("EmptyLinkTextError"));
-        SetTextboxFocus(gDialog.linkTextInput);
+        gDialog.linkTextInput.focus();
         return false;
       }
     }

@@ -10,7 +10,6 @@ var msgWindow; // important, don't change the name of this variable. it's really
 var gSearchTermSession; // really an in memory temporary filter we use to read in and write out the search terms
 var gSearchFolderURIs = "";
 var gMessengerBundle = null;
-var gFolderBundle = null;
 var gDefaultColor = "";
 var gMsgFolder;
 let isDefaultColor = false;
@@ -27,14 +26,21 @@ var { MailServices } = ChromeUtils.importESModule(
 var { MailUtils } = ChromeUtils.importESModule(
   "resource:///modules/MailUtils.sys.mjs"
 );
-var { PluralForm } = ChromeUtils.importESModule(
-  "resource:///modules/PluralForm.sys.mjs"
-);
 var { VirtualFolderHelper } = ChromeUtils.importESModule(
   "resource:///modules/VirtualFolderWrapper.sys.mjs"
 );
 var { UIFontSize } = ChromeUtils.importESModule(
   "resource:///modules/UIFontSize.sys.mjs"
+);
+
+ChromeUtils.defineLazyGetter(
+  this,
+  "l10n",
+  () =>
+    new Localization(
+      ["messenger/virtualFolderProperties.ftl", "messenger/searchWidgets.ftl"],
+      true
+    )
 );
 
 window.addEventListener("DOMContentLoaded", onLoad);
@@ -50,10 +56,6 @@ function onLoad() {
     "chrome://messenger/locale/messenger.properties"
   );
 
-  gFolderBundle = Services.strings.createBundle(
-    "chrome://messenger/locale/folderWidgets.properties"
-  );
-
   // call this when OK is pressed
   msgWindow = windowArgs.msgWindow;
 
@@ -64,7 +66,7 @@ function onLoad() {
     acceptButton.label = document
       .querySelector("dialog")
       .getAttribute("editFolderAcceptButtonLabel");
-    acceptButton.accesskey = document
+    acceptButton.accessKey = document
       .querySelector("dialog")
       .getAttribute("editFolderAcceptButtonAccessKey");
     InitDialogWithVirtualFolder(windowArgs.folder);
@@ -73,7 +75,7 @@ function onLoad() {
     acceptButton.label = document
       .querySelector("dialog")
       .getAttribute("newFolderAcceptButtonLabel");
-    acceptButton.accesskey = document
+    acceptButton.accessKey = document
       .querySelector("dialog")
       .getAttribute("newFolderAcceptButtonAccessKey");
     // it is possible that we were given arguments to pre-fill the dialog with...
@@ -150,12 +152,8 @@ function updateOnlineSearchState() {
       );
 
   const checkbox = document.getElementById("searchOnline");
-  if (includesOnlineServers) {
-    checkbox.removeAttribute("disabled");
-  } else {
-    checkbox.setAttribute("disabled", true);
-    checkbox.checked = false;
-  }
+  checkbox.toggleAttribute("disabled", !includesOnlineServers);
+  checkbox.checked = !includesOnlineServers;
 }
 
 function InitDialogWithVirtualFolder(aVirtualFolder) {
@@ -231,7 +229,7 @@ function InitDialogWithVirtualFolder(aVirtualFolder) {
   setupSearchRows(gSearchTermSession.searchTerms);
 
   // set the name of the folder
-  const name = gFolderBundle.formatStringFromName("verboseFolderFormat", [
+  const name = gMessengerBundle.formatStringFromName("verboseFolderFormat", [
     aVirtualFolder.localizedName,
     aVirtualFolder.server.prettyName,
   ]);
@@ -375,11 +373,13 @@ function onFolderListDialogCallback(searchFolderURIs) {
 function updateFoldersCount() {
   const srchFolderUriArray = gSearchFolderURIs.split("|");
   const folderCount = gSearchFolderURIs ? srchFolderUriArray.length : 0;
-  const foldersList = document.getElementById("chosenFoldersCount");
-  foldersList.textContent = PluralForm.get(
-    folderCount,
-    gMessengerBundle.GetStringFromName("virtualFolderSourcesChosen")
-  ).replace("#1", folderCount);
+  const chosenFoldersCount = document.getElementById("chosenFoldersCount");
+  chosenFoldersCount.textContent = l10n.formatValueSync(
+    "virtual-folder-sources-chosen",
+    {
+      count: folderCount,
+    }
+  );
   if (folderCount > 0) {
     const folderNames = [];
     for (const folderURI of srchFolderUriArray) {
@@ -390,9 +390,9 @@ function updateFoldersCount() {
       );
       folderNames.push(name);
     }
-    foldersList.setAttribute("tooltiptext", folderNames.join("\n"));
+    chosenFoldersCount.setAttribute("tooltiptext", folderNames.join("\n"));
   } else {
-    foldersList.removeAttribute("tooltiptext");
+    chosenFoldersCount.removeAttribute("tooltiptext");
   }
 }
 

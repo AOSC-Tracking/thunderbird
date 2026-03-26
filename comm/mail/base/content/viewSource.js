@@ -36,7 +36,7 @@ addEventListener("load", () => {
   if (Services.prefs.getBoolPref("view_source.wrap_long_lines", false)) {
     document
       .getElementById("cmd_wrapLongLines")
-      .setAttribute("checked", "true");
+      .toggleAttribute("checked", true);
   }
 
   gViewSourceUtils.viewSourceInBrowser({
@@ -47,26 +47,26 @@ addEventListener("load", () => {
 
   document
     .getElementById("repair-text-encoding")
-    .setAttribute("disabled", !gBrowser.mayEnableCharacterEncodingMenu);
+    .toggleAttribute("disabled", !gBrowser.mayEnableCharacterEncodingMenu);
   gBrowser.addEventListener(
     "load",
     () => {
       document
         .getElementById("repair-text-encoding")
-        .setAttribute("disabled", !gBrowser.mayEnableCharacterEncodingMenu);
+        .toggleAttribute("disabled", !gBrowser.mayEnableCharacterEncodingMenu);
     },
     true
   );
 
   gBrowser.addEventListener(
-    "DoZoomEnlargeBy10",
+    "DoZoomEnlarge",
     () => {
       ZoomManager.scrollZoomEnlarge(gBrowser);
     },
     true
   );
   gBrowser.addEventListener(
-    "DoZoomReduceBy10",
+    "DoZoomReduce",
     () => {
       ZoomManager.scrollReduceEnlarge(gBrowser);
     },
@@ -85,7 +85,7 @@ var viewSourceChrome = {
     if (state) {
       document
         .getElementById("cmd_wrapLongLines")
-        .setAttribute("checked", "true");
+        .toggleAttribute("checked", true);
     } else {
       document.getElementById("cmd_wrapLongLines").removeAttribute("checked");
     }

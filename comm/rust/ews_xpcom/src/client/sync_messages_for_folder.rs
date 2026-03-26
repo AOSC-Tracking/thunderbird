@@ -3,21 +3,21 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use ews::{
-    server_version::ExchangeServerVersion,
-    sync_folder_items::{self, SyncFolderItems, SyncFolderItemsResponse},
     ItemShape, Operation, OperationResponse,
+    server_version::ExchangeServerVersion,
+    sync_folder_items::{self, SyncFolderItems},
 };
+use protocol_shared::client::DoOperation;
+use protocol_shared::safe_xpcom::SafeEwsMessageSyncListener;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
 
 use super::{
-    process_response_message_class, single_response_or_error, BaseFolderId, BaseShape, DoOperation,
-    ServerType, XpComEwsClient, XpComEwsError,
+    BaseFolderId, BaseShape, ServerType, XpComEwsClient, XpComEwsError,
+    process_response_message_class, single_response_or_error,
 };
-
-use crate::{macros::queue_operation, safe_xpcom::SafeEwsMessageSyncListener};
 
 struct DoSyncMessagesForFolder<'a> {
     pub listener: &'a SafeEwsMessageSyncListener,
@@ -25,12 +25,14 @@ struct DoSyncMessagesForFolder<'a> {
     pub sync_state_token: Option<String>,
 }
 
-impl DoOperation for DoSyncMessagesForFolder<'_> {
+impl<ServerT: ServerType> DoOperation<XpComEwsClient<ServerT>, XpComEwsError>
+    for DoSyncMessagesForFolder<'_>
+{
     const NAME: &'static str = SyncFolderItems::NAME;
     type Okay = ();
     type Listener = SafeEwsMessageSyncListener;
 
-    async fn do_operation<ServerT: ServerType>(
+    async fn do_operation(
         &mut self,
         client: &XpComEwsClient<ServerT>,
     ) -> Result<Self::Okay, XpComEwsError> {
@@ -56,8 +58,10 @@ impl DoOperation for DoSyncMessagesForFolder<'_> {
                 sync_scope: None,
             };
 
-            let rcv = queue_operation!(client, SyncFolderItems, op, Default::default());
-            let response_messages = rcv.await??.into_response_messages();
+            let response_messages = client
+                .enqueue_and_send(op, Default::default())
+                .await?
+                .into_response_messages();
 
             let response_class = single_response_or_error(response_messages)?;
             let message = process_response_message_class(SyncFolderItems::NAME, response_class)?;
@@ -113,6 +117,7 @@ impl DoOperation for DoSyncMessagesForFolder<'_> {
 
             if client.version_handler.get_version() >= ExchangeServerVersion::Exchange2013 {
                 fields_to_fetch.push("item:Preview");
+                fields_to_fetch.push("item:Flag");
             }
 
             let messages_by_id: HashMap<_, _> = client
@@ -171,7 +176,8 @@ impl DoOperation for DoSyncMessagesForFolder<'_> {
                             continue;
                         }
 
-                        let header = result?.populate_from_message_headers(msg)?;
+                        let header =
+                            result?.populate_from_message_headers(crate::headers::Message(msg))?;
                         self.listener.on_detached_hdr_populated(header)?;
                     }
 
@@ -186,12 +192,15 @@ impl DoOperation for DoSyncMessagesForFolder<'_> {
                         log::info!("Processing Update change with ID {item_id}");
 
                         let msg = messages_by_id.get(item_id).ok_or_else(|| {
+                            log::error!("Unable to fetch message with ID {item_id}");
                             XpComEwsError::Processing {
                                 message: format!("Unable to fetch message with ID {item_id}"),
                             }
                         })?;
 
+                        log::debug!("Updating message with item ID {item_id}");
                         let mut result = self.listener.on_message_updated(item_id);
+                        log::debug!("Got header for message ID {item_id}");
 
                         let mut hdr_is_detached = false;
                         if let Err(nserror::NS_ERROR_NOT_AVAILABLE) = result {
@@ -217,7 +226,9 @@ impl DoOperation for DoSyncMessagesForFolder<'_> {
                         // readability depend on the context, and which ones can
                         // always be updated, so we copy the remote state onto
                         // the database entry and commit.
-                        let header = result?.populate_from_message_headers(msg)?;
+                        let header =
+                            result?.populate_from_message_headers(crate::headers::Message(msg))?;
+                        log::debug!("Populated headers for item ID {item_id}");
 
                         // Persist the database entry. If it's a new one
                         // (because we've missed the creation event), then we
@@ -229,6 +240,8 @@ impl DoOperation for DoSyncMessagesForFolder<'_> {
                         } else {
                             self.listener.on_existing_hdr_changed()?;
                         }
+
+                        log::debug!("Completed update for item ID {item_id}");
                     }
 
                     sync_folder_items::Change::Delete { item_id } => {

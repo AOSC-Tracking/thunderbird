@@ -285,13 +285,17 @@ export class Pop3Client {
     this._socket.ondata = this._onData;
     this._socket.onclose = this._onClose;
     this._nextAction = res => {
-      // See if there is an APOP timestamp.
-      // eslint-disable-next-line no-control-regex
-      const matches = res.statusText.match(/<[\x00-\x7F]+@[\x00-\x7F]+>/);
-      if (matches?.[0]) {
-        this._apopTimestamp = matches[0];
+      if (res.success) {
+        // See if there is an APOP timestamp.
+        // eslint-disable-next-line no-control-regex
+        const matches = res.statusText.match(/<[\x00-\x7F]+@[\x00-\x7F]+>/);
+        if (matches?.[0]) {
+          this._apopTimestamp = matches[0];
+        }
+        this.onOpen();
+      } else {
+        this._actionError("pop3ServerError", [], res.statusText);
       }
-      this.onOpen();
     };
     this._socket.transport.setTimeout(
       Ci.nsISocketTransport.TIMEOUT_READ_WRITE,
@@ -1673,7 +1677,15 @@ export class Pop3Client {
 
     this._actionDone(Cr.NS_ERROR_FAILURE);
 
-    if (!this._msgWindow) {
+    let msgWindow = this._msgWindow;
+    if (!msgWindow) {
+      // If there's a message window on the URI, use that.
+      // (The getter for `msgWindow` may throw).
+      try {
+        msgWindow = this.runningUri?.msgWindow;
+      } catch {}
+    }
+    if (!msgWindow) {
       return;
     }
 
@@ -1695,7 +1707,7 @@ export class Pop3Client {
       "pop3ErrorDialogTitle",
       [this._server.prettyName]
     );
-    Services.prompt.alert(this._msgWindow.domWindow, errorTitle, errorMsg);
+    Services.prompt.alert(msgWindow.domWindow, errorTitle, errorMsg);
   }
 
   /**

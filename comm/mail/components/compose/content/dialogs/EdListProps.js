@@ -192,8 +192,8 @@ function BuildBulletStyleList() {
   if (gListType == "ul") {
     gDialog.BulletStyleList.removeAttribute("disabled");
     gDialog.BulletStyleLabel.removeAttribute("disabled");
-    gDialog.StartingNumberInput.setAttribute("disabled", "true");
-    gDialog.StartingNumberLabel.setAttribute("disabled", "true");
+    gDialog.StartingNumberInput.toggleAttribute("disabled", true);
+    gDialog.StartingNumberLabel.toggleAttribute("disabled", true);
 
     label = GetString("BulletStyle");
 
@@ -219,17 +219,17 @@ function BuildBulletStyleList() {
 
     gDialog.BulletStyleList.value = gNumberStyleType;
   } else {
-    gDialog.BulletStyleList.setAttribute("disabled", "true");
-    gDialog.BulletStyleLabel.setAttribute("disabled", "true");
-    gDialog.StartingNumberInput.setAttribute("disabled", "true");
-    gDialog.StartingNumberLabel.setAttribute("disabled", "true");
+    gDialog.BulletStyleList.toggleAttribute("disabled", true);
+    gDialog.BulletStyleLabel.toggleAttribute("disabled", true);
+    gDialog.StartingNumberInput.toggleAttribute("disabled", true);
+    gDialog.StartingNumberLabel.toggleAttribute("disabled", true);
   }
 
   // Disable advanced edit button if changing to "normal"
   if (gListType) {
     gDialog.AdvancedEditButton.removeAttribute("disabled");
   } else {
-    gDialog.AdvancedEditButton.setAttribute("disabled", "true");
+    gDialog.AdvancedEditButton.toggleAttribute("disabled", true);
   }
 
   if (label) {
@@ -242,7 +242,7 @@ function SelectListType() {
   var NewType = gDialog.ListTypeList.value;
 
   if (NewType == "ol") {
-    SetTextboxFocus(gDialog.StartingNumberInput);
+    gDialog.StartingNumberInput.focus();
   }
 
   if (gListType != NewType) {
@@ -276,7 +276,7 @@ function SelectBulletStyle() {
       );
 
       gNumberStyleType = type;
-      SetTextboxFocus(gDialog.StartingNumberInput);
+      gDialog.StartingNumberInput.focus();
     }
   }
 }

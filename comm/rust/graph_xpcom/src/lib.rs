@@ -4,23 +4,31 @@
 
 use std::{cell::OnceCell, ffi::c_void};
 
-use nserror::{nsresult, NS_ERROR_ALREADY_INITIALIZED, NS_ERROR_INVALID_ARG, NS_OK};
+use nserror::{NS_ERROR_ALREADY_INITIALIZED, NS_ERROR_INVALID_ARG, NS_OK, nsresult};
 use nsstring::{nsACString, nsCString};
 use protocol_shared::{
-    authentication::credentials::AuthenticationProvider, ExchangeConnectionDetails,
+    ExchangeConnectionDetails,
+    authentication::credentials::AuthenticationProvider,
+    safe_xpcom::{SafeUrlListener, uri::SafeUri},
 };
 use thin_vec::ThinVec;
 use url::Url;
 use xpcom::{
+    RefPtr,
     interfaces::{
-        nsIInputStream, nsIMsgIncomingServer, nsIURI, nsIUrlListener, IEwsFolderListener,
-        IEwsMessageCreateListener, IEwsMessageFetchListener, IEwsMessageSyncListener,
-        IEwsSimpleOperationListener,
+        IEwsFolderListener, IEwsMessageCreateListener, IEwsMessageFetchListener,
+        IEwsMessageSyncListener, IEwsSimpleOperationListener, nsIInputStream, nsIMsgIncomingServer,
+        nsIURI, nsIUrlListener,
     },
-    nsIID, xpcom_method, RefPtr,
+    nsIID, xpcom_method,
 };
 
+use crate::client::XpComGraphClient;
+
 extern crate xpcom;
+
+mod client;
+mod error;
 
 /// Creates a new instance of the XPCOM/Graph bridge interface [`XpcomGraphBridge`].
 ///
@@ -29,13 +37,13 @@ extern crate xpcom;
 /// valid memory, and `result` must not be used until the return value is
 /// checked.
 #[allow(non_snake_case)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn NS_CreateGraphClient(iid: &nsIID, result: *mut *mut c_void) -> nsresult {
     let instance = XpcomGraphBridge::allocate(InitXpcomGraphBridge {
         details: OnceCell::default(),
     });
 
-    instance.QueryInterface(iid, result)
+    unsafe { instance.QueryInterface(iid, result) }
 }
 
 /// `XpcomEwsBridge` provides an XPCOM interface implementation for mediating
@@ -69,6 +77,11 @@ impl XpcomGraphBridge {
         endpoint: &nsACString,
         server: &nsIMsgIncomingServer,
     ) -> Result<(), nsresult> {
+        log::debug!(
+            "Initializing XpcomGraphBridge with endpoint {}",
+            endpoint.to_string()
+        );
+
         let endpoint = Url::parse(&endpoint.to_utf8()).map_err(|_| NS_ERROR_INVALID_ARG)?;
 
         let credentials = server.get_credentials()?;
@@ -92,8 +105,26 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(check_connectivity => CheckConnectivity(listener: *const nsIUrlListener) -> *const nsIURI);
-    fn check_connectivity(&self, _listener: &nsIUrlListener) -> Result<RefPtr<nsIURI>, nsresult> {
-        Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
+    fn check_connectivity(&self, listener: &nsIUrlListener) -> Result<RefPtr<nsIURI>, nsresult> {
+        let server = self.details.get().unwrap().server.clone();
+        let endpoint = self.details.get().unwrap().endpoint.clone();
+
+        let uri = endpoint.to_string();
+        let uri = SafeUri::new(uri)?;
+
+        let client = XpComGraphClient::new(server, endpoint);
+
+        let listener = SafeUrlListener::new(listener);
+
+        // The client operation is async and we want it to survive the end of
+        // this scope, so spawn it as a detached `moz_task`.
+        moz_task::spawn_local(
+            "check_connectivity",
+            client.check_connectivity(uri.clone(), listener),
+        )
+        .detach();
+
+        Ok(uri.into())
     }
 
     xpcom_method!(sync_folder_hierarchy => SyncFolderHierarchy(
@@ -200,6 +231,20 @@ impl XpcomGraphBridge {
         _listener: &IEwsSimpleOperationListener,
         _message_ids: &ThinVec<nsCString>,
         _is_read: bool,
+    ) -> Result<(), nsresult> {
+        Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
+    }
+
+    xpcom_method!(change_flag_status => ChangeFlagStatus(
+        listener: *const IEwsSimpleOperationListener,
+        message_ids: *const ThinVec<nsCString>,
+        is_flagged: bool
+    ));
+    fn change_flag_status(
+        &self,
+        _listener: &IEwsSimpleOperationListener,
+        _message_ids: &ThinVec<nsCString>,
+        _is_flagged: bool,
     ) -> Result<(), nsresult> {
         Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
     }

@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+mod change_flag_status;
 mod change_read_status;
 mod change_read_status_all;
 mod check_connectivity;
@@ -17,35 +18,33 @@ mod sync_folder_hierarchy;
 mod sync_messages_for_folder;
 mod update_folder;
 
-use std::{collections::VecDeque, sync::Arc};
+use std::{cell::Cell, collections::VecDeque, fmt::Debug, sync::Arc};
 
 use ews::{
-    create_item::{CreateItem, CreateItemResponse},
-    get_folder::{GetFolder, GetFolderResponse, GetFolderResponseMessage},
-    get_item::{GetItem, GetItemResponse},
-    response::{ResponseClass, ResponseCode, ResponseError},
-    update_item::{UpdateItem, UpdateItemResponse},
     BaseFolderId, BaseItemId, BaseShape, Folder, FolderId, FolderShape, ItemResponseMessage,
     ItemShape, Operation, OperationResponse, PathToElement, RealItem,
+    create_item::CreateItem,
+    get_folder::{GetFolder, GetFolderResponseMessage},
+    get_item::GetItem,
+    response::{ResponseClass, ResponseError},
+    soap,
+    update_item::{UpdateItem, UpdateItemResponse},
 };
-use fxhash::FxHashMap;
 use mail_parser::MessageParser;
 use mailnews_ui_glue::UserInteractiveServer;
-use protocol_shared::authentication::credentials::AuthenticationProvider;
+use protocol_shared::{
+    authentication::credentials::AuthenticationProvider,
+    safe_xpcom::{SafeEwsMessageCreateListener, StaleMsgDbHeader, UpdatedMsgDbHeader},
+};
 use url::Url;
 use xpcom::{RefCounted, RefPtr};
 
 use crate::{
     error::XpComEwsError,
-    macros::queue_operation,
-    operation_queue::OperationQueue,
+    operation_queue::{OperationQueue, QueuedOperation},
     operation_sender::{
-        observable_server::ObservableServer, OperationRequestOptions, OperationSender,
-        TransportSecFailureBehavior,
-    },
-    safe_xpcom::{
-        handle_error, SafeEwsFolderListener, SafeEwsMessageCreateListener, SafeListener,
-        StaleMsgDbHeader, UpdatedMsgDbHeader,
+        OperationRequestOptions, OperationSender, TransportSecFailureBehavior,
+        observable_server::ObservableServer,
     },
     server_version::ServerVersionHandler,
 };
@@ -64,8 +63,6 @@ const MSGFLAG_READ: i32 = 0x00000001;
 const MSGFLAG_UNMODIFIED: i32 = 0x00000002;
 const MSGFLAG_UNSENT: i32 = 0x00000008;
 
-const EWS_ROOT_FOLDER: &str = "msgfolderroot";
-
 /// Shorthand for the most common server type constraints.
 pub(crate) trait ServerType:
     AuthenticationProvider + UserInteractiveServer + ObservableServer + RefCounted
@@ -74,6 +71,93 @@ pub(crate) trait ServerType:
 impl<T> ServerType for T where
     T: AuthenticationProvider + UserInteractiveServer + ObservableServer + RefCounted
 {
+}
+
+/// The result from an EWS operation, containing either the operation's response
+/// or an error.
+type EwsOperationResult<T> = Result<<T as Operation>::Response, XpComEwsError>;
+
+/// The EWS implementation of the [`QueuedOperation`] trait. It wraps around a
+/// type that implements [`ews::Operation`].
+pub struct QueuedEwsOperation<Op: Operation> {
+    inner: Op,
+    sender: Cell<Option<oneshot::Sender<EwsOperationResult<Op>>>>,
+    options: OperationRequestOptions,
+}
+
+impl<Op: Operation> QueuedEwsOperation<Op> {
+    /// Create a new [`QueuedEwsOperation`] and return it, along a channel
+    /// [`Receiver`] that will be used to communicate the operation's result to
+    /// the consumer.
+    ///
+    /// [`Receiver`]: oneshot::Receiver
+    pub fn new(
+        op: Op,
+        options: OperationRequestOptions,
+    ) -> (Self, oneshot::Receiver<EwsOperationResult<Op>>) {
+        let (snd, rcv) = oneshot::channel();
+
+        let op = QueuedEwsOperation {
+            inner: op,
+            sender: Cell::new(Some(snd)),
+            options,
+        };
+
+        (op, rcv)
+    }
+
+    /// Communicates the given [`EwsOperationResult`] to the listener through
+    /// the channel that was created by [`QueuedEwsOperation::new`].
+    fn send_result(&self, res: EwsOperationResult<Op>) {
+        match self.sender.take() {
+            Some(sender) => {
+                if let Err(err) = sender.send(res) {
+                    log::error!("error communicating the result of a queued request: {err}")
+                }
+            }
+            None => log::error!(
+                "trying to send result for operation {} on already used oneshot channel",
+                <Op as Operation>::NAME
+            ),
+        }
+    }
+}
+
+impl<Op, ServerT> QueuedOperation<ServerT> for QueuedEwsOperation<Op>
+where
+    Op: Operation,
+    ServerT: ServerType + 'static,
+{
+    async fn perform(&self, op_sender: Arc<OperationSender<ServerT>>) {
+        let op_name = <Op as Operation>::NAME;
+        let version = op_sender.server_version();
+        let envelope = soap::Envelope {
+            headers: vec![soap::Header::RequestServerVersion { version }],
+            body: &self.inner,
+        };
+        let request_body = match envelope.as_xml_document() {
+            Ok(body) => body,
+            Err(err) => return self.send_result(Err(err.into())),
+        };
+
+        let res = op_sender
+            .make_and_send_request(op_name, &request_body, &self.options)
+            .await;
+
+        self.send_result(res);
+    }
+}
+
+// `Cell` only implements `Debug` if the inner type also implements `Copy`
+// (which isn't the case here), so we need a custom implementation that leaves
+// it out of the debug output.
+impl<Op: Operation> Debug for QueuedEwsOperation<Op> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QueuedEwsOperation")
+            .field("inner", &self.inner)
+            .field("options", &self.options)
+            .finish()
+    }
 }
 
 pub(crate) struct XpComEwsClient<ServerT: ServerType + 'static> {
@@ -96,8 +180,13 @@ impl<ServerT: ServerType + 'static> XpComEwsClient<ServerT> {
         let op_sender = OperationSender::new(endpoint, server, version_handler.clone())?;
         let op_sender = Arc::new(op_sender);
 
+        // Start the queue with a few runners. We're picking 5 here as an
+        // arbitrary number, without a strong reason for it (beyond being higher
+        // than 1). In the future, we could maybe move
+        // `maximumConnectionsNumber` from `nsIImapIncomingServer` to
+        // `nsIMsgIncomingServer` and use its value here.
         let queue = OperationQueue::new(op_sender.clone());
-        queue.clone().start(1);
+        queue.clone().start(5);
 
         Ok(XpComEwsClient {
             version_handler,
@@ -129,275 +218,18 @@ impl<ServerT: ServerType + 'static> XpComEwsClient<ServerT> {
         self.op_sender.url()
     }
 
-    /// Builds a map from remote folder ID to distinguished folder ID.
-    ///
-    /// This allows translating from the folder ID returned by `GetFolder`
-    /// calls and well-known IDs associated with special folders.
-    async fn get_well_known_folder_map(
+    /// `Op` needs a static lifetime, because it needs to be dispatch-able to a
+    /// runner at *some* point in the future. In practice, this mainly means the
+    /// underlying implementation must have ownership of its own data (or only
+    /// borrow long-lived objects).
+    pub(crate) async fn enqueue_and_send<Op: Operation + 'static>(
         &self,
-        listener: &SafeEwsFolderListener,
-    ) -> Result<FxHashMap<String, &str>, XpComEwsError> {
-        const DISTINGUISHED_IDS: &[&str] = &[
-            EWS_ROOT_FOLDER,
-            "inbox",
-            "deleteditems",
-            "drafts",
-            "outbox",
-            "sentitems",
-            "junkemail",
-            // The `archive` distinguished id isn't documented at
-            // https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/distinguishedfolderid
-            // but it does provide the Exchange account's archive folder when
-            // requested, while the other documented `archive*` distinguished
-            // ids result in folder not found errors.
-            "archive",
-        ];
-
-        // We should always request the root folder first to simplify processing
-        // the response below.
-        assert_eq!(
-            DISTINGUISHED_IDS[0], EWS_ROOT_FOLDER,
-            "expected first fetched folder to be root"
-        );
-
-        let ids = DISTINGUISHED_IDS
-            .iter()
-            .map(|id| BaseFolderId::DistinguishedFolderId {
-                id: id.to_string(),
-                change_key: None,
-            })
-            .collect();
-
-        // Fetch all distinguished folder IDs at once, since we have few enough
-        // that they fit within Microsoft's recommended batch size of ten.
-        let op = GetFolder {
-            folder_shape: FolderShape {
-                base_shape: BaseShape::IdOnly,
-            },
-            folder_ids: ids,
-        };
-
-        let rcv = queue_operation!(self, GetFolder, op, Default::default());
-        let response = rcv.await??;
-
-        let response_messages = response.into_response_messages();
-        validate_response_message_count(&response_messages, DISTINGUISHED_IDS.len())?;
-
-        // We expect results from EWS to be in the same order as given in the
-        // request. EWS docs aren't explicit about response ordering, but
-        // responses don't contain another means of mapping requested ID to
-        // response.
-        let mut message_iter = DISTINGUISHED_IDS.iter().zip(response_messages);
-
-        // Record the root folder for messages before processing the other
-        // responses. We're okay to unwrap since we request a static number of
-        // folders and we've already checked that we have that number of
-        // responses.
-        let (_, response_class) = message_iter.next().unwrap();
-        let message = process_response_message_class(GetFolder::NAME, response_class)?;
-
-        // Any error fetching the root folder is fatal, since we can't correctly
-        // set the parents of any folders it contains without knowing its ID.
-        let root_folder_id = validate_get_folder_response_message(&message)?;
-        listener.on_new_root_folder(root_folder_id)?;
-
-        // Build the mapping for the remaining folders.
-        message_iter
-            .filter_map(|(&distinguished_id, response_class)| {
-                let message = match process_response_message_class(GetFolder::NAME, response_class)
-                {
-                    Ok(message) => Some(message),
-
-                    // Not every Exchange account will have all queried
-                    // well-known folders, so we skip any which were not
-                    // found.
-                    Err(XpComEwsError::ResponseError(ResponseError {
-                        response_code: ResponseCode::ErrorFolderNotFound,
-                        ..
-                    })) => None,
-
-                    // Return any other error.
-                    Err(err) => {
-                        return Some(Err(err));
-                    }
-                };
-
-                message.map(|message| {
-                    // Validate the message (and propagate any error) if it's
-                    // not `None`.
-                    match validate_get_folder_response_message(&message) {
-                        // Map from EWS folder ID to distinguished ID.
-                        Ok(folder_id) => Ok((folder_id.id, distinguished_id)),
-                        Err(err) => Err(err),
-                    }
-                })
-            })
-            .collect()
-    }
-
-    async fn push_sync_state_to_ui(
-        &self,
-        listener: &SafeEwsFolderListener,
-        create_ids: Vec<String>,
-        update_ids: Vec<String>,
-        delete_ids: Vec<String>,
-        sync_state: &str,
-        well_known_map: &Option<FxHashMap<String, &str>>,
-    ) -> Result<(), XpComEwsError> {
-        if !create_ids.is_empty() {
-            let created = self.batch_get_folders(create_ids).await?;
-            for folder in created {
-                match folder {
-                    Folder::Folder {
-                        folder_id,
-                        parent_folder_id,
-                        display_name,
-                        ..
-                    } => listener.on_folder_created(
-                        folder_id,
-                        parent_folder_id,
-                        display_name,
-                        well_known_map,
-                    )?,
-                    _ => return Err(nserror::NS_ERROR_FAILURE.into()),
-                }
-            }
-        }
-
-        if !update_ids.is_empty() {
-            let updated = self.batch_get_folders(update_ids).await?;
-            for folder in updated {
-                match folder {
-                    Folder::Folder {
-                        folder_id,
-                        parent_folder_id,
-                        display_name,
-                        ..
-                    } => listener.on_folder_updated(folder_id, parent_folder_id, display_name)?,
-                    _ => return Err(nserror::NS_ERROR_FAILURE.into()),
-                }
-            }
-        }
-
-        for id in delete_ids {
-            listener.on_folder_deleted(id)?;
-        }
-
-        listener.on_sync_state_token_changed(sync_state)?;
-
-        Ok(())
-    }
-
-    async fn batch_get_folders(&self, ids: Vec<String>) -> Result<Vec<Folder>, XpComEwsError> {
-        let mut folders = Vec::with_capacity(ids.len());
-        let mut ids = ids.into_iter().peekable();
-        let mut buf = Vec::with_capacity(10);
-
-        loop {
-            // Per Microsoft's recommendation, we batch `GetFolder` operations
-            // in chunks of 10 to avoid throttling.
-            //
-            // https://learn.microsoft.com/en-us/exchange/client-developer/exchange-web-services/mailbox-synchronization-and-ews-in-exchange
-            for _ in 0..10 {
-                // This is sort of a terrible way to do this, but
-                // `array_chunks()`, `next_chunk()`, etc. are still nightly
-                // features on `Iterator` as of this writing and we want to take
-                // ownership rather than cloning.
-                match ids.next() {
-                    Some(value) => buf.push(value),
-                    None => break,
-                }
-            }
-
-            let to_fetch = buf
-                .drain(..)
-                .map(|id| BaseFolderId::FolderId {
-                    id,
-                    change_key: None,
-                })
-                .collect();
-
-            // Execute the request and collect all mail folders found in the
-            // response.
-            let op = GetFolder {
-                folder_shape: FolderShape {
-                    base_shape: BaseShape::AllProperties,
-                },
-                folder_ids: to_fetch,
-            };
-
-            let rcv = queue_operation!(self, GetFolder, op, Default::default());
-            let response = rcv.await??;
-            let messages = response.into_response_messages();
-
-            let mut fetched = messages
-                .into_iter()
-                .filter_map(|response_class| {
-                    let message = match process_response_message_class(GetFolder::NAME, response_class) {
-                        Ok(message) => message,
-                        Err(err) => {return Some(Err(err));}
-                    };
-                    if let Err(err) = validate_get_folder_response_message(&message) {
-                        return Some(Err(err));
-                    }
-
-                    message
-                        .folders
-                        .inner
-                        .into_iter()
-                        .next()
-                        .and_then(|folder| match &folder {
-                            Folder::Folder {
-                                folder_class,
-                                display_name,
-                                ..
-                            } => {
-                                let folder_class =
-                                    folder_class.as_ref().map(|string| string.as_str());
-
-                                // Filter out non-mail folders. According to EWS
-                                // docs, this should be any folder which class
-                                // start is "IPF.Note", or starts with
-                                // "IPF.Note." (to allow some systems to define
-                                // custom mail-derived classes).
-                                //
-                                // See
-                                // <https://learn.microsoft.com/en-us/exchange/client-developer/exchange-web-services/folders-and-items-in-ews-in-exchange>
-                                match folder_class {
-                                    Some(folder_class) => {
-                                        if folder_class == "IPF.Note"
-                                            || folder_class.starts_with("IPF.Note.")
-                                        {
-                                            Some(Ok(folder))
-                                        } else {
-                                            log::debug!("Skipping folder with unsupported class: {folder_class}");
-                                            None
-                                        }
-                                    }
-                                    None => {
-                                        log::warn!(
-                                            "Skipping folder without a class: {}",
-                                            display_name.clone().unwrap_or("unknown".to_string())
-                                        );
-
-                                        None
-                                    }
-                                }
-                            }
-
-                            _ => None,
-                        })
-                })
-                .collect::<Result<_, _>>()?;
-
-            folders.append(&mut fetched);
-
-            if ids.peek().is_none() {
-                break;
-            }
-        }
-
-        Ok(folders)
+        op: Op,
+        options: OperationRequestOptions,
+    ) -> Result<Op::Response, XpComEwsError> {
+        let (queued_op, rcv) = QueuedEwsOperation::new(op, options);
+        self.queue.enqueue(Box::new(queued_op)).await?;
+        rcv.await?
     }
 
     /// Fetches items from the remote Exchange server.
@@ -454,8 +286,7 @@ impl<ServerT: ServerType + 'static> XpComEwsClient<ServerT> {
                 item_ids: batch_ids,
             };
 
-            let rcv = queue_operation!(self, GetItem, op, Default::default());
-            let response = rcv.await??;
+            let response = self.enqueue_and_send(op, Default::default()).await?;
 
             for response_message in response.into_response_messages() {
                 let message = process_response_message_class(GetItem::NAME, response_message)?;
@@ -488,17 +319,15 @@ impl<ServerT: ServerType + 'static> XpComEwsClient<ServerT> {
         create_item: CreateItem,
         transport_sec_failure_behavior: TransportSecFailureBehavior,
     ) -> Result<ItemResponseMessage, XpComEwsError> {
-        let rcv = queue_operation!(
-            self,
-            CreateItem,
-            create_item,
-            OperationRequestOptions {
-                transport_sec_failure_behavior,
-                ..Default::default()
-            }
-        );
-
-        let response = rcv.await??;
+        let response = self
+            .enqueue_and_send(
+                create_item,
+                OperationRequestOptions {
+                    transport_sec_failure_behavior,
+                    ..Default::default()
+                },
+            )
+            .await?;
 
         // We have only sent one message, therefore the response should only
         // contain one response message.
@@ -517,8 +346,9 @@ impl<ServerT: ServerType + 'static> XpComEwsClient<ServerT> {
     ) -> Result<UpdateItemResponse, XpComEwsError> {
         let expected_response_count = update_item.item_changes.len();
 
-        let rcv = queue_operation!(self, UpdateItem, update_item, Default::default());
-        let response = rcv.await??;
+        let response = self
+            .enqueue_and_send(update_item, Default::default())
+            .await?;
 
         // Get all response messages.
         let response_messages = response.response_messages();
@@ -667,56 +497,4 @@ fn response_into_messages<OpResponse: OperationResponse>(
             }
         })
         .collect()
-}
-
-/// Where [`Operation`] represents the types and (de)serialization of an EWS operation,
-/// this trait represents the client implementation of performing an operation.
-pub(crate) trait DoOperation {
-    /// A name of the operation for logging purposes.
-    ///
-    /// This is usually the same as [`Operation::NAME`], but not always, because some
-    /// implementations of `DoOperation` don't correspond 1-to-1 with an EWS operation.
-    const NAME: &str;
-
-    /// The success case return type of [`Self::do_operation`].
-    type Okay;
-
-    /// The listener this operation uses to report success/failure.
-    type Listener: SafeListener;
-
-    /// Do the operation represented. Includes most of the logic, returning any errors encountered.
-    async fn do_operation<ServerT: ServerType>(
-        &mut self,
-        client: &XpComEwsClient<ServerT>,
-    ) -> Result<Self::Okay, XpComEwsError>;
-
-    /// Turn the succesesfully completed operation into the argument for [`SafeListener::on_success`].
-    fn into_success_arg(self, ok: Self::Okay) -> <Self::Listener as SafeListener>::OnSuccessArg;
-
-    /// Turn the failed operation into the argument for [`SafeListener::on_failure`].
-    fn into_failure_arg(self) -> <Self::Listener as SafeListener>::OnFailureArg;
-
-    /// Handle the operation done in [`Self::do_operation`]. I.e., calls `do_operation`, and handles
-    /// any errors returned as appropriate.
-    async fn handle_operation<ServerT: ServerType>(
-        mut self,
-        client: &XpComEwsClient<ServerT>,
-        listener: &Self::Listener,
-    ) where
-        Self: Sized,
-    {
-        match self.do_operation(client).await {
-            Ok(okay) => {
-                if let Err(err) = listener.on_success(self.into_success_arg(okay)) {
-                    log::warn!(
-                        "listener for {} success callback returned an error: {err}",
-                        Self::NAME
-                    );
-                }
-            }
-            Err(err) => {
-                handle_error(listener, Self::NAME, &err, self.into_failure_arg());
-            }
-        }
-    }
 }

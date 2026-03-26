@@ -13,6 +13,9 @@ const { HttpsProxy } = ChromeUtils.importESModule(
 const { ServerTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/ServerTestUtils.sys.mjs"
 );
+const { MailStringUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailStringUtils.sys.mjs"
+);
 
 requestLongerTimeout(4);
 
@@ -20,7 +23,7 @@ const PASSWORD = "hunter2";
 const USER = "testExchange@exchange.test";
 // Encoding matches what FetchHTTP.sys.mjs uses.
 const BASIC_AUTH = btoa(
-  String.fromCharCode(...new TextEncoder().encode(`${USER}:${PASSWORD}`))
+  MailStringUtils.stringToByteString(`${USER}:${PASSWORD}`)
 );
 const emailUser = {
   name: "John Doe",
@@ -395,8 +398,7 @@ add_task(async function test_exchange_manual_configuration() {
   // The test server isn't set up with HTTPS, so we have an insecure URL here.
   Assert.equal(
     ewsConfigStep.querySelector("#incomingExchangeUrl").value,
-    // eslint-disable-next-line @microsoft/sdl/no-insecure-url
-    "http://exchange.test/EWS/Exchange.asmx",
+    "http://exchange.test/EWS/Exchange.asmx", // eslint-disable @microsoft/sdl/no-insecure-url
     "The EWS URL input should have the correct exchange url"
   );
   Assert.equal(
@@ -505,16 +507,20 @@ add_task(async function test_exchange_graph_advanced_configuration() {
     incomingForm,
     "config-updated"
   );
-  protocolSelector.openMenu(true);
-  await BrowserTestUtils.waitForPopupEvent(protocolSelector.menupopup, "shown");
-  const graphSelection = protocolSelector.querySelector(
-    "#incomingProtocolGraph"
-  );
-  Assert.ok(
-    BrowserTestUtils.isVisible(graphSelection),
-    "Graph menu item should be visible."
-  );
-  EventUtils.synthesizeMouseAtCenter(graphSelection, {});
+  const protocolSelectorPromise =
+    BrowserTestUtils.waitForSelectPopupShown(window);
+
+  await EventUtils.synthesizeMouseAtCenter(protocolSelector, {});
+
+  const protocolSelectorPopup = await protocolSelectorPromise;
+
+  const protocolSelectorItems =
+    protocolSelectorPopup.querySelectorAll("menuitem");
+
+  // #incomingProtocolGraph
+  protocolSelectorPopup.activateItem(protocolSelectorItems[3]);
+
+  await BrowserTestUtils.waitForPopupEvent(protocolSelectorPopup, "hidden");
   let { detail: configUpdatedEvent } = await configUpdatedEventPromise;
   Assert.ok(!configUpdatedEvent.completed, "Config should be incomplete");
 

@@ -28,10 +28,7 @@ import { TestUtils } from "resource://testing-common/TestUtils.sys.mjs";
 
 import * as EventUtils from "resource://testing-common/mail/EventUtils.sys.mjs";
 import { dump_view_state } from "resource://testing-common/mail/ViewHelpers.sys.mjs";
-import {
-  promise_new_window,
-  wait_for_window_focused,
-} from "resource://testing-common/mail/WindowHelpers.sys.mjs";
+import { promise_new_window } from "resource://testing-common/mail/WindowHelpers.sys.mjs";
 
 var nsMsgViewIndex_None = 0xffffffff;
 
@@ -406,7 +403,11 @@ export async function open_message_from_file(file) {
 
   const msgc = await newWindowPromise;
   await wait_for_message_display_completion(msgc, true);
-  wait_for_window_focused(msgc);
+  if (Services.focus.activeWindow != msgc) {
+    await new Promise(resolve =>
+      msgc.addEventListener("activate", resolve, { once: true })
+    );
+  }
   await TestUtils.waitForTick();
 
   return msgc;
@@ -1039,32 +1040,6 @@ export async function select_shift_click_folder(aFolder) {
 }
 
 /**
- * Right click on the folder tree view. With any luck, this will have the
- * side-effect of opening up a pop-up which it is then on _your_ head to do
- * something with or close.  However, we have helpful popup function helpers
- * helpers because asuth's so nice.
- *
- * NOTE: The argument is a folder here, unlike in the message case, so beware.
- *
- * @returns {integer} The view index that you clicked on.
- */
-export async function right_click_on_folder(aFolder) {
-  const win = get_about_3pane();
-  const folderTree = win.document.getElementById("folderTree");
-  const shownPromise = BrowserTestUtils.waitForEvent(
-    win.document.getElementById("folderPaneContext"),
-    "popupshown"
-  );
-  const row = folderTree.rows.find(treeRow => treeRow.uri == aFolder.URI);
-  EventUtils.synthesizeMouseAtCenter(
-    row.querySelector(".container"),
-    { type: "contextmenu" },
-    win
-  );
-  await shownPromise;
-}
-
-/**
  * Middle-click on the folder tree view, presumably opening a new folder tab.
  *
  * NOTE: The argument is a folder here, unlike in the message case, so beware.
@@ -1525,8 +1500,8 @@ export function assert_message_pane_visible() {
   mc.view_init(); // Force the view menu to update.
   const paneMenuItem = mc.document.getElementById("menu_showMessage");
   Assert.equal(
-    paneMenuItem.getAttribute("checked"),
-    "true",
+    paneMenuItem.hasAttribute("checked"),
+    true,
     "The Message Pane menu item should be checked."
   );
 }
@@ -1557,8 +1532,8 @@ export function assert_message_pane_hidden() {
   mc.view_init(); // Force the view menu to update.
   const paneMenuItem = mc.document.getElementById("menu_showMessage");
   Assert.notEqual(
-    paneMenuItem.getAttribute("checked"),
-    "true",
+    paneMenuItem.hasAttribute("checked"),
+    true,
     "The Message Pane menu item should not be checked."
   );
 }
@@ -1832,45 +1807,6 @@ export function assert_not_shown(aMessages) {
       );
     }
   });
-}
-
-/**
- * @param {boolean} aShouldBeElided - Should the messages at the view indices be elided?
- * @param {...*} aArgs - Arguments of the form processed by
- *     |_process_row_message_arguments|.
- */
-function _assert_elided_helper(aShouldBeElided, ...aArgs) {
-  const [troller, viewIndices] = _process_row_message_arguments(...aArgs);
-
-  const dbView = get_db_view(troller);
-  for (const viewIndex of viewIndices) {
-    const flags = dbView.getFlagsAt(viewIndex);
-    if (Boolean(flags & Ci.nsMsgMessageFlags.Elided) != aShouldBeElided) {
-      throw new Error(
-        "Message at view index " +
-          viewIndex +
-          (aShouldBeElided
-            ? " should be elided but is not!"
-            : " should not be elided but is!")
-      );
-    }
-  }
-}
-
-/**
- * Assert that all of the messages at the given view indices are collapsed.
- * Arguments should be of the type accepted by |assert_selected_and_displayed|.
- */
-export function assert_collapsed(...aArgs) {
-  _assert_elided_helper(true, ...aArgs);
-}
-
-/**
- * Assert that all of the messages at the given view indices are expanded.
- * Arguments should be of the type accepted by |assert_selected_and_displayed|.
- */
-export function assert_expanded(...aArgs) {
-  _assert_elided_helper(false, ...aArgs);
 }
 
 var RECOGNIZED_WINDOWS = ["messagepane", "multimessage"];

@@ -17,13 +17,10 @@ const { OAuth2Providers } = ChromeUtils.importESModule(
   "resource:///modules/OAuth2Providers.sys.mjs"
 );
 
-const { openLinkExternally } = ChromeUtils.importESModule(
-  "resource:///modules/LinkHelper.sys.mjs"
-);
-
 const { gAccountSetupLogger, standardPorts, assert } = AccountCreationUtils;
 
 import { AccountHubStep } from "./account-hub-step.mjs";
+import "./account-hub-select.mjs"; // eslint-disable-line import/no-unassigned-import
 
 /**
  * Account Hub Email Incoming Form Template
@@ -95,11 +92,10 @@ class EmailIncomingForm extends AccountHubStep {
 
   connectedCallback() {
     if (this.hasConnected) {
-      super.connectedCallback();
       return;
     }
-
     this.hasConnected = true;
+
     super.connectedCallback();
 
     const template = document
@@ -136,11 +132,11 @@ class EmailIncomingForm extends AccountHubStep {
       this.#configChanged();
     });
 
-    this.#incomingAuthenticationMethod.addEventListener("command", () => {
+    this.#incomingAuthenticationMethod.addEventListener("change", () => {
       this.#configChanged();
     });
 
-    this.#incomingConnectionSecurity.addEventListener("command", () => {
+    this.#incomingConnectionSecurity.addEventListener("change", () => {
       this.#configChanged();
       this.#adjustPortToSSLAndProtocol();
     });
@@ -149,7 +145,7 @@ class EmailIncomingForm extends AccountHubStep {
       this.#adjustSSLToPort();
     });
 
-    this.#incomingProtocol.addEventListener("command", () => {
+    this.#incomingProtocol.addEventListener("change", () => {
       this.#updateConfigInputsVisibility(this.#incomingProtocol.value >= 4);
       this.#configChanged();
       this.#adjustPortToSSLAndProtocol();
@@ -169,29 +165,15 @@ class EmailIncomingForm extends AccountHubStep {
       "click",
       this
     );
-    this.querySelector("#incomingSecurityWarning").addEventListener(
-      "click",
-      this
-    );
   }
 
   handleEvent(event) {
-    switch (event.target.id) {
-      case "advancedConfigurationIncoming":
-        this.dispatchEvent(
-          new CustomEvent("advanced-config", {
-            bubbles: true,
-          })
-        );
-        break;
-      case "moreInfoLink":
-        openLinkExternally(
-          Services.urlFormatter.formatURLPref("app.support.baseURL"),
-          { addToHistory: false }
-        );
-        break;
-      default:
-        break;
+    if (event.target.id === "advancedConfigurationIncoming") {
+      this.dispatchEvent(
+        new CustomEvent("advanced-config", {
+          bubbles: true,
+        })
+      );
     }
   }
 
@@ -316,22 +298,7 @@ class EmailIncomingForm extends AccountHubStep {
     const plainSecurity = socketType == Ci.nsMsgSocketType.plain;
 
     // If connection security chosen is none, show insecure connection warning.
-    this.#incomingConnectionSecurity.classList.toggle("warning", plainSecurity);
-    if (plainSecurity) {
-      this.#incomingConnectionSecurity.setAttribute("aria-invalid", true);
-      this.#incomingConnectionSecurity.setAttribute(
-        "aria-describedby",
-        "incomingSecurityWarning"
-      );
-      this.querySelector("#incomingSecurityWarning").setAttribute(
-        "role",
-        "alert"
-      );
-    } else {
-      this.#incomingConnectionSecurity.setAttribute("aria-invalid", false);
-      this.#incomingConnectionSecurity.removeAttribute("aria-describedby");
-      this.querySelector("#incomingSecurityWarning").removeAttribute("role");
-    }
+    this.#incomingConnectionSecurity.toggleAttribute("warning", plainSecurity);
 
     if (config.incoming.port && !standardPorts.includes(config.incoming.port)) {
       return;

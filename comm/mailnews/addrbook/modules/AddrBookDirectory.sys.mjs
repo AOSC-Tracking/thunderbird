@@ -47,8 +47,7 @@ export class AddrBookDirectory {
 
     // If this._readOnly is true, the user is prevented from making changes to
     // the contacts. Subclasses may override this (for example to sync with a
-    // server) by setting this._overrideReadOnly to true, but must clear it
-    // before yielding to another thread (e.g. awaiting a Promise).
+    // server) by calling the "Internal" variant of functions.
 
     if (this._dirPrefId) {
       XPCOMUtils.defineLazyPreferenceGetter(
@@ -601,17 +600,68 @@ export class AddrBookDirectory {
   hasMailListWithName(name) {
     return this.getMailListFromName(name) != null;
   }
-  addCard(card) {
-    return this.dropCard(card, false);
-  }
-  modifyCard(card) {
-    if (this._readOnly && !this._overrideReadOnly) {
+  addCard(card, withNewUID) {
+    if (this._readOnly) {
       throw new Components.Exception(
         "Directory is read-only",
         Cr.NS_ERROR_FAILURE
       );
     }
+    return this.addCardInternal(card, withNewUID);
+  }
+  /**
+   * The implementation of `addCard`, without a read-only check. This
+   * must not be called directly except by subclasses when syncing with a
+   * server. All other calls should go through `addCard`.
+   *
+   * @param {nsIAbCard} card - The card to add.
+   * @param {boolean} [withNewUID] - If true, replaces the card's UID with a
+   *   new one.
+   * @returns {nsIAbCard}
+   */
+  addCardInternal(card, withNewUID) {
+    if (!card.UID) {
+      throw new Error("Card must have a UID to be added to this directory.");
+    }
 
+    const uid = withNewUID ? lazy.newUID() : card.UID;
+    const newProperties = this.prepareToSaveCard(card, uid);
+    if (card.directoryUID && card.directoryUID != this._uid) {
+      // These properties belong to a different directory. Don't keep them.
+      newProperties.delete("_etag");
+      newProperties.delete("_href");
+    }
+
+    if (this.hasOwnProperty("cards")) {
+      this.cards.set(uid, newProperties);
+    }
+    this.saveCardProperties(uid, newProperties);
+
+    // Force the UI to throw away cached card values.
+    lazy.MailServices.ab.clearCache();
+
+    const newCard = this.getCard(uid);
+    Services.obs.notifyObservers(newCard, "addrbook-contact-created", this.UID);
+    return newCard;
+  }
+  modifyCard(card) {
+    if (this._readOnly) {
+      throw new Components.Exception(
+        "Directory is read-only",
+        Cr.NS_ERROR_FAILURE
+      );
+    }
+    return this.modifyCardInternal(card);
+  }
+  /**
+   * The implementation of `modifyCard`, without a read-only check. This
+   * must not be called directly except by subclasses when syncing with a
+   * server. All other calls should go through `modifyCard`.
+   *
+   * @param {nsIAbCard} card - The card to modify.
+   * @returns {nsIAbCard}
+   */
+  modifyCardInternal(card) {
     const oldProperties = this.loadCardProperties(card.UID);
     const newProperties = this.prepareToSaveCard(card);
 
@@ -656,13 +706,22 @@ export class AddrBookDirectory {
     return newCard;
   }
   deleteCards(cards) {
-    if (this._readOnly && !this._overrideReadOnly) {
+    if (this._readOnly) {
       throw new Components.Exception(
         "Directory is read-only",
         Cr.NS_ERROR_FAILURE
       );
     }
-
+    return this.deleteCardsInternal(cards);
+  }
+  /**
+   * The implementation of `deleteCards`, without a read-only check. This
+   * must not be called directly except by subclasses when syncing with a
+   * server. All other calls should go through `deleteCards`.
+   *
+   * @param {nsIAbCard[]} cards - The card to delete.
+   */
+  deleteCardsInternal(cards) {
     if (cards === null) {
       throw Components.Exception("", Cr.NS_ERROR_INVALID_POINTER);
     }
@@ -690,38 +749,6 @@ export class AddrBookDirectory {
     for (const list of this.childNodes) {
       list.deleteCards(cards);
     }
-  }
-  dropCard(card, needToCopyCard) {
-    if (this._readOnly && !this._overrideReadOnly) {
-      throw new Components.Exception(
-        "Directory is read-only",
-        Cr.NS_ERROR_FAILURE
-      );
-    }
-
-    if (!card.UID) {
-      throw new Error("Card must have a UID to be added to this directory.");
-    }
-
-    const uid = needToCopyCard ? lazy.newUID() : card.UID;
-    const newProperties = this.prepareToSaveCard(card, uid);
-    if (card.directoryUID && card.directoryUID != this._uid) {
-      // These properties belong to a different directory. Don't keep them.
-      newProperties.delete("_etag");
-      newProperties.delete("_href");
-    }
-
-    if (this.hasOwnProperty("cards")) {
-      this.cards.set(uid, newProperties);
-    }
-    this.saveCardProperties(uid, newProperties);
-
-    // Force the UI to throw away cached card values.
-    lazy.MailServices.ab.clearCache();
-
-    const newCard = this.getCard(uid);
-    Services.obs.notifyObservers(newCard, "addrbook-contact-created", this.UID);
-    return newCard;
   }
   useForAutocomplete() {
     return (

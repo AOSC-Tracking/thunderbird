@@ -114,7 +114,7 @@
                 <checkbox
                   id="local-fire-alarms-checkbox"
                   data-l10n-id="calendar-properties-show-reminders"
-                  checked="true"
+                  checked=""
                 />
               </html:td>
             </html:tr>
@@ -127,7 +127,7 @@
               </html:th>
               <html:td>
                 <menulist id="email-identity-menulist" oncommand="onChangeIdentity(event)">
-                  <menupopup id="email-identity-menupopup" />
+                  <menupopup id="email-identity-menupopup" native="false" />
                 </menulist>
               </html:td>
             </html:tr>
@@ -152,7 +152,10 @@
               id="network-username-input"
               class="calendar-creation-text-input"
               flex="1"
-              oninput="fillLocationPlaceholder(); checkRequired()"
+              oninput="
+                fillLocationPlaceholder();
+                checkRequired();
+              "
             />
           </html:td>
         </html:tr>
@@ -187,7 +190,7 @@
             <checkbox
               id="network-cache-checkbox"
               data-l10n-id="calendar-properties-offline-support"
-              checked="true"
+              checked=""
             />
           </html:td>
         </html:tr>
@@ -247,7 +250,7 @@
             flex="1"
             onselect="selectProvider(this.selectedItem.value)"
           >
-            <menupopup id="network-selectcalendar-providertype-menupopup" />
+            <menupopup id="network-selectcalendar-providertype-menupopup" native="false" />
           </menulist>
         </hbox>
         <richlistbox

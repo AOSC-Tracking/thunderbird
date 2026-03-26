@@ -307,7 +307,7 @@ ChromeUtils.defineESModuleGetters(this, {
    * - modes: An object whose attributes are mode names (which are
    *     automatically propagated to a 'name' attribute for debugging) and
    *     values are objects with the following attributes...
-   * any of the openTab/closeTab/saveTabState/showTab/onTitleChanged
+   * - any of the openTab/closeTab/saveTabState/showTab/onTitleChanged
    *     functions as described on the mode definitions.  These will only be
    *     called if the mode does not provide the functions.  Note that because
    *     the 'this' variable passed to the functions will always reference the
@@ -1997,19 +1997,19 @@ window.addEventListener(
       }
 
       currentTabInfo = tabmail.tabInfo.find(info => info.tabNode == tabNode);
-      openInWindowItem.setAttribute(
+      openInWindowItem.toggleAttribute(
         "disabled",
         currentTabInfo.canClose && tabmail.persistTab(currentTabInfo)
       );
-      closeOtherTabsItem.setAttribute(
+      closeOtherTabsItem.toggleAttribute(
         "disabled",
         tabmail.tabInfo.every(info => info == currentTabInfo || !info.canClose)
       );
-      recentlyClosedMenu.setAttribute(
+      recentlyClosedMenu.toggleAttribute(
         "disabled",
         !tabmail.recentlyClosedTabs.length
       );
-      closeItem.setAttribute("disabled", !currentTabInfo.canClose);
+      closeItem.toggleAttribute("disabled", !currentTabInfo.canClose);
       return true;
     });
 

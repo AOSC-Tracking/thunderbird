@@ -63,7 +63,7 @@ function Startup() {
   InitDialog();
 
   DoEnabling();
-  SetTextboxFocus(gDialog.NameInput);
+  gDialog.NameInput.focus();
   SetWindowLocation();
 }
 
@@ -83,8 +83,8 @@ function ChangeName() {
 
 function DoEnabling() {
   var enable = gDialog.NameInput.value.length > 0;
-  SetElementEnabled(gDialog.OkButton, enable);
-  SetElementEnabledById("AdvancedEditButton1", enable);
+  gDialog.OkButton.disabled = !enable;
+  document.getElementById("AdvancedEditButton1").disabled = !enable;
 }
 
 function AnchorNameExists(name) {
@@ -109,7 +109,7 @@ function ValidateData() {
   var name = TrimString(gDialog.NameInput.value);
   if (!name) {
     ShowInputErrorMessage(GetString("MissingAnchorNameError"));
-    SetTextboxFocus(gDialog.NameInput);
+    gDialog.NameInput.focus();
     return false;
   }
   // Replace spaces with "_" and strip other characters
@@ -121,7 +121,7 @@ function ValidateData() {
     ShowInputErrorMessage(
       GetString("DuplicateAnchorNameError").replace(/%name%/, name)
     );
-    SetTextboxFocus(gDialog.NameInput);
+    gDialog.NameInput.focus();
     return false;
   }
   globalElement.name = name;
