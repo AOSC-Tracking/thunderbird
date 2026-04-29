@@ -13,7 +13,7 @@ gkrust = []
 gkrust-gtest = ["gkrust"]
 
 [workspace]
-members = ['xpcom_async', 'moz_http', 'gkrust', 'ews_xpcom', 'gtest', 'sys_tray', 'mailnews_ui_glue', 'graph_xpcom', 'protocol_shared', 'ms_graph_tb']
+members = ['ews_xpcom', 'gkrust', 'graph_xpcom', 'gtest', 'mailnews_string_glue', 'mailnews_ui_glue', 'moz_http', 'ms_graph_tb', 'protocol_shared', 'sys_tray', 'xpcom_async']
 
 [workspace.package]
 rust-version = "1.90.0"
@@ -23,7 +23,7 @@ uniffi = { version = "0.31" }
 uniffi_bindgen = { version = "0.31" }
 uniffi_pipeline = { version = "0.31" }
 rusqlite = { version = "0.37" }
-glean = { version = "=67.0.0" }
+glean = { version = "=67.1.0" }
 
 [target."cfg(windows)".dependencies.scopeguard]
 version = "1"
@@ -213,10 +213,20 @@ itertools = { path = "../../build/rust/itertools" }
 backtrace = { path = "../../build/rust/backtrace" }
 bindgen_0_72 = { package = "bindgen", git = "https://github.com/rust-lang/rust-bindgen", rev = "9366e0af8da529c958b4cd4fcbe492d951c86f5c" }
 bindgen = { path = "../../build/rust/bindgen" }
+icu_collator = { path = "../../third_party/rust/icu_collator" }
+icu_collator_data = { path = "../../third_party/rust/icu_collator_data" }
+icu_normalizer = { path = "../../third_party/rust/icu_normalizer" }
+icu_normalizer_data = { path = "../../third_party/rust/icu_normalizer_data" }
+icu_collections = { path = "../../third_party/rust/icu_collections" }
+utf8_iter = { path = "../../third_party/rust/utf8_iter" }
+utf16_iter = { path = "../../third_party/rust/utf16_iter" }
+icu_properties = { path = "../../third_party/rust/icu_properties" }
+icu_properties_data = { path = "../../third_party/rust/icu_properties_data" }
 nix = { path = "../../build/rust/nix" }
 autocfg = { path = "../../third_party/rust/autocfg" }
 goblin = { path = "../../build/rust/goblin" }
 getrandom = { path = "../../build/rust/getrandom" }
+mio = { git = "https://github.com/kinetiknz/mio", rev = "5e8b202db39facecc343170f50a07916640a607c" }
 rustc-hash = { path = "../../build/rust/rustc-hash" }
 memoffset = { path = "../../build/rust/memoffset" }
 hashbrown_0_13 = { package = "hashbrown", path = "../../build/rust/hashbrown-0.13" }
@@ -249,6 +259,9 @@ libudev-sys = { path = "../../dom/webauthn/libudev-sys" }
 midir = { git = "https://github.com/mozilla/midir.git", rev = "54759f681f3b523e120d047adec2bb1a97152017" }
 malloc_size_of_derive = { path = "../../xpcom/rust/malloc_size_of_derive" }
 wr_malloc_size_of = { path = "../../gfx/wr/wr_malloc_size_of" }
+harfbuzz-sys = { git = "https://github.com/hsivonen/rust-harfbuzz", rev = "9d58a23a98772a197291d04af93f7041b7093d95" }
+harfbuzz = { git = "https://github.com/hsivonen/rust-harfbuzz", rev = "9d58a23a98772a197291d04af93f7041b7093d95" }
+harfbuzz-traits = { git = "https://github.com/hsivonen/rust-harfbuzz", rev = "9d58a23a98772a197291d04af93f7041b7093d95" }
 objc = { git = "https://github.com/glandium/rust-objc", rev = "4de89f5aa9851ceca4d40e7ac1e2759410c04324" }
 allocator-api2 = { git = "https://github.com/glandium/allocator-api2", rev = "ad5f3d56a5a4519eff52af4ff85293431466ef5c" }
 context_id = { path = "../../third_party/application-services/components/context_id" }

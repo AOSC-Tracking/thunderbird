@@ -166,7 +166,32 @@ export class MessageSend {
     return this._deliverMessage(messageFile);
   }
 
-  sendMessageFile(
+  /**
+   * Sends a file to the specified composition fields, via the user identity
+   * provided.
+   *
+   * @param {nsIMsgIdentity} userIdentity - The user identity to use for sending
+   *   this email.
+   * @param {string} accountKey - The key of the account that this message relates to.
+   * @param {nsIMsgCompFields} compFields - An object containing information
+   *   on who to send the message to.
+   * @param {nsIFile} messageFile - A reference to the file to send.
+   * @param {boolean} deleteSendFileOnCompletion - Set to true if you want the
+   *   send file deleted once the message has been sent.
+   * @param {boolean} digest - If this is a multipart message, this param
+   *   specifies whether the message is in digest or mixed format.
+   * @param {nsMsgDeliverMode} deliverMode - The delivery mode for sending the
+   *   message (see above for values).
+   * @param {?nsIMsgDBHdr} msgToReplace - A message header representing a
+   *   message to be replaced by the one sent.
+   * @param {?nsIMsgSendListener} listener - An nsIMsgSendListener to receive
+   *   feedback on the current send status. This parameter can also support
+   *   the nsIMsgCopyServiceListener interface to receive notifications of copy
+   *   finishing e.g. after saving a message to the sent mail folder.
+   * @param {string} smtpPassword - Pass this in to prevent a dialog if the
+   *   password is needed for secure transmission.
+   */
+  async sendMessageFile(
     userIdentity,
     accountKey,
     compFields,
@@ -176,7 +201,6 @@ export class MessageSend {
     deliverMode,
     msgToReplace,
     listener,
-    statusFeedback,
     smtpPassword
   ) {
     this._userIdentity = userIdentity;
@@ -186,7 +210,6 @@ export class MessageSend {
     this._msgToReplace = msgToReplace;
     this._smtpPassword = smtpPassword;
     this._sendListener = listener;
-    this._statusFeedback = statusFeedback;
     this._shouldRemoveMessageFile = deleteSendFileOnCompletion;
 
     this._sendReport = Cc[
@@ -412,7 +435,11 @@ export class MessageSend {
         return;
       }
 
-      const params = [folder.name, accountName, localFoldersAccountName];
+      const params = [
+        folder.localizedName,
+        accountName,
+        localFoldersAccountName,
+      ];
       let promptMsg;
       switch (this._deliverMode) {
         case Ci.nsIMsgSend.nsMsgDeliverNow:
@@ -494,11 +521,6 @@ export class MessageSend {
             this._sendProgress = progress;
             this._isRetry = true;
           }
-          // Ensure statusFeedback is set so progress percent bargraph occurs.
-          if (this._sendProgress instanceof Ci.nsIMsgStatusFeedback) {
-            this._sendProgress.msgWindow.statusFeedback = this._sendProgress;
-          }
-
           this._mimeDoFcc();
           return;
         } else if (buttonPressed == 2) {
@@ -951,7 +973,7 @@ export class MessageSend {
         // Typically, this appends "Sent-", "Drafts-" or "Templates-" to folder
         // and then has the account name appended, e.g., .../Sent-MyImapAccount.
         const localFolder = lazy.MailUtils.getOrCreateFolder(this._folderUri);
-        folderUri += localFolder.name + "-";
+        folderUri += localFolder.localizedName + "-";
       }
       if (this._fcc) {
         // Get the account name where the "save to" failed.
@@ -1013,7 +1035,7 @@ export class MessageSend {
     folder = lazy.MailUtils.getOrCreateFolder(this._folderUri);
     const statusMsg = this._composeBundle.formatStringFromName(
       "copyMessageStart",
-      [folder?.name || "?"]
+      [folder?.localizedName || "?"]
     );
     this._setStatusMessage(statusMsg);
     lazy.MsgUtils.sendLogger.debug("startCopyOperation");
@@ -1088,6 +1110,7 @@ export class MessageSend {
     return MailServices.filters.applyFilters(
       Ci.nsMsgFilterType.PostOutgoing,
       [msgHdr],
+      [],
       folder,
       msgWindow,
       this
@@ -1155,11 +1178,6 @@ export class MessageSend {
     );
 
     const outgoingListener = new PromiseMsgOutgoingListener(this);
-    const msgStatus =
-      this._sendProgress instanceof Ci.nsIMsgStatusFeedback
-        ? this._sendProgress
-        : this._statusFeedback;
-
     // Retrieve the relevant server to send this message from the outgoing
     // server service (and make sure it gave us one).
     const server = MailServices.outgoingServer.getServerByIdentity(
@@ -1181,7 +1199,7 @@ export class MessageSend {
       this._userIdentity,
       this._compFields.from,
       this._smtpPassword,
-      msgStatus,
+      this._sendProgress,
       this._compFields.DSN,
       this._compFields.messageId,
       outgoingListener

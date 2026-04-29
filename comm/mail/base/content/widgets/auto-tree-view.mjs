@@ -33,6 +33,7 @@ function cloneColumns(columns) {
  */
 class AutoTreeView extends TreeView {
   #defaultColumns;
+  #rowFragment;
 
   connectedCallback() {
     super.connectedCallback();
@@ -169,6 +170,15 @@ class AutoTreeView extends TreeView {
     super.view = view;
     // Now update the headers.
     this.sortBy(view.sortColumn, view.sortDirection);
+  }
+
+  /**
+   * Forget the cached row fragment, then clear all rows from the list and
+   * create them again.
+   */
+  reset() {
+    this.#rowFragment = null;
+    super.reset();
   }
 
   /**
@@ -352,14 +362,16 @@ class AutoTreeView extends TreeView {
       this.#persistSort();
     }
 
-    this.table
-      .querySelector(".sorting")
-      ?.classList.remove("sorting", "ascending", "descending");
+    this.table.header
+      .querySelector("[aria-sort]")
+      ?.removeAttribute("aria-sort");
+
     // Use the values from the view here, in case it rejects `newColumn` or
     // `newDirection`.
-    this.table
-      .querySelector(`#${this.view.sortColumn} button`)
-      ?.classList.add("sorting", this.view.sortDirection);
+    const header = this.table.header.querySelector(`#${this.view.sortColumn}`);
+    if (header) {
+      header.ariaSort = this.view.sortDirection;
+    }
   }
 
   /**
@@ -389,6 +401,66 @@ class AutoTreeView extends TreeView {
     Services.xulStore.removeValue(xulStoreURL, this.id, "sortColumn");
     Services.xulStore.removeValue(xulStoreURL, this.id, "sortDirection");
   }
+
+  /**
+   * The template for creating rows. This is thrown away (by `reset`) and
+   * recreated when necessary.
+   *
+   * @type {DocumentFragment}
+   */
+  get rowFragment() {
+    if (this.#rowFragment) {
+      return this.#rowFragment;
+    }
+    this.#rowFragment = document.createDocumentFragment();
+    for (const column of this.table.columns) {
+      const cell = this.#rowFragment.appendChild(document.createElement("td"));
+      cell.classList.add(`${column.id.toLowerCase()}-column`);
+
+      if (column.hidden) {
+        cell.hidden = true;
+        continue;
+      }
+
+      // Set role as gridcell for keyboard navigation
+      if (this.table.body.role === "treegrid") {
+        cell.role = "gridcell";
+      }
+
+      if (column.checkbox) {
+        const checkbox = cell.appendChild(document.createElement("input"));
+        checkbox.type = "checkbox";
+        checkbox.tabIndex = -1;
+        continue;
+      }
+
+      let container = cell;
+      if (column.twisty || column.cellIcon) {
+        container = cell.appendChild(document.createElement("div"));
+        container.classList.add("container");
+      }
+      if (column.twisty) {
+        const twistyButton = container.appendChild(
+          document.createElement("button")
+        );
+        twistyButton.type = "button";
+        twistyButton.classList.add("button", "button-flat", "twisty");
+        twistyButton.ariaHidden = "hidden";
+        twistyButton.tabIndex = -1;
+      }
+      if (column.cellIcon) {
+        container
+          .appendChild(document.createElement("img"))
+          .classList.add("icon");
+      }
+      if (container.childElementCount) {
+        container
+          .appendChild(document.createElement("div"))
+          .classList.add("container-inner");
+      }
+    }
+    return this.#rowFragment;
+  }
 }
 customElements.define("auto-tree-view", AutoTreeView);
 
@@ -413,12 +485,8 @@ class AutoTreeViewTableRow extends TreeViewTableRow {
 
     this.setAttribute("draggable", "true");
     this.classList.add("table-layout");
-
-    for (const column of this.list.table.columns) {
-      this.appendChild(document.createElement("td")).classList.add(
-        `${column.id.toLowerCase()}-column`
-      );
-    }
+    this.role = this.list.table.body.role === "treegrid" ? "row" : "option";
+    this.append(this.list.rowFragment.cloneNode(true));
   }
 
   /**
@@ -436,23 +504,23 @@ class AutoTreeViewTableRow extends TreeViewTableRow {
     }
 
     const viewRow = this.view.rowAt(this._index);
-    if (viewRow.parent) {
-      this.ariaLevel = viewRow.level + 1;
-      this.ariaSetSize = viewRow.parent.children.length;
-      this.ariaPosInSet = viewRow.parent.children.indexOf(viewRow) + 1;
+    if (!viewRow) {
+      // Weird, but it could happen. Don't waste time.
+      return;
     }
-    this.role = this.list.table.body.role === "treegrid" ? "row" : "option";
+    if (Services.appinfo.accessibilityEnabled || Cu.isInAutomation) {
+      this.ariaRowIndex = this._index + 1;
+      this.ariaLevel = viewRow.level + 1;
+      this.ariaSetSize = viewRow.setSize;
+      this.ariaPosInSet = viewRow.posInSet + 1;
+    }
     this.id = `${this.list.id}-row${this._index}`;
 
     const isGroup = viewRow.children.length > 0;
     this.classList.toggle("children", isGroup);
 
     const isGroupOpen = viewRow.open;
-    if (isGroup) {
-      this.setAttribute("aria-expanded", isGroupOpen);
-    } else {
-      this.removeAttribute("aria-expanded");
-    }
+    this.ariaExpanded = isGroup ? isGroupOpen : null;
     this.classList.toggle("collapsed", !isGroupOpen);
 
     this.dataset.properties = [...viewRow.properties].join(" ");
@@ -464,58 +532,39 @@ class AutoTreeViewTableRow extends TreeViewTableRow {
         continue;
       }
 
-      // Set role as gridcell for keyboard navigation
-      if (this.role == "row") {
-        cell.role = "gridcell";
-      }
-
-      cell.replaceChildren();
-      cell.removeAttribute("aria-label");
+      cell.ariaLabel = null;
       cell.title = "";
 
+      if (column.twisty) {
+        // Add the twisty icon here (instead of once in `connectedCallback`)
+        // every time so that the animation doesn't happen when the row gets
+        // recycled. But not if we actually want it to animate.
+        if (!this._twistyAnimating) {
+          const twistyButton = cell.querySelector("button.twisty");
+          const twistyIcon = document.createElement("img");
+          twistyIcon.classList.add("twisty-icon");
+          twistyButton.replaceChildren(twistyIcon);
+        }
+        delete this._twistyAnimating;
+      }
+
       if (column.checkbox) {
-        const checkbox = cell.appendChild(document.createElement("input"));
-        checkbox.type = "checkbox";
-        checkbox.tabIndex = -1;
+        const checkbox = cell.querySelector(`input[type="checkbox"]`);
         checkbox.checked = viewRow.hasProperty(column.checkbox);
-        checkbox.addEventListener("change", () => {
+        checkbox.onchange = () => {
           viewRow.toggleProperty(column.checkbox, checkbox.checked);
           this.dataset.properties = [...viewRow.properties].join(" ");
-        });
+        };
         continue;
       }
 
       const text = viewRow.getText(column.id);
-      let container = cell;
-      if (column.twisty || column.cellIcon) {
-        container = cell.appendChild(document.createElement("div"));
-        container.classList.add("container");
-      }
+      let container = cell.querySelector("div.container") || cell;
       if (column.twisty) {
         container.style.paddingInlineStart = viewRow.level * 16 + "px";
-        const twistyButton = container.appendChild(
-          document.createElement("button")
-        );
-        twistyButton.type = "button";
-        twistyButton.classList.add("button", "button-flat", "twisty");
-        twistyButton.ariaHidden = "hidden";
-        twistyButton.tabIndex = -1;
-        const twistyIcon = twistyButton.appendChild(
-          document.createElement("img")
-        );
-        twistyIcon.classList.add("twisty-icon");
       }
-      if (column.cellIcon) {
-        container
-          .appendChild(document.createElement("img"))
-          .classList.add("icon");
-      }
-      if (container.childElementCount) {
-        const div = container.appendChild(document.createElement("div"));
-        div.textContent = text;
-      } else {
-        container.textContent = text;
-      }
+      container = container.querySelector("div.container-inner") ?? container;
+      container.textContent = text;
       if (column.l10n?.cell) {
         document.l10n.setAttributes(cell, column.l10n.cell, { title: text });
         continue;

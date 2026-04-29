@@ -28,6 +28,15 @@ export class TreeDataAdapter {
   _rowMap = [];
 
   /**
+   * All TreeDataRow items in order, except those descended from closed rows.
+   * Created by `#createFlatRowCache` when needed, and cleared by
+   * `_clearFlatRowCache` when invalid.
+   *
+   * @type {TreeDataRow[]}
+   */
+  _flatRowCache;
+
+  /**
    * The currently sorted column.
    *
    * @type {string|undefined}
@@ -62,15 +71,69 @@ export class TreeDataAdapter {
   }
 
   /**
+   * Flatten all rows, except those descended from closed rows, into a
+   * potentially sparse array for speed of access.
+   */
+  #createFlatRowCache() {
+    if (this._flatRowCache) {
+      return;
+    }
+
+    this._flatRowCache = [];
+
+    let topOffset = 0;
+    const topSetSize = this._rowMap.length;
+    this._rowMap.forEach((row, index) => {
+      row.level = 0;
+      row.setSize = topSetSize;
+      row.posInSet = index;
+      const topFlatIndex = index + topOffset;
+      this._flatRowCache[topFlatIndex] = row;
+      topOffset += this.#addChildren(row, topFlatIndex);
+    });
+    this._flatRowCache.length = this._rowMap.length + topOffset;
+  }
+
+  /**
+   * Add the children of a row to the cache.
+   *
+   * @param {TreeDataRow} row - Parent of the rows to add. This should already
+   *   exist in the row cache.
+   * @param {number} parentFlatIndex - Index of the parent row in the cache.
+   */
+  #addChildren(row, parentFlatIndex) {
+    if (!row?.open) {
+      return 0;
+    }
+    let offset = 0;
+    const setSize = row.children.length;
+    row.children.forEach((childRow, childIndex) => {
+      childRow.parent = row;
+      childRow.level = row.level + 1;
+      childRow.setSize = setSize;
+      childRow.posInSet = childIndex;
+      const childFlatIndex = parentFlatIndex + 1 + childIndex + offset;
+      this._flatRowCache[childFlatIndex] = childRow;
+      offset += this.#addChildren(childRow, childFlatIndex);
+    });
+    return row.children.length + offset;
+  }
+
+  /**
+   * Clear the flattened row cache.
+   */
+  _clearFlatRowCache() {
+    this._flatRowCache = null;
+  }
+
+  /**
    * The number of visible rows.
    *
    * @returns {integer}
    */
   get rowCount() {
-    return this._rowMap.reduce(
-      (total, current) => total + (current.open ? current.rowCount + 1 : 1),
-      0
-    );
+    this.#createFlatRowCache();
+    return this._flatRowCache.length;
   }
 
   /**
@@ -81,21 +144,8 @@ export class TreeDataAdapter {
    * @returns {?TreeDataRow}
    */
   rowAt(rowIndex) {
-    for (const topLevelRow of this._rowMap) {
-      if (rowIndex == 0) {
-        return topLevelRow;
-      }
-      rowIndex--;
-      if (topLevelRow.open) {
-        if (rowIndex < topLevelRow.rowCount) {
-          // A subclass might return undefined here, if it loads rows
-          // asynchronously. Use a blank row in the interim.
-          return topLevelRow.rowAt(rowIndex) ?? new TreeDataRow();
-        }
-        rowIndex -= topLevelRow.rowCount;
-      }
-    }
-    return null;
+    this.#createFlatRowCache();
+    return this._flatRowCache[rowIndex] ?? null;
   }
 
   /**
@@ -109,21 +159,8 @@ export class TreeDataAdapter {
     if (!row) {
       return -1;
     }
-    let rowIndex = 0;
-    for (const topLevelRow of this._rowMap) {
-      if (topLevelRow == row) {
-        return rowIndex;
-      }
-      rowIndex++;
-      if (topLevelRow.open) {
-        const childIndex = topLevelRow.indexOf(row);
-        if (childIndex >= 0) {
-          return rowIndex + childIndex;
-        }
-        rowIndex += topLevelRow.rowCount;
-      }
-    }
-    return -1;
+    this.#createFlatRowCache();
+    return this._flatRowCache.indexOf(row);
   }
 
   /**
@@ -222,6 +259,8 @@ export class TreeDataAdapter {
     if (row.open) {
       row.open = false;
       if (rowCount) {
+        // Remove the descendants from the row cache.
+        this._flatRowCache?.splice(rowIndex + 1, rowCount);
         this._tree?.rowCountChanged(rowIndex + 1, -rowCount);
       }
     } else {
@@ -230,6 +269,15 @@ export class TreeDataAdapter {
       // (Used for subclasses.)
       row.ensureChildren?.(this, rowIndex);
       if (rowCount) {
+        if (this._flatRowCache) {
+          // Create space in the row cache for the descendants.
+          const head = this._flatRowCache.slice(0, rowIndex + 1);
+          const tail = this._flatRowCache.slice(rowIndex + 1);
+          head.length += rowCount;
+          this._flatRowCache = head.concat(tail);
+          // Fill the space.
+          this.#addChildren(row, rowIndex);
+        }
         this._tree?.rowCountChanged(rowIndex + 1, rowCount);
       }
     }
@@ -303,6 +351,7 @@ export class TreeDataAdapter {
 
     this.sortColumn = sortColumn;
     this.sortDirection = sortDirection;
+    this._clearFlatRowCache();
     this._tree?.reset();
   }
 }
@@ -340,6 +389,24 @@ export class TreeDataRow {
    * @type {TreeDataRow[]}
    */
   children = [];
+
+  /**
+   * The size of the level this row belongs to, i.e. how many siblings this
+   * row has, plus one. Set by `#createFlatRowCache` for setting `ariaSetSize` on
+   * HTML elements.
+   *
+   * @type {number}
+   */
+  setSize;
+
+  /**
+   * Zero-indexed position of this row amongst its siblings. Set by
+   * `#createFlatRowCache` for setting aria for setting `ariaPosInSet` on HTML
+   * elements.
+   *
+   * @type {number}
+   */
+  posInSet;
 
   /**
    * A set of string properties.

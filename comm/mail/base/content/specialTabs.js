@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* global MozElements, openOptionsDialog */
+/* global MozElements, openPreferencesTab */
 
 /* import-globals-from utilityOverlay.js */
 
@@ -810,7 +810,7 @@ var specialTabs = {
       // nsDocLoader.cpp: Overwriting an existing document channel. Mozilla-central
       // is aggressively setting nodefaultsrc, so we do the same. See Comment 8
       // of bug 1921974 for more details.
-      aTab.browser.setAttribute("nodefaultsrc", "true");
+      aTab.browser.toggleAttribute("nodefaultsrc", true);
       clone.querySelector("stack").appendChild(aTab.browser);
 
       if (aArgs.skipLoad) {
@@ -820,9 +820,10 @@ var specialTabs = {
         // a docShell, which runs into a MOZ_ASSERT later (see Bug 1770105).
         // We must ensure the context is a parent window that is already
         // marked as remote (see Bug 1843741)
-        if (aArgs.openWindowInfo?.isRemote) {
-          aTab.browser.setAttribute("remote", "true");
-        }
+        aTab.browser.toggleAttribute(
+          "remote",
+          !!aArgs.openWindowInfo?.isRemote
+        );
       }
       if (aArgs.userContextId) {
         aTab.browser.setAttribute("usercontextid", aArgs.userContextId);
@@ -1165,7 +1166,7 @@ var specialTabs = {
         label: telemetryBundle.GetStringFromName("telemetryLinkLabel"),
         popup: null,
         callback: () => {
-          openOptionsDialog("panePrivacy", "privacyDataCollectionCategory");
+          openPreferencesTab("panePrivacy", "privacyDataCollectionCategory");
         },
       },
     ];

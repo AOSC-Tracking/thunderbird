@@ -148,7 +148,7 @@ static bool IsArg(const char* arg, const char* s) {
   return false;
 }
 
-MOZ_RUNINIT Bootstrap::UniquePtr gBootstrap;
+constinit Bootstrap::UniquePtr gBootstrap;
 
 static int do_main(int argc, char* argv[], char* envp[]) {
   // Allow thunderbird.exe to launch XULRunner apps via -app <application.ini>
@@ -212,7 +212,7 @@ static int do_main(int argc, char* argv[], char* envp[]) {
 
   // Note: FF needs to keep in sync with LauncherProcessWin,
   //       TB doesn't have that file.
-  const char* acceptableParams[] = {"compose", "mail", nullptr};
+  const char* acceptableParams[] = {"compose", "mail"};
   EnsureCommandlineSafe(argc, argv, acceptableParams);
 
 #ifdef XP_WIN

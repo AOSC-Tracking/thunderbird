@@ -2585,12 +2585,7 @@ var folderPane = {
    * @returns {boolean}
    */
   _isGmailFolder(folder) {
-    return (
-      folder?.parent?.isServer &&
-      folder.server instanceof Ci.nsIImapIncomingServer &&
-      folder.server.isGMailServer &&
-      folder.noSelect
-    );
+    return folder instanceof Ci.nsIMsgImapMailFolder && folder.isGmailFolder;
   },
 
   /**
@@ -6291,19 +6286,16 @@ var threadPane = {
    * @param {string} column - The ID of column affecting the sorting order.
    */
   updateSortIndicator(column) {
-    this.treeTable
-      .querySelector(".sorting")
-      ?.classList.remove("sorting", "ascending", "descending");
-    // The column could be a removed custom column.
-    if (!column) {
-      return;
+    this.treeTable.header
+      .querySelector("[aria-sort]")
+      ?.removeAttribute("aria-sort");
+
+    const header = this.treeTable.header.querySelector(`#${column}`);
+    if (header) {
+      header.ariaSort = gViewWrapper.isSortedAscending
+        ? "ascending"
+        : "descending";
     }
-    this.treeTable
-      .querySelector(`#${column} button`)
-      ?.classList.add(
-        "sorting",
-        gViewWrapper.isSortedAscending ? "ascending" : "descending"
-      );
   },
 
   /**
@@ -6716,6 +6708,16 @@ function ensureFolderTreeRowIsVisible(row) {
     collapsedAncestor = collapsedAncestor.parentNode.closest(
       "#folderTree li.collapsed"
     );
+  }
+
+  // Instantly fast-forward expansion animations to 100% completion.
+  for (const animation of folderTree.getAnimations({ subtree: true })) {
+    if (
+      !CSSAnimation.isInstance(animation) &&
+      !CSSTransition.isInstance(animation)
+    ) {
+      animation.finish();
+    }
   }
 }
 

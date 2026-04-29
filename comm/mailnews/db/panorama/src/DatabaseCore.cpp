@@ -53,8 +53,8 @@ NS_IMPL_ISUPPORTS_CI(DatabaseCore, nsIDatabaseCore, nsIMsgDBService,
 
 StaticRefPtr<DatabaseCore> DatabaseCore::sInstance;
 bool DatabaseCore::sDatabaseIsNew = false;
-MOZ_RUNINIT nsCOMPtr<mozIStorageConnection> DatabaseCore::sConnection;
-MOZ_RUNINIT nsTHashMap<nsCString, nsCOMPtr<mozIStorageStatement>>
+MOZ_GLOBINIT nsCOMPtr<mozIStorageConnection> DatabaseCore::sConnection;
+MOZ_GLOBINIT nsTHashMap<nsCString, nsCOMPtr<mozIStorageStatement>>
     DatabaseCore::sStatements;
 
 /* static */
@@ -171,6 +171,8 @@ nsresult DatabaseCore::EnsureConnection() {
     sDatabaseIsNew = true;
   }
 
+  rv = sConnection->ExecuteSimpleSQL("PRAGMA cache_size=-200000;"_ns);
+  NS_ENSURE_SUCCESS(rv, rv);
   RefPtr<TagsMatchFunction> tagsInclude = new TagsMatchFunction(true);
   sConnection->CreateFunction("tags_include"_ns, 2, tagsInclude);
   RefPtr<TagsMatchFunction> tagsExclude = new TagsMatchFunction(false);
@@ -189,8 +191,6 @@ nsresult DatabaseCore::CreateNewDatabase() {
   // Please keep mailnews/db/panorama/test/xpcshell/head.js in sync with
   // changes to the following code.
   nsresult rv = sConnection->ExecuteSimpleSQL("PRAGMA journal_mode=WAL;"_ns);
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = sConnection->ExecuteSimpleSQL("PRAGMA cache_size=-200000;"_ns);
   NS_ENSURE_SUCCESS(rv, rv);
   rv = sConnection->ExecuteSimpleSQL(
       "CREATE TABLE folders ( \
@@ -637,21 +637,22 @@ class FolderMigrator final : public nsIRunnable, mozIStorageStatementCallback {
       mParamsArray->NewBindingParams(getter_AddRefs(params));
 
       params->BindInt64ByName("folderId"_ns, mDestFolderId);
-      params->BindUTF8StringByName("messageId"_ns,
-                                   DatabaseUtils::Normalize(messageId));
+      params->BindUTF8StringByName(
+          "messageId"_ns, MOZ_TRY(DatabaseUtils::Normalize(messageId)));
       params->BindInt64ByName("date"_ns, date);
       params->BindUTF8StringByName("sender"_ns,
-                                   DatabaseUtils::Normalize(sender));
-      params->BindUTF8StringByName("recipients"_ns,
-                                   DatabaseUtils::Normalize(recipients));
+                                   MOZ_TRY(DatabaseUtils::Normalize(sender)));
+      params->BindUTF8StringByName(
+          "recipients"_ns, MOZ_TRY(DatabaseUtils::Normalize(recipients)));
       params->BindUTF8StringByName("ccList"_ns,
-                                   DatabaseUtils::Normalize(ccList));
+                                   MOZ_TRY(DatabaseUtils::Normalize(ccList)));
       params->BindUTF8StringByName("bccList"_ns,
-                                   DatabaseUtils::Normalize(bccList));
+                                   MOZ_TRY(DatabaseUtils::Normalize(bccList)));
       params->BindUTF8StringByName("subject"_ns,
-                                   DatabaseUtils::Normalize(subject));
+                                   MOZ_TRY(DatabaseUtils::Normalize(subject)));
       params->BindInt64ByName("flags"_ns, flags);
-      params->BindUTF8StringByName("tags"_ns, DatabaseUtils::Normalize(tags));
+      params->BindUTF8StringByName("tags"_ns,
+                                   MOZ_TRY(DatabaseUtils::Normalize(tags)));
 
       // Collect what we need to insert into the message_properties table, and
       // the things we need to update in the messages table once we have the

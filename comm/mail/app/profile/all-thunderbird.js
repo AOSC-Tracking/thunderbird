@@ -1242,6 +1242,9 @@ pref("devtools.webconsole.input.editorOnboarding", true);
 // Enable grouping/repeating similar messages in the console, true by default
 pref("devtools.webconsole.groupSimilarMessages", true);
 
+// Enable codemirror 6 for the JSTerminal in the console
+pref("devtools.webconsole.codemirrorNext", false);
+
 // Enable network monitoring the browser toolbox console/browser console.
 pref("devtools.browserconsole.enableNetworkMonitoring", false);
 
@@ -1486,11 +1489,6 @@ pref("mail.inappnotifications.refreshInterval", 21600000);
 // Disables all filtering of in-app notifications, useful for testing.
 pref("mail.inappnotifications.bypass-filtering", false);
 
-// Whether Yahoo/AOL/ATT OAuth user is detected.
-// Used to notify about upcoming changes via in-app notification.
-// TODO: Remove this when PKCE is fully rolled out for Yahoo/AOL/AT&T
-pref("mail.inappnotifications.pkceUpgradeForYahooAol", false);
-
 // Whether Thunderbird is running under Flatpak or Snap.
 // These are set at startup each run so they reflect the current runtime.
 // Used to notify about upcoming changes via in-app notification.
@@ -1512,6 +1510,9 @@ pref("mail.accounthub.enabled", true);
 // Enable address book setup via account hub
 pref("mail.accounthub.addressbook.enabled", true);
 
+// Enabled Thundermail ui in account hub.
+pref("mail.accounthub.thundermail.enabled", false);
+
 // Export to mobile logging level.
 pref("mail.qrexport.loglevel", "Warn");
 
@@ -1529,3 +1530,10 @@ pref("mail.threadpane.cardsview.rowcount", 3);
 
 // Whether the OS Authentication is enabled or not.
 pref("signon.management.page.os-auth.locked.enabled", false);
+
+#ifdef XP_MACOSX
+pref("widget.macos.native-anchored-menus", false);
+#endif
+
+// The color used to style primary buttons and elements.
+pref("mail.appearance.accentColor", "accent-color");

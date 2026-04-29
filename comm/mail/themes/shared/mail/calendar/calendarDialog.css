@@ -3,15 +3,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 :root {
+  --calendar-dialog-gap: calc(var(--space-base) + var(--space-step));
   --calendar-dialog-row-padding-inline: calc(var(--space-base) + 2 * var(--space-step));
-  --calendar-dialog-row-column-gap: calc(var(--space-base) + var(--space-step));
+  --calendar-dialog-row-column-gap: var(--calendar-dialog-gap);
   --calendar-dialog-row-content-gap: var(--space-step);
-  --calendar-dialog-row-expand-button-padding-inline-start: calc(var(--space-base) + var(--space-step));
+  --calendar-dialog-row-expand-button-padding-inline-start: var(--calendar-dialog-gap);
   --calendar-dialog-expanded-row-content-gap: var(--space-base);
   --calendar-dialog-expanded-row-padding-block: calc(var(--space-base) + 2 * var(--space-step));
   --calendar-border-radius: calc(2 * var(--space-step));
   --calendar-dialog-top-bar-height: var(--space-base);
-  --calendar-dialog-title-bar-padding-block: calc(var(--space-base) + var(--space-step));
+  --calendar-dialog-title-bar-padding-block: var(--calendar-dialog-gap);
 }
 
 [is="calendar-dialog"] {
@@ -24,6 +25,7 @@
   max-block-size: calc(100vh - 8 * var(--space-step));
   z-index: 999;
   box-sizing: border-box;
+  background-color: var(--color-surface-base);
 
   .footer {
     block-size: 50px;
@@ -31,6 +33,10 @@
     padding-block: 9px;
     box-sizing: border-box;
     border-block-start: 1px solid var(--color-surface-border);
+
+    &:has(calendar-dialog-acceptance[hidden]) {
+      display: none;
+    }
   }
 }
 
@@ -38,10 +44,11 @@
   --calendar-bar-color-fallback: #1373d9;
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  flex-direction: column;
   padding: calc(var(--calendar-dialog-title-bar-padding-block) + var(--calendar-dialog-top-bar-height)) var(--calendar-dialog-row-padding-inline)
     var(--calendar-dialog-title-bar-padding-block);
-  gap: calc(3 * var(--space-step));
+  gap: 4px;
 
   &::before {
     border-radius: var(--calendar-border-radius) var(--calendar-border-radius) 0 0;
@@ -51,6 +58,28 @@
     inset-inline: 0;
     block-size: var(--calendar-dialog-top-bar-height);
     background: var(--calendar-bar-color, var(--calendar-bar-color-fallback));
+  }
+
+  & .titlebar-row {
+    position: relative;
+    min-inline-size: 100%;
+    display: flex;
+    align-items: center;
+    gap: calc(3 * var(--space-step));
+  }
+
+  & .calendar-name {
+    flex: 1;
+
+    &::before {
+      content: "";
+      background: var(--calendar-bar-color, var(--calendar-bar-color-fallback));
+      inline-size: 9px;
+      block-size: 9px;
+      margin-inline-end: 9px;
+      display: inline-block;
+      border-radius: 9px;
+    }
   }
 
   & .calendar-dialog-title {
@@ -101,6 +130,14 @@
   content: var(--icon-file-draft);
 }
 
+.icon-attachment {
+  content: var(--icon-attachment);
+}
+
+.icon-attendees {
+  content: var(--icon-contact);
+}
+
 .icon-delete {
   content: var(--icon-close);
 }
@@ -113,6 +150,10 @@
   &:dir(rtl) {
     content: var(--icon-nav-left);
   }
+}
+
+.icon-video {
+  content: var(--icon-video-sm);
 }
 
 calendar-dialog-date-row {
@@ -133,6 +174,13 @@ calendar-dialog-date-row {
   margin: 0;
 }
 
+.button.menu-button {
+  --button-padding: var(--space-step);
+  box-sizing: border-box;
+  background-image: var(--icon-kebab);
+  margin: 0;
+}
+
 .button.back-button {
   --button-padding: var(--space-step);
   background-image: var(--icon-nav-left);
@@ -146,13 +194,23 @@ calendar-dialog-date-row {
 
 .button.join-button {
   border-radius: 1000px;
-  font-size: 0.9rem;
+  font-size: 0.77rem;
   font-weight: bold;
   text-transform: uppercase;
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
   box-shadow:
     inset 0 4px 6px rgba(255, 255, 255, 0.1),
     0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: calc(2 * var(--space-step)) calc(3 * var(--space-step));
+  margin: 0;
+}
+
+.divider::after {
+  content: "";
+  display: flex;
+  block-size: 1px;
+  margin-block-start: var(--calendar-dialog-gap);
+  border-block-start: 1px solid var(--color-surface-deep);
 }
 
 .expanding-row:not([hidden]),
@@ -189,8 +247,11 @@ calendar-dialog-subview-manager {
     block-size: 100%;
     display: flex;
     flex-direction: column;
-    gap: calc(var(--space-base) + var(--space-step));
-    padding-block-end: calc(var(--space-base) + var(--space-step));
+    gap: var(--calendar-dialog-gap);
+  }
+
+  #calendarDialogMainSubview {
+    padding-block-end: var(--calendar-dialog-gap);
   }
 }
 
@@ -225,5 +286,44 @@ calendar-dialog-description-row {
     & .plain-text-description {
       display: none;
     }
+  }
+}
+
+.attachments-list {
+  list-style-type: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-step);
+  margin-block-start: calc(var(--space-step) * 3);
+}
+
+li[is="calendar-dialog-attachment"] {
+  flex-grow: 0;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--calendar-dialog-gap);
+  padding-block: var(--space-step);
+
+  .attachment-icon {
+    &[src=""][srcset=""] {
+      content: var(--icon-link);
+    }
+    flex-shrink: 0;
+    stroke: currentColor;
+    -moz-context-properties: stroke;
+  }
+
+  .open-attachment-button {
+    fill: currentColor;
+    -moz-context-properties: fill;
+    background-image: var(--icon-external-xs);
+    flex-shrink: 0;
+  }
+
+  .attachment-label {
+    flex: 1 auto;
   }
 }

@@ -87,6 +87,7 @@ nsMsgSendLater::~nsMsgSendLater() {
   PR_Free(m_to);
   PR_Free(m_fcc);
   PR_Free(m_bcc);
+  PR_Free(m_messageId);
   PR_Free(m_newsgroups);
   PR_Free(m_headers);
   PR_Free(mLeftoverBuffer);
@@ -178,19 +179,6 @@ nsMsgSendLater::Observe(nsISupports* aSubject, const char* aTopic,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgSendLater::SetStatusFeedback(nsIMsgStatusFeedback* aFeedback) {
-  mFeedback = aFeedback;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgSendLater::GetStatusFeedback(nsIMsgStatusFeedback** aFeedback) {
-  NS_ENSURE_ARG_POINTER(aFeedback);
-  NS_IF_ADDREF(*aFeedback = mFeedback);
   return NS_OK;
 }
 
@@ -559,7 +547,7 @@ nsresult nsMsgSendLater::CompleteMailFileSend() {
       false,                        // bool digest_p,
       nsIMsgSend::nsMsgSendUnsent,  // nsMsgDeliverMode mode,
       nullptr,                      // nsIMsgDBHdr *msgToReplace,
-      sendListener, mFeedback, nullptr, getter_AddRefs(promise));
+      sendListener, nullptr, getter_AddRefs(promise));
   return rv;
 }
 
@@ -875,8 +863,9 @@ nsresult nsMsgSendLater::BuildHeaders() {
 
   PR_FREEIF(m_to);
   PR_FREEIF(m_bcc);
-  PR_FREEIF(m_newsgroups);
   PR_FREEIF(m_fcc);
+  PR_FREEIF(m_messageId);
+  PR_FREEIF(m_newsgroups);
   PR_FREEIF(mIdentityKey);
   PR_FREEIF(mAccountKey);
   m_flags = 0;

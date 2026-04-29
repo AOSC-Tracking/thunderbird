@@ -41,9 +41,8 @@ impl Get {
 }
 impl Operation for Get {
     const METHOD: Method = Method::GET;
-    type Body = ();
     type Response<'response> = MailFolder<'response>;
-    fn build(&self) -> http::Request<Self::Body> {
+    fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let mut params = Serializer::new(String::new());
         let (select, selection) = self.selection.pair();
         params.append_pair(select, &selection);
@@ -52,11 +51,11 @@ impl Operation for Get {
         let uri = format!("{path}?{params}")
             .parse::<http::uri::Uri>()
             .unwrap();
-        http::Request::builder()
+        let request = http::Request::builder()
             .uri(uri)
             .method(Self::METHOD)
-            .body(())
-            .unwrap()
+            .body(vec![])?;
+        Ok(request)
     }
 }
 impl Select for Get {
@@ -72,10 +71,14 @@ impl Select for Get {
 #[derive(Debug)]
 pub struct Patch<'body> {
     template_expressions: TemplateExpressions,
-    body: MailFolder<'body>,
+    body: OperationBody<MailFolder<'body>>,
 }
 impl<'body> Patch<'body> {
-    pub fn new(endpoint: String, mail_folder_id: String, body: MailFolder<'body>) -> Self {
+    pub fn new(
+        endpoint: String,
+        mail_folder_id: String,
+        body: OperationBody<MailFolder<'body>>,
+    ) -> Self {
         Self {
             template_expressions: TemplateExpressions {
                 endpoint,
@@ -87,16 +90,22 @@ impl<'body> Patch<'body> {
 }
 impl<'body> Operation for Patch<'body> {
     const METHOD: Method = Method::PATCH;
-    type Body = MailFolder<'body>;
     type Response<'response> = MailFolder<'response>;
-    fn build(&self) -> http::Request<Self::Body> {
+    fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let uri = format_path(&self.template_expressions)
             .parse::<http::uri::Uri>()
             .unwrap();
-        http::Request::builder()
+        let (body, content_type) = match self.body {
+            OperationBody::JSON(body) => {
+                (serde_json::to_vec(&body)?, String::from("application/json"))
+            }
+            OperationBody::Other { body, content_type } => (body, content_type),
+        };
+        let request = http::Request::builder()
             .uri(uri)
             .method(Self::METHOD)
-            .body(self.body.clone())
-            .unwrap()
+            .header("Content-Type", content_type)
+            .body(body)?;
+        Ok(request)
     }
 }

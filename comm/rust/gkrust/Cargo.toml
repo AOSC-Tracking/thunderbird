@@ -22,14 +22,16 @@ mozilla-central-workspace-hack = { version = "0.1", features = ['gkrust'], optio
 gkrust-shared = { version = "0.1.0", path = "../../../toolkit/library/rust/shared" }
 ews_xpcom = { version = "0.1.0", path = "../ews_xpcom" }
 graph_xpcom = { version = "0.1.0", path = "../graph_xpcom" }
+mailnews_string_glue = { version = "0.1.0", path = "../mailnews_string_glue" }
 mailnews_ui_glue = { version = "0.1.0", path = "../mailnews_ui_glue" }
 sys_tray = { version = "0.1.0", path = "../sys_tray" }
 aa-stroke = { git = "https://github.com/FirefoxGraphics/aa-stroke", rev = "5776bdfc8ad664a1503db668fab397d818a5f98a" }
 abridged_certs = { path = "../../../security/manager/ssl/abridged_certs" }
 adblock = { version = "0.12.1", features = ['full-regex-handling', 'single-thread'], default-features = false }
+app_collator_glue = { path = "../../../intl/app_collator_glue" }
 audio_thread_priority = { version = "0.34" }
-audioipc2-client = { git = "https://github.com/mozilla/audioipc", rev = "c8d3f03cb5f889e4cab18cc1360ad0daa074f17a", optional = true }
-audioipc2-server = { git = "https://github.com/mozilla/audioipc", rev = "c8d3f03cb5f889e4cab18cc1360ad0daa074f17a", optional = true }
+audioipc2-client = { git = "https://github.com/mozilla/audioipc", rev = "0339c4732ceadbc5f54898b77498c33fff0f3f90", optional = true }
+audioipc2-server = { git = "https://github.com/mozilla/audioipc", rev = "0339c4732ceadbc5f54898b77498c33fff0f3f90", optional = true }
 authrs_bridge = { path = "../../../dom/webauthn/authrs_bridge" }
 binary_http = { path = "../../../netwerk/protocol/http/binary_http" }
 bitsdownload = { path = "../../../toolkit/components/bitsdownload", optional = true }
@@ -42,7 +44,7 @@ content_classifier_engine = { path = "../../../toolkit/components/content-classi
 cose-c = { version = "0.1.5" }
 crash_helper_client = { path = "../../../toolkit/crashreporter/crash_helper_client", optional = true }
 crypto_hash = { path = "../../../security/manager/ssl/crypto_hash" }
-cubeb-coreaudio = { git = "https://github.com/mozilla/cubeb-coreaudio-rs", rev = "5b689a7f90086e07c271ad1cf79325ee06112ab6", optional = true, features = ['vpio-forcelist'] }
+cubeb-coreaudio = { git = "https://github.com/mozilla/cubeb-coreaudio-rs", rev = "0bb8a45a040e85d313eb18deb36570e87df3a6af", optional = true, features = ['vpio-forcelist'] }
 cubeb-pulse = { git = "https://github.com/mozilla/cubeb-pulse-rs", rev = "9cebfcceb073e9dd10cfb275a7590bca58d4c251", optional = true, features = ['pulse-dlopen'] }
 cubeb-sys = { version = "0.32.0", optional = true, features = ['gecko-in-tree'] }
 dap_ffi = { path = "../../../toolkit/components/dap/ffi" }
@@ -64,6 +66,8 @@ gecko_logger = { path = "../../../xpcom/rust/gecko_logger" }
 gecko_tracing = { path = "../../../xpcom/rust/gecko_tracing" }
 geckoservo = { path = "../../../servo/ports/geckolib" }
 gkrust_utils = { path = "../../../xpcom/rust/gkrust_utils" }
+happy_eyeballs_glue = { path = "../../../netwerk/protocol/http/happy_eyeballs_glue" }
+harfbuzz_glue = { path = "../../../gfx/harfbuzz_glue" }
 http_sfv = { path = "../../../netwerk/base/http-sfv" }
 idna_glue = { path = "../../../netwerk/base/idna_glue", features = ['mailnews'] }
 ipcclientcerts = { path = "../../../security/manager/ssl/ipcclientcerts" }
@@ -74,7 +78,7 @@ jxl_decoder = { path = "../../../image/rust/jxl", optional = true }
 kvstore = { path = "../../../toolkit/components/kvstore" }
 l10nregistry = { path = "../../../intl/l10n/rust/l10nregistry-rs" }
 l10nregistry-ffi = { path = "../../../intl/l10n/rust/l10nregistry-ffi" }
-libz-rs-sys = { version = "0.4.1", features = ['custom-prefix'], optional = true }
+libz-rs-sys = { version = "0.6", features = ['custom-prefix'], optional = true }
 locale_service_glue = { path = "../../../intl/locale/rust/locale_service_glue" }
 localization-ffi = { path = "../../../intl/l10n/rust/localization-ffi" }
 log = { version = "0.4", features = ['release_max_level_info'] }
@@ -100,7 +104,7 @@ oxilangtag-ffi = { path = "../../../intl/locale/rust/oxilangtag-ffi" }
 pdf-trust-anchors = { path = "../../../security/manager/ssl/pdf_trust_anchors" }
 prefs_parser = { path = "../../../modules/libpref/parser" }
 processtools = { path = "../../../toolkit/components/processtools" }
-profiler_helper = { path = "../../../tools/profiler/rust-helper", optional = true }
+profiler_helper = { path = "../../../tools/profiler/rust-helper" }
 qcms = { path = "../../../gfx/qcms", features = ['c_bindings', 'neon'] }
 qwac-trust-anchors = { path = "../../../security/manager/ssl/qwac_trust_anchors" }
 rsdparsa_capi = { path = "../../../dom/media/webrtc/sdp/rsdparsa_capi" }
@@ -123,6 +127,7 @@ webrender_bindings = { path = "../../../gfx/webrender_bindings" }
 wgpu_bindings = { path = "../../../gfx/wgpu_bindings" }
 wpf-gpu-raster = { git = "https://github.com/FirefoxGraphics/wpf-gpu-raster", rev = "99979da091fd58fba8477e7fcdf5ec0727102916" }
 xpcom = { path = "../../../xpcom/rust/xpcom" }
+zlib-rs = { version = "0.6", features = ['avx512'], optional = true }
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["mozilla-central-workspace-hack"]

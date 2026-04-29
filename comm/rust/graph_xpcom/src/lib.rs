@@ -9,16 +9,16 @@ use nsstring::{nsACString, nsCString};
 use protocol_shared::{
     ExchangeConnectionDetails,
     authentication::credentials::AuthenticationProvider,
-    safe_xpcom::{SafeUrlListener, uri::SafeUri},
+    safe_xpcom::{SafeEwsFolderListener, SafeUrlListener, uri::SafeUri},
 };
 use thin_vec::ThinVec;
 use url::Url;
 use xpcom::{
     RefPtr,
     interfaces::{
-        IEwsFolderListener, IEwsMessageCreateListener, IEwsMessageFetchListener,
-        IEwsMessageSyncListener, IEwsSimpleOperationListener, nsIInputStream, nsIMsgIncomingServer,
-        nsIURI, nsIUrlListener,
+        IExchangeFolderListener, IExchangeMessageCreateListener, IExchangeMessageFetchListener,
+        IExchangeMessageSyncListener, IExchangeSimpleOperationListener, nsIInputStream,
+        nsIMsgIncomingServer, nsIURI, nsIUrlListener,
     },
     nsIID, xpcom_method,
 };
@@ -48,7 +48,7 @@ pub unsafe extern "C" fn NS_CreateGraphClient(iid: &nsIID, result: *mut *mut c_v
 
 /// `XpcomEwsBridge` provides an XPCOM interface implementation for mediating
 /// between C++ consumers and an async Rust Graph API client.
-#[xpcom::xpcom(implement(IEwsClient), atomic)]
+#[xpcom::xpcom(implement(IExchangeClient), atomic)]
 pub struct XpcomGraphBridge {
     details: OnceCell<ExchangeConnectionDetails>,
 }
@@ -82,7 +82,17 @@ impl XpcomGraphBridge {
             endpoint.to_string()
         );
 
-        let endpoint = Url::parse(&endpoint.to_utf8()).map_err(|_| NS_ERROR_INVALID_ARG)?;
+        // The ms_graph_tb crate is built from the Graph 1.0 API specification.
+        // Incoming configuration is assumed to exclude the API version, so it
+        // needs to be added to the base endpoint for all API calls here.
+        let mut endpoint = Url::parse(&endpoint.to_utf8()).map_err(|_| NS_ERROR_INVALID_ARG)?;
+        {
+            let mut endpoint_path = endpoint
+                .path_segments_mut()
+                .map_err(|_| nserror::NS_ERROR_MALFORMED_URI)?;
+            endpoint_path.push("v1.0");
+        }
+        let endpoint = endpoint.clone();
 
         let credentials = server.get_credentials()?;
         let server = RefPtr::new(server);
@@ -128,25 +138,42 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(sync_folder_hierarchy => SyncFolderHierarchy(
-        _listener: *const IEwsFolderListener,
-        _sync_state: *const nsACString
+        listener: *const IExchangeFolderListener,
+        sync_state: *const nsACString
     ));
     fn sync_folder_hierarchy(
         &self,
-        _listener: &IEwsFolderListener,
-        _sync_state: &nsACString,
+        listener: &IExchangeFolderListener,
+        sync_state: &nsACString,
     ) -> Result<(), nsresult> {
-        Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
+        let sync_state = if sync_state.is_empty() {
+            None
+        } else {
+            Some(sync_state.to_utf8().into_owned())
+        };
+
+        let server = self.details.get().unwrap().server.clone();
+        let endpoint = self.details.get().unwrap().endpoint.clone();
+
+        let client = XpComGraphClient::new(server, endpoint);
+
+        moz_task::spawn_local(
+            "sync_folder_hierarchy",
+            client.sync_folder_hierarchy(SafeEwsFolderListener::new(listener), sync_state),
+        )
+        .detach();
+
+        Ok(())
     }
 
     xpcom_method!(create_folder => CreateFolder(
-        _listener: *const IEwsSimpleOperationListener,
+        _listener: *const IExchangeSimpleOperationListener,
         _parent_id: *const nsACString,
         _name: *const nsACString
     ));
     fn create_folder(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _parent_id: &nsACString,
         _name: &nsACString,
     ) -> Result<(), nsresult> {
@@ -154,26 +181,26 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(delete_folder => DeleteFolder(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         folder_ids: *const ThinVec<nsCString>
     ));
     fn delete_folder(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _folder_ids: &ThinVec<nsCString>,
     ) -> Result<(), nsresult> {
         Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
     }
 
     xpcom_method!(empty_folder => EmptyFolder(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         folder_ids: *const ThinVec<nsCString>,
         subfolder_ids: *const ThinVec<nsCString>,
         message_ids: *const ThinVec<nsCString>
     ));
     fn empty_folder(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _folder_ids: &ThinVec<nsCString>,
         _subfolder_ids: &ThinVec<nsCString>,
         _message_ids: &ThinVec<nsCString>,
@@ -182,13 +209,13 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(update_folder => UpdateFolder(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         folder_id: *const nsACString,
         folder_name: *const nsACString
     ));
     fn update_folder(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _folder_id: &nsACString,
         _folder_name: &nsACString,
     ) -> Result<(), nsresult> {
@@ -196,13 +223,13 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(sync_messages_for_folder => SyncMessagesForFolder(
-        listener: *const IEwsMessageSyncListener,
+        listener: *const IExchangeMessageSyncListener,
         folder_id: *const nsACString,
         sync_state: *const nsACString
     ));
     fn sync_messages_for_folder(
         &self,
-        _listener: &IEwsMessageSyncListener,
+        _listener: &IExchangeMessageSyncListener,
         _folder_id: &nsACString,
         _sync_state: &nsACString,
     ) -> Result<(), nsresult> {
@@ -210,25 +237,25 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(get_message => GetMessage(
-        callbacks: *const IEwsMessageFetchListener,
+        callbacks: *const IExchangeMessageFetchListener,
         id: *const nsACString
     ));
     fn get_message(
         &self,
-        _listener: &IEwsMessageFetchListener,
+        _listener: &IExchangeMessageFetchListener,
         _id: &nsACString,
     ) -> Result<(), nsresult> {
         Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
     }
 
     xpcom_method!(change_read_status => ChangeReadStatus(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         message_ids: *const ThinVec<nsCString>,
         is_read: bool
     ));
     fn change_read_status(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _message_ids: &ThinVec<nsCString>,
         _is_read: bool,
     ) -> Result<(), nsresult> {
@@ -236,13 +263,13 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(change_flag_status => ChangeFlagStatus(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         message_ids: *const ThinVec<nsCString>,
         is_flagged: bool
     ));
     fn change_flag_status(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _message_ids: &ThinVec<nsCString>,
         _is_flagged: bool,
     ) -> Result<(), nsresult> {
@@ -250,14 +277,14 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(change_read_status_all => ChangeReadStatusAll(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         folder_ids: *const ThinVec<nsCString>,
         is_read: bool,
         suppress_read_receipts: bool
     ));
     fn change_read_status_all(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _folder_ids: &ThinVec<nsCString>,
         _is_read: bool,
         _suppress_read_receipts: bool,
@@ -266,7 +293,7 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(create_message => CreateMessage(
-        listener: *const IEwsMessageCreateListener,
+        listener: *const IExchangeMessageCreateListener,
         folder_id: *const nsACString,
         is_draft: bool,
         is_read: bool,
@@ -274,7 +301,7 @@ impl XpcomGraphBridge {
     ));
     fn create_message(
         &self,
-        _listener: &IEwsMessageCreateListener,
+        _listener: &IExchangeMessageCreateListener,
         _folder_id: &nsACString,
         _is_draft: bool,
         _is_read: bool,
@@ -284,13 +311,13 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(move_items => MoveItems(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         destination_folder_id: *const nsACString,
         item_ids: *const ThinVec<nsCString>
     ));
     fn move_items(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _destination_folder_id: &nsACString,
         _item_ids: &ThinVec<nsCString>,
     ) -> Result<(), nsresult> {
@@ -298,13 +325,13 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(copy_items => CopyItems(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         destination_folder_id: *const nsACString,
         item_ids: *const ThinVec<nsCString>
     ));
     fn copy_items(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _destination_folder_id: &nsACString,
         _item_ids: &ThinVec<nsCString>,
     ) -> Result<(), nsresult> {
@@ -312,13 +339,13 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(move_folders => MoveFolders(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         destination_folder_id: *const nsACString,
         folder_ids: *const ThinVec<nsCString>
     ));
     fn move_folders(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _destination_folder_id: &nsACString,
         _folder_ids: &ThinVec<nsCString>,
     ) -> Result<(), nsresult> {
@@ -326,13 +353,13 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(copy_folders => CopyFolders(
-        callbacks: *const IEwsSimpleOperationListener,
+        callbacks: *const IExchangeSimpleOperationListener,
         destination_folder_id: *const nsACString,
         folder_ids: *const ThinVec<nsCString>
     ));
     fn copy_folders(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _destination_folder_id: &nsACString,
         _folder_ids: &ThinVec<nsCString>,
     ) -> Result<(), nsresult> {
@@ -340,26 +367,26 @@ impl XpcomGraphBridge {
     }
 
     xpcom_method!(delete_messages => DeleteMessages(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         ews_ids: *const ThinVec<nsCString>
     ));
     fn delete_messages(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _ews_ids: &ThinVec<nsCString>,
     ) -> Result<(), nsresult> {
         Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
     }
 
     xpcom_method!(mark_items_as_junk => MarkItemsAsJunk(
-        listener: *const IEwsSimpleOperationListener,
+        listener: *const IExchangeSimpleOperationListener,
         ews_ids: *const ThinVec<nsCString>,
         is_junk: bool,
         legacyDestinationFolderId: *const nsACString
     ));
     fn mark_items_as_junk(
         &self,
-        _listener: &IEwsSimpleOperationListener,
+        _listener: &IExchangeSimpleOperationListener,
         _ews_ids: &ThinVec<nsCString>,
         _is_junk: bool,
         _legacy_destination_folder_id: &nsACString,

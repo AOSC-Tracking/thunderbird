@@ -83,8 +83,7 @@
     </template>
 
     <menupopup id="accountAddPopup"
-               onpopupshowing="updateBlockedItems(this.children, true);"
-               native="false">
+               onpopupshowing="updateBlockedItems(this.children, true);">
       <menuitem id="accountActionsAddMailAccount"
                 data-l10n-id="account-tree-add-mail-account"
                 prefstring="mail.disable_new_account_addition"
@@ -105,7 +104,7 @@
 
     <vbox class="sidebar-footer-list">
       <html:a id="prefsButton" class="sidebar-footer-link"
-              onclick="openOptionsDialog();">
+              onclick="openPreferencesTab();">
         <html:img class="sidebar-footer-icon"
                   src="chrome://messenger/skin/icons/new/compact/settings.svg" alt="" />
         <label class="sidebar-footer-label"

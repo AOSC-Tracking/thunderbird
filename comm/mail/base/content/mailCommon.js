@@ -76,7 +76,7 @@ var commandController = {
     cmd_cancel() {
       gFolder
         .QueryInterface(Ci.nsIMsgNewsFolder)
-        .cancelMessage(gDBView.hdrForFirstSelectedMessage, top.msgWindow);
+        .cancelMessage(gDBView.hdrForFirstSelectedMessage, null, top.msgWindow);
     },
     cmd_openConversation() {
       new ConversationOpener(window).openConversationForMessages(
@@ -125,7 +125,7 @@ var commandController = {
     cmd_tag9: () => commandController._toggleMessageTagKey(9),
     cmd_addTag: () => commandController._addTag(),
     cmd_manageTags() {
-      window.browsingContext.topChromeWindow.openOptionsDialog(
+      window.browsingContext.topChromeWindow.openPreferencesTab(
         "paneGeneral",
         "tagsCategory"
       );
@@ -375,6 +375,7 @@ var commandController = {
         MailServices.filters.applyFilters(
           Ci.nsMsgFilterType.Manual,
           selectedMessages,
+          [],
           gFolder,
           top.msgWindow
         );

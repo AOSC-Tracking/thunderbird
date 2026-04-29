@@ -36,6 +36,7 @@ add_setup(async function () {
   );
   imapAccount.incomingServer.port = imapServer.port;
   imapAccount.incomingServer.password = "password";
+  imapAccount.incomingServer.QueryInterface(Ci.nsIImapIncomingServer);
   imapAccount.incomingServer.deleteModel = Ci.nsMsgImapDeleteModels.IMAPDelete;
   imapRootFolder = imapAccount.incomingServer.rootFolder;
 
@@ -406,7 +407,7 @@ add_task(async function testNNTPSubscribe() {
 
         // Clear the search field.
 
-        EventUtils.synthesizeKey("VK_ESCAPE", {}, win);
+        EventUtils.synthesizeKey("KEY_Escape", {}, win);
 
         await TestUtils.waitForCondition(
           () => view.rowCount == 5,

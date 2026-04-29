@@ -30,6 +30,7 @@
 #include "nsIMsgFilter.h"
 #include "nsIMsgFilterService.h"
 #include "nsIMsgSearchTerm.h"
+#include "nsIFeedbackService.h"
 #include "nsImapMoveCoalescer.h"
 #include "nsIPrompt.h"
 #include "nsIDocShell.h"
@@ -59,7 +60,6 @@
 #include "nsIMsgFolderNotificationService.h"
 #include "prprf.h"
 #include "nsIMsgFilterCustomAction.h"
-#include "nsIMsgStatusFeedback.h"
 #include "nsIMsgThread.h"
 #include "nsMsgLineBuffer.h"
 #include "mozilla/Components.h"
@@ -1692,6 +1692,35 @@ nsImapMailFolder::GetCanSubscribe(bool* aResult) {
   // you can only subscribe to imap servers, not imap folders
   *aResult = isImapServer;
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsImapMailFolder::GetIsGmailFolder(bool* isGmailFolder) {
+  *isGmailFolder = false;
+
+  nsCOMPtr<nsIMsgFolder> parent = do_QueryReferent(mParent);
+  if (!parent) {
+    return NS_OK;
+  }
+
+  bool parentIsServer;
+  parent->GetIsServer(&parentIsServer);
+  if (!parentIsServer) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIImapIncomingServer> server = do_QueryReferent(mServer);
+  if (!server) {
+    return NS_OK;
+  }
+
+  bool isGMailServer;
+  server->GetIsGMailServer(&isGMailServer);
+  if (!isGMailServer) {
+    return NS_OK;
+  }
+
+  return GetNoSelect(isGmailFolder);
 }
 
 nsresult nsImapMailFolder::GetServerKey(nsACString& serverKey) {
@@ -7445,16 +7474,14 @@ nsresult nsImapMailFolder::CopyStreamMessage(
       NS_ENSURE_SUCCESS(rv, rv);
       rv = bundle->FormatStringFromName("imapCopyingMessageOf2", formatStrings,
                                         progressText);
-      nsCOMPtr<nsIMsgStatusFeedback> statusFeedback;
-      if (m_copyState->m_msgWindow)
-        m_copyState->m_msgWindow->GetStatusFeedback(
-            getter_AddRefs(statusFeedback));
-      if (statusFeedback) {
-        statusFeedback->ShowStatusString(progressText);
-        int32_t percent;
-        percent = (100 * m_copyState->m_curIndex) /
-                  (int32_t)m_copyState->m_messages.Length();
-        statusFeedback->ShowProgress(percent);
+      NS_ENSURE_SUCCESS(rv, rv);
+      nsCOMPtr<nsIFeedbackService> feedback =
+          mozilla::components::Feedback::Service();
+      if (feedback) {
+        feedback->ReportStatus(NS_ConvertUTF16toUTF8(progressText), ""_ns);
+        int32_t percent = (100 * m_copyState->m_curIndex) /
+                          (int32_t)m_copyState->m_messages.Length();
+        feedback->ReportProgress(percent);
       }
     }
 

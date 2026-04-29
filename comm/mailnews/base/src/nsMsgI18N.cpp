@@ -5,13 +5,11 @@
 
 #include "nsMsgI18N.h"
 
-#include <stdlib.h>
 #include <tuple>
 
 #include "nsICharsetConverterManager.h"
 #include "mozilla/Components.h"
 #include "mozilla/Utf8.h"
-#include "nsIPrefService.h"
 #include "nsIMimeConverter.h"
 #include "nsMsgUtils.h"
 #include "nsILineInputStream.h"
@@ -21,7 +19,6 @@
 #include "nsUTF8Utils.h"
 #include "nsNetUtil.h"
 #include "nsCRTGlue.h"
-#include "nsComponentManagerUtils.h"
 #include "nsIFileStreams.h"
 #include "../../intl/nsUTF7ToUnicode.h"
 #include "../../intl/nsMUTF7ToUnicode.h"
@@ -243,34 +240,22 @@ const char* nsMsgI18NParseMetaCharset(nsIFile* file) {
   return charset;
 }
 
-nsresult nsMsgI18NShrinkUTF8Str(const nsACString& inString, uint32_t aMaxLength,
-                                nsACString& outString) {
-  if (inString.IsEmpty()) {
-    outString.Truncate();
-    return NS_OK;
+nsCString nsMsgI18NTruncateUTF8Str(const nsACString& inString,
+                                   size_t maxBytes) {
+  const char* begin = inString.BeginReading();
+  const char* end = inString.EndReading();
+  const char* cur = begin;
+  while (cur < end) {
+    const char* prev = cur;
+    bool err = false;
+    UTF8CharEnumerator::NextChar(&cur, end, &err);
+    size_t len = cur - begin;
+    // If invalid UTF-8 or past our limit, just return what we've got so far.
+    if (err || len > maxBytes) {
+      return nsCString(Substring(begin, prev));
+    }
   }
-  if (inString.Length() < aMaxLength) {
-    outString.Assign(inString);
-    return NS_OK;
-  }
-  NS_ASSERTION(mozilla::IsUtf8(inString), "Invalid UTF-8 string is inputted");
-  const char* start = inString.BeginReading();
-  const char* end = start + inString.Length();
-  const char* last = start + aMaxLength;
-  const char* cur = start;
-  const char* prev = nullptr;
-  bool err = false;
-  while (cur < last) {
-    prev = cur;
-    if (!UTF8CharEnumerator::NextChar(&cur, end, &err) || err) break;
-  }
-  if (!prev || err) {
-    outString.Truncate();
-    return NS_OK;
-  }
-  uint32_t len = prev - start;
-  outString.Assign(Substring(inString, 0, len));
-  return NS_OK;
+  return nsCString(inString);
 }
 
 void nsMsgI18NConvertRawBytesToUTF16(const nsACString& inString,

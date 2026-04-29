@@ -999,6 +999,16 @@ Enigmail.msg = {
       newSecurityInfo = gMsgCompose.compFields.composeSecure.wrappedJSObject;
     }
 
+    if (
+      sendFlags & EnigmailConstants.SEND_SIGNED &&
+      !(sendFlags & EnigmailConstants.SEND_ENCRYPTED)
+    ) {
+      newSecurityInfo.signFormat =
+        sendFlags & EnigmailConstants.SEND_SIG_UNOBTRUSIVE
+          ? "unobtrusive"
+          : "multipart";
+    }
+
     newSecurityInfo.originalSubject = gMsgCompose.compFields.subject;
     newSecurityInfo.originalReferences = gMsgCompose.compFields.references;
 
@@ -1127,7 +1137,12 @@ Enigmail.msg = {
         await this.attachOwnKey(senderKeyId);
       }
 
-      const autocryptGossipHeaders = await this.getAutocryptGossip();
+      const autocryptGossipHeaders =
+        gSendEncrypted &&
+        this.sendPgpMime &&
+        gCurrentIdentity.sendAutocryptHeaders
+          ? await this.getAutocryptGossip()
+          : "";
 
       var usingPGPMime =
         sendFlags & EnigmailConstants.SEND_PGP_MIME &&
@@ -1168,6 +1183,15 @@ Enigmail.msg = {
 
       if (usingPGPMime) {
         uiFlags |= EnigmailConstants.UI_PGP_MIME;
+        if (sendFlags & SIGN && !(sendFlags & ENCRYPT)) {
+          if (
+            Services.prefs.getStringPref(
+              "mail.openpgp.clear_signature_format"
+            ) == "unobtrusive"
+          ) {
+            sendFlags |= EnigmailConstants.SEND_SIG_UNOBTRUSIVE;
+          }
+        }
       }
 
       if (sendFlags & (ENCRYPT | SIGN) && usingPGPMime) {
@@ -1925,7 +1949,6 @@ Enigmail.msg = {
             "am-e2e.xhtml",
             MailServices.accounts.getServersForIdentity(gCurrentIdentity)[0]
           );
-          Services.wm.getMostRecentWindow("mail:3pane")?.focus();
           return true;
         },
       },

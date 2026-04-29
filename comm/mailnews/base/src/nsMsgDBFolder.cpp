@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "FolderPopulation.h"
+#include "IHeaderBlock.h"
 #include "MailNewsTypes.h"
 #include "msgCore.h"
 #include "nsLocalFile.h"
@@ -68,6 +69,7 @@
 #include "nsIWritablePropertyBag2.h"
 #include "UrlListener.h"
 #include "nsIMsgCopyService.h"
+#include "nsIMsgImapMailFolder.h"
 #ifdef MOZ_PANORAMA
 #  include "FolderDatabase.h"
 #  include "DatabaseCore.h"
@@ -163,17 +165,17 @@ NS_IMETHODIMP nsMsgFolderService::InitializeFolderStrings() {
   return NS_OK;
 }
 
-MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedInboxName;
-MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedTrashName;
-MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedSentName;
-MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedDraftsName;
-MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedTemplatesName;
-MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedUnsentName;
-MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedJunkName;
-MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedAllMailName;
-MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedArchivesName;
+constinit nsString nsMsgDBFolder::kLocalizedInboxName;
+constinit nsString nsMsgDBFolder::kLocalizedTrashName;
+constinit nsString nsMsgDBFolder::kLocalizedSentName;
+constinit nsString nsMsgDBFolder::kLocalizedDraftsName;
+constinit nsString nsMsgDBFolder::kLocalizedTemplatesName;
+constinit nsString nsMsgDBFolder::kLocalizedUnsentName;
+constinit nsString nsMsgDBFolder::kLocalizedJunkName;
+constinit nsString nsMsgDBFolder::kLocalizedAllMailName;
+constinit nsString nsMsgDBFolder::kLocalizedArchivesName;
 
-MOZ_RUNINIT nsString nsMsgDBFolder::kLocalizedBrandShortName;
+constinit nsString nsMsgDBFolder::kLocalizedBrandShortName;
 
 nsrefcnt nsMsgDBFolder::mInstanceCount = 0;
 bool nsMsgDBFolder::gInitializeStringsDone = false;
@@ -192,7 +194,6 @@ constexpr nsLiteralCString kJunkStatusChanged = "JunkStatusChanged"_ns;
 constexpr nsLiteralCString kKeywords = "Keywords"_ns;
 constexpr nsLiteralCString kMRMTimeChanged = "MRMTimeChanged"_ns;
 constexpr nsLiteralCString kMRUTimeChanged = "MRUTimeChanged"_ns;
-constexpr nsLiteralCString kMsgLoaded = "msgLoaded"_ns;
 constexpr nsLiteralCString kName = "Name"_ns;
 constexpr nsLiteralCString kNewMailReceived = "NewMailReceived"_ns;
 constexpr nsLiteralCString kNewMessages = "NewMessages"_ns;
@@ -1957,7 +1958,7 @@ nsMsgDBFolder::OnMessageClassified(const nsACString& aMsgURI,
       // appearing in the middle of automatic filtering (plus I really don't
       // want to propagate that value.)
       rv = filterService->ApplyFilters(nsMsgFilterType::PostPlugin,
-                                       mPostBayesMessagesToFilter, this,
+                                       mPostBayesMessagesToFilter, {}, this,
                                        nullptr, nullptr);
       mPostBayesMessagesToFilter.Clear();
     }
@@ -3031,9 +3032,16 @@ NS_IMETHODIMP nsMsgDBFolder::GetPrettyPath(nsACString& aPath) {
 
   nsCOMPtr<nsIMsgFolder> parent = do_QueryReferent(mParent);
   if (parent) {
-    parent->GetPrettyPath(aPath);
-    if (!aPath.IsEmpty()) {
-      aPath.AppendLiteral("/");
+    bool parentIsGmailFolder = false;
+    nsCOMPtr<nsIMsgImapMailFolder> imapParent = do_QueryInterface(parent);
+    if (imapParent) {
+      imapParent->GetIsGmailFolder(&parentIsGmailFolder);
+    }
+    if (!parentIsGmailFolder) {
+      parent->GetPrettyPath(aPath);
+      if (!aPath.IsEmpty()) {
+        aPath.AppendLiteral("/");
+      }
     }
   }
   nsCString localizedName;
@@ -5387,10 +5395,7 @@ NS_IMETHODIMP nsMsgDBFolder::GetMsgTextFromStream(
 
   // finally, truncate the string based on aMaxOutputLen
   if (aMsgText.Length() > aMaxOutputLen) {
-    if (NS_IsAscii(aMsgText.BeginReading()))
-      aMsgText.SetLength(aMaxOutputLen);
-    else
-      nsMsgI18NShrinkUTF8Str(aMsgText, aMaxOutputLen, aMsgText);
+    aMsgText = nsMsgI18NTruncateUTF8Str(aMsgText, (size_t)aMaxOutputLen);
   }
 
   // Also assign the content type being returned

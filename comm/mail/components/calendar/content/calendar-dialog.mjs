@@ -9,7 +9,12 @@ import "./calendar-dialog-date-row.mjs"; // eslint-disable-line import/no-unassi
 import "./calendar-dialog-description-row.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./calendar-dialog-categories.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./calendar-dialog-reminders-row.mjs"; // eslint-disable-line import/no-unassigned-import
+import "./calendar-dialog-attachments-list.mjs"; // eslint-disable-line import/no-unassigned-import
+import "./calendar-dialog-attendees-row.mjs"; // eslint-disable-line import/no-unassigned-import
 
+const { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 // Eagerly loading modules, since we assume that an event will be displayed soon
 // after this is loaded. Any module in an optional path for displaying an event
 // should be lazy loaded, however.
@@ -19,6 +24,17 @@ const { cal } = ChromeUtils.importESModule(
 const { recurrenceStringFromItem } = ChromeUtils.importESModule(
   "resource:///modules/calendar/calRecurrenceUtils.sys.mjs"
 );
+
+const { extractJoinLink } = ChromeUtils.importESModule(
+  "resource:///modules/calendar/JoinLinkParser.sys.mjs"
+);
+
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
+  getAttachmentIcon:
+    "moz-src:///comm/mail/components/calendar/modules/CalendarAttachmentUtils.sys.mjs",
+});
 
 export const DEFAULT_DIALOG_MARGIN = 12;
 
@@ -56,6 +72,48 @@ export class CalendarDialog extends PositionedDialog {
   triggerSelector =
     "calendar-event-box,calendar-month-day-box-item,.multiday-event-listitem";
 
+  /**
+   * The video conferencing join link string for the calendar event.
+   *
+   * @type {string}
+   */
+  #meetingUrl = null;
+
+  /**
+   * Event loading promise. Don't try loading again until previous attempt is complete.
+   *
+   * @type {boolean}
+   */
+  #loading;
+
+  /**
+   * Resolver for loading process.
+   *
+   * @type {Function}
+   */
+  #resolver;
+
+  /**
+   * A promse that resolves when loading is complete.
+   *
+   * @type {Promise<void>}
+   */
+  showPromise;
+
+  /**
+   * If the data has been invaildated and should be reloaded.
+   *
+   * @type {boolean}
+   */
+  #reload;
+
+  /**
+   * The title element for the dialog
+   *
+   * @type {HTMLElement}
+   */
+  #title;
+
   connectedCallback() {
     if (!this.hasConnected) {
       this.hasConnected = true;
@@ -71,12 +129,13 @@ export class CalendarDialog extends PositionedDialog {
         "calendar-dialog-subview-manager"
       );
 
-      this.querySelector(".close-button").addEventListener("click", this);
-      this.querySelector("#locationLink").addEventListener("click", this);
+      this.addEventListener("click", this);
       this.#subviewManager.addEventListener("subviewchanged", this);
-      this.querySelector(".back-button").addEventListener("click", this);
-      this.querySelector("#expandDescription").addEventListener("click", this);
       this.#subviewManager.addEventListener("toggleRowVisibility", this);
+      this.querySelector("calendar-dialog-acceptance").addEventListener(
+        "setEventResponse",
+        this
+      );
 
       this.querySelector(".back-button").hidden =
         this.#subviewManager.isDefaultSubviewVisible();
@@ -84,6 +143,7 @@ export class CalendarDialog extends PositionedDialog {
       this.setAttribute("is", "calendar-dialog");
 
       this.container = document.getElementById("calendarDisplayBox");
+      this.#title = this.querySelector(".calendar-dialog-title");
     }
 
     document.l10n.translateFragment(this);
@@ -106,10 +166,21 @@ export class CalendarDialog extends PositionedDialog {
    * @type {Record<string,Function>}
    */
   #clickHandlers = {
+    "#locationLink": event => {
+      event.preventDefault();
+      openLinkExternally(event.target.href);
+      return false;
+    },
     ".close-button": () => this.close(),
+    ".menu-button": () => this.#toggleMenu(),
     ".back-button": () => this.#subviewManager.showDefaultSubview(),
     "#expandDescription": () =>
       this.#subviewManager.showSubview("calendarDescriptionSubview"),
+    "#joinMeeting": () => lazy.openLinkExternally(this.#meetingUrl),
+    "#expandAttachments": () =>
+      this.#subviewManager.showSubview("calendarAttachmentsSubview"),
+    "#expandAttendees": () =>
+      this.#subviewManager.showSubview("calendarAttendeesSubview"),
   };
 
   handleEvent(event) {
@@ -132,7 +203,32 @@ export class CalendarDialog extends PositionedDialog {
           .toggleAttribute("hidden", event.detail.isHidden);
         break;
       }
+      case "setEventResponse":
+        this.querySelector("calendar-dialog-acceptance").setAttribute(
+          "status",
+          event.detail.status
+        );
+        // TODO: Update the event with the user response.
+        break;
     }
+  }
+
+  /**
+   * Reset variables and check if the data should be reloaded.
+   *
+   * @returns {boolean} - If a reload was done
+   */
+  async #checkReloadAndReturn() {
+    if (!this.#reload) {
+      return false;
+    }
+
+    this.#loading = false;
+    this.#reload = false;
+    this.#clearData();
+    await this.#loadCalendarEvent();
+
+    return true;
   }
 
   /**
@@ -146,12 +242,34 @@ export class CalendarDialog extends PositionedDialog {
     if (!event.isEvent()) {
       throw new Error("Can only display events");
     }
+
+    if (this.open) {
+      this.close();
+    }
+
     this.removeAttribute("calendar-id");
     if (event.recurrenceId) {
       this.setAttribute("recurrence-id", event.recurrenceId.nativeTime);
     }
     this.setAttribute("event-id", event.id);
     this.setAttribute("calendar-id", event.calendar.id);
+  }
+
+  /**
+   * The dialogs show method is updated to be async and resolve when the dialog
+   * is actually shown after event loading has completed. An event parameter is
+   * also added to allow positioning of the dialog relative to the click event
+   * triggered the show to happen.
+   *
+   * @param {?Event} event - The event most likely a click that should be used
+   * to identify the trigger element for dialog positioning
+   */
+  async show(event) {
+    if (this.showPromise) {
+      await this.showPromise;
+    }
+
+    super.show(event);
   }
 
   /**
@@ -163,15 +281,34 @@ export class CalendarDialog extends PositionedDialog {
       return;
     }
 
+    if (!this.showPromise) {
+      const { promise, resolve } = Promise.withResolvers();
+      this.showPromise = promise;
+      this.#resolver = resolve;
+    }
+
+    if (this.#loading) {
+      this.#reload = true;
+      return;
+    }
+
+    this.#loading = true;
+
     // Let's find the calendar we're displaying an event from.
     const calendarId = this.getAttribute("calendar-id");
-    if (!calendarId) {
-      // Only clear if event ID is still set.
-      if (this.getAttribute("event-id")) {
-        await this.#clearData();
+    const eventId = this.getAttribute("event-id");
+    if (!calendarId || !eventId) {
+      // Need to call clearData explicitly here to reset the dialog
+      // checkReloadAndReturn only clears if reloading.
+      this.#clearData();
+      this.#loading = false;
+      if (!(await this.#checkReloadAndReturn())) {
+        this.#resolver();
+        this.showPromise = null;
       }
       return;
     }
+
     const calendar = cal.manager.getCalendarById(calendarId);
     if (!calendar) {
       console.error("No calendar", calendarId);
@@ -179,25 +316,31 @@ export class CalendarDialog extends PositionedDialog {
       return;
     }
 
-    // Let's find the event in the calendar.
-    const eventId = this.getAttribute("event-id");
-    if (!eventId) {
-      // Should clear now, since calendar ID is still set.
-      await this.#clearData();
+    // Check if data has been invalidated while clearing.
+    if (await this.#checkReloadAndReturn()) {
       return;
     }
+
     let event = await calendar.getItem(eventId);
+
+    // Check if data has been invalidated while loading.
+    if (await this.#checkReloadAndReturn()) {
+      return;
+    }
+
     if (!event) {
       // Only dismiss the dialog if the state hasn't changed while awaiting.
       if (eventId === this.getAttribute("event-id")) {
         console.error("Could not find", eventId, "in", calendarId);
         this.close();
       }
+
       return;
     }
     if (!event.isEvent()) {
       console.error(calendarId, eventId, "is not an event");
       this.close();
+
       return;
     }
 
@@ -228,10 +371,9 @@ export class CalendarDialog extends PositionedDialog {
       `var(--calendar-${cssSafeCalendarId}-backcolor)`
     );
 
-    this.querySelector(".event-title").textContent = event.title;
+    this.#title.textContent = event.title;
     this.querySelector(".calendar-name").textContent = calendar.name;
-    this.querySelector(".calendar-dialog-title").title =
-      `${calendar.name} - ${event.title}`;
+    this.#title.title = `${calendar.name} - ${event.title}`;
 
     const dateRow = this.querySelector("calendar-dialog-date-row");
     const startDate = cal.dtz.dateTimeToJsDate(event.startDate);
@@ -267,23 +409,75 @@ export class CalendarDialog extends PositionedDialog {
 
     this.querySelector("calendar-dialog-reminders-row").setReminders(reminders);
 
-    const plainDescriptionPromise = this.querySelector(
-      "#expandingDescription"
-    ).setDescription(event.descriptionText);
-    const richDescriptionPromise = this.querySelector(
-      "#expandedDescription"
-    ).setDescription(event.descriptionText, event.descriptionHTML);
-    await Promise.allSettled([plainDescriptionPromise, richDescriptionPromise]);
+    const attendees = event.getAttendees();
+
+    for (const attendeeView of this.querySelectorAll(
+      "calendar-dialog-attendees-row"
+    )) {
+      attendeeView.setAttendees(attendees);
+    }
+
+    this.querySelector("#expandAttendees").hidden = attendees.length <= 3;
+    this.querySelector(`#attendeesRow`).classList.toggle(
+      "expanding-row",
+      attendees.length > 3
+    );
+
+    const attachments = event.getAttachments();
+    if (attachments.length) {
+      document.l10n.setAttributes(
+        this.querySelector("#attachmentsRow .row-label"),
+        "calendar-dialog-attachments-summary-label",
+        { count: attachments.length }
+      );
+      this.querySelector("calendar-dialog-attachments-list").setAttachments(
+        attachments.map(attachment => ({
+          uri: attachment.uri.spec,
+          icon: lazy.getAttachmentIcon(attachment),
+        }))
+      );
+    }
+    this.querySelector("#attachmentsRow").hidden = !attachments.length;
+
+    this.#setJoinMeetingButton(event.descriptionText || "");
+
+    const acceptanceWidget = this.querySelector("calendar-dialog-acceptance");
+    const hasAttendees = event.getAttendees().length > 0;
+    acceptanceWidget.hidden = !hasAttendees;
+    if (hasAttendees) {
+      acceptanceWidget.setAttribute(
+        "status",
+        cal.itip.getInvitedAttendee(event, calendar).participationStatus
+      );
+    }
+
+    this.querySelector("#expandingDescription").setDescription(
+      event.descriptionText
+    );
+    this.querySelector("#expandedDescription").setDescription(
+      event.descriptionText,
+      event.descriptionHTML
+    );
+
+    if (await this.#checkReloadAndReturn()) {
+      return;
+    }
+
+    this.#loading = false;
+
+    this.#resolver();
+
+    this.showPromise = null;
   }
 
   /**
    * Clear the data displayed in the dialog.
    */
-  async #clearData() {
+  #clearData() {
     this.#subviewManager.showDefaultSubview();
-    this.querySelector(".event-title").textContent = "";
+    this.#title.textContent = "";
     this.querySelector(".calendar-name").textContent = "";
-    this.querySelector(".calendar-dialog-title").title = "";
+    this.#title.title = "";
 
     // Only clearing the repeats attribute, the dates are expected to always
     // have a value.
@@ -291,9 +485,16 @@ export class CalendarDialog extends PositionedDialog {
     this.querySelector("calendar-dialog-categories").setCategories([]);
     this.#setLocation("");
     this.style.removeProperty("--calendar-bar-color");
-    await this.querySelector("#expandingDescription").setDescription("");
-    await this.querySelector("#expandedDescription").setDescription("");
+    this.querySelector(
+      `calendar-dialog-attendees-row:not([type])`
+    ).setAttendees([]);
+    this.querySelector(`calendar-dialog-attendees-row[type]`).setAttendees([]);
     this.querySelector("calendar-dialog-reminders-row").setReminders([]);
+    this.querySelector("calendar-dialog-attachments-list").setAttachments([]);
+    this.querySelector("#attachmentsRow").hidden = true;
+    this.querySelector("calendar-dialog-acceptance").reset();
+    this.querySelector("#expandingDescription").setDescription("");
+    this.querySelector("#expandedDescription").setDescription("");
   }
 
   /**
@@ -311,6 +512,14 @@ export class CalendarDialog extends PositionedDialog {
       "hidden",
       !eventLocation
     );
+    this.querySelector("#locationRow").classList.toggle(
+      "divider",
+      eventLocation
+    );
+    this.querySelector("#joinMeetingRow").classList.toggle(
+      "divider",
+      !eventLocation
+    );
 
     if (parsedURL) {
       locationLink.textContent = eventLocation;
@@ -322,6 +531,29 @@ export class CalendarDialog extends PositionedDialog {
     locationText.textContent = eventLocation;
     locationLink.textContent = "";
     locationLink.setAttribute("href", "");
+  }
+
+  /**
+   * Sets the join meeting button link in the event dialog by parsing the
+   * description for any meeting links.
+   *
+   * @param {string} eventDescription - The event plain text description.
+   */
+  #setJoinMeetingButton(eventDescription) {
+    const joinMeetingRow = this.querySelector("#joinMeetingRow");
+    const meetingUrl = extractJoinLink(eventDescription);
+    joinMeetingRow.hidden = !meetingUrl;
+    this.#meetingUrl = meetingUrl;
+  }
+
+  /**
+   * Open the popup menu in the header.
+   */
+  #toggleMenu() {
+    this.querySelector("menupopup").openPopup(
+      this.querySelector(".menu-button"),
+      "after_end"
+    );
   }
 }
 

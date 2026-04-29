@@ -7,6 +7,9 @@
 const { CalEvent } = ChromeUtils.importESModule(
   "resource:///modules/CalEvent.sys.mjs"
 );
+const { CalAttendee } = ChromeUtils.importESModule(
+  "resource:///modules/CalAttendee.sys.mjs"
+);
 const { cal } = ChromeUtils.importESModule(
   "resource:///modules/calendar/calUtils.sys.mjs"
 );
@@ -22,6 +25,10 @@ const { DEFAULT_DIALOG_MARGIN } = ChromeUtils.importESModule(
 );
 const { CalAlarm } = ChromeUtils.importESModule(
   "resource:///modules/CalAlarm.sys.mjs"
+);
+
+const { CalAttachment } = ChromeUtils.importESModule(
+  "resource:///modules/CalAttachment.sys.mjs"
 );
 
 const { weekView } = CalendarTestUtils;
@@ -143,6 +150,8 @@ function createCalendar({
  * @param {string} [options.descriptionHTML] - HTML version of the
  *   description. Overrides description if truthy.
  * @param {CalAlarm[]} [options.alarms=[]] - Calendar alarms.
+ * @param {string[]} [options.attachments=[]] - Attached files.
+ * @param {calIAttendee[]} [options.attendees=[]] - Event Attendees.
  * @returns {CalEvent} - The created event.
  */
 async function createEvent({
@@ -157,6 +166,8 @@ async function createEvent({
   description = "",
   descriptionHTML,
   alarms = [],
+  attachments = [],
+  attendees = [],
 } = {}) {
   let start = new Date(baseDate);
   start.setDate(baseDate.getDate() + offset);
@@ -170,6 +181,15 @@ async function createEvent({
   end.setDate(baseDate.getDate() + offset + days);
   end = cal.dtz.jsDateToDateTime(end, 0);
   const event = new CalEvent();
+
+  for (const attendeeData of attendees) {
+    const attendee = new CalAttendee();
+    for (const [key, value] of Object.entries(attendeeData)) {
+      attendee[key] = value;
+    }
+    event.addAttendee(attendee);
+  }
+
   event.title = name;
   event.startDate = start;
   event.endDate = end;
@@ -194,6 +214,12 @@ async function createEvent({
     event.setProperty("LOCATION", location);
   }
 
+  for (const attachmentLocation of attachments) {
+    const attachment = new CalAttachment();
+    attachment.uri = Services.io.newURI(attachmentLocation);
+    event.addAttachment(attachment);
+  }
+
   const returnEvent = await calendar.addItem(event);
 
   return returnEvent;
@@ -216,6 +242,12 @@ async function openEvent({ eventBox }) {
   EventUtils.sendMouseEvent(dblClickEvent, eventBox, window);
 
   await readyPromise;
+
+  const dialog = document.querySelector('[is="calendar-dialog"]');
+
+  if (!dialog.open) {
+    await BrowserTestUtils.waitForAttribute("open", dialog);
+  }
 
   return eventBox;
 }
@@ -318,13 +350,14 @@ async function waitForCalendarReady() {
  *
  * @param {HTMLElement} target - The target element to compare against.
  * @param {string} message - The assertion message to display.
+ * @param {Document} [localDocument=document] - The document to operate in. Defaults to the global chrome document.
  */
-function checkTolerance(target, message) {
+function checkTolerance(target, message, localDocument = document) {
   const targetRect = target.getBoundingClientRect();
-  const dialogRect = document
+  const dialogRect = localDocument
     .querySelector('[is="calendar-dialog"]')
     .getBoundingClientRect();
-  const containerRect = document
+  const containerRect = localDocument
     .getElementById("calendarDisplayBox")
     .getBoundingClientRect();
 
@@ -504,8 +537,16 @@ async function positionTest({ calendar, duration = 1, offset, hour, size }) {
       `Duration: ${duration} - Offset: ${offset} - Hour: ${hour} - Window ${size.name} - Position ${JSON.stringify(position)}`
     );
   }
+  const dialog = document.querySelector('[is="calendar-dialog"]');
+  dialog?.close();
 
-  document.querySelector('[is="calendar-dialog"]')?.close();
+  if (dialog) {
+    await BrowserTestUtils.waitForCondition(
+      () => BrowserTestUtils.isHidden(dialog),
+      "Waiting for dialog to close and reset"
+    );
+  }
+
   await calendar.deleteItem(eventBox.occurrence);
 }
 

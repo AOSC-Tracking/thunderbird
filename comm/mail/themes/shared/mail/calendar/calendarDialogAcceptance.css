@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-:host {
+:host(:not([hidden])) {
   --space-available: calc(100% - 2px);
   --button-space: calc(var(--space-available)/3);
   background: var(--color-surface-subtle);
@@ -15,13 +15,15 @@
   inline-size: 100%;
 
   & .toggle {
-    background: #ff8933;
+    background: transparent;
     border-radius: 36px;
     box-shadow: none;
     block-size: 26px;
     position: absolute;
     inset-block-start: 2px;
-    transition: all 0.4s ease-in;
+    transition:
+      inset-inline-start 0.4s,
+      border-color 0.4s ease-in;
     inline-size: calc(calc(var(--space-available) - 15px) / 3);
   }
 
@@ -71,6 +73,12 @@
   }
 }
 
+:host([status="NEEDS-ACTION"]) {
+  & .toggle {
+    display: none;
+  }
+}
+
 #going {
   &:checked {
     & ~ .toggle {
@@ -111,14 +119,14 @@
   &:checked {
     & ~ .toggle {
       background-color: var(--color-surface-base);
-      border: 1px solid var(--color-surface-border-intense);
+      border: 1px solid var(--color-text-secondary);
       inset-inline-start: calc(var(--button-space) * 2 + 3px);
     }
     & ~ label[for="notGoing"] {
-      color: var(--color-surface-border-intense);
+      color: var(--color-text-secondary);
 
       & img {
-        --icon-stroke: var(--color-surface-border-intense);
+        --icon-stroke: var(--color-text-secondary);
         display: inline-block;
       }
     }

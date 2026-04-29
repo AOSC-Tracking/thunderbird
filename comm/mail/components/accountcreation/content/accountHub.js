@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+/* global isFirstRun */
+
 "use strict";
 
 var { MailServices } = ChromeUtils.importESModule(
@@ -50,6 +52,13 @@ class AccountHubControllerClass {
    * @type {?HTMLElement}
    */
   #currentView = null;
+
+  /**
+   * If this is the first time user experience.
+   *
+   * @type {boolean}
+   */
+  isFirstRun;
 
   /**
    * Object containing all strings to trigger the needed methods for the various
@@ -220,6 +229,11 @@ class AccountHubControllerClass {
       return;
     }
     Glean.mail.accountHubLoaded.record({ view_name: type });
+
+    // This is set and only updated on open. This will avoid any inconsistent
+    // experience if the state somehow changes mid flow.
+    this.isFirstRun = isFirstRun();
+    this.#modal.classList.toggle("account-hub-first-run", this.isFirstRun);
 
     await this.#views[type].call();
     if (!this.#modal.open) {

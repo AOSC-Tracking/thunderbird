@@ -4,8 +4,7 @@
 
 #ifndef NO_BROWSERCONTEXT
   <menupopup id="browserContext"
-             class="no-icon-menupopup"
-             native="false">
+             class="no-icon-menupopup">
     <!-- Browser navigation -->
     <menugroup id="context-navigation">
         <menuitem id="browserContext-back"
@@ -86,7 +85,7 @@
               oncommand="gContextMenu.addDictionaries();"/>
     <menu id="browserContext-spell-dictionaries"
           data-l10n-id="text-action-spell-dictionaries">
-        <menupopup id="browserContext-spell-dictionaries-menu" native="false">
+        <menupopup id="browserContext-spell-dictionaries-menu">
             <menuseparator id="browserContext-spell-language-separator"/>
             <menuitem id="browserContext-spell-add-dictionaries"
                       label="&spellAddDictionaries.label;"
@@ -146,7 +145,7 @@
   <panel id="DateTimePickerPanel"
          type="arrow"
          orient="vertical"
-         noautofocus="true"
+         noautofocus="noautofocus"
          norolluponanchor="true"
          consumeoutsideclicks="never"
          level="top"
@@ -161,7 +160,6 @@
     <menupopup rolluponmousewheel="true"
                activateontab="true" position="after_start"
                level="parent"
-               native="false"
 #ifdef XP_WIN
                consumeoutsideclicks="false" ignorekeys="shortcuts"
 #endif
@@ -171,6 +169,6 @@
   <panel is="autocomplete-richlistbox-popup" id="PopupAutoComplete"
          type="autocomplete"
          role="group"
-         noautofocus="true"/>
+         noautofocus="noautofocus"/>
 
   <tooltip id="remoteBrowserTooltip"/>

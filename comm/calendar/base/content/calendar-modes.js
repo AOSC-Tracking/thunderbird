@@ -46,6 +46,10 @@ function changeMode(mode = "mail") {
     elem.setAttribute("current", gCurrentMode);
   });
 
+  // The new calendar dialog should be hidden when switching mode, since it will
+  // otherwise overlay whatever tab we switch to.
+  document.getElementById("calendarDialog")?.close();
+
   TodayPane.onModeModified();
 }
 
@@ -116,10 +120,7 @@ function calSwitchToTaskMode() {
     document.getElementById("calMinimonth").setAttribute("freebusy", "true");
 
     const tree = document.getElementById("calendar-task-tree");
-    if (!tree.hasBeenVisible) {
-      tree.hasBeenVisible = true;
-      tree.refresh();
-    }
+    tree.ensureInitialized();
 
     document.commandDispatcher.updateCommands("calendar_commands");
     window.setCursor("auto");

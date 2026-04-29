@@ -38,6 +38,7 @@ let initialKeyIdPref = "";
 let gOutbox;
 
 const aboutMessage = get_about_message();
+const unobSigPrefName = "mail.openpgp.clear_signature_format";
 
 async function waitCheckEncryptionStateDone(win) {
   return BrowserTestUtils.waitForEvent(
@@ -51,6 +52,8 @@ async function waitCheckEncryptionStateDone(win) {
  * receiver.
  */
 add_setup(async function () {
+  Services.prefs.setStringPref(unobSigPrefName, "multipart");
+
   bobAcct = MailServices.accounts.createAccount();
   bobAcct.incomingServer = MailServices.accounts.createIncomingServer(
     "bob",
@@ -98,7 +101,7 @@ add_setup(async function () {
 
 /**
  * Tests composition of a message that is signed only shows as signed in the
- * Outbox.
+ * Outbox, and has header-protection header.
  */
 add_task(async function testSignedMessageComposition() {
   const autocryptPrefName = "mail.identity.default.sendAutocryptHeaders";
@@ -111,7 +114,7 @@ add_task(async function testSignedMessageComposition() {
 
   await setup_msg_contents(
     cwc,
-    "alice@openpgp.example",
+    "alice@openpgp.example, carol@example.com",
     "Compose Signed Message",
     "This is a signed message composition test."
   );
@@ -126,11 +129,25 @@ add_task(async function testSignedMessageComposition() {
   const src = await get_msg_source(msg);
   const lines = src.split("\n");
 
+  // Ensure no Gossip headers are included in signed-only message
+  // with multiple recipients for whom public keys are available.
+  Assert.ok(
+    !src.includes("Autocrypt-Gossip:"),
+    "Signed only email should not send Autocrypt-Gossip"
+  );
+
   Assert.ok(
     lines.some(
       line => line.trim() == "Autocrypt: addr=bob@openpgp.example; keydata="
     ),
     "Correct Autocrypt header found"
+  );
+
+  Assert.ok(
+    lines.some(
+      line => line.includes('; hp="clear"'),
+      "header-protection cipher line should have been found"
+    )
   );
 
   Assert.ok(
@@ -269,7 +286,7 @@ Autocrypt-Gossip: addr=carol@example.com; keydata=
 /**
  * Tests composition of a signed, encrypted message, for two recipients,
  * is shown as signed and encrypted in the Outbox, and has the
- * Autocrypt-Gossip headers.
+ * Autocrypt-Gossip headers, and has header-protection header
  */
 add_task(async function testSignedEncryptedMessageComposition() {
   await be_in_folder(bobAcct.incomingServer.rootFolder);
@@ -351,6 +368,13 @@ add_task(async function testSignedEncryptedMessageComposition() {
     );
   }
 
+  Assert.ok(
+    lines.some(
+      line => line.includes('; hp="cipher"'),
+      "header-protection cipher line should have been found"
+    )
+  );
+
   // Delete the message so other tests work.
   EventUtils.synthesizeKey("VK_DELETE");
 });
@@ -422,4 +446,5 @@ registerCleanupFunction(async function tearDown() {
   await OpenPGPTestUtils.removeKeyById("0xfbfcc82a015e7330", true);
   MailServices.accounts.removeIncomingServer(bobAcct.incomingServer, true);
   MailServices.accounts.removeAccount(bobAcct, true);
+  Services.prefs.clearUserPref(unobSigPrefName);
 });

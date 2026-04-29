@@ -34,6 +34,8 @@ const otherKeyName = AppConstants.platform == "macosx" ? "ctrlKey" : "metaKey";
  * @property {boolean} [icon=false] - Cell content is an icon.
  * @property {object} [l10n]
  * @property {string} [l10n.cell] - Fluent string to use in cells.
+ * @property {string} [l10n.a11y] - Fluent string to use as the screen-reader
+ *   label for the column header.
  * @property {string} [l10n.header] - Fluent string to use in the column header.
  * @property {string} [l10n.menuitem] - Fluent string to use in the column
  *   picker menu.
@@ -56,7 +58,7 @@ const otherKeyName = AppConstants.platform == "macosx" ? "ctrlKey" : "metaKey";
  * Main tree view container that takes care of generating the main scrollable
  * DIV and the tree table.
  */
-export class TreeView extends HTMLElement {
+export class BaseTreeView extends HTMLElement {
   static observedAttributes = ["rows"];
 
   /**
@@ -75,7 +77,7 @@ export class TreeView extends HTMLElement {
    * be visible at once.
    */
   #calculateToleranceBufferSize() {
-    this._toleranceSize = this.#calculateVisibleRowCount() * 2;
+    this._toleranceSize = this._calculateVisibleRowCount() * 2;
   }
 
   /**
@@ -128,19 +130,12 @@ export class TreeView extends HTMLElement {
   _view = null;
 
   /**
-   * The current selection.
+   * The current selection. This remains null in `BaseTreeView` but it's
+   * defined here to keep things simple.
    *
    * @type {nsITreeSelection}
    */
   _selection = null;
-
-  /**
-   * The function storing the timeout callback for the delayed select feature in
-   * order to clear it when not needed.
-   *
-   * @type {integer}
-   */
-  _selectTimeout = null;
 
   /**
    * A handle to the callback to fill the buffer when we aren't busy painting.
@@ -214,9 +209,10 @@ export class TreeView extends HTMLElement {
    *
    * WARNING: This may cause synchronous reflow if used after modifying the DOM.
    *
+   * @protected
    * @returns {integer} - The number of visible or partly-visible rows.
    */
-  #calculateVisibleRowCount() {
+  _calculateVisibleRowCount() {
     return Math.ceil(
       this.#calculateVisibleHeight() / this._rowElementClass.ROW_HEIGHT
     );
@@ -239,6 +235,8 @@ export class TreeView extends HTMLElement {
 
     this.placeholder = this.querySelector(`slot[name="placeholders"]`);
 
+    this.addEventListener("click", this);
+    this.addEventListener("keydown", this);
     this.addEventListener("scroll", this);
     this.addEventListener("mousedown", this);
 
@@ -273,7 +271,7 @@ export class TreeView extends HTMLElement {
       // There's not much point in reducing the number of rows on resize. Scroll
       // height remains the same and we can retain the extra rows in the buffer.
       if (this._height > previousHeight) {
-        this._ensureVisibleRowsAreDisplayed();
+        this.#ensureVisibleRowsAreDisplayed();
       } else {
         this.#dispatchRowBufferReadyEvent();
       }
@@ -299,270 +297,51 @@ export class TreeView extends HTMLElement {
 
   handleEvent(event) {
     switch (event.type) {
-      case "keyup": {
-        if (
-          ["Tab", "F6"].includes(event.key) &&
-          this.currentIndex == -1 &&
-          this.selectedIndex == -1 &&
-          this._view?.rowCount
-        ) {
-          this.currentIndex = this.#firstVisibleRowIndex;
-        }
-        break;
-      }
       case "click": {
-        // Bail out on non primary or double clicks.
-        if (event.button !== 0 || event.detail !== 1) {
-          // Ensure the focus is not moved somewhere else.
-          this.ensureCorrectFocus();
-          return;
-        }
-
-        const row = event.target.closest(`tr[is="${this._rowElementName}"]`);
-        if (!row) {
-          return;
-        }
-
-        const index = row.index;
-
-        if (event.target.classList.contains("tree-button-thread")) {
-          if (this._view.isContainerOpen(index)) {
-            let children = 0;
-            for (
-              let i = index + 1;
-              i < this._view.rowCount && this._view.getLevel(i) > 0;
-              i++
-            ) {
-              children++;
-            }
-            this._selectRange(index, index + children, event[accelKeyName]);
+        // This behaviour is only for BaseTreeView. TreeView replaces it.
+        const row = event.target.closest("tr");
+        if (
+          row &&
+          this._view.isContainer(row.index) &&
+          event.target.closest(".twisty")
+        ) {
+          if (this._view.isContainerOpen(row.index)) {
+            this.collapseRowAtIndex(row.index);
           } else {
-            const addedRows = this.expandRowAtIndex(index);
-            this._selectRange(index, index + addedRows, event[accelKeyName]);
+            const addedRows = this.expandRowAtIndex(row.index);
+            this.scrollExpandedRowIntoView(row.index, addedRows);
           }
-          this.ensureCorrectFocus();
-          return;
         }
-
-        if (this._view.isContainer(index) && event.target.closest(".twisty")) {
-          if (this._view.isContainerOpen(index)) {
-            this.collapseRowAtIndex(index);
-          } else {
-            const addedRows = this.expandRowAtIndex(index);
-            this.scrollExpandedRowIntoView(index, addedRows);
-          }
-          this.ensureCorrectFocus();
-          return;
-        }
-
-        // Handle the click as a CTRL extension if it happens on the checkbox
-        // image inside the selection column.
-        if (event.target.classList.contains("tree-view-row-select-checkbox")) {
-          if (event.shiftKey) {
-            this._selectRange(-1, index, event[accelKeyName]);
-          } else {
-            this._toggleSelected(index);
-          }
-          this.ensureCorrectFocus();
-          return;
-        }
-
-        if (event.target.classList.contains("tree-button-request-delete")) {
-          this.table.body.dispatchEvent(
-            new CustomEvent("request-delete", {
-              bubbles: true,
-              detail: {
-                index,
-              },
-            })
-          );
-          this.ensureCorrectFocus();
-          return;
-        }
-
-        if (event.target.classList.contains("tree-button-flag")) {
-          this.table.body.dispatchEvent(
-            new CustomEvent("toggle-flag", {
-              bubbles: true,
-              detail: {
-                isFlagged: row.dataset.properties.includes("flagged"),
-                index,
-              },
-            })
-          );
-          this.ensureCorrectFocus();
-          return;
-        }
-
-        if (event.target.classList.contains("tree-button-unread")) {
-          this.table.body.dispatchEvent(
-            new CustomEvent("toggle-unread", {
-              bubbles: true,
-              detail: {
-                isUnread: row.dataset.properties.includes("unread"),
-                index,
-              },
-            })
-          );
-          this.ensureCorrectFocus();
-          return;
-        }
-
-        if (event.target.classList.contains("tree-button-spam")) {
-          this.table.body.dispatchEvent(
-            new CustomEvent("toggle-spam", {
-              bubbles: true,
-              detail: {
-                isJunk: row.dataset.properties.split(" ").includes("junk"),
-                index,
-              },
-            })
-          );
-          this.ensureCorrectFocus();
-          return;
-        }
-
-        if (event[accelKeyName] && !event.shiftKey) {
-          this._toggleSelected(index);
-        } else if (event.shiftKey) {
-          this._selectRange(-1, index, event[accelKeyName]);
-        } else {
-          this._selectSingle(index);
-        }
-
-        this.ensureCorrectFocus();
         break;
       }
       case "keydown": {
-        // Row and cell navigation on Windows. Supports JAWS and NVDA.
-        // Row and cell navigation on Linux. Supports Orca.
-        // TODO: Add navigation for macOS.
-        // macOS VoiceOver uses the Caps Lock key or both Control + Option.
-        const isA11yCellNavigation =
-          (AppConstants.platform == "win" && event.altKey && event.ctrlKey) ||
-          (AppConstants.platform == "linux" && event.altKey && event.shiftKey);
-
-        if (event[otherKeyName]) {
-          return;
+        // This behaviour is only for BaseTreeView. TreeView replaces it.
+        const row = event.target.closest("tr");
+        if (!row || event[otherKeyName]) {
+          break;
         }
 
-        const currentIndex = this.currentIndex == -1 ? 0 : this.currentIndex;
-        let newIndex;
-        switch (event.key) {
-          case "ArrowUp":
-            this.removeCurrentCellClass();
-            newIndex = currentIndex - 1;
-            break;
-          case "ArrowDown":
-            this.removeCurrentCellClass();
-            newIndex = currentIndex + 1;
-            break;
-          case "ArrowLeft":
-          case "ArrowRight": {
-            event.preventDefault();
-            if (isA11yCellNavigation) {
-              this.navigateRowCells(event);
-              return;
-            }
-            if (this.currentIndex == -1) {
-              return;
-            }
-            const isArrowRight = event.key == "ArrowRight";
-            const isRTL = this.matches(":dir(rtl)");
-            if (isArrowRight == isRTL) {
-              // Collapse action.
-              const currentLevel = this._view.getLevel(this.currentIndex);
-              if (this._view.isContainerOpen(this.currentIndex)) {
-                this.collapseRowAtIndex(this.currentIndex);
-                return;
-              } else if (currentLevel == 0) {
-                return;
-              }
-
-              const parentIndex = this._view.getParentIndex(this.currentIndex);
-              if (parentIndex != -1) {
-                newIndex = parentIndex;
-              }
-            } else if (this._view.isContainer(this.currentIndex)) {
-              // Expand action.
-              if (!this._view.isContainerOpen(this.currentIndex)) {
-                const addedRows = this.expandRowAtIndex(this.currentIndex);
-                this.scrollExpandedRowIntoView(
-                  this.currentIndex,
-                  addedRows,
-                  true
-                );
-              } else {
-                newIndex = this.currentIndex + 1;
-              }
-            }
-            if (newIndex != undefined) {
-              this._selectSingle(newIndex);
-            }
-            return;
-          }
-          case "Home":
-            newIndex = 0;
-            break;
-          case "End":
-            newIndex = this._view.rowCount - 1;
-            break;
-          case "PageUp":
-            newIndex = Math.max(
-              0,
-              currentIndex - this.#calculateVisibleRowCount()
-            );
-            break;
-          case "PageDown":
-            newIndex = Math.min(
-              this._view.rowCount - 1,
-              currentIndex + this.#calculateVisibleRowCount()
-            );
-            break;
-        }
-
-        if (newIndex != undefined) {
-          newIndex = this._clampIndex(newIndex);
-          if (newIndex != null) {
-            if (event[accelKeyName] && !event.shiftKey) {
-              // Change focus, but not selection.
-              this.currentIndex = newIndex;
-            } else if (event.shiftKey) {
-              this._selectRange(-1, newIndex, event[accelKeyName]);
-            } else {
-              this._selectSingle(newIndex, true);
-            }
-          }
+        if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
           event.preventDefault();
-          return;
-        }
-
-        // Space bar keystroke selection toggling.
-        if (event.key == " " && this.currentIndex != -1) {
-          // Don't do anything if we're on macOS and the target row is already
-          // selected.
-          if (
-            AppConstants.platform == "macosx" &&
-            this._selection.isSelected(this.currentIndex)
-          ) {
-            return;
-          }
-
-          // Handle the macOS exception of toggling the selection with only
-          // the space bar since CMD+Space is captured by the OS.
-          if (event[accelKeyName] || AppConstants.platform == "macosx") {
-            this._toggleSelected(this.currentIndex);
-            event.preventDefault();
-          } else if (!this._selection.isSelected(this.currentIndex)) {
-            // The target row is not currently selected.
-            this._selectSingle(this.currentIndex, true);
-            event.preventDefault();
+          const isArrowRight = event.key == "ArrowRight";
+          const isRTL = this.matches(":dir(rtl)");
+          if (isArrowRight == isRTL) {
+            // Collapse action.
+            if (this._view.isContainerOpen(row.index)) {
+              this.collapseRowAtIndex(row.index);
+            }
+          } else if (this._view.isContainer(row.index)) {
+            // Expand action.
+            if (!this._view.isContainerOpen(row.index)) {
+              const addedRows = this.expandRowAtIndex(row.index);
+              this.scrollExpandedRowIntoView(row.index, addedRows, true);
+            }
           }
         }
         break;
       }
       case "scroll":
-        this._ensureVisibleRowsAreDisplayed(true);
+        this.#ensureVisibleRowsAreDisplayed(true);
         break;
       case "mousedown":
         // If this happened on the empty space below the tree table, set or
@@ -585,23 +364,14 @@ export class TreeView extends HTMLElement {
   }
 
   set view(view) {
-    this._selection = null;
     if (this._view) {
       this._view.setTree(null);
       this._view.selection = null;
-    }
-    if (this._selection) {
-      this._selection.view = null;
     }
 
     this._view = view;
     if (view) {
       try {
-        this._selection = new TreeSelection();
-        this._selection.tree = this;
-        this._selection.view = view;
-
-        view.selection = this._selection;
         view.setTree(this);
       } catch (ex) {
         // This isn't a XULTreeElement, and we can't make it one, so if the
@@ -613,7 +383,7 @@ export class TreeView extends HTMLElement {
     }
 
     // Clear the height of the top spacer to avoid confusing
-    // `_ensureVisibleRowsAreDisplayed`.
+    // `#ensureVisibleRowsAreDisplayed`.
     this.table.spacerTop.setHeight(0);
     this.reset();
 
@@ -650,7 +420,7 @@ export class TreeView extends HTMLElement {
       currentCell.classList.remove("current-cell");
       cell.classList.add("current-cell");
       cell.focus();
-      this.table.body.setAttribute("aria-activedescendant", cell.id);
+      this.table.body.ariaActiveDescendantElement = cell;
       return;
     }
 
@@ -669,7 +439,7 @@ export class TreeView extends HTMLElement {
     }
     cell.classList.add("current-cell");
     cell.focus();
-    this.table.body.setAttribute("aria-activedescendant", cell.id);
+    this.table.body.ariaActiveDescendantElement = cell;
   }
 
   /**
@@ -752,7 +522,7 @@ export class TreeView extends HTMLElement {
    */
   reset() {
     this.#resetRowBuffer();
-    this._ensureVisibleRowsAreDisplayed();
+    this.#ensureVisibleRowsAreDisplayed();
   }
 
   /**
@@ -770,16 +540,19 @@ export class TreeView extends HTMLElement {
    * on its own.
    *
    * @param {integer} index
+   * @param {integer} [rowCount] - Pass this to avoid repeated calculation.
    */
-  #doInvalidateRow(index) {
-    const rowCount = this._view?.rowCount ?? 0;
+  #doInvalidateRow(index, rowCount) {
+    rowCount ??= this._view?.rowCount ?? 0;
     const row = this.getRowAtIndex(index);
     if (row) {
       if (index >= rowCount) {
-        this._removeRowAtIndex(index);
+        this.#removeRowAtIndex(index);
       } else {
         row.index = index;
-        row.selected = this._selection.isSelected(index);
+        if (this._selection) {
+          row.selected = this._selection.isSelected(index);
+        }
       }
     } else if (
       index >= this.#firstBufferRowIndex &&
@@ -796,15 +569,16 @@ export class TreeView extends HTMLElement {
    * @param {integer} endIndex
    */
   invalidateRange(startIndex, endIndex) {
+    const rowCount = this._view?.rowCount ?? 0;
     for (
       let index = Math.max(startIndex, this.#firstBufferRowIndex),
         last = Math.min(endIndex, this.#lastBufferRowIndex);
       index <= last;
       index++
     ) {
-      this.#doInvalidateRow(index);
+      this.#doInvalidateRow(index, rowCount);
     }
-    this._ensureVisibleRowsAreDisplayed();
+    this.#ensureVisibleRowsAreDisplayed();
   }
 
   /**
@@ -1070,16 +844,17 @@ export class TreeView extends HTMLElement {
    * @param {boolean} [fillImmediately=false] - If true, any rows added are
    *   filled immediately instead of waiting for an animation frame.
    */
-  _ensureVisibleRowsAreDisplayed(fillImmediately = false) {
+  #ensureVisibleRowsAreDisplayed(fillImmediately = false) {
     this.#cancelToleranceFillCallback();
 
     const rowCount = this._view?.rowCount ?? 0;
+    this.table.ariaRowCount = this.table.body.ariaRowCount = rowCount;
     if (!rowCount) {
       this.dispatchEvent(new CustomEvent("showplaceholder"));
     }
     this.placeholder?.classList.toggle("show", !rowCount);
 
-    if (!rowCount || this.#calculateVisibleRowCount() == 0) {
+    if (!rowCount || this._calculateVisibleRowCount() == 0) {
       return;
     }
 
@@ -1146,7 +921,7 @@ export class TreeView extends HTMLElement {
       const pruneBeforeRow = this.getRowAtIndex(ranges.pruneBefore);
       let rowToPrune = pruneBeforeRow.previousElementSibling;
       while (rowToPrune) {
-        this._removeRowAtIndex(rowToPrune.index);
+        this.#removeRowAtIndex(rowToPrune.index);
         rowToPrune = pruneBeforeRow.previousElementSibling;
       }
     }
@@ -1155,7 +930,7 @@ export class TreeView extends HTMLElement {
       const pruneAfterRow = this.getRowAtIndex(ranges.pruneAfter);
       let rowToPrune = pruneAfterRow.nextElementSibling;
       while (rowToPrune) {
-        this._removeRowAtIndex(rowToPrune.index);
+        this.#removeRowAtIndex(rowToPrune.index);
         rowToPrune = pruneAfterRow.nextElementSibling;
       }
     }
@@ -1254,22 +1029,18 @@ export class TreeView extends HTMLElement {
    *
    * @param {integer} index - The position in the existing list where rows were
    *   added or removed.
-   * @param {integer} delta - The change in number of rows; positive if rows
+   * @param {integer} _delta - The change in number of rows; positive if rows
    *   were added and negative if rows were removed.
    */
-  rowCountChanged(index, delta) {
-    if (!this._selection) {
-      return;
-    }
-
-    this._selection.adjustSelection(index, delta);
-    this._updateCurrentIndexClasses();
+  rowCountChanged(index, _delta) {
+    this.invalidateRange(index, this.view.rowCount - 1);
     this.dispatchEvent(new CustomEvent("rowcountchange"));
   }
 
   /**
    * Clamps `index` to a value between 0 and `rowCount - 1`.
    *
+   * @protected
    * @param {integer} index
    * @returns {integer}
    */
@@ -1294,6 +1065,7 @@ export class TreeView extends HTMLElement {
    *   inserted before this row.
    * @param {boolean} [fillImmediately=false] - The row will be filled
    *   immediately instead of waiting for an animation frame.
+   * @returns {HTMLTableRowElement}
    */
   _addRowAtIndex(index, before = null, fillImmediately = false) {
     const row = document.createElement("tr", { is: this._rowElementName });
@@ -1306,14 +1078,8 @@ export class TreeView extends HTMLElement {
       row.fillRow();
     }
 
-    if (this._selection?.isSelected(index)) {
-      row.selected = true;
-    }
-    if (this.currentIndex === index) {
-      row.classList.add("current");
-      this.table.body.setAttribute("aria-activedescendant", row.id);
-    }
     this._rows.set(index, row);
+    return row;
   }
 
   /**
@@ -1328,13 +1094,14 @@ export class TreeView extends HTMLElement {
       return;
     }
 
+    row.ariaRowIndex = row.index + 1;
     // If this._view is a `TreeDataAdapter`, we should be able to get the view
     // row object, and that'll be much faster than the other method below.
     const viewRow = this._view.rowAt?.(row.index);
-    if (viewRow?.parent) {
+    if (viewRow) {
       row.ariaLevel = viewRow.level + 1;
-      row.ariaSetSize = viewRow.parent.children.length;
-      row.ariaPosInSet = viewRow.parent.children.indexOf(viewRow) + 1;
+      row.ariaSetSize = viewRow.setSize;
+      row.ariaPosInSet = viewRow.posInSet + 1;
       return;
     }
 
@@ -1374,7 +1141,7 @@ export class TreeView extends HTMLElement {
    *
    * @param {integer} index
    */
-  _removeRowAtIndex(index) {
+  #removeRowAtIndex(index) {
     const row = this._rows.get(index);
     row?.remove();
     this._rows.delete(index);
@@ -1402,16 +1169,25 @@ export class TreeView extends HTMLElement {
       return;
     }
 
-    // If the selected row is going to be collapsed, move the selection.
-    // Even if the row to be collapsed is already selected, set
-    // selectIndex to ensure currentIndex also points to the correct row.
-    let selectedIndex = this.selectedIndex;
-    while (selectedIndex >= index) {
-      if (selectedIndex == index) {
-        this.selectedIndex = index;
-        break;
+    // Mark this row so that the twisty animates (AutoTreeView only).
+    // The property is cleared when the row is invalidated and filled.
+    const row = this.getRowAtIndex(index);
+    if (row) {
+      row._twistyAnimating = true;
+    }
+
+    if (this._selection) {
+      // If the selected row is going to be collapsed, move the selection.
+      // Even if the row to be collapsed is already selected, set
+      // selectIndex to ensure currentIndex also points to the correct row.
+      let selectedIndex = this.selectedIndex;
+      while (selectedIndex >= index) {
+        if (selectedIndex == index) {
+          this.selectedIndex = index;
+          break;
+        }
+        selectedIndex = this._view.getParentIndex(selectedIndex);
       }
-      selectedIndex = this._view.getParentIndex(selectedIndex);
     }
 
     // Check if the view calls rowCountChanged. If it didn't, we'll have to
@@ -1447,6 +1223,13 @@ export class TreeView extends HTMLElement {
   expandRowAtIndex(index) {
     if (!this._view.isContainer(index) || this._view.isContainerOpen(index)) {
       return 0;
+    }
+
+    // Mark this row so that the twisty animates (AutoTreeView only).
+    // The property is cleared when the row is invalidated and filled.
+    const row = this.getRowAtIndex(index);
+    if (row) {
+      row._twistyAnimating = true;
     }
 
     // Check if the view calls rowCountChanged. If it didn't, we'll have to
@@ -1500,7 +1283,7 @@ export class TreeView extends HTMLElement {
         (index +
           Math.min(
             addedRows - index + firstIndex,
-            this.#calculateVisibleRowCount() - 1
+            this._calculateVisibleRowCount() - 1
           )) +
       rowHeight;
     const topOfFirstRow = rowHeight * index;
@@ -1518,6 +1301,410 @@ export class TreeView extends HTMLElement {
         behavior: "auto",
       });
     }
+  }
+
+  /**
+   * Loop through all available child elements of the placeholder slot and
+   * show those that are needed.
+   *
+   * @param {Array} idsToShow - Array of ids to show.
+   */
+  updatePlaceholders(idsToShow) {
+    for (const element of this.placeholder.children) {
+      element.hidden = !idsToShow.includes(element.id);
+    }
+  }
+
+  /**
+   * Move the focus back to the widget that is in charge of accessibility.
+   */
+  ensureCorrectFocus() {
+    this.table.body.focus();
+  }
+}
+customElements.define("base-tree-view", BaseTreeView);
+
+export class TreeView extends BaseTreeView {
+  /**
+   * The function storing the timeout callback for the delayed select feature in
+   * order to clear it when not needed.
+   *
+   * @type {integer}
+   */
+  #selectTimeout = null;
+
+  connectedCallback() {
+    super.connectedCallback();
+    this.addEventListener("keyup", this);
+  }
+
+  handleEvent(event) {
+    switch (event.type) {
+      case "keyup": {
+        if (!event.target.closest(`[is="tree-view-table-body"]`)) {
+          break;
+        }
+        if (
+          ["Tab", "F6"].includes(event.key) &&
+          this.currentIndex == -1 &&
+          this.selectedIndex == -1 &&
+          this._view?.rowCount
+        ) {
+          this.currentIndex = this.getFirstVisibleIndex();
+        }
+        break;
+      }
+      case "click": {
+        // This completely replaces the "click" handler in BaseTreeView.
+        if (!event.target.closest(`[is="tree-view-table-body"]`)) {
+          break;
+        }
+        // Bail out on non primary or double clicks.
+        if (event.button !== 0 || event.detail !== 1) {
+          // Ensure the focus is not moved somewhere else.
+          this.ensureCorrectFocus();
+          return;
+        }
+
+        const row = event.target.closest(`tr[is="${this._rowElementName}"]`);
+        if (!row) {
+          return;
+        }
+
+        const index = row.index;
+
+        if (event.target.classList.contains("tree-button-thread")) {
+          if (this._view.isContainerOpen(index)) {
+            let children = 0;
+            for (
+              let i = index + 1;
+              i < this._view.rowCount && this._view.getLevel(i) > 0;
+              i++
+            ) {
+              children++;
+            }
+            this._selectRange(index, index + children, event[accelKeyName]);
+          } else {
+            const addedRows = this.expandRowAtIndex(index);
+            this._selectRange(index, index + addedRows, event[accelKeyName]);
+          }
+          this.ensureCorrectFocus();
+          return;
+        }
+
+        if (this._view.isContainer(index) && event.target.closest(".twisty")) {
+          if (this._view.isContainerOpen(index)) {
+            this.collapseRowAtIndex(index);
+          } else {
+            const addedRows = this.expandRowAtIndex(index);
+            this.scrollExpandedRowIntoView(index, addedRows);
+          }
+          this.ensureCorrectFocus();
+          return;
+        }
+
+        // Handle the click as a CTRL extension if it happens on the checkbox
+        // image inside the selection column.
+        if (event.target.classList.contains("tree-view-row-select-checkbox")) {
+          if (event.shiftKey) {
+            this._selectRange(-1, index, event[accelKeyName]);
+          } else {
+            this._toggleSelected(index);
+          }
+          this.ensureCorrectFocus();
+          return;
+        }
+
+        if (event.target.classList.contains("tree-button-request-delete")) {
+          this.table.body.dispatchEvent(
+            new CustomEvent("request-delete", {
+              bubbles: true,
+              detail: {
+                index,
+              },
+            })
+          );
+          this.ensureCorrectFocus();
+          return;
+        }
+
+        if (event.target.classList.contains("tree-button-flag")) {
+          this.table.body.dispatchEvent(
+            new CustomEvent("toggle-flag", {
+              bubbles: true,
+              detail: {
+                isFlagged: row.dataset.properties.includes("flagged"),
+                index,
+              },
+            })
+          );
+          this.ensureCorrectFocus();
+          return;
+        }
+
+        if (event.target.classList.contains("tree-button-unread")) {
+          this.table.body.dispatchEvent(
+            new CustomEvent("toggle-unread", {
+              bubbles: true,
+              detail: {
+                isUnread: row.dataset.properties.includes("unread"),
+                index,
+              },
+            })
+          );
+          this.ensureCorrectFocus();
+          return;
+        }
+
+        if (event.target.classList.contains("tree-button-spam")) {
+          this.table.body.dispatchEvent(
+            new CustomEvent("toggle-spam", {
+              bubbles: true,
+              detail: {
+                isJunk: row.dataset.properties.split(" ").includes("junk"),
+                index,
+              },
+            })
+          );
+          this.ensureCorrectFocus();
+          return;
+        }
+
+        if (event[accelKeyName] && !event.shiftKey) {
+          this._toggleSelected(index);
+        } else if (event.shiftKey) {
+          this._selectRange(-1, index, event[accelKeyName]);
+        } else {
+          this._selectSingle(index);
+        }
+
+        this.ensureCorrectFocus();
+        break;
+      }
+      case "keydown": {
+        // This completely replaces the "keydown" handler in BaseTreeView.
+        if (
+          !event.target.closest(`[is="tree-view-table-body"]`) ||
+          event[otherKeyName]
+        ) {
+          break;
+        }
+
+        // Row and cell navigation on Windows. Supports JAWS and NVDA.
+        // Row and cell navigation on Linux. Supports Orca.
+        // TODO: Add navigation for macOS.
+        // macOS VoiceOver uses the Caps Lock key or both Control + Option.
+        const isA11yCellNavigation =
+          (AppConstants.platform == "win" && event.altKey && event.ctrlKey) ||
+          (AppConstants.platform == "linux" && event.altKey && event.shiftKey);
+
+        const currentIndex = this.currentIndex == -1 ? 0 : this.currentIndex;
+        let newIndex;
+        switch (event.key) {
+          case "ArrowUp":
+            this.removeCurrentCellClass();
+            newIndex = currentIndex - 1;
+            break;
+          case "ArrowDown":
+            this.removeCurrentCellClass();
+            newIndex = currentIndex + 1;
+            break;
+          case "ArrowLeft":
+          case "ArrowRight": {
+            event.preventDefault();
+            if (isA11yCellNavigation) {
+              this.navigateRowCells(event);
+              return;
+            }
+            if (this.currentIndex == -1) {
+              return;
+            }
+            const isArrowRight = event.key == "ArrowRight";
+            const isRTL = this.matches(":dir(rtl)");
+            if (isArrowRight == isRTL) {
+              // Collapse action.
+              const currentLevel = this._view.getLevel(this.currentIndex);
+              if (this._view.isContainerOpen(this.currentIndex)) {
+                this.collapseRowAtIndex(this.currentIndex);
+                return;
+              } else if (currentLevel == 0) {
+                return;
+              }
+
+              const parentIndex = this._view.getParentIndex(this.currentIndex);
+              if (parentIndex != -1) {
+                newIndex = parentIndex;
+              }
+            } else if (this._view.isContainer(this.currentIndex)) {
+              // Expand action.
+              if (!this._view.isContainerOpen(this.currentIndex)) {
+                const addedRows = this.expandRowAtIndex(this.currentIndex);
+                this.scrollExpandedRowIntoView(
+                  this.currentIndex,
+                  addedRows,
+                  true
+                );
+              } else {
+                newIndex = this.currentIndex + 1;
+              }
+            }
+            if (newIndex != undefined) {
+              this._selectSingle(newIndex);
+            }
+            return;
+          }
+          case "Home":
+            newIndex = 0;
+            break;
+          case "End":
+            newIndex = this._view.rowCount - 1;
+            break;
+          case "PageUp":
+            newIndex = Math.max(
+              0,
+              currentIndex - this._calculateVisibleRowCount()
+            );
+            break;
+          case "PageDown":
+            newIndex = Math.min(
+              this._view.rowCount - 1,
+              currentIndex + this._calculateVisibleRowCount()
+            );
+            break;
+        }
+
+        if (newIndex != undefined) {
+          newIndex = this._clampIndex(newIndex);
+          if (newIndex != null) {
+            if (event[accelKeyName] && !event.shiftKey) {
+              // Change focus, but not selection.
+              this.currentIndex = newIndex;
+            } else if (event.shiftKey) {
+              this._selectRange(-1, newIndex, event[accelKeyName]);
+            } else {
+              this._selectSingle(newIndex, true);
+            }
+          }
+          event.preventDefault();
+          return;
+        }
+
+        // Space bar keystroke selection toggling.
+        if (event.key == " " && this.currentIndex != -1) {
+          // Don't do anything if we're on macOS and the target row is already
+          // selected.
+          if (
+            AppConstants.platform == "macosx" &&
+            this._selection.isSelected(this.currentIndex)
+          ) {
+            return;
+          }
+
+          // Handle the macOS exception of toggling the selection with only
+          // the space bar since CMD+Space is captured by the OS.
+          if (event[accelKeyName] || AppConstants.platform == "macosx") {
+            this._toggleSelected(this.currentIndex);
+            event.preventDefault();
+          } else if (!this._selection.isSelected(this.currentIndex)) {
+            // The target row is not currently selected.
+            this._selectSingle(this.currentIndex, true);
+            event.preventDefault();
+          }
+        }
+        break;
+      }
+      default:
+        // "scroll" and "mousedown" events are handled in BaseTreeView.
+        super.handleEvent(event);
+        break;
+    }
+  }
+
+  /**
+   * The current view for this list.
+   *
+   * @type {nsITreeView|TreeDataAdapter}
+   */
+  get view() {
+    return this._view;
+  }
+
+  set view(view) {
+    if (this._view) {
+      this._view.setTree(null);
+      this._view.selection = null;
+    }
+    if (this._selection) {
+      this._selection.view = null;
+      this._selection = null;
+    }
+
+    this._view = view;
+    if (view) {
+      this._selection = new TreeSelection();
+      this._selection.tree = this;
+      this._selection.view = view;
+
+      view.selection = this._selection;
+      try {
+        view.setTree(this);
+      } catch (ex) {
+        // This isn't a XULTreeElement, and we can't make it one, so if the
+        // `setTree` call crosses XPCOM, an exception will be thrown.
+        if (ex.result != Cr.NS_ERROR_XPC_BAD_CONVERT_JS) {
+          throw ex;
+        }
+      }
+    }
+
+    // Clear the height of the top spacer to avoid confusing
+    // `#ensureVisibleRowsAreDisplayed`.
+    this.table.spacerTop.setHeight(0);
+    this.reset();
+
+    this.dispatchEvent(new CustomEvent("viewchange"));
+  }
+
+  /**
+   * Updates the list to reflect added or removed rows.
+   *
+   * @param {integer} index - The position in the existing list where rows were
+   *   added or removed.
+   * @param {integer} delta - The change in number of rows; positive if rows
+   *   were added and negative if rows were removed.
+   */
+  rowCountChanged(index, delta) {
+    if (!this._selection) {
+      return;
+    }
+
+    this._selection.adjustSelection(index, delta);
+    this._updateCurrentIndexClasses();
+    this.dispatchEvent(new CustomEvent("rowcountchange"));
+  }
+
+  /**
+   * Creates a new row element and adds it to the DOM.
+   *
+   * @param {integer} index
+   * @param {HTMLTableRowElement} [before] - If given, the added row will be
+   *   inserted before this row.
+   * @param {boolean} [fillImmediately=false] - The row will be filled
+   *   immediately instead of waiting for an animation frame.
+   * @returns {HTMLTableRowElement}
+   */
+  _addRowAtIndex(index, before = null, fillImmediately = false) {
+    const row = super._addRowAtIndex(index, before, fillImmediately);
+
+    if (this._selection?.isSelected(index)) {
+      row.selected = true;
+    }
+    if (this.currentIndex === index) {
+      row.classList.add("current");
+      this.table.body.ariaActiveDescendantElement = row;
+    }
+
+    return row;
   }
 
   /**
@@ -1554,7 +1741,7 @@ export class TreeView extends HTMLElement {
     }
 
     if (!this._view || index < 0 || index > this._view.rowCount - 1) {
-      this.table.body.removeAttribute("aria-activedescendant");
+      this.table.body.ariaActiveDescendantElement = null;
       return;
     }
 
@@ -1565,15 +1752,16 @@ export class TreeView extends HTMLElement {
       // example when we delete the first message with ID 0, the next message
       // becomes ID 0 itself. Therefore the attribute wouldn't trigger the screen
       // reader to announce the new message without being cleared first.
-      this.table.body.removeAttribute("aria-activedescendant");
+      this.table.body.ariaActiveDescendantElement = null;
       row.classList.add("current");
-      this.table.body.setAttribute("aria-activedescendant", row.id);
+      this.table.body.ariaActiveDescendantElement = row;
     }
   }
 
   /**
    * Select and focus the given index.
    *
+   * @protected
    * @param {integer} index - The index to select.
    * @param {boolean} [delaySelect=false] - If the selection should be delayed.
    */
@@ -1593,6 +1781,7 @@ export class TreeView extends HTMLElement {
   /**
    * Start or extend a range selection to the given index and focus it.
    *
+   * @protected
    * @param {number} start - Start index of selection. -1 for current index.
    * @param {number} end - End index of selection.
    * @param {boolean} [extend=false] - If the new selection range should extend
@@ -1607,6 +1796,7 @@ export class TreeView extends HTMLElement {
   /**
    * Toggle the selection state at the given index and focus it.
    *
+   * @protected
    * @param {integer} index - The index to toggle.
    */
   _toggleSelected(index) {
@@ -1732,18 +1922,6 @@ export class TreeView extends HTMLElement {
   }
 
   /**
-   * Loop through all available child elements of the placeholder slot and
-   * show those that are needed.
-   *
-   * @param {Array} idsToShow - Array of ids to show.
-   */
-  updatePlaceholders(idsToShow) {
-    for (const element of this.placeholder.children) {
-      element.hidden = !idsToShow.includes(element.id);
-    }
-  }
-
-  /**
    * Update the classes on the table element to reflect the current selection
    * state, and dispatch an event to allow implementations to handle the
    * change in the selection state.
@@ -1781,8 +1959,8 @@ export class TreeView extends HTMLElement {
     // No need to handle a delayed select if not required.
     if (!delaySelect) {
       // Clear the timeout in case something was still running.
-      if (this._selectTimeout) {
-        window.clearTimeout(this._selectTimeout);
+      if (this.#selectTimeout) {
+        window.clearTimeout(this.#selectTimeout);
       }
       this.dispatchEvent(new CustomEvent("select", { bubbles: true }));
       return;
@@ -1790,21 +1968,14 @@ export class TreeView extends HTMLElement {
 
     const delay = this.dataset.selectDelay || 50;
     if (delay != -1) {
-      if (this._selectTimeout) {
-        window.clearTimeout(this._selectTimeout);
+      if (this.#selectTimeout) {
+        window.clearTimeout(this.#selectTimeout);
       }
-      this._selectTimeout = window.setTimeout(() => {
+      this.#selectTimeout = window.setTimeout(() => {
         this.dispatchEvent(new CustomEvent("select", { bubbles: true }));
-        this._selectTimeout = null;
+        this.#selectTimeout = null;
       }, delay);
     }
-  }
-
-  /**
-   * Move the focus back to the widget that is in charge of accessibility.
-   */
-  ensureCorrectFocus() {
-    this.table.body.focus();
   }
 }
 customElements.define("tree-view", TreeView);
@@ -2064,7 +2235,7 @@ class TreeViewTableHeader extends HTMLTableSectionElement {
    * @param {HTMLTableRowElement} element - The row to animate.
    * @param {number} to - The new X position of the element after animation.
    */
-  static _transitionTranslation(element, to) {
+  static #transitionTranslation(element, to) {
     element.style.transform = to ? `translateX(${to}px)` : null;
     element.classList.toggle("column-moved-by-dragging", to);
   }
@@ -2102,7 +2273,6 @@ class TreeViewTableHeader extends HTMLTableSectionElement {
     this.#pickerContext = document.createXULElement("menupopup");
     this.#pickerContext.classList.add("menupopup-column-picker");
     this.#pickerContext.setAttribute("position", "bottomleft topleft");
-    this.#pickerContext.setAttribute("native", "false");
     this.#pickerContext.addEventListener("popupshowing", event => {
       // Bail out if we're opening a submenu.
       if (event.target != this.#pickerContext) {
@@ -2332,7 +2502,7 @@ class TreeViewTableHeader extends HTMLTableSectionElement {
       } else if (!afterDraggedTh) {
         multiplier = 1;
       }
-      TreeViewTableHeader._transitionTranslation(
+      TreeViewTableHeader.#transitionTranslation(
         headerCell,
         multiplier * cell.clientWidth
       );
@@ -2566,6 +2736,9 @@ class TreeViewTableHeaderCell extends HTMLTableCellElement {
     this.id = column.id;
     this.#button.id = `${column.id}Button`;
 
+    if (column.l10n?.a11y) {
+      document.l10n.setAttributes(this, column.l10n.a11y);
+    }
     if (column.l10n?.header) {
       document.l10n.setAttributes(this.#button, column.l10n.header);
     } else if (column.name && !column.icon) {
@@ -2625,15 +2798,6 @@ class TreeViewTableHeaderCell extends HTMLTableCellElement {
     if (column.delete) {
       this.#button.classList.add("tree-view-header-delete");
     }
-  }
-
-  /**
-   * Set this table header as responsible for the sorting of rows.
-   *
-   * @param {"ascending"|"descending"} direction - The new sorting direction.
-   */
-  setSorting(direction) {
-    this.#button.classList.add("sorting", direction);
   }
 
   /**
@@ -2724,10 +2888,6 @@ class TreeViewTableBody extends HTMLTableSectionElement {
     this.setAttribute("aria-multiselectable", "true");
 
     const treeView = this.closest(".tree-view-scrollable-container");
-    this.addEventListener("keyup", treeView);
-    this.addEventListener("click", treeView);
-    this.addEventListener("keydown", treeView);
-
     if (treeView.dataset.labelId) {
       this.setAttribute("aria-labelledby", treeView.dataset.labelId);
     }
@@ -2772,7 +2932,6 @@ export class TreeViewTableRow extends HTMLTableRowElement {
     this.tabIndex = -1;
     this.list = this.closest(".tree-view-scrollable-container");
     this.view = this.list.view;
-    this.setAttribute("aria-selected", !!this.selected);
   }
 
   /**

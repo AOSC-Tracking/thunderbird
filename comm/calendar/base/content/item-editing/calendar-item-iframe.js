@@ -623,9 +623,7 @@ function loadDialog(aItem) {
   }
 
   // URL link
-  const itemUrl = window.calendarItem.getProperty("URL")?.trim() || "";
-  const showLink = showOrHideItemURL(itemUrl);
-  updateItemURL(showLink, itemUrl);
+  updateItemURL(window.calendarItem.getProperty("URL")?.trim());
 
   // Description
   const editorElement = document.getElementById("item-description");
@@ -800,14 +798,9 @@ function changeUndiscloseCheckboxStatus() {
  * @param {calIItemBase} aItem - The item to load into the category panel.
  */
 function loadCategories(aItem) {
-  const itemCategories = aItem.getCategories();
-  const categoryList = cal.category.fromPrefs();
-  for (const cat of itemCategories) {
-    if (!categoryList.includes(cat)) {
-      categoryList.push(cat);
-    }
-  }
-  cal.l10n.sortArrayByLocaleCollator(categoryList);
+  const categoryList = [...new Set([...cal.category.fromPrefs(), ...aItem.getCategories()])].sort(
+    new Intl.Collator().compare
+  );
 
   // Make sure the maximum number of categories is applied to the listbox
   const calendar = getCurrentCalendar();
@@ -819,23 +812,23 @@ function loadCategories(aItem) {
     item.setAttribute("class", "menuitem-iconic");
     document.l10n.setAttributes(item, "calendar-none");
     item.setAttribute("type", "radio");
-    if (itemCategories.length === 0) {
+    if (aItem.getCategories().length === 0) {
       item.toggleAttribute("checked", true);
     }
     categoryPopup.appendChild(item);
   }
   for (const cat of categoryList) {
-    const item = document.createXULElement("menuitem");
-    item.setAttribute("class", "menuitem-iconic calendar-category");
-    item.setAttribute("label", cat);
-    item.setAttribute("value", cat);
-    item.setAttribute("type", maxCount === null || maxCount > 1 ? "checkbox" : "radio");
-    if (itemCategories.includes(cat)) {
-      item.toggleAttribute("checked", true);
+    const menuitem = document.createXULElement("menuitem");
+    menuitem.setAttribute("class", "menuitem-iconic calendar-category");
+    menuitem.setAttribute("label", cat);
+    menuitem.setAttribute("value", cat);
+    menuitem.setAttribute("type", maxCount === null || maxCount > 1 ? "checkbox" : "radio");
+    if (aItem.getCategories().includes(cat)) {
+      menuitem.toggleAttribute("checked", true);
     }
     const cssSafeId = cal.view.formatStringForCSSRule(cat);
-    item.style.setProperty("--item-color", `var(--category-${cssSafeId}-color)`);
-    categoryPopup.appendChild(item);
+    menuitem.style.setProperty("--item-color", `var(--category-${cssSafeId}-color)`);
+    categoryPopup.appendChild(menuitem);
   }
 
   updateCategoryMenulist();
@@ -3660,54 +3653,26 @@ function updateAttachment() {
 }
 
 /**
- * Returns whether to show or hide the related link on the dialog
- * (rfc2445 URL property).
- *
- * @param {string} url - The url in question.
- * @returns {boolean} true for show and false for hide
- */
-function showOrHideItemURL(url) {
-  if (!url) {
-    return false;
-  }
-  let handler;
-  let uri;
-  try {
-    uri = Services.io.newURI(url);
-    handler = Services.io.getProtocolHandler(uri.scheme);
-  } catch (e) {
-    // No protocol handler for the given protocol, or invalid uri
-    // hideOrShow(false);
-    return false;
-  }
-  // Only show if its either an internal protocol handler, or its external
-  // and there is an external app for the scheme
-  return (
-    !(handler instanceof Ci.nsIExternalProtocolHandler) ||
-    handler.externalAppExistsForScheme(uri.scheme)
-  );
-}
-
-/**
  * Updates the related link on the dialog (rfc2445 URL property).
  *
- * @param {boolean} aShow - Show the link (true) or not (false).
- * @param {string} aUrl - The url.
+ * @param {?string} url - The url.
  */
-function updateItemURL(aShow, aUrl) {
+function updateItemURL(url) {
   // Hide or show the link
-  document.getElementById("event-grid-link-separator").toggleAttribute("hidden", !aShow);
-  document.getElementById("event-grid-link-row").toggleAttribute("hidden", !aShow);
+  document.getElementById("event-grid-link-separator").toggleAttribute("hidden", !url);
+  document.getElementById("event-grid-link-row").toggleAttribute("hidden", !url);
+
+  if (!url) {
+    return;
+  }
 
   // Set the url for the link
-  if (aShow && aUrl.length) {
-    setTimeout(() => {
-      // HACK the url-link doesn't crop when setting the value in onLoad
-      const label = document.getElementById("url-link");
-      label.setAttribute("value", aUrl);
-      label.setAttribute("href", aUrl);
-    }, 0);
-  }
+  setTimeout(() => {
+    // HACK the url-link doesn't crop when setting the value in onLoad
+    const label = document.getElementById("url-link");
+    label.setAttribute("value", url);
+    label.setAttribute("href", url);
+  }, 0);
 }
 
 /**

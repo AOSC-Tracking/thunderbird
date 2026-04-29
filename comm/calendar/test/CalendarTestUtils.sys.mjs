@@ -752,6 +752,28 @@ export const CalendarTestUtils = {
   },
 
   /**
+   * Ensures the tasks tab is open.
+   *
+   * @param {Window} win
+   */
+  async openTasksTab(win) {
+    const tabmail = win.document.getElementById("tabmail");
+    const tasksMode = tabmail.tabModes.tasks;
+
+    if (tasksMode.tabs.length == 1) {
+      tabmail.selectedTab = tasksMode.tabs[0];
+    } else {
+      const tasksTabButton = win.document.getElementById("tasksButton");
+      EventUtils.synthesizeMouseAtCenter(tasksTabButton, { clickCount: 1 }, win);
+    }
+
+    Assert.equal(tasksMode.tabs.length, 1, "tasks tab is open");
+    Assert.equal(tabmail.selectedTab, tasksMode.tabs[0], "tasks tab is selected");
+
+    await new Promise(resolve => win.setTimeout(resolve));
+  },
+
+  /**
    * Make sure the current view has finished loading.
    *
    * @param {Window} win
@@ -821,6 +843,24 @@ export const CalendarTestUtils = {
     }
 
     Assert.equal(calendarMode.tabs.length, 0, "calendar tab is not open");
+
+    await new Promise(resolve => win.setTimeout(resolve));
+  },
+
+  /**
+   * Ensures the tasks tab is not open.
+   *
+   * @param {Window} win
+   */
+  async closeTasksTab(win) {
+    const tabmail = win.document.getElementById("tabmail");
+    const tasksMode = tabmail.tabModes.tasks;
+
+    if (tasksMode.tabs.length == 1) {
+      tabmail.closeTab(tasksMode.tabs[0]);
+    }
+
+    Assert.equal(tasksMode.tabs.length, 0, "tasks tab is not open");
 
     await new Promise(resolve => win.setTimeout(resolve));
   },
@@ -966,7 +1006,7 @@ export const CalendarTestUtils = {
    *
    * @returns {Promise<Window>}
    */
-  waitForEventDialog(mode = "view") {
+  async waitForEventDialog(mode = "view") {
     const uri =
       mode === "edit"
         ? "chrome://calendar/content/calendar-event-dialog.xhtml"
@@ -976,10 +1016,29 @@ export const CalendarTestUtils = {
       if (win.document.documentURI != uri) {
         return false;
       }
-
-      Assert.report(false, undefined, undefined, "Event dialog opened");
+      Assert.report(
+        false,
+        undefined,
+        undefined,
+        `Event dialog opened; ${Services.focus.activeWindow?.location} active`
+      );
       if (Services.focus.activeWindow != win) {
-        await BrowserTestUtils.waitForEvent(win, "activate");
+        let focusTimeoutId;
+        const focusTimeout = new Promise(resolve => {
+          focusTimeoutId = win.setTimeout(() => {
+            Assert.report(false, undefined, undefined, `Will force focus to ${win.location}`);
+            win.focus();
+            resolve();
+          }, 5000);
+        });
+        await Promise.race([BrowserTestUtils.waitForEvent(win, "activate"), focusTimeout]);
+        win.clearTimeout(focusTimeoutId);
+        Assert.report(
+          false,
+          undefined,
+          undefined,
+          `${Services.focus.activeWindow?.location} now active - ${Services.focus.focusedWindow?.location} has focus`
+        );
       }
       if (mode === "edit") {
         const iframe = win.document.getElementById("calendar-item-panel-iframe");

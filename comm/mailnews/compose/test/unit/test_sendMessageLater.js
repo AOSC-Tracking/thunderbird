@@ -46,9 +46,7 @@ msll.prototype = {
   onMessageStartSending() {
     this._startedSending = true;
   },
-  onMessageSendProgress() {
-    // XXX Enable this function
-  },
+  onMessageSendProgress() {},
   onMessageSendError(aCurrentMessage, aMessageHeader, aStatus) {
     do_throw(
       "onMessageSendError should not have been called, status: " + aStatus
@@ -240,7 +238,6 @@ add_task(async function run_the_test() {
     Ci.nsIMsgSend.nsMsgQueueForLater,
     null,
     copyListener,
-    null,
     null
   );
 

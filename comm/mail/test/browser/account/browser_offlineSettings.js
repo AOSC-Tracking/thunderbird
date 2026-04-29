@@ -23,6 +23,13 @@ let imapAccount, imapRootFolder;
 let ewsAccount, ewsRootFolder;
 
 add_setup(async () => {
+  // Disable AutoSync so toggling offline flags doesn't trigger background
+  // download timers that leak past the end of the test.
+  Services.prefs.setBoolPref(
+    "mail.server.default.autosync_offline_stores",
+    false
+  );
+
   // Set up servers.
 
   const imapServer = await ServerTestUtils.createServer({ type: "imap" });
@@ -66,7 +73,13 @@ add_setup(async () => {
     .getChildNamed("offline.second")
     .setFlag(Ci.nsMsgFolderFlags.Offline);
   nntpRootFolder.createSubfolder("offline.third", null);
+  nntpRootFolder
+    .getChildNamed("offline.third")
+    .clearFlag(Ci.nsMsgFolderFlags.Offline);
   nntpRootFolder.createSubfolder("offline.third.fourth", null);
+  nntpRootFolder
+    .getChildNamed("offline.third.fourth")
+    .clearFlag(Ci.nsMsgFolderFlags.Offline);
 
   // Set up IMAP account.
 
@@ -89,6 +102,10 @@ add_setup(async () => {
       imapRootFolder.getChildNamed("third").numSubFolders == 1,
     "waiting for IMAP folders to sync"
   );
+  imapRootFolder.getChildNamed("Inbox").setFlag(Ci.nsMsgFolderFlags.Offline);
+  imapRootFolder.getChildNamed("first").setFlag(Ci.nsMsgFolderFlags.Offline);
+  imapRootFolder.getChildNamed("second").setFlag(Ci.nsMsgFolderFlags.Offline);
+  imapRootFolder.getChildNamed("Trash").clearFlag(Ci.nsMsgFolderFlags.Offline);
   imapRootFolder.getChildNamed("third").clearFlag(Ci.nsMsgFolderFlags.Offline);
   imapRootFolder
     .getChildNamed("third")
@@ -123,11 +140,17 @@ add_setup(async () => {
   ewsRootFolder.getChildNamed("Inbox").setFlag(Ci.nsMsgFolderFlags.Offline);
   ewsRootFolder.getChildNamed("first").setFlag(Ci.nsMsgFolderFlags.Offline);
   ewsRootFolder.getChildNamed("second").setFlag(Ci.nsMsgFolderFlags.Offline);
+  ewsRootFolder.getChildNamed("third").clearFlag(Ci.nsMsgFolderFlags.Offline);
+  ewsRootFolder
+    .getChildNamed("third")
+    .getChildNamed("fourth")
+    .clearFlag(Ci.nsMsgFolderFlags.Offline);
 
   registerCleanupFunction(async () => {
     MailServices.accounts.removeAccount(nntpAccount, false);
     MailServices.accounts.removeAccount(imapAccount, false);
     MailServices.accounts.removeAccount(ewsAccount, false);
+    Services.prefs.clearUserPref("mail.server.default.autosync_offline_stores");
     tabmail.closeOtherTabs(0);
   });
 });
@@ -265,6 +288,7 @@ add_task(async function testNNTP() {
       isSubDialog: true,
       async callback(win) {
         await SimpleTest.promiseFocus(win);
+        await new Promise(resolve => win.requestAnimationFrame(resolve));
 
         const doc = win.document;
         const tree = doc.getElementById("synchronizeTree");
@@ -280,7 +304,8 @@ add_task(async function testNNTP() {
 
         // Check the initial selection.
         const isSelected = index =>
-          tree.view.rowAt(index).hasProperty("folderSelected");
+          tree.view.rowAt(index).hasProperty("checked") &&
+          tree.getRowAtIndex(index).querySelector("input").checked;
         Assert.ok(isSelected(0));
         Assert.ok(isSelected(1));
         Assert.ok(!isSelected(2));
@@ -297,10 +322,10 @@ add_task(async function testNNTP() {
           {},
           win
         );
-
-        // Change the selection by selecting some rows and pressing space.
-        tree.view.selection.rangedSelect(2, 3, false);
-        tree.focus();
+        // ... and using the keyboard.
+        tree.table.body.rows[2].querySelector('input[type="checkbox"]').focus();
+        EventUtils.synthesizeKey(" ", {}, win);
+        EventUtils.synthesizeKey("KEY_Tab", {}, win);
         EventUtils.synthesizeKey(" ", {}, win);
 
         // Check the changed selection.
@@ -388,6 +413,7 @@ add_task(async function testIMAP() {
       isSubDialog: true,
       async callback(win) {
         await SimpleTest.promiseFocus(win);
+        await new Promise(resolve => win.requestAnimationFrame(resolve));
 
         const doc = win.document;
         const tree = doc.getElementById("synchronizeTree");
@@ -400,6 +426,7 @@ add_task(async function testIMAP() {
         );
         tree.view.toggleOpenState(4); // Open "third" folder.
         Assert.equal(tree.view.rowCount, 6);
+        await new Promise(resolve => win.requestAnimationFrame(resolve));
 
         Assert.equal(tree.view.getCellText(0, "name"), "Inbox");
         Assert.equal(tree.view.getCellText(1, "name"), "Trash");
@@ -410,7 +437,8 @@ add_task(async function testIMAP() {
 
         // Check the initial selection.
         const isSelected = index =>
-          tree.view.rowAt(index).hasProperty("folderSelected");
+          tree.view.rowAt(index).hasProperty("checked") &&
+          tree.getRowAtIndex(index).querySelector("input").checked;
         Assert.ok(isSelected(0));
         Assert.ok(!isSelected(1));
         Assert.ok(isSelected(2));
@@ -429,10 +457,10 @@ add_task(async function testIMAP() {
           {},
           win
         );
-
-        // Change the selection by selecting some rows and pressing space.
-        tree.view.selection.rangedSelect(4, 5, false);
-        tree.focus();
+        // ... and using the keyboard.
+        tree.table.body.rows[4].querySelector('input[type="checkbox"]').focus();
+        EventUtils.synthesizeKey(" ", {}, win);
+        EventUtils.synthesizeKey("KEY_Tab", {}, win);
         EventUtils.synthesizeKey(" ", {}, win);
 
         // Check the changed selection.
@@ -522,6 +550,7 @@ add_task(async function testEWS() {
       isSubDialog: true,
       async callback(win) {
         await SimpleTest.promiseFocus(win);
+        await new Promise(resolve => win.requestAnimationFrame(resolve));
 
         const doc = win.document;
         const tree = doc.getElementById("synchronizeTree");
@@ -535,6 +564,7 @@ add_task(async function testEWS() {
         );
         tree.view.toggleOpenState(3); // Open "third" folder.
         Assert.equal(tree.view.rowCount, 5);
+        await new Promise(resolve => win.requestAnimationFrame(resolve));
 
         Assert.equal(tree.view.getCellText(0, "name"), "Inbox");
         Assert.equal(tree.view.getCellText(1, "name"), "first");
@@ -544,7 +574,8 @@ add_task(async function testEWS() {
 
         // Check the initial selection.
         const isSelected = index =>
-          tree.view.rowAt(index).hasProperty("folderSelected");
+          tree.view.rowAt(index).hasProperty("checked") &&
+          tree.getRowAtIndex(index).querySelector("input").checked;
         Assert.ok(isSelected(0));
         Assert.ok(isSelected(1));
         Assert.ok(isSelected(2));
@@ -562,10 +593,10 @@ add_task(async function testEWS() {
           {},
           win
         );
-
-        // Change the selection by selecting some rows and pressing space.
-        tree.view.selection.rangedSelect(3, 4, false);
-        tree.focus();
+        // ... and using the keyboard.
+        tree.table.body.rows[3].querySelector('input[type="checkbox"]').focus();
+        EventUtils.synthesizeKey(" ", {}, win);
+        EventUtils.synthesizeKey("KEY_Tab", {}, win);
         EventUtils.synthesizeKey(" ", {}, win);
 
         // Check the changed selection.

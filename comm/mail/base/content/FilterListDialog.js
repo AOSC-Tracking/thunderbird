@@ -10,6 +10,13 @@ var { UIFontSize } = ChromeUtils.importESModule(
   "resource:///modules/UIFontSize.sys.mjs"
 );
 
+ChromeUtils.defineLazyGetter(
+  this,
+  "l10n",
+  () =>
+    new Localization(["branding/brand.ftl", "messenger/filterEditor.ftl"], true)
+);
+
 window.addEventListener("load", onLoad);
 window.addEventListener("unload", onFilterUnload);
 window.addEventListener("close", event => {
@@ -33,8 +40,6 @@ var gSearchBox = null;
 var gRunFiltersFolder = null;
 var gRunFiltersButton = null;
 
-var gFilterBundle = null;
-
 var msgMoveMotion = {
   Up: 0,
   Down: 1,
@@ -44,14 +49,13 @@ var msgMoveMotion = {
 
 var gRunningFilters = false;
 
-var gStatusFeedback = {
-  progressMeterVisible: false,
-
-  showStatusString(status) {
-    document.getElementById("statusText").setAttribute("value", status);
-  },
-  startMeteors() {
-    // change run button to be a stop button
+window.addEventListener("message", event => {
+  if (event.data.statusMessage) {
+    document
+      .getElementById("statusText")
+      .setAttribute("value", event.data.statusMessage);
+  }
+  if (event.data.meteors == "start-meteors") {
     gRunFiltersButton.disabled = true;
     gRunningFilters = true;
 
@@ -61,12 +65,11 @@ var gStatusFeedback = {
         .removeAttribute("collapsed");
       this.progressMeterVisible = true;
     }
-
     document.getElementById("statusbar-icon").removeAttribute("value");
-  },
-  stopMeteors() {
+  }
+  if (event.data.meteors == "stop-meteors") {
     try {
-      gRunFiltersButton.disabled = false;
+      //gRunFiltersButton.disabled = false;
       gRunningFilters = false;
 
       if (this.progressMeterVisible) {
@@ -76,10 +79,8 @@ var gStatusFeedback = {
     } catch (ex) {
       // can get here if closing window when running filters
     }
-  },
-  showProgress() {},
-  closeWindow() {},
-};
+  }
+});
 
 var filterEditorQuitObserver = {
   observe(aSubject, aTopic) {
@@ -100,7 +101,6 @@ function onLoad() {
     "@mozilla.org/messenger/msgwindow;1"
   ].createInstance(Ci.nsIMsgWindow);
   gFilterListMsgWindow.domWindow = window;
-  gFilterListMsgWindow.statusFeedback = gStatusFeedback;
 
   gServerMenu = document.getElementById("serverMenu");
   gFilterListbox = document.getElementById("filterList");
@@ -114,7 +114,6 @@ function onLoad() {
   gSearchBox = document.getElementById("searchBox");
   gRunFiltersFolder = document.getElementById("runFiltersFolder");
   gRunFiltersButton = document.getElementById("runFiltersButton");
-  gFilterBundle = document.getElementById("bundle_filter");
 
   updateButtons();
 
@@ -337,6 +336,7 @@ function setRunFolder(aFolder) {
  * Toggle enabled state of a filter, in both the filter properties and the UI.
  *
  * @param {Element} aFilterItem - An item (row) of the filter list to be toggled.
+ * @param {boolean} [aSetForEvent] - Enabled status.
  */
 function toggleFilter(aFilterItem, aSetForEvent) {
   const filter = aFilterItem._filter;
@@ -344,9 +344,7 @@ function toggleFilter(aFilterItem, aSetForEvent) {
     Services.prompt.alert(
       window,
       null,
-      gFilterBundle.getFormattedString("cannotEnableIncompatFilter", [
-        document.getElementById("bundle_brand").getString("brandShortName"),
-      ])
+      l10n.formatValueSync("filter-cannot-enable-incompatible")
     );
     return;
   }
@@ -512,18 +510,23 @@ function onDeleteFilter() {
     return;
   }
 
+  const [confirmMsg, checkboxLabel] = l10n.formatValuesSync([
+    { id: "filter-delete-confirmation" },
+    { id: "filter-dont-warn-delete-checkbox" },
+  ]);
+
   const checkValue = { value: false };
   if (
     Services.prefs.getBoolPref("mailnews.filters.confirm_delete") &&
     Services.prompt.confirmEx(
       window,
       null,
-      gFilterBundle.getString("deleteFilterConfirmation"),
+      confirmMsg,
       Services.prompt.STD_YES_NO_BUTTONS,
       "",
       "",
       "",
-      gFilterBundle.getString("dontWarnAboutDeleteCheckbox"),
+      checkboxLabel,
       checkValue
     )
   ) {
@@ -690,10 +693,13 @@ function onFilterUnload() {
 
 function onFilterClose() {
   if (gRunningFilters) {
-    const promptTitle = gFilterBundle.getString("promptTitle");
-    const promptMsg = gFilterBundle.getString("promptMsg");
-    const stopButtonLabel = gFilterBundle.getString("stopButtonLabel");
-    const continueButtonLabel = gFilterBundle.getString("continueButtonLabel");
+    const [promptTitle, promptMsg, stopButtonLabel, continueButtonLabel] =
+      l10n.formatValuesSync([
+        { id: "filter-running-title" },
+        { id: "filter-running-message" },
+        { id: "filter-stop-button" },
+        { id: "filter-continue-button" },
+      ]);
 
     const result = Services.prompt.confirmEx(
       window,

@@ -49,6 +49,17 @@ function InitWithToolbox(aToolbox) {
     elts[i].addEventListener("drop", onToolbarDrop, true);
   }
 
+  gToolbox.addEventListener(
+    "customizationending",
+    function () {
+      finishToolbarCustomization();
+      if (!gToolboxSheet) {
+        window.close();
+      }
+    },
+    { once: true }
+  );
+
   initDialog();
 }
 
@@ -133,6 +144,9 @@ function onUnload() {
 }
 
 function finishToolbarCustomization() {
+  if (!gToolbox.customizing) {
+    return;
+  }
   removeToolboxListeners();
   unwrapToolbarItems();
   persistCurrentSets();
@@ -238,12 +252,28 @@ function persistCurrentSets() {
     return;
   }
 
+  const windowURL = gToolboxDocument.location.href;
+  const oldState = {};
+  const newState = {};
+
   forEachCustomizableToolbar(function (toolbar) {
+    oldState[toolbar.id] = Services.xulStore
+      .getValue(windowURL, toolbar.id, "currentset")
+      .split(",")
+      .filter(Boolean);
+
     // Calculate currentset and store it in the attribute.
     var currentSet = toolbar.currentSet;
     toolbar.setAttribute("currentset", currentSet);
     Services.xulStore.persist(toolbar, "currentset");
+    newState[toolbar.id] = currentSet.split(",").filter(Boolean);
   });
+
+  Services.obs.notifyObservers(
+    gToolboxDocument.defaultView,
+    "toolbar-customization-persisted",
+    JSON.stringify({ oldState, newState })
+  );
 }
 
 /**

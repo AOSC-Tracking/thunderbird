@@ -389,28 +389,54 @@ export async function open_message_from_file(file) {
     .mutate()
     .setQuery("type=application/x-message-display")
     .finalize();
+  Assert.report(false, undefined, undefined, `Opening ${fileURL.spec}`);
 
-  const newWindowPromise = promise_new_window("mail:messageWindow");
-  const win = mc.openDialog(
+  const newWindowPromise = BrowserTestUtils.domWindowOpenedAndLoaded(
+    null,
+    async win => {
+      return (
+        win.location.href == "chrome://messenger/content/messageWindow.xhtml"
+      );
+    }
+  );
+  mc.openDialog(
     "chrome://messenger/content/messageWindow.xhtml",
     "_blank",
     "all,chrome,dialog=no,status,toolbar",
     fileURL
   );
-  await BrowserTestUtils.waitForEvent(win, "load");
-  const aboutMessage = get_about_message(win);
-  await BrowserTestUtils.waitForEvent(aboutMessage, "MsgLoaded");
-
-  const msgc = await newWindowPromise;
-  await wait_for_message_display_completion(msgc, true);
-  if (Services.focus.activeWindow != msgc) {
-    await new Promise(resolve =>
-      msgc.addEventListener("activate", resolve, { once: true })
+  const win = await newWindowPromise;
+  Assert.report(false, undefined, undefined, `${win.location} window opened`);
+  await wait_for_message_display_completion(win, true);
+  Assert.report(false, undefined, undefined, "message display complete");
+  if (Services.focus.activeWindow != win) {
+    let focusTimeoutId;
+    const focusTimeout = new Promise(resolve => {
+      focusTimeoutId = win.setTimeout(() => {
+        Assert.report(
+          false,
+          undefined,
+          undefined,
+          `Will force focus to ${win.location}`
+        );
+        win.focus();
+        resolve();
+      }, 5000);
+    });
+    await Promise.race([
+      BrowserTestUtils.waitForEvent(win, "activate"),
+      focusTimeout,
+    ]);
+    win.clearTimeout(focusTimeoutId);
+    Assert.report(
+      false,
+      undefined,
+      undefined,
+      `${Services.focus.activeWindow?.location} now active - ${Services.focus.focusedWindow?.location} has focus`
     );
   }
   await TestUtils.waitForTick();
-
-  return msgc;
+  return win;
 }
 
 /**

@@ -5,6 +5,7 @@
 // EDITS TO THIS FILE WILL BE OVERWRITTEN
 
 #![doc = "Provides operations to call the delta method.\n\nAuto-generated from [Microsoft OpenAPI metadata](https://github.com/microsoftgraph/msgraph-metadata/blob/master/openapi/v1.0/openapi.yaml) via `ms_graph_tb_extract openapi.yaml ms_graph_tb/`."]
+use crate::pagination::*;
 use crate::types::mail_folder::*;
 use crate::*;
 use form_urlencoded::Serializer;
@@ -35,9 +36,8 @@ impl Get {
 }
 impl Operation for Get {
     const METHOD: Method = Method::GET;
-    type Body = ();
-    type Response<'response> = DeltaResponse<Vec<MailFolder<'response>>>;
-    fn build(&self) -> http::Request<Self::Body> {
+    type Response<'response> = DeltaResponse<MailFolder<'response>>;
+    fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let mut params = Serializer::new(String::new());
         let (select, selection) = self.selection.pair();
         params.append_pair(select, &selection);
@@ -46,11 +46,11 @@ impl Operation for Get {
         let uri = format!("{path}?{params}")
             .parse::<http::uri::Uri>()
             .unwrap();
-        http::Request::builder()
+        let request = http::Request::builder()
             .uri(uri)
             .method(Self::METHOD)
-            .body(())
-            .unwrap()
+            .body(vec![])?;
+        Ok(request)
     }
 }
 impl Select for Get {
@@ -78,13 +78,12 @@ impl TryFrom<&str> for GetDelta {
 }
 impl Operation for GetDelta {
     const METHOD: Method = Method::GET;
-    type Body = ();
-    type Response<'response> = DeltaResponse<Vec<MailFolder<'response>>>;
-    fn build(&self) -> http::Request<Self::Body> {
-        http::Request::builder()
+    type Response<'response> = DeltaResponse<MailFolder<'response>>;
+    fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
+        let request = http::Request::builder()
             .uri(&self.token)
             .method(Self::METHOD)
-            .body(())
-            .unwrap()
+            .body(vec![])?;
+        Ok(request)
     }
 }

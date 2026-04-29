@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="chrome://messenger/skin/variables.css"/>
     <link rel="stylesheet" href="chrome://messenger/skin/icons.css"/>
     <link rel="stylesheet" href="chrome://messenger/skin/widgets.css"/>
+    <link rel="stylesheet" href="chrome://messenger/skin/spacings.css"/>
     <link rel="stylesheet" href="chrome://messenger/skin/calendar/calendarDialog.css"/>
     <script src="chrome://messenger/content/calendar-dialog.mjs" type="module"></script>
     <style>
@@ -41,6 +42,29 @@
         </label>
         <div class="toggle"></div>
       </div>
+    </template>
+    <template id="calendarDialogAttendeesRowTemplate">
+      <calendar-dialog-row>
+        <img
+          src=""
+          slot="icon"
+          class="icon-attendees"
+          data-l10n-id="calendar-dialog-attendees-row-icon"
+        />
+        <div slot="label">
+          <span id="attendeesCount" class="row-label"></span>
+        </div>
+        <div slot="content">
+          <span class="attendees-summary"></span>
+          <ul class="attendees-list"></ul>
+        </div>
+      </calendar-dialog-row>
+    </template>
+    <template id="calendarDialogAttendeeTemplate">
+      <span class="attendee-name"></span>
+      <span class="attendee-email"></span>
+      <span class="attendee-label"></span>
+      <img src="" class="attendee-icon"/>
     </template>
     <template id="calendarDialogRowTemplate">
       <div class="row">
@@ -95,7 +119,7 @@
             tooltip="aHTMLTooltip"
             context="browserContext"
             constrainpopups="false"
-            nodefaultsrc="true"
+            nodefaultsrc="nodefaultsrc"
           ></xul:browser>
         </div>
       </calendar-dialog-row>
@@ -116,19 +140,62 @@
         </div>
       </calendar-dialog-row>
     </template>
+    <template id="calendarDialogAttachmentTemplate">
+      <img
+        class="attachment-icon"
+        src=""
+        srcset=""
+        data-l10n-id="calendar-dialog-attachment-link-icon"
+      />
+      <a class="attachment-label" href=""></a>
+    </template>
+    <template id="calendarDialogAttachmentsListTemplate">
+      <calendar-dialog-row>
+        <img
+          src=""
+          slot="icon"
+          class="icon-attachment"
+          data-l10n-id="calendar-dialog-attachments-row-icon"
+        />
+        <span
+          slot="label"
+          class="row-label"
+          data-l10n-id="calendar-dialog-attachments-label"
+        ></span>
+        <ul slot="content" class="attachments-list"></ul>
+      </calendar-dialog-row>
+    </template>
     <template id="calendarDialogTemplate">
       <div class="titlebar">
-        <button
-          class="button icon-button icon-only button-flat back-button"
-          data-l10n-id="calendar-dialog-back-button"
-        ></button>
-        <h2 class="calendar-dialog-title">
-          <span class="calendar-name screen-reader-only"></span>
-          <span class="event-title"></span>
-        </h2>
-        <button class="button icon-button icon-only button-flat close-button"
-                data-l10n-id="calendar-dialog-close-button">
-        </button>
+        <div class="titlebar-row">
+            <button
+              class="button icon-button icon-only button-flat back-button"
+              data-l10n-id="calendar-dialog-back-button"
+              type="button"
+            ></button>
+            <span class="calendar-name"></span>
+            <div class="title-button-container">
+              <button
+                class="button icon-button icon-only button-flat menu-button"
+                type="menu"
+                data-l10n-id="calendar-dialog-menu">
+                <xul:menupopup id="event-read-menu" class="no-icon-menupopup">
+                  <xul:menuitem data-l10n-id="calendar-dialog-menu-duplicate"/>
+                  <xul:menuitem data-l10n-id="calendar-dialog-menu-delete"/>
+                  <xul:menuitem data-l10n-id="calendar-dialog-menu-print"/>
+                </xul:menupopup>
+              </button>
+              <button
+                class="button icon-button icon-only button-flat close-button"
+                data-l10n-id="calendar-dialog-close-button"
+                type="button">
+              </button>
+            </div>
+        </div>
+        <div class="titlebar-row">
+          <h2 class="calendar-dialog-title">
+          </h2>
+        </div>
       </div>
       <div class="content">
         <calendar-dialog-subview-manager
@@ -136,11 +203,26 @@
         >
           <div id="calendarDialogMainSubview" hidden="hidden">
             <calendar-dialog-date-row></calendar-dialog-date-row>
+            <calendar-dialog-row id="joinMeetingRow">
+              <img
+                src=""
+                slot="icon"
+                class="icon-video"
+                data-l10n-id="calendar-dialog-join-meeting-row-icon" />
+              <div slot="label">
+                <button
+                  id="joinMeeting"
+                  class="button button-primary join-button"
+                  type="button"
+                  data-l10n-id="calendar-dialog-join-meeting-button"
+                ></button>
+              </div>
+            </calendar-dialog-row>
             <calendar-dialog-row id="locationRow">
               <img
+                src=""
                 slot="icon"
                 class="icon-location"
-                src=""
                 data-l10n-id="calendar-dialog-location-row-icon"
               />
               <div slot="label">
@@ -153,13 +235,28 @@
                 <span id="locationText" hidden="hidden"></span>
               </div>
             </calendar-dialog-row>
-            <calendar-dialog-reminders-row></calendar-dialog-reminders-row>
+            <div id="attendeesRow" class="expanding-row hideable-row">
+              <calendar-dialog-attendees-row></calendar-dialog-attendees-row>
+              <button
+                id="expandAttendees"
+                class="button button-flat expand-button icon-button"
+                type="button"
+              >
+                <img
+                  src=""
+                  class="icon-nav-right"
+                  data-l10n-id="calendar-dialog-attendees-expand-icon"
+                />
+              </button>
+            </div>
             <div id="descriptionRow" class="expanding-row hideable-row">
-              <calendar-dialog-description-row id="expandingDescription">
-              </calendar-dialog-description-row>
+              <calendar-dialog-description-row
+                id="expandingDescription"
+              ></calendar-dialog-description-row>
               <button
                 id="expandDescription"
                 class="button button-flat expand-button icon-button"
+                type="button"
               >
                 <img
                   src=""
@@ -168,9 +265,33 @@
                 />
               </button>
             </div>
+            <div id="attachmentsRow" class="expanding-row" hidden="hidden">
+              <calendar-dialog-row>
+                <img
+                  src=""
+                  slot="icon"
+                  class="icon-attachment"
+                  data-l10n-id="calendar-dialog-attachments-row-icon"
+                />
+                <div slot="label">
+                  <span class="row-label"></span>
+                </div>
+              </calendar-dialog-row>
+              <button
+                id="expandAttachments"
+                class="button button-flat expand-button icon-button"
+                type="button"
+              >
+                <img
+                  src=""
+                  class="icon-nav-right"
+                  data-l10n-id="calendar-dialog-attachments-expand-icon"
+                />
+              </button>
+            </div>
+            <calendar-dialog-reminders-row></calendar-dialog-reminders-row>
             <calendar-dialog-categories class="hideable-row"></calendar-dialog-categories>
           </div>
-          <div id="calendarDialogOtherSubview" hidden="hidden">Test only subview</div>
           <div
             id="calendarDescriptionSubview"
             hidden="hidden"
@@ -178,12 +299,31 @@
             <calendar-dialog-description-row
               id="expandedDescription"
               type="full"
-            >
-            </calendar-dialog-description-row>
+            ></calendar-dialog-description-row>
           </div>
+          <div
+            id="calendarAttachmentsSubview"
+            hidden="hidden"
+          >
+            <calendar-dialog-attachments-list
+              id="calendarAttachmentsList"
+            ></calendar-dialog-attachments-list>
+          </div>
+          <div
+            id="calendarAttendeesSubview"
+            hidden="hidden"
+          >
+          <calendar-dialog-attendees-row
+              id="expandedAttendees"
+              type="full"
+            ></calendar-dialog-attendees-row>
+          </div>
+          <div id="calendarDialogOtherSubview" hidden="hidden">Test only subview</div>
         </calendar-dialog-subview-manager>
       </div>
-      <div class="footer"></div>
+      <div class="footer">
+        <calendar-dialog-acceptance></calendar-dialog-acceptance>
+      </div>
     </template>
     <div id="test-container">
       <button id="trigger"></button>

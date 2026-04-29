@@ -166,6 +166,7 @@ async function MsgAccountManager(selectPage, server) {
     return;
   }
 
+  win.focus();
   const tabmail = win.document.getElementById("tabmail");
   // If the server wasn't specified, and we have the window open, try
   // and use the currently selected folder to work out the server to select.
@@ -200,41 +201,12 @@ async function MsgAccountManager(selectPage, server) {
 }
 
 /**
- * Open the Account Setup Tab or focus it if it's already open.
- *
- * @param {boolean} [isInitialSetup] - If this call is for the initial account
- *   setup.
+ * Open the Account Hub to set up a new email account.
  */
-function openAccountSetup(isInitialSetup = false) {
+function openAccountSetup() {
   const mail3Pane = Services.wm.getMostRecentWindow("mail:3pane");
   mail3Pane.focus();
-
-  // Only show the Account Hub if this is not the initial setup.
-  if (
-    !isInitialSetup &&
-    Services.prefs.getBoolPref("mail.accounthub.enabled", false)
-  ) {
-    mail3Pane.openAccountHub();
-    return;
-  }
-
-  const tabmail = mail3Pane.document.getElementById("tabmail");
-
-  // Switch to the account setup tab if it's already open.
-  for (const tabInfo of tabmail.tabInfo) {
-    const tab = tabmail.getTabForBrowser(tabInfo.browser);
-    if (tab?.urlbar?.value == "about:accountsetup") {
-      const accountSetup = tabInfo.browser.contentWindow.gAccountSetup;
-      // Reset the entire UI only if the previously opened setup was completed.
-      if (accountSetup._currentModename == "success") {
-        accountSetup.resetSetup();
-      }
-      tabmail.switchToTab(tabInfo);
-      return;
-    }
-  }
-
-  tabmail.openTab("contentTab", { url: "about:accountsetup" });
+  mail3Pane.openAccountHub();
 }
 
 /**

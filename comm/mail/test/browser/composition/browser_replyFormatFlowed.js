@@ -19,7 +19,6 @@ var {
 var {
   be_in_folder,
   get_special_folder,
-
   open_message_from_file,
   press_delete,
   select_click_row,
@@ -31,23 +30,25 @@ var gDrafts;
 
 add_setup(async function () {
   gDrafts = await get_special_folder(Ci.nsMsgFolderFlags.Drafts, true);
-
   Services.prefs.setBoolPref("mail.identity.id1.compose_html", false);
 });
 
 async function subtest_reply_format_flowed(aFlowed) {
+  info(`Running subtest_reply_format_flowed; flowed=${aFlowed}\n`);
   const file = new FileUtils.File(getTestFilePath("data/format-flowed.eml"));
   const msgc = await open_message_from_file(file);
+  await SimpleTest.promiseFocus(msgc);
 
   Services.prefs.setBoolPref("mailnews.send_plaintext_flowed", aFlowed);
 
+  await new Promise(requestIdleCallback);
+  info("Opening reply compose window...");
   const cwc = await open_compose_with_reply(msgc);
-
-  await BrowserTestUtils.closeWindow(msgc);
 
   // Now save the message as a draft.
   await save_compose_message(cwc);
   await close_compose_window(cwc);
+  info("Saved as draft. Will wait until the Drafts folder has it...");
 
   await TestUtils.waitForCondition(
     () => gDrafts.getTotalMessages(false) == 1,
@@ -71,6 +72,8 @@ async function subtest_reply_format_flowed(aFlowed) {
 
   // Delete the outgoing message.
   await press_delete();
+
+  await BrowserTestUtils.closeWindow(msgc);
 }
 
 add_task(async function test_reply_format_flowed() {

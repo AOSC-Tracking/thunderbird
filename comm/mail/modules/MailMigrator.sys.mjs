@@ -30,7 +30,7 @@ export var MailMigrator = {
   _migrateUI() {
     // The code for this was ported from
     // mozilla/browser/components/nsBrowserGlue.js
-    const UI_VERSION = 57;
+    const UI_VERSION = 60;
     const UI_VERSION_PREF = "mail.ui-rdf.version";
     let currentUIVersion = Services.prefs.getIntPref(UI_VERSION_PREF, 0);
 
@@ -411,6 +411,45 @@ export var MailMigrator = {
         updateValue(
           "chrome://openpgp/content/ui/enigmailKeyManager.xhtml",
           "showOthersKeys"
+        );
+      }
+
+      if (currentUIVersion < 58) {
+        // We've already migrated Yahoo/AOL/AT&T accounts to use PKCE
+        // where applicable in OAuth2Module.sys.mjs. We can now remove the
+        // pref that indicates whether such a user was detected.
+        Services.prefs.clearUserPref(
+          "mail.inappnotifications.pkceUpgradeForYahooAol"
+        );
+      }
+
+      if (currentUIVersion < 60) {
+        function updateCheckedValue(url, id) {
+          if (Services.xulStore.hasValue(url, id, "checked")) {
+            const oldValue = Services.xulStore.getValue(url, id, "checked");
+            Services.xulStore.setValue(
+              url,
+              id,
+              "checked",
+              oldValue == "false" ? "-moz-missing\n" : ""
+            );
+          }
+        }
+        updateCheckedValue(
+          "chrome://messenger/content/messenger.xhtml",
+          "calendar_toggle_orientation_command"
+        );
+        updateCheckedValue(
+          "chrome://messenger/content/messenger.xhtml",
+          "calendar_toggle_workdays_only_command"
+        );
+        updateCheckedValue(
+          "chrome://messenger/content/messenger.xhtml",
+          "calendar_toggle_tasks_in_view_command"
+        );
+        updateCheckedValue(
+          "chrome://messenger/content/messenger.xhtml",
+          "calendar_toggle_show_completed_in_view_command"
         );
       }
 

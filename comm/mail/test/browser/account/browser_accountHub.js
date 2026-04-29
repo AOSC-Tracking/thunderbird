@@ -19,17 +19,22 @@ registerCleanupFunction(function () {
   Services.prefs.setCharPref(PREF_NAME, PREF_VALUE);
 });
 
-// TODO: Defer this for when the account hub replaces the account setup tab.
-// add_task(async function test_account_hub_opening_at_startup() {});
+add_task(async function account_hub_does_not_exist_with_accounts() {
+  // We wait 1 second to make sure the account hub is not still opening.
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  Assert.ok(
+    !document.querySelector("account-hub-container"),
+    "Account hub should not exist"
+  );
+});
 
 add_task(async function test_account_hub_opening() {
   Services.fog.testResetFOG();
-  // TODO: Use an actual button once it's implemented in the UI.
-  // Open the dialog.
   await window.openAccountHub();
 
   let events = Glean.mail.accountHubLoaded.testGetValue();
-  Assert.equal(events.length, 2);
+  Assert.equal(events.length, 2, "Should initially have two events");
   Assert.deepEqual(
     events.map(v => v.extra.view_name),
     ["MAIL", "autoConfigSubview"]
@@ -452,6 +457,33 @@ add_task(async function test_cancel_finding_config() {
   await subtest_close_account_hub_dialog(dialog, emailTemplate);
 });
 
+add_task(async function test_account_hub_not_first_run() {
+  const dialog = await subtest_open_account_hub_dialog();
+
+  Assert.ok(
+    !dialog.classList.contains("account-hub-first-run"),
+    "Should not have the first run class"
+  );
+  Assert.ok(
+    !window.AccountHubController.isFirstRun,
+    "Should have first run correctly set"
+  );
+
+  const closeEvent = BrowserTestUtils.waitForEvent(dialog, "close");
+  EventUtils.synthesizeMouseAtCenter(
+    dialog
+      .querySelector("email-auto-form")
+      .shadowRoot.querySelector("account-hub-header")
+      .shadowRoot.querySelector("#closeButton"),
+    {}
+  );
+  await closeEvent;
+  Assert.ok(
+    !dialog.open,
+    "The dialog element should close when clicking on the close button"
+  );
+});
+
 add_task(async function test_account_enter_password_imap_account() {
   IMAPServer.open();
   SMTPServer.open();
@@ -500,11 +532,11 @@ add_task(async function test_account_enter_password_imap_account() {
   // remember password checkbox should be checked and enabled.
   Assert.ok(
     !rememberPasswordInput.disabled,
-    "The remember password input should be disabled."
+    "The remember password input should be enabled."
   );
   Assert.ok(
     rememberPasswordInput.checked,
-    "The remember password input should be unchecked."
+    "The remember password input should be checked."
   );
 
   await SpecialPowers.popPrefEnv();
@@ -582,13 +614,11 @@ add_task(async function test_account_enter_password_imap_account() {
     "The email password subview should be hidden."
   );
 
-  let imapAccount;
-
-  await TestUtils.waitForCondition(
+  const imapAccount = await TestUtils.waitForCondition(
     () =>
-      (imapAccount = MailServices.accounts.accounts.find(
+      MailServices.accounts.accounts.find(
         account => account.identities[0]?.email === emailUser.email
-      )),
+      ),
     "The user account should be created."
   );
 
