@@ -31,8 +31,10 @@ impl<ServerT: AuthenticationProvider + RefCounted>
         &mut self,
         client: &XpComGraphClient<ServerT>,
     ) -> Result<Self::Okay, XpComGraphError> {
-        log::info!("Start running for URI {}", self.uri);
-        self.listener.on_start_running_url(self.uri.clone());
+        log::info!("Start running for URI {}", self.endpoint);
+        self.listener
+            .on_start_running_url(self.uri.clone())
+            .to_result()?;
 
         let endpoint = self.endpoint.as_str().to_string();
         let mut get_me = paths::me::Get::new(endpoint);
@@ -52,7 +54,9 @@ impl<ServerT: AuthenticationProvider + RefCounted>
 }
 
 impl<ServerT: AuthenticationProvider + RefCounted> XpComGraphClient<ServerT> {
-    /// Perform a connectivity check by querying the user information endpoint.
+    /// Perform a connectivity check by querying the [user information] endpoint.
+    ///
+    /// [user information]: https://learn.microsoft.com/en-us/graph/api/user-get
     pub async fn check_connectivity(self, uri: SafeUri, listener: SafeUrlListener) {
         let operation = DoCheckConnectivity {
             listener: &listener,

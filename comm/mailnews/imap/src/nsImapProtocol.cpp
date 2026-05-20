@@ -100,7 +100,7 @@ extern LazyLogModule IMAP_DC;  // For imap folder discovery
 #define IMAP_ENV_HEADERS "From To Cc Bcc Subject Date Message-ID "
 #define IMAP_DB_HEADERS                                                 \
   "Priority X-Priority References Newsgroups In-Reply-To Content-Type " \
-  "Reply-To"
+  "Reply-To Received"
 #define IMAP_ENV_AND_DB_HEADERS IMAP_ENV_HEADERS IMAP_DB_HEADERS
 MOZ_RUNINIT static const PRIntervalTime kImapSleepTime =
     PR_MillisecondsToInterval(60000);
@@ -196,7 +196,7 @@ NS_IMPL_ISUPPORTS(nsMsgImapLineDownloadCache, nsIImapHeaderInfo)
 // **** helper class for downloading line ****
 nsMsgImapLineDownloadCache::nsMsgImapLineDownloadCache() {
   fLineInfo = (msg_line_info*)PR_CALLOC(sizeof(msg_line_info));
-  fLineInfo->uidOfMessage = nsMsgKey_None;
+  fLineInfo->uidOfMessage = ImapUid_None;
   m_msgSize = 0;
 }
 
@@ -228,17 +228,17 @@ NS_IMETHODIMP nsMsgImapLineDownloadCache::ResetCache() {
 bool nsMsgImapLineDownloadCache::CacheEmpty() { return m_bufferPos == 0; }
 
 NS_IMETHODIMP nsMsgImapLineDownloadCache::CacheLine(const char* line,
-                                                    uint32_t uid) {
+                                                    ImapUid uid) {
   fLineInfo->uidOfMessage = uid;
   return AppendString(line);
 }
 
-/* attribute nsMsgKey msgUid; */
-NS_IMETHODIMP nsMsgImapLineDownloadCache::GetMsgUid(nsMsgKey* aMsgUid) {
+/* attribute ImapUid msgUid; */
+NS_IMETHODIMP nsMsgImapLineDownloadCache::GetMsgUid(ImapUid* aMsgUid) {
   *aMsgUid = fLineInfo->uidOfMessage;
   return NS_OK;
 }
-NS_IMETHODIMP nsMsgImapLineDownloadCache::SetMsgUid(nsMsgKey aMsgUid) {
+NS_IMETHODIMP nsMsgImapLineDownloadCache::SetMsgUid(ImapUid aMsgUid) {
   fLineInfo->uidOfMessage = aMsgUid;
   return NS_OK;
 }
@@ -624,7 +624,7 @@ nsImapProtocol::nsImapProtocol()
   mFolderHighestUID = 0;
   m_notifySearchHit = false;
   m_preferPlainText = false;
-  m_uidValidity = kUidUnknown;
+  m_uidValidity = ImapUid_None;
 }
 
 nsresult nsImapProtocol::Configure(int32_t TooFastTime, int32_t IdealTime,
@@ -806,7 +806,7 @@ nsresult nsImapProtocol::SetupWithUrl(nsIURI* aURL, nsISupports* aConsumer) {
     mFolderLastModSeq = 0;
     mFolderTotalMsgCount = 0;
     mFolderHighestUID = 0;
-    m_uidValidity = kUidUnknown;
+    m_uidValidity = ImapUid_None;
     if (folder) {
       nsCOMPtr<nsIMsgDatabase> folderDB;
       nsCOMPtr<nsIDBFolderInfo> folderInfo;
@@ -818,7 +818,7 @@ nsresult nsImapProtocol::SetupWithUrl(nsIURI* aURL, nsISupports* aConsumer) {
         mFolderLastModSeq = ParseUint64Str(modSeqStr.get());
         folderInfo->GetNumMessages(&mFolderTotalMsgCount);
         folderInfo->GetUint32Property(kHighestRecordedUIDPropertyName, 0,
-                                      &mFolderHighestUID);
+                                      (uint32_t*)&mFolderHighestUID);
         folderInfo->GetImapUidValidity(&m_uidValidity);
       }
     }
@@ -2715,7 +2715,7 @@ void nsImapProtocol::ProcessSelectedStateURL() {
         m_imapMailFolderSink->GetMsgHdrsToDownload(
             &more, &m_progressExpectedNumber, msgIdList);
         if (msgIdList.Length() > 0) {
-          FolderHeaderDump(msgIdList.Elements(), msgIdList.Length());
+          FolderHeaderDump(msgIdList);
           m_runningUrl->SetMoreHeadersToDownload(more);
           // We're going to be re-running this url.
           if (more) m_runningUrl->SetRerunningUrl(true);
@@ -2759,8 +2759,9 @@ void nsImapProtocol::ProcessSelectedStateURL() {
       // This is a common case event for attachments that are fetched within a
       // browser context.
       if (!DeathSignalReceived())
-        uidValidityOk = m_uidValidity == kUidUnknown ||
-                        m_uidValidity == GetServerStateParser().FolderUID();
+        uidValidityOk =
+            m_uidValidity == ImapUid_None ||
+            m_uidValidity == GetServerStateParser().FolderUIDValidity();
     }
 
     if (!uidValidityOk)
@@ -2796,7 +2797,7 @@ void nsImapProtocol::ProcessSelectedStateURL() {
           if (GetServerStateParser().LastCommandSuccessful() &&
               m_imapMailFolderSink && !moreHeadersToDownload) {
             m_imapMailFolderSink->SetUidValidity(
-                GetServerStateParser().FolderUID());
+                GetServerStateParser().FolderUIDValidity());
             ProcessMailboxUpdate(false);  // handle uidvalidity change
           }
           break;
@@ -2845,14 +2846,18 @@ void nsImapProtocol::ProcessSelectedStateURL() {
             // Note: No longer doing bodystructure.
             uint32_t messageSize = GetMessageSize(messageIdString);
 
-            // The "wontFit" and cache parameter calculations (customLimit,
+            // See if message fits in a system "cache2" entry. (Still do but N/A
+            // if message fetched into offline store.) Used for debug logging
+            // below and to ensure imap fetch does a peek to avoid possibly
+            // setting \Seen flag when auto setting message as read is disabled.
+            bool wontFit =
+                net::CacheObserver::EntryIsTooBig(messageSize, gUseDiskCache2);
+            // The cache parameter calculations (customLimit,
             // realLimit) are only for debug information logging below.
             if (MOZ_LOG_TEST(IMAPCache, LogLevel::Debug)) {
               nsCOMPtr<nsIMsgMailNewsUrl> mailnewsurl =
                   do_QueryInterface(m_runningUrl);
               if (mailnewsurl) {
-                bool wontFit = net::CacheObserver::EntryIsTooBig(
-                    messageSize, gUseDiskCache2);
                 int64_t customLimit;
                 int64_t realLimit;
                 if (gUseDiskCache2) {
@@ -2878,6 +2883,19 @@ void nsImapProtocol::ProcessSelectedStateURL() {
                          messageSize, wontFit));
               }
             }
+            bool forcePeek = false;
+            if (wontFit && whatToFetch == kEveryThingRFC822) {
+              // Message doesn't fit in cache entry and doing a normal fetch.
+              // If auto marking as read is disabled, force a peek to prevent
+              // server from setting the /Seen flag. If auto marking as read is
+              // enabled and a delay is enabled, also force a peek to avoid
+              // setting /Seen (read) flag immediately and still wait for the
+              // delay to mark the message as read.
+              forcePeek =
+                  !Preferences::GetBool("mailnews.mark_message_read.auto") ||
+                  Preferences::GetBool("mailnews.mark_message_read.delay");
+              if (forcePeek) whatToFetch = kEveryThingRFC822Peek;
+            }
             // Note again: No longer doing bodystructure.
             // Fetch the whole thing, and try to do it in chunks.
             MOZ_LOG(
@@ -2885,10 +2903,11 @@ void nsImapProtocol::ProcessSelectedStateURL() {
                 ("%s: Fetch entire message with FetchTryChunking", __func__));
             FetchTryChunking(messageIdString, whatToFetch, bMessageIdsAreUids,
                              NULL, messageSize, true);
+
             // If fetch was not a peek, ensure that the message displays as
             // read (not bold) in case the server fails to mark the message
             // as SEEN.
-            if (GetServerStateParser().LastCommandSuccessful() &&
+            if (!forcePeek && GetServerStateParser().LastCommandSuccessful() &&
                 m_imapAction != nsIImapUrl::nsImapMsgFetchPeek) {
               uint32_t uid = strtoul(messageIdString.get(), nullptr, 10);
               int32_t index;
@@ -3870,7 +3889,7 @@ void nsImapProtocol::FetchTryChunking(const nsCString& messageIds,
 }
 
 void nsImapProtocol::PostLineDownLoadEvent(const char* line,
-                                           uint32_t uidOfMessage) {
+                                           ImapUid uidOfMessage) {
   if (!GetServerStateParser().GetDownloadingHeaders()) {
     uint32_t byteCount = PL_strlen(line);
     bool echoLineToMessageSink = false;
@@ -4378,7 +4397,7 @@ void nsImapProtocol::ProcessMailboxUpdate(bool handlePossibleUndo) {
       // Obtain the highest (highwater mark) UID seen since the last UIDVALIDITY
       // response occurred (associated with the most recent SELECT for the
       // folder).
-      uint32_t highestRecordedUID = GetServerStateParser().HighestRecordedUID();
+      ImapUid highestRecordedUID = GetServerStateParser().HighestRecordedUID();
       // if we're using CONDSTORE, and the parser hasn't seen any UIDs, use
       // the highest UID previously seen and saved for the folder instead.
       if (useCS && !highestRecordedUID) highestRecordedUID = mFolderHighestUID;
@@ -4431,7 +4450,7 @@ void nsImapProtocol::ProcessMailboxUpdate(bool handlePossibleUndo) {
 
   if (GetServerStateParser().LastCommandSuccessful()) {
     if (msgIdList.Length() > 0) {
-      FolderHeaderDump(msgIdList.Elements(), msgIdList.Length());
+      FolderHeaderDump(msgIdList);
     }
     HeaderFetchCompleted();
     // this might be bogus, how are we going to do pane notification and stuff
@@ -4440,7 +4459,7 @@ void nsImapProtocol::ProcessMailboxUpdate(bool handlePossibleUndo) {
 
   // wait for a list of bodies to fetch.
   if (GetServerStateParser().LastCommandSuccessful()) {
-    nsTArray<nsMsgKey> msgIds;
+    nsTArray<ImapUid> msgIds;
     WaitForPotentialListOfBodysToFetch(msgIds);
     if (msgIds.Length() > 0 && GetServerStateParser().LastCommandSuccessful()) {
       // Tell the url that it should store the msg fetch results offline,
@@ -4453,7 +4472,7 @@ void nsImapProtocol::ProcessMailboxUpdate(bool handlePossibleUndo) {
                  (m_stringIndex == IMAP_MESSAGES_STRING_INDEX));
       m_progressCurrentNumber[m_stringIndex] = 0;
       m_progressExpectedNumber = msgIds.Length();
-      FolderMsgDump(msgIds.Elements(), msgIds.Length(), kEveryThingRFC822Peek);
+      FolderMsgDump(msgIds, kEveryThingRFC822Peek);
       m_runningUrl->SetStoreResultsOffline(wasStoringOffline);
     }
   }
@@ -4461,11 +4480,11 @@ void nsImapProtocol::ProcessMailboxUpdate(bool handlePossibleUndo) {
     GetServerStateParser().ResetFlagInfo();
 }
 
-void nsImapProtocol::FolderHeaderDump(uint32_t* msgUids, uint32_t msgCount) {
-  FolderMsgDump(msgUids, msgCount, kHeadersRFC822andUid);
+void nsImapProtocol::FolderHeaderDump(mozilla::Span<const ImapUid> msgUids) {
+  FolderMsgDump(msgUids, kHeadersRFC822andUid);
 }
 
-void nsImapProtocol::FolderMsgDump(uint32_t* msgUids, uint32_t msgCount,
+void nsImapProtocol::FolderMsgDump(mozilla::Span<const ImapUid> msgUids,
                                    nsIMAPeFetchFields fields) {
   // lets worry about this progress stuff later.
   switch (fields) {
@@ -4480,13 +4499,13 @@ void nsImapProtocol::FolderMsgDump(uint32_t* msgUids, uint32_t msgCount,
       break;
   }
 
-  FolderMsgDumpLoop(msgUids, msgCount, fields);
+  FolderMsgDumpLoop(msgUids, fields);
 
   SetProgressString(IMAP_EMPTY_STRING_INDEX);
 }
 
 void nsImapProtocol::WaitForPotentialListOfBodysToFetch(
-    nsTArray<nsMsgKey>& msgIdList) {
+    nsTArray<ImapUid>& msgIdList) {
   PRIntervalTime sleepTime = kImapSleepTime;
 
   ReentrantMonitorAutoEnter fetchListMon(m_fetchBodyListMonitor);
@@ -4500,15 +4519,15 @@ void nsImapProtocol::WaitForPotentialListOfBodysToFetch(
 // libmsg uses this to notify a running imap url about message bodies it should
 // download. why not just have libmsg explicitly download the message bodies?
 NS_IMETHODIMP nsImapProtocol::NotifyBodysToDownload(
-    const nsTArray<nsMsgKey>& keys) {
+    const nsTArray<ImapUid>& uids) {
   ReentrantMonitorAutoEnter fetchListMon(m_fetchBodyListMonitor);
-  m_fetchBodyIdList = keys.Clone();
+  m_fetchBodyIdList = uids.Clone();
   m_fetchBodyListIsNew = true;
   fetchListMon.Notify();
   return NS_OK;
 }
 
-NS_IMETHODIMP nsImapProtocol::GetFlagsForUID(uint32_t uid, bool* foundIt,
+NS_IMETHODIMP nsImapProtocol::GetFlagsForUID(ImapUid uid, bool* foundIt,
                                              imapMessageFlagsType* resultFlags,
                                              char** customFlags) {
   int32_t i;
@@ -4536,14 +4555,15 @@ NS_IMETHODIMP nsImapProtocol::GetSupportedUserFlags(uint16_t* supportedFlags) {
   *supportedFlags = m_flagState->GetSupportedUserFlags();
   return NS_OK;
 }
-void nsImapProtocol::FolderMsgDumpLoop(uint32_t* msgUids, uint32_t msgCount,
+void nsImapProtocol::FolderMsgDumpLoop(mozilla::Span<const ImapUid> msgUids,
                                        nsIMAPeFetchFields fields) {
-  int32_t msgCountLeft = msgCount;
+  uint32_t msgCountLeft = (uint32_t)msgUids.Length();
   uint32_t msgsDownloaded = 0;
   do {
     nsCString idString;
     uint32_t msgsToDownload = msgCountLeft;
-    AllocateImapUidString(msgUids + msgsDownloaded, msgsToDownload, m_flagState,
+    AllocateImapUidString(msgUids.Elements() + msgsDownloaded, msgsToDownload,
+                          m_flagState,
                           idString);  // 20 * 200
     FetchMessage(idString, fields);
     msgsDownloaded += msgsToDownload;
@@ -9407,8 +9427,6 @@ nsresult nsImapMockChannel::OpenCacheEntry() {
   MOZ_LOG(IMAPCache, LogLevel::Debug,
           ("%s: Obtained storage obj for |%s| cache2", __func__,
            gUseDiskCache2 ? "disk" : "mem"));
-
-  int32_t uidValidity = -1;
   uint32_t cacheAccess = nsICacheStorage::OPEN_NORMALLY;
 
   nsCOMPtr<nsIImapUrl> imapUrl = do_QueryInterface(m_url, &rv);
@@ -9416,6 +9434,7 @@ nsresult nsImapMockChannel::OpenCacheEntry() {
 
   nsCOMPtr<nsIImapMailFolderSink> folderSink;
   rv = imapUrl->GetImapMailFolderSink(getter_AddRefs(folderSink));
+  ImapUid uidValidity = ImapUid_None;
   if (folderSink) folderSink->GetUidValidity(&uidValidity);
 
   // If we're storing the message in the offline store, don't

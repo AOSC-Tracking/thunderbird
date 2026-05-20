@@ -5,11 +5,14 @@
 //! Modules for turning our representation of the Graph API into Rust code
 //! (specifically, a [`proc_macro2::TokenStream`]).
 
+use log::warn;
 use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 use std::{collections::HashSet, fmt};
 
-use crate::{extract::schema::Property, naming};
+use crate::{
+    extract::schema::Property, module_hierarchy::ModuleName, naming, oxidize::types::GraphType,
+};
 
 pub mod paths;
 pub mod types;
@@ -18,12 +21,12 @@ fn imports(properties: &[crate::extract::schema::Property]) -> TokenStream {
     let mut imports = properties
         .iter()
         .filter_map(|p| {
-            if let RustType::Custom(custom_rust_type) = &p.rust_type {
+            if let RustType::NamedSchema(custom_rust_type) = &p.rust_type {
                 let original_name = custom_rust_type.original_name();
-                if crate::SUPPORTED_TYPES.contains(&original_name.as_str()) {
+                if crate::SUPPORTED_TYPES.contains(original_name.as_str()) {
                     Some(custom_rust_type.as_snake_case())
                 } else {
-                    println!(
+                    warn!(
                         "not generating imports for property of unsupported custom type {}",
                         original_name
                     );
@@ -55,11 +58,8 @@ pub struct ModuleFile {
 
 impl ModuleFile {
     /// Construct a new `ModuleFile`. Modules should be sorted before calling.
-    pub fn new(modules: &[impl AsRef<str>]) -> Self {
-        let modules = modules
-            .iter()
-            .map(|id| format_ident!("{}", id.as_ref()))
-            .collect();
+    pub fn new(modules: &[ModuleName]) -> Self {
+        let modules = modules.iter().map(ModuleName::as_rust_ident).collect();
         Self {
             allowed_lints: vec![],
             denied_lints: vec![],
@@ -236,8 +236,13 @@ pub enum RustType {
     F32,
     F64,
     String,
-    _Bytes, // FIXME: will be needed once we add byte and binary support
-    Custom(CustomRustType),
+    Bytes,
+
+    /// A type represented by a named schema in the OpenAPI spec.
+    NamedSchema(SchemaName),
+
+    /// A type represented by an unnamed "object" schema in the OpenAPI spec.
+    UnnamedSchema(GraphType),
 }
 
 impl RustType {
@@ -251,7 +256,7 @@ impl RustType {
             | Self::I64
             | Self::F32
             | Self::F64 => Composed::Copy,
-            Self::String | Self::_Bytes => Composed::Slice,
+            Self::String | Self::Bytes => Composed::Slice,
             _ => Composed::Composite,
         }
     }
@@ -274,8 +279,9 @@ impl RustType {
             Self::F32 => "f32",
             Self::F64 => "f64",
             Self::String => string,
-            Self::_Bytes => bytes,
-            Self::Custom(s) => s.as_pascal_case(),
+            Self::Bytes => bytes,
+            Self::NamedSchema(s) => s.as_pascal_case(),
+            Self::UnnamedSchema(s) => s.name(),
         }
     }
 
@@ -292,44 +298,48 @@ impl RustType {
             Self::F64 => quote!(f64),
             Self::String if !sliced => quote!(String),
             Self::String => quote!(str),
-            Self::_Bytes if !sliced => quote!(Vec<u8>),
-            Self::_Bytes => quote!([u8]),
-            Self::Custom(name) => {
+            Self::Bytes if !sliced => quote!(Vec<u8>),
+            Self::Bytes => quote!([u8]),
+            Self::NamedSchema(name) => {
                 let ident = format_ident!("{}", name.as_pascal_case());
+                quote!(#ident)
+            }
+            Self::UnnamedSchema(unnamed) => {
+                let ident = format_ident!("{}", unnamed.name());
                 quote!(#ident)
             }
         }
     }
 }
 
-/// A custom Rust type that doesn't fit in any of the [`RustType`] variants.
+/// The name of a named type/schema from the OpenAPI spec.
 ///
 /// This struct holds both the PascalCase and original versions of the type's
 /// name. Ideally we'd generate the PascalCase version upon request (e.g. when
-/// `as_pascal_case` is called), but this causes ownership issues further down
-/// the line.
-#[derive(Debug, Clone)]
-pub struct CustomRustType {
+/// `as_pascal_case` is called), but this would cause ownership issues further
+/// down the line.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SchemaName {
     pascal_case: String,
     original_name: String,
 }
 
-impl From<String> for CustomRustType {
+impl From<String> for SchemaName {
     fn from(value: String) -> Self {
         Self::from(value.as_str())
     }
 }
 
-impl From<&str> for CustomRustType {
+impl From<&str> for SchemaName {
     fn from(value: &str) -> Self {
-        CustomRustType {
+        SchemaName {
             pascal_case: crate::naming::pascalize(value),
             original_name: value.to_string(),
         }
     }
 }
 
-impl CustomRustType {
+impl SchemaName {
     /// Returns the type's name in PascalCase.
     pub fn as_pascal_case(&self) -> &String {
         &self.pascal_case
@@ -346,15 +356,36 @@ impl CustomRustType {
     }
 }
 
-/// Given the propeperty and whether it should be a reference, produce a
+/// Given the property and whether it should be a reference, produce a
 /// `TokenStream` that can be used as a return type representing it.
 ///
 /// `lifetime_name` defaults to `'a`. Note that any name *must* include the
 /// leading `'`.
 fn return_type(prop: &Property, refers: Reference, lifetime_name: Option<&str>) -> TokenStream {
+    let mut ty = instantiated_type(prop, refers, lifetime_name);
+
+    if !prop.is_ref && !matches!(prop.rust_type, RustType::Bytes) {
+        ty = quote!(Result<#ty, Error>);
+    }
+
+    ty
+}
+
+/// Given the propeperty and whether it should be a reference, produce a
+/// `TokenStream` that can be used as an argument type representing it.
+fn arg_type(prop: &Property, refers: Reference) -> TokenStream {
+    instantiated_type(prop, refers, Some("'_"))
+}
+
+/// Helper for [`return_type`] and [`arg_type`]
+fn instantiated_type(
+    prop: &Property,
+    refers: Reference,
+    lifetime_name: Option<&str>,
+) -> TokenStream {
     let base = &prop.rust_type.base_token(prop.nullable, refers);
 
-    let mut ty: TokenStream = if matches!(prop.rust_type, RustType::Custom(_)) {
+    let mut ty: TokenStream = if matches!(prop.rust_type, RustType::NamedSchema(_)) {
         // The format_ident! macro doesn't like lifetime names, so we do this manually.
         let lifetime_name: TokenStream = lifetime_name
             .unwrap_or("'a")
@@ -369,7 +400,7 @@ fn return_type(prop: &Property, refers: Reference, lifetime_name: Option<&str>) 
     if refers == Reference::Ref
         && composed != Composed::Copy
         && (!prop.is_collection || composed == Composed::Slice)
-        && !matches!(prop.rust_type, RustType::Custom(_))
+        && !matches!(prop.rust_type, RustType::NamedSchema(_))
     {
         ty = quote!(&#ty);
     }
@@ -380,10 +411,6 @@ fn return_type(prop: &Property, refers: Reference, lifetime_name: Option<&str>) 
 
     if prop.nullable {
         ty = quote!(Option<#ty>);
-    }
-
-    if !prop.is_ref {
-        ty = quote!(Result<#ty, Error>);
     }
 
     ty
@@ -460,6 +487,11 @@ pub fn is_rust_keyword(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        extract::path::{ApiBody, Method, Operation, Path, Success},
+        oxidize::paths::PathModule,
+    };
+
     use super::*;
 
     /// Test that lists of escaped values don't escape the word "and" at the end
@@ -479,5 +511,72 @@ mod tests {
         let expected = "A list of other email addresses for the user; for example: `['bob@contoso.com', 'Robert@fabrikam.com']`.\n\n Can store up to 250 values, each with a limit of 250 characters. NOTE: This property can't contain accent characters. Returned only on `$select`. Supports `$filter` (`eq`, `not`, `ge`, `le`, `in`, `startsWith`, `endsWith`, `/$count eq 0`, `/$count ne 0`).";
 
         assert_eq!(markup_doc_comment(input), expected);
+    }
+
+    #[test]
+    fn test_media_resource_codegen() {
+        let path = Path {
+            name: "/pets/{pet-id}/$value".to_string(),
+            template_expressions: vec!["pet-id".to_string()],
+            description: None,
+            operations: vec![
+                Operation {
+                    method: Method::Put,
+                    summary: Some("Change the noise".to_string()),
+                    description: Some("Return the pet's noise.".to_string()),
+                    external_docs: None,
+                    pageable: false,
+                    is_delta: false,
+                    parameters: None,
+                    body: Some(ApiBody {
+                        _description: None,
+                        property: Property {
+                            name: "string".to_string(),
+                            nullable: false,
+                            is_collection: false,
+                            rust_type: RustType::Bytes,
+                            description: None,
+                            is_ref: false,
+                        },
+                    }),
+                    success: Success::NoBody,
+                },
+                Operation {
+                    method: Method::Get,
+                    summary: None,
+                    description: Some("Return the pet's noise.".to_string()),
+                    external_docs: None,
+                    pageable: false,
+                    is_delta: false,
+                    parameters: None,
+                    body: None,
+                    success: Success::WithBody(ApiBody {
+                        _description: Some(".wav with the pet's noise.".to_string()),
+                        property: Property {
+                            name: "string".to_string(),
+                            nullable: false,
+                            is_collection: false,
+                            rust_type: RustType::Bytes,
+                            description: None,
+                            is_ref: false,
+                        },
+                    }),
+                },
+            ],
+        };
+        let path_module = PathModule {
+            path: &path,
+            child_modules: &[],
+        };
+
+        let generated = quote!(#path_module);
+
+        println!("{generated}");
+
+        let generated_code = format!("{generated}");
+
+        // The generated code for PUT operations should not be parameterized
+        // on body lifetime.
+        assert!(!generated_code.contains("Put < 'body >"));
     }
 }

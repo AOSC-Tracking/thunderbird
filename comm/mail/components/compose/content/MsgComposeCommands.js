@@ -92,6 +92,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   ComposeUtils: "resource:///modules/ComposeUtils.sys.mjs",
   MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
+  QuoteSanitizer: "resource:///modules/QuoteSanitizer.sys.mjs",
 });
 
 ChromeUtils.defineLazyGetter(lazy, "taskbarProgress", () => {
@@ -584,6 +585,8 @@ function updateEditableFields(aDisable) {
 /**
  * Small helper function to check whether the node passed in is a signature.
  * Note that a text node is not a DOM element, hence .localName can't be used.
+ *
+ * @param {Node} aNode - Node to check.
  */
 function isSignature(aNode) {
   return (
@@ -659,6 +662,15 @@ var stateListener = {
       editor.resetModificationCount();
     }
     if (gMsgCompose.composeHTML) {
+      const doc = getBrowser().contentDocument;
+      if (
+        doc.querySelector('blockquote[type="cite"], .moz-forward-container')
+      ) {
+        const isDarkMode =
+          window.matchMedia("(prefers-color-scheme: dark)").matches &&
+          Services.prefs.getBoolPref("mail.dark-reader.enabled", false);
+        lazy.QuoteSanitizer.sanitize(doc, isDarkMode);
+      }
       loadHTMLMsgPrefs();
     }
     AdjustFocus();
@@ -3173,8 +3185,17 @@ function GetArgs(originalData) {
     var argname = pairs[i].substring(0, pos);
     var argvalue = pairs[i].substring(pos + 1);
     if (argvalue.startsWith("'") && argvalue.endsWith("'")) {
+      // Single quotes act as a raw literal escape. We strip the quotes
+      // but do not decode. This is especially important for the 'body'
+      // argument ensuring unaltered content.
       args[argname] = argvalue.substring(1, argvalue.length - 1);
     } else {
+      // Double quotes must be stripped to prevent validation errors (such as
+      // trailing quotes in email addresses), but the contents still need to be
+      // URI decoded to support tools like xdg-email.
+      if (argvalue.startsWith('"') && argvalue.endsWith('"')) {
+        argvalue = argvalue.substring(1, argvalue.length - 1);
+      }
       try {
         args[argname] = decodeURIComponent(argvalue);
       } catch (e) {
@@ -6543,8 +6564,7 @@ async function CompleteGenericSendMessage(msgType) {
         gSendOperationInProgress = true;
       }
     }
-    msgWindow.domWindow = window;
-    msgWindow.rootDocShell.allowAuth = true;
+    window.browsingContext.docShell.allowAuth = true;
     progress.msgWindow = msgWindow;
     await gMsgCompose.sendMsg(
       msgType,

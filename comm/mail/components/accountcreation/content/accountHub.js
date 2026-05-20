@@ -93,6 +93,13 @@ class AccountHubControllerClass {
         event.stopPropagation();
         if (!this.#minimized && this.#reset()) {
           this.#modal.close();
+          // Check system integration once account hub is closed without
+          // blocking this event. This also allows account hub to clean up and
+          // avoid false-positives by having a temporary account in the profile.
+          window.requestIdleCallback(
+            () => window.showSystemIntegrationDialog(),
+            { timeout: 100 }
+          );
         }
       },
       {
@@ -135,22 +142,20 @@ class AccountHubControllerClass {
       }
     );
 
+    this.#modal.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || !this.isFirstRun) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+    });
+
     this.#modal.addEventListener("close", () => {
       // Re-enable keyboard interaction.
       document.getElementById("tabmail").globalOverlay = false;
     });
 
     this.#modal.addEventListener("cancel", event => {
-      if (
-        !MailServices.accounts.accounts.length &&
-        !Services.prefs.getBoolPref("app.use_without_mail_account", false)
-      ) {
-        // Prevent closing the modal if no account is currently present and the
-        // user didn't request using Thunderbird without an email account.
-        event.preventDefault();
-        return;
-      }
-
       // Don't allow the dialog to be canceled via the ESC key if some
       // operations are in progress and can't be aborted or the UI can't be
       // cleared.
@@ -234,6 +239,10 @@ class AccountHubControllerClass {
     // experience if the state somehow changes mid flow.
     this.isFirstRun = isFirstRun();
     this.#modal.classList.toggle("account-hub-first-run", this.isFirstRun);
+
+    for (const step of this.#modal.querySelectorAll(".account-hub-step")) {
+      step.setAttribute("is-first-run", this.isFirstRun);
+    }
 
     await this.#views[type].call();
     if (!this.#modal.open) {

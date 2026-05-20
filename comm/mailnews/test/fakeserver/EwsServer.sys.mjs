@@ -348,15 +348,6 @@ export class EwsServer extends MockServer {
   #lastRequestedVersion;
 
   /**
-   * The content of the last outgoing message sent to this server.
-   *
-   * @type {?string}
-   * @name EwsServer.lastSentMessage
-   * @private
-   */
-  #lastSentMessage;
-
-  /**
    * The username that must be supplied on requests to this server if HTTP
    * basic authentication is used.
    *
@@ -531,15 +522,6 @@ export class EwsServer extends MockServer {
   }
 
   /**
-   * The content of the last outgoing message sent to this server.
-   *
-   * @type {?string}
-   */
-  get lastSentMessage() {
-    return this.#lastSentMessage;
-  }
-
-  /**
    * Create a list of `RemoteFolder`s, representing well-known folders typically
    * synchronised first from an EWS server.
    *
@@ -686,7 +668,7 @@ export class EwsServer extends MockServer {
 
     // Retrieve the desired display name for this folder.
     const folderName =
-      folderEl.getElementsByTagName("t:DisplayName")[0].innerText;
+      folderEl.getElementsByTagName("t:DisplayName")[0].textContent;
 
     // Generate a random ID for the folder.
     const folderId = (Math.random() + 1).toString(36).substring(2);
@@ -762,18 +744,27 @@ export class EwsServer extends MockServer {
       "m:SyncFolderItemsResponseMessage"
     )[0];
 
-    let changes = this.itemChanges
-      .slice(offset)
-      .filter(([, parentId]) => parentId === syncFolderId);
-    if (changes.length > this.maxSyncItems) {
+    const [changes, truncated] = this.getChangesSince(
+      offset,
+      syncFolderId,
+      this.maxSyncItems
+    );
+
+    if (truncated) {
       responseMessageEl.getElementsByTagName(
         "m:IncludesLastItemInRange"
       )[0].textContent = "false";
-      changes = changes.slice(0, this.maxSyncItems);
+    }
+
+    let mostRecentChangeIdx;
+    if (truncated) {
+      mostRecentChangeIdx = offset + this.maxSyncItems;
+    } else {
+      mostRecentChangeIdx = this.itemChanges.length;
     }
 
     const resSyncStateEl = resDoc.createElement("m:SyncState");
-    resSyncStateEl.textContent = this.itemChanges.indexOf(changes.at(-1)) + 1;
+    resSyncStateEl.textContent = mostRecentChangeIdx;
     responseMessageEl.appendChild(resSyncStateEl);
 
     const changesEl = resDoc.getElementsByTagName("m:Changes")[0];
@@ -999,7 +990,7 @@ export class EwsServer extends MockServer {
 
     const message =
       reqDoc.getElementsByTagName("t:MimeContent")[0].firstChild.nodeValue;
-    this.#lastSentMessage = atob(message);
+    this.lastSentMessage = atob(message);
 
     // Check if the created item is being saved to a folder.
     const savedItemFolderId = reqDoc.getElementsByTagName("SavedItemFolderId");
@@ -1010,7 +1001,7 @@ export class EwsServer extends MockServer {
         .getAttribute("Id");
 
       const newItemId = "created-item-" + this.itemsCreated;
-      this.addNewItemOrMoveItemToFolder(newItemId, folderId);
+      this.addItemToFolder(newItemId, folderId);
       this.itemsCreated += 1;
 
       const itemsEl = resDoc.getElementsByTagName("m:Items")[0];
@@ -1038,8 +1029,8 @@ export class EwsServer extends MockServer {
       "t:ItemId"
     );
 
-    itemIds.forEach(id => {
-      this.addNewItemOrMoveItemToFolder(id, destinationFolderId);
+    const newItemIds = itemIds.map(id => {
+      return this.moveItemToFolder(id, destinationFolderId);
     });
 
     const resDoc = this.#buildGenericMoveResponse(
@@ -1048,7 +1039,7 @@ export class EwsServer extends MockServer {
       "m:Items",
       "t:Message",
       "t:ItemId",
-      itemIds
+      newItemIds
     );
 
     return this.#serializer.serializeToString(resDoc);
@@ -1068,8 +1059,10 @@ export class EwsServer extends MockServer {
       "t:ItemId"
     );
 
-    itemIds.forEach(id => {
-      this.addNewItemOrMoveItemToFolder(`${id}_copy`, destinationFolderId);
+    const newItemIds = itemIds.map(id => {
+      const newId = `${id}_copy`;
+      this.addItemToFolder(newId, destinationFolderId);
+      return newId;
     });
 
     const resDoc = this.#buildGenericMoveResponse(
@@ -1078,7 +1071,7 @@ export class EwsServer extends MockServer {
       "m:Items",
       "t:Message",
       "t:ItemId",
-      itemIds
+      newItemIds
     );
 
     return this.#serializer.serializeToString(resDoc);
@@ -1142,7 +1135,7 @@ export class EwsServer extends MockServer {
         for (const [itemId, itemInfo] of this.items()) {
           if (itemInfo.parentId === sourceFolderId) {
             const newItemId = `${itemId}_copy`;
-            this.addNewItemOrMoveItemToFolder(
+            this.addItemToFolder(
               newItemId,
               newFolderId,
               itemInfo.syntheticMessage
@@ -1451,10 +1444,11 @@ export class EwsServer extends MockServer {
     const responseMessagesEl =
       resDoc.getElementsByTagName("m:ResponseMessages")[0];
     for (const id of itemIds) {
+      let newId;
       if (isJunk) {
-        this.addNewItemOrMoveItemToFolder(id, "junkemail");
+        newId = this.moveItemToFolder(id, "junkemail");
       } else {
-        this.addNewItemOrMoveItemToFolder(id, "inbox");
+        newId = this.moveItemToFolder(id, "inbox");
       }
       const responseMessageEl = resDoc.createElement(
         "m:MarkAsJunkResponseMessage"
@@ -1463,7 +1457,7 @@ export class EwsServer extends MockServer {
       const responseCodeEl = resDoc.createElement("m:ResponseCode");
       responseCodeEl.textContent = "NoError";
       const movedItemIdEl = resDoc.createElement("m:MovedItemId");
-      movedItemIdEl.setAttribute("Id", id);
+      movedItemIdEl.setAttribute("Id", newId);
       responseMessageEl.appendChild(responseCodeEl);
       responseMessageEl.appendChild(movedItemIdEl);
       responseMessagesEl.appendChild(responseMessageEl);
@@ -1664,7 +1658,6 @@ export class EwsServer extends MockServer {
         this.getItemsInFolder(folder.id).forEach(item => {
           item.syntheticMessage.metaState.read = markRead;
           this.itemChanges.push(["readflag", item.parentId, item.id]);
-          console.log(item.id, item.syntheticMessage.metaState.read);
         });
 
         if (!success) {

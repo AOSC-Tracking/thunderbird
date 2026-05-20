@@ -5,24 +5,22 @@ edition = "2024"
 rust-version.workspace = true
 
 [dependencies]
-async-channel = "2.5.0"
 async-lock = "3.4.2"
 base64 = "0.21.3"
 cstr = "0.2"
-ews = { git = "https://github.com/thunderbird/ews-rs.git", rev = "3553c0b35b78c4e529cf8f563e0b3220f9edabed", version = "0.1.0", features = [
-    "interop",
-] }
+ews = { version = "0.1.0", features = ["interop"] }
 firefox-on-glean = { version = "0.1.0", path = "../../../toolkit/components/glean/api" }
-futures = "0.3.28"
 fxhash = "0.2.1"
 log = "0.4.21"
 mail-parser = "0.9.3"
+mailnews_string_glue = { version = "0.1.0", path = "../mailnews_string_glue" }
 mailnews_ui_glue = { version = "0.1.0", path = "../mailnews_ui_glue" }
 moz_http = { version = "0.1.0", path = "../moz_http" }
 moz_task = { version = "0.1.0", path = "../../../xpcom/rust/moz_task" }
 nserror = { version = "0.1.0", path = "../../../xpcom/rust/nserror" }
 nsstring = { version = "0.1.0", path = "../../../xpcom/rust/nsstring" }
 oneshot = "0.1.11"
+operation-queue = { version = "=1.0.0", features = ["line_token"] }
 paste = "1.0.11"
 protocol_shared = { version = "0.1.0", path = "../protocol_shared" }
 quick-xml = { version = "0.31.0", features = ["serde"] }

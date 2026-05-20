@@ -1,3 +1,1 @@
-20260416011526
-https://hg.mozilla.org/releases/comm-release/rev/34e449d3f0e9ecfe6581392e6419d0062493f5f1
-https://hg.mozilla.org/releases/mozilla-release/rev/1a6c5c6f11fca486436075d92fd82d51f706c775
+20260515020702

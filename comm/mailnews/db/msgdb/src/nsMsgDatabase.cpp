@@ -124,20 +124,6 @@ nsMsgDBService::~nsMsgDBService() {
   // If you hit this warning, it means that some code is holding onto
   // a db at shutdown.
   NS_WARNING_ASSERTION(!m_dbCache.Length(), "some msg dbs left open");
-#  ifndef MOZILLA_OFFICIAL
-  // Only print this on local builds since it causes crashes,
-  // see bug 1468691, bug 1377692 and bug 1342858.
-  for (uint32_t i = 0; i < m_dbCache.Length(); i++) {
-    nsMsgDatabase* pMessageDB = m_dbCache.ElementAt(i);
-    if (pMessageDB) {
-      NS_WARNING(nsPrintfCString("db left open: %s",
-                                 PromiseFlatCString(
-                                     pMessageDB->m_dbFile->HumanReadablePath())
-                                     .get())
-                     .get());
-    }
-  }
-#  endif
 #endif
 }
 
@@ -2088,13 +2074,6 @@ nsresult nsMsgDatabase::RemoveHeaderFromThread(nsMsgHdr* msgHdr) {
     ret = thread->RemoveChildHdr(msgHdr, this);
   }
   return ret;
-}
-
-NS_IMETHODIMP nsMsgDatabase::RemoveHeaderMdbRow(nsIMsgDBHdr* msg) {
-  NS_ENSURE_ARG_POINTER(msg);
-  nsMsgHdr* msgHdr =
-      static_cast<nsMsgHdr*>(msg);  // closed system, so this is ok
-  return RemoveHeaderFromDB(msgHdr);
 }
 
 // This is a lower level routine which doesn't send notifications or

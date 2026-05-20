@@ -9,6 +9,75 @@ import {
   RemoteFolder,
 } from "resource://testing-common/mailnews/MockServer.sys.mjs";
 
+import { CommonUtils } from "resource://services-common/utils.sys.mjs";
+
+/**
+ * A recipient to a `GraphMessage`. Note that the structure of this class does
+ * *not* match the structure of the `recipient` type from the Graph API.
+ */
+export class Recipient {
+  /**
+   * The recipient's name.
+   *
+   * @type {string}
+   */
+  name;
+
+  /**
+   * The recipient's email address.
+   *
+   * @type {string}
+   */
+  address;
+
+  constructor(name, address) {
+    this.name = name;
+    this.address = address;
+  }
+}
+
+/**
+ * A message created on a Graph server. Note that the structure of this class
+ * does *not* match the structure of the `message` type from the Graph API.
+ */
+export class GraphMessage {
+  /**
+   * The unique identifier for this message.
+   *
+   * @type {string}
+   */
+  id;
+
+  /**
+   * The message's Bcc recipients.
+   *
+   * @type {Array<Recipient>}
+   */
+  bccRecipients = [];
+
+  /**
+   * Whether the user has requested DSN (Delivery Status Notification) for this
+   * message.
+   *
+   * @type {bool}
+   */
+  dsnRequested = false;
+
+  /**
+   * The raw RFC822 content for this message.
+   *
+   * @type {string}
+   */
+  content;
+
+  constructor(id, bccRecipients, dsnRequested, content) {
+    this.id = id;
+    this.bccRecipients = bccRecipients;
+    this.dsnRequested = dsnRequested;
+    this.content = content;
+  }
+}
+
 /**
  * A mock server to mimic operations with Graph API.
  */
@@ -59,7 +128,31 @@ export class GraphServer extends MockServer {
    */
   #listenPort;
 
-  constructor(username = "user", password = "password", listenPort = -1) {
+  /**
+   * A map from message IDs to RFC822 message payloads.
+   *
+   * @type {Map<string, GraphMessage>}
+   * @private
+   */
+  #createdMessagesById = new Map();
+
+  /**
+   * The latest `GraphMessage` sent. Similar to `lastSentMessage` except this
+   * also includes metadata such as Bcc recipients, DSN, etc.
+   *
+   * @type {GraphMessage}
+   * @name GraphServer.lastSentGraphMessage
+   * @private
+   */
+  #lastSentGraphMessage = null;
+
+  constructor({
+    hostname,
+    port,
+    username = "user",
+    password = "password",
+    listenPort = -1,
+  } = {}) {
     super();
     this.#httpServer = new HttpServer();
     this.#httpServer.registerPrefixHandler("/", (request, response) => {
@@ -70,6 +163,15 @@ export class GraphServer extends MockServer {
         throw e;
       }
     });
+    if (hostname && port) {
+      // Used by ServerTestUtils to make this server appear at hostname:port.
+      // This doesn't mean the HTTP server is listening on that host and port.
+      this.#httpServer.identity.add(
+        port == 443 ? "https" : "http",
+        hostname,
+        port
+      );
+    }
 
     this.#username = username;
     this.#password = password;
@@ -118,6 +220,10 @@ export class GraphServer extends MockServer {
     return this.#httpServer.identity.primaryPort;
   }
 
+  get lastSentGraphMessage() {
+    return this.#lastSentGraphMessage;
+  }
+
   /**
    * Dispatch a request to the appropriate resource handler based on the
    * request API path and method.
@@ -147,14 +253,84 @@ export class GraphServer extends MockServer {
       : request.path;
     const resourceQuery = request.queryString;
 
+    // Try to find a handler that matches the method and path for the request.
     let responseJsonObject = {};
-    if (resourcePath === "/me") {
-      responseJsonObject = this.#me();
-    } else if (resourcePath === "/me/mailFolders/delta()") {
-      responseJsonObject = this.#mailFoldersDelta(resourceQuery);
-    } else if (resourcePath.startsWith("/me/mailFolders/")) {
-      responseJsonObject = this.#mailFolder(resourcePath.substring(16));
-    } else {
+    let pathMatch;
+    switch (request.method) {
+      case "GET":
+        if (resourcePath === "/me") {
+          responseJsonObject = this.#me();
+        } else if (
+          (pathMatch = /\/me\/mailFolders\/(\w+)\/messages\/delta/.exec(
+            resourcePath
+          ))
+        ) {
+          const folderName = pathMatch[1];
+          responseJsonObject = this.#mailFolderMessages(
+            folderName,
+            resourceQuery
+          );
+        } else if (
+          (pathMatch = /\/me\/mailFolders\('(\w+)'\)\/messages\/delta/.exec(
+            resourcePath
+          ))
+        ) {
+          const folderName = pathMatch[1];
+          responseJsonObject = this.#mailFolderMessages(
+            folderName,
+            resourceQuery
+          );
+        } else if (resourcePath === "/me/mailFolders/delta()") {
+          responseJsonObject = this.#mailFoldersDelta(resourceQuery);
+        } else if (resourcePath.startsWith("/me/mailFolders/")) {
+          responseJsonObject = this.#mailFolder(resourcePath.substring(16));
+        } else if (
+          (pathMatch = /\/me\/messages\/([0-9a-zA-Z_-]+)\/\$value/.exec(
+            resourcePath
+          ))
+        ) {
+          const content = this.#messageMediaResource(pathMatch[1]);
+          // This endpoint does not return a JSON object, so we can write the
+          // response directly to the output stream and return here.
+          response.bodyOutputStream.write(content, content.length);
+          return;
+        }
+        break;
+
+      case "POST":
+        if (resourcePath === "/me/messages") {
+          responseJsonObject = this.#createMessage(request);
+        } else if (
+          resourcePath.startsWith("/me/messages") &&
+          resourcePath.endsWith("/send")
+        ) {
+          // `#sendMessage()` takes care of setting the necessary properties on
+          // the response, so we should skip the body serialization part here.
+          this.#sendMessage(resourcePath, response);
+          return;
+        } else if (resourcePath.startsWith("/me/mailFolders/")) {
+          responseJsonObject = this.#createFolder(
+            resourcePath.substring(16),
+            request,
+            response
+          );
+        } else if (
+          resourcePath.startsWith("/me/messages") &&
+          resourcePath.endsWith("/move")
+        ) {
+          responseJsonObject = this.#moveMessages(request);
+        }
+        break;
+
+      case "PATCH":
+        if (resourcePath.startsWith("/me/messages")) {
+          responseJsonObject = this.#updateMessage(request);
+        }
+    }
+
+    // If we don't have a body to respond with, it likely means we've failed to
+    // find a handler for our request.
+    if (Object.keys(responseJsonObject).length === 0) {
       throw new Error(`Unexpected Graph resource: ${resourcePath}`);
     }
 
@@ -164,7 +340,7 @@ export class GraphServer extends MockServer {
   }
 
   /**
-   * Handle the /me resource.
+   * Handle the GET /me resource.
    *
    * @returns {object}
    */
@@ -185,7 +361,7 @@ export class GraphServer extends MockServer {
   }
 
   /**
-   * Handle /me/mailFolders/{mailFolderId}.
+   * Handle GET /me/mailFolders/{mailFolderId}.
    *
    * @param {string} folderId
    * @returns {object}
@@ -208,7 +384,66 @@ export class GraphServer extends MockServer {
   }
 
   /**
-   * Handle /me/mailFolders/delta().
+   * Handle POST /me/mailFolders/...
+   *
+   * @param {string} folderPath
+   * @param {nsIHttpRequest} request
+   * @param {nsIHttpResponse} response
+   * @returns {object}
+   */
+  #createFolder(folderPath, request, response) {
+    if (
+      folderPath.endsWith("/childFolders") &&
+      folderPath.split("/").length == 2
+    ) {
+      return this.#createChildFolder(
+        folderPath.substring(0, folderPath.indexOf("/")),
+        request,
+        response
+      );
+    }
+
+    throw new Error(`Unexpected folder create path: ${folderPath}`);
+  }
+
+  /**
+   * Handle POST /me/mailFolders/{mailFolderId}/childFolders.
+   *
+   * @param {string} parentFolderId
+   * @param {nsIHttpRequest} request
+   * @param {nsIHttpResponse} response
+   * @returns {object}
+   */
+  #createChildFolder(parentFolderId, request, response) {
+    const decodedParentId = decodeURIComponent(parentFolderId);
+    const parentFolder =
+      this.getDistinguishedFolder(decodedParentId) ||
+      this.getFolder(decodedParentId);
+    if (!parentFolder) {
+      throw new Error(`Unexpected parent folder id: ${decodedParentId}`);
+    }
+
+    const requestBody = JSON.parse(
+      CommonUtils.readBytesFromInputStream(request.bodyInputStream)
+    );
+    const folderName = requestBody.displayName;
+    const folderId = `created-folder-${this.folders.length}`;
+
+    this.appendRemoteFolder(
+      new RemoteFolder(folderId, parentFolder.id, folderName, null)
+    );
+    response.setStatusLine("1.1", 201, "Created");
+
+    return {
+      "@odata.context": `${this.#endpoint}/$metadata#users('me')/mailFolders/$entity`,
+      id: folderId,
+      displayName: folderName,
+      parentFolderId: parentFolder.id,
+    };
+  }
+
+  /**
+   * Handle GET /me/mailFolders/delta().
    *
    * @param {string} queryString
    * @returns {object}
@@ -261,6 +496,224 @@ export class GraphServer extends MockServer {
       "@odata.context": context,
       value: page,
       "@odata.deltaLink": nextDelta,
+    };
+  }
+
+  /**
+   * Handle GET /me/messages/{id}/$value
+   *
+   * @param {string} messageId The ID of the message.
+   * @returns {string?} The message content.
+   */
+  #messageMediaResource(messageId) {
+    const itemInfo = this.getItemInfo(messageId);
+    if (!itemInfo) {
+      return null;
+    }
+
+    const message = itemInfo.syntheticMessage;
+    if (!message) {
+      return null;
+    }
+
+    return message.toMessageString();
+  }
+
+  /**
+   * Handle POST /me/messages
+   *
+   * @param {nsIHttpRequest} request
+   * @returns {object}
+   */
+  #createMessage(request) {
+    // TODO: at some point we'll want to create messages in specific folders, in
+    // which case we'll want to stop hardcoding the drafts folder here. This is
+    // fine for now, since Graph defaults to that folder when none is provided.
+    const draftFolder = this.folders.filter(
+      folder => folder.distinguishedId == "drafts"
+    )[0];
+
+    const newItemId = "created-item-" + this.itemsCreated;
+    this.addItemToFolder(newItemId, draftFolder.id);
+    this.itemsCreated += 1;
+
+    const reqBody = CommonUtils.readBytesFromInputStream(
+      request.bodyInputStream
+    );
+    const message = new GraphMessage(newItemId, [], false, atob(reqBody));
+
+    this.#createdMessagesById.set(newItemId, message);
+
+    // Note: returning only the ID should be fine for now because that's the
+    // only bit of the message we actually use, but in the future we'll probably
+    // want to expand this response with more fields.
+    return {
+      id: newItemId,
+    };
+  }
+
+  /**
+   * Handle PATCH /me/messages/{messageId}
+   *
+   * @param {nsIHttpRequest} request
+   */
+  #updateMessage(request) {
+    const pathParts = request.path.split("/");
+    const messageId = pathParts[pathParts.length - 1];
+
+    const reqBody = CommonUtils.readBytesFromInputStream(
+      request.bodyInputStream
+    );
+    const parsedReq = JSON.parse(reqBody);
+
+    // Fetch the corresponding message and update its metadata.
+    const message = this.#createdMessagesById.get(messageId);
+
+    // `GraphMessage.bccRecipients` defaults to an empty array, so we should
+    // only update it if the request contains a non-empty array.
+    if (parsedReq.bccRecipients) {
+      for (const recipient of parsedReq.bccRecipients) {
+        const bccRecipient = new Recipient(
+          recipient.emailAddress.name,
+          recipient.emailAddress.address
+        );
+        message.bccRecipients.push(bccRecipient);
+      }
+    }
+
+    // `GraphMessage.dsnRequested` defaults to `false`, so we should only update
+    // it if the request sets it to `true`.
+    if (parsedReq.isDeliveryReceiptRequested) {
+      message.dsnRequested = parsedReq.isDeliveryReceiptRequested;
+    }
+
+    // Note: returning only the ID should be fine for now because we don't
+    // actually look at the response from this request (beyond basic things like
+    // the HTTP status code), but in the future we'll probably want to expand
+    // this response with more fields.
+    return {
+      id: messageId,
+    };
+  }
+
+  /**
+   * Handle POST /me/messages/{messageId}/send
+   *
+   * Note that, unlike other handlers, this one sets the necessary properties on
+   * the response directly.
+   *
+   * @param {string} requestPath
+   * @param {nsIHttpResponse} response
+   */
+  #sendMessage(requestPath, response) {
+    const messageId = /\/me\/messages\/(.+)\/send/.exec(requestPath)[1];
+
+    const message = this.#createdMessagesById.get(messageId);
+    if (!message) {
+      response.setStatusLine("1.1", 404, "Not Found");
+    } else {
+      response.setStatusLine("1.1", 202, "Accepted");
+      this.lastSentMessage = message.content;
+      this.#lastSentGraphMessage = message;
+    }
+  }
+
+  #mailFolderMessages(folderName, queryString) {
+    const params = new URLSearchParams(queryString);
+    let offset;
+    if (params.has("$skiptoken")) {
+      offset = parseInt(params.get("$skiptoken"));
+    } else if (params.has("$deltatoken")) {
+      offset = parseInt(params.get("$deltatoken"));
+    } else {
+      offset = 0;
+    }
+
+    const context = `${this.#endpoint}/$metadata#Collection(message)`;
+
+    const [changes, truncated] = this.getChangesSince(
+      offset,
+      folderName,
+      this.maxSyncItems
+    );
+
+    const page = [];
+    for (const [changeType, parentId, itemId] of changes) {
+      if (changeType == "create") {
+        const item = this.getItemInfo(itemId);
+        const itemData = {
+          "@odata.type": "#microsoft.graph.message",
+          id: itemId,
+          parentFolderId: parentId,
+          internetMessageId: item.syntheticMessage.messageId,
+          subject: item.syntheticMessage.subject,
+          bodyPreview: item.syntheticMessage.bodyPart
+            .toMessageString()
+            .slice(0, 10),
+        };
+        page.push(itemData);
+      } else if (changeType == "delete") {
+        const itemData = {
+          "@odata.type": "#microsoft.graph.message",
+          id: itemId,
+          "@removed": { reason: "deleted" },
+        };
+        page.push(itemData);
+      }
+      // TODO (https://bugzilla.mozilla.org/show_bug.cgi?id=2025009) Handle
+      // message updates.
+    }
+
+    const result = {
+      "@odata.context": context,
+      value: page,
+    };
+
+    if (truncated) {
+      // We have at least one more page of data. Send a nextLink.
+      const newToken = offset + this.maxSyncItems;
+      result["@odata.nextLink"] =
+        `${this.#endpoint}/me/mailFolders('${folderName}')/messages/delta?$skiptoken=${newToken}`;
+    } else {
+      // We are up to date. Send a deltaLink.
+      const newToken = changes
+        ? this.itemChanges.indexOf(changes.at(-1)) + 1
+        : 0;
+      result["@odata.deltaLink"] =
+        `${this.#endpoint}/me/mailFolders('${folderName}')/messages/delta?$deltatoken=${newToken}`;
+    }
+
+    return result;
+  }
+
+  /**
+   * Handle POST /me/messages/{messageId}/move
+   *
+   * @param {nsIHttpRequest} request
+   */
+  #moveMessages(request) {
+    // Extract the message ID, i.e. the second-to-last section of the path.
+    const pathParts = request.path.split("/");
+    const messageId = pathParts[pathParts.length - 2];
+
+    const reqBody = CommonUtils.readBytesFromInputStream(
+      request.bodyInputStream
+    );
+    const parsedReq = JSON.parse(reqBody);
+
+    const folderId = parsedReq.DestinationId;
+    if (!folderId) {
+      dump(`${reqBody}\n`);
+      throw new Error("missing destination ID for move");
+    }
+
+    const newId = this.moveItemToFolder(messageId, folderId);
+
+    // Note: returning only the ID should be fine for now because that's the
+    // only bit of the message we actually use, but in the future we'll probably
+    // want to expand this response with more fields.
+    return {
+      id: newId,
     };
   }
 

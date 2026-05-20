@@ -2,10 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::env;
+use std::{env, sync::Arc};
 
+use moz_http::Response;
 use ms_graph_tb::Operation;
-use protocol_shared::{authentication::credentials::AuthenticationProvider, error::ProtocolError};
+use protocol_shared::{
+    authentication::credentials::AuthenticationProvider, client::ProtocolClient,
+    error::ProtocolError,
+};
 use url::Url;
 use uuid::Uuid;
 use xpcom::{RefCounted, RefPtr};
@@ -13,7 +17,13 @@ use xpcom::{RefCounted, RefPtr};
 use crate::error::XpComGraphError;
 
 mod check_connectivity;
+mod create_folder;
+mod create_message;
+mod get_message;
+mod move_message;
+mod send_message;
 mod sync_folder_hierarchy;
+mod sync_messages_for_folder;
 
 // The environment variable that controls whether to include request/response
 // payloads when logging. We only check for the variable's presence, not any
@@ -30,7 +40,7 @@ impl<ServerT: AuthenticationProvider + RefCounted> XpComGraphClient<ServerT> {
         XpComGraphClient { server, endpoint }
     }
 
-    async fn send_request<Op>(&self, operation: Op) -> Result<Op::Response<'_>, XpComGraphError>
+    async fn send_request<Op>(&self, operation: Op) -> Result<Response, XpComGraphError>
     where
         Op: Operation,
     {
@@ -48,7 +58,7 @@ impl<ServerT: AuthenticationProvider + RefCounted> XpComGraphClient<ServerT> {
 
         // Generate random id for logging purposes.
         let request_id = Uuid::new_v4();
-        log::info!("Making operation request {request_id}: {resource_url}");
+        log::info!("Making operation request {request_id}: {method} {resource_url}");
 
         let mut request_builder = client.request(method, &resource_url)?;
 
@@ -73,6 +83,11 @@ impl<ServerT: AuthenticationProvider + RefCounted> XpComGraphClient<ServerT> {
                     message: "Invalid Content-Type header in request".to_string(),
                 })?;
 
+            if env::var(LOG_NETWORK_PAYLOADS_ENV_VAR).is_ok() {
+                // Also log the request body if requested.
+                log::info!("C: {}", String::from_utf8_lossy(body.as_slice()));
+            }
+
             request_builder = request_builder.body(body.as_slice(), content_type);
         }
 
@@ -82,7 +97,7 @@ impl<ServerT: AuthenticationProvider + RefCounted> XpComGraphClient<ServerT> {
         let response_status = response.status()?;
 
         log::info!(
-            "Response received for request {request_id} (status {response_status}): {resource_url}"
+            "Response received for request {request_id} (status {response_status}): {method} {resource_url}"
         );
 
         if env::var(LOG_NETWORK_PAYLOADS_ENV_VAR).is_ok() {
@@ -97,9 +112,38 @@ impl<ServerT: AuthenticationProvider + RefCounted> XpComGraphClient<ServerT> {
             })
             .into())
         } else {
-            let value: Op::Response<'_> =
-                serde_json::from_slice(response_body).map_err(XpComGraphError::Json)?;
-            Ok(value)
+            Ok(response)
         }
     }
+
+    async fn send_request_json_response<Op>(
+        &self,
+        operation: Op,
+    ) -> Result<Op::Response<'_>, XpComGraphError>
+    where
+        Op: Operation,
+    {
+        let response = self.send_request(operation).await?;
+        let mut response_body = response.body();
+        if response_body.is_empty() {
+            // If the endpoint returns an empty (0 bytes) response, we'll
+            // hit a parse error because `serde_json` doesn't know how to
+            // handle empty byte slices. In this case, we give it something
+            // that parses as the unit type (`()`), since that's the only
+            // case in which an empty body would be a valid response.
+            response_body = "null".as_bytes();
+        }
+
+        let value: Op::Response<'_> =
+            serde_json::from_slice(response_body).map_err(XpComGraphError::Json)?;
+        Ok(value)
+    }
+}
+
+impl<ServerT: AuthenticationProvider + RefCounted> ProtocolClient for XpComGraphClient<ServerT> {
+    fn protocol_identifier(&self) -> String {
+        String::from("graph")
+    }
+
+    async fn shutdown(self: Arc<Self>) {}
 }

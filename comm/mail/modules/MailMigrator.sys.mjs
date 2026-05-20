@@ -423,6 +423,12 @@ export var MailMigrator = {
         );
       }
 
+      if (currentUIVersion < 59) {
+        for (const identity of MailServices.accounts.allIdentities) {
+          identity.attachPgpKey = false;
+        }
+      }
+
       if (currentUIVersion < 60) {
         function updateCheckedValue(url, id) {
           if (Services.xulStore.hasValue(url, id, "checked")) {

@@ -66,7 +66,7 @@
 }
 
 :root[lwt-tree] {
-  --richlist-button-background: var(--sidebar-background-color);
+  --richlist-button-background: var(--sidebar-background);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -248,6 +248,7 @@ html|input[type="color"]:not([disabled]):hover:active {
 button[default] {
   background-color: var(--button-primary-background-color);
   color: var(--button-primary-text-color) !important;
+  border-color: var(--button-primary-border-color) !important;
 
   &:focus-visible {
     border-color: var(--primary-focus-border);
@@ -399,13 +400,13 @@ checkbox {
     & button,
     & menulist,
     & select:not([size], [multiple]) {
-      color: var(--sidebar-text-color) !important;
+      color: var(--sidebar-color) !important;
     }
   }
 
   & tree {
     appearance: none;
-    border: 1px solid var(--sidebar-border-color);
+    border: 1px solid var(--sidebar-border);
   }
 
   & .autocomplete-richlistbox {

@@ -11,8 +11,13 @@ pub mod authentication;
 pub mod cancellable_request;
 pub mod client;
 pub mod error;
+pub mod headerblock_xpcom;
 pub mod headers;
+pub mod outgoing;
 pub mod safe_xpcom;
+pub mod xpcom_io;
+
+mod observers;
 
 /// Connection details required for HTTPS-based Exchange protocols.
 #[derive(Clone)]

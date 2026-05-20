@@ -14,6 +14,7 @@ support-files = [
   "db/relations.sql",
   "db/sortGroups.sql",
 ]
+tags = ["panorama"]
 
 ["test_delete.js"]
 
@@ -24,6 +25,9 @@ support-files = [
 ["test_insert.js"]
 
 ["test_liveView.js"]
+
+["test_liveViewConversationsDataAdapter.js"]
+tags = ["dataadapter"]
 
 ["test_liveViewDataAdapter.js"]
 tags = ["dataadapter"]

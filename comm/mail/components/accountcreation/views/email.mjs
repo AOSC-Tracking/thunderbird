@@ -30,12 +30,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "resource:///modules/accountcreation/ExchangeAutoDiscover.sys.mjs",
 });
 
-ChromeUtils.defineLazyGetter(
-  lazy,
-  "l10n",
-  () => new Localization(["messenger/accountcreation/accountSetup.ftl"], true)
-);
-
 import "chrome://messenger/content/accountcreation/content/widgets/account-hub-step.mjs"; // eslint-disable-line import/no-unassigned-import
 import "chrome://messenger/content/accountcreation/content/widgets/account-hub-footer.mjs"; // eslint-disable-line import/no-unassigned-import
 
@@ -71,6 +65,13 @@ class AccountHubEmail extends HTMLElement {
    * @type {HTMLElement}
    */
   #emailOutgoingConfigSubview;
+
+  /**
+   * Email default manual config subview.
+   *
+   * @type {HTMLElement}
+   */
+  #emailManualConfigSubview;
 
   /**
    * Email config found subview.
@@ -123,6 +124,13 @@ class AccountHubEmail extends HTMLElement {
    * @type {AccountConfig}
    */
   #currentConfig;
+
+  /**
+   * The current Account object that was created in this account setup.
+   *
+   * @type {nsIMsgAccount}
+   */
+  #account = {};
 
   /**
    * A Config Verifier object that verifies the currentConfig.
@@ -238,6 +246,15 @@ class AccountHubEmail extends HTMLElement {
       subview: {},
       templateId: "email-sync-accounts-form",
     },
+    manualConfigSubview: {
+      id: "emailManualConfigSubview",
+      nextStep: "emailPasswordSubview",
+      previousStep: "emailConfigFoundSubview",
+      forwardEnabled: true,
+      customActionFluentID: "",
+      subview: {},
+      templateId: "email-manual-config-form",
+    },
     incomingConfigSubview: {
       id: "emailIncomingConfigSubview",
       nextStep: "outgoingConfigSubview",
@@ -294,6 +311,11 @@ class AccountHubEmail extends HTMLElement {
     this.#states.outgoingConfigSubview.subview =
       this.#emailOutgoingConfigSubview;
 
+    this.#emailManualConfigSubview = this.querySelector(
+      "#emailManualConfigSubview"
+    );
+    this.#states.manualConfigSubview.subview = this.#emailManualConfigSubview;
+
     this.#emailConfigFoundSubview = this.querySelector(
       "#emailConfigFoundSubview"
     );
@@ -325,6 +347,7 @@ class AccountHubEmail extends HTMLElement {
     this.#emailFooter.addEventListener("back", this);
     this.#emailFooter.addEventListener("forward", this);
     this.#emailFooter.addEventListener("custom-footer-action", this);
+    this.addEventListener("click", this);
     this.#emailAutoConfigSubview.addEventListener("config-updated", this);
     this.#emailAutoConfigSubview.addEventListener("edit-configuration", this);
     this.#emailIncomingConfigSubview.addEventListener("config-updated", this);
@@ -588,6 +611,56 @@ class AccountHubEmail extends HTMLElement {
           });
         }
         break;
+      case "click": {
+        if (!event.composedTarget.closest(".account-hub-thundermail-button")) {
+          return;
+        }
+
+        const oauth2Module = new lazy.OAuth2Module();
+        // Override this preference for tests.
+        const hostname = Services.prefs.getStringPref(
+          "mail.accounthub.thundermail.hostname",
+          "thundermail.com"
+        );
+        oauth2Module.initFromHostname(hostname, null, "imap");
+
+        this.#startLoading("account-hub-oauth-pending");
+        this.abortable = new AbortController();
+        this.abortable.signal.onabort = () => {
+          oauth2Module.cancelPrompt();
+          this.#stopLoading();
+          this.abortable = null;
+        };
+
+        try {
+          const deferred = Promise.withResolvers();
+          oauth2Module.getAccessToken({
+            onSuccess: deferred.resolve,
+            onFailure: deferred.reject,
+          });
+          const accessToken = await deferred.promise;
+          // The Thundermail access token has a JWT containing a username and
+          // real name we can use.
+          const jwt = JSON.parse(
+            new TextDecoder().decode(
+              ChromeUtils.base64URLDecode(accessToken.split(".")[1], {
+                padding: "ignore",
+              })
+            )
+          );
+          this.#stopLoading();
+          this.abortable = null;
+          this.#handleForwardAction("autoConfigSubview", {
+            email: jwt.preferred_username,
+            realName: jwt.name || jwt.preferred_username,
+          });
+        } catch (ex) {
+          this.#stopLoading();
+          this.abortable = null;
+        }
+
+        break;
+      }
       case "submit":
         event.preventDefault();
         if (!event.target.checkValidity()) {
@@ -693,7 +766,7 @@ class AccountHubEmail extends HTMLElement {
         break;
       case "install-addon":
         try {
-          this.#startLoading("account-setup-installing-addon");
+          this.#startLoading("account-hub-installing-addon");
           await this.#installAddon();
           // Update the add-on state in the found config list.
           this.#currentSubview.setAddon();
@@ -707,7 +780,7 @@ class AccountHubEmail extends HTMLElement {
         }
         this.#stopLoading();
         this.#currentSubview.showNotification({
-          fluentTitleId: "account-setup-success-addon",
+          fluentTitleId: "account-hub-success-addon",
           type: "success",
         });
         break;
@@ -1034,7 +1107,7 @@ class AccountHubEmail extends HTMLElement {
           this.#addSyncAccounts(stateData);
 
           await this.#initUI(this.#states[this.#currentState].nextStep);
-          this.#currentSubview.setState(this.#currentConfig);
+          this.#currentSubview.setState(this.#account);
           this.#currentSubview.showNotification({
             fluentTitleId: "account-hub-email-added-success",
             type: "success",
@@ -1087,7 +1160,7 @@ class AccountHubEmail extends HTMLElement {
           if (config.isComplete()) {
             this.#stopLoading();
             this.#currentSubview.showNotification({
-              fluentTitleId: "account-setup-success-half-manual",
+              fluentTitleId: "account-hub-success-half-manual",
               type: "success",
             });
             this.#emailFooter.toggleForwardDisabled(false);
@@ -1123,7 +1196,7 @@ class AccountHubEmail extends HTMLElement {
             this.#states[this.#currentState].previousStep || this.#currentState
           );
           this.#currentSubview.showNotification({
-            fluentTitleId: "account-setup-find-settings-failed",
+            fluentTitleId: "account-hub-find-settings-failed",
             error,
             type: "error",
           });
@@ -1240,7 +1313,7 @@ class AccountHubEmail extends HTMLElement {
       discoveryDone = true;
       this.#discoveryStream = null;
 
-      if (error.cause?.fluentTitleId === "account-setup-credentials-wrong") {
+      if (error.cause?.fluentTitleId === "account-hub-credentials-wrong") {
         throw new AuthenticationRequiredError(error.message, {
           cause: error.cause,
         });
@@ -1356,15 +1429,15 @@ class AccountHubEmail extends HTMLElement {
     if (lazy.CreateInBackend.checkIncomingServerAlreadyExists(accountConfig)) {
       throw new Error("Account already exists.", {
         cause: {
-          fluentTitleId: "account-setup-creation-error-title",
-          fluentDescriptionId: "account-setup-error-server-exists",
+          fluentTitleId: "account-hub-creation-error-title",
+          fluentDescriptionId: "account-hub-error-server-exists",
         },
       });
     }
 
-    const [title, description] = await lazy.l10n.formatValues([
-      "account-setup-confirm-advanced-title",
-      "account-setup-confirm-advanced-description",
+    const [title, description] = await document.l10n.formatValues([
+      "account-hub-confirm-advanced-title",
+      "account-hub-confirm-advanced-description",
     ]);
 
     // TODO: Create a custom styled dialog instead of using the old one.
@@ -1493,7 +1566,7 @@ class AccountHubEmail extends HTMLElement {
         !(syncAccounts.addressBooks.length || syncAccounts.calendars.length)
       ) {
         await this.#initUI("emailAddedSuccessSubview");
-        this.#currentSubview.setState(this.#currentConfig);
+        this.#currentSubview.setState(this.#account);
         this.#currentSubview.showNotification({
           fluentTitleId: "account-hub-email-added-success",
           type: "success",
@@ -1586,8 +1659,8 @@ class AccountHubEmail extends HTMLElement {
     if (lazy.CreateInBackend.checkIncomingServerAlreadyExists(completeConfig)) {
       throw new Error("Account already exists.", {
         cause: {
-          fluentTitleId: "account-setup-creation-error-title",
-          fluentDescriptionId: "account-setup-error-server-exists",
+          fluentTitleId: "account-hub-creation-error-title",
+          fluentDescriptionId: "account-hub-error-server-exists",
         },
       });
     }
@@ -1634,7 +1707,7 @@ class AccountHubEmail extends HTMLElement {
         ["imap", "pop3"].includes(completeConfig.incoming.type) &&
         completeConfig.incomingAlternatives.some(i => i.type == "exchange")
       ) {
-        errorTitle = "account-setup-exchange-config-unverifiable";
+        errorTitle = "account-hub-exchange-config-unverifiable";
       }
 
       this.#configVerifier.cleanup();
@@ -1664,6 +1737,8 @@ class AccountHubEmail extends HTMLElement {
       window.msgWindow,
       null
     );
+
+    this.#account = emailAccount;
   }
 
   /**

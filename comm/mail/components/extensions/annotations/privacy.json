@@ -26,6 +26,9 @@
     "annotations": [
       {
         "version_added": true
+      },
+      {
+        "text": "The privacy API allows to control privacy-related settings."
       }
     ]
   },
@@ -35,7 +38,27 @@
       {
         "version_added": true
       }
-    ]
+    ],
+    "properties": {
+      "globalPrivacyControl": {
+        "annotations": [
+          {
+            "additional_properties": {
+              "readOnly": true
+            }
+          }
+        ]
+      },
+      "httpsOnlyMode": {
+        "annotations": [
+          {
+            "additional_properties": {
+              "readOnly": true
+            }
+          }
+        ]
+      }
+    }
   },
   {
     "namespace": "privacy.services",

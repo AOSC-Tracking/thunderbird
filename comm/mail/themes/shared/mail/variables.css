@@ -11,9 +11,6 @@
   --account-color: var(--selected-item-color);
   --transition-duration: 200ms;
   --transition-timing: ease;
-  --arrowpanel-background: var(--layout-background-1);
-  --arrowpanel-color: var(--layout-color-1);
-  --arrowpanel-border-color: var(--layout-border-1);
   --lwt-additional-images: none;
   --lwt-background-alignment: right top;
   --lwt-background-tiling: no-repeat;
@@ -38,6 +35,8 @@
   --button-primary-active-background-color: color-mix(in srgb, var(--selected-item-color) 70%, black);
   --button-primary-text-color: var(--selected-item-text-color);
   --button-primary-border-color: color-mix(in srgb, var(--selected-item-color) 85%, black);
+  --button-primary-shadow: 0 2px 4px -4px rgba(0, 0, 0, 0.12);
+  --button-primary-hover-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 
   --button-destructive-background-color: var(--color-red-60);
   --button-destructive-hover-background-color: color-mix(in srgb, var(--color-red-50) 50%, var(--color-red-60));
@@ -64,17 +63,17 @@
   --search-bar-background: var(--layout-background-0);
   --search-bar-focus-background: var(--layout-background-0);
   --search-field-placeholder: color-mix(in srgb, currentColor 50%, transparent);
-  --search-focus-outline-color: var(--focus-outline-color);
   --search-outline-offset: -1px;
   --selected-item-color: var(--sidebar-highlight-background-color, AccentColor);
   --selected-item-text-color: var(--sidebar-highlight-text-color, AccentColorText);
   --sidebar-header-gap: 9px;
   --sidebar-header-spacing: 9px;
-  --splitter-color: var(--sidebar-border-color, var(--layout-border-0));
-  --sidebar-border-color: var(--layout-border-0);
+  --sidebar-background: var(--sidebar-background-color, var(--layout-background-1));
+  --sidebar-color: var(--sidebar-text-color, var(--layout-color-1));
+  --sidebar-border: var(--sidebar-border-color, var(--layout-border-0));
 
   --tab-min-height: 33px;
-  --lwt-tabs-border-color: var(--sidebar-border-color);
+  --lwt-tabs-border-color: var(--sidebar-border);
   --tabs-tabbar-border-size: 1px;
   --toolbar-button-hover-background-color: color-mix(in srgb, currentColor 10%, transparent);
   --toolbar-button-hover-border-color: color-mix(in srgb, currentColor 30%, transparent);
@@ -124,10 +123,24 @@
   --color-accent-primary-hover: var(--button-primary-hover-background-color);
   --color-accent-primary-active: var(--button-primary-active-background-color);
   --button-text-color-primary: var(--button-primary-text-color);
+  --button-text-color-primary-hover: var(--button-primary-text-color);
+  --button-background-color-primary: var(--button-primary-background-color);
+  --button-background-color-primary-hover: var(--button-primary-hover-background-color);
+  --button-background-color-primary-active: var(--button-primary-active-background-color);
+  --button-border-color-primary: var(--button-primary-border-color);
+  --button-border-color-primary-hover: var(--button-primary-border-color);
+  --border-radius-medium: var(--button-border-radius);
 
   --tabline-color: var(--selected-item-color);
 
   --drop-indicator-z-index: 3;
+
+  & :is(menupopup, panel) {
+    --panel-background: var(--color-surface-subtle);
+    --panel-color: var(--color-text-base);
+    --panel-border-color: var(--color-surface-border-intense);
+    --panel-border-radius: 8px;
+  }
 
   /* LW-themes enabled */
 
@@ -153,8 +166,8 @@
   }
 
   &[lwt-tree] {
-    --select-focus-text-color: var(--sidebar-highlight-text-color, var(--sidebar-text-color));
-    --new-focused-folder-color: var(--sidebar-highlight-text-color, var(--sidebar-text-color));
+    --select-focus-text-color: var(--sidebar-highlight-text-color, var(--sidebar-color));
+    --new-focused-folder-color: var(--sidebar-highlight-text-color, var(--sidebar-color));
     --row-grouped-header-bg-color: hsla(0, 0%, 50%, 0.15);
     --row-grouped-header-bg-color-selected: light-dark(
       var(--sidebar-highlight-background-color, hsla(0, 0%, 80%, 0.6)),
@@ -164,6 +177,8 @@
 
   @media (prefers-color-scheme: dark) {
     --lwt-accent-color: rgb(24, 24, 26);
+    --button-primary-shadow: none;
+    --button-primary-hover-shadow: none;
   }
 
   /* Special High contrast setting */
@@ -181,6 +196,8 @@
     --button-primary-text-color: SelectedItemText;
     --button-primary-border-color: SelectedItem;
     --button-primary-hover-border-color: -moz-DialogText;
+    --button-primary-shadow: none;
+    --button-primary-hover-shadow: none;
     --button-link-text-color: LinkText;
     --button-link-active-text-color: ActiveText;
     --button-pressed-shadow: none;
@@ -204,9 +221,6 @@
       --buttons-secondary-hover-bgcolor: rgb(224, 224, 230);
       --buttons-secondary-active-bgcolor: rgb(207, 207, 216);
       --buttons-secondary-color: rgb(21, 20, 26);
-      --arrowpanel-dimmed: color-mix(in srgb, currentColor 12%, transparent);
-      --arrowpanel-dimmed-further: color-mix(in srgb, currentColor 20%, transparent);
-      --arrowpanel-dimmed-even-further: color-mix(in srgb, currentColor 27%, transparent);
       --error-text-color: #c50042;
       --link-color: LinkText;
       --link-color-hover: LinkText;
@@ -215,6 +229,12 @@
       --toolbar-field-color: var(--layout-color-1);
       --toolbar-field-background-color: var(--layout-background-1);
       --toolbar-field-border-color: var(--layout-border-1);
+    }
+
+    & :is(menupopup, panel) {
+      --panel-dimmed: color-mix(in srgb, var(--selected-item-color) 12%, transparent);
+      --panel-dimmed-further: color-mix(in srgb, var(--selected-item-color) 20%, transparent);
+      --panel-dimmed-even-further: color-mix(in srgb, var(--selected-item-color) 27%, transparent);
     }
   }
 }
@@ -325,6 +345,14 @@
 
 @media not (prefers-contrast) {
   /* stylelint-disable-next-line media-query-no-invalid */
+  @media not -moz-pref("mail.appearance.accentColor", "accent-color") {
+    :host,
+    :root {
+      accent-color: var(--selected-item-color);
+    }
+  }
+
+  /* stylelint-disable-next-line media-query-no-invalid */
   @media -moz-pref("mail.appearance.accentColor", "thunderbird") {
     :host,
     :root {
@@ -356,7 +384,7 @@
     :host,
     :root {
       --selected-item-color: light-dark(var(--color-accent-pink-light), var(--color-accent-pink-dark));
-      --selected-item-text-color: var(--color-black);
+      --selected-item-text-color: light-dark(var(--color-white), var(--color-black));
     }
   }
 

@@ -52,7 +52,7 @@ vcard-edit {
   column-gap: 2em;
   grid-template-rows: masonry;
   row-gap: var(--vcard-edit-row-gap);
-  color: var(--sidebar-text-color);
+  color: var(--sidebar-color);
   --input-border-density: 1px;
 
   & label[for] {
@@ -124,26 +124,9 @@ vcard-n {
   flex-direction: column;
 
   & button {
-    min-inline-size: auto;
-    min-block-size: auto;
-    display: inline-flex;
     margin: 0;
-    padding: 3px;
-    border: none;
-    z-index: 2;
-    margin-block-end: 9px;
-    border-radius: 8px;
-  }
-
-  & button img {
-    -moz-context-properties: fill;
-    fill: currentColor;
-    inline-size: 9px;
-    block-size: 9px;
-  }
-
-  & button[hidden] {
-    display: none;
+    margin-block-end: 8px;
+    display: inline-flex;
   }
 }
 
@@ -249,17 +232,17 @@ vcard-nickname {
     &:checked {
       background-image: none;
       background-color: transparent;
-      border-color: var(--button-background-color-primary);
+      border-color: var(--button-primary-background-color);
       position: relative;
 
       &:enabled {
         &:hover {
           background-color: transparent;
-          border-color: var(--button-background-color-primary-hover);
+          border-color: var(--button-primary-hover-background-color);
         }
 
         &:active {
-          border-color: var(--button-background-color-primary-active);
+          border-color: var(--button-primary-active-background-color);
         }
       }
 
@@ -268,18 +251,18 @@ vcard-nickname {
         display: block;
         block-size: 8px;
         inline-size: 8px;
-        background-color: var(--button-background-color-primary);
+        background-color: var(--button-primary-background-color);
         border-radius: 50%;
         position: absolute;
         inset: 3px;
 
         &:enabled {
           &:hover {
-            background-color: var(--button-background-color-primary-hover);
+            background-color: var(--button-primary-hover-background-color);
           }
 
           &:active {
-            background-color: var(--button-background-color-primary-active);
+            background-color: var(--button-primary-active-background-color);
           }
         }
       }
@@ -387,6 +370,23 @@ vcard-adr select {
   border-radius: var(--button-border-radius);
   min-block-size: auto;
   inline-size: fit-content;
+  margin-inline-start: 0;
+
+  &::before {
+    content: "";
+    inline-size: 12px;
+    block-size: 12px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  &.only-icon {
+    min-inline-size: 0;
+    justify-content: center;
+    inline-size: 16px;
+    block-size: 16px;
+    padding: 0;
+  }
 
   &:enabled {
     &:is(:hover, :active, :hover:active) {
@@ -400,38 +400,22 @@ vcard-adr select {
 }
 
 .add-property-button {
-  &.button {
-    -moz-context-properties: fill;
-    color: var(--button-background-color-primary);
-    fill: var(--button-text-color-primary);
-  }
+  -moz-context-properties: fill, stroke;
+  color: var(--selected-item-color);
 
   &:enabled {
     &:is(:hover, :active, :hover:active) {
-      color: var(--button-background-color-primary);
+      background-color: var(--button-primary-background-color);
+      color: var(--button-primary-text-color);
     }
   }
 
   &::before {
-    position: relative;
-    display: block;
-    content: "";
-    border-radius: 8px;
-    background-color: var(--button-background-color-primary);
-    inline-size: 13px;
-    block-size: 13px;
-    background-image: url("chrome://global/skin/icons/add.svg");
-    background-position: center;
-    background-repeat: no-repeat;
-    background-size: 9px;
-    fill: unset;
-    stroke: unset;
-    fill-opacity: unset;
+    background-image: var(--icon-circle-add-sm);
   }
 }
 
 .remove-property-button {
-  min-inline-size: 0;
   color: var(--vcard-remove-color);
   margin-block-end: 3px;
   -moz-context-properties: fill, stroke;
@@ -439,20 +423,8 @@ vcard-adr select {
   stroke: currentColor;
   align-self: center;
 
-  &.only-icon {
-    justify-content: center;
-    inline-size: 16px;
-    block-size: 16px;
-    padding: 0;
-  }
-
   &::before {
-    content: "";
-    inline-size: 12px;
-    block-size: 12px;
     background-image: var(--icon-subtract-circle-sm);
-    background-repeat: no-repeat;
-    background-position: center;
   }
 
   &:enabled {

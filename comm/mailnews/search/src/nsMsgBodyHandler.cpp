@@ -16,8 +16,6 @@
 #include "mozilla/Utf8.h"
 #include "mime_closure.h"
 
-#include "nsMsgBodyHandler2.cpp"
-
 nsMsgBodyHandler::nsMsgBodyHandler(nsIMsgSearchScopeTerm* scope,
                                    nsIMsgDBHdr* msg) {
   m_scope = scope;
@@ -110,7 +108,8 @@ int32_t nsMsgBodyHandler::GetNextLine(nsCString& buf, nsCString& charset,
     outLength = buf.Length();
   }
 
-  if (m_partIsSMIME && mozilla::Preferences::GetBool("mail.search_encrypted_bodies")) {
+  if (m_partIsSMIME &&
+      mozilla::Preferences::GetBool("mail.search_encrypted_bodies")) {
     nsCString decrypted;
     DecryptSMIME(buf, decrypted);
     GetRelevantTextParts(decrypted, buf);
@@ -253,7 +252,8 @@ int32_t nsMsgBodyHandler::ApplyTransformations(const nsCString& line,
       StripHtml(buf);
     }
 
-    if (m_partIsPGP  && mozilla::Preferences::GetBool("mail.search_encrypted_bodies")) {
+    if (m_partIsPGP &&
+        mozilla::Preferences::GetBool("mail.search_encrypted_bodies")) {
       nsCString decrypted;
       DecryptPGP(buf, decrypted);
       GetRelevantTextParts(decrypted, buf);
@@ -563,6 +563,9 @@ void nsMsgBodyHandler::SniffPossibleMIMEHeader(const nsCString& line) {
     if (!m_boundaries.Contains(boundary)) m_boundaries.AppendElement(boundary);
   }
 
+  // For simple text/plain or text/html messages we don't need the charset,
+  // since the caller of `MatchBody()` already provides the overall message
+  // charset.
   if (m_isMultipart && (start = lowerCaseLine.Find("charset=")) != kNotFound) {
     start += 8;  // strlen("charset=")
     bool foundQuote = false;

@@ -26,8 +26,10 @@
 
   @media (prefers-reduced-motion: no-preference) {
     transition:
-      background-color 0.15s,
-      border-color 0.15s;
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease,
+      box-shadow 0.15s ease;
   }
 
   &:enabled {
@@ -132,23 +134,28 @@
   /* Primary Button Styles */
 
   &.button-primary {
+    font-weight: 600;
     background-color: var(--button-primary-background-color);
     color: var(--button-primary-text-color);
     border-color: var(--button-primary-border-color);
+    box-shadow: var(--button-primary-shadow);
 
     &:enabled {
       &:hover {
         background-color: var(--button-primary-hover-background-color);
         color: var(--button-primary-text-color);
         border-color: var(--button-primary-border-color);
+        box-shadow: var(--button-primary-hover-shadow);
 
         @media (prefers-contrast) {
           border-color: var(--button-primary-hover-border-color);
+          box-shadow: none;
         }
 
         &:active {
           background-color: var(--button-primary-active-background-color);
           border-color: var(--button-primary-border-color);
+          box-shadow: none;
         }
       }
     }
@@ -228,7 +235,9 @@
       font-size: 0.8rem;
       cursor: pointer;
       padding: 0;
-      margin: 0;
+      --margin-for-outline: 2px;
+      margin: var(--margin-for-outline) 0;
+      min-block-size: calc(var(--button-min-height) - 2 * var(--margin-for-outline));
     }
   }
 
@@ -412,7 +421,7 @@
 
     & > option {
       background-color: var(--background-color-box);
-      color: var(--text-color);
+      color: var(--color-text-base);
     }
   }
 }

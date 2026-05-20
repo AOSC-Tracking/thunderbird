@@ -43,8 +43,10 @@ Thunderbird Source Tree Documentation
 
    /backend/accounts
    /backend/email_protocols
+   /backend/folders
    /backend/folder_compaction
    /backend/folder_storage
+   /backend/message_database
    /panorama/index
 
 .. toctree::
@@ -67,6 +69,7 @@ Thunderbird Source Tree Documentation
    :maxdepth: 1
 
    /inappnotifications/index
+   /backend/oauth
    /telemetry/index
 
 Indices and tables

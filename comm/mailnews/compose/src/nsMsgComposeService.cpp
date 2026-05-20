@@ -35,6 +35,7 @@
 #include "nsIMsgDatabase.h"
 #include "nsIDocumentEncoder.h"
 #include "mozilla/dom/Selection.h"
+#include "mozilla/intl/Segmenter.h"
 #include "mozilla/intl/LineBreaker.h"
 #include "mimemoz2.h"
 #include "nsIURIMutator.h"
@@ -48,7 +49,6 @@
 #include "nsICommandLine.h"
 #include "nsMsgUtils.h"
 #include "nsIPrincipal.h"
-#include "nsIMutableArray.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -184,20 +184,20 @@ nsMsgComposeService::GetHTMLForSelection(mozilla::dom::Selection* selection,
     if (requireMultipleWords) {
       if (selPlain.IsEmpty()) return NS_ERROR_ABORT;
 
-      const uint32_t length = selPlain.Length();
-      const char16_t* unicodeStr = selPlain.get();
-      int32_t endWordPos =
-          mozilla::intl::LineBreaker::Next(unicodeStr, length, 0);
-
-      // If there's not even one word, then there's not multiple words
-      if (endWordPos == NS_LINEBREAKER_NEED_MORE_TEXT) return NS_ERROR_ABORT;
+      mozilla::intl::LineBreakIteratorUtf16 lineBreakIter(selPlain);
+      Maybe<uint32_t> breakPt = lineBreakIter.Next();
+      if (breakPt.isNothing()) {
+        // Not even one word, let alone multiple.
+        return NS_ERROR_ABORT;
+      }
 
       // If after the first word is only space, then there's not multiple
       // words
-      const char16_t* end;
-      for (end = unicodeStr + endWordPos; mozilla::intl::NS_IsSpace(*end);
-           end++);
-      if (!*end) return NS_ERROR_ABORT;
+      const char16_t* begin = selPlain.BeginReading() + breakPt.value();
+      const char16_t* end = selPlain.EndReading();
+      if (std::all_of(begin, end, mozilla::intl::NS_IsSpace)) {
+        return NS_ERROR_ABORT;
+      }
     }
 
     if (!charsOnlyIf.IsEmpty()) {
@@ -329,16 +329,29 @@ nsMsgComposeService::OpenComposeWindow(
         nsCOMPtr<nsINode> node = selection->GetFocusNode();
         nsAutoCString selHTML;
         if (node && NS_SUCCEEDED(GetHTMLForSelection(selection, selHTML))) {
+          // Traverse the DOM tree upwards to check if the selection is
+          // inside a <pre> tag.
+          bool isInsidePre = false;
+          for (nsCOMPtr<nsINode> parentNode = node; parentNode;
+               parentNode = parentNode->GetParentNode()) {
+            if (parentNode->LocalName().EqualsLiteral("pre")) {
+              isInsidePre = true;
+              break;
+            }
+          }
+          // Wrap in <pre> if it's an actual HTML <pre> block or a plain-text
+          // email.
           IgnoredErrorResult er;
-          if ((node->LocalName().IsEmpty() ||
-               node->LocalName().EqualsLiteral("pre")) &&
-              node->OwnerDoc()->QuerySelector(
-                  "body > div:first-of-type.moz-text-plain"_ns, er)) {
-            // Treat the quote as <pre> for selections in moz-text-plain bodies.
-            // If focusNode.localName isn't empty, we had e.g. body selected
-            // and should not add <pre>.
+          if (isInsidePre ||
+              ((node->LocalName().IsEmpty() ||
+                node->LocalName().EqualsLiteral("pre")) &&
+               node->OwnerDoc()->QuerySelector(
+                   "body > div:first-of-type.moz-text-plain"_ns, er))) {
+            // Treat the quote as <pre> for selections in actual <pre> tags or
+            // moz-text-plain bodies. If focusNode.localName isn't empty, we
+            // had e.g. body selected and should not add <pre>.
             pMsgComposeParams->SetHtmlToQuote(
-                "<pre class=\"moz-quote-pre\" wrap=\"\">"_ns + selHTML +
+                R"(<pre class="moz-quote-pre" wrap="">)"_ns + selHTML +
                 "</pre>"_ns);
           } else {
             pMsgComposeParams->SetHtmlToQuote(selHTML);
@@ -565,14 +578,6 @@ NS_IMETHODIMP nsMsgTemplateReplyHelper::OnStopRunningUrl(nsIURI* aUrl,
                                                          nsresult aExitCode) {
   NS_ENSURE_SUCCESS(aExitCode, aExitCode);
   nsresult rv;
-  nsCOMPtr<nsPIDOMWindowOuter> parentWindow;
-  if (mMsgWindow) {
-    nsCOMPtr<nsIDocShell> docShell;
-    rv = mMsgWindow->GetRootDocShell(getter_AddRefs(docShell));
-    NS_ENSURE_SUCCESS(rv, rv);
-    parentWindow = do_GetInterface(docShell);
-    NS_ENSURE_TRUE(parentWindow, NS_ERROR_FAILURE);
-  }
 
   // create the compose params object
   nsCOMPtr<nsIMsgComposeParams> pMsgComposeParams(
@@ -629,7 +634,7 @@ NS_IMETHODIMP nsMsgTemplateReplyHelper::OnStopRunningUrl(nsIURI* aUrl,
   /** initialize nsIMsgCompose, Send the message, wait for send completion
    * response **/
 
-  rv = pMsgCompose->Initialize(pMsgComposeParams, parentWindow, nullptr);
+  rv = pMsgCompose->Initialize(pMsgComposeParams, nullptr, nullptr);
   NS_ENSURE_SUCCESS(rv, rv);
 
   RefPtr<mozilla::dom::Promise> promise;
@@ -856,14 +861,6 @@ nsMsgComposeService::ForwardMessage(const nsAString& forwardTo,
         uriToOpen, nsMimeOutput::nsMimeMessageDraftOrTemplate, identity,
         uriToOpen, aMsgHdr, true, forwardTo, false, aMsgWindow, false);
 
-  nsCOMPtr<mozIDOMWindowProxy> parentWindow;
-  if (aMsgWindow) {
-    nsCOMPtr<nsIDocShell> docShell;
-    rv = aMsgWindow->GetRootDocShell(getter_AddRefs(docShell));
-    NS_ENSURE_SUCCESS(rv, rv);
-    parentWindow = do_GetInterface(docShell);
-    NS_ENSURE_TRUE(parentWindow, NS_ERROR_FAILURE);
-  }
   // create the compose params object
   nsCOMPtr<nsIMsgComposeParams> pMsgComposeParams(
       do_CreateInstance("@mozilla.org/messengercompose/composeparams;1", &rv));
@@ -883,9 +880,8 @@ nsMsgComposeService::ForwardMessage(const nsAString& forwardTo,
       do_CreateInstance("@mozilla.org/messengercompose/compose;1", &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  /** initialize nsIMsgCompose, Send the message, wait for send completion
-   * response **/
-  rv = pMsgCompose->Initialize(pMsgComposeParams, parentWindow, nullptr);
+  // Initialize nsIMsgCompose, Send the message.
+  rv = pMsgCompose->Initialize(pMsgComposeParams, nullptr, nullptr);
   NS_ENSURE_SUCCESS(rv, rv);
 
   RefPtr<Promise> promise;

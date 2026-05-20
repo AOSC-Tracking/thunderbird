@@ -23,7 +23,7 @@ uniffi = { version = "0.31" }
 uniffi_bindgen = { version = "0.31" }
 uniffi_pipeline = { version = "0.31" }
 rusqlite = { version = "0.37" }
-glean = { version = "=67.1.0" }
+glean = { version = "=67.2.0" }
 
 [target."cfg(windows)".dependencies.scopeguard]
 version = "1"
@@ -235,7 +235,6 @@ hashbrown_0_15 = { package = "hashbrown", path = "../../build/rust/hashbrown" }
 hashlink = { path = "../../build/rust/hashlink" }
 thiserror = { path = "../../build/rust/thiserror" }
 toml = { path = "../../build/rust/toml" }
-thin-vec = { path = "../../third_party/rust/thin-vec" }
 js-sys = { path = "../../build/rust/dummy-web/js-sys" }
 wasm-bindgen = { path = "../../build/rust/dummy-web/wasm-bindgen" }
 web-sys = { path = "../../build/rust/dummy-web/web-sys" }
@@ -249,8 +248,6 @@ rure = { path = "../../third_party/rust/rure" }
 unicode-bidi = { git = "https://github.com/servo/unicode-bidi", rev = "ca612daf1c08c53abe07327cb3e6ef6e0a760f0c" }
 nss-gk-api = { git = "https://github.com/beurdouche/nss-gk-api", rev = "e48a946811ffd64abc78de3ee284957d8d1c0d63" }
 any_all_workaround = { git = "https://github.com/hsivonen/any_all_workaround", rev = "7fb1b7034c9f172aade21ee1c8554e8d8a48af80" }
-chardetng = { git = "https://github.com/hsivonen/chardetng", rev = "a07d20273ce36146adaf76bd667dd57bd7b3508b" }
-chardetng_c = { git = "https://github.com/hsivonen/chardetng_c", rev = "2f0aba284677d098de14f91ffe5a9e5b9a4922c2" }
 cose = { git = "https://github.com/franziskuskiefer/cose-rust", rev = "43c22248d136c8b38fe42ea709d08da6355cf04b" }
 firefox-on-glean = { path = "../../toolkit/components/glean/api" }
 icu_capi = { path = "../../intl/icu_capi" }
@@ -262,6 +259,7 @@ wr_malloc_size_of = { path = "../../gfx/wr/wr_malloc_size_of" }
 harfbuzz-sys = { git = "https://github.com/hsivonen/rust-harfbuzz", rev = "9d58a23a98772a197291d04af93f7041b7093d95" }
 harfbuzz = { git = "https://github.com/hsivonen/rust-harfbuzz", rev = "9d58a23a98772a197291d04af93f7041b7093d95" }
 harfbuzz-traits = { git = "https://github.com/hsivonen/rust-harfbuzz", rev = "9d58a23a98772a197291d04af93f7041b7093d95" }
+encoding_rs = { git = "https://github.com/hsivonen/encoding_rs", rev = "1236d1bc423e6ba35a06485f74a6304db2d703b5" }
 objc = { git = "https://github.com/glandium/rust-objc", rev = "4de89f5aa9851ceca4d40e7ac1e2759410c04324" }
 allocator-api2 = { git = "https://github.com/glandium/allocator-api2", rev = "ad5f3d56a5a4519eff52af4ff85293431466ef5c" }
 context_id = { path = "../../third_party/application-services/components/context_id" }

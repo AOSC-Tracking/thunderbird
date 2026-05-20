@@ -4,6 +4,10 @@
 
 "use strict";
 
+const { MockExternalProtocolService } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MockExternalProtocolService.sys.mjs"
+);
+
 const PREF_NAME = "mailnews.auto_config_url";
 const PREF_VALUE = Services.prefs.getCharPref(PREF_NAME);
 
@@ -12,11 +16,14 @@ add_setup(function () {
   const url =
     "http://mochi.test:8888/browser/comm/mail/test/browser/account/xml/";
   Services.prefs.setCharPref(PREF_NAME, url);
-});
 
-registerCleanupFunction(function () {
-  // Restore the original pref.
-  Services.prefs.setCharPref(PREF_NAME, PREF_VALUE);
+  MockExternalProtocolService.init();
+
+  registerCleanupFunction(function () {
+    MockExternalProtocolService.cleanup();
+    // Restore the original pref.
+    Services.prefs.setCharPref(PREF_NAME, PREF_VALUE);
+  });
 });
 
 add_task(async function account_hub_does_not_exist_with_accounts() {
@@ -636,9 +643,36 @@ add_task(async function test_account_enter_password_imap_account() {
   // the success view.
   const successStep = dialog.querySelector("email-added-success");
   await BrowserTestUtils.waitForAttributeRemoval("hidden", successStep);
+  Assert.ok(
+    BrowserTestUtils.isVisible(
+      successStep.querySelector("#accountHubEncryptionLink")
+    ),
+    "E2E Encryption link should be visible."
+  );
+
+  // Clicking the E2E encryption link in the success page should open up the
+  // account manager.
+  const tabmail = document.getElementById("tabmail");
+  const e2eAccountManagerPromise = promiseTab("about:accountsettings", win => {
+    Assert.equal(
+      win.document.querySelector("#accounttree .current").id,
+      `${imapAccount.key}/am-e2e.xhtml`,
+      "Server should be selected in the account tree"
+    );
+  });
+  EventUtils.synthesizeMouseAtCenter(
+    successStep.querySelector("#accountHubEncryptionLink"),
+    {}
+  );
+  await e2eAccountManagerPromise;
 
   await subtest_clear_status_bar();
+  tabmail.closeTab(tabmail.currentTabInfo);
+
   MailServices.accounts.removeAccount(imapAccount);
+  MailServices.outgoingServer.deleteServer(
+    MailServices.outgoingServer.servers.find(s => s.key != "smtp1")
+  );
   Services.logins.removeAllLogins();
 
   IMAPServer.close();
@@ -646,3 +680,47 @@ add_task(async function test_account_enter_password_imap_account() {
 
   await subtest_close_account_hub_dialog(dialog, successStep);
 });
+
+add_task(async function test_footerLinks() {
+  const dialog = await subtest_open_account_hub_dialog();
+  const footer = dialog.querySelector("#emailFooter");
+  const links = footer.querySelectorAll("li:not([hidden]) a");
+
+  for (const link of links) {
+    const loadPromise = MockExternalProtocolService.promiseLoad();
+    EventUtils.synthesizeMouseAtCenter(link, {}, window);
+    Assert.equal(
+      await loadPromise,
+      link.href,
+      `Should externally open link for ${link.textContent}`
+    );
+  }
+
+  await subtest_close_account_hub_dialog(
+    dialog,
+    dialog.querySelector("email-auto-form")
+  );
+  MockExternalProtocolService.reset();
+});
+
+/**
+ * Wait for a tab to open, run a callback on it.
+ *
+ * @param {string} url - The URL of the expected tab.
+ * @param {Function} [callback] - A callback to run once the tab is open and
+ *   loaded. The callback takes the tab's window object as an argument.
+ */
+async function promiseTab(url, callback) {
+  const {
+    detail: { tabInfo },
+  } = await BrowserTestUtils.waitForEvent(window, "TabOpen");
+  await BrowserTestUtils.browserLoaded(tabInfo.browser);
+  await TestUtils.waitForTick();
+
+  Assert.equal(
+    tabInfo.browser.currentURI.spec,
+    url,
+    "correct page should be loaded in the tab"
+  );
+  await callback?.(tabInfo.browser.contentWindow);
+}

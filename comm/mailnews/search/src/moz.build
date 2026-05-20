@@ -12,8 +12,9 @@ EXPORTS += [
     "nsMsgSearchTerm.h",
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     "nsMsgBodyHandler.cpp",
+    "nsMsgBodyHandler2.cpp",
     "nsMsgFilter.cpp",
     "nsMsgFilterList.cpp",
     "nsMsgFilterService.cpp",

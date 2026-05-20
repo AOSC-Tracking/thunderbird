@@ -1,5 +1,18 @@
 [
   {
+    "namespace": "manifest",
+    "types": [
+      {
+        "id": "ComposeScript",
+        "annotations": [
+          {
+            "note": "The <var>run_at</var> option is not supported for compose scripts, because the compose editor does not load content in the same way as a regular web page."
+          }
+        ]
+      }
+    ]
+  },
+  {
     "namespace": "composeScripts",
     "functions": [
       {
@@ -15,6 +28,38 @@
   },
   {
     "namespace": "messageDisplayScripts",
+    "types": [
+      {
+        "id": "RegisteredMessageDisplayScriptOptions",
+        "properties": {
+          "runAt": {
+            "enums": {
+              "document_start": {
+                "annotations": [
+                  {
+                    "text": "Inject the script after the document is created, but before any other content is loaded."
+                  }
+                ]
+              },
+              "document_end": {
+                "annotations": [
+                  {
+                    "text": "Inject the script after the DOM is complete, but before subresources like images and frames have loaded."
+                  }
+                ]
+              },
+              "document_idle": {
+                "annotations": [
+                  {
+                    "text": "Inject the script after the page is fully loaded. This is the default."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    ],
     "functions": [
       {
         "name": "register",

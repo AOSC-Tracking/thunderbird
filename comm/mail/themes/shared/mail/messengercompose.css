@@ -31,14 +31,6 @@
     color: var(--lwt-text-color);
   }
 
-  & panel[type="autocomplete-richlistbox"] {
-    margin-block-start: -1px;
-    padding: 2px 0;
-    --panel-background: var(--arrowpanel-background);
-    --panel-color: var(--arrowpanel-color);
-    --panel-border-color: var(--arrowpanel-border-color);
-  }
-
   & .autocomplete-richlistbox {
     color: inherit;
     background-color: inherit;
@@ -59,7 +51,7 @@
   border-radius: var(--autocomplete-item-radius);
 
   &:hover {
-    background-color: var(--arrowpanel-dimmed);
+    background-color: var(--panel-dimmed);
   }
 
   &[selected] {
@@ -94,7 +86,7 @@
 
 #attachmentBucket {
   block-size: var(--attachmentSplitter-height);
-  border-block: 1px solid var(--splitter-color); /* The same color as the splitters */
+  border-block: 1px solid var(--sidebar-border); /* The same color as the splitters */
   padding: 1px;
   max-block-size: 30vh;
 }
@@ -900,7 +892,7 @@ toolbarbutton.formatting-button {
 }
 
 #msgIdentity.has-custom-color {
-  --icon-color: var(--primary);
+  --icon-color: var(--selected-item-color);
 
   &[is="menulist-editable"]::part(label-box)::before {
     display: block;
@@ -914,7 +906,7 @@ toolbarbutton.formatting-button {
   }
 
   & #msgIdentityPopup > menuitem:not(:last-child) {
-    --icon-color: var(--primary);
+    --icon-color: var(--selected-item-color);
 
     &::before {
       display: block;
@@ -1573,6 +1565,6 @@ dialog .key-info-block {
   margin-inline-start: 28px;
 }
 
-.comma-separated a:not(:last-child):after {
+.comma-separated a:not(:last-child)::after {
   content: ", ";
 }

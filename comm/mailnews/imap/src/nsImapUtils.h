@@ -34,11 +34,11 @@ extern nsresult nsBuildImapMessageURI(const char* baseURI, nsMsgKey key,
 extern nsresult nsCreateImapBaseMessageURI(const nsACString& baseURI,
                                            nsCString& baseMessageURI);
 
-void AllocateImapUidString(const uint32_t* msgUids, uint32_t& msgCount,
+void AllocateImapUidString(const ImapUid* msgUids, uint32_t& msgCount,
                            nsImapFlagAndUidState* flagState,
                            nsCString& returnString);
-void ParseUidString(const char* uidString, nsTArray<nsMsgKey>& keys);
-void AppendUid(nsCString& msgIds, uint32_t uid);
+void ParseUidString(const char* uidString, nsTArray<ImapUid>& uids);
+void AppendUid(nsCString& msgIds, ImapUid uid);
 
 class nsImapMailboxSpec : public nsIMailboxSpec {
  public:
@@ -54,12 +54,12 @@ class nsImapMailboxSpec : public nsIMailboxSpec {
 
   uint32_t mBoxFlags;
   uint32_t mSupportedUserFlags;
-  int32_t mFolder_UIDVALIDITY;
+  ImapUid mFolder_UIDVALIDITY;
   uint64_t mHighestModSeq;
   int32_t mNumOfMessages;
   int32_t mNumOfUnseenMessages;
   int32_t mNumOfRecentMessages;
-  int32_t mNextUID;
+  ImapUid mNextUID;
   nsCString mAllocatedPathName;
   nsCString mHostName;
   nsString mUnicharPathName;

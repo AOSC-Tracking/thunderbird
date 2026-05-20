@@ -234,6 +234,18 @@ folder-pane-header-toggle-full-path =
 folder-pane-header-hide-local-folders =
   .label = Hide Local Folders
 
+folder-pane-mode-header-all = All Folders
+
+folder-pane-mode-header-unread = Unread Folders
+
+folder-pane-mode-header-favorite = Favorite Folders
+
+folder-pane-mode-header-recent = Recent Folders
+
+folder-pane-mode-header-smart = Unified Folders
+
+folder-pane-mode-header-tags = Tags
+
 folder-pane-mode-context-button =
   .title = Folder mode options
 
@@ -668,11 +680,16 @@ apply-current-view-to-folder-with-children-message = Apply the current folder’
 # $total (Number) - Number of messages in thread.
 threadpane-sort-header-unread-count =
   { $unread ->
-    [one] <span>1</span> unread
-    *[other] <span>{ $unread }</span> unread
-  } of { $total ->
-    [one] <span>1</span> message
-    *[other] <span>{ $total }</span> messages
+    [one]
+      { $total ->
+        [one] <span>1</span> unread of <span>1</span> message
+       *[other] <span>1</span> unread of <span>{ $total }</span> messages
+      }
+   *[other]
+      { $total ->
+        [one] <span>{ $unread }</span> unread of <span>1</span> message
+       *[other] <span>{ $unread }</span> unread of <span>{ $total }</span> messages
+      }
   }
 
 # Variables:

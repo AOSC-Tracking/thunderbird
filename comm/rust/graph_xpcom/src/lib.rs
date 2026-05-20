@@ -9,7 +9,11 @@ use nsstring::{nsACString, nsCString};
 use protocol_shared::{
     ExchangeConnectionDetails,
     authentication::credentials::AuthenticationProvider,
-    safe_xpcom::{SafeEwsFolderListener, SafeUrlListener, uri::SafeUri},
+    safe_xpcom::{
+        SafeEwsFolderListener, SafeEwsMessageCreateListener, SafeEwsMessageFetchListener,
+        SafeEwsMessageSyncListener, SafeEwsSimpleOperationListener, SafeUrlListener, uri::SafeUri,
+    },
+    xpcom_io,
 };
 use thin_vec::ThinVec;
 use url::Url;
@@ -29,6 +33,7 @@ extern crate xpcom;
 
 mod client;
 mod error;
+mod outgoing;
 
 /// Creates a new instance of the XPCOM/Graph bridge interface [`XpcomGraphBridge`].
 ///
@@ -77,10 +82,7 @@ impl XpcomGraphBridge {
         endpoint: &nsACString,
         server: &nsIMsgIncomingServer,
     ) -> Result<(), nsresult> {
-        log::debug!(
-            "Initializing XpcomGraphBridge with endpoint {}",
-            endpoint.to_string()
-        );
+        log::debug!("Initializing XpcomGraphBridge with endpoint {endpoint}");
 
         // The ms_graph_tb crate is built from the Graph 1.0 API specification.
         // Incoming configuration is assumed to exclude the API version, so it
@@ -173,11 +175,26 @@ impl XpcomGraphBridge {
     ));
     fn create_folder(
         &self,
-        _listener: &IExchangeSimpleOperationListener,
-        _parent_id: &nsACString,
-        _name: &nsACString,
+        listener: &IExchangeSimpleOperationListener,
+        parent_id: &nsACString,
+        name: &nsACString,
     ) -> Result<(), nsresult> {
-        Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
+        let server = self.details.get().unwrap().server.clone();
+        let endpoint = self.details.get().unwrap().endpoint.clone();
+
+        let client = XpComGraphClient::new(server, endpoint);
+
+        moz_task::spawn_local(
+            "create_folder",
+            client.create_folder(
+                SafeEwsSimpleOperationListener::new(listener),
+                parent_id.to_utf8().into_owned(),
+                name.to_utf8().into_owned(),
+            ),
+        )
+        .detach();
+
+        Ok(())
     }
 
     xpcom_method!(delete_folder => DeleteFolder(
@@ -229,11 +246,30 @@ impl XpcomGraphBridge {
     ));
     fn sync_messages_for_folder(
         &self,
-        _listener: &IExchangeMessageSyncListener,
-        _folder_id: &nsACString,
-        _sync_state: &nsACString,
+        listener: &IExchangeMessageSyncListener,
+        folder_id: &nsACString,
+        sync_state: &nsACString,
     ) -> Result<(), nsresult> {
-        Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
+        let server = self.details.get().unwrap().server.clone();
+        let endpoint = self.details.get().unwrap().endpoint.clone();
+
+        let client = XpComGraphClient::new(server, endpoint);
+
+        let listener = SafeEwsMessageSyncListener::new(listener);
+        let folder_id = folder_id.to_utf8().to_string();
+        let sync_state = if sync_state.is_empty() {
+            None
+        } else {
+            Some(sync_state.to_utf8().to_string())
+        };
+
+        moz_task::spawn_local(
+            "sync_messages_for_folder",
+            client.sync_messages_for_folder(listener, folder_id, sync_state),
+        )
+        .detach();
+
+        Ok(())
     }
 
     xpcom_method!(get_message => GetMessage(
@@ -242,10 +278,20 @@ impl XpcomGraphBridge {
     ));
     fn get_message(
         &self,
-        _listener: &IExchangeMessageFetchListener,
-        _id: &nsACString,
+        listener: &IExchangeMessageFetchListener,
+        id: &nsACString,
     ) -> Result<(), nsresult> {
-        Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
+        let server = self.details.get().unwrap().server.clone();
+        let endpoint = self.details.get().unwrap().endpoint.clone();
+
+        let client = XpComGraphClient::new(server, endpoint);
+
+        let listener = SafeEwsMessageFetchListener::new(listener);
+        let id = id.to_utf8().to_string();
+
+        moz_task::spawn_local("get_message", client.get_message(listener, id)).detach();
+
+        Ok(())
     }
 
     xpcom_method!(change_read_status => ChangeReadStatus(
@@ -301,13 +347,32 @@ impl XpcomGraphBridge {
     ));
     fn create_message(
         &self,
-        _listener: &IExchangeMessageCreateListener,
-        _folder_id: &nsACString,
-        _is_draft: bool,
-        _is_read: bool,
-        _message_stream: &nsIInputStream,
+        listener: &IExchangeMessageCreateListener,
+        folder_id: &nsACString,
+        is_draft: bool,
+        is_read: bool,
+        message_stream: &nsIInputStream,
     ) -> Result<(), nsresult> {
-        Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
+        let server = self.details.get().unwrap().server.clone();
+        let endpoint = self.details.get().unwrap().endpoint.clone();
+
+        let client = XpComGraphClient::new(server, endpoint);
+
+        let content = xpcom_io::read_stream(message_stream)?;
+
+        moz_task::spawn_local(
+            "sync_folder_hierarchy",
+            client.create_message(
+                folder_id.to_string(),
+                is_draft,
+                is_read,
+                content,
+                SafeEwsMessageCreateListener::new(listener),
+            ),
+        )
+        .detach();
+
+        Ok(())
     }
 
     xpcom_method!(move_items => MoveItems(
@@ -317,11 +382,26 @@ impl XpcomGraphBridge {
     ));
     fn move_items(
         &self,
-        _listener: &IExchangeSimpleOperationListener,
-        _destination_folder_id: &nsACString,
-        _item_ids: &ThinVec<nsCString>,
+        listener: &IExchangeSimpleOperationListener,
+        destination_folder_id: &nsACString,
+        item_ids: &ThinVec<nsCString>,
     ) -> Result<(), nsresult> {
-        Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
+        let server = self.details.get().unwrap().server.clone();
+        let endpoint = self.details.get().unwrap().endpoint.clone();
+
+        let destination_folder_id = destination_folder_id.to_string();
+        let item_ids = item_ids.iter().map(|id| id.to_string()).collect();
+
+        let client = XpComGraphClient::new(server, endpoint);
+        let listener = SafeEwsSimpleOperationListener::new(listener);
+
+        moz_task::spawn_local(
+            "move_messages",
+            client.move_messages(destination_folder_id, item_ids, listener),
+        )
+        .detach();
+
+        Ok(())
     }
 
     xpcom_method!(copy_items => CopyItems(

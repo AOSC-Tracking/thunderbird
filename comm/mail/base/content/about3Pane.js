@@ -2223,10 +2223,10 @@ var folderPane = {
 
     mode.container = container;
     mode.containerHeader = container.querySelector(".mode-container");
-    mode.containerHeader.querySelector(".mode-name").textContent =
-      messengerBundle.GetStringFromName(
-        modeName == "tags" ? "tag" : `folderPaneModeHeader_${modeName}`
-      );
+    document.l10n.setAttributes(
+      mode.containerHeader.querySelector(".mode-name"),
+      `folder-pane-mode-header-${modeName}`
+    );
     mode.containerList = container.querySelector("ul");
     this._initMode(mode);
     mode.active = true;
@@ -3785,6 +3785,12 @@ var folderPane = {
       // In a failure, proceed anyway since we're dealing with problems
       folder.ForceDBClosed();
     }
+    // The local store was deleted above. It won't be recreated until the user
+    // attempts to load a message or the offline sync process creates it.
+    // However, folder discovery relies on the existence of the offline store,
+    // so to avoid an intermediate state that could cause folder discovery to
+    // fail for this folder, we create the local store.
+    folder.msgStore.ensureLocalStore(folder);
     folder.updateFolder(top.msgWindow);
   },
 
@@ -7444,10 +7450,8 @@ commandController.registerCallback(
     // enabled for junk. The junk type picks up possible dummy message headers,
     // while the runJunkControls will prevent running on XF virtual folders.
     return (
-      commandController._getViewCommandStatus(Ci.nsMsgViewCommandType.junk) &&
-      commandController._getViewCommandStatus(
-        Ci.nsMsgViewCommandType.runJunkControls
-      )
+      gDBView?.getCommandStatus(Ci.nsMsgViewCommandType.junk) &&
+      gDBView?.getCommandStatus(Ci.nsMsgViewCommandType.runJunkControls)
     );
   }
 );

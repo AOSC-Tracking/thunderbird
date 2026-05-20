@@ -11,6 +11,7 @@ EXPORTS += [
     "LineReader.h",
     "MailHeaderParsing.h",
     "mailnews_string_glue.h",
+    "MailStream.h",
     "MboxMsgInputStream.h",
     "MboxMsgOutputStream.h",
     "msgCore.h",
@@ -40,13 +41,14 @@ EXPORTS += [
     "UrlListener.h",
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     "CopyMessageStreamListener.cpp",
     "FolderCompactor.cpp",
     "FolderLookupService.cpp",
     "MailHeaderParsing.cpp",
     "MailNewsDLF.cpp",
     "MailnewsLoadContextInfo.cpp",
+    "MailStream.cpp",
     "MboxMsgInputStream.cpp",
     "MboxMsgOutputStream.cpp",
     "MsgOperationListener.cpp",
@@ -103,17 +105,18 @@ SOURCES += [
 ]
 
 if CONFIG["OS_ARCH"] == "WINNT":
-    SOURCES += [
+    UNIFIED_SOURCES += [
         "nsMessengerWinIntegration.cpp",
-        # This file cannot be built in unified mode because of name clashes with Windows headers.
+    ]
+    SOURCES += [
         "nsUserInfoWin.cpp",
     ]
 elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
-    SOURCES += [
+    UNIFIED_SOURCES += [
         "nsUserInfoUnix.cpp",
     ]
 elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
-    SOURCES += [
+    UNIFIED_SOURCES += [
         "nsMessengerOSXIntegration.mm",
         "nsUserInfoMac.mm",
     ]

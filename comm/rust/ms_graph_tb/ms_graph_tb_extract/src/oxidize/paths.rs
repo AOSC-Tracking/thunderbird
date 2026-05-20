@@ -6,29 +6,46 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 
 use crate::GENERATION_DISCLOSURE;
+use crate::extract::path::ApiBody;
 use crate::extract::{
     path::{Method, Operation, Path, Success},
     schema::Property,
 };
+use crate::module_hierarchy::ModuleName;
 use crate::naming::snakeify;
+use crate::oxidize::types::GraphType;
 
 use super::{Reference, RustType, markup_doc_comment, return_type};
 
-impl ToTokens for Path {
+/// Code generation state for one extracted API path.
+///
+/// This wraps [`crate::extract::path::Path`], which is an OpenAPI-style API
+/// path, and emits the corresponding Rust path module.
+pub struct PathModule<'a> {
+    pub path: &'a Path,
+    pub child_modules: &'a [ModuleName],
+}
+
+impl ToTokens for PathModule<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Self {
+            path,
+            child_modules,
+        } = self;
         let Path {
             name,
             template_expressions,
             description,
             operations,
-        } = self;
+        } = path;
         let mut imports = vec![];
         let template_expressions = TemplateExpressionsDef::new(name, template_expressions);
+        let child_modules = child_modules.iter().map(ModuleName::as_rust_ident);
         let mut operations = operations.clone();
-        operations.sort_by(|a, b| a.method.cmp(&b.method));
+        operations.sort_by_key(|op| op.method);
         let operation_defs = operations
             .iter()
-            .filter_map(|operation| {
+            .map(|operation| {
                 let description = match (&operation.summary, &operation.description) {
                     (Some(summary), Some(desc)) => Some(format!("{summary}\n\n{desc}")),
                     (Some(text), None) | (None, Some(text)) => Some(text.clone()),
@@ -52,16 +69,10 @@ impl ToTokens for Path {
                     }
                 };
 
-                let method = operation.method;
                 let response = operation_response(operation);
-                match method {
-                    Method::Get => Some(http_get(&mut imports, template_expressions.idents.clone(), description, operation, response)),
-                    Method::Patch => Some(http_with_body(Method::Patch, &mut imports, template_expressions.idents.clone(), description, operation, response)),
-                    Method::Post => Some(http_with_body(Method::Post, &mut imports, template_expressions.idents.clone(), description, operation, response)),
-                    _ => {
-                        eprintln!("skipping unsupported method: {method}");
-                        None
-                    }
+                match &operation.body {
+                    Some(body) => request_with_body(body.clone(), &mut imports, template_expressions.idents.clone(), description, operation, response),
+                    None => request_without_body(&mut imports, template_expressions.idents.clone(), description, operation, response),
                 }
             })
             .collect::<Vec<_>>();
@@ -77,6 +88,8 @@ impl ToTokens for Path {
         let imports = super::imports(&imports);
 
         tokens.append_all(quote! {
+            #( pub mod #child_modules; )*
+
             use form_urlencoded::Serializer;
             use http::method::Method;
             use std::str::FromStr;
@@ -92,7 +105,7 @@ impl ToTokens for Path {
 }
 
 fn operation_response(operation: &Operation) -> TokenStream {
-    if operation.delta {
+    if operation.is_delta {
         let response = delta_response_value(operation);
         quote!(DeltaResponse<#response>)
     } else if operation.pageable {
@@ -119,20 +132,27 @@ fn delta_response_value(operation: &Operation) -> TokenStream {
     return_type(&element, Reference::Own, Some("'response"))
 }
 
-fn http_get(
+/// Generate the struct and implementation of a request that doesn't take a
+/// body.
+fn request_without_body(
     imports: &mut Vec<Property>,
     template_expressions: Vec<Ident>,
     description: Option<TokenStream>,
     operation: &Operation,
     response: TokenStream,
 ) -> RequestDef {
-    let method = Method::Get;
+    if let Success::WithBody(ref body) = operation.success {
+        imports.push(body.property.clone());
+    }
+
+    let method = operation.method;
+
     let selectable = selectable(operation);
     let selection_type = if selectable {
         let Success::WithBody(ref selection_body) = operation.success else {
             panic!("selectable request with no response type: {operation:?}");
         };
-        let RustType::Custom(ref selection_type) = selection_body.property.rust_type else {
+        let RustType::NamedSchema(ref selection_type) = selection_body.property.rust_type else {
             panic!("non-custom selectable response type: {operation:?}");
         };
         let selection_type = format_ident!("{}Selection", selection_type.as_pascal_case());
@@ -142,6 +162,14 @@ fn http_get(
         None
     }
     .map(|s| format_ident!("{s}"));
+
+    let mut unnamed_body_types = Vec::new();
+    if let Success::WithBody(resp_body) = &operation.success
+        && let RustType::UnnamedSchema(graph_type) = &resp_body.property.rust_type
+    {
+        unnamed_body_types.push(graph_type.clone());
+    }
+
     let struct_def = StructDef {
         description,
         method,
@@ -164,8 +192,9 @@ fn http_get(
         selectable,
     };
     let select_def = SelectDef { selection_type };
-    let delta_def = operation.delta.then(|| DeltaDef { response });
+    let delta_def = operation.is_delta.then(|| DeltaDef { response });
     RequestDef {
+        unnamed_body_types,
         struct_def,
         impl_def,
         operation_def,
@@ -174,24 +203,42 @@ fn http_get(
     }
 }
 
-fn http_with_body(
-    method: Method,
+/// Generate the struct and implementation of a request that takes the given
+/// body.
+fn request_with_body(
+    op_body: ApiBody,
     imports: &mut Vec<Property>,
     template_expressions: Vec<Ident>,
     description: Option<TokenStream>,
     operation: &Operation,
     response: TokenStream,
 ) -> RequestDef {
-    let op_body = operation
-        .body
-        .clone()
-        .expect("Patch operations should have a body");
     imports.push(op_body.property.clone());
+
+    if let Success::WithBody(ref body) = operation.success {
+        imports.push(body.property.clone());
+    }
+
+    let method = operation.method;
+
     let mut body = op_body.property.rust_type.base_token(false, Reference::Own);
-    let body_lifetime = Some(quote!(<'body>));
-    if op_body.property.is_ref {
+    let body_lifetime = match op_body.property.rust_type {
+        RustType::NamedSchema(_) | RustType::UnnamedSchema(_) => Some(quote!(<'body>)),
+        _ => None,
+    };
+    if op_body.property.is_ref || matches!(op_body.property.rust_type, RustType::UnnamedSchema(_)) {
         body = quote!(#body #body_lifetime);
     }
+
+    let mut unnamed_body_types = Vec::new();
+    if let RustType::UnnamedSchema(graph_type) = op_body.property.rust_type {
+        unnamed_body_types.push(graph_type);
+    } else if let Success::WithBody(resp_body) = &operation.success
+        && let RustType::UnnamedSchema(graph_type) = &resp_body.property.rust_type
+    {
+        unnamed_body_types.push(graph_type.clone());
+    }
+
     let struct_def = StructDef {
         description,
         method,
@@ -216,8 +263,12 @@ fn http_with_body(
     let select_def = SelectDef {
         selection_type: None,
     };
-    assert!(!operation.delta, "deltas are not supported for PATCH");
+    assert!(
+        !operation.is_delta,
+        "deltas are not supported for requests with a body"
+    );
     RequestDef {
+        unnamed_body_types,
         struct_def,
         impl_def,
         operation_def,
@@ -234,6 +285,7 @@ struct TemplateExpressionsDef {
 }
 
 impl TemplateExpressionsDef {
+    #[must_use]
     fn new(raw_path: &str, template_expressions: &[String]) -> Self {
         let mut path = format!("{{endpoint}}{raw_path}");
         let mut idents = vec![format_ident!("endpoint")];
@@ -269,6 +321,7 @@ impl ToTokens for TemplateExpressionsDef {
 }
 
 pub struct RequestDef {
+    unnamed_body_types: Vec<GraphType>,
     struct_def: StructDef,
     impl_def: ImplDef,
     operation_def: OperationDef,
@@ -279,12 +332,18 @@ pub struct RequestDef {
 impl ToTokens for RequestDef {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let RequestDef {
+            unnamed_body_types,
             struct_def,
             impl_def,
             operation_def,
             select_def,
             delta_def,
         } = self;
+        tokens.append_all(
+            unnamed_body_types
+                .iter()
+                .map(|graph_type| quote!(#graph_type)),
+        );
         tokens.append_all(quote! {
             #struct_def
             #impl_def
@@ -356,6 +415,7 @@ impl ToTokens for ImplDef {
         };
         tokens.append_all(quote! {
             impl #lifetime #method #lifetime {
+                #[must_use]
                 pub fn new(#( #template_expressions: String, )* #arg) -> Self {
                     Self {
                         template_expressions: TemplateExpressions {
@@ -424,8 +484,10 @@ impl ToTokens for OperationDef {
             },
         };
 
+        let lifetime = lifetime.as_ref().map(|_| quote!(<'_>));
+
         tokens.append_all(quote! {
-            impl #lifetime Operation for #method #lifetime {
+            impl Operation for #method #lifetime {
                 const METHOD: Method = Method::#upper_method;
                 type Response<'response> = #response;
 
@@ -456,11 +518,11 @@ impl ToTokens for SelectDef {
                     type Properties = #selection_type;
 
                     fn select<P: IntoIterator<Item = Self::Properties>>(&mut self, properties: P) {
-                        self.selection.select(properties)
+                        self.selection.select(properties);
                     }
 
                     fn extend<P: IntoIterator<Item = Self::Properties>>(&mut self, properties: P) {
-                        self.selection.extend(properties)
+                        self.selection.extend(properties);
                     }
                 }
             })

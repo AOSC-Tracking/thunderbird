@@ -491,7 +491,7 @@ class nsImapMailFolder : public nsMsgDBFolder,
   nsCOMPtr<nsIMsgFolder> mSpamFolder;
   nsMsgKey m_curMsgUid;
   nsMsgKey m_previousHighestUid;
-  uint32_t m_uidValidity;
+  ImapUid m_uidValidity;
 
   // These three vars are used to store counts from STATUS or SELECT command
   // They include deleted messages, so they can differ from the generic
@@ -500,7 +500,7 @@ class nsImapMailFolder : public nsMsgDBFolder,
   int32_t m_numServerUnseenMessages;
   int32_t m_numServerTotalMessages;
   // if server supports UIDNEXT, we store it here.
-  int32_t m_nextUID;
+  ImapUid m_nextUID;
 
   int32_t m_nextMessageByteLength;
   nsCOMPtr<nsIUrlListener> m_urlListener;

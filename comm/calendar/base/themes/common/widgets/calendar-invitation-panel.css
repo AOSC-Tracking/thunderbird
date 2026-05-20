@@ -6,7 +6,7 @@
 :host(calendar-invitation-panel) {
   background-color: Field;
   inline-size: auto;
-  border: 1px solid var(--splitter-color);
+  border: 1px solid var(--sidebar-border);
 }
 
 :host(calendar-invitation-panel) .notificationbox-stack {
@@ -87,11 +87,11 @@ calendar-invitation-interval {
   display: inline-block;
 }
 
-.calendar-invitation-panel-partstat-breakdown:before {
+.calendar-invitation-panel-partstat-breakdown::before {
   content: "(";
 }
 
-.calendar-invitation-panel-partstat-breakdown:after {
+.calendar-invitation-panel-partstat-breakdown::after {
   content: ")";
 }
 

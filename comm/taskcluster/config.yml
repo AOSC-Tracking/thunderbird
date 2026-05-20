@@ -35,6 +35,7 @@ treeherder:
         'BMcs': 'Beetmover checksums,'
         'BMcss': 'Beetmover checksums for source'
         'BMR': 'Beetmover repackages'
+        'BM-apt': 'Beetmover APT (.deb) packages'
         'c-Up': 'Balrog submission of complete updates'
         'cs': 'Checksum signing'
         'css': 'Checksum signing for source'
@@ -287,6 +288,14 @@ mac-signing:
                 - deep: false
                   runtime: true
                   force: true
+                  entitlements: comm/build/macosx/hardenedruntime/v2/production/security-module-helper.xml
+                  globs:
+                      - "/Contents/MacOS/security-module-helper.app"
+                  only-if-milestone-is-nightly: true
+
+                - deep: false
+                  runtime: true
+                  force: true
                   # These files are signed without entitlements
                   globs:
                       - "/Contents/MacOS/crashhelper"
@@ -323,6 +332,14 @@ mac-signing:
                   entitlements: comm/build/macosx/hardenedruntime/v2/developer/media-plugin-helper.xml
                   globs:
                       - "/Contents/MacOS/media-plugin-helper.app"
+
+                - deep: false
+                  runtime: true
+                  force: true
+                  entitlements: comm/build/macosx/hardenedruntime/v2/developer/security-module-helper.xml
+                  globs:
+                      - "/Contents/MacOS/security-module-helper.app"
+                  only-if-milestone-is-nightly: true
 
                 - deep: false
                   runtime: true

@@ -20,6 +20,9 @@ form {
   --hub-menuitem-background-color-selected: var(--color-primary-default);
   --hub-form-input-line-height: 1em;
   --hub-form-label-font-size: 1rem;
+  --hub-form-label-line-height: 1rlh;
+  --hub-form-label-padding: var(--space-step);
+  --hub-form-label-height: calc(var(--hub-form-label-line-height) + 2 * var(--hub-form-label-padding));
   --hub-form-input-block-padding: 12px;
 
   grid-row: header / footer;
@@ -69,6 +72,7 @@ form {
 
   label {
     font-size: var(--hub-form-label-font-size);
+    line-height: var(--hub-form-label-line-height);
     font-weight: 600;
     color: var(--hub-menulist-label-color);
 
@@ -78,7 +82,7 @@ form {
       border-radius: 3px;
       transform-origin: left center;
       color: var(--color-text-secondary);
-      padding: 3px;
+      padding: var(--hub-form-label-padding);
       margin-inline-start: 7px;
       font-weight: 400;
       cursor: text;
@@ -125,7 +129,7 @@ form {
     border: 1px solid var(--color-surface-border);
     border-radius: var(--button-border-radius);
     background-color: var(--hub-input-bg-color);
-    font-weight: 200;
+    font-weight: 300;
     max-inline-size: 100%;
 
     &[type="password"] {
@@ -137,7 +141,7 @@ form {
     }
 
     &::placeholder {
-      font-weight: 200;
+      font-weight: 300;
       color: var(--color-text-secondary);
     }
 
@@ -148,7 +152,7 @@ form {
     }
 
     &:focus {
-      border-color: light-dark(var(--color-primary-hover), var(--color-primary-default));
+      border-color: var(--selected-item-color);
     }
 
     &:focus-visible {
@@ -304,7 +308,7 @@ div:has(legend) {
   position: relative;
 
   &:has(label.animated) {
-    padding-block-start: calc(var(--hub-form-label-font-size) - var(--hub-form-input-block-padding));
+    padding-block-start: calc(var(--hub-form-label-height) - var(--hub-form-input-block-padding));
   }
 
   &:has(.security-warning) {
@@ -454,12 +458,13 @@ div:has(legend) {
 }
 
 .input-success {
-  input:invalid ~ & {
-    display: none;
-  }
+  display: none;
 
-  input:user-valid ~ &,
-  input:valid ~ & {
+  /* Optional fields need to have placeholder="" or an actual placeholder so the
+   * validity checkmark doesn't show in their empty state. If we ever get the
+   * :blank pseudo class, we can use that instead. */
+  input:user-valid:not(:optional:placeholder-shown) ~ &,
+  input:valid:not(:placeholder-shown) ~ & {
     display: inline-block;
   }
 }

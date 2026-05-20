@@ -73,3 +73,7 @@ support-files = [
 ["browser_imageInsertionDialog.js"]
 
 ["browser_indentOutdent.js"]
+
+["browser_inlineRelatedAttachmentDraft.js"]
+
+["browser_malformedMultipartMixedForward.js"]

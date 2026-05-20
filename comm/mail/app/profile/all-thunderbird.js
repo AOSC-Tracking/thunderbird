@@ -467,9 +467,10 @@ pref("network.protocol-handler.expose.nntp", true);
 pref("network.protocol-handler.expose.imap", true);
 pref("network.protocol-handler.expose.pop", true);
 pref("network.protocol-handler.expose.mailbox", true);
-// `x-moz-ews` is meant for internal use only, so we shouldn't handle e.g.
+// `x-moz-{ews,graph}` are meant for internal use only, so we shouldn't handle e.g.
 // clickable links with this scheme.
 pref("network.protocol-handler.expose.x-moz-ews", false);
+pref("network.protocol-handler.expose.x-moz-graph", false);
 // Although we allow these to be exposed internally, there are various places
 // (e.g. message pane) where we may divert them out to external applications.
 pref("network.protocol-handler.expose.about", true);
@@ -511,7 +512,9 @@ pref("network.protocol-handler.external.moz-cal-handle-itip", false);
 pref("network.protocol-handler.external.smile", false);
 pref("network.protocol-handler.external.ews", false);
 pref("network.protocol-handler.external.ews-message", false);
+pref("network.protocol-handler.external.graph-message", false);
 pref("network.protocol-handler.external.x-moz-ews", false);
+pref("network.protocol-handler.external.x-moz-graph", false);
 
 pref("network.hosts.smtp_server",           "mail");
 pref("network.hosts.pop_server",            "mail");
@@ -1510,8 +1513,11 @@ pref("mail.accounthub.enabled", true);
 // Enable address book setup via account hub
 pref("mail.accounthub.addressbook.enabled", true);
 
-// Enabled Thundermail ui in account hub.
+// Enable Thundermail ui in account hub.
 pref("mail.accounthub.thundermail.enabled", false);
+
+// Enable new manual config ui in account hub.
+pref("mail.accounthub.manualconfig.enabled", false);
 
 // Export to mobile logging level.
 pref("mail.qrexport.loglevel", "Warn");

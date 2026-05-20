@@ -70,14 +70,14 @@ using mozilla::net::LoadInfo;
 static const char sequenceString[] = "SEQUENCE";
 static const char uidString[] = "UID";
 
-static bool gInitialized = false;
+static bool gImapServiceInitialized = false;
 
 NS_IMPL_ISUPPORTS(nsImapService, nsIImapService, nsIMsgMessageService,
                   nsIProtocolHandler, nsIMsgProtocolInfo,
                   nsIMsgMessageFetchPartService, nsIContentHandler)
 
 nsImapService::nsImapService() {
-  if (!gInitialized) {
+  if (!gImapServiceInitialized) {
     nsresult rv;
 
     nsCOMPtr<nsIIOService> ioServ = do_GetIOService();
@@ -101,7 +101,7 @@ nsImapService::nsImapService() {
     NS_ASSERTION(autoSyncMgr != nullptr,
                  "*** Cannot initialize nsAutoSyncManager service.");
 
-    gInitialized = true;
+    gImapServiceInitialized = true;
   }
 }
 
@@ -1018,7 +1018,7 @@ NS_IMETHODIMP nsImapService::IsMsgInMemCache(nsIURI* aUrl,
         do_QueryInterface(aImapMailFolder, &rv));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    int32_t uidValidity = -1;
+    ImapUid uidValidity;
     folderSink->GetUidValidity(&uidValidity);
     // stick the uid validity in front of the url, so that if the uid validity
     // changes, we won't reuse the wrong cache entries.
@@ -1289,7 +1289,7 @@ NS_IMETHODIMP nsImapService::Expunge(nsIMsgFolder* aImapMailFolder,
 /* old-stle biff that doesn't download headers */
 NS_IMETHODIMP nsImapService::Biff(nsIMsgFolder* aImapMailFolder,
                                   nsIUrlListener* aUrlListener, nsIURI** aURL,
-                                  uint32_t uidHighWater) {
+                                  ImapUid uidHighWater) {
   NS_ENSURE_ARG_POINTER(aImapMailFolder);
 
   // static const char *formatString = "biff>%c%s>%ld";
@@ -2289,25 +2289,10 @@ NS_IMETHODIMP nsImapService::NewChannel(nsIURI* aURI, nsILoadInfo* aLoadInfo,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  nsCOMPtr<nsIMsgWindow> msgWindow;
-  mailnewsUrl->GetMsgWindow(getter_AddRefs(msgWindow));
-  if (msgWindow) {
-    nsCOMPtr<nsIDocShell> msgDocShell;
-    msgWindow->GetRootDocShell(getter_AddRefs(msgDocShell));
-    if (msgDocShell) {
-      nsCOMPtr<nsIProgressEventSink> prevEventSink;
-      channel->GetProgressEventSink(getter_AddRefs(prevEventSink));
-      nsCOMPtr<nsIInterfaceRequestor> docIR(do_QueryInterface(msgDocShell));
-      channel->SetNotificationCallbacks(docIR);
-      // we want to use our existing event sink.
-      if (prevEventSink) channel->SetProgressEventSink(prevEventSink);
-    }
-  } else {
-    // This function ends by checking the final value of rv and deciding whether
-    // to set aRetVal to our channel according to it. Let's just
-    // reset rv to an OK value.
-    rv = NS_OK;
-  }
+  // This function ends by checking the final value of rv and deciding whether
+  // to set aRetVal to our channel according to it. Let's just
+  // reset rv to an OK value.
+  rv = NS_OK;
 
   // the imap url holds a weak reference so we can pass the channel into the
   // imap protocol when we actually run the url.

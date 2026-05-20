@@ -5,7 +5,7 @@
 #include "nsAutoSyncState.h"
 
 #include "EwsFetchMsgsToOffline.h"
-#include "IEwsFolder.h"
+#include "IExchangeFolder.h"
 #include "nsImapMailFolder.h"
 #include "nsIImapService.h"
 #include "nsIMsgMailNewsUrl.h"
@@ -444,7 +444,8 @@ NS_IMETHODIMP nsAutoSyncState::OnStopRunningUrl(nsIURI* aUrl,
     nsCOMPtr<nsIMsgImapMailFolder> imapFolder =
         do_QueryReferent(mOwnerFolder, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
-    int32_t serverTotal, serverUnseen, serverRecent, serverNextUID;
+    int32_t serverTotal, serverUnseen, serverRecent;
+    ImapUid serverNextUID;
     imapFolder->GetServerTotal(&serverTotal);
     imapFolder->GetServerUnseen(&serverUnseen);
     imapFolder->GetServerRecent(&serverRecent);
@@ -460,11 +461,10 @@ NS_IMETHODIMP nsAutoSyncState::OnStopRunningUrl(nsIURI* aUrl,
         serverRecent != mLastServerRecent  //||
         /*(serverUnseen != mLastServerUnseen)*/) {
       if (MOZ_LOG_TEST(gAutoSyncLog, LogLevel::Debug)) {
-        nsCString folderName;
-        ownerFolder->GetURI(folderName);
-        MOZ_LOG(gAutoSyncLog, LogLevel::Debug,
-                ("%s: folder %s status changed serverNextUID=%d lastNextUID=%d",
-                 __func__, folderName.get(), serverNextUID, mLastNextUID));
+        MOZ_LOG_FMT(
+            gAutoSyncLog, LogLevel::Debug,
+            "{}: folder {} status changed serverNextUID={} lastNextUID={}",
+            __func__, ownerFolder->URI(), serverNextUID, mLastNextUID);
         MOZ_LOG(gAutoSyncLog, LogLevel::Debug,
                 ("%s: serverTotal = %d lastServerTotal = %d serverRecent = %d "
                  "lastServerRecent = %d\n",
@@ -714,7 +714,7 @@ NS_IMETHODIMP nsAutoSyncState::DownloadMessagesForOffline(
                    status, folder->URI().get()));
 
           // Let the folder know these messages are now stored offline.
-          nsCOMPtr<IEwsFolder> ewsFolder{do_QueryInterface(folder)};
+          nsCOMPtr<IExchangeFolder> ewsFolder{do_QueryInterface(folder)};
           if (ewsFolder) {
             ewsFolder->HandleDownloadedMessages();
           }
@@ -760,7 +760,7 @@ NS_IMETHODIMP nsAutoSyncState::SetLastUpdateTime(PRTime aLastUpdateTime) {
 }
 
 void nsAutoSyncState::SetServerCounts(int32_t total, int32_t recent,
-                                      int32_t unseen, int32_t nextUID) {
+                                      int32_t unseen, ImapUid nextUID) {
   mLastServerTotal = total;
   mLastServerRecent = recent;
   mLastServerUnseen = unseen;

@@ -41,6 +41,9 @@
 #include "nsIImapMockChannel.h"
 #include "nsIProgressEventSink.h"
 #include "nsIMsgWindow.h"
+#include "nsIWindowMediator.h"
+#include "nsIPromptService.h"
+#include "nsEmbedCID.h"
 #include "nsIMsgFolder.h"  // TO include biffState enum. Change to bool later...
 #include "nsIMsgLocalMailFolder.h"
 #include "nsIMsgOfflineImapOperation.h"
@@ -211,11 +214,11 @@ nsImapMailFolder::nsImapMailFolder()
       m_folderQuotaDataIsValid(false),
       m_totalKeysToFetch(0) {
   m_boxFlags = 0;
-  m_uidValidity = kUidUnknown;
+  m_uidValidity = ImapUid_None;
   m_numServerRecentMessages = 0;
   m_numServerUnseenMessages = 0;
   m_numServerTotalMessages = 0;
-  m_nextUID = nsMsgKey_None;
+  m_nextUID = ImapUid_None;
   m_hierarchyDelimiter = kOnlineHierarchySeparatorUnknown;
   m_folderACL = nullptr;
   m_aclFlags = 0;
@@ -1501,35 +1504,39 @@ NS_IMETHODIMP nsImapMailFolder::Rename(const nsACString& newName,
   nsresult rv;
   nsAutoCString newNameStr(newName);
   if (newNameStr.FindChar(m_hierarchyDelimiter, 0) != kNotFound) {
-    nsCOMPtr<nsIDocShell> docShell;
-    if (msgWindow) msgWindow->GetRootDocShell(getter_AddRefs(docShell));
-    if (docShell) {
-      nsCOMPtr<nsIStringBundle> bundle;
-      rv = IMAPGetStringBundle(getter_AddRefs(bundle));
-      if (NS_SUCCEEDED(rv) && bundle) {
-        AutoTArray<nsString, 1> formatStrings;
-        formatStrings.AppendElement()->Append(m_hierarchyDelimiter);
-        nsString alertString;
-        rv = bundle->FormatStringFromName("imapSpecialChar2", formatStrings,
-                                          alertString);
-        nsCOMPtr<nsIPrompt> dialog(do_GetInterface(docShell));
-        // setting up the dialog title
-        nsCOMPtr<nsIMsgIncomingServer> server;
-        rv = GetServer(getter_AddRefs(server));
-        NS_ENSURE_SUCCESS(rv, rv);
-        nsString dialogTitle;
-        nsAutoCString accountName;
-        rv = server->GetPrettyName(accountName);
-        NS_ENSURE_SUCCESS(rv, rv);
-        AutoTArray<nsString, 1> titleParams = {
-            NS_ConvertUTF8toUTF16(accountName)};
-        rv = bundle->FormatStringFromName("imapAlertDialogTitle", titleParams,
-                                          dialogTitle);
+    nsCOMPtr<nsIStringBundle> bundle;
+    rv = IMAPGetStringBundle(getter_AddRefs(bundle));
+    NS_ENSURE_SUCCESS(rv, rv);
 
-        if (dialog && !alertString.IsEmpty())
-          dialog->Alert(dialogTitle.get(), alertString.get());
-      }
-    }
+    AutoTArray<nsString, 1> formatStrings;
+    formatStrings.AppendElement()->Append(m_hierarchyDelimiter);
+    nsString alertString;
+    rv = bundle->FormatStringFromName("imapSpecialChar2", formatStrings,
+                                      alertString);
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIMsgIncomingServer> server;
+    rv = GetServer(getter_AddRefs(server));
+    NS_ENSURE_SUCCESS(rv, rv);
+    nsString dialogTitle;
+    nsAutoCString accountName;
+    rv = server->GetPrettyName(accountName);
+    NS_ENSURE_SUCCESS(rv, rv);
+    AutoTArray<nsString, 1> titleParams = {NS_ConvertUTF8toUTF16(accountName)};
+    rv = bundle->FormatStringFromName("imapAlertDialogTitle", titleParams,
+                                      dialogTitle);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<mozIDOMWindowProxy> domWindow;
+    nsCOMPtr<nsIWindowMediator> winMed =
+        do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    winMed->GetMostRecentWindow(nullptr, getter_AddRefs(domWindow));
+
+    nsCOMPtr<nsIPromptService> dlgService(
+        do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
+    NS_ENSURE_SUCCESS(rv, rv);
+    dlgService->Alert(domWindow, dialogTitle.get(), alertString.get());
+
     return NS_ERROR_FAILURE;
   }
   nsCOMPtr<nsIImapIncomingServer> incomingImapServer;
@@ -1845,7 +1852,7 @@ NS_IMETHODIMP nsImapMailFolder::ReadFromFolderCacheElem(
   element->GetCachedInt32("serverTotal", &m_numServerTotalMessages);
   element->GetCachedInt32("serverUnseen", &m_numServerUnseenMessages);
   element->GetCachedInt32("serverRecent", &m_numServerRecentMessages);
-  element->GetCachedInt32("nextUID", &m_nextUID);
+  element->GetCachedInt32("nextUID", (int32_t*)&m_nextUID);
   int32_t lastSyncTimeInSec;
   if (NS_FAILED(element->GetCachedInt32("lastSyncTimeInSec",
                                         (int32_t*)&lastSyncTimeInSec)))
@@ -1872,8 +1879,8 @@ NS_IMETHODIMP nsImapMailFolder::WriteToFolderCacheElem(
   element->SetCachedInt32("serverTotal", m_numServerTotalMessages);
   element->SetCachedInt32("serverUnseen", m_numServerUnseenMessages);
   element->SetCachedInt32("serverRecent", m_numServerRecentMessages);
-  if (m_nextUID != (int32_t)nsMsgKey_None)
-    element->SetCachedInt32("nextUID", m_nextUID);
+  if (m_nextUID != ImapUid_None)
+    element->SetCachedInt32("nextUID", (int32_t)m_nextUID);
 
   // store folder's last sync time
   if (m_autoSyncStateObj) {
@@ -2003,6 +2010,8 @@ nsresult nsImapMailFolder::BuildIdsAndKeyArray(
   return AllocateUidStringFromKeys(keyArray, msgIds);
 }
 
+// This function overlaps with AllocateImapUidString().
+// See https://bugzilla.mozilla.org/show_bug.cgi?id=2031552
 /* static */
 nsresult nsImapMailFolder::AllocateUidStringFromKeys(
     const nsTArray<nsMsgKey>& keys, nsCString& msgIds) {
@@ -2264,26 +2273,30 @@ nsImapMailFolder::DeleteSelf(nsIMsgWindow* msgWindow) {
         (deleteNoTrash) ? "imapDeleteNoTrash" : "imapMoveFolderToTrash",
         formatStrings, confirmationStr);
     NS_ENSURE_SUCCESS(rv, rv);
-    if (!msgWindow) return NS_ERROR_NULL_POINTER;
-    nsCOMPtr<nsIDocShell> docShell;
-    msgWindow->GetRootDocShell(getter_AddRefs(docShell));
-    nsCOMPtr<nsIPrompt> dialog;
-    if (docShell) dialog = do_GetInterface(docShell);
-    if (dialog) {
-      int32_t buttonPressed = 0;
-      // Default the dialog to "cancel".
-      const uint32_t buttonFlags =
-          (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_0) +
-          (nsIPrompt::BUTTON_TITLE_CANCEL * nsIPrompt::BUTTON_POS_1);
 
-      bool dummyValue = false;
-      rv = dialog->ConfirmEx(deleteFolderDialogTitle.get(),
-                             confirmationStr.get(), buttonFlags,
-                             deleteFolderButtonLabel.get(), nullptr, nullptr,
-                             nullptr, &dummyValue, &buttonPressed);
-      NS_ENSURE_SUCCESS(rv, rv);
-      confirmed = !buttonPressed;  // "ok" is in position 0
-    }
+    nsCOMPtr<mozIDOMWindowProxy> domWindow;
+    nsCOMPtr<nsIWindowMediator> winMed =
+        do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    winMed->GetMostRecentWindow(nullptr, getter_AddRefs(domWindow));
+
+    nsCOMPtr<nsIPromptService> dlgService(
+        do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    int32_t buttonPressed = 0;
+    // Default the dialog to "cancel".
+    const uint32_t buttonFlags =
+        (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_0) +
+        (nsIPrompt::BUTTON_TITLE_CANCEL * nsIPrompt::BUTTON_POS_1);
+
+    bool dummyValue = false;
+    rv = dlgService->ConfirmEx(domWindow, deleteFolderDialogTitle.get(),
+                               confirmationStr.get(), buttonFlags,
+                               deleteFolderButtonLabel.get(), nullptr, nullptr,
+                               nullptr, &dummyValue, &buttonPressed);
+    NS_ENSURE_SUCCESS(rv, rv);
+    confirmed = !buttonPressed;  // "ok" is in position 0
   } else {
     confirmed = true;
   }
@@ -2458,7 +2471,7 @@ NS_IMETHODIMP nsImapMailFolder::UpdateImapMailboxInfo(
   nsTArray<nsMsgKey> keysToDelete;
   uint32_t numNewUnread;
   nsCOMPtr<nsIDBFolderInfo> dbFolderInfo;
-  int32_t imapUIDValidity = 0;
+  ImapUid imapUIDValidity = 0;
   if (mDatabase) {
     rv = mDatabase->GetDBFolderInfo(getter_AddRefs(dbFolderInfo));
     if (NS_SUCCEEDED(rv) && dbFolderInfo) {
@@ -2483,7 +2496,7 @@ NS_IMETHODIMP nsImapMailFolder::UpdateImapMailboxInfo(
     NS_ENSURE_SUCCESS(rv, rv);
     opsDb->ListAllOfflineDeletes(existingKeys);
   }
-  int32_t folderValidity;
+  ImapUid folderValidity;
   aSpec->GetFolder_UIDVALIDITY(&folderValidity);
   nsCOMPtr<nsIImapFlagAndUidState> flagState;
   aSpec->GetFlagState(getter_AddRefs(flagState));
@@ -2644,9 +2657,11 @@ NS_IMETHODIMP nsImapMailFolder::UpdateImapMailboxInfo(
 
   // some servers don't return UIDNEXT on SELECT - don't crunch
   // existing values in that case.
-  int32_t nextUID;
+  ImapUid nextUID;
   aSpec->GetNextUID(&nextUID);
-  if (nextUID != (int32_t)nsMsgKey_None) m_nextUID = nextUID;
+  if (nextUID != ImapUid_None) {
+    m_nextUID = nextUID;
+  }
 
   return rv;
 }
@@ -2664,7 +2679,7 @@ NS_IMETHODIMP nsImapMailFolder::UpdateImapMailboxStatus(
   aSpec->GetNumUnseenMessages(&numUnread);
   aSpec->GetNumMessages(&numTotal);
   aSpec->GetNumRecentMessages(&m_numServerRecentMessages);
-  int32_t prevNextUID = m_nextUID;
+  ImapUid prevNextUID = m_nextUID;
   aSpec->GetNextUID(&m_nextUID);
   bool summaryChanged = false;
 
@@ -2813,11 +2828,11 @@ nsresult nsImapMailFolder::SetupHeaderParseStream(
 
 // Helper for ParseMsgHdrs().
 nsresult nsImapMailFolder::ParseAdoptedHeaderLine(const char* aMessageLine,
-                                                  nsMsgKey aMsgKey) {
+                                                  ImapUid uid) {
   // we can get blocks that contain more than one line,
   // but they never contain partial lines
   const char* str = aMessageLine;
-  m_curMsgUid = aMsgKey;
+  m_curMsgUid = uid;
   m_msgParser->SetNewKey(m_curMsgUid);
   // m_envelope_pos, for local folders,
   // is the msg key. Setting this will set the msg key for the new header.
@@ -4056,8 +4071,7 @@ NS_IMETHODIMP nsImapMailFolder::GetMsgHdrsToDownload(
 
 void nsImapMailFolder::PrepareToAddHeadersToMailDB(nsIImapProtocol* aProtocol) {
   // now, tell it we don't need any bodies.
-  nsTArray<nsMsgKey> noBodies;
-  aProtocol->NotifyBodysToDownload(noBodies);
+  aProtocol->NotifyBodysToDownload({});
 }
 
 void nsImapMailFolder::TweakHeaderFlags(nsIImapProtocol* aProtocol,
@@ -4307,7 +4321,7 @@ void nsImapMailFolder::EndOfflineDownload() {
 // If any of the filters require the full message body, this function will
 // then apply them. And junk filtering.
 NS_IMETHODIMP
-nsImapMailFolder::NormalEndMsgWriteStream(nsMsgKey uidOfMessage, bool markRead,
+nsImapMailFolder::NormalEndMsgWriteStream(ImapUid uidOfMessage, bool markRead,
                                           nsIImapUrl* imapUrl,
                                           int32_t updatedMessageSize) {
   NS_WARNING_ASSERTION((uidOfMessage == m_curMsgUid), "Interleaved messages?");
@@ -5325,7 +5339,7 @@ nsImapMailFolder::StartMessage(nsIMsgMailNewsUrl* aUrl) {
 }
 
 NS_IMETHODIMP
-nsImapMailFolder::EndMessage(nsIMsgMailNewsUrl* aUrl, nsMsgKey uidOfMessage) {
+nsImapMailFolder::EndMessage(nsIMsgMailNewsUrl* aUrl, ImapUid uidOfMessage) {
   nsCOMPtr<nsIImapUrl> imapUrl(do_QueryInterface(aUrl));
   nsCOMPtr<nsISupports> copyState;
   NS_ENSURE_TRUE(imapUrl, NS_ERROR_FAILURE);
@@ -5382,7 +5396,7 @@ nsImapMailFolder::NotifySearchHit(nsIMsgMailNewsUrl* aUrl,
 }
 
 NS_IMETHODIMP
-nsImapMailFolder::SetAppendMsgUid(nsMsgKey aKey, nsIImapUrl* aUrl) {
+nsImapMailFolder::SetAppendMsgUid(ImapUid aKey, nsIImapUrl* aUrl) {
   nsresult rv;
   nsCOMPtr<nsISupports> copyState;
   if (aUrl) aUrl->GetCopyState(getter_AddRefs(copyState));
@@ -5467,6 +5481,8 @@ nsImapMailFolder::HeaderFetchCompleted(nsIImapProtocol* aProtocol) {
           (m_downloadingFolderForOfflineUse || autoDownloadNewHeaders)) {
         // this is the case when DownloadAllForOffline is called.
         notifiedBodies = true;
+        // TODO: we'll need a key->UID mapping here!
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
         aProtocol->NotifyBodysToDownload(keysToDownload);
       } else {
         // create auto-sync state object lazily
@@ -5494,8 +5510,7 @@ nsImapMailFolder::HeaderFetchCompleted(nsIImapProtocol* aProtocol) {
       }
     }
     if (!notifiedBodies) {
-      nsTArray<nsMsgKey> noBodies;
-      aProtocol->NotifyBodysToDownload(noBodies);
+      aProtocol->NotifyBodysToDownload({});
     }
 
     nsCOMPtr<nsIURI> runningUri;
@@ -5538,24 +5553,25 @@ nsImapMailFolder::SetBiffStateAndUpdate(nsMsgBiffState biffState) {
 }
 
 NS_IMETHODIMP
-nsImapMailFolder::GetUidValidity(int32_t* uidValidity) {
+nsImapMailFolder::GetUidValidity(ImapUid* uidValidity) {
   NS_ENSURE_ARG(uidValidity);
-  if ((int32_t)m_uidValidity == kUidUnknown) {
+  if (m_uidValidity == ImapUid_None) {
     nsCOMPtr<nsIMsgDatabase> db;
     nsCOMPtr<nsIDBFolderInfo> dbFolderInfo;
     (void)GetDBFolderInfoAndDB(getter_AddRefs(dbFolderInfo),
                                getter_AddRefs(db));
     if (db) db->GetDBFolderInfo(getter_AddRefs(dbFolderInfo));
 
-    if (dbFolderInfo)
-      dbFolderInfo->GetImapUidValidity((int32_t*)&m_uidValidity);
+    if (dbFolderInfo) {
+      dbFolderInfo->GetImapUidValidity(&m_uidValidity);
+    }
   }
   *uidValidity = m_uidValidity;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsImapMailFolder::SetUidValidity(int32_t uidValidity) {
+nsImapMailFolder::SetUidValidity(ImapUid uidValidity) {
   m_uidValidity = uidValidity;
   return NS_OK;
 }
@@ -8645,7 +8661,7 @@ NS_IMETHODIMP nsImapMailFolder::GetServerUnseen(int32_t* aServerUnseen) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsImapMailFolder::GetServerNextUID(int32_t* aNextUID) {
+NS_IMETHODIMP nsImapMailFolder::GetServerNextUID(ImapUid* aNextUID) {
   NS_ENSURE_ARG_POINTER(aNextUID);
   *aNextUID = m_nextUID;
   return NS_OK;

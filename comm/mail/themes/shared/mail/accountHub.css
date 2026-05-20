@@ -37,7 +37,6 @@ dialog {
   --hub-account-secondary-button-border-active: var(--color-surface-border-intense);
   --hub-account-button-outline-focus: var(--color-primary-hover);
   --hub-account-button-hover-active-color: light-dark(var(--color-surface-border), var(--color-surface-lower));
-  --hub-account-footer-link-color: var(--color-primary-default);
   --hub-border-color: light-dark(var(--color-primary-soft), var(--color-primary-default));
   --hub-divider-color: var(--color-surface-base);
   --hub-loader-background: var(--color-surface-base);
@@ -121,8 +120,8 @@ dialog {
   align-items: center;
   gap: 6px;
   padding: 12px 15px;
-  border: 1px solid light-dark(AccentColor, var(--color-primary-default));
-  border-radius: var(--arrowpanel-border-radius);
+  border: 1px solid var(--selected-item-color);
+  border-radius: var(--button-border-radius);
   color: var(--layout-color-2);
   background-color: var(--layout-background-1);
   box-shadow: 0 2px 4px rgba(58, 57, 68, 0.3);
@@ -134,7 +133,7 @@ dialog {
 
   &:hover {
     background-color: var(--layout-background-2);
-    color: var(--primary);
+    color: var(--selected-item-color);
 
     &:active {
       background-color: var(--layout-background-3);
@@ -172,7 +171,8 @@ dialog {
   flex-direction: column;
   block-size: 100%;
   overflow-y: auto;
-  justify-content: center;
+  justify-content: space-around;
+  padding-block-end: 2px;
 }
 
 .account-hub-address-book-form {
@@ -187,14 +187,10 @@ dialog {
   border: 1px solid var(--hub-border-color);
   /* Background color to better hide loading of the webp (>=100ms) */
   background-color: var(--color-surface-base);
-  background-image: url("chrome://messenger/skin/images/accounthub-bg-light.webp");
+  background-image: light-dark(url("chrome://messenger/skin/images/accounthub-bg-light.webp"), url("chrome://messenger/skin/images/accounthub-bg-dark.webp"));
   background-position: center center;
   background-repeat: no-repeat;
   background-size: cover;
-
-  @media (prefers-color-scheme: dark) {
-    background-image: url("chrome://messenger/skin/images/accounthub-bg-dark.webp");
-  }
 
   &.busy {
     cursor: wait;
@@ -305,7 +301,7 @@ header {
     font-size: 1.7rem;
     font-weight: 400;
     margin-block: var(--hub-header-margin-block-start) 0;
-    color: var(--color-primary-pressed);
+    color: var(--color-text-base);
   }
 
   & .sub-view-sub-header {
@@ -362,6 +358,31 @@ header {
   font-size: 2.8rem;
   font-weight: 200;
   letter-spacing: 1px;
+}
+
+.account-hub-first-run {
+  &#brandingHeader {
+    & h1 {
+      align-self: center;
+    }
+
+    & > img {
+      align-self: center;
+      inline-size: 65px;
+      block-size: 65px;
+    }
+
+    & .branding-header-title {
+      font-size: 3.7rem;
+      font-weight: 300;
+      line-height: 100%;
+    }
+
+    & .branding-header-name {
+      font-size: 1rem;
+      font-weight: 400;
+    }
+  }
 }
 
 #welcomeHeader h1 {
@@ -705,39 +726,6 @@ header {
     line-height: var(--hub-floating-button-line-height);
   }
 
-  &.primary-button {
-    background-color: var(--hub-account-primary-button-background);
-    color: var(--hub-account-primary-button-color);
-    border-color: var(--hub-account-primary-button-border);
-    box-shadow: 0 6px 3px -4px rgba(21, 66, 124, 0.3);
-
-    &:hover {
-      background-color: var(--hub-account-primary-button-background-hover);
-      color: var(--hub-account-primary-button-color);
-      border-color: var(--hub-account-primary-button-border-active);
-      box-shadow: 0 4px 2px -3px rgba(21, 66, 124, 0.3);
-
-      &:active {
-        background-color: var(--hub-account-primary-button-background-active);
-        color: var(--hub-account-primary-button-color);
-        border-color: var(--hub-account-primary-button-border-active);
-        box-shadow: none;
-      }
-    }
-
-    &:active {
-      background-color: var(--hub-account-primary-button-background-active);
-      color: var(--hub-account-primary-button-color);
-      border-color: var(--hub-account-primary-button-border-active);
-      box-shadow: none;
-    }
-
-    &:focus-visible {
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
-    }
-  }
-
   &.secondary-button {
     background-color: var(--hub-account-secondary-button-background);
     color: var(--hub-account-secondary-button-color);
@@ -835,8 +823,8 @@ header {
     font-size: 1.1rem;
     text-decoration: none;
     letter-spacing: 0.2px;
-    font-weight: 200;
-    color: var(--hub-account-footer-link-color);
+    font-weight: 300;
+    color: var(--link-color);
 
     &:hover {
       text-decoration: underline;
@@ -872,6 +860,58 @@ header {
       font-weight: normal;
       margin: 0;
     }
+  }
+}
+
+.account-hub-thundermail-header {
+  margin-block-start: 53px;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--space-base) * 2);
+
+  & button {
+    border-radius: 3px;
+    background: transparent;
+    border: 1px solid var(--color-primary-default);
+    display: inline-flex;
+    padding: calc(var(--space-base) + var(--space-step)) calc(var(--space-base) * 2);
+    align-items: center;
+    gap: var(--space-base);
+    color: var(--color-primary-default);
+    font-size: 1.153rem;
+    font-weight: 500;
+
+    & img {
+      block-size: 20px;
+      inline-size: 20px;
+      content: var(--icon-thundermail-lg);
+    }
+  }
+
+  & .account-hub-thundermail-divider {
+    color: var(--color-text-icon-secondary);
+    text-align: center;
+    font-size: 0.923rem;
+    font-weight: 400;
+    line-height: 100%;
+
+    &::before,
+    &::after {
+      content: "";
+      background: var(--color-surface-border);
+      inline-size: 38px;
+      block-size: 1px;
+      display: inline-block;
+      vertical-align: middle;
+    }
+  }
+}
+
+/* stylelint-disable-next-line media-query-no-invalid */
+@media -moz-pref("mail.accounthub.thundermail.enabled") {
+  .account-hub-thundermail-header {
+    display: flex;
   }
 }
 

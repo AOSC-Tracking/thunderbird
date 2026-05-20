@@ -330,7 +330,7 @@ NS_SYNCRUNNABLEATTRIBUTE(ImapMailFolderSink, FolderNeedsACLListed, bool)
 NS_SYNCRUNNABLEATTRIBUTE(ImapMailFolderSink, FolderNeedsSubscribing, bool)
 NS_SYNCRUNNABLEATTRIBUTE(ImapMailFolderSink, FolderNeedsAdded, bool)
 NS_SYNCRUNNABLEATTRIBUTE(ImapMailFolderSink, AclFlags, uint32_t)
-NS_SYNCRUNNABLEATTRIBUTE(ImapMailFolderSink, UidValidity, int32_t)
+NS_SYNCRUNNABLEATTRIBUTE(ImapMailFolderSink, UidValidity, ImapUid)
 NS_SYNCRUNNABLEATTRIBUTE(ImapMailFolderSink, FolderQuotaCommandIssued, bool)
 NS_SYNCRUNNABLEMETHOD4(ImapMailFolderSink, SetFolderQuotaData, uint32_t,
                        const nsACString&, uint64_t, uint64_t)
@@ -351,7 +351,7 @@ NS_SYNCRUNNABLEMETHOD2(ImapMailFolderSink, OnlineCopyCompleted,
                        nsIImapProtocol*, ImapOnlineCopyState)
 NS_SYNCRUNNABLEMETHOD1(ImapMailFolderSink, StartMessage, nsIMsgMailNewsUrl*)
 NS_SYNCRUNNABLEMETHOD2(ImapMailFolderSink, EndMessage, nsIMsgMailNewsUrl*,
-                       nsMsgKey)
+                       ImapUid)
 NS_SYNCRUNNABLEMETHOD2(ImapMailFolderSink, NotifySearchHit, nsIMsgMailNewsUrl*,
                        const char*)
 NS_SYNCRUNNABLEMETHOD2(ImapMailFolderSink, CopyNextStreamMessage, bool,
@@ -379,8 +379,8 @@ NS_SYNCRUNNABLEMETHOD2(ImapMailFolderSink, GetMessageId, nsIImapUrl*,
 
 NS_SYNCRUNNABLEMETHOD2(ImapMessageSink, SetupMsgWriteStream, nsIFile*, bool)
 NS_SYNCRUNNABLEMETHOD3(ImapMessageSink, ParseAdoptedMsgLine, const char*,
-                       nsMsgKey, nsIImapUrl*)
-NS_SYNCRUNNABLEMETHOD4(ImapMessageSink, NormalEndMsgWriteStream, nsMsgKey, bool,
+                       ImapUid, nsIImapUrl*)
+NS_SYNCRUNNABLEMETHOD4(ImapMessageSink, NormalEndMsgWriteStream, ImapUid, bool,
                        nsIImapUrl*, int32_t)
 NS_SYNCRUNNABLEMETHOD0(ImapMessageSink, AbortMsgWriteStream)
 NS_SYNCRUNNABLEMETHOD4(ImapMessageSink, NotifyMessageFlags, uint32_t,

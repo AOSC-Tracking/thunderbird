@@ -234,6 +234,25 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::CreateFolder(nsIMsgFolder* aParent,
   return rv;
 }
 
+NS_IMETHODIMP nsMsgBrkMBoxStore::EnsureLocalStore(nsIMsgFolder* folder) {
+  NS_ENSURE_ARG(folder);
+
+  nsCOMPtr<nsIFile> path;
+  nsresult rv = folder->GetFilePath(getter_AddRefs(path));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  bool exists = false;
+  rv = path->Exists(&exists);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!exists) {
+    rv = path->Create(nsIFile::NORMAL_FILE_TYPE, 0600);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return NS_OK;
+}
+
 // Get the current attributes of the mbox file, corrected for caching
 void nsMsgBrkMBoxStore::GetMailboxModProperties(nsIMsgFolder* aFolder,
                                                 int64_t* aSize,
@@ -284,9 +303,6 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::HasSpaceAvailable(nsIMsgFolder* aFolder,
   return NS_OK;
 }
 
-static bool gGotGlobalPrefs = false;
-static int32_t gTimeStampLeeway = 60;
-
 NS_IMETHODIMP nsMsgBrkMBoxStore::IsSummaryFileValid(nsIMsgFolder* aFolder,
                                                     nsIMsgDatabase* aDB,
                                                     bool* aResult) {
@@ -325,16 +341,13 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::IsSummaryFileValid(nsIMsgFolder* aFolder,
       *aResult = true;
       return NS_OK;
     }
-    if (!gGotGlobalPrefs) {
-      Preferences::GetInt("mail.db_timestamp_leeway", &gTimeStampLeeway);
-      gGotGlobalPrefs = true;
-    }
     // if those values are ok, check time stamp
-    if (gTimeStampLeeway == 0)
+    int32_t timeStampLeeway = Preferences::GetInt("mail.db_timestamp_leeway");
+    if (timeStampLeeway == 0)
       *aResult = folderDate == actualFolderTimeStamp;
     else
       *aResult = std::abs((int32_t)(actualFolderTimeStamp - folderDate)) <=
-                 gTimeStampLeeway;
+                 timeStampLeeway;
   }
   return NS_OK;
 }
@@ -822,17 +835,6 @@ nsMsgBrkMBoxStore::DiscardNewMessage(nsIMsgFolder* folder,
   // Safe to close the stream in any case.
   outStream->Close();
 
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgBrkMBoxStore::MoveNewlyDownloadedMessage(nsIMsgDBHdr* aNewHdr,
-                                              nsIMsgFolder* aDestFolder,
-                                              bool* aResult) {
-  NS_ENSURE_ARG_POINTER(aNewHdr);
-  NS_ENSURE_ARG_POINTER(aDestFolder);
-  NS_ENSURE_ARG_POINTER(aResult);
-  *aResult = false;
   return NS_OK;
 }
 
