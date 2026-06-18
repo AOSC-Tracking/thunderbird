@@ -12,7 +12,7 @@ export VER='128.0.1esr'
 
 ```sh
 git checkout tarball
-for f in $(find . -mindepth 1 -maxdepth 1); do name="$(basename "$f")"; if [ ! "$name" = '.git' ]; then rm -rf "$name"; fi done
+find . -mindepth 1 -maxdepth 1 \( \! -name .git \) -exec rm -rf {} +
 ```
 
 3. Extract all files from the archive, then move all files and directories, including the hidden one, from the `thunderbird-$VER` directory to the working tree.
