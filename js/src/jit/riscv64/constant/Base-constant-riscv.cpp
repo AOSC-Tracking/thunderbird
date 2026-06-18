@@ -13,7 +13,11 @@
 #include "jit/riscv64/constant/Constant-riscv-v.h"
 #include "jit/riscv64/constant/Constant-riscv-zicsr.h"
 #include "jit/riscv64/constant/Constant-riscv-zifencei.h"
-#include "jit/riscv64/Simulator-riscv64.h"
+
+#ifdef JS_SIMULATOR_RISCV64
+#  include "jit/riscv64/Simulator-riscv64.h"
+#endif
+
 namespace js {
 namespace jit {
 
