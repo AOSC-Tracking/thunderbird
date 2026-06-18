@@ -37,6 +37,7 @@ prefs = [
   "mail.server.server2.type=pop3",
   "mail.server.server2.userName=tinderbox",
   "mail.server.server2.whiteListAbURI=",
+  "mail.setup.loglevel=All",
   "mail.shell.checkDefaultClient=false",
   "mail.smtp.defaultserver=smtp1",
   "mail.smtpserver.smtp1.type=smtp",
@@ -48,6 +49,7 @@ prefs = [
   "mailnews.auto_config.addons_url=about:blank",
   "mailnews.auto_config.fetchFromExchange.enabled=false",
   "mailnews.auto_config_url=about:blank",
+  "mailnews.oauth.loglevel=All",
   "mailnews.start_page.override_url=about:blank",
   "mailnews.start_page.url=about:blank",
 ]
@@ -117,9 +119,6 @@ tags = ["archive"]
 
 ["browser_imAccountSettings.js"]
 
-["browser_mailAccountSetupWizard.js"]
-disabled = "Will be removed in bug 2020400"
-
 ["browser_manageIdentities.js"]
 
 ["browser_offlineSettings.js"]
@@ -130,12 +129,12 @@ skip-if = [
   "os == 'win'",
 ]
 
-["browser_retestConfig.js"]
-disabled = "Will be removed in bug 2020400"
-
 ["browser_settingsInfrastructure.js"]
 
 ["browser_thundermailSetup.js"]
+tags = ["oauth"]
+
+["browser_thundermailUrlSetup.js"]
 tags = ["oauth"]
 
 ["browser_tree.js"]

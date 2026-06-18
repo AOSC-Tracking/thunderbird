@@ -112,7 +112,7 @@ add_setup(async function () {
     MailServices.accounts.removeAccount(pop3Account, false);
     MailServices.accounts.removeAccount(ewsAccount, false);
 
-    Services.logins.removeAllLogins();
+    await Services.logins.removeAllLoginsAsync();
     Services.prefs.clearUserPref("mailnews.oauth.loglevel");
     Services.prefs.clearUserPref("signon.rememberSignons");
 
@@ -186,8 +186,10 @@ async function handleOAuthDialog() {
   );
 }
 
-function checkSavedPassword() {
-  const logins = Services.logins.findLogins("oauth://test.test", "", "");
+async function checkSavedPassword() {
+  const logins = await Services.logins.searchLoginsAsync({
+    origin: "oauth://test.test",
+  });
   Assert.equal(
     logins.length,
     1,
@@ -226,6 +228,7 @@ add_task(async function testNoTokens() {
         issuer: "test.test",
         reason: "no refresh token",
         result: "succeeded",
+        where: "internal",
       },
     ]);
 
@@ -234,8 +237,8 @@ add_task(async function testNoTokens() {
     await fetchMessages(inbox);
     await waitForMessages(inbox);
 
-    checkSavedPassword(inbox);
-    Services.logins.removeAllLogins();
+    await checkSavedPassword(inbox);
+    await Services.logins.removeAllLoginsAsync();
 
     await promiseServerIdle(inbox.server);
     inbox.server.closeCachedConnections();
@@ -270,14 +273,14 @@ add_task(async function testNoAccessToken() {
     await fetchMessages(inbox);
     await waitForMessages(inbox);
 
-    checkSavedPassword(inbox);
+    await checkSavedPassword(inbox);
     await promiseServerIdle(inbox.server);
     inbox.server.closeCachedConnections();
 
     OAuth2TestUtils.forgetObjects();
   }
 
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 });
 
 /**
@@ -318,14 +321,14 @@ add_task(async function testExpiredAccessToken() {
     await fetchMessages(inbox);
     await waitForMessages(inbox);
 
-    checkSavedPassword(inbox);
+    await checkSavedPassword(inbox);
     await promiseServerIdle(inbox.server);
     inbox.server.closeCachedConnections();
 
     OAuth2TestUtils.forgetObjects();
   }
 
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 });
 
 /**
@@ -397,7 +400,7 @@ add_task(async function testBadAccessToken() {
     OAuth2TestUtils.forgetObjects();
   }
 
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
   oAuth2Server.accessToken = "access_token";
 });
 
@@ -437,14 +440,15 @@ add_task(async function testBadRefreshToken() {
         issuer: "test.test",
         reason: "invalid grant",
         result: "succeeded",
+        where: "internal",
       },
     ]);
 
-    checkSavedPassword(inbox);
+    await checkSavedPassword(inbox);
     await promiseServerIdle(inbox.server);
     inbox.server.closeCachedConnections();
 
     OAuth2TestUtils.forgetObjects();
-    Services.logins.removeAllLogins();
+    await Services.logins.removeAllLoginsAsync();
   }
 });

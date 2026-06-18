@@ -79,6 +79,23 @@ export class GraphMessage {
 }
 
 /**
+ * A simple class to hold the data associated with an HTTP response.
+ */
+class HttpResponseData {
+  constructor(
+    statusCode,
+    statusMessage,
+    bodyContent = "",
+    httpVersion = "1.1"
+  ) {
+    this.httpVersion = httpVersion;
+    this.statusCode = statusCode;
+    this.statusMessage = statusMessage;
+    this.bodyContent = bodyContent;
+  }
+}
+
+/**
  * A mock server to mimic operations with Graph API.
  */
 export class GraphServer extends MockServer {
@@ -251,32 +268,121 @@ export class GraphServer extends MockServer {
     const resourcePath = request.path.startsWith("/v1.0")
       ? request.path.substring(5)
       : request.path;
-    const resourceQuery = request.queryString;
 
+    if (resourcePath === "/$batch") {
+      this.#handleBatchRequest(request, response);
+    } else {
+      this.#handleResourcePath(request, response, resourcePath);
+    }
+  }
+
+  #handleResourcePath(request, response, resourcePath) {
+    const method = request.method;
+    const resourceQuery = request.queryString;
+    const requestBody = CommonUtils.readBytesFromInputStream(
+      request.bodyInputStream
+    );
+    const httpResponseData = this.#dispatchRequest(
+      method,
+      resourcePath,
+      resourceQuery,
+      requestBody
+    );
+    response.setStatusLine(
+      httpResponseData.httpVersion,
+      httpResponseData.statusCode,
+      httpResponseData.statusMessage
+    );
+    response.bodyOutputStream.write(
+      httpResponseData.bodyContent,
+      httpResponseData.bodyContent.length
+    );
+  }
+
+  #handleBatchRequest(request, response) {
+    const batchRequest = JSON.parse(
+      CommonUtils.readBytesFromInputStream(request.bodyInputStream)
+    );
+
+    const responseJsonObject = {
+      responses: [],
+    };
+
+    for (const batchRequestItem of batchRequest.requests) {
+      const id = batchRequestItem.id;
+      const method = batchRequestItem.method;
+      const path = batchRequestItem.url;
+      const body = batchRequestItem.body;
+
+      const itemResponseData = this.#dispatchRequest(
+        method,
+        path,
+        null,
+        JSON.stringify(body)
+      );
+
+      let itemResponseJson;
+      if (itemResponseData.bodyContent) {
+        itemResponseJson = JSON.parse(itemResponseData.bodyContent);
+      } else {
+        itemResponseJson = null;
+      }
+
+      const batchResponseItem = {
+        id,
+        status: itemResponseData.statusCode,
+        headers: {
+          "content-type": "application/json",
+        },
+      };
+
+      // Only add the body item if there is a json object to put there.
+      if (itemResponseJson) {
+        batchResponseItem.body = itemResponseJson;
+      }
+
+      responseJsonObject.responses.push(batchResponseItem);
+    }
+
+    response.setStatusLine("1.1", 200, "OK");
+    const responseBody = JSON.stringify(responseJsonObject);
+    response.bodyOutputStream.write(responseBody, responseBody.length);
+  }
+
+  /**
+   * Dispatch a request to the appropriate handler.
+   *
+   * @param {string} requestMethod
+   * @param {string} resourcePath
+   * @param {string} resourceQuery
+   * @param {string} requestBody
+   * @returns {HttpResponseData} The response status code and content for the request.
+   */
+  #dispatchRequest(requestMethod, resourcePath, resourceQuery, requestBody) {
     // Try to find a handler that matches the method and path for the request.
     let responseJsonObject = {};
     let pathMatch;
-    switch (request.method) {
+    switch (requestMethod) {
       case "GET":
         if (resourcePath === "/me") {
           responseJsonObject = this.#me();
         } else if (
-          (pathMatch = /\/me\/mailFolders\/(\w+)\/messages\/delta/.exec(
+          (pathMatch = /\/me\/mailFolders\/([\w\-]+)\/messages\/delta/.exec(
             resourcePath
           ))
         ) {
           const folderName = pathMatch[1];
-          responseJsonObject = this.#mailFolderMessages(
+          responseJsonObject = this.#syncFolderMessages(
             folderName,
             resourceQuery
           );
         } else if (
-          (pathMatch = /\/me\/mailFolders\('(\w+)'\)\/messages\/delta/.exec(
+          (pathMatch = /\/me\/mailFolders\('([\w\-]+)'\)\/messages\/delta/.exec(
             resourcePath
           ))
         ) {
           const folderName = pathMatch[1];
-          responseJsonObject = this.#mailFolderMessages(
+          responseJsonObject = this.#syncFolderMessages(
             folderName,
             resourceQuery
           );
@@ -290,42 +396,57 @@ export class GraphServer extends MockServer {
           ))
         ) {
           const content = this.#messageMediaResource(pathMatch[1]);
-          // This endpoint does not return a JSON object, so we can write the
-          // response directly to the output stream and return here.
-          response.bodyOutputStream.write(content, content.length);
-          return;
+          // This endpoint does not return a JSON object, so we can return
+          // the content directly here.
+          return content;
         }
         break;
 
       case "POST":
         if (resourcePath === "/me/messages") {
-          responseJsonObject = this.#createMessage(request);
+          responseJsonObject = this.#createMessage(requestBody);
         } else if (
           resourcePath.startsWith("/me/messages") &&
           resourcePath.endsWith("/send")
         ) {
           // `#sendMessage()` takes care of setting the necessary properties on
           // the response, so we should skip the body serialization part here.
-          this.#sendMessage(resourcePath, response);
-          return;
+          return this.#sendMessage(resourcePath);
+        } else if (
+          resourcePath.startsWith("/me/mailFolders") &&
+          resourcePath.endsWith("/move")
+        ) {
+          responseJsonObject = this.#moveFolder(resourcePath, requestBody);
+        } else if (
+          resourcePath.startsWith("/me/mailFolders") &&
+          resourcePath.endsWith("/copy")
+        ) {
+          responseJsonObject = this.#copyFolder(resourcePath, requestBody);
         } else if (resourcePath.startsWith("/me/mailFolders/")) {
-          responseJsonObject = this.#createFolder(
-            resourcePath.substring(16),
-            request,
-            response
-          );
+          return this.#createFolder(resourcePath.substring(16), requestBody);
         } else if (
           resourcePath.startsWith("/me/messages") &&
           resourcePath.endsWith("/move")
         ) {
-          responseJsonObject = this.#moveMessages(request);
+          responseJsonObject = this.#moveMessages(resourcePath, requestBody);
         }
         break;
 
       case "PATCH":
         if (resourcePath.startsWith("/me/messages")) {
-          responseJsonObject = this.#updateMessage(request);
+          responseJsonObject = this.#updateMessage(resourcePath, requestBody);
+        } else if (resourcePath.startsWith("/me/mailFolders")) {
+          responseJsonObject = this.#updateFolder(resourcePath, requestBody);
         }
+        break;
+
+      case "DELETE":
+        if (resourcePath.startsWith("/me/mailFolders")) {
+          this.#deleteFolder(resourcePath);
+          // There is no body, so we return 204 No Content to indicate success.
+          return new HttpResponseData(204, "No Content");
+        }
+        break;
     }
 
     // If we don't have a body to respond with, it likely means we've failed to
@@ -334,9 +455,7 @@ export class GraphServer extends MockServer {
       throw new Error(`Unexpected Graph resource: ${resourcePath}`);
     }
 
-    // Send the response.
-    const responseBody = JSON.stringify(responseJsonObject);
-    response.bodyOutputStream.write(responseBody, responseBody.length);
+    return new HttpResponseData(200, "OK", JSON.stringify(responseJsonObject));
   }
 
   /**
@@ -387,18 +506,18 @@ export class GraphServer extends MockServer {
    * Handle POST /me/mailFolders/...
    *
    * @param {string} folderPath
-   * @param {nsIHttpRequest} request
+   * @param {string} requestBody
    * @param {nsIHttpResponse} response
    * @returns {object}
    */
-  #createFolder(folderPath, request, response) {
+  #createFolder(folderPath, requestBody, response) {
     if (
       folderPath.endsWith("/childFolders") &&
       folderPath.split("/").length == 2
     ) {
       return this.#createChildFolder(
         folderPath.substring(0, folderPath.indexOf("/")),
-        request,
+        requestBody,
         response
       );
     }
@@ -410,11 +529,11 @@ export class GraphServer extends MockServer {
    * Handle POST /me/mailFolders/{mailFolderId}/childFolders.
    *
    * @param {string} parentFolderId
-   * @param {nsIHttpRequest} request
-   * @param {nsIHttpResponse} response
-   * @returns {object}
+   * @param {string} requestBody
+   *
+   * @returns {HttpResponseData}
    */
-  #createChildFolder(parentFolderId, request, response) {
+  #createChildFolder(parentFolderId, requestBody) {
     const decodedParentId = decodeURIComponent(parentFolderId);
     const parentFolder =
       this.getDistinguishedFolder(decodedParentId) ||
@@ -423,23 +542,24 @@ export class GraphServer extends MockServer {
       throw new Error(`Unexpected parent folder id: ${decodedParentId}`);
     }
 
-    const requestBody = JSON.parse(
-      CommonUtils.readBytesFromInputStream(request.bodyInputStream)
-    );
-    const folderName = requestBody.displayName;
+    const requestJson = JSON.parse(requestBody);
+    const folderName = requestJson.displayName;
     const folderId = `created-folder-${this.folders.length}`;
 
     this.appendRemoteFolder(
       new RemoteFolder(folderId, parentFolder.id, folderName, null)
     );
-    response.setStatusLine("1.1", 201, "Created");
 
-    return {
-      "@odata.context": `${this.#endpoint}/$metadata#users('me')/mailFolders/$entity`,
-      id: folderId,
-      displayName: folderName,
-      parentFolderId: parentFolder.id,
-    };
+    return new HttpResponseData(
+      201,
+      "Created",
+      JSON.stringify({
+        "@odata.context": `${this.#endpoint}/$metadata#users('me')/mailFolders/$entity`,
+        id: folderId,
+        displayName: folderName,
+        parentFolderId: parentFolder.id,
+      })
+    );
   }
 
   /**
@@ -516,16 +636,16 @@ export class GraphServer extends MockServer {
       return null;
     }
 
-    return message.toMessageString();
+    return new HttpResponseData(200, "OK", message.toMessageString());
   }
 
   /**
    * Handle POST /me/messages
    *
-   * @param {nsIHttpRequest} request
+   * @param {string} requestBody
    * @returns {object}
    */
-  #createMessage(request) {
+  #createMessage(requestBody) {
     // TODO: at some point we'll want to create messages in specific folders, in
     // which case we'll want to stop hardcoding the drafts folder here. This is
     // fine for now, since Graph defaults to that folder when none is provided.
@@ -537,10 +657,7 @@ export class GraphServer extends MockServer {
     this.addItemToFolder(newItemId, draftFolder.id);
     this.itemsCreated += 1;
 
-    const reqBody = CommonUtils.readBytesFromInputStream(
-      request.bodyInputStream
-    );
-    const message = new GraphMessage(newItemId, [], false, atob(reqBody));
+    const message = new GraphMessage(newItemId, [], false, atob(requestBody));
 
     this.#createdMessagesById.set(newItemId, message);
 
@@ -555,16 +672,14 @@ export class GraphServer extends MockServer {
   /**
    * Handle PATCH /me/messages/{messageId}
    *
-   * @param {nsIHttpRequest} request
+   * @param {string} resourcePath
+   * @param {string} requestBody
    */
-  #updateMessage(request) {
-    const pathParts = request.path.split("/");
+  #updateMessage(resourcePath, requestBody) {
+    const pathParts = resourcePath.split("/");
     const messageId = pathParts[pathParts.length - 1];
 
-    const reqBody = CommonUtils.readBytesFromInputStream(
-      request.bodyInputStream
-    );
-    const parsedReq = JSON.parse(reqBody);
+    const parsedReq = JSON.parse(requestBody);
 
     // Fetch the corresponding message and update its metadata.
     const message = this.#createdMessagesById.get(messageId);
@@ -597,28 +712,103 @@ export class GraphServer extends MockServer {
   }
 
   /**
+   * Handle PATCH /me/mailFolders/{mailFolderId}
+   *
+   * @param {string} resourcePath
+   * @param {string} requestBody
+   */
+  #updateFolder(resourcePath, requestBody) {
+    const pathParts = resourcePath.split("/");
+    const folderId = pathParts[pathParts.length - 1];
+
+    const parsedReq = JSON.parse(requestBody);
+
+    const newName = parsedReq.displayName;
+
+    this.renameFolderById(folderId, newName);
+
+    return {
+      id: folderId,
+      displayName: newName,
+    };
+  }
+
+  /**
    * Handle POST /me/messages/{messageId}/send
    *
    * Note that, unlike other handlers, this one sets the necessary properties on
    * the response directly.
    *
    * @param {string} requestPath
-   * @param {nsIHttpResponse} response
+   *
+   * @returns {[string, number, string]} The resulting HTTP status [version, statusCode, message].
    */
-  #sendMessage(requestPath, response) {
+  #sendMessage(requestPath) {
     const messageId = /\/me\/messages\/(.+)\/send/.exec(requestPath)[1];
 
     const message = this.#createdMessagesById.get(messageId);
     if (!message) {
-      response.setStatusLine("1.1", 404, "Not Found");
-    } else {
-      response.setStatusLine("1.1", 202, "Accepted");
-      this.lastSentMessage = message.content;
-      this.#lastSentGraphMessage = message;
+      return new HttpResponseData(404, "Not Found");
+    }
+
+    this.lastSentMessage = message.content;
+    this.#lastSentGraphMessage = message;
+    return new HttpResponseData(202, "Accepted");
+  }
+
+  /**
+   * Check if the query string requests the extended property with the given ID.
+   *
+   * @param {string} queryString
+   * @param {string} propId
+   * @returns {bool}
+   */
+  #requestsExtendedProperty(queryString, propId) {
+    const params = new URLSearchParams(queryString);
+    const expand = params.get("expand") ?? params.get("$expand");
+    return (
+      expand?.includes(
+        `singleValueExtendedProperties($filter=id eq '${propId}')`
+      ) ?? false
+    );
+  }
+
+  /**
+   * Adds any expanded single value extended properties from `itemId` requested
+   * in `queryString` to `itemData`.
+   *
+   * Currently only supports size requests ("Integer 0x0E08").
+   *
+   * @param {object} itemData
+   * @param {string} itemId
+   * @param {string} queryString
+   */
+  #appendExpandedSingleValueExtendedProperties(itemData, itemId, queryString) {
+    if (!this.#requestsExtendedProperty(queryString, "Integer 0x0E08")) {
+      return;
+    }
+
+    const item = this.getItemInfo(itemId);
+    let messageSize = null;
+    messageSize = item.syntheticMessage.toMessageString().length;
+
+    if (messageSize !== null) {
+      itemData.singleValueExtendedProperties = [
+        {
+          id: "Integer 0xe08",
+          value: `${messageSize}`,
+        },
+      ];
     }
   }
 
-  #mailFolderMessages(folderName, queryString) {
+  /**
+   * Handles GET /me/mailFolders/{folderId}/delta
+   *
+   * @param {string} folderName - The name of the folder to sync.
+   * @param {string} queryString - The query parameters from the request.
+   */
+  #syncFolderMessages(folderName, queryString) {
     const params = new URLSearchParams(queryString);
     let offset;
     if (params.has("$skiptoken")) {
@@ -639,7 +829,13 @@ export class GraphServer extends MockServer {
 
     const page = [];
     for (const [changeType, parentId, itemId] of changes) {
-      if (changeType == "create") {
+      // Graph doesn't differentiate between creation, update and read flag
+      // updates, they all appear the same in delta responses.
+      if (
+        changeType == "create" ||
+        changeType == "update" ||
+        changeType == "readflag"
+      ) {
         const item = this.getItemInfo(itemId);
         const itemData = {
           "@odata.type": "#microsoft.graph.message",
@@ -650,7 +846,15 @@ export class GraphServer extends MockServer {
           bodyPreview: item.syntheticMessage.bodyPart
             .toMessageString()
             .slice(0, 10),
+          isRead: item.syntheticMessage.metaState.read,
+          toRecipients: syntheticRecipientsToGraph(item.syntheticMessage.to),
+          ccRecipients: syntheticRecipientsToGraph(item.syntheticMessage.cc),
         };
+        this.#appendExpandedSingleValueExtendedProperties(
+          itemData,
+          itemId,
+          queryString
+        );
         page.push(itemData);
       } else if (changeType == "delete") {
         const itemData = {
@@ -660,8 +864,6 @@ export class GraphServer extends MockServer {
         };
         page.push(itemData);
       }
-      // TODO (https://bugzilla.mozilla.org/show_bug.cgi?id=2025009) Handle
-      // message updates.
     }
 
     const result = {
@@ -672,15 +874,25 @@ export class GraphServer extends MockServer {
     if (truncated) {
       // We have at least one more page of data. Send a nextLink.
       const newToken = offset + this.maxSyncItems;
+      const nextParams = new URLSearchParams(params);
+      nextParams.delete("$skiptoken");
+      nextParams.delete("$deltatoken");
+      nextParams.delete("skiptoken");
+      nextParams.delete("deltatoken");
+      nextParams.set("$skiptoken", `${newToken}`);
       result["@odata.nextLink"] =
-        `${this.#endpoint}/me/mailFolders('${folderName}')/messages/delta?$skiptoken=${newToken}`;
+        `${this.#endpoint}/me/mailFolders('${folderName}')/messages/delta?${nextParams}`;
     } else {
       // We are up to date. Send a deltaLink.
-      const newToken = changes
-        ? this.itemChanges.indexOf(changes.at(-1)) + 1
-        : 0;
+      const newToken = this.itemChanges.length;
+      const nextParams = new URLSearchParams(params);
+      nextParams.delete("$skiptoken");
+      nextParams.delete("$deltatoken");
+      nextParams.delete("skiptoken");
+      nextParams.delete("deltatoken");
+      nextParams.set("$deltatoken", `${newToken}`);
       result["@odata.deltaLink"] =
-        `${this.#endpoint}/me/mailFolders('${folderName}')/messages/delta?$deltatoken=${newToken}`;
+        `${this.#endpoint}/me/mailFolders('${folderName}')/messages/delta?${nextParams}`;
     }
 
     return result;
@@ -689,21 +901,19 @@ export class GraphServer extends MockServer {
   /**
    * Handle POST /me/messages/{messageId}/move
    *
-   * @param {nsIHttpRequest} request
+   * @param {string} resourcePath
+   * @param {string} requestBody
    */
-  #moveMessages(request) {
+  #moveMessages(resourcePath, requestBody) {
     // Extract the message ID, i.e. the second-to-last section of the path.
-    const pathParts = request.path.split("/");
+    const pathParts = resourcePath.split("/");
     const messageId = pathParts[pathParts.length - 2];
 
-    const reqBody = CommonUtils.readBytesFromInputStream(
-      request.bodyInputStream
-    );
-    const parsedReq = JSON.parse(reqBody);
+    const parsedReq = JSON.parse(requestBody);
 
     const folderId = parsedReq.DestinationId;
     if (!folderId) {
-      dump(`${reqBody}\n`);
+      dump(`${requestBody}\n`);
       throw new Error("missing destination ID for move");
     }
 
@@ -717,7 +927,109 @@ export class GraphServer extends MockServer {
     };
   }
 
+  /**
+   * Handle POST /me/mailFolders/{folderId}/move
+   *
+   * @param {string} resourcePath
+   * @param {string} requestBody
+   */
+  #moveFolder(resourcePath, requestBody) {
+    // Extract the folder ID, i.e. the second-to-last section of the path.
+    const pathParts = resourcePath.split("/");
+    const folderId = pathParts[pathParts.length - 2];
+
+    const parsedReq = JSON.parse(requestBody);
+
+    const newParentFolderId = parsedReq.DestinationId;
+    if (!folderId) {
+      dump(`${requestBody}\n`);
+      throw new Error("missing destination ID for move");
+    }
+
+    // Graph IDs are observed to not be stable during a move.
+    const graphIsNotStable = false;
+    const newId = this.reparentFolderById(
+      folderId,
+      newParentFolderId,
+      graphIsNotStable
+    );
+
+    // Note: returning only the ID should be fine for now because that's the
+    // only bit of the folder we actually use, but in the future we'll probably
+    // want to expand this response with more fields.
+    return {
+      id: newId,
+    };
+  }
+  /**
+   * Handle POST /me/mailFolders/{folderId}/copy
+   *
+   * @param {string} resourcePath
+   * @param {string} requestBody
+   */
+  #copyFolder(resourcePath, requestBody) {
+    // Extract the folder ID, i.e. the second-to-last section of the path.
+    const pathParts = resourcePath.split("/");
+    const folderId = pathParts[pathParts.length - 2];
+
+    const parsedReq = JSON.parse(requestBody);
+
+    const newParentFolderId = parsedReq.DestinationId;
+    if (!folderId) {
+      dump(`${requestBody}\n`);
+      throw new Error("missing destination ID for move");
+    }
+
+    const sourceFolder = this.getFolder(folderId);
+    const newId = this.copyFolderToId(sourceFolder, newParentFolderId);
+
+    // Note: returning only the ID should be fine for now because that's the
+    // only bit of the folder we actually use, but in the future we'll probably
+    // want to expand this response with more fields.
+    return {
+      id: newId,
+    };
+  }
+
+  /**
+   * Handle DELETE /me/mailFolders/{folderId}
+   *
+   * @param {string} resourcePath
+   */
+  #deleteFolder(resourcePath) {
+    const pathParts = resourcePath.split("/");
+    const folderId = pathParts[pathParts.length - 2];
+
+    this.deleteRemoteFolderById(folderId);
+  }
+
   get #endpoint() {
     return `http://127.0.0.1:${this.port}`;
   }
+}
+
+/**
+ * Maps a list of recipients in a `SyntheticMessage` to an array with the
+ * relevant structure from the Graph API. Each element of the resulting array is
+ * an object, itself containing an `emailAddress` object, which has a `name` and
+ * an `address`.
+ *
+ * @param {?string[][]} recipients - A single recipient (e.g. to or cc) from a
+ *   `SyntheticMessage`, which is an array with the display name as the first
+ *   element and the address as the second.
+ * @returns {object[]} - The recipients formatted as expected in the Graph API.
+ */
+function syntheticRecipientsToGraph(recipients) {
+  if (!recipients) {
+    return [];
+  }
+
+  return recipients.map(recipient => {
+    return {
+      emailAddress: {
+        name: recipient[0],
+        address: recipient[1],
+      },
+    };
+  });
 }

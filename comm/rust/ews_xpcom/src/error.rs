@@ -9,8 +9,6 @@
 
 use ews::response::ResponseError;
 use nserror::nsresult;
-use oneshot::RecvError;
-use operation_queue::Error as QueueError;
 use protocol_shared::error::ProtocolError;
 use thiserror::Error;
 
@@ -39,15 +37,6 @@ pub(crate) enum XpComEwsError {
 
     #[error("error in processing response")]
     Processing { message: String },
-
-    #[error("async communication error: could not receive the operation response: {0}")]
-    OperationReceiver(#[from] RecvError),
-
-    #[error("client has shut down")]
-    ClientClosed,
-
-    #[error("operation queue error: {0}")]
-    Queue(#[from] QueueError),
 }
 
 impl From<&XpComEwsError> for nsresult {
@@ -55,7 +44,7 @@ impl From<&XpComEwsError> for nsresult {
         match value {
             XpComEwsError::Protocol(ProtocolError::XpCom(value)) => *value,
             XpComEwsError::Protocol(ProtocolError::Http(value)) => value.into(),
-            XpComEwsError::ClientClosed => nserror::NS_BASE_STREAM_CLOSED,
+            XpComEwsError::Protocol(ProtocolError::ClientClosed) => nserror::NS_BASE_STREAM_CLOSED,
 
             _ => nserror::NS_ERROR_UNEXPECTED,
         }

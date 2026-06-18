@@ -14,8 +14,9 @@ async function checkABrowser(browser) {
       url => url != "about:blank"
     );
   }
+  await SimpleTest.promiseFocus(browser);
 
-  const win = browser.ownerGlobal;
+  const win = browser.documentGlobal;
   const doc = browser.ownerDocument;
 
   // Date picker
@@ -151,9 +152,9 @@ async function checkABrowser(browser) {
     Assert.ok(!details.open, "details element should be closed initially");
     EventUtils.synthesizeMouseAtCenter(summary, {}, content);
     Assert.ok(details.open, "details element should open on click");
-    EventUtils.synthesizeKey("VK_SPACE", {}, content);
+    EventUtils.synthesizeKey(" ", {}, content);
     Assert.ok(!details.open, "details element should close on space key press");
-    EventUtils.synthesizeKey("VK_RETURN", {}, content);
+    EventUtils.synthesizeKey("KEY_Enter", {}, content);
     Assert.ok(details.open, "details element should open on return key press");
   });
 }

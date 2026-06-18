@@ -26,6 +26,8 @@ support-files = ["data/**"]
 
 ["browser_attachmentIcon.js"]
 
+["browser_attachmentInAltPart.js"]
+
 ["browser_attachmentInPlainMsg.js"]
 
 ["browser_attachmentMenus.js"]
@@ -33,3 +35,7 @@ support-files = ["data/**"]
 ["browser_attachmentSize.js"]
 
 ["browser_openAttachment.js"]
+
+["browser_rfc822Base64Attachment.js"]
+
+["browser_unreferencedRelatedPart.js"]

@@ -23,13 +23,16 @@ add_setup(async function () {
   subview = tab.browser.contentWindow.document.querySelector(
     "email-manual-incoming-form"
   );
-  EventUtils.synthesizeMouseAtCenter(subview, {}, browser.contentWindow);
 
   registerCleanupFunction(() => {
     tabmail.closeOtherTabs(tabmail.tabInfo[0]);
   });
 });
 
+/**
+ * @param {HTMLSelectElement} select
+ * @param {"ews"|"ewsWithOauth"|"imap"|"all"} protocol
+ */
 async function checkAuthMethods(select, protocol) {
   const authMethods = {
     0: "autodetect",
@@ -45,6 +48,8 @@ async function checkAuthMethods(select, protocol) {
     imap: ["0", "1", "2", "3", "4"],
     all: Object.keys(authMethods),
   };
+
+  await new Promise(resolve => window.requestAnimationFrame(resolve));
 
   const popupPromise = BrowserTestUtils.waitForSelectPopupShown(window);
   await EventUtils.synthesizeMouseAtCenter(select, {}, browser.contentWindow);
@@ -350,39 +355,6 @@ add_task(async function test_settingStateLeavesConfigIntact() {
   subview.resetState();
 });
 
-add_task(async function test_graphIsDisabledByDefault() {
-  const config = new AccountConfig();
-  config.incoming.type = "ews";
-  subview.setState(config);
-
-  const protocolSelector = subview.querySelector("#incomingProtocol");
-
-  const protocolSelectorPromise =
-    BrowserTestUtils.waitForSelectPopupShown(window);
-
-  await EventUtils.synthesizeMouseAtCenter(
-    protocolSelector,
-    {},
-    browser.contentWindow
-  );
-
-  const protocolSelectorPopup = await protocolSelectorPromise;
-
-  const protocolSelectorItems =
-    protocolSelectorPopup.querySelectorAll("menuitem");
-
-  Assert.ok(
-    BrowserTestUtils.isHidden(protocolSelectorItems[3]),
-    "Graph selection should be unavailable by default."
-  );
-
-  protocolSelectorPopup.hidePopup();
-
-  await BrowserTestUtils.waitForPopupEvent(protocolSelectorPopup, "hidden");
-
-  subview.resetState();
-});
-
 add_task(async function test_graphIsEnabledByPref() {
   await SpecialPowers.pushPrefEnv({ set: [["mail.graph.enabled", true]] });
   const config = new AccountConfig();
@@ -406,7 +378,7 @@ add_task(async function test_graphIsEnabledByPref() {
 
   Assert.ok(
     BrowserTestUtils.isVisible(protocolSelectorItems[2]),
-    "Graph selection should be unavailable by default."
+    "Graph selection should be available."
   );
 
   protocolSelectorPopup.hidePopup();

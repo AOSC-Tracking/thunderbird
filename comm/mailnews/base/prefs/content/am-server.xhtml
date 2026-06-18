@@ -17,8 +17,11 @@
       http-equiv="Content-Security-Policy"
       content="default-src chrome:; script-src chrome: 'unsafe-inline' moz-src:; style-src chrome: 'unsafe-inline'; connect-src https:"
     />
+    <link rel="stylesheet" href="chrome://messenger/skin/input-fields.css" />
     <link rel="stylesheet" href="chrome://messenger/skin/accountManage.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/colors.css" />
     <link rel="stylesheet" href="chrome://messenger/skin/icons.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/variables.css" />
     <link rel="stylesheet" href="chrome://messenger/skin/folderMenus.css" />
 
     <link rel="localization" href="messenger/certError.ftl" />
@@ -600,27 +603,39 @@
 
           <!-- Advanced EWS settings -->
           <hbox flex="1" hidefor="pop3,nntp,imap" hidden="hidden">
-            <label id="ews.ewsUrl" wsm_persist="true" hidden="hidden" />
+            <label id="ews.exchangeUrl" wsm_persist="true" hidden="hidden" />
             <checkbox
-              id="ews.ewsOverrideOAuthDetails"
+              id="ews.exchangeOverrideOAuthDetails"
               wsm_persist="true"
               prefattribute="value"
               prefstring="mail.server.%serverkey%.ews_override_oauth_details"
               hidden="hidden"
             />
             <label
-              id="ews.ewsApplicationId"
+              id="ews.exchangeApplicationId"
               wsm_persist="true"
               hidden="hidden"
             />
-            <label id="ews.ewsTenantId" wsm_persist="true" hidden="hidden" />
-            <label id="ews.ewsRedirectUri" wsm_persist="true" hidden="hidden" />
             <label
-              id="ews.ewsEndpointHost"
+              id="ews.exchangeTenantId"
               wsm_persist="true"
               hidden="hidden"
             />
-            <label id="ews.ewsOAuthScopes" wsm_persist="true" hidden="hidden" />
+            <label
+              id="ews.exchangeRedirectUri"
+              wsm_persist="true"
+              hidden="hidden"
+            />
+            <label
+              id="ews.exchangeEndpointHost"
+              wsm_persist="true"
+              hidden="hidden"
+            />
+            <label
+              id="ews.exchangeOAuthScopes"
+              wsm_persist="true"
+              hidden="hidden"
+            />
           </hbox>
 
           <!-- NNTP -->

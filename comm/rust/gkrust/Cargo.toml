@@ -7,6 +7,9 @@ version = "0.1.0"
 edition = "2024"
 rust-version.workspace = true
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/lib.rs"
 crate-type = ["staticlib"]
@@ -29,9 +32,9 @@ aa-stroke = { git = "https://github.com/FirefoxGraphics/aa-stroke", rev = "5776b
 abridged_certs = { path = "../../../security/manager/ssl/abridged_certs" }
 adblock = { version = "0.12.1", features = ['full-regex-handling', 'single-thread'], default-features = false }
 app_collator_glue = { path = "../../../intl/app_collator_glue" }
-audio_thread_priority = { version = "0.34" }
-audioipc2-client = { git = "https://github.com/mozilla/audioipc", rev = "b52c33425baf619b6c1278c5b4c7ffa3e92b9b1e", optional = true }
-audioipc2-server = { git = "https://github.com/mozilla/audioipc", rev = "b52c33425baf619b6c1278c5b4c7ffa3e92b9b1e", optional = true }
+audio_thread_priority = { version = "0.35" }
+audioipc2-client = { git = "https://github.com/mozilla/audioipc", rev = "57a79753da9de4cf4b1c54e0c6775d3d2aba26f6", optional = true }
+audioipc2-server = { git = "https://github.com/mozilla/audioipc", rev = "57a79753da9de4cf4b1c54e0c6775d3d2aba26f6", optional = true }
 authrs_bridge = { path = "../../../dom/webauthn/authrs_bridge" }
 binary_http = { path = "../../../netwerk/protocol/http/binary_http" }
 bitsdownload = { path = "../../../toolkit/components/bitsdownload", optional = true }
@@ -93,7 +96,7 @@ mozannotation_client = { path = "../../../toolkit/crashreporter/mozannotation_cl
 mozannotation_server = { path = "../../../toolkit/crashreporter/mozannotation_server", optional = true }
 mozglue-static = { path = "../../../mozglue/static/rust" }
 mozurl = { path = "../../../netwerk/base/mozurl" }
-mp4parse_capi = { git = "https://github.com/mozilla/mp4parse-rust", rev = "952f5173fd2c33fcbc5e6d3c9de48f4afc0347fc", features = ['missing-pixi-permitted'] }
+mp4parse_capi = { git = "https://github.com/mozilla/mp4parse-rust", rev = "fb7ed9effb5eae0f3768c2c5ec0a63c61f35ba60", features = ['missing-pixi-permitted'] }
 neqo_glue = { path = "../../../netwerk/socket/neqo_glue" }
 netwerk_helper = { path = "../../../netwerk/base/rust-helper" }
 nserror = { path = "../../../xpcom/rust/nserror" }
@@ -106,13 +109,14 @@ pdf-trust-anchors = { path = "../../../security/manager/ssl/pdf_trust_anchors" }
 prefs_parser = { path = "../../../modules/libpref/parser" }
 processtools = { path = "../../../toolkit/components/processtools" }
 profiler_helper = { path = "../../../tools/profiler/rust-helper" }
-qcms = { path = "../../../gfx/qcms", features = ['c_bindings', 'neon'] }
+qcms = { path = "../../../gfx/qcms", features = ['c_bindings', 'neon', 'cmyk'] }
 qwac-trust-anchors = { path = "../../../security/manager/ssl/qwac_trust_anchors" }
 rsdparsa_capi = { path = "../../../dom/media/webrtc/sdp/rsdparsa_capi" }
 rure = { version = "0.2.2" }
 rusqlite = { workspace = true, features = ['modern_sqlite'] }
 rust_minidump_writer_linux = { path = "../../../toolkit/crashreporter/rust_minidump_writer_linux", optional = true }
 signature_cache = { path = "../../../security/certverifier/signature_cache" }
+ssl_tokens_cache = { path = "../../../netwerk/base/ssl_tokens_cache" }
 static_prefs = { path = "../../../modules/libpref/init/static_prefs" }
 storage = { path = "../../../storage/rust" }
 trust-anchors = { path = "../../../security/manager/ssl/trust_anchors" }

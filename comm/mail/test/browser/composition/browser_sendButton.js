@@ -108,7 +108,7 @@ add_task(async function test_send_enabled_manual_address() {
 
   // When the addressee is not in To, Cc, Bcc or Newsgroup, disable Send again.
   clear_recipients(cwc);
-  EventUtils.synthesizeMouseAtCenter(menuButton, {}, menuButton.ownerGlobal);
+  EventUtils.synthesizeMouseAtCenter(menuButton, {}, menuButton.documentGlobal);
   await new Promise(resolve => setTimeout(resolve));
   await BrowserTestUtils.waitForPopupEvent(menu, "shown");
   menu.activateItem(
@@ -133,7 +133,7 @@ add_task(async function test_send_enabled_manual_address() {
   check_send_commands_state(cwc, false);
 
   const ccShow = cwc.document.getElementById("addr_ccShowAddressRowButton");
-  EventUtils.synthesizeMouseAtCenter(ccShow, {}, ccShow.ownerGlobal);
+  EventUtils.synthesizeMouseAtCenter(ccShow, {}, ccShow.documentGlobal);
   await new Promise(resolve => setTimeout(resolve));
   check_send_commands_state(cwc, false);
 
@@ -141,11 +141,11 @@ add_task(async function test_send_enabled_manual_address() {
   EventUtils.synthesizeMouseAtCenter(
     get_first_pill(cwc),
     {},
-    get_first_pill(cwc).ownerGlobal
+    get_first_pill(cwc).documentGlobal
   );
   await new Promise(resolve => setTimeout(resolve));
   // Delete the selected pill.
-  EventUtils.synthesizeKey("VK_DELETE", {}, cwc);
+  EventUtils.synthesizeKey("KEY_Delete", {}, cwc);
   // Confirm the address row is now empty.
   Assert.ok(!get_first_pill(cwc));
   // Confirm the send button is disabled.
@@ -188,7 +188,7 @@ add_task(async function test_send_enabled_manual_address() {
   EventUtils.synthesizeMouseAtCenter(
     newsgroupsButton,
     {},
-    newsgroupsButton.ownerGlobal
+    newsgroupsButton.documentGlobal
   );
   await new Promise(resolve => setTimeout(resolve));
 
@@ -329,7 +329,7 @@ add_task(async function test_update_pill_before_send() {
 
   // Set the pill which is in edit mode to an invalid email.
   EventUtils.synthesizeKey("KEY_Home", { shiftKey: true }, cwc);
-  EventUtils.synthesizeKey("VK_BACK_SPACE", {}, cwc);
+  EventUtils.synthesizeKey("KEY_Backspace", {}, cwc);
   EventUtils.sendString("invalidEmail", cwc);
 
   // Click send while the pill is in the edit mode and check the dialog title

@@ -299,6 +299,146 @@ add_task(async function delete_from_collapsed_group() {
     "after 10th delete"
   );
   await assertMessagesCount(2, 3);
+});
+
+add_task(async function test_expanded_root_deletion_indentation() {
+  // Setup a fresh folder with a 3-message thread (Root -> Child 1 -> Child 2).
+  const structFolder = await create_folder("StructFolder_Expanded");
+  await make_message_sets_in_folders(
+    [structFolder],
+    [{ count: 3, msgsPerThread: 3 }]
+  );
+
+  await switch_tab(tab1);
+  await be_in_folder(structFolder);
+  await make_display_threaded();
+  await expand_all_threads();
+
+  const dbView =
+    document.getElementById("tabmail").currentTabInfo.chromeBrowser
+      .contentWindow.gDBView;
+
+  // Verify initial view state. We should have 3 rows.
+  Assert.equal(
+    dbView.rowCount,
+    3,
+    "Thread should have exactly 3 visible messages"
+  );
+  Assert.equal(dbView.getLevel(0), 0, "Root message should be at level 0");
+  Assert.greater(dbView.getLevel(1), 0, "Child 1 should be indented");
+
+  // Delete the root message.
+  await select_click_row(0);
+  await press_delete();
+
+  // Verify there are no ghost rows and indentation is recalculated correctly.
+  Assert.equal(
+    dbView.rowCount,
+    2,
+    "Thread should have exactly 2 visible messages after root deletion"
+  );
+  Assert.equal(
+    dbView.getLevel(0),
+    0,
+    "Newly promoted root should be shifted to level 0"
+  );
+  Assert.equal(
+    dbView.getLevel(1),
+    1,
+    "Remaining sibling should be correctly indented at level 1"
+  );
+
+  structFolder.deleteSelf(null);
+});
+
+add_task(async function test_non_root_deletion_indentation_shift() {
+  // Setup a fresh folder with a 4-message thread.
+  const structFolder = await create_folder("StructFolder_Shift");
+  await make_message_sets_in_folders(
+    [structFolder],
+    [{ count: 4, msgsPerThread: 4 }]
+  );
+
+  await switch_tab(tab1);
+  await be_in_folder(structFolder);
+  await make_display_threaded();
+  await expand_all_threads();
+
+  const dbView =
+    document.getElementById("tabmail").currentTabInfo.chromeBrowser
+      .contentWindow.gDBView;
+
+  // Delete the first child (Row 1).
+  // This forces the DB to reparent Row 2 and Row 3 to the Root.
+  const oldLevelRow2 = dbView.getLevel(2);
+  await select_click_row(1);
+  await press_delete();
+
+  // Verify the batched NoteChange logic correctly shifted the remaining
+  // siblings.
+  Assert.equal(dbView.rowCount, 3, "Thread should have 3 messages left");
+  Assert.equal(
+    dbView.getLevel(1),
+    oldLevelRow2 - 1,
+    "Reparented sibling should be shifted left by 1"
+  );
+
+  structFolder.deleteSelf(null);
+});
+
+add_task(async function test_cross_tab_phantom_twisty() {
+  // Setup a folder with exactly 2 messages in a thread.
+  const structFolder = await create_folder("StructFolder_Phantom");
+  await make_message_sets_in_folders(
+    [structFolder],
+    [{ count: 2, msgsPerThread: 2 }]
+  );
+
+  // Tab 2 (Background window representation): Collapsed.
+  await switch_tab(tab2);
+  await be_in_folder(structFolder);
+  await make_display_threaded();
+  await collapse_all_threads();
+  const dbViewTab2 =
+    document.getElementById("tabmail").currentTabInfo.chromeBrowser
+      .contentWindow.gDBView;
+
+  Assert.equal(
+    dbViewTab2.rowCount,
+    1,
+    "Background tab should show 1 collapsed row"
+  );
+  Assert.ok(
+    dbViewTab2.isContainer(0),
+    "Background tab root should have the HASCHILDREN twisty initially"
+  );
+
+  // Tab 1 (Foreground window representation): Expanded.
+  await switch_tab(tab1);
+  await be_in_folder(structFolder);
+  await make_display_threaded();
+  await expand_all_threads();
+
+  // Delete the child (row 1) in the foreground tab.
+  await select_click_row(1);
+  await press_delete();
+
+  // Switch back to Tab 2 to verify the background sync.
+  await switch_tab(tab2);
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
+
+  // The root should still be there, but the twisty must be gone
+  Assert.equal(
+    dbViewTab2.rowCount,
+    1,
+    "Background tab should still show the root message"
+  );
+  Assert.ok(
+    !dbViewTab2.isContainer(0),
+    "Background tab root should lose the HASCHILDREN twisty after child deletion"
+  );
+
+  structFolder.deleteSelf(null);
 
   await close_tab(tab2);
 });

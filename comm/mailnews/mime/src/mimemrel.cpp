@@ -102,6 +102,7 @@
 #include "mimemrel.h"
 #include "mimepbuf.h"
 #include "mimemapl.h"
+#include "mimeleaf.h"
 #include "nsMailHeaders.h"
 #include "prmem.h"
 #include "prprf.h"
@@ -160,6 +161,7 @@ static int MimeMultipartRelated_initialize(MimeObject* obj) {
 
   relobj->input_file_stream = nullptr;
   relobj->output_file_stream = nullptr;
+  relobj->is_part_in_hidden_alternative = false;
 
   return ((MimeObjectClass*)&MIME_SUPERCLASS)->initialize(obj);
 }
@@ -339,6 +341,16 @@ static bool MimeThisIsStartPart(MimeObject* obj, MimeObject* child) {
   PR_FREEIF(ct);
   if (!st) return false;
 
+  // Strip angle brackets from the start parameter value per RFC 2387.
+  char* stStripped = st;
+  if (*stStripped == '<') {
+    stStripped++;
+    int stLen = strlen(stStripped);
+    if (stLen > 0 && stStripped[stLen - 1] == '>') {
+      stStripped[stLen - 1] = '\0';
+    }
+  }
+
   cst = MimeHeaders_get(child->headers, HEADER_CONTENT_ID, false, false);
   if (!cst)
     rval = false;
@@ -353,7 +365,7 @@ static bool MimeThisIsStartPart(MimeObject* obj, MimeObject* child) {
       }
     }
 
-    rval = (!strcmp(st, tmp));
+    rval = (!strcmp(stStripped, tmp));
   }
 
   PR_FREEIF(st);
@@ -425,15 +437,21 @@ static bool MimeMultipartRelated_output_child_p(MimeObject* obj,
       }
     }
 
-    if (location) {
-      char* base_url =
-          MimeHeaders_get(child->headers, HEADER_CONTENT_BASE, false, false);
-      char* absolute =
-          MakeAbsoluteURL(base_url ? base_url : relobj->base_url, location);
+    if (!location) {
+      // Without Content-ID or Content-Location this part is unreachable via
+      // cid: rewriting. Output it as a normal attachment so data is not
+      // silently discarded.
+      return true;
+    }
 
-      PR_FREEIF(base_url);
-      PR_Free(location);
-      if (absolute) {
+    char* base_url =
+        MimeHeaders_get(child->headers, HEADER_CONTENT_BASE, false, false);
+    char* absolute =
+        MakeAbsoluteURL(base_url ? base_url : relobj->base_url, location);
+
+    PR_FREEIF(base_url);
+    PR_Free(location);
+    if (absolute) {
         nsAutoCString partnum;
         nsAutoCString imappartnum;
         partnum.Adopt(mime_part_address(child));
@@ -545,7 +563,6 @@ static bool MimeMultipartRelated_output_child_p(MimeObject* obj,
           }
         }
       }
-    }
   } else {
     /* Ah-hah!  We're the head object.  */
     relobj->head_loaded = true;
@@ -601,6 +618,23 @@ static int MimeMultipartRelated_parse_child_line(MimeObject* obj,
   if (!kid) return -1;
 
   if (kid != relobj->headobj) {
+    // Hidden related parts may later surface as attachments; keep decoded sizes.
+    if (!kid->output_p &&
+        mime_subclass_p(kid->clazz, (MimeObjectClass*)&mimeLeafClass)) {
+      int32_t lineLength = length;
+      if (lineLength > 0 && line[lineLength - 1] == '\n') lineLength--;
+      if (lineLength > 0 && line[lineLength - 1] == '\r') lineLength--;
+
+      if (!first_line_p) {
+        char nl[] = MSG_LINEBREAK;
+        int status = MimeLeaf_parse_buffer_for_size(nl, MSG_LINEBREAK_LEN, kid);
+        if (status < 0) return status;
+      }
+
+      int status = MimeLeaf_parse_buffer_for_size(line, lineLength, kid);
+      if (status < 0) return status;
+    }
+
     // In decompose mode, buffer non-head child content so we can replay it
     // in parse_eof for parts the reader decides are visible attachments.
     if (obj->options && obj->options->decompose_file_p) {
@@ -644,6 +678,9 @@ static int MimeMultipartRelated_parse_child_line(MimeObject* obj,
       }
       return MimePartBufferWrite(relobj->child_bufs[idx], line, length);
     }
+    if (kid->output_p)
+      return ((MimeMultipartClass*)&MIME_SUPERCLASS)
+          ->parse_child_line(obj, line, length, first_line_p);
     return 0;
   }
 
@@ -887,8 +924,8 @@ static int flush_tag(MimeMultipartRelated* relobj) {
           if (status < 0) return status;
           buf = ptr2; /* skip over the cid: URL we substituted */
 
-          /* don't show that object as attachment */
-          if (value->m_obj) value->m_obj->dontShowAsAttachment = true;
+          if (!relobj->is_part_in_hidden_alternative && value->m_obj)
+            value->m_obj->dontShowAsAttachment = true;
         }
 
         /* Restore the character that we nulled. */
@@ -921,8 +958,8 @@ static int flush_tag(MimeMultipartRelated* relobj) {
           if (status < 0) return status;
           buf = ptr2; /* skip over the cid: URL we substituted */
 
-          /* don't show that object as attachment */
-          if (value->m_obj) value->m_obj->dontShowAsAttachment = true;
+          if (!relobj->is_part_in_hidden_alternative && value->m_obj)
+            value->m_obj->dontShowAsAttachment = true;
         }
       }
       /* rhp - if we get here, we should still check against the hash table! */

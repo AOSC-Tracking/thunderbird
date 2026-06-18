@@ -63,7 +63,7 @@ add_setup(async () => {
 
     const logins = await Services.logins.getAllLogins();
     Assert.equal(logins.length, 0, "no faulty logins were saved");
-    Services.logins.removeAllLogins();
+    await Services.logins.removeAllLoginsAsync();
     RemoteAddressBookUtils.getAddressBooksForExistingAccounts = gABFEA;
   });
 });
@@ -104,7 +104,7 @@ add_task(async function test_remoteAddressBookFormPwFromStorage() {
 
   await checkSyncSubview(dialog);
 
-  Services.logins.removeLogin(login);
+  await Services.logins.removeLoginAsync(login);
 });
 
 add_task(
@@ -131,7 +131,7 @@ add_task(
 
     await checkSyncSubview(dialog);
 
-    Services.logins.removeLogin(login);
+    await Services.logins.removeLoginAsync(login);
     const logins = await Services.logins.searchLoginsAsync({
       origin: "https://carddav.test",
     });
@@ -140,7 +140,7 @@ add_task(
       1,
       "Login should be duplicated to redirected origin"
     );
-    Services.logins.removeLogin(logins[0]);
+    await Services.logins.removeLoginAsync(logins[0]);
     DNS.srv = _srv;
   }
 );
@@ -197,7 +197,7 @@ add_task(async function test_remoteAddressBookFormOauth() {
     "OAuth credential should have refresh token as password"
   );
 
-  Services.logins.removeLogin(logins[0]);
+  await Services.logins.removeLoginAsync(logins[0]);
   proxy.destroy();
   OAuth2TestUtils.stopServer();
   OAuth2TestUtils.checkTelemetry([
@@ -205,6 +205,7 @@ add_task(async function test_remoteAddressBookFormOauth() {
       issuer: "test.test",
       reason: "no refresh token",
       result: "succeeded",
+      where: "internal",
     },
   ]);
   CardDAVServer.password = "hunter2";
@@ -227,7 +228,7 @@ add_task(async function test_notACardDAVServer() {
     "address-book-carddav-connection-error"
   );
 
-  Services.logins.removeLogin(login);
+  await Services.logins.removeLoginAsync(login);
   CardDAVServer.resetHandlers();
 });
 
@@ -240,7 +241,7 @@ add_task(async function test_noCardDAVWellKnown() {
   await fillInForm(dialog, "https://carddav.test");
   await checkSyncSubview(dialog);
 
-  Services.logins.removeLogin(login);
+  await Services.logins.removeLoginAsync(login);
   CardDAVServer.resetHandlers();
 });
 
@@ -272,7 +273,7 @@ add_task(async function test_appleCardDAVServer() {
   await fillInForm(dialog, "https://carddav.test");
   await checkSyncSubview(dialog);
 
-  Services.logins.removeLogin(login);
+  await Services.logins.removeLoginAsync(login);
   CardDAVServer.resetHandlers();
 });
 
@@ -345,7 +346,7 @@ add_task(async function test_emailWithoutServer() {
     "address-book-carddav-connection-error"
   );
 
-  Services.logins.removeLogin(login);
+  await Services.logins.removeLoginAsync(login);
 });
 
 add_task(async function test_dnsWithTXT() {
@@ -396,7 +397,7 @@ add_task(async function test_dnsWithTXT() {
   );
   Assert.ok(foundAb, "Should find entry for the address book");
 
-  Services.logins.removeLogin(login);
+  await Services.logins.removeLoginAsync(login);
   DNS.srv = _srv;
   DNS.txt = _txt;
   await dialog.querySelector("account-hub-address-book").reset();
@@ -470,7 +471,7 @@ add_task(async function test_directoryWithNoName() {
   const tabmail = document.getElementById("tabmail");
   tabmail.closeOtherTabs(0);
 
-  Services.logins.removeLogin(login);
+  await Services.logins.removeLoginAsync(login);
   CardDAVServer.books = books;
   CardDAVServer.resetHandlers();
 });
@@ -496,7 +497,7 @@ add_task(async function test_invalidCertificate() {
     "address-book-carddav-connection-error"
   );
 
-  Services.logins.removeLogin(login);
+  await Services.logins.removeLoginAsync(login);
   CardDAVServer.resetHandlers();
   await dialog.querySelector("account-hub-address-book").reset();
 });
@@ -541,7 +542,7 @@ add_task(async function test_invalidCertificateWithException() {
     ui: "carddav-utils",
   });
 
-  Services.logins.removeLogin(login);
+  await Services.logins.removeLoginAsync(login);
   CardDAVServer.resetHandlers();
   certOverrideService.clearAllOverrides();
 });
@@ -585,7 +586,7 @@ add_task(async function test_remoteAddressBookRememberPassword() {
     CardDAVServer.password,
     "Should store the expected password"
   );
-  Services.logins.removeLogin(logins[0]);
+  await Services.logins.removeLoginAsync(logins[0]);
 
   await SpecialPowers.popPrefEnv();
 });
@@ -606,7 +607,7 @@ add_task(async function test_unsupportedCardDAVServer() {
     "address-book-carddav-known-incompatible"
   );
 
-  Services.logins.removeLogin(login);
+  await Services.logins.removeLoginAsync(login);
   CardDAVServer.resetHandlers();
   await dialog.querySelector("account-hub-address-book").reset();
   Assert.equal(

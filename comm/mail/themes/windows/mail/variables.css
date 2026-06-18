@@ -30,8 +30,8 @@
     --item-focus-selected-border-color: SelectedItemText;
     --new-folder-color: Highlight;
     --menuitem-vertical-padding: 3px;
-    --panel-dimmed: SelectedItem;
-    --panel-dimmed-further: SelectedItem;
+    --panel-background-color-dimmed: SelectedItem;
+    --panel-background-color-dimmed-further: SelectedItem;
     --toolbar-field-focus-border-color: SelectedItem;
 
     & .themeable-full,
@@ -39,9 +39,9 @@
     & #navigation-toolbox > toolbar,
     & #todaypane-new-event-button,
     & #CardViewBox {
-      --toolbarbutton-hover-background: SelectedItem;
+      --toolbarbutton-background-color-hover: SelectedItem;
       --toolbarbutton-hover-bordercolor: SelectedItemText !important;
-      --toolbarbutton-active-background: SelectedItem;
+      --toolbarbutton-background-color-active: SelectedItem;
       --toolbarbutton-active-bordercolor: SelectedItemText;
       --toolbarbutton-checked-background: SelectedItem;
       --toolbarbutton-icon-fill-attention: SelectedItem;
@@ -61,7 +61,7 @@
     }
 
     & menulist {
-      --toolbarbutton-hover-background: ButtonFace;
+      --toolbarbutton-background-color-hover: ButtonFace;
     }
   }
 }

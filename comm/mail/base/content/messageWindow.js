@@ -27,6 +27,15 @@ ChromeUtils.defineESModuleGetters(this, {
   UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
 });
 
+ChromeUtils.defineESModuleGetters(
+  this,
+  {
+    setupShortcuts:
+      "moz-src:///comm/mail/base/content/modules/ShortcutsOverlay.mjs",
+  },
+  { global: "current" }
+);
+
 var messageBrowser;
 
 function getBrowser() {
@@ -85,6 +94,7 @@ function OnLoadMessageWindow() {
   updateTroubleshootMenuItem();
   ToolbarIconColor.init();
   BondOpenPGP.init();
+  setupShortcuts();
 
   setTimeout(delayedOnLoadMessageWindow, 0); // when debugging, set this to 5000, so you can see what happens after the window comes up.
 
@@ -551,13 +561,6 @@ function SetupCommandUpdateHandlers() {
     0,
     messageBrowser.contentWindow.commandController
   );
-  // Use the main window's transaction manager.
-  // There may not be a "main" window if an .eml file was double-clicked.
-  const mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
-  if (mainWindow) {
-    window.msgWindow.transactionManager =
-      mainWindow.msgWindow.transactionManager;
-  }
 }
 
 function UnloadCommandUpdateHandlers() {

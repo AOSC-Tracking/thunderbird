@@ -71,7 +71,9 @@ async function waitForCardsListReady(list) {
   const eventName = "_treerowbufferfillAbListReady";
   list._rowBufferReadyEvent = new CustomEvent(eventName);
   await BrowserTestUtils.waitForEvent(list, eventName);
-  await new Promise(resolve => list.ownerGlobal.requestAnimationFrame(resolve));
+  await new Promise(resolve =>
+    list.documentGlobal.requestAnimationFrame(resolve)
+  );
 }
 
 async function openAddressBookWindow() {
@@ -436,7 +438,7 @@ async function doSearch(searchString, ...expectedCards) {
     EventUtils.synthesizeKey("a", { accelKey: true }, abWindow);
     EventUtils.sendString(searchString, abWindow);
   } else {
-    EventUtils.synthesizeKey("VK_ESCAPE", {}, abWindow);
+    EventUtils.synthesizeKey("KEY_Escape", {}, abWindow);
   }
 
   await viewChangePromise;

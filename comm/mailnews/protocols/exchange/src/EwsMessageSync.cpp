@@ -3,10 +3,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #include "EwsMessageSync.h"
-#include "EwsFolder.h"
-#include "EwsListeners.h"
+#include "ExchangeFolder.h"
+#include "ExchangeListeners.h"
 #include "IExchangeClient.h"
-#include "IEwsIncomingServer.h"
+#include "IExchangeIncomingServer.h"
 #include "IHeaderBlock.h"
 #include "MailHeaderParsing.h"  // For ParseHeaderBlock().
 #include "mozilla/Components.h"
@@ -20,7 +20,8 @@
 mozilla::LazyLogModule gEwsLog("ews_xpcom");
 
 /**
- * Helper class for orchestrating a message sync operation for an EwsFolder.
+ * Helper class for orchestrating a message sync operation for an
+ * ExchangeFolder.
  *
  * You can think of it as an object which represents the sync operation as it
  * progresses.
@@ -31,7 +32,7 @@ mozilla::LazyLogModule gEwsLog("ews_xpcom");
  * folder, database, whatever.
  * It exists for the duration of the sync operation.
  *
- * This removes most protocol-specific message sync code out of EwsFolder.
+ * This removes most protocol-specific message sync code out of ExchangeFolder.
  *
  * Architectural aside (potential future directions):
  *
@@ -90,7 +91,7 @@ class EwsMessageSyncHandler : public IExchangeMessageSyncListener,
   NS_DECL_ISUPPORTS
 
   EwsMessageSyncHandler(
-      EwsFolder* folder, std::function<void()> onStart,
+      ExchangeFolder* folder, std::function<void()> onStart,
       std::function<void(nsresult, nsTArray<nsMsgKey> const&,
                          nsTArray<RefPtr<IHeaderBlock>> const&)>
           onStop)
@@ -112,18 +113,18 @@ class EwsMessageSyncHandler : public IExchangeMessageSyncListener,
     // Most of the listener callbacks will want to poke the database.
     MOZ_TRY(mFolder->GetMsgDatabase(getter_AddRefs(mDB)));
 
-    // We can get the EwsClient via the EwsFolder:
+    // We can get the EwsClient via the ExchangeFolder:
     nsCOMPtr<IExchangeClient> ewsClient;
     {
       nsCOMPtr<nsIMsgIncomingServer> server;
       MOZ_TRY(mFolder->GetServer(getter_AddRefs(server)));
-      nsCOMPtr<IEwsIncomingServer> ewsServer(do_QueryInterface(server));
+      nsCOMPtr<IExchangeIncomingServer> ewsServer(do_QueryInterface(server));
       MOZ_TRY(ewsServer->GetProtocolClient(getter_AddRefs(ewsClient)));
     }
 
     // We need to know the EwsID of this folder on the server.
     nsAutoCString ewsFolderId;
-    MOZ_TRY(mFolder->GetEwsId(ewsFolderId));
+    MOZ_TRY(mFolder->GetExchangeId(ewsFolderId));
 
     // EWS provides us an opaque value which specifies the last version of
     // upstream messages we received. Provide that to simplify sync.
@@ -205,7 +206,7 @@ class EwsMessageSyncHandler : public IExchangeMessageSyncListener,
     MOZ_TRY(mDB->AddMsgHdr(&raw, true, getter_AddRefs(newHeader)));
 
     // Link the message to the server EwsId.
-    MOZ_TRY(newHeader->SetStringProperty(kEwsIdProperty, ewsId));
+    MOZ_TRY(newHeader->SetStringProperty(kExchangeIdProperty, ewsId));
 
     // Some non-RFC5322 details to mop up.
     if (messageSize) {
@@ -237,9 +238,10 @@ class EwsMessageSyncHandler : public IExchangeMessageSyncListener,
     nsresult rv = mDB->GetMsgHdrForEwsItemID(ewsId, getter_AddRefs(msgHdr));
     NS_ENSURE_SUCCESS(rv, rv);
     if (!msgHdr) {
-      // An `Updated` before a `Created`? Something has gone pear-shaped.
-      // Let the operation know. It _might_ decide to continue, using the
-      // "Created" callback instead, or it might skip it.
+      // We might be in a weird situation where the server told us of an update
+      // before a creation, or it might be that the server does not distinguish
+      // the two cases. Either way, let the consumer know in case it wants to
+      // try creating the message instead.
       return NS_MSG_MESSAGE_NOT_FOUND;
     }
 
@@ -279,7 +281,19 @@ class EwsMessageSyncHandler : public IExchangeMessageSyncListener,
     }
     updated.flags = flags;  // Ignore any X-Mozilla-Status values.
 
+    // We need the old flags to notify listeners.
+    uint32_t oldFlags;
+    MOZ_TRY(msgHdr->GetFlags(&oldFlags));
+
+    // Update the database entry, then notify any listener to let them know
+    // about the changes.
     MOZ_TRY(ApplyRawHdrToDbHdr(updated, msgHdr));
+
+    // Setting `instigator` (the 4th argument to `NotifyHdrChangeAll`) to
+    // nullptr should be fine here, the only listener that actually cares about
+    // it is the `nsMsgDBView` to check whether it instigated the change itself
+    // (which it hasn't in this case).
+    MOZ_TRY(mDB->NotifyHdrChangeAll(msgHdr, oldFlags, flags, nullptr));
 
     if (messageSize) {
       MOZ_TRY(msgHdr->SetMessageSize(messageSize));
@@ -333,6 +347,11 @@ class EwsMessageSyncHandler : public IExchangeMessageSyncListener,
 
   // Called when the operation succeeds.
   NS_IMETHOD OnSyncComplete() override {
+    // We might have processed unread count updates via `OnMessageUpdated`, in
+    // which case we need to make sure the message counts are up to date.
+    MOZ_TRY(mDB->SyncCounts());
+    MOZ_TRY(mFolder->UpdateSummaryTotals(true));
+
     MOZ_ASSERT(mNewMessages.Length() == mNewHeaders.Length());
     mOnStop(NS_OK, mNewMessages, mNewHeaders);
     return NS_OK;
@@ -345,6 +364,13 @@ class EwsMessageSyncHandler : public IExchangeMessageSyncListener,
   // Called if sync operation fails.
   NS_IMETHOD OnOperationFailure(nsresult status) override {
     MOZ_ASSERT(NS_FAILED(status));
+
+    // We might have processed unread count updates via `OnMessageUpdated` (even
+    // if the sync failed), in which case we need to make sure the message
+    // counts are up to date.
+    MOZ_TRY(mDB->SyncCounts());
+    MOZ_TRY(mFolder->UpdateSummaryTotals(true));
+
     // Even if the operation fails some messages may have already been added
     // to the database and the folder should be told about them.
     MOZ_ASSERT(mNewMessages.Length() == mNewHeaders.Length());
@@ -353,7 +379,7 @@ class EwsMessageSyncHandler : public IExchangeMessageSyncListener,
   }
 
  private:
-  RefPtr<EwsFolder> mFolder;
+  RefPtr<ExchangeFolder> mFolder;
   RefPtr<nsIMsgDatabase> mDB;
 
   nsTArray<nsMsgKey> mNewMessages;
@@ -368,7 +394,7 @@ NS_IMPL_ISUPPORTS(EwsMessageSyncHandler, IExchangeMessageSyncListener,
                   IExchangeFallibleOperationListener)
 
 nsresult EwsPerformMessageSync(
-    EwsFolder* folder, std::function<void()> onStart,
+    ExchangeFolder* folder, std::function<void()> onStart,
     std::function<void(nsresult, nsTArray<nsMsgKey> const&,
                        nsTArray<RefPtr<IHeaderBlock>> const&)>
         onStop) {

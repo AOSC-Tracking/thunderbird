@@ -3,9 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 @import url("chrome://messenger/skin/shared/preferences/subdialog.css");
-@import url("chrome://messenger/skin/colors.css");
-@import url("chrome://messenger/skin/variables.css");
-@import url("chrome://messenger/skin/icons.css");
 
 @namespace html url("http://www.w3.org/1999/xhtml");
 
@@ -58,8 +55,8 @@ html|moz-input-search {
 }
 
 #pref-category-box {
-  background-color: var(--in-content-categories-background);
-  border-inline-end: 1px solid var(--in-content-categories-border);
+  background-color: var(--sidebar-background);
+  border-inline-end: none;
   inline-size: 18em;
 }
 
@@ -226,7 +223,7 @@ menulist::part(dropmarker-icon) {
 
 .sticky-container {
   position: sticky;
-  background-color: var(--background-color-canvas);
+  background-color: var(--layout-background-0);
   inset-block-start: 0;
   z-index: 1;
   /* The sticky-container should have the capability to cover all spotlight area. */
@@ -331,21 +328,8 @@ tabpanel > hbox > description {
 }
 
 @media (max-width: 830px) {
-  #pref-category-box,
   #categories {
     inline-size: auto;
-  }
-
-  #categories > .category {
-    padding-inline: 12px;
-  }
-
-  .sidebar-footer-link {
-    margin-inline: 12px;
-  }
-
-  #preferencesContainer {
-    padding-inline: 15px;
   }
 }
 
@@ -357,7 +341,7 @@ html|input:is([type="email"], [type="tel"], [type="text"], [type="password"], [t
 html|input[type="number"] {
   margin-inline-start: 4px;
   padding: 1px;
-  min-block-size: calc(var(--button-height) - 4px);
+  min-block-size: var(--button-height);
 
   /* sizes: chars + 8px padding + 1px borders + spin buttons 25+2+10px  */
   &.size2 {
@@ -379,35 +363,17 @@ html|input[type="number"] {
 
   &::-moz-number-spin-up,
   &::-moz-number-spin-down {
-    appearance: none;
     min-inline-size: 25px;
+    min-block-size: calc(var(--button-height) * 0.5 - 4px);
     border: 1px solid var(--border-color);
     background-color: var(--button-background-color);
-    background-position: center;
-    background-repeat: no-repeat;
     color: var(--button-text-color);
-    -moz-context-properties: stroke;
-    stroke: currentColor;
   }
 
   &::-moz-number-spin-up:hover,
   &::-moz-number-spin-down:hover {
     background-color: var(--button-background-color-hover);
     color: var(--button-text-color-hover);
-  }
-
-  &::-moz-number-spin-up {
-    min-block-size: calc(var(--button-height) * 0.5 - 3px);
-    border-block-end-width: 1px;
-    border-block-end-style: solid;
-    border-radius: 1px 1px 0 0;
-    background-image: url("chrome://messenger/skin/icons/new/nav-up-sm.svg");
-  }
-
-  &::-moz-number-spin-down {
-    min-block-size: calc(var(--button-height) * 0.5 - 4px);
-    border-radius: 0 0 1px 1px;
-    background-image: url("chrome://messenger/skin/icons/new/nav-down-sm.svg");
   }
 }
 
@@ -442,8 +408,11 @@ tab {
 
 #filter {
   flex: 1;
-  margin-inline: 0;
   --input-text-max-width: none;
+
+  #CookiesDialog & {
+    margin-inline-start: 8px;
+  }
 }
 
 /* XXX This style is for bug 740213 and should be removed once that
@@ -708,6 +677,10 @@ treechildren::-moz-tree-cell-text(selected) {
 #primaryMessengerLocale {
   margin-inline: 0 4px;
   min-inline-size: 20em;
+}
+
+#selectedLocales > richlistitem {
+  padding-inline-start: 13px;
 }
 
 #availableLocales {

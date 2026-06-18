@@ -2,21 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../../../../toolkit/mozapps/extensions/content/aboutaddons.js */
+/* global windowRoot */
 
-const THUNDERBIRD_THEME_PREVIEWS = new Map([
-  [
-    "thunderbird-compact-light@mozilla.org",
-    "resource://builtin-themes/light/preview.svg",
-  ],
-  [
-    "thunderbird-compact-dark@mozilla.org",
-    "resource://builtin-themes/dark/preview.svg",
-  ],
-]);
+const { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
+);
+
+const { formatUTMParams, getAddonMessageInfo } = ChromeUtils.importESModule(
+  "chrome://mozapps/content/extensions/aboutaddons-utils.mjs",
+  { global: "current" }
+);
 
 ChromeUtils.defineESModuleGetters(this, {
-  ExtensionData: "resource://gre/modules/Extension.sys.mjs",
+  AddonRepository: "resource://gre/modules/addons/AddonRepository.sys.mjs",
+  parseManifest: "resource:///modules/ExtensionUtilities.sys.mjs",
   UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
 });
 
@@ -25,6 +24,10 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "alternativeAddonSearchUrl",
   "extensions.alternativeAddonSearch.url"
 );
+
+function getBrowserElement() {
+  return window.docShell.chromeEventHandler;
+}
 
 (async function () {
   window.MozXULElement.insertFTLIfNeeded("branding/brand.ftl");
@@ -41,7 +44,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
       if (uri.scheme == "http" || uri.scheme == "https") {
         event.preventDefault();
         event.stopPropagation();
-        windowRoot.ownerGlobal.openTrustedLinkIn(event.target.href, "tab");
+        windowRoot.documentGlobal.openTrustedLinkIn(event.target.href, "tab");
       }
     }
   });
@@ -56,36 +59,33 @@ XPCOMUtils.defineLazyPreferenceGetter(
   // Add our stylesheet.
   const contentStylesheet = document.createElement("link");
   contentStylesheet.rel = "stylesheet";
-  contentStylesheet.href = "chrome://messenger/skin/aboutAddonsExtra.css";
+  contentStylesheet.href = "chrome://messenger/skin/aboutExtra.css";
   document.head.appendChild(contentStylesheet);
 
-  // Override logic for detecting unsigned add-ons.
-  window.isCorrectlySigned = function () {
-    return true;
-  };
-
-  // Load our theme screenshots.
-  const _getScreenshotUrlForAddon = getScreenshotUrlForAddon;
-  getScreenshotUrlForAddon = function (addon) {
-    if (THUNDERBIRD_THEME_PREVIEWS.has(addon.id)) {
-      return THUNDERBIRD_THEME_PREVIEWS.get(addon.id);
-    }
-    return _getScreenshotUrlForAddon(addon);
-  };
-
-  // Add logic to detect add-ons using the unsupported legacy API.
+  // Add logic to detect add-ons using the unsupported legacy API or suppressed
+  // Experiments.
   const getMozillaAddonMessageInfo = window.getAddonMessageInfo;
   window.getAddonMessageInfo = async function (
     addon,
     { isCardExpanded, isInDisabledSection }
   ) {
     const { name } = addon;
+    const data = await parseManifest(addon);
+    if (data.isSuppressedExperiment) {
+      return {
+        linkId: "add-on-learn-more-and-search-alternative-button-label",
+        linkUrl: `${alternativeAddonSearchUrl}?id=${encodeURIComponent(
+          addon.id
+        )}&q=${encodeURIComponent(name)}&isSuppressed=true`,
+        messageId: "details-notification-suppressed-esr",
+        messageArgs: { name },
+        type: "warning",
+      };
+    }
 
-    const data = new ExtensionData(addon.getResourceURI());
-    await data.loadManifest();
     if (
       addon.type == "extension" &&
-      (data.manifest.legacy ||
+      (data.isLegacy ||
         (!addon.isCompatible &&
           (AddonManager.checkCompatibility ||
             addon.blocklistState !== Ci.nsIBlocklistService.STATE_SOFTBLOCKED)))
@@ -110,6 +110,8 @@ XPCOMUtils.defineLazyPreferenceGetter(
   // Override parts of the addon-card customElement to be able
   // to add a dedicated button for extension preferences.
   await customElements.whenDefined("addon-card");
+  const AddonCard = customElements.get("addon-card");
+
   AddonCard.prototype.addOptionsButton = async function () {
     const { addon, optionsButton } = this;
     if (addon.type != "extension") {
@@ -129,8 +131,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
     // Upon fresh install the manifest has not been parsed and optionsType
     // is not known, manually trigger parsing.
     if (addon.isActive && !addon.optionsType) {
-      const data = new ExtensionData(addon.getResourceURI());
-      await data.loadManifest();
+      await parseManifest(addon);
     }
 
     addonOptionsButton.disabled = !(addon.isActive && addon.optionsType);
@@ -144,9 +145,11 @@ XPCOMUtils.defineLazyPreferenceGetter(
   // Override parts of the addon-permission-list customElement to be able
   // to show the usage of Experiments in the permission list.
   await customElements.whenDefined("addon-permissions-list");
+  const AddonPermissionsList = customElements.get("addon-permissions-list");
+
   AddonPermissionsList.prototype.renderExperimentOnly = function () {
     this.textContent = "";
-    const frag = importTemplate("addon-permissions-list");
+    const frag = AddonPermissionsList.fragment;
     const section = frag.querySelector(".addon-permissions-required");
     section.hidden = false;
     const list = section.querySelector(".addon-permissions-list");
@@ -165,9 +168,8 @@ XPCOMUtils.defineLazyPreferenceGetter(
   // It calls this.render() which is async without awaiting it anyway.
   AddonPermissionsList.prototype.setAddon = async function (addon) {
     this.addon = addon;
-    const data = new ExtensionData(addon.getResourceURI());
-    await data.loadManifest();
-    if (data.manifest.experiment_apis) {
+    const data = await parseManifest(addon);
+    if (data.isExperiment) {
       this.renderExperimentOnly();
     } else {
       this.render();
@@ -175,6 +177,8 @@ XPCOMUtils.defineLazyPreferenceGetter(
   };
 
   await customElements.whenDefined("recommended-addon-card");
+  const RecommendedAddonCard = customElements.get("recommended-addon-card");
+
   RecommendedAddonCard.prototype._setCardContent =
     RecommendedAddonCard.prototype.setCardContent;
   RecommendedAddonCard.prototype.setCardContent = function (card, addon) {
@@ -183,7 +187,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
       if (event.target.matches("a[href]") || event.target.matches("button")) {
         return;
       }
-      windowRoot.ownerGlobal.openTrustedLinkIn(
+      windowRoot.documentGlobal.openTrustedLinkIn(
         card.querySelector(".disco-addon-author a").href,
         "tab"
       );
@@ -191,6 +195,8 @@ XPCOMUtils.defineLazyPreferenceGetter(
   };
 
   await customElements.whenDefined("search-addons");
+  const SearchAddons = customElements.get("search-addons");
+
   SearchAddons.prototype.searchAddons = function (query) {
     if (query.length === 0) {
       return;
@@ -211,7 +217,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
     }
 
     const browser = getBrowserElement();
-    const chromewin = browser.ownerGlobal;
+    const chromewin = browser.documentGlobal;
     chromewin.openLinkIn(url.href, "tab", {
       fromChrome: true,
       triggeringPrincipal: Services.scriptSecurityManager.createNullPrincipal(

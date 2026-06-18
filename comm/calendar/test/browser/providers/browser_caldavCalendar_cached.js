@@ -10,7 +10,11 @@ CalDAVServer.open("bob", "bob");
 
 let calendar;
 add_setup(async function () {
-  if (!Services.logins.findLogins(CalDAVServer.origin, null, "test").length) {
+  const logins = await Services.logins.searchLoginsAsync({
+    origin: CalDAVServer.origin,
+    httpRealm: "test",
+  });
+  if (!logins.length) {
     // Save a username and password to the login manager.
     const loginInfo = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(Ci.nsILoginInfo);
     loginInfo.init(CalDAVServer.origin, null, "test", "bob", "bob", "", "");
@@ -25,7 +29,7 @@ add_setup(async function () {
     // This test has issues cleaning up, and it breaks all the subsequent tests.
     await new Promise(r => setTimeout(r, 1000)); // eslint-disable-line mozilla/no-arbitrary-setTimeout
     await CalDAVServer.close();
-    Services.logins.removeAllLogins();
+    await Services.logins.removeAllLoginsAsync();
     removeCalendar(calendar);
   });
 });

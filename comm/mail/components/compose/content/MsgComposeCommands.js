@@ -553,16 +553,18 @@ function updateEditableFields(aDisable) {
     return;
   }
 
-  if (aDisable) {
-    gMsgCompose.editor.flags |= Ci.nsIEditor.eEditorReadonlyMask;
-  } else {
-    gMsgCompose.editor.flags &= ~Ci.nsIEditor.eEditorReadonlyMask;
+  if (gMsgCompose.editor) {
+    if (aDisable) {
+      gMsgCompose.editor.flags |= Ci.nsIEditor.eEditorReadonlyMask;
+    } else {
+      gMsgCompose.editor.flags &= ~Ci.nsIEditor.eEditorReadonlyMask;
 
-    try {
-      const checker = GetCurrentEditor().getInlineSpellChecker(true);
-      checker.enableRealTimeSpell = gSpellCheckingEnabled;
-    } catch (ex) {
-      // An error will be thrown if there are no dictionaries. Just ignore it.
+      try {
+        const checker = GetCurrentEditor().getInlineSpellChecker(true);
+        checker.enableRealTimeSpell = gSpellCheckingEnabled;
+      } catch (ex) {
+        // An error will be thrown if there are no dictionaries. Just ignore it.
+      }
     }
   }
 
@@ -822,8 +824,7 @@ var stateListener = {
         if (gMsgCompose) {
           gMsgCompose.onSendNotPerformed(null, Cr.NS_ERROR_ABORT);
         }
-
-        MsgComposeCloseWindow();
+        window.close();
       }
     } else if (gAutoSaving) {
       // If we failed to save, and we're autosaving, need to re-mark the editor
@@ -882,6 +883,9 @@ var gSendListener = {
       }
       Services.obs.removeObserver(onWindowClosed, "domwindowclosed");
       if (!params.exceptionAdded) {
+        return;
+      }
+      if (!gCurrentIdentity) {
         return;
       }
       const server = MailServices.outgoingServer.getServerByKey(
@@ -2117,7 +2121,7 @@ function msgComposeContextOnShowing(event) {
     linkText,
     linkUrl,
     selectionText: isTextSelected ? selectionInfo.fullText : undefined,
-    pageUrl: target.ownerGlobal.top.location.href,
+    pageUrl: target.documentGlobal.top.location.href,
     onComposeBody: true,
   };
   subject.context = subject;
@@ -5601,7 +5605,7 @@ async function ComposeLoad() {
       getComposeBundle().getString("initErrorDlgMessage")
     );
 
-    MsgComposeCloseWindow();
+    window.close();
     return;
   }
 
@@ -5862,10 +5866,6 @@ function ComposeUnload() {
   if (gAutoSaveTimeout) {
     clearTimeout(gAutoSaveTimeout);
   }
-  if (msgWindow) {
-    msgWindow.closeWindow();
-  }
-
   ReleaseGlobalVariables();
 
   top.controllers.removeController(SecurityController);
@@ -5876,8 +5876,7 @@ function ComposeUnload() {
     }
   }
 
-  // This destroys the window for us.
-  MsgComposeCloseWindow();
+  window.close();
 }
 
 function onEncryptionChoice(value) {
@@ -6449,11 +6448,11 @@ async function GenericSendMessage(msgType) {
 
     await CompleteGenericSendMessage(msgType);
     window.dispatchEvent(new CustomEvent("compose-prepare-message-completed"));
-  } catch (exception) {
-    console.error(exception);
+  } catch (ex) {
+    console.warn(`Send FAILED; ${ex.message}`, ex);
     window.dispatchEvent(
       new CustomEvent("compose-prepare-message-completed", {
-        detail: { exception },
+        detail: { exception: ex },
       })
     );
   }
@@ -6474,7 +6473,6 @@ async function CompleteGenericSendMessage(msgType) {
   if (gAutoSaving && gAutoSavingInProgress) {
     return;
   }
-  let sendError = null;
   try {
     if (gAutoSaving) {
       gAutoSavingInProgress = true;
@@ -6573,9 +6571,9 @@ async function CompleteGenericSendMessage(msgType) {
       progress
     );
   } catch (ex) {
-    console.warn("GenericSendMessage FAILED: " + ex);
+    console.warn(`GenericSendMessage FAILED: ${ex.message}`, ex);
     ToggleWindowLock(false);
-    sendError = ex;
+    return;
   } finally {
     if (gAutoSaving) {
       gAutoSavingInProgress = false;
@@ -6612,8 +6610,12 @@ async function CompleteGenericSendMessage(msgType) {
     window.dispatchEvent(new CustomEvent("aftersave"));
   }
 
-  if (sendError) {
-    throw sendError;
+  if (
+    msgType == Ci.nsIMsgCompDeliverMode.Now ||
+    msgType == Ci.nsIMsgCompDeliverMode.Later ||
+    msgType == Ci.nsIMsgCompDeliverMode.Background
+  ) {
+    window.close();
   }
 }
 
@@ -8076,14 +8078,6 @@ function SetContentAndBodyAsUnmodified() {
   gContentChanged = false;
 }
 
-function MsgComposeCloseWindow() {
-  if (gMsgCompose) {
-    gMsgCompose.CloseWindow();
-  } else {
-    window.close();
-  }
-}
-
 function GetLastAttachDirectory() {
   var lastDirectory;
 
@@ -9373,7 +9367,7 @@ function OpenSelectedAttachment() {
           background: false,
           linkHandler: "single-page",
         });
-        tabmail.ownerGlobal.focus();
+        tabmail.documentGlobal.focus();
         return;
       }
       // If no tabmail, open PDF same as other attachments.
@@ -11477,7 +11471,8 @@ var gComposeNotificationBar = {
       );
     } else {
       document.l10n.setAttributes(
-        gComposeNotification.getNotificationWithValue("blockedContent"),
+        gComposeNotification.getNotificationWithValue("blockedContent")
+          .messageText,
         "blocked-content-message",
         { count: urls.length }
       );

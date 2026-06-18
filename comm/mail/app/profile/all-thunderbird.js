@@ -232,6 +232,15 @@ pref("extensions.startupScanScopes", 4);
 pref("extensions.update.requireBuiltInCerts", false);
 pref("extensions.install.requireBuiltInCerts", false);
 
+// Allow experiments and suppress unsigned warnings.
+pref("extensions.experiments.enabled", true);
+pref("extensions.ui.disableUnsignedWarnings", true);
+
+// Allow Experiments to be suppressed.
+pref("extensions.experiments.suppressed", false);
+// Comma-separated list of add-on IDs exempt from experiment suppression.
+pref("extensions.experiments.allowed", "tbpro-add-on@thunderbird.net,owl@beonex.com");
+
 // Gecko Profiler
 pref("extensions.geckoProfiler.acceptedExtensionIds", "geckoprofiler@mozilla.com,quantum-foxfooding@mozilla.com,raptor@mozilla.org");
 
@@ -1071,6 +1080,8 @@ pref("devtools.eyedropper.zoom", 6);
 pref("devtools.markup.collapseAttributes", true);
 // Length to collapse attributes
 pref("devtools.markup.collapseAttributeLength", 120);
+// Enable the display of comment nodes in the markup view.
+pref("devtools.markup.showComments", true);
 // Whether to auto-beautify the HTML on copy.
 pref("devtools.markup.beautifyOnCopy", false);
 
@@ -1506,9 +1517,6 @@ pref("mail.thread.conversation.enabled", false);
 // Enable the conversion to dark mode for all messages when using a dark theme.
 pref("mail.dark-reader.enabled", true);
 pref("mail.dark-reader.show-toggle", true);
-
-// Enable the new account setup (starting from the second account)
-pref("mail.accounthub.enabled", true);
 
 // Enable address book setup via account hub
 pref("mail.accounthub.addressbook.enabled", true);

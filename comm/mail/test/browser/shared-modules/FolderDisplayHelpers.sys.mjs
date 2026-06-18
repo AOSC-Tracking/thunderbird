@@ -276,7 +276,7 @@ export function open_selected_messages(win = mc) {
   // Focus the thread tree
   focus_thread_tree();
   // Open whatever's selected
-  EventUtils.synthesizeKey("VK_RETURN", {}, win);
+  EventUtils.synthesizeKey("KEY_Enter", {}, win);
 }
 
 export var open_selected_message = open_selected_messages;
@@ -636,7 +636,7 @@ export async function select_click_row(aViewIndex) {
   aViewIndex = _normalize_view_index(aViewIndex);
 
   const row = await _get_row_at_index(aViewIndex);
-  EventUtils.synthesizeMouseAtCenter(row, {}, row.ownerGlobal);
+  EventUtils.synthesizeMouseAtCenter(row, {}, row.documentGlobal);
   await TestUtils.waitForTick();
 
   await wait_for_message_display_completion(undefined, true);
@@ -1117,7 +1117,7 @@ export async function delete_via_popup() {
     // context menu items on macos.
     ctxDelete.click();
   } else {
-    EventUtils.synthesizeMouseAtCenter(ctxDelete, {}, ctxDelete.ownerGlobal);
+    EventUtils.synthesizeMouseAtCenter(ctxDelete, {}, ctxDelete.documentGlobal);
   }
 
   // for reasons unknown, the pop-up does not close itself?
@@ -1158,7 +1158,7 @@ export async function press_delete(aWin = mc, aModifiers) {
     "DeleteOrMoveMsgCompleted",
     "DeleteOrMoveMsgFailed"
   );
-  EventUtils.synthesizeKey("VK_DELETE", aModifiers || {}, aWin);
+  EventUtils.synthesizeKey("KEY_Delete", aModifiers || {}, aWin);
   await wait_for_folder_events();
 }
 
@@ -1568,7 +1568,7 @@ export function assert_message_pane_hidden() {
  * Toggle the visibility of the message pane.
  */
 export function toggle_message_pane() {
-  EventUtils.synthesizeKey("VK_F8", {}, get_about_3pane());
+  EventUtils.synthesizeKey("KEY_F8", {}, get_about_3pane());
 }
 
 /**

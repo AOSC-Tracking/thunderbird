@@ -260,7 +260,7 @@ add_task(async function test_rename_attachment() {
   // Now, rename the attachment.
   const bucket = cwc.document.getElementById("attachmentBucket");
   const node = bucket.querySelector("richlistitem.attachmentItem");
-  EventUtils.synthesizeMouseAtCenter(node, {}, node.ownerGlobal);
+  EventUtils.synthesizeMouseAtCenter(node, {}, node.documentGlobal);
   const dialogPromise = BrowserTestUtils.promiseAlertDialog(null, undefined, {
     callback: subtest_rename_attachment,
   });
@@ -300,7 +300,11 @@ add_task(async function test_open_attachment() {
     "chrome://mozapps/content/downloads/unknownContentType.xhtml",
     { callback: subtest_open_attachment }
   );
-  EventUtils.synthesizeMouseAtCenter(node, { clickCount: 2 }, node.ownerGlobal);
+  EventUtils.synthesizeMouseAtCenter(
+    node,
+    { clickCount: 2 },
+    node.documentGlobal
+  );
   await dialogPromise;
 
   await close_compose_window(cwc);
@@ -416,7 +420,7 @@ async function subtest_reordering(
       EventUtils.synthesizeMouseAtCenter(
         aCwc.document.getElementById(action.button),
         {},
-        aCwc.document.getElementById(action.button).ownerGlobal
+        aCwc.document.getElementById(action.button).documentGlobal
       );
     } else if ("key" in action) {
       EventUtils.synthesizeKey(action.key, action.key_modifiers, aCwc);
@@ -483,7 +487,7 @@ add_task(async function test_attachment_reordering() {
   await BrowserTestUtils.waitForPopupEvent(panel, "shown");
 
   // Click on the editor which should close the panel.
-  EventUtils.synthesizeMouseAtCenter(editorEl, {}, editorEl.ownerGlobal);
+  EventUtils.synthesizeMouseAtCenter(editorEl, {}, editorEl.documentGlobal);
   await TestUtils.waitForCondition(
     () => panel.state == "closed",
     "Reordering panel didn't close when editor was clicked."
@@ -710,42 +714,42 @@ add_task(async function test_attachment_reordering() {
     {
       select: [1],
       // key_moveAttachmentLeft
-      key: "VK_LEFT",
+      key: "KEY_ArrowLeft",
       key_modifiers: modAlt,
       result: ["x", "a", "C", "y1", "y2", "B", "b", "z", "bb"],
     },
     {
       select: [0],
       // key_moveAttachmentBottom
-      key: AppConstants.platform == "macosx" ? "VK_DOWN" : "VK_END",
+      key: AppConstants.platform == "macosx" ? "KEY_ArrowDown" : "KEY_End",
       key_modifiers: modifiers2,
       result: ["a", "C", "y1", "y2", "B", "b", "z", "bb", "x"],
     },
     {
       select: [8],
       // key_moveAttachmentTop
-      key: AppConstants.platform == "macosx" ? "VK_UP" : "VK_HOME",
+      key: AppConstants.platform == "macosx" ? "KEY_ArrowUp" : "KEY_Home",
       key_modifiers: modifiers2,
       result: ["x", "a", "C", "y1", "y2", "B", "b", "z", "bb"],
     },
     {
       select: [0],
       // key_moveAttachmentBottom2 (secondary shortcut on MAC, same as Win primary)
-      key: "VK_END",
+      key: "KEY_End",
       key_modifiers: modAlt,
       result: ["a", "C", "y1", "y2", "B", "b", "z", "bb", "x"],
     },
     {
       select: [8],
       // key_moveAttachmentTop2 (secondary shortcut on MAC, same as Win primary)
-      key: "VK_HOME",
+      key: "KEY_Home",
       key_modifiers: modAlt,
       result: ["x", "a", "C", "y1", "y2", "B", "b", "z", "bb"],
     },
     {
       select: [0],
       // key_moveAttachmentRight
-      key: "VK_RIGHT",
+      key: "KEY_ArrowRight",
       key_modifiers: modAlt,
       result: ["a", "x", "C", "y1", "y2", "B", "b", "z", "bb"],
     },
@@ -759,21 +763,21 @@ add_task(async function test_attachment_reordering() {
     {
       select: [1, 3, 4, 7],
       // key_moveAttachmentRight
-      key: "VK_RIGHT",
+      key: "KEY_ArrowRight",
       key_modifiers: modAlt,
       result: ["a", "C", "x", "B", "y1", "y2", "b", "bb", "z"],
     },
     {
       select: [2, 4, 5, 8],
       // key_moveAttachmentLeft
-      key: "VK_LEFT",
+      key: "KEY_ArrowLeft",
       key_modifiers: modAlt,
       result: ["a", "x", "C", "y1", "y2", "B", "b", "z", "bb"],
     },
     {
       select: [1, 3, 4, 7],
       // key_moveAttachmentLeft
-      key: "VK_LEFT",
+      key: "KEY_ArrowLeft",
       key_modifiers: modAlt,
       result: ["x", "a", "y1", "y2", "C", "B", "z", "b", "bb"],
     },
@@ -782,35 +786,35 @@ add_task(async function test_attachment_reordering() {
     {
       select: [0, 2, 3, 6],
       // key_moveAttachmentLeft
-      key: "VK_LEFT",
+      key: "KEY_ArrowLeft",
       key_modifiers: modAlt,
       result: ["x", "y1", "y2", "a", "C", "z", "B", "b", "bb"],
     },
     {
       select: [0, 1, 2, 5],
       // key_moveAttachmentLeft
-      key: "VK_LEFT",
+      key: "KEY_ArrowLeft",
       key_modifiers: modAlt,
       result: ["x", "y1", "y2", "a", "z", "C", "B", "b", "bb"],
     },
     {
       select: [0, 1, 2, 4],
       // key_moveAttachmentLeft
-      key: "VK_LEFT",
+      key: "KEY_ArrowLeft",
       key_modifiers: modAlt,
       result: ["x", "y1", "y2", "z", "a", "C", "B", "b", "bb"],
     },
     {
       select: [3, 5, 6, 8],
       // key_moveAttachmentRight
-      key: "VK_RIGHT",
+      key: "KEY_ArrowRight",
       key_modifiers: modAlt,
       result: ["x", "y1", "y2", "a", "z", "b", "C", "B", "bb"],
     },
     {
       select: [4, 6, 7, 8],
       // key_moveAttachmentRight
-      key: "VK_RIGHT",
+      key: "KEY_ArrowRight",
       key_modifiers: modAlt,
       result: ["x", "y1", "y2", "a", "b", "z", "C", "B", "bb"],
     },
@@ -819,35 +823,35 @@ add_task(async function test_attachment_reordering() {
     {
       select: [1, 2],
       // key_moveAttachmentRight
-      key: "VK_RIGHT",
+      key: "KEY_ArrowRight",
       key_modifiers: modAlt,
       result: ["x", "a", "y1", "y2", "b", "z", "C", "B", "bb"],
     },
     {
       select: [0, 2, 3, 5],
       // key_moveAttachmentRight
-      key: "VK_RIGHT",
+      key: "KEY_ArrowRight",
       key_modifiers: modAlt,
       result: ["a", "x", "b", "y1", "y2", "C", "z", "B", "bb"],
     },
     {
       select: [1, 3, 4, 6],
       // key_moveAttachmentBundleUp
-      key: "VK_UP",
+      key: "KEY_ArrowUp",
       key_modifiers: modAlt,
       result: ["a", "x", "y1", "y2", "z", "b", "C", "B", "bb"],
     },
     {
       select: [5, 6],
       // key_moveAttachmentLeft
-      key: "VK_LEFT",
+      key: "KEY_ArrowLeft",
       key_modifiers: modAlt,
       result: ["a", "x", "y1", "y2", "b", "C", "z", "B", "bb"],
     },
     {
       select: [0, 4, 5, 7],
       // key_moveAttachmentBundleDown
-      key: "VK_DOWN",
+      key: "KEY_ArrowDown",
       key_modifiers: modAlt,
       result: ["x", "y1", "y2", "z", "a", "b", "C", "B", "bb"],
     },
@@ -856,28 +860,28 @@ add_task(async function test_attachment_reordering() {
     {
       select: [0, 4, 5, 7],
       // key_moveAttachmentTop
-      key: AppConstants.platform == "macosx" ? "VK_UP" : "VK_HOME",
+      key: AppConstants.platform == "macosx" ? "KEY_ArrowUp" : "KEY_Home",
       key_modifiers: modifiers2,
       result: ["x", "a", "b", "B", "y1", "y2", "z", "C", "bb"],
     },
     {
       select: [0, 4, 5, 6],
       // key_moveAttachmentBottom
-      key: AppConstants.platform == "macosx" ? "VK_DOWN" : "VK_END",
+      key: AppConstants.platform == "macosx" ? "KEY_ArrowDown" : "KEY_End",
       key_modifiers: modifiers2,
       result: ["a", "b", "B", "C", "bb", "x", "y1", "y2", "z"],
     },
     {
       select: [0, 1, 3, 4],
       // key_moveAttachmentBottom2 (secondary shortcut on MAC, same as Win primary)
-      key: "VK_END",
+      key: "KEY_End",
       key_modifiers: modAlt,
       result: ["B", "x", "y1", "y2", "z", "a", "b", "C", "bb"],
     },
     {
       select: [5, 6, 7, 8],
       // key_moveAttachmentTop2 (secondary shortcut on MAC, same as Win primary)
-      key: "VK_HOME",
+      key: "KEY_Home",
       key_modifiers: modAlt,
       result: ["a", "b", "C", "bb", "B", "x", "y1", "y2", "z"],
     },

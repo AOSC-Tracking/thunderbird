@@ -86,11 +86,11 @@ impl std::fmt::Display for ParseError {
 }
 
 /// A structured GraphAPI HTTP request parameter.
-// FIXME: most fields are ignored because only $select is currently supported
+// FIXME: fewer fields should be ignored as we support more parameter types
 #[derive(Debug, Clone)]
 pub struct Parameter {
     pub name: Option<String>,
-    pub _in: Option<String>,
+    pub r#in: Option<String>,
     pub _description: Option<String>,
     pub _typ: Option<RustType>,
 }
@@ -103,13 +103,14 @@ impl From<&OaParameter> for Parameter {
                 simple_name(reference).to_string(),
             ))),
             Some(schema) => {
-                let (_, properties) = extract_from_schema(
+                let properties = extract_from_schema(
                     schema,
                     SchemaContext {
                         kind: SchemaKind::Other,
                         is_delta: false,
                     },
-                );
+                )
+                .properties;
                 assert_eq!(
                     properties.len(),
                     1,
@@ -120,7 +121,7 @@ impl From<&OaParameter> for Parameter {
         };
         Parameter {
             name: value.name.clone(),
-            _in: value.r#in.clone(),
+            r#in: value.r#in.clone(),
             _description: value.description.clone(),
             _typ: typ,
         }
@@ -137,7 +138,8 @@ pub struct ApiBody {
 
 impl ApiBody {
     pub fn from_openapi(value: &OaBody, kind: SchemaKind, is_delta: bool) -> Self {
-        let (_, properties) = extract_from_schema(&value.schema, SchemaContext { kind, is_delta });
+        let properties =
+            extract_from_schema(&value.schema, SchemaContext { kind, is_delta }).properties;
         assert_eq!(
             properties.len(),
             1,

@@ -9,6 +9,9 @@
  * real services in a test environment.
  */
 
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
 const { OAuth2TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/OAuth2TestUtils.sys.mjs"
 );
@@ -29,7 +32,7 @@ const accessToken = `foo.${ChromeUtils.base64URLEncode(
 info(`The access token is "${accessToken}".`);
 
 add_setup(async function () {
-  SpecialPowers.pushPrefEnv({
+  await SpecialPowers.pushPrefEnv({
     set: [
       ["mail.accounthub.thundermail.enabled", true],
       ["mail.accounthub.thundermail.hostname", "external.test"],
@@ -40,9 +43,10 @@ add_setup(async function () {
       ["mailnews.oauth.useExternalBrowser", true],
     ],
   });
+  Services.fog.testResetFOG();
 
   OAuth2TestUtils.startServer({ username, accessToken });
-  await ServerTestUtils.createServers([
+  const [imapServer] = await ServerTestUtils.createServers([
     {
       ...ServerTestUtils.serverDefs.imap.oAuth,
       options: {
@@ -53,10 +57,14 @@ add_setup(async function () {
     },
     ServerTestUtils.serverDefs.smtp.oAuth,
   ]);
+  await imapServer.addMessages(
+    "INBOX",
+    new MessageGenerator().makeMessages({ count: 5 })
+  );
 });
 
-registerCleanupFunction(function () {
-  Services.logins.removeAllLogins();
+registerCleanupFunction(async () => {
+  await Services.logins.removeAllLoginsAsync();
 });
 
 add_task(async function () {
@@ -72,7 +80,7 @@ add_task(async function () {
 
   // Click the button. Pretend we've gone to our browser and logged in.
   const urlPromise = OAuth2TestUtils.promiseExternalOAuthURL();
-  EventUtils.synthesizeMouseAtCenter(button, {}, button.ownerGlobal);
+  EventUtils.synthesizeMouseAtCenter(button, {}, button.documentGlobal);
   const url = await urlPromise;
   await OAuth2TestUtils.submitOAuthURL(url, {
     expectedScope: "test_mail",
@@ -97,7 +105,9 @@ add_task(async function () {
   EventUtils.synthesizeMouseAtCenter(footerForward, {});
 
   // Okay, we've finished the account set up. Check the login is saved.
-  const logins = Services.logins.findLogins("oauth://external.test", "", "");
+  const logins = await Services.logins.getAllLogins({
+    origin: "oauth://external.test",
+  });
   Assert.equal(
     logins.length,
     1,
@@ -121,6 +131,11 @@ add_task(async function () {
   Assert.equal(imapServer.authMethod, Ci.nsMsgAuthMethod.OAuth2);
   Assert.equal(imapServer.username, username);
 
+  // Check an identity was created with the right information.
+  Assert.equal(account.identities.length, 1);
+  Assert.equal(account.defaultIdentity.fullName, "Roc E. Mail");
+  Assert.equal(account.defaultIdentity.email, "roc@external.test");
+
   // Check the outgoing server config was saved.
   Assert.equal(MailServices.outgoingServer.servers.length, 2);
   const smtpServer = MailServices.outgoingServer.servers.find(
@@ -131,6 +146,29 @@ add_task(async function () {
   Assert.equal(smtpServer.port, 587);
   Assert.equal(smtpServer.authMethod, Ci.nsMsgAuthMethod.OAuth2);
   Assert.equal(smtpServer.username, username);
+
+  // Wait for mail to appear in the inbox.
+  const inbox = imapServer.rootFolder.getFolderWithFlags(
+    Ci.nsMsgFolderFlags.Inbox
+  );
+  await TestUtils.waitForCondition(
+    () => inbox.getTotalMessages(false) == 5,
+    "waiting for mail to be received"
+  );
+  imapServer.QueryInterface(Ci.nsIImapIncomingServer);
+  await TestUtils.waitForCondition(
+    () => imapServer.allConnectionsIdle,
+    "waiting for IMAP connection to become idle"
+  );
+
+  OAuth2TestUtils.checkTelemetry([
+    {
+      issuer: "external.test",
+      reason: "no refresh token",
+      result: "succeeded",
+      where: "external",
+    },
+  ]);
 
   // Clean up.
   MailServices.accounts.removeAccount(account, false);

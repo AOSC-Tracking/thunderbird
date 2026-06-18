@@ -11,6 +11,9 @@ const { OAuth2TestUtils } = ChromeUtils.importESModule(
 const { setTimeout } = ChromeUtils.importESModule(
   "resource://gre/modules/Timer.sys.mjs"
 );
+const { OAuth2PageGenerator } = ChromeUtils.importESModule(
+  "moz-src:///comm/mailnews/base/src/OAuth2PageGenerator.sys.mjs"
+);
 
 /**
  * Tests that refresh tokens are correctly retrieved from the login manager.
@@ -59,7 +62,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_scope"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "charlie@foo.invalid");
-  Assert.equal(mod.getRefreshToken(), "charlie");
+  Assert.equal(await mod.getRefreshToken(), "charlie");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -73,7 +76,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_scope"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "charlie@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "");
+  Assert.equal(await mod.getRefreshToken(), "");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -87,7 +90,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_mail"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "charlie@foo.invalid");
-  Assert.equal(mod.getRefreshToken(), "");
+  Assert.equal(await mod.getRefreshToken(), "");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -101,7 +104,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_mail"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "charlie@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "");
+  Assert.equal(await mod.getRefreshToken(), "");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -114,7 +117,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_mail"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "juliet@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "juliet");
+  Assert.equal(await mod.getRefreshToken(), "juliet");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -126,7 +129,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_mail"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "juliet@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "juliet");
+  Assert.equal(await mod.getRefreshToken(), "juliet");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -137,7 +140,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_addressbook"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "juliet@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "juliet");
+  Assert.equal(await mod.getRefreshToken(), "juliet");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -148,7 +151,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_calendar"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "juliet@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "juliet");
+  Assert.equal(await mod.getRefreshToken(), "juliet");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -162,7 +165,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_mail"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "mike@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "mike");
+  Assert.equal(await mod.getRefreshToken(), "mike");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -174,7 +177,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_mail"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "mike@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "mike");
+  Assert.equal(await mod.getRefreshToken(), "mike");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -185,7 +188,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_addressbook"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "mike@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "mike");
+  Assert.equal(await mod.getRefreshToken(), "mike");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -196,7 +199,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_calendar"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "mike@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "mike");
+  Assert.equal(await mod.getRefreshToken(), "mike");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -209,7 +212,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_mail"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "oscar@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "oscar-mail");
+  Assert.equal(await mod.getRefreshToken(), "oscar-mail");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -220,7 +223,7 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_addressbook"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "oscar@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "oscar-addressbook");
+  Assert.equal(await mod.getRefreshToken(), "oscar-addressbook");
 
   OAuth2TestUtils.forgetObjects();
 
@@ -231,10 +234,10 @@ add_task(async function testGetRefreshToken() {
   Assert.deepEqual([...mod._requiredScopes], ["test_calendar"]);
   Assert.equal(mod._loginOrigin, "oauth://test.test");
   Assert.equal(mod._username, "oscar@bar.invalid");
-  Assert.equal(mod.getRefreshToken(), "oscar-calendar");
+  Assert.equal(await mod.getRefreshToken(), "oscar-calendar");
 
   OAuth2TestUtils.forgetObjects();
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 });
 
 /**
@@ -332,7 +335,7 @@ add_task(async function testSetRefreshToken() {
     "token last-update time should have been updated"
   );
 
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
   OAuth2TestUtils.forgetObjects();
   OAuth2TestUtils.stopServer();
 });
@@ -443,7 +446,7 @@ add_task(async function testSetRefreshTokenWithNewScope() {
     "token last-update time should have been updated"
   );
 
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
   OAuth2TestUtils.forgetObjects();
   OAuth2TestUtils.stopServer();
   delete oAuth2Server.grantedScope;
@@ -525,7 +528,7 @@ add_task(async function testSetRefreshTokenPreservesOthers() {
   Assert.equal(logins[2].username, "oscar@bar.invalid");
   Assert.equal(logins[2].password, "refresh_token");
 
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
   OAuth2TestUtils.forgetObjects();
   OAuth2TestUtils.stopServer();
   delete oAuth2Server.grantedScope;
@@ -612,7 +615,7 @@ add_task(async function testSetAndClearTokensExternally() {
   );
 
   // Test calling `clearTokens` from outside the module.
-  mod.clearTokens();
+  await mod.clearTokens();
   Assert.equal(
     mod._oauth.refreshToken,
     null,
@@ -624,7 +627,11 @@ add_task(async function testSetAndClearTokensExternally() {
     "access token should be cleared from memory"
   );
   Assert.equal(
-    await Services.logins.countLogins("oauth://test.test", "", "test_scope"),
+    await Services.logins.countLoginsAsync(
+      "oauth://test.test",
+      "",
+      "test_scope"
+    ),
     0,
     "login should have been removed"
   );
@@ -640,7 +647,120 @@ add_task(async function testSetAndClearTokensExternally() {
     "connect should fail without UI, proving we needed to re-auth"
   );
 
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
+  OAuth2TestUtils.forgetObjects();
+  OAuth2TestUtils.stopServer();
+});
+
+/**
+ * Tests that `OAuth2` objects are cleared and invalidated if associated
+ * tokens get removed from the logins manager.
+ */
+add_task(async function testForgetRemovedTokens() {
+  Services.fog.testResetFOG();
+
+  await OAuth2TestUtils.startServer();
+  const logins = await storeLogins([
+    ["oauth://test.test", "test_scope", "charlie@foo.invalid", "refresh_token"],
+    ["oauth://test.test", "test_scope", "delta@foo.invalid", "refresh_token"],
+  ]);
+
+  // Create modules for each user.
+
+  const charlie1 = new OAuth2Module();
+  charlie1.initFromHostname("mochi.test", "charlie@foo.invalid", "imap");
+  Assert.equal(await charlie1.getRefreshToken(), "refresh_token");
+  let deferred = Promise.withResolvers();
+  charlie1.connect(false, {
+    onSuccess: deferred.resolve,
+    onFailure: deferred.reject,
+  });
+  Assert.equal(
+    await deferred.promise,
+    btoa("user=charlie@foo.invalid\u0001auth=Bearer access_token\u0001\u0001")
+  );
+
+  const delta1 = new OAuth2Module();
+  delta1.initFromHostname("mochi.test", "delta@foo.invalid", "imap");
+  Assert.equal(await delta1.getRefreshToken(), "refresh_token");
+  deferred = Promise.withResolvers();
+  delta1.connect(false, {
+    onSuccess: deferred.resolve,
+    onFailure: deferred.reject,
+  });
+  Assert.equal(
+    await deferred.promise,
+    btoa("user=delta@foo.invalid\u0001auth=Bearer access_token\u0001\u0001")
+  );
+
+  // Remove one of the logins from the login manager.
+
+  await Services.logins.removeLoginAsync(logins[0]);
+
+  // charlie1 should no longer have access.
+  Assert.equal(await charlie1.getRefreshToken(), "");
+  deferred = Promise.withResolvers();
+  charlie1.connect(false, {
+    onSuccess: deferred.reject,
+    onFailure: deferred.resolve,
+  });
+  Assert.equal(await deferred.promise, Cr.NS_ERROR_ABORT);
+
+  // delta1 should still have access.
+  Assert.equal(await delta1.getRefreshToken(), "refresh_token");
+  deferred = Promise.withResolvers();
+  delta1.connect(false, {
+    onSuccess: deferred.resolve,
+    onFailure: deferred.reject,
+  });
+  Assert.equal(
+    await deferred.promise,
+    btoa("user=delta@foo.invalid\u0001auth=Bearer access_token\u0001\u0001")
+  );
+
+  // A new module for charlie@foo.invalid should not have access.
+  const charlie2 = new OAuth2Module();
+  charlie2.initFromHostname("mochi.test", "charlie@foo.invalid", "imap");
+  Assert.notEqual(charlie2._oauth, charlie1._oauth);
+  Assert.equal(await charlie2.getRefreshToken(), "");
+  deferred = Promise.withResolvers();
+  charlie2.connect(false, {
+    onSuccess: deferred.reject,
+    onFailure: deferred.resolve,
+  });
+  Assert.equal(await deferred.promise, Cr.NS_ERROR_ABORT);
+
+  // A new module for delta@foo.invalid should reuse delta1's inner object.
+  const delta2 = new OAuth2Module();
+  delta2.initFromHostname("mochi.test", "delta@foo.invalid", "imap");
+  Assert.equal(delta2._oauth, delta1._oauth);
+
+  // Remove all logins.
+
+  await Services.logins.removeAllLoginsAsync();
+
+  // delta1 should no longer have access.
+  Assert.equal(await delta1.getRefreshToken(), "");
+  deferred = Promise.withResolvers();
+  delta1.connect(false, {
+    onSuccess: deferred.reject,
+    onFailure: deferred.resolve,
+  });
+  Assert.equal(await deferred.promise, Cr.NS_ERROR_ABORT);
+
+  // A new module for delta@foo.invalid should not have access.
+  const delta3 = new OAuth2Module();
+  delta3.initFromHostname("mochi.test", "delta@foo.invalid", "imap");
+  Assert.notEqual(delta3._oauth, delta1._oauth);
+  Assert.equal(await delta3.getRefreshToken(), "");
+  deferred = Promise.withResolvers();
+  delta3.connect(false, {
+    onSuccess: deferred.reject,
+    onFailure: deferred.resolve,
+  });
+  Assert.equal(await deferred.promise, Cr.NS_ERROR_ABORT);
+
+  OAuth2TestUtils.checkTelemetry([]);
   OAuth2TestUtils.forgetObjects();
   OAuth2TestUtils.stopServer();
 });
@@ -720,8 +840,9 @@ add_task(async function testOverrideIssuer() {
 });
 
 add_task(async function testExternalRequest() {
-  await OAuth2TestUtils.startServer();
+  Services.fog.testResetFOG();
   Services.prefs.setBoolPref("mailnews.oauth.useExternalBrowser", true);
+  await OAuth2TestUtils.startServer();
 
   try {
     const mod = new OAuth2Module();
@@ -782,11 +903,229 @@ add_task(async function testExternalRequest() {
       "refresh token should have been saved"
     );
   } finally {
-    Services.logins.removeAllLogins();
+    await Services.logins.removeAllLoginsAsync();
     OAuth2TestUtils.forgetObjects();
     OAuth2TestUtils.stopServer();
     Services.prefs.clearUserPref("mailnews.oauth.useExternalBrowser");
   }
+  OAuth2TestUtils.checkTelemetry([
+    {
+      issuer: "external.test",
+      reason: "no refresh token",
+      result: "succeeded",
+      where: "external",
+    },
+  ]);
+});
+
+/**
+ * Tests that launching two external browser flows to the same endpoint fails
+ * when done in quick succession, but succeeds after waiting for the cooldown to
+ * expire.
+ */
+add_task(async function testCooldown() {
+  Services.fog.testResetFOG();
+  Services.prefs.setBoolPref("mailnews.oauth.useExternalBrowser", true);
+  await OAuth2TestUtils.startServer();
+
+  try {
+    const mod = new OAuth2Module();
+    Assert.ok(
+      mod.initFromHostname("external.test", "romeo@foo.invalid", "imap"),
+      "external.test should initialize for OAuth"
+    );
+
+    // Initial request.
+    const externalOAuthURL1 = OAuth2TestUtils.promiseExternalOAuthURL();
+    const deferred1 = Promise.withResolvers();
+    mod.connect(true, {
+      onSuccess: deferred1.resolve,
+      onFailure: deferred1.reject,
+    });
+    const url1 = await externalOAuthURL1;
+    await OAuth2TestUtils.submitOAuthURL(url1, {
+      expectedHint: "romeo@foo.invalid",
+      expectedScope: "test_mail",
+      username: "user",
+      password: "password",
+    });
+    await deferred1.promise;
+
+    // Second request (should fail).
+    mod._oauth.accessToken = null;
+    mod._oauth.refreshToken = null;
+    const externalOAuthURL2 = OAuth2TestUtils.promiseExternalOAuthURL();
+    const deferred2 = Promise.withResolvers();
+    mod.connect(true, {
+      onSuccess: token =>
+        deferred2.reject(new Error(`Unexpected success: ${token}`)),
+      onFailure: deferred2.resolve,
+    });
+    Assert.equal(await deferred2.promise, Cr.NS_ERROR_ABORT);
+
+    // Wait for cooldown (COOLDOWN_MS in OAuth2.sys.mjs + 500).
+    info("Waiting for 3.5 seconds...");
+    await new Promise(resolve => do_timeout(3500, resolve));
+
+    // Third request (should succeed).
+    const deferred3 = Promise.withResolvers();
+    mod.connect(true, {
+      onSuccess: deferred3.resolve,
+      onFailure: deferred3.reject,
+    });
+    const url3 = await externalOAuthURL2;
+    await OAuth2TestUtils.submitOAuthURL(url3, {
+      expectedHint: "romeo@foo.invalid",
+      expectedScope: "test_mail",
+      username: "user",
+      password: "password",
+    });
+    await deferred3.promise;
+  } finally {
+    await Services.logins.removeAllLoginsAsync();
+    OAuth2TestUtils.forgetObjects();
+    OAuth2TestUtils.stopServer();
+    Services.prefs.clearUserPref("mailnews.oauth.useExternalBrowser");
+  }
+});
+
+add_task(async function testExternalRequestRejectsMismatchedState() {
+  Services.fog.testResetFOG();
+  Services.prefs.setBoolPref("mailnews.oauth.useExternalBrowser", true);
+  await OAuth2TestUtils.startServer();
+
+  try {
+    const mod = new OAuth2Module();
+    Assert.ok(
+      mod.initFromHostname("external.test", "romeo@foo.invalid", "imap"),
+      "external.test should initialize for OAuth"
+    );
+
+    const externalOAuthURL = OAuth2TestUtils.promiseExternalOAuthURL();
+    const deferred = Promise.withResolvers();
+    mod.connect(true, {
+      onSuccess: () => deferred.reject(new Error("connect should fail")),
+      onFailure: deferred.resolve,
+    });
+
+    const url = await externalOAuthURL;
+    Assert.stringMatches(
+      new URL(url).searchParams.get("state"),
+      /^[\w-]{43}$/,
+      "request should include state"
+    );
+    await OAuth2TestUtils.submitOAuthURL(url, {
+      expectedHint: "romeo@foo.invalid",
+      expectedScope: "test_mail",
+      username: "user",
+      password: "password",
+      callbackState: "mismatched-state",
+      expectSuccess: false,
+    });
+    const error = await deferred.promise;
+
+    Assert.equal(
+      error,
+      Cr.NS_ERROR_ABORT,
+      "mismatched state should fail the OAuth flow"
+    );
+    Assert.equal(
+      mod._oauth.refreshToken,
+      "",
+      "refresh token should not be set"
+    );
+    Assert.equal(
+      mod._oauth.accessToken,
+      null,
+      "access token should not be set"
+    );
+    Assert.equal(
+      await Services.logins.countLogins(
+        "oauth://external.test",
+        "",
+        "test_mail"
+      ),
+      0,
+      "login should not be saved"
+    );
+  } finally {
+    await Services.logins.removeAllLoginsAsync();
+    OAuth2TestUtils.forgetObjects();
+    OAuth2TestUtils.stopServer();
+    Services.prefs.clearUserPref("mailnews.oauth.useExternalBrowser");
+  }
+  OAuth2TestUtils.checkTelemetry([
+    {
+      issuer: "external.test",
+      reason: "no refresh token",
+      result: "state mismatch",
+      where: "external",
+    },
+  ]);
+});
+
+add_task(async function testExternalRequestToInvalidEndpoint() {
+  Services.fog.testResetFOG();
+  Services.prefs.setBoolPref("mailnews.oauth.useExternalBrowser", true);
+  await OAuth2TestUtils.startServer();
+
+  try {
+    const mod = new OAuth2Module();
+    Assert.ok(
+      mod.initFromHostname("external.test", "romeo@foo.invalid", "imap"),
+      "external.test should initialize for OAuth"
+    );
+
+    const externalOAuthURL = OAuth2TestUtils.promiseExternalOAuthURL();
+    const deferred = Promise.withResolvers();
+    mod.connect(true, {
+      onSuccess: () => deferred.reject(new Error("connect should fail")),
+      onFailure: deferred.resolve,
+    });
+
+    const url = await externalOAuthURL;
+    const redirectURI = new URL(new URL(url).searchParams.get("redirect_uri"));
+    Assert.equal(
+      redirectURI.hostname,
+      "localhost",
+      "Redirect URI should be a localhost URL"
+    );
+
+    const errorReponse = await fetch(
+      `${redirectURI.protocol}//${redirectURI.hostname}:${redirectURI.port}/testError`,
+      {
+        method: "POST",
+      }
+    );
+    Assert.equal(errorReponse.status, 400, "Should get an error code");
+    const responseContent = await errorReponse.text();
+    Assert.equal(
+      responseContent,
+      await OAuth2PageGenerator.generateErrorPage(),
+      "Should get the error page content"
+    );
+
+    const error = await deferred.promise;
+
+    Assert.equal(
+      error,
+      Cr.NS_ERROR_ABORT,
+      "Should result in authorization failure"
+    );
+  } finally {
+    await Services.logins.removeAllLoginsAsync();
+    OAuth2TestUtils.forgetObjects();
+    OAuth2TestUtils.stopServer();
+    Services.prefs.clearUserPref("mailnews.oauth.useExternalBrowser");
+  }
+  OAuth2TestUtils.checkTelemetry([
+    {
+      issuer: "external.test",
+      reason: "no refresh token",
+      result: "authorization failed",
+      where: "external",
+    },
+  ]);
 });
 
 /**
@@ -794,6 +1133,7 @@ add_task(async function testExternalRequest() {
  * username from the access token. This is used for Thundermail setup.
  */
 add_task(async function testGetUsernameFromAccessToken() {
+  Services.fog.testResetFOG();
   Services.prefs.setBoolPref("mailnews.oauth.useExternalBrowser", true);
 
   const username = "mike@external.test";
@@ -883,19 +1223,30 @@ add_task(async function testGetUsernameFromAccessToken() {
       "creating another OAuth2Module with no username must not reuse the inner OAuth2 object"
     );
   } finally {
-    Services.logins.removeAllLogins();
+    await Services.logins.removeAllLoginsAsync();
     OAuth2TestUtils.forgetObjects();
     OAuth2TestUtils.stopServer();
     Services.prefs.clearUserPref("mailnews.oauth.useExternalBrowser");
   }
+  OAuth2TestUtils.checkTelemetry([
+    {
+      issuer: "external.test",
+      reason: "no refresh token",
+      result: "succeeded",
+      where: "external",
+    },
+  ]);
 });
 
-async function storeLogins(logins) {
-  for (const [origin, scope, username, token] of logins) {
+async function storeLogins(loginData) {
+  const logins = [];
+  for (const [origin, scope, username, token] of loginData) {
     const loginInfo = Cc[
       "@mozilla.org/login-manager/loginInfo;1"
     ].createInstance(Ci.nsILoginInfo);
     loginInfo.init(origin, null, scope, username, token, "", "");
     await Services.logins.addLoginAsync(loginInfo);
+    logins.push(loginInfo);
   }
+  return logins;
 }

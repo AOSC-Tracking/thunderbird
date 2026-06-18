@@ -16,7 +16,6 @@ EXPORTS += [
     "MboxMsgOutputStream.h",
     "msgCore.h",
     "MsgOperationListener.h",
-    "MsgPasswordAuthModule.h",
     "nsImapMoveCoalescer.h",
     "nsMailAuthModule.h",
     "nsMailChannel.h",
@@ -52,7 +51,6 @@ UNIFIED_SOURCES += [
     "MboxMsgInputStream.cpp",
     "MboxMsgOutputStream.cpp",
     "MsgOperationListener.cpp",
-    "MsgPasswordAuthModule.cpp",
     "nsCidProtocolHandler.cpp",
     "nsImapMoveCoalescer.cpp",
     "nsMailAuthModule.cpp",
@@ -91,6 +89,7 @@ UNIFIED_SOURCES += [
     "nsMsgSpecialViews.cpp",
     "nsMsgTagService.cpp",
     "nsMsgThreadedDBView.cpp",
+    "nsMsgTransactionService.cpp",
     "nsMsgTxn.cpp",
     "nsMsgUtils.cpp",
     "nsMsgWindow.cpp",
@@ -144,6 +143,7 @@ EXTRA_JS_MODULES += [
     "MsgDBCacheManager.sys.mjs",
     "MsgIncomingServer.sys.mjs",
     "MsgKeySet.sys.mjs",
+    "MsgPasswordAuthModule.sys.mjs",
     "MsgProtocolInfo.sys.mjs",
     "OAuth2.sys.mjs",
     "OAuth2Module.sys.mjs",
@@ -151,6 +151,10 @@ EXTRA_JS_MODULES += [
     "TemplateUtils.sys.mjs",
     "VirtualFolderWrapper.sys.mjs",
     "WinUnreadBadge.sys.mjs",
+]
+
+MOZ_SRC_FILES += [
+    "OAuth2PageGenerator.sys.mjs",
 ]
 
 USE_LIBS += [

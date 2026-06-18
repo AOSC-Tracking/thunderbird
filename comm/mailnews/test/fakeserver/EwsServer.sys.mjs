@@ -11,8 +11,6 @@ import {
 
 import { CommonUtils } from "resource://services-common/utils.sys.mjs";
 
-import { SyntheticMessage } from "resource://testing-common/mailnews/MessageGenerator.sys.mjs";
-
 /**
  * This file provides a mock/fake EWS (Exchange Web Services) server to run our
  * unit tests against.
@@ -122,6 +120,24 @@ const CREATE_FOLDER_RESPONSE_BASE = `${EWS_SOAP_HEAD}
         </m:CreateFolderResponseMessage>
       </m:ResponseMessages>
     </m:CreateFolderResponse>
+${EWS_SOAP_FOOT}`;
+
+// The base for a response to a CreateFolder operation request. Before sending,
+// the server will populate `m:Folders` with the server-side IDs of the newly
+// created folders.
+const UPDATE_FOLDER_RESPONSE_BASE = `${EWS_SOAP_HEAD}
+    <m:UpdateFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+                            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                            xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                            xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:UpdateFolderResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Folders>
+          </m:Folders>
+        </m:UpdateFolderResponseMessage>
+      </m:ResponseMessages>
+    </m:UpdateFolderResponse>
 ${EWS_SOAP_FOOT}`;
 
 const MOVE_ITEM_RESPONSE_BASE = `${EWS_SOAP_HEAD}
@@ -633,6 +649,8 @@ export class EwsServer extends MockServer {
       resBytes = this.#generateEmptyFolderResponse(reqDoc);
     } else if (reqDoc.getElementsByTagName("MarkAllItemsAsRead").length) {
       resBytes = this.#generateMarkAllItemsAsReadResponse(reqDoc);
+    } else if (reqDoc.getElementsByTagName("UpdateFolder").length) {
+      resBytes = this.#generateUpdateFolderResponse(reqDoc);
     } else {
       throw new Error("Unexpected EWS operation");
     }
@@ -690,6 +708,52 @@ export class EwsServer extends MockServer {
     folderIdEl.setAttribute("Id", folderId);
     newFolderEl.appendChild(folderIdEl);
     foldersEl.appendChild(newFolderEl);
+
+    return this.#serializer.serializeToString(resDoc);
+  }
+
+  /**
+   * Generate a response for an EWS UpdateFolder operation.
+   *
+   * @see {@link https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/updatefolder-operation}
+   *
+   * @param {XMLDocument} reqDoc
+   *
+   * @returns {string} The serialized XML response document.
+   */
+  #generateUpdateFolderResponse(reqDoc) {
+    const folderChanges = reqDoc.getElementsByTagName("FolderChange");
+
+    const resDoc = this.#parser.parseFromString(
+      UPDATE_FOLDER_RESPONSE_BASE,
+      "text/xml"
+    );
+
+    const foldersEl = resDoc.getElementsByTagName("m:Folders");
+
+    for (const folderChange of folderChanges) {
+      const folderIdToChange = folderChange
+        .getElementsByTagName("t:FolderId")
+        .getAttribute("Id");
+      // We currently only support changing a folder's name.
+      const folderField =
+        folderChange.getElementsByTagName("t:SetFolderField")[0];
+      const fieldURI = folderField
+        .getElementsByTagName("t:FieldURI")[0]
+        .getAttribute("FieldURI");
+      if (fieldURI == "folder:DisplayName") {
+        const displayName =
+          folderField.getElementsByTagName("t:DisplayName").textContent;
+
+        this.renameFolderById(folderIdToChange, displayName);
+
+        const folderEl = resDoc.createElement("t:Folder");
+        const folderIdEl = resDoc.createElement("FolderId");
+        folderIdEl.setAttribute("Id", folderIdToChange);
+        folderEl.appendChild(folderIdEl);
+        foldersEl.appendChild(folderEl);
+      }
+    }
 
     return this.#serializer.serializeToString(resDoc);
   }
@@ -768,17 +832,13 @@ export class EwsServer extends MockServer {
     responseMessageEl.appendChild(resSyncStateEl);
 
     const changesEl = resDoc.getElementsByTagName("m:Changes")[0];
-    changes.forEach(([changeType, parentId, itemId]) => {
+    changes.forEach(([changeType, _, itemId]) => {
       if (changeType == "create") {
-        const messageEl = changesEl
+        const item = this.getItemInfo(itemId);
+        const messageEl = this.#buildMessageResponseDocument(resDoc, item);
+        changesEl
           .appendChild(resDoc.createElement("t:Create"))
-          .appendChild(resDoc.createElement("t:Message"));
-        messageEl
-          .appendChild(resDoc.createElement("t:ItemId"))
-          .setAttribute("Id", itemId);
-        messageEl
-          .appendChild(resDoc.createElement("t:ParentFolderId"))
-          .setAttribute("Id", parentId);
+          .appendChild(messageEl);
       } else if (changeType == "readflag") {
         const item = this.getItemInfo(itemId);
         const changeEl = changesEl.appendChild(
@@ -790,11 +850,11 @@ export class EwsServer extends MockServer {
         changeEl.appendChild(resDoc.createElement("t:IsRead")).textContent =
           item.syntheticMessage.metaState.read;
       } else if (changeType == "update") {
+        const item = this.getItemInfo(itemId);
+        const messageEl = this.#buildMessageResponseDocument(resDoc, item);
         changesEl
           .appendChild(resDoc.createElement("t:Update"))
-          .appendChild(resDoc.createElement("t:Message"))
-          .appendChild(resDoc.createElement("t:ItemId"))
-          .setAttribute("Id", itemId);
+          .appendChild(messageEl);
       } else if (changeType == "delete") {
         changesEl
           .appendChild(resDoc.createElement("t:Delete"))
@@ -1091,7 +1151,14 @@ export class EwsServer extends MockServer {
       "t:FolderId"
     );
 
-    folderIds.forEach(id => this.reparentFolderById(id, destinationFolderId));
+    folderIds.filter(id => {
+      try {
+        this.reparentFolderById(id, destinationFolderId);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    });
 
     const resDoc = this.#buildGenericMoveResponse(
       MOVE_FOLDER_RESPONSE_BASE,
@@ -1119,36 +1186,9 @@ export class EwsServer extends MockServer {
       "t:FolderId"
     );
 
-    folderIds.forEach(sourceFolderId => {
+    const newFolderIds = folderIds.map(sourceFolderId => {
       const sourceFolder = this.getFolder(sourceFolderId);
-      if (sourceFolder) {
-        const newFolderId = `${sourceFolderId}_copy`;
-        const folderCopy = new RemoteFolder(
-          newFolderId,
-          destinationFolderId,
-          sourceFolder.displayName,
-          newFolderId
-        );
-        this.appendRemoteFolder(folderCopy);
-        // Make copies of the items that belong to the source folder
-        // and place them in the destination folder.
-        for (const [itemId, itemInfo] of this.items()) {
-          if (itemInfo.parentId === sourceFolderId) {
-            const newItemId = `${itemId}_copy`;
-            this.addItemToFolder(
-              newItemId,
-              newFolderId,
-              itemInfo.syntheticMessage
-                ? new SyntheticMessage(
-                    itemInfo.syntheticMessage.headers,
-                    itemInfo.syntheticMessage.bodyPart,
-                    itemInfo.syntheticMessage.metaState
-                  )
-                : null
-            );
-          }
-        }
-      }
+      return this.copyFolderToId(sourceFolder, destinationFolderId);
     });
 
     const resDoc = this.#buildGenericMoveResponse(
@@ -1157,7 +1197,7 @@ export class EwsServer extends MockServer {
       "m:Folders",
       "t:Folder",
       "t:FolderId",
-      folderIds
+      newFolderIds
     );
 
     return this.#serializer.serializeToString(resDoc);
@@ -1200,7 +1240,7 @@ export class EwsServer extends MockServer {
       if (flagEl) {
         const flagStatusEl = flagEl.getElementsByTagName("t:FlagStatus")[0];
         const extendedPropertyEl =
-          itemChange.GetElementsByTagName("ExtendedProperty")[0];
+          itemChange.getElementsByTagName("ExtendedProperty")[0];
         if (flagStatusEl && extendedPropertyEl) {
           const fieldUriEl =
             extendedPropertyEl.getElementsByTagName("t:ExtendedFieldUri")[0];
@@ -1292,94 +1332,12 @@ export class EwsServer extends MockServer {
       responseMessageEl.appendChild(itemsEl);
 
       const item = this.getItemInfo(reqItemId);
-      const messageEl = resDoc.createElement("t:Message");
-      const itemIdEl = resDoc.createElement("t:ItemId");
-      itemIdEl.setAttribute("Id", reqItemId);
-      const parentFolderIdEl = resDoc.createElement("t:ParentFolderId");
-      parentFolderIdEl.setAttribute("Id", item.parentId);
-      messageEl.appendChild(itemIdEl);
-      messageEl.appendChild(parentFolderIdEl);
+      const messageEl = this.#buildMessageResponseDocument(resDoc, item);
 
-      if (item.syntheticMessage) {
-        const messageIdEl = resDoc.createElement("t:InternetMessageId");
-        messageIdEl.textContent = item.syntheticMessage.messageId;
-        messageEl.appendChild(messageIdEl);
-
-        const dateEl = resDoc.createElement("t:DateTimeSent");
-        dateEl.textContent = item.syntheticMessage.date.toISOString();
-        messageEl.appendChild(dateEl);
-
-        const senderEl = resDoc.createElement("t:Sender");
-        const senderMailboxEl = this.#mailboxElFromTuple(
-          resDoc,
-          item.syntheticMessage.from
-        );
-        senderEl.appendChild(senderMailboxEl);
-        messageEl.appendChild(senderEl);
-
-        const toEl = resDoc.createElement("t:DisplayTo");
-        toEl.textContent = item.syntheticMessage.toName;
-        messageEl.appendChild(toEl);
-
-        const subjectEl = resDoc.createElement("t:Subject");
-        subjectEl.textContent = item.syntheticMessage.subject;
-        messageEl.appendChild(subjectEl);
-
-        const isReadEl = resDoc.createElement("t:IsRead");
-        isReadEl.textContent = item.syntheticMessage.metaState.read;
-        messageEl.appendChild(isReadEl);
-
-        const sizeEl = resDoc.createElement("t:Size");
-        sizeEl.textContent = item.syntheticMessage.toMessageString().length;
-        messageEl.appendChild(sizeEl);
-
-        const flagEl = resDoc.createElement("t:Flag");
-        const flagStatusEl = resDoc.createElement("t:FlagStatus");
-        if (item.syntheticMessage.metaState.flagged) {
-          flagStatusEl.textContent = "Flagged";
-        } else {
-          flagStatusEl.textContent = "NotFlagged";
-        }
-        flagEl.appendChild(flagStatusEl);
-        messageEl.appendChild(flagEl);
-
-        const toRecipientsEl = resDoc.createElement("t:ToRecipients");
-        for (const to of item.syntheticMessage.to) {
-          const toMailboxEl = this.#mailboxElFromTuple(resDoc, to);
-          toRecipientsEl.appendChild(toMailboxEl);
-        }
-        messageEl.appendChild(toRecipientsEl);
-
-        if (item.syntheticMessage.cc) {
-          const ccRecipientsEl = resDoc.createElement("t:CcRecipients");
-          for (const cc of item.syntheticMessage.cc) {
-            const ccMailboxEl = this.#mailboxElFromTuple(resDoc, cc);
-            ccRecipientsEl.appendChild(ccMailboxEl);
-          }
-          messageEl.appendChild(ccRecipientsEl);
-        }
-
-        if (
-          item.syntheticMessage.bodyPart &&
-          item.syntheticMessage.bodyPart.body &&
-          typeof item.syntheticMessage.bodyPart.body == "string"
-        ) {
-          const previewEl = resDoc.createElement("t:Preview");
-          previewEl.textContent = sanitizeXmlTextContent(
-            item.syntheticMessage.bodyPart.body.substring(0, 256)
-          );
-          messageEl.appendChild(previewEl);
-        }
-
-        if (includeContent) {
-          const contentEl = resDoc.createElement("t:MimeContent");
-          contentEl.textContent = btoa(item.syntheticMessage.toMessageString());
-          messageEl.appendChild(contentEl);
-        }
-
-        messageEl.appendChild(
-          buildInternetMessageHeaders(resDoc, item.syntheticMessage)
-        );
+      if (item.syntheticMessage && includeContent) {
+        const contentEl = resDoc.createElement("t:MimeContent");
+        contentEl.textContent = btoa(item.syntheticMessage.toMessageString());
+        messageEl.appendChild(contentEl);
       }
 
       itemsEl.appendChild(messageEl);
@@ -1795,6 +1753,93 @@ export class EwsServer extends MockServer {
     mailboxEl.appendChild(addressEl);
 
     return mailboxEl;
+  }
+
+  #buildMessageResponseDocument(resDoc, item) {
+    const messageEl = resDoc.createElement("t:Message");
+    const itemIdEl = resDoc.createElement("t:ItemId");
+    itemIdEl.setAttribute("Id", item.id);
+    const parentFolderIdEl = resDoc.createElement("t:ParentFolderId");
+    parentFolderIdEl.setAttribute("Id", item.parentId);
+    messageEl.appendChild(itemIdEl);
+    messageEl.appendChild(parentFolderIdEl);
+
+    if (item.syntheticMessage) {
+      const messageIdEl = resDoc.createElement("t:InternetMessageId");
+      messageIdEl.textContent = item.syntheticMessage.messageId;
+      messageEl.appendChild(messageIdEl);
+
+      const dateEl = resDoc.createElement("t:DateTimeSent");
+      dateEl.textContent = item.syntheticMessage.date.toISOString();
+      messageEl.appendChild(dateEl);
+
+      const senderEl = resDoc.createElement("t:Sender");
+      const senderMailboxEl = this.#mailboxElFromTuple(
+        resDoc,
+        item.syntheticMessage.from
+      );
+      senderEl.appendChild(senderMailboxEl);
+      messageEl.appendChild(senderEl);
+
+      const toEl = resDoc.createElement("t:DisplayTo");
+      toEl.textContent = item.syntheticMessage.toName;
+      messageEl.appendChild(toEl);
+
+      const subjectEl = resDoc.createElement("t:Subject");
+      subjectEl.textContent = item.syntheticMessage.subject;
+      messageEl.appendChild(subjectEl);
+
+      const isReadEl = resDoc.createElement("t:IsRead");
+      isReadEl.textContent = item.syntheticMessage.metaState.read;
+      messageEl.appendChild(isReadEl);
+
+      const sizeEl = resDoc.createElement("t:Size");
+      sizeEl.textContent = item.syntheticMessage.toMessageString().length;
+      messageEl.appendChild(sizeEl);
+
+      const flagEl = resDoc.createElement("t:Flag");
+      const flagStatusEl = resDoc.createElement("t:FlagStatus");
+      if (item.syntheticMessage.metaState.flagged) {
+        flagStatusEl.textContent = "Flagged";
+      } else {
+        flagStatusEl.textContent = "NotFlagged";
+      }
+      flagEl.appendChild(flagStatusEl);
+      messageEl.appendChild(flagEl);
+
+      const toRecipientsEl = resDoc.createElement("t:ToRecipients");
+      for (const to of item.syntheticMessage.to) {
+        const toMailboxEl = this.#mailboxElFromTuple(resDoc, to);
+        toRecipientsEl.appendChild(toMailboxEl);
+      }
+      messageEl.appendChild(toRecipientsEl);
+
+      if (item.syntheticMessage.cc) {
+        const ccRecipientsEl = resDoc.createElement("t:CcRecipients");
+        for (const cc of item.syntheticMessage.cc) {
+          const ccMailboxEl = this.#mailboxElFromTuple(resDoc, cc);
+          ccRecipientsEl.appendChild(ccMailboxEl);
+        }
+        messageEl.appendChild(ccRecipientsEl);
+      }
+
+      if (
+        item.syntheticMessage.bodyPart &&
+        item.syntheticMessage.bodyPart.body &&
+        typeof item.syntheticMessage.bodyPart.body == "string"
+      ) {
+        const previewEl = resDoc.createElement("t:Preview");
+        previewEl.textContent = sanitizeXmlTextContent(
+          item.syntheticMessage.bodyPart.body.substring(0, 256)
+        );
+        messageEl.appendChild(previewEl);
+      }
+
+      messageEl.appendChild(
+        buildInternetMessageHeaders(resDoc, item.syntheticMessage)
+      );
+    }
+    return messageEl;
   }
 }
 

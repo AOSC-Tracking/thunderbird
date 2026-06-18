@@ -18,7 +18,6 @@ messenger.jar:
     content/messenger/aboutExtraStylesheet.js       (content/aboutExtraStylesheet.js)
     content/messenger/aboutMessage.js               (content/aboutMessage.js)
 *   content/messenger/aboutMessage.xhtml            (content/aboutMessage.xhtml)
-    content/messenger/aboutRights.xhtml             (content/aboutRights.xhtml)
     content/messenger/browserRequest.js             (content/browserRequest.js)
 *   content/messenger/browserRequest.xhtml          (content/browserRequest.xhtml)
     content/messenger/commonDialog.xhtml            (content/commonDialog.xhtml)
@@ -79,7 +78,6 @@ messenger.jar:
     content/messenger/searchBar.js                  (content/searchBar.js)
     content/messenger/SearchDialog.js               (content/SearchDialog.js)
 *   content/messenger/SearchDialog.xhtml            (content/SearchDialog.xhtml)
-    content/messenger/shortcutsOverlay.js           (content/shortcutsOverlay.js)
     content/messenger/spacesToolbar.js              (content/spacesToolbar.js)
     content/messenger/specialTabs.js                (content/specialTabs.js)
 #ifdef MOZ_SERVICES_SYNC

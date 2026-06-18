@@ -142,7 +142,7 @@ add_setup(async () => {
     server.identity.remove("https", "autodiscover.exchange.test", 443);
     server.registerFile("/autodiscover/autodiscover.xml", null);
     server.stop();
-    Services.logins.removeAllLogins();
+    await Services.logins.removeAllLoginsAsync();
     await SpecialPowers.popPrefEnv();
   });
 });
@@ -199,7 +199,7 @@ add_task(async function test_exchange_requires_credentials_account_creation() {
     "Incoming username should be expected username"
   );
 
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
   await subtest_close_account_hub_dialog(dialog, configFoundTemplate);
 
   await SpecialPowers.popPrefEnv();
@@ -298,7 +298,7 @@ add_task(
       authenticationStep
     );
 
-    Services.logins.removeAllLogins();
+    await Services.logins.removeAllLoginsAsync();
     await subtest_close_account_hub_dialog(dialog, authenticationStep);
     await SpecialPowers.popPrefEnv();
   }
@@ -388,7 +388,7 @@ add_task(async function test_exchange_manual_configuration() {
     "The username input should have the exchange email from the config"
   );
 
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
   await subtest_close_account_hub_dialog(dialog, ewsConfigStep);
   needsAuthentication = true;
   await SpecialPowers.popPrefEnv();
@@ -396,6 +396,9 @@ add_task(async function test_exchange_manual_configuration() {
 
 add_task(async function test_exchange_ews_advanced_configuration() {
   needsAuthentication = false;
+  await SpecialPowers.pushPrefEnv({
+    set: [["mail.graph.enabled", true]],
+  });
   const dialog = await subtest_open_account_hub_dialog();
   const emailTemplate = dialog.querySelector("email-auto-form");
   const footerForward = dialog.querySelector("#emailFooter #forward");
@@ -410,6 +413,7 @@ add_task(async function test_exchange_ews_advanced_configuration() {
   const configFoundTemplate = await checkAvailableConfigs(dialog, [
     "imap",
     "ews",
+    "graph",
     "exchange",
   ]);
   const editConfigurationButton =
@@ -428,6 +432,7 @@ add_task(async function test_exchange_ews_advanced_configuration() {
   const ewsAccount = await waitForAccount(emailUser.email);
   await cleanupAdvancedConfigurationTest(tabmail, ewsAccount);
   needsAuthentication = true;
+  await SpecialPowers.popPrefEnv();
 });
 
 add_task(async function test_exchange_graph_advanced_configuration() {
@@ -696,7 +701,7 @@ add_task(async function test_full_exchange_account_creation() {
   MailServices.outgoingServer.deleteServer(
     MailServices.outgoingServer.servers.find(s => s.key != "smtp1")
   );
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 
   ewsServer.stop();
   await subtest_close_account_hub_dialog(dialog, successStep);
@@ -828,7 +833,7 @@ async function cleanupAdvancedConfigurationTest(tabmail, account) {
     MailServices.outgoingServer.servers.find(s => s.key != "smtp1")
   );
   await subtest_clear_status_bar();
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 }
 
 /**

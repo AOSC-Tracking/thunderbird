@@ -657,7 +657,7 @@ var messageProgressListener = {
    * message loading has finished.
    */
   onDOMContentLoaded(event) {
-    const { docShell } = event.target.ownerGlobal;
+    const { docShell } = event.target.documentGlobal;
     if (!docShell.isTopLevelContentDocShell) {
       return;
     }
@@ -2509,19 +2509,36 @@ const attachmentNameDNDObserver = {
 };
 
 function onShowOtherActionsPopup() {
-  // Enable/disable the Open Conversation button.
-  const glodaEnabled = Services.prefs.getBoolPref(
-    "mailnews.database.global.indexer.enabled"
+  const hasTabmail = !!top.document.getElementById("tabmail");
+  const redirectSeparator = document.getElementById(
+    "otherActionsRedirectSeparator"
   );
-
   const openConversation = document.getElementById(
     "otherActionsOpenConversation"
   );
-  // Check because this menuitem element is not present in messageWindow.xhtml.
-  if (openConversation) {
-    openConversation.disabled = !(
-      glodaEnabled && Gloda.isMessageIndexed(gMessage)
+  const openInNewWindow = document.getElementById(
+    "otherActionsOpenInNewWindow"
+  );
+  const openInNewTab = document.getElementById("otherActionsOpenInNewTab");
+
+  if (hasTabmail) {
+    // This action is only available if the conversation is indexed.
+    const glodaEnabled = Services.prefs.getBoolPref(
+      "mailnews.database.global.indexer.enabled"
     );
+    openConversation.hidden =
+      !glodaEnabled || !Gloda.isMessageIndexed(gMessage);
+
+    // These actions are only available in the about:3pane preview pane.
+    const inAbout3Pane = parent.location.href == "about:3pane";
+    openInNewTab.hidden = !inAbout3Pane;
+    openInNewWindow.hidden = !inAbout3Pane;
+  } else {
+    // These actions are not available in the standalone window.
+    redirectSeparator.hidden = true;
+    openConversation.hidden = true;
+    openInNewWindow.hidden = true;
+    openInNewTab.hidden = true;
   }
 
   const isDummyMessage = !gViewWrapper.isSynthetic && !gMessage.folder;
@@ -3137,7 +3154,7 @@ const gMessageHeader = {
     const messageId = element.id;
     const subject = {
       menu: popup,
-      tab: popup.ownerGlobal,
+      tab: popup.documentGlobal,
       onHeaderPaneLink: true,
       linkText: messageId,
       linkUrl: `mid:${messageId.substring(1, messageId.length - 1)}`,

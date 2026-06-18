@@ -6,7 +6,6 @@
 #include "nsImapIncomingServer.h"
 
 #include "msgCore.h"
-#include "MsgPasswordAuthModule.h"
 #include "netCore.h"
 #include "../public/nsIImapHostSessionList.h"
 #include "nsFmtString.h"
@@ -238,16 +237,29 @@ nsImapIncomingServer::GetUsingSubscription(bool* bVal) {
 
 NS_IMETHODIMP
 nsImapIncomingServer::SetUsingSubscription(bool bVal) {
+  bool oldVal = bVal;
+  bool hadPref =
+      NS_SUCCEEDED(GetBoolValue("using_subscription", &oldVal));
+
+  nsresult rv = SetBoolValue("using_subscription", bVal);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   nsCString serverKey;
   GetKey(serverKey);
-  if (!serverKey.IsEmpty()) {
-    nsresult rv;
-    nsCOMPtr<nsIImapHostSessionList> hostSession =
-        do_GetService("@mozilla.org/messenger/imaphostsessionlist;1", &rv);
-    if (NS_SUCCEEDED(rv))
-      hostSession->SetHostIsUsingSubscription(serverKey.get(), bVal);
+  nsCOMPtr<nsIImapHostSessionList> hostSession =
+      do_GetService("@mozilla.org/messenger/imaphostsessionlist;1");
+  if (hostSession && !serverKey.IsEmpty()) {
+    hostSession->SetHostIsUsingSubscription(serverKey.get(), bVal);
   }
-  return SetBoolValue("using_subscription", bVal);
+
+  if (hadPref && oldVal != bVal && hostSession && !serverKey.IsEmpty()) {
+    // Applies the flip between "subscribed-only" (LSUB) and "all folders"
+    // (LIST) immediately, so the folder pane updates without a restart.
+    hostSession->SetHaveWeEverDiscoveredFoldersForHost(serverKey.get(),
+                                                       false);
+    PerformExpand(nullptr);
+  }
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1958,7 +1970,9 @@ NS_IMETHODIMP
 nsImapIncomingServer::AsyncGetPassword(nsIImapProtocol* aProtocol,
                                        bool aNewPasswordRequested,
                                        nsAString& aPassword) {
-  if (mPasswordModule->cachedPassword().IsEmpty()) {
+  nsAutoCString value;
+  MOZ_TRY(mPasswordModule->GetCachedPassword(value));
+  if (value.IsEmpty()) {
     // We're now going to need to do something that will end up with us either
     // poking login manager or prompting the user. We need to ensure we only
     // do one prompt at a time (and login manager could cause a master password
@@ -1976,8 +1990,9 @@ nsImapIncomingServer::AsyncGetPassword(nsIImapProtocol* aProtocol,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  if (!mPasswordModule->cachedPassword().IsEmpty()) {
-    aPassword = mPasswordModule->cachedPassword();
+  MOZ_TRY(mPasswordModule->GetCachedPassword(value));
+  if (value.IsEmpty()) {
+    aPassword = NS_ConvertUTF8toUTF16(value);
   }
 
   return NS_OK;
@@ -1987,15 +2002,14 @@ nsImapIncomingServer::AsyncGetPassword(nsIImapProtocol* aProtocol,
 // if no password string is present.
 NS_IMETHODIMP
 nsImapIncomingServer::SyncGetPassword(nsAString& aPassword) {
-  nsresult rv = NS_OK;
+  nsAutoCString value;
   if (NS_SUCCEEDED(GetPasswordWithoutUI()) &&
-      !mPasswordModule->cachedPassword().IsEmpty()) {
-    aPassword = mPasswordModule->cachedPassword();
-  } else {
-    rv = NS_ERROR_NOT_AVAILABLE;
+      NS_SUCCEEDED(mPasswordModule->GetCachedPassword(value)) &&
+      !value.IsEmpty()) {
+    aPassword = NS_ConvertUTF8toUTF16(value);
+    return NS_OK;
   }
-
-  return rv;
+  return NS_ERROR_NOT_AVAILABLE;
 }
 
 NS_IMETHODIMP

@@ -370,17 +370,17 @@ class nsImapMailFolder : public nsMsgDBFolder,
                            nsIFile** dbFile);
   nsresult ExpungeAndCompact(nsIUrlListener* aListener,
                              nsIMsgWindow* aMsgWindow);
-  void FindKeysToAdd(const nsTArray<nsMsgKey>& existingKeys,
-                     nsTArray<nsMsgKey>& keysToFetch, uint32_t& numNewUnread,
+  void FindUidsToAdd(const nsTArray<ImapUid>& existingUids,
+                     nsTArray<ImapUid>& uidsToFetch, uint32_t& numNewUnread,
                      nsIImapFlagAndUidState* flagState);
-  void FindKeysToDelete(const nsTArray<nsMsgKey>& existingKeys,
-                        nsTArray<nsMsgKey>& keysToFetch,
+  void FindUidsToDelete(const nsTArray<ImapUid>& existingUids,
+                        nsTArray<ImapUid>& uidsToFetch,
                         nsIImapFlagAndUidState* flagState, uint32_t boxFlags);
   void PrepareToAddHeadersToMailDB(nsIImapProtocol* aProtocol);
   void TweakHeaderFlags(nsIImapProtocol* aProtocol, nsIMsgDBHdr* tweakMe);
 
   nsresult SyncFlags(nsIImapFlagAndUidState* flagState);
-  nsresult HandleCustomFlags(nsMsgKey uidOfMessage, nsIMsgDBHdr* dbHdr,
+  nsresult HandleCustomFlags(nsMsgKey msgKey, nsIMsgDBHdr* dbHdr,
                              uint16_t userFlags, nsCString& keywords);
   nsresult NotifyMessageFlagsFromHdr(nsIMsgDBHdr* dbHdr, nsMsgKey msgKey,
                                      uint32_t flags);
@@ -489,8 +489,8 @@ class nsImapMailFolder : public nsMsgDBFolder,
   nsTArray<nsMsgKey> mSpamKeysToMove;
   /// the junk destination folder
   nsCOMPtr<nsIMsgFolder> mSpamFolder;
-  nsMsgKey m_curMsgUid;
-  nsMsgKey m_previousHighestUid;
+  ImapUid m_curMsgUid;
+  ImapUid m_previousHighestUid;
   ImapUid m_uidValidity;
 
   // These three vars are used to store counts from STATUS or SELECT command
@@ -554,8 +554,8 @@ class nsImapMailFolder : public nsMsgDBFolder,
   // for pseudo hdrs.
   nsTHashMap<nsCStringHashKey, nsMsgKey> m_pseudoHdrs;
 
-  nsTArray<nsMsgKey> m_keysToFetch;
-  uint32_t m_totalKeysToFetch;
+  nsTArray<ImapUid> m_uidsToFetch;
+  uint32_t m_totalUidsToFetch;
 
   /**
    * delete if appropriate local storage for messages in this folder

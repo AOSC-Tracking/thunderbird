@@ -166,7 +166,7 @@ export var CardDAVUtils = {
             }
 
             if (!isCertError || !finalChannel.securityInfo) {
-              reject(new Components.Exception("Connection failure", status));
+              reject(new Components.Exception("Connection error", status));
               return;
             }
 
@@ -379,14 +379,19 @@ export var CardDAVUtils = {
     let response;
     async function tryURL(urlCandidate) {
       log.log(`Attempting to connect to ${urlCandidate}`);
-      response = await CardDAVUtils.makeRequest(urlCandidate, requestParams);
-      if (response.status == 207 && response.dom) {
-        log.log(`${urlCandidate} ... success`);
-      } else {
-        log.log(
-          `${urlCandidate} ... response was "${response.status} ${response.statusText}"`
-        );
-        response = null;
+      try {
+        response = await CardDAVUtils.makeRequest(urlCandidate, requestParams);
+        if (response.status == 207 && response.dom) {
+          log.log(`${urlCandidate} ... success`);
+        } else {
+          log.log(
+            `${urlCandidate} ... response was "${response.status} ${response.statusText}"`
+          );
+          response = null;
+        }
+      } catch (ex) {
+        log.warn(ex);
+        throw ex;
       }
     }
 
@@ -510,7 +515,7 @@ export var CardDAVUtils = {
       foundBooks.push({
         url,
         name,
-        async create() {
+        create() {
           const dirPrefId = MailServices.ab.newAddressBook(
             this.name,
             null,
@@ -524,15 +529,17 @@ export var CardDAVUtils = {
             book.setBoolValue("readOnly", true);
           }
 
+          let authPromise;
           if (oAuth) {
             book.setStringValue("carddav.username", username);
+            authPromise = Promise.resolve();
           } else if (callbacks.authInfo?.username) {
             log.log(`Saving login info for ${callbacks.authInfo.username}`);
             book.setStringValue(
               "carddav.username",
               callbacks.authInfo.username
             );
-            await callbacks.saveAuth();
+            authPromise = callbacks.saveAuth().catch(console.error);
           }
 
           const dir = lazy.CardDAVDirectory.forFile(book.fileName);
@@ -540,7 +547,10 @@ export var CardDAVUtils = {
           // for a username/password again in the case that we didn't save it.
           // The user won't be prompted again until Thunderbird is restarted.
           dir._userContextId = userContextId;
-          dir.fetchAllFromServer();
+
+          // Trigger the initial sync with the server. Do not do this async,
+          // as it's not required before returning the directory.
+          authPromise.then(() => dir.fetchAllFromServer());
 
           return dir;
         },
@@ -600,7 +610,16 @@ export class NotificationCallbacks {
         return true;
       }
 
-      const logins = Services.logins.findLogins(channel.URI.prePath, null, "");
+      let finished = false;
+      let logins;
+      Services.logins
+        .searchLoginsAsync({ origin: channel.URI.prePath })
+        .then(result => (logins = result))
+        .finally(() => (finished = true));
+      Services.tm.spinEventLoopUntilOrQuit(
+        "CardDAVUtils.sys.mjs:promptAuth",
+        () => finished
+      );
       for (const l of logins) {
         if (l.username == this.username) {
           authInfo.username = l.username;
@@ -682,7 +701,11 @@ export class NotificationCallbacks {
 
     // If any other header is used, it should be added here. We might want
     // to just copy all headers over to the new channel.
-    copyHeader("Authorization");
+    if (oldChannel.URI.prePath == newChannel.URI.prePath) {
+      // Don't send the Authorization header to another server. Ask for
+      // authorization again.
+      copyHeader("Authorization");
+    }
     copyHeader("Depth");
     copyHeader("Originator");
     copyHeader("Recipient");

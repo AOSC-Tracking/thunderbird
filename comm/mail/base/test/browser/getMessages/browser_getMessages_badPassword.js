@@ -117,7 +117,7 @@ add_setup(async function () {
     MailServices.accounts.removeAccount(ewsAccount, false);
     MailServices.accounts.removeAccount(nntpAccount, false);
 
-    Services.logins.removeAllLogins();
+    await Services.logins.removeAllLoginsAsync();
     Services.prefs.clearUserPref("signon.rememberSignons");
   });
 });
@@ -242,12 +242,10 @@ function handlePasswordPrompt(button, password, rememberPassword = false) {
   });
 }
 
-function checkSavedPassword(inbox) {
-  const logins = Services.logins.findLogins(
-    `${inbox.server.localStoreType}://test.test`,
-    "",
-    ""
-  );
+async function checkSavedPassword(inbox) {
+  const logins = await Services.logins.searchLoginsAsync({
+    origin: `${inbox.server.localStoreType}://test.test`,
+  });
   Assert.equal(
     logins.length,
     1,
@@ -261,7 +259,7 @@ function checkSavedPassword(inbox) {
  * Tests getting messages when there is no password to use.
  */
 add_task(async function testEnterPassword() {
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 
   for (const inbox of allInboxes) {
     Assert.equal(
@@ -305,7 +303,7 @@ add_task(async function testEnterPassword() {
  * The entered password should be saved to the password manager.
  */
 add_task(async function testEnterAndSavePassword() {
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 
   for (const inbox of allInboxes) {
     info(`getting messages for ${inbox.server.type} inbox with no password`);
@@ -318,7 +316,7 @@ add_task(async function testEnterAndSavePassword() {
   }
 
   for (const inbox of allInboxes) {
-    checkSavedPassword(inbox);
+    await checkSavedPassword(inbox);
     inbox.server.forgetPassword();
     inbox.server.closeCachedConnections();
   }
@@ -332,7 +330,7 @@ add_task(async function testEnterAndSavePassword() {
  * The new password should be saved to the password manager.
  */
 add_task(async function testWrongPassword() {
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 
   for (const inbox of allInboxes) {
     info(`getting messages for ${inbox.server.type} inbox with bad password`);
@@ -352,7 +350,7 @@ add_task(async function testWrongPassword() {
   }
 
   for (const inbox of allInboxes) {
-    checkSavedPassword(inbox);
+    await checkSavedPassword(inbox);
     inbox.server.forgetPassword();
     inbox.server.closeCachedConnections();
   }

@@ -17,17 +17,19 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   AccountConfig: "resource:///modules/accountcreation/AccountConfig.sys.mjs",
   cal: "resource:///modules/calendar/calUtils.sys.mjs",
-  RemoteAddressBookUtils:
-    "resource:///modules/accountcreation/RemoteAddressBookUtils.sys.mjs",
+  ConfigVerifier: "resource:///modules/accountcreation/ConfigVerifier.sys.mjs",
   CreateInBackend:
     "resource:///modules/accountcreation/CreateInBackend.sys.mjs",
-  ConfigVerifier: "resource:///modules/accountcreation/ConfigVerifier.sys.mjs",
+  FetchConfig: "resource:///modules/accountcreation/FetchConfig.sys.mjs",
   FindConfig: "resource:///modules/accountcreation/FindConfig.sys.mjs",
-  GuessConfig: "resource:///modules/accountcreation/GuessConfig.sys.mjs",
-  OAuth2Module: "resource:///modules/OAuth2Module.sys.mjs",
-  Sanitizer: "resource:///modules/accountcreation/Sanitizer.sys.mjs",
   getAddonsList:
     "resource:///modules/accountcreation/ExchangeAutoDiscover.sys.mjs",
+  GuessConfig: "resource:///modules/accountcreation/GuessConfig.sys.mjs",
+  OAuth2Module: "resource:///modules/OAuth2Module.sys.mjs",
+  OAuth2Providers: "resource:///modules/OAuth2Providers.sys.mjs",
+  RemoteAddressBookUtils:
+    "resource:///modules/accountcreation/RemoteAddressBookUtils.sys.mjs",
+  Sanitizer: "resource:///modules/accountcreation/Sanitizer.sys.mjs",
 });
 
 import "chrome://messenger/content/accountcreation/content/widgets/account-hub-step.mjs"; // eslint-disable-line import/no-unassigned-import
@@ -246,6 +248,24 @@ class AccountHubEmail extends HTMLElement {
       subview: {},
       templateId: "email-sync-accounts-form",
     },
+    exchangeSettingsSubview: {
+      id: "emailExchangeSettingsSubview",
+      nextStep: "emailExchangeTypeSubview",
+      previousStep: "emailConfigFoundSubview",
+      forwardEnabled: false,
+      customActionFluentID: "",
+      subview: {},
+      templateId: "email-exchange-settings",
+    },
+    exchangeTypeSubview: {
+      id: "emailExchangeTypeSubview",
+      nextStep: "emailPasswordSubview",
+      previousStep: "exchangeSettingsSubview",
+      forwardEnabled: false,
+      customActionFluentID: "",
+      subview: {},
+      templateId: "email-exchange-type",
+    },
     manualConfigSubview: {
       id: "emailManualConfigSubview",
       nextStep: "emailPasswordSubview",
@@ -342,6 +362,12 @@ class AccountHubEmail extends HTMLElement {
     );
     this.#states.emailCredentialsConfirmationSubview.subview =
       this.#emailCredentialsConfirmationSubview;
+    this.#states.exchangeSettingsSubview.subview = this.querySelector(
+      "#emailExchangeSettingsSubview"
+    );
+    this.#states.exchangeTypeSubview.subview = this.querySelector(
+      "#emailExchangeTypeSubview"
+    );
 
     this.#emailFooter = this.querySelector("account-hub-footer");
     this.#emailFooter.addEventListener("back", this);
@@ -1536,9 +1562,27 @@ class AccountHubEmail extends HTMLElement {
         "back",
         "account-hub-email-skip-button"
       );
+
+      // We'll look for address books and calendars at the domain of the email
+      // address and, if it's different but is at the same site according to
+      // the eTLD service, the domain of the incoming mail server.
+      const hostnames = [this.#email.split("@")[1]];
+      const incomingHostname = this.#currentConfig.incoming.hostname;
+      if (
+        incomingHostname != hostnames[0] &&
+        Services.eTLD.getSchemelessSiteFromHost(incomingHostname) ==
+          Services.eTLD.getSchemelessSiteFromHost(hostnames[0])
+      ) {
+        hostnames.push(incomingHostname);
+      }
+      gAccountSetupLogger.debug(
+        `Discovering address books and calendars at ${hostnames.join(", ")}.`
+      );
+
       const syncAccounts = {};
       // TODO: fetch address books and calendars in parallel?
       syncAccounts.addressBooks = await this.#getAddressBooks(
+        hostnames,
         this.#currentConfig.incoming.password ?? ""
       );
 
@@ -1551,6 +1595,7 @@ class AccountHubEmail extends HTMLElement {
       await abortableTimeout(1000, this.abortable.signal);
 
       syncAccounts.calendars = await this.#getCalendars(
+        hostnames,
         this.#currentConfig.incoming.password ?? "",
         false
       );
@@ -1744,13 +1789,13 @@ class AccountHubEmail extends HTMLElement {
   /**
    * Get the address books associated with the current account.
    *
+   * @param {string[]} hostnames - One or two hostnames to attempt address
+   *   book discovery at.
    * @param {string} password - The password for the current account.
    *
    * @returns {Array} - The address books associated with the account.
    */
-  async #getAddressBooks(password) {
-    let addressBooks = [];
-
+  async #getAddressBooks(hostnames, password) {
     // Bail out if the CardDAV scope wasn't granted.
     if (this.#currentConfig.incoming.auth == Ci.nsMsgAuthMethod.OAuth2) {
       const oAuth2 = new lazy.OAuth2Module();
@@ -1760,42 +1805,45 @@ class AccountHubEmail extends HTMLElement {
           this.#currentConfig.incoming.username,
           "carddav"
         ) ||
-        !oAuth2.getRefreshToken()
+        !(await oAuth2.getRefreshToken())
       ) {
-        return addressBooks;
+        return [];
       }
     }
 
-    const hostname = this.#email.split("@")[1];
-    try {
-      addressBooks =
-        await lazy.RemoteAddressBookUtils.getAddressBooksForAccount(
-          this.#email,
-          password,
-          `https://${hostname}`
+    for (const hostname of hostnames) {
+      try {
+        const addressBooks =
+          await lazy.RemoteAddressBookUtils.getAddressBooksForAccount(
+            this.#email,
+            password,
+            `https://${hostname}`
+          );
+        if (addressBooks.length) {
+          return addressBooks;
+        }
+      } catch (error) {
+        gAccountSetupLogger.debug(
+          `Found no address books for ${this.#email} on ${hostname}.`,
+          error
         );
-    } catch (error) {
-      gAccountSetupLogger.debug(
-        `Found no address books for ${this.#email} on ${hostname}.`,
-        error
-      );
+      }
     }
 
-    return addressBooks;
+    return [];
   }
 
   /**
    * Get the calendars associated with the current account.
    *
+   * @param {string[]} hostnames - One or two hostnames to attempt calendar
+   *   discovery at.
    * @param {string} password - The password for the current account.
    * @param {boolean} rememberPassword - The remember password choice.
    *
    * @returns {Array} - The calendars associated with the account.
    */
-  async #getCalendars(password, rememberPassword) {
-    let calendarEntries = null;
-    const cals = [];
-
+  async #getCalendars(hostnames, password, rememberPassword) {
     // Bail out if the CalDAV scope wasn't granted.
     if (this.#currentConfig.incoming.auth == Ci.nsMsgAuthMethod.OAuth2) {
       const oAuth2 = new lazy.OAuth2Module();
@@ -1805,34 +1853,37 @@ class AccountHubEmail extends HTMLElement {
           this.#currentConfig.incoming.username,
           "caldav"
         ) ||
-        !oAuth2.getRefreshToken()
+        !(await oAuth2.getRefreshToken())
       ) {
-        return cals;
+        return [];
       }
     }
 
-    const hostname = this.#email.split("@")[1];
-
-    try {
-      calendarEntries = await lazy.cal.provider.detection.detect(
-        this.#email,
-        password,
-        `https://${hostname}`,
-        rememberPassword,
-        [],
-        {}
-      );
-    } catch (error) {
-      gAccountSetupLogger.debug(
-        `Found no calendars for ${this.#email} on ${hostname}.`,
-        error
-      );
-      return cals;
+    let calendarEntries;
+    for (const hostname of hostnames) {
+      try {
+        calendarEntries = await lazy.cal.provider.detection.detect(
+          this.#email,
+          password,
+          `https://${hostname}`,
+          rememberPassword,
+          [],
+          {}
+        );
+        if (calendarEntries.size) {
+          break;
+        }
+      } catch (error) {
+        gAccountSetupLogger.debug(
+          `Found no calendars for ${this.#email} on ${hostname}.`,
+          error
+        );
+      }
     }
 
     // If no calendars return empty array.
-    if (!calendarEntries.size) {
-      return cals;
+    if (!calendarEntries?.size) {
+      return [];
     }
 
     // Collect existing calendars to compare with the list of recently fetched
@@ -1841,6 +1892,7 @@ class AccountHubEmail extends HTMLElement {
       lazy.cal.manager.getCalendars({}).map(calendar => calendar.uri.spec)
     );
 
+    const cals = [];
     for (const calendars of calendarEntries.values()) {
       for (const calendar of calendars) {
         if (existing.has(calendar.uri.spec)) {
@@ -1986,6 +2038,65 @@ class AccountHubEmail extends HTMLElement {
     }
     this.#emailFooter.toggleForwardDisabled(true);
     return true;
+  }
+
+  /**
+   * @param {string} realName
+   * @param {string} email
+   * @param {string} token
+   */
+  async setUpThundermailFromURL(realName, email, token) {
+    // Check if there's an existing token for this username. If there is, stop.
+    // Override this preference for tests.
+    const hostname = Services.prefs.getStringPref(
+      "mail.accounthub.thundermail.hostname",
+      "thundermail.com"
+    );
+    const oauthDetails = lazy.OAuth2Providers.getHostnameDetails(
+      hostname,
+      "imap"
+    );
+    const oauthOrigin = `oauth://${oauthDetails.issuer}`;
+    for (const login of await Services.logins.searchLoginsAsync({
+      origin: oauthOrigin,
+    })) {
+      if (login.username == email) {
+        // TODO These strings are wrong.
+        this.#currentSubview.showNotification({
+          error: new Error("Token already exists", {
+            cause: {
+              fluentTitleId: "account-hub-creation-error-title",
+              fluentDescriptionId: "account-hub-error-server-exists",
+            },
+          }),
+          type: "error",
+        });
+        return;
+      }
+    }
+
+    // Save token to logins store.
+    const login = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(
+      Ci.nsILoginInfo
+    );
+    login.init(oauthOrigin, null, oauthDetails.allScopes, email, token);
+    await Services.logins.addLoginAsync(login);
+
+    // Fetch latest autoconfig. We know that the ISP is configured.
+    const abortController = new AbortController();
+    const configPromise = lazy.FetchConfig.fromISP(
+      hostname,
+      email,
+      abortController.signal
+    );
+
+    const config = await configPromise;
+    lazy.AccountConfig.replaceVariables(config, realName, email);
+
+    this.#realName = realName;
+    this.#email = config.incoming.username;
+    this.#currentConfig = config;
+    await this.#initConfigView(config);
   }
 }
 

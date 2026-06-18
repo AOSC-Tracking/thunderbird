@@ -123,12 +123,17 @@ add_task(async function testSingleVirtual() {
 
 /** Test a virtual folder with multiple backing folders. */
 add_task(async function testXFVirtual() {
+  // Note: The message counts for folderD and folderE (2 and 13) are carefully
+  // chosen. If a selection spans across the boundary between these two
+  // physical folders, the backend executes the deletion in sequential batches.
+  // This causes the UI to fire multiple "select" events, while _doDelete()
+  // strictly expects only a single one.
   const folderD = rootFolder
     .createLocalSubfolder("threadTreeDeletingD")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderD.addMessageBatch(
     generator
-      .makeMessages({ count: 4 })
+      .makeMessages({ count: 2 })
       .map(message => message.toMessageString())
   );
 
@@ -137,7 +142,7 @@ add_task(async function testXFVirtual() {
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderE.addMessageBatch(
     generator
-      .makeMessages({ count: 11, msgsPerThread: 3 })
+      .makeMessages({ count: 13, msgsPerThread: 3 })
       .map(message => message.toMessageString())
   );
 
@@ -323,11 +328,11 @@ add_task(async function testDeletionWhileScrolling() {
   scrollListener.setScrollExpectation(-1);
 
   // Page up a few times then delete some messages.
-  await delayThenPressAndWaitForSelect(0, "VK_PAGE_UP");
-  await delayThenPressAndWaitForSelect(60, "VK_PAGE_UP");
-  await delayThenPressAndWaitForSelect(60, "VK_PAGE_UP");
-  await delayThenPressAndWaitForSelect(400, "VK_DELETE");
-  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(0, "KEY_PageUp");
+  await delayThenPressAndWaitForSelect(60, "KEY_PageUp");
+  await delayThenPressAndWaitForSelect(60, "KEY_PageUp");
+  await delayThenPressAndWaitForSelect(400, "KEY_Delete");
+  await delayThenPressAndWaitForSelect(80, "KEY_Delete");
 
   await scrollend;
 
@@ -342,14 +347,14 @@ add_task(async function testDeletionWhileScrolling() {
   scrollend = scrollListener.promiseScrollingStopped();
   scrollListener.setScrollExpectation(1);
 
-  await delayThenPressAndWaitForSelect(60, "VK_PAGE_DOWN");
-  await delayThenPressAndWaitForSelect(60, "VK_PAGE_DOWN");
-  await delayThenPressAndWaitForSelect(60, "VK_PAGE_DOWN");
-  await delayThenPressAndWaitForSelect(300, "VK_DELETE");
-  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
-  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
-  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
-  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(60, "KEY_PageDown");
+  await delayThenPressAndWaitForSelect(60, "KEY_PageDown");
+  await delayThenPressAndWaitForSelect(60, "KEY_PageDown");
+  await delayThenPressAndWaitForSelect(300, "KEY_Delete");
+  await delayThenPressAndWaitForSelect(80, "KEY_Delete");
+  await delayThenPressAndWaitForSelect(80, "KEY_Delete");
+  await delayThenPressAndWaitForSelect(80, "KEY_Delete");
+  await delayThenPressAndWaitForSelect(80, "KEY_Delete");
 
   await scrollend;
 
@@ -370,9 +375,9 @@ add_task(async function testDeletionWhileScrolling() {
   );
   threadTree.selectedIndex = targetIndex;
   await selectEvent;
-  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
-  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
-  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(80, "KEY_Delete");
+  await delayThenPressAndWaitForSelect(80, "KEY_Delete");
+  await delayThenPressAndWaitForSelect(80, "KEY_Delete");
 
   Assert.less(
     threadTree.getFirstVisibleIndex(),
@@ -433,8 +438,8 @@ async function subtest() {
   threadTree.currentIndex = 4;
   // We should select the message below the current index, but we select the
   // message below the first selected one.
-  await doDeleteCommand(9);
-  await verifySelection(7, [2], 2);
+  await doDeleteCommand(11);
+  await verifySelection(7, [3], 3);
   verifySubjects([
     subjects[0],
     subjects[1],

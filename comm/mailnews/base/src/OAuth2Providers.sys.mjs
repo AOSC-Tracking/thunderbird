@@ -37,6 +37,11 @@ const EWS_SCOPES = {
   ews: "https://outlook.office.com/EWS.AccessAsUser.All",
   // "exchange" is used in the account setup, then the config is copied to "ews".
   exchange: "https://outlook.office.com/EWS.AccessAsUser.All",
+
+  // The `offline_access` scope instructs the Microsoft backend to provide a
+  // refresh token, which we can then store and avoid needing to trigger a new
+  // interactive flow at each startup. See
+  // https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#successful-response-2
   extra: "offline_access",
 };
 
@@ -45,6 +50,12 @@ const GRAPH_SCOPES = {
     "https://graph.microsoft.com/User.Read https://graph.microsoft.com/MailboxFolder.ReadWrite",
   graph:
     "https://graph.microsoft.com/User.Read https://graph.microsoft.com/MailboxFolder.ReadWrite",
+
+  // The `offline_access` scope instructs the Microsoft backend to provide a
+  // refresh token, which we can then store and avoid needing to trigger a new
+  // interactive flow at each startup. See
+  // https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#successful-response-2
+  extra: "offline_access",
 };
 
 const TBPRO_SCOPES = "openid profile email offline_access";
@@ -115,30 +126,44 @@ var kHostnames = new Map([
   ],
 ]);
 
-// We have a separate sandbox for prototyping OAuth scopes on Microsoft 365.
-const microsoft365ProductionAppId = "9e5f94bc-e8a4-4e73-b8be-63364c29d753";
-const microsoft365SandboxAppId = "b00dc6cb-0459-4bd4-ac0d-2e23516f906a";
-const microsoft365ProductionTenantId = "common";
-const microsoft365SandboxTenantId = "aead8f37-924c-4d3f-9f20-494295c72956";
-
-const useMicrosoft365Sandbox = Services.prefs.getBoolPref(
-  "mail.microsoft.useM365Sandbox",
-  false
-);
-
-const microsoft365AppId = useMicrosoft365Sandbox
-  ? microsoft365SandboxAppId
-  : microsoft365ProductionAppId;
-
-const microsoft365TenantId = useMicrosoft365Sandbox
-  ? microsoft365SandboxTenantId
-  : microsoft365ProductionTenantId;
+/**
+ * This list serves as a helper to filter out issuers that don't use an object
+ * to provide type specific scopes but don't support exchange don't offer OAuth
+ * for exchange. If an issuer is registered with an object of scopes it doesn't
+ * need to be declared in this list, because its capabilities are determined by
+ * the keys on the object.
+ *
+ * @type {Set<string>}
+ */
+const kIssuersWithoutExchangeSupport = new Set([
+  "o2.mail.ru",
+  "oauth.yandex.com",
+  "login.yahoo.com",
+  "login.aol.com",
+  "comcast.net",
+  "auth.tb.pro",
+  "auth-stage.tb.pro",
+]);
 
 /**
- * Map of issuers to clientId, clientSecret, authorizationEndpoint, tokenEndpoint,
- *  and usePKCE (RFC7636).
- * Issuer is a unique string for the organization that a Thunderbird account
- * was registered at.
+ * @typedef issuerDetails
+ * The information required to perform OAuth authentication with an provider.
+ * See RFC6749 for more information.
+ *
+ * @property {string} name - An internal name Thunderbird uses to identify the
+ *   details object. Usually but not necessarily the hostname of the endpoints.
+ * @property {boolean} builtIn - If the details are in `kIssuers`, below.
+ * @property {string} clientId
+ * @property {string} [clientSecret]
+ * @property {string} authorizationEndpoint
+ * @property {string} [redirectionEndpoint]
+ * @property {string} tokenEndpoint
+ * @property {boolean} [usePKCE] - The issuer uses PKCE (RFC7636)
+ */
+
+/**
+ * Map of issuers to issuerDetails. Issuer is a unique string for the
+ * organization that a Thunderbird account was registered at.
  *
  * For the moment these details are hard-coded, since dynamic client
  * registration is not yet supported. Don't copy these values for your
@@ -157,6 +182,7 @@ var kIssuers = new Map([
       clientSecret: "kSmqreRr0qwBWJgbf5Y-PjSU",
       authorizationEndpoint: "https://accounts.google.com/o/oauth2/auth",
       tokenEndpoint: "https://www.googleapis.com/oauth2/v3/token",
+      usePKCE: true,
     },
   ],
   [
@@ -213,10 +239,11 @@ var kIssuers = new Map([
     {
       name: "login.microsoftonline.com",
       builtIn: true,
-      clientId: microsoft365AppId, // Application (client) ID
+      clientId: "9e5f94bc-e8a4-4e73-b8be-63364c29d753", // Application (client) ID
       // https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-protocols#endpoints
-      authorizationEndpoint: `https://login.microsoftonline.com/${microsoft365TenantId}/oauth2/v2.0/authorize`,
-      tokenEndpoint: `https://login.microsoftonline.com/${microsoft365TenantId}/oauth2/v2.0/token`,
+      authorizationEndpoint: `https://login.microsoftonline.com/common/oauth2/v2.0/authorize`,
+      tokenEndpoint: `https://login.microsoftonline.com/common/oauth2/v2.0/token`,
+      redirectionEndpoint: "https://localhost",
     },
   ],
 
@@ -284,6 +311,7 @@ var kIssuers = new Map([
       authorizationEndpoint: "https://oauth.test.test/form",
       tokenEndpoint: "https://oauth.test.test/token",
       redirectionEndpoint: "https://localhost",
+      usePKCE: true,
     },
   ],
   [
@@ -296,9 +324,13 @@ var kIssuers = new Map([
       authorizationEndpoint: "https://oauth.test.test/form",
       tokenEndpoint: "https://oauth.test.test/token",
       redirectionEndpoint: "http://localhost",
+      usePKCE: true,
     },
   ],
 ]);
+for (const issuerDetails of kIssuers.values()) {
+  Object.freeze(issuerDetails);
+}
 
 /**
  * OAuth2Providers: Methods to lookup OAuth2 parameters for supported OAuth2
@@ -360,6 +392,10 @@ export var OAuth2Providers = {
     }
 
     if (typeof scopes == "string") {
+      if (type == "exchange" && kIssuersWithoutExchangeSupport.has(issuer)) {
+        // Exchange is not available for this hostname.
+        return undefined;
+      }
       // Scopes not separated into types.
       return { issuer, allScopes: scopes, requiredScopes: scopes };
     }
@@ -408,17 +444,33 @@ export var OAuth2Providers = {
   /**
    * Map an issuer to OAuth2 account details.
    *
+   * This function will override Microsoft 365 providers to use the Thunderbird
+   * Sandbox Azure application ID if the `mail.microsoft.useM365Sandbox`
+   * preference is set to true.
+   *
    * @param {string} issuer - The organization issuing OAuth2 parameters, e.g.
    *   "accounts.google.com".
-   *
-   * @returns {Array} An array containing [clientId, clientSecret, authorizationEndpoint, tokenEndpoint].
-   *   clientId and clientSecret are strings representing the account registered
-   *   for Thunderbird with the organization.
-   *   authorizationEndpoint and tokenEndpoint are url strings representing
-   *   endpoints to access OAuth2 authentication.
+   * @returns {?IssuerDetails}
    */
   getIssuerDetails(issuer) {
-    return kIssuers.get(issuer);
+    let details = kIssuers.get(issuer);
+    // We have a separate sandbox for prototyping OAuth scopes on Microsoft 365.
+    const useMicrosoft365Sandbox = Services.prefs.getBoolPref(
+      "mail.microsoft.useM365Sandbox",
+      false
+    );
+    if (useMicrosoft365Sandbox) {
+      if (issuer == "login.microsoftonline.com") {
+        details = structuredClone(details);
+        details.clientId = "b00dc6cb-0459-4bd4-ac0d-2e23516f906a";
+        const microsoft365SandboxTenantId =
+          "aead8f37-924c-4d3f-9f20-494295c72956";
+        details.authorizationEndpoint = `https://login.microsoftonline.com/${microsoft365SandboxTenantId}/oauth2/v2.0/authorize`;
+        details.tokenEndpoint = `https://login.microsoftonline.com/${microsoft365SandboxTenantId}/oauth2/v2.0/token`;
+        Object.freeze(details);
+      }
+    }
+    return details;
   },
 
   /**
@@ -454,7 +506,7 @@ export var OAuth2Providers = {
         throw new Error(`Hostname ${hostname} already registered.`);
       }
     }
-    kIssuers.set(issuer, {
+    const issuerDetails = {
       name: issuer,
       builtIn: false,
       clientId,
@@ -463,7 +515,9 @@ export var OAuth2Providers = {
       tokenEndpoint,
       redirectionEndpoint,
       usePKCE,
-    });
+    };
+    Object.freeze(issuerDetails);
+    kIssuers.set(issuer, issuerDetails);
     for (const hostname of hostnames) {
       kHostnames.set(hostname, [issuer, scopes]);
     }

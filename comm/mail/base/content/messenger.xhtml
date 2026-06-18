@@ -38,7 +38,10 @@
     http-equiv="Content-Security-Policy"
     content="default-src chrome:; script-src chrome: resource: 'unsafe-inline' moz-src: ; style-src chrome: 'unsafe-inline'; img-src chrome: data: moz-icon: https://addons.thunderbird.net; connect-src *"
   />
-  <link rel="stylesheet" href="chrome://messenger/skin/mailWindow1.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/messenger.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/primaryToolbar.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/folderPane.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/messageIcons.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/tagColors.css" />
   <link
     rel="stylesheet"
@@ -59,7 +62,10 @@
   <link rel="stylesheet" href="chrome://messenger/skin/panelUI.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/contextMenu.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/input-fields.css" />
-  <link rel="stylesheet" href="chrome://messenger/skin/inAppNotificationManager.css" />
+  <link
+    rel="stylesheet"
+    href="chrome://messenger/skin/inAppNotificationManager.css"
+  />
   <link
     rel="stylesheet"
     href="chrome://messenger/skin/openpgp/inlineNotification.css"
@@ -124,6 +130,7 @@
   <link rel="localization" href="messenger/inAppNotifications.ftl" />
   <link rel="localization" href="messenger/unifiedToolbar.ftl" />
   <link rel="localization" href="messenger/unifiedToolbarItems.ftl" />
+  <link rel="localization" href="messenger/extensionsUI.ftl" />
 #ifdef MOZ_SERVICES_SYNC
   <link rel="localization" href="messenger/syncAccounts.ftl" />
 #endif
@@ -253,9 +260,6 @@
 
   <!-- NEEDED FOR MIGRATION CHECK AT INSTALL -->
   <script defer="defer" src="chrome://calendar/content/calendar-migration.js"></script>
-
-  <!-- Customizable shortcuts -->
-  <script defer="defer" src="chrome://messenger/content/shortcutsOverlay.js"></script>
 
   <script defer="defer" src="chrome://messenger/content/accountcreation/accountHub.js"></script>
 
@@ -433,7 +437,16 @@
       <html:ul id="addon-webext-perm-list" class="addon-webext-perm-list"/>
       <description id="addon-webext-experiment-warning" class="addon-webext-experiment-warning"/>
       <hbox>
-        <label id="addon-webext-perm-info" is="text-link" class="popup-notification-learnmore-link"/>
+        <label data-l10n-id="webext-perms-learn-more" id="addon-webext-perm-info" is="text-link" class="popup-notification-learnmore-link"/>
+      </hbox>
+    </popupnotificationcontent>
+  </popupnotification>
+
+  <popupnotification id="addon-webext-expsuppressed-notification" hasicon="true" hidden="hidden">
+    <popupnotificationcontent class="addon-webext-expsuppressed-notification-content" orient="vertical">
+      <description data-l10n-id="webext-install-suppressed-details" class="addon-webext-expsuppressed-text"/>
+      <hbox>
+        <label data-l10n-id="webext-perms-learn-more" id="addon-webext-expsuppressed-info" is="text-link" class="popup-notification-learnmore-link"/>
       </hbox>
     </popupnotificationcontent>
   </popupnotification>

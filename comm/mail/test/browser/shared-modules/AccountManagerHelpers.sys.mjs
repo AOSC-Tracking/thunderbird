@@ -5,7 +5,6 @@
 import {
   content_tab_e,
   open_content_tab_with_url,
-  promise_content_tab_load,
 } from "resource://testing-common/mail/ContentTabHelpers.sys.mjs";
 
 import * as fdh from "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs";
@@ -44,12 +43,6 @@ export async function open_advanced_settings(callback) {
   await promise_account_tree_load(tab);
   await callback(tab);
   mc.document.getElementById("tabmail").closeTab(tab);
-}
-
-export async function openAccountSetup() {
-  const tab = await open_content_tab_with_url("about:accountsetup");
-  await promise_content_tab_load(tab, "about:accountsetup", 10000);
-  return tab;
 }
 
 /**
@@ -160,14 +153,14 @@ export async function remove_account(
     EventUtils.synthesizeMouseAtCenter(
       cdc.document.getElementById("removeAccount"),
       {},
-      cdc.document.getElementById("removeAccount").ownerGlobal
+      cdc.document.getElementById("removeAccount").documentGlobal
     );
   }
   if (removeData) {
     EventUtils.synthesizeMouseAtCenter(
       cdc.document.getElementById("removeData"),
       {},
-      cdc.document.getElementById("removeData").ownerGlobal
+      cdc.document.getElementById("removeData").documentGlobal
     );
   }
 

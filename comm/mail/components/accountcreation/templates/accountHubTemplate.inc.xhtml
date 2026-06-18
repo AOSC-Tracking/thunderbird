@@ -6,6 +6,7 @@
   CSS in here, those files are handled lazily in the controller and in the
   various shadowRoots of the views.
 -->
+#include ./accountHubInputTemplate.inc.xhtml
 #include ./accountHubSelectTemplate.inc.xhtml
 #include ./accountHubAddressBookAccountSelectTemplate.inc.xhtml
 #include ./accountHubAddressBookLdapAccountFormTemplate.inc.xhtml
@@ -18,6 +19,8 @@
 #include ./accountHubEmailAutoFormTemplate.inc.xhtml
 #include ./accountHubEmailConfigFoundTemplate.inc.xhtml
 #include ./accountHubEmailCredentialsConfirmationTemplate.inc.xhtml
+#include ./accountHubEmailExchangeSettingsTemplate.inc.xhtml
+#include ./accountHubEmailExchangeType.inc.xhtml
 #include ./accountHubEmailIncomingFormTemplate.inc.xhtml
 #include ./accountHubEmailOutgoingFormTemplate.inc.xhtml
 #include ./accountHubEmailPasswordFormTemplate.inc.xhtml
@@ -125,6 +128,16 @@
     hidden="hidden"
   >
   </email-manual-config-form>
+  <email-exchange-settings
+    id="emailExchangeSettingsSubview"
+    class="account-hub-step"
+    hidden="hidden"
+  ></email-exchange-settings>
+  <email-exchange-type
+    id="emailExchangeTypeSubview"
+    class="account-hub-step"
+    hidden="hidden"
+  ></email-exchange-type>
   <email-config-found
     id="emailConfigFoundSubview"
     title-id="account-hub-email-config-found"

@@ -5,7 +5,6 @@
 
 #include "nsMsgCompose.h"
 #include "MailNewsTypes.h"
-#include "mozilla/dom/Document.h"
 #include "nsPIDOMWindow.h"
 #include "mozIDOMWindow.h"
 #include "nsIMsgMessageService.h"
@@ -57,11 +56,13 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/glean/CommMailComponentsComposeMetrics.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/HTMLAnchorElement.h"
 #include "mozilla/dom/HTMLImageElement.h"
-#include "mozilla/dom/Selection.h"
-#include "mozilla/dom/Promise.h"
+#include "mozilla/dom/NodeList.h"
 #include "mozilla/dom/Promise-inl.h"  // IWYU pragma: keep
+#include "mozilla/dom/Promise.h"
+#include "mozilla/dom/Selection.h"
 #include "mozilla/Utf8.h"
 #include "nsStreamConverter.h"
 #include "nsIObserverService.h"
@@ -171,6 +172,18 @@ nsMsgCompose::~nsMsgCompose() {
     // tmp attachments are needed to create the message, so don't delete them.
     DeleteTmpAttachments();
   }
+
+  if (mDocShell) {
+    nsCOMPtr<nsIMsgComposeService> composeService =
+        mozilla::components::Compose::Service();
+    if (composeService) composeService->UnregisterComposeDocShell(mDocShell);
+  }
+  mDocShell = nullptr;
+
+  // ensure that the destructor of nsMsgSend is invoked to remove
+  // temporary files.
+  mMsgSend = nullptr;
+  m_editor = nullptr;
 }
 
 /* the following macro actually implement addref, release and query interface
@@ -187,7 +200,7 @@ nsresult GetChildOffset(nsINode* aChild, nsINode* aParent, int32_t& aOffset) {
 
   if (!aChild || !aParent) return NS_ERROR_NULL_POINTER;
 
-  nsINodeList* childNodes = aParent->ChildNodes();
+  RefPtr<dom::NodeList> childNodes = aParent->ChildNodes();
   for (uint32_t i = 0; i < childNodes->Length(); i++) {
     nsINode* childNode = childNodes->Item(i);
     if (childNode == aChild) {
@@ -1318,40 +1331,6 @@ NS_IMETHODIMP nsMsgCompose::GetDeleteDraft(bool* aDeleteDraft) {
 
 NS_IMETHODIMP nsMsgCompose::SetDeleteDraft(bool aDeleteDraft) {
   mDeleteDraft = aDeleteDraft;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgCompose::CloseWindow(void) {
-  nsresult rv;
-
-  nsCOMPtr<nsIMsgComposeService> composeService =
-      mozilla::components::Compose::Service();
-  // unregister the compose object with the compose service
-  rv = composeService->UnregisterComposeDocShell(mDocShell);
-  NS_ENSURE_SUCCESS(rv, rv);
-  mDocShell = nullptr;
-
-  // ensure that the destructor of nsMsgSend is invoked to remove
-  // temporary files.
-  mMsgSend = nullptr;
-  m_editor = nullptr;
-  if (m_window) {
-    nsCOMPtr<nsPIDOMWindowOuter> outerWin = nsPIDOMWindowOuter::From(m_window);
-    if (!outerWin) {
-      NS_WARNING("Getting outer win FAILED");
-      return NS_ERROR_FAILURE;
-    }
-    outerWin->Close();
-    m_window = nullptr;
-  }
-  return rv;
-}
-
-nsresult nsMsgCompose::Abort() {
-  if (mMsgSend) mMsgSend->Abort();
-
-  if (mProgress) mProgress->CloseProgressDialog(true);
-
   return NS_OK;
 }
 
@@ -3058,48 +3037,30 @@ nsresult nsMsgComposeSendListener::OnStopSending(const char* aMsgID,
     nsCOMPtr<nsIMsgProgress> progress;
     msgCompose->GetProgress(getter_AddRefs(progress));
 
-    if (NS_SUCCEEDED(aStatus)) {
-      nsCOMPtr<nsIMsgCompFields> compFields;
-      msgCompose->GetCompFields(getter_AddRefs(compFields));
+    bool shouldCloseProgress = NS_FAILED(aStatus);
 
+    if (NS_SUCCEEDED(aStatus)) {
       // only process the reply flags if we successfully sent the message
       msgCompose->ProcessReplyFlags();
-
-      // See if there is a composer window
-      nsMsgCompose* _compose = static_cast<nsMsgCompose*>(msgCompose.get());
-      bool hasDomWindow = _compose->m_window;
-
-      // Close the window ONLY if we are not going to do a save operation
-      nsAutoString fieldsFCC;
-      if (NS_SUCCEEDED(compFields->GetFcc(fieldsFCC))) {
-        if (!fieldsFCC.IsEmpty()) {
-          if (fieldsFCC.LowerCaseEqualsLiteral("nocopy://")) {
-            msgCompose->NotifyStateListeners(
-                nsIMsgComposeNotificationType::ComposeProcessDone, NS_OK);
-            if (progress) {
-              progress->UnregisterListener(this);
-              progress->CloseProgressDialog(false);
-            }
-            if (hasDomWindow) msgCompose->CloseWindow();
-          }
-        }
-      } else {
-        msgCompose->NotifyStateListeners(
-            nsIMsgComposeNotificationType::ComposeProcessDone, NS_OK);
-        if (progress) {
-          progress->UnregisterListener(this);
-          progress->CloseProgressDialog(false);
-        }
-        // If we fail on the simple GetFcc call, close the window to be safe
-        //  and avoid windows hanging around.
-        if (hasDomWindow) msgCompose->CloseWindow();
-      }
 
       // Remove the current draft msg when sending draft is done.
       bool deleteDraft;
       msgCompose->GetDeleteDraft(&deleteDraft);
       if (deleteDraft) RemoveCurrentDraftMessage(msgCompose, false, false);
-    } else {
+
+      nsAutoString fieldsFCC;
+      nsCOMPtr<nsIMsgCompFields> compFields;
+      rv = msgCompose->GetCompFields(getter_AddRefs(compFields));
+      NS_ENSURE_SUCCESS(rv, rv);
+      compFields->GetFcc(fieldsFCC);
+
+      // If we aren't saving a copy, we should also close the progress dialog.
+      if (fieldsFCC.LowerCaseEqualsLiteral("nocopy://")) {
+        shouldCloseProgress = true;
+      }
+    }
+
+    if (shouldCloseProgress) {
       msgCompose->NotifyStateListeners(
           nsIMsgComposeNotificationType::ComposeProcessDone, aStatus);
       if (progress) {
@@ -3178,7 +3139,6 @@ nsresult nsMsgComposeSendListener::OnStopCopy(nsresult aStatus) {
           msgCompose->SetDeleteDraft(true);
           RemoveCurrentDraftMessage(msgCompose, true, false);
         }
-        msgCompose->CloseWindow();
       }
     }
     msgCompose->ClearMessageSend();
@@ -3311,8 +3271,6 @@ nsresult nsMsgComposeSendListener::RemoveCurrentDraftMessage(
   if (NS_SUCCEEDED(rv) && !curDraftIdURL.IsEmpty()) {
     rv = RemoveDraftOrTemplate(compObj, curDraftIdURL, isSaveTemplate);
     if (NS_FAILED(rv)) NS_WARNING("Removing current draft failed");
-  } else {
-    NS_WARNING("RemoveCurrentDraftMessage can't get draft id");
   }
 
   if (isSaveTemplate) {
@@ -4579,7 +4537,7 @@ void nsMsgCompose::TagConvertible(Element* node, int32_t* _retval) {
 
       nsAutoString hrefValue;
       node->GetAttribute(u"href"_ns, hrefValue);
-      nsINodeList* children = node->ChildNodes();
+      RefPtr<dom::NodeList> children = node->ChildNodes();
       if (children->Length() > 0) {
         nsINode* pItem = children->Item(0);
         nsAutoString textValue;
@@ -4608,7 +4566,7 @@ nsMsgCompose::NodeTreeConvertible(Element* node, int32_t* _retval) {
   TagConvertible(node, &result);
 
   // Walk tree recursively to check the children.
-  nsINodeList* children = node->ChildNodes();
+  RefPtr<dom::NodeList> children = node->ChildNodes();
   for (uint32_t i = 0; i < children->Length(); i++) {
     nsINode* pItem = children->Item(i);
     // We assume all nodes that are not elements are convertible,
@@ -4902,8 +4860,6 @@ NS_IMETHODIMP nsMsgCompose::GetDeliverMode(MSG_DeliverMode* aDeliverMode) {
 
 void nsMsgCompose::DeleteTmpAttachments() {
   if (mTmpAttachmentsDeleted) {
-    // Don't delete tmp attachments if compose window is still open, e.g. saving
-    // a draft.
     return;
   }
   mTmpAttachmentsDeleted = true;

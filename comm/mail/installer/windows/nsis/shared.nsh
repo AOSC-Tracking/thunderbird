@@ -24,6 +24,7 @@
   SetShellVarContext all      ; Set SHCTX to all users (e.g. HKLM)
   ${SetHandlersMail} ; Uses SHCTX
   ${SetHandlersNews} ; Uses SHCTX
+  ${SetHandlersNetThunderbird} ; Uses SHCTX
   ${SetClientsMail} "HKLM"
   ${SetClientsNews} "HKLM"
   ${SetClientsCalendar} "HKLM"
@@ -255,6 +256,17 @@
 !macroend
 !define SetHandlersCalendar "!insertmacro SetHandlersCalendar"
 
+!macro SetHandlersNetThunderbird
+  ${GetLongPath} "$INSTDIR\${FileMainEXE}" $8
+
+  StrCpy $0 "SOFTWARE\Classes"
+  StrCpy $1 "$\"$8$\" $\"%1$\""
+
+  ${AddHandlerValues} "$0\Thunderbird.Url.net.thunderbird"  "$1" "$8,0" "${AppRegNameMail} URL" "delete" ""
+  ${AddHandlerValues} "$0\net.thunderbird" "$1" "$8,0" "${AppRegNameMail} URL" "true" ""
+!macroend
+!define SetHandlersNetThunderbird "!insertmacro SetHandlersNetThunderbird"
+
 ; XXXrstrong - there are several values that will be overwritten by and
 ; overwrite other installs of the same application.
 !macro SetClientsMail RegKey
@@ -331,6 +343,7 @@
   StrCpy $2 "$\"$8$\" $\"%1$\""
   ${AddHandlerValues} "$0\Protocols\mailto" "$1" "$8,0" "${AppRegNameMail} URL" "true" ""
   ${AddHandlerValues} "$0\Protocols\mid" "$2" "$8,0" "${AppRegNameMail} URL" "true" ""
+  ${AddHandlerValues} "$0\Protocols\net.thunderbird" "$2" "$8,0" "${AppRegNameMail} URL" "true" ""
 
   ; Capabilities registry keys
   WriteRegStr ${RegKey} "$0\Capabilities" "ApplicationDescription" "$(REG_APP_DESC)"
@@ -341,6 +354,7 @@
   WriteRegStr ${RegKey} "$0\Capabilities\StartMenu" "Mail" "${ClientsRegName}"
   WriteRegStr ${RegKey} "$0\Capabilities\URLAssociations" "mailto" "Thunderbird.Url.mailto"
   WriteRegStr ${RegKey} "$0\Capabilities\URLAssociations" "mid" "Thunderbird.Url.mid"
+  WriteRegStr ${RegKey} "$0\Capabilities\URLAssociations" "net.thunderbird" "Thunderbird.Url.net.thunderbird"
 
   ; Registered Application
   WriteRegStr ${RegKey} "Software\RegisteredApplications" "${AppRegNameMail}" "$0\Capabilities"
@@ -672,6 +686,17 @@
   ${IsHandlerForInstallDir} "mid" $R9
   ${If} "$R9" == "true"
     ${AddHandlerValues} "SOFTWARE\Classes\mid" "$3" "$8,0" "" "" ""
+  ${EndIf}
+
+  ${IsHandlerForInstallDir} "Thunderbird.Url.net.thunderbird" $R9
+  ${If} "$R9" == "true"
+    ${AddHandlerValues} "SOFTWARE\Classes\Thunderbird.Url.net.thunderbird" "$3" "$8,0" \
+                        "${AppRegNameMail} URL" "delete" ""
+  ${EndIf}
+
+  ${IsHandlerForInstallDir} "net.thunderbird" $R9
+  ${If} "$R9" == "true"
+    ${AddHandlerValues} "SOFTWARE\Classes\net.thunderbird" "$3" "$8,0" "" "" ""
   ${EndIf}
 
   ${IsHandlerForInstallDir} "Thunderbird.Url.news" $R9
@@ -1241,6 +1266,8 @@ Function SetAsDefaultAppUser
   ; http://support.microsoft.com/kb/297878
   ${GetParameters} $R0
 
+  StrCpy $9 ""
+
   ClearErrors
   ${GetOptions} "$R0" "Mail" $R1
   ${Unless} ${Errors}
@@ -1262,13 +1289,7 @@ Function SetAsDefaultAppUser
           GetFunctionAddress $0 SetAsDefaultMailAppUserHKCU
           UAC::ExecCodeSegment $0
         ${EndIf}
-
-        ; Do we also set TB as default News client? If not we can return
-        ClearErrors
-        ${GetOptions} "$R0" "News" $R1
-        ${If} ${Errors}
-          Return
-        ${EndIf}
+        StrCpy $9 "return"
       ${EndIf}
     ${EndIf}
   ${EndUnless}
@@ -1294,7 +1315,7 @@ Function SetAsDefaultAppUser
           GetFunctionAddress $0 SetAsDefaultNewsAppUserHKCU
           UAC::ExecCodeSegment $0
         ${EndIf}
-        Return ; Nothing more needs to be done
+        StrCpy $9 "return"
       ${EndIf}
     ${EndIf}
   ${EndUnless}
@@ -1320,10 +1341,21 @@ Function SetAsDefaultAppUser
           GetFunctionAddress $0 SetAsDefaultCalendarAppUserHKCU
           UAC::ExecCodeSegment $0
         ${EndIf}
-        Return ; Nothing more needs to be done
+        StrCpy $9 "return"
       ${EndIf}
     ${EndIf}
   ${EndUnless}
+
+  ClearErrors
+  ${GetOptions} "$R0" "NetThunderbird" $R1
+  ${Unless} ${Errors}
+    Call SetAsDefaultNetThunderbirdAppUserHKCU
+    StrCpy $9 "return"
+  ${EndUnless}
+
+  ${If} "$9" == "return"
+    Return
+  ${EndIf}
 
   ; The code after ElevateUAC won't be executed when the user:
   ; a) is a member of the administrators group (e.g. elevation is required)
@@ -1474,6 +1506,14 @@ Function SetAsDefaultCalendarAppUserHKCU
   ${Unless} ${Errors}
     AppAssocReg::SetAppAsDefaultAll "${AppRegNameCalendar}"
   ${EndUnless}
+FunctionEnd
+
+Function SetAsDefaultNetThunderbirdAppUserHKCU
+  SetShellVarContext current  ; Set SHCTX to the current user (e.g. HKCU)
+
+  ${SetHandlersNetThunderbird}
+
+  ClearErrors
 FunctionEnd
 
 !endif

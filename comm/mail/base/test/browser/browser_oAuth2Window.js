@@ -54,6 +54,7 @@ add_task(async function testAccept() {
       issuer: "test.test",
       reason: "no refresh token",
       result: "succeeded",
+      where: "internal",
     },
   ]);
   OAuth2TestUtils.forgetObjects();
@@ -64,7 +65,7 @@ add_task(async function testAccept() {
   Assert.equal(logins[0].httpRealm, "test_scope");
   Assert.equal(logins[0].username, "victor@foo.invalid");
   Assert.equal(logins[0].password, "refresh_token");
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 });
 
 /**
@@ -94,13 +95,14 @@ add_task(async function testCancel() {
       issuer: "test.test",
       reason: "no refresh token",
       result: "cancelled",
+      where: "internal",
     },
   ]);
   OAuth2TestUtils.forgetObjects();
 
   const logins = await Services.logins.getAllLogins();
   Assert.equal(logins.length, 0, "there should be no token saved");
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 });
 
 /**
@@ -148,11 +150,12 @@ add_task(async function testSpoofScope() {
       issuer: "test.test",
       reason: "no refresh token",
       result: "invalid scope",
+      where: "internal",
     },
   ]);
   OAuth2TestUtils.forgetObjects();
 
   const logins = await Services.logins.getAllLogins();
   Assert.equal(logins.length, 0, "there should be no token saved");
-  Services.logins.removeAllLogins();
+  await Services.logins.removeAllLoginsAsync();
 });

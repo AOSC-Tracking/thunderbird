@@ -71,8 +71,21 @@ impl ToTokens for PathModule<'_> {
 
                 let response = operation_response(operation);
                 match &operation.body {
-                    Some(body) => request_with_body(body.clone(), &mut imports, template_expressions.idents.clone(), description, operation, response),
-                    None => request_without_body(&mut imports, template_expressions.idents.clone(), description, operation, response),
+                    Some(body) => request_with_body(
+                        body.clone(),
+                        &mut imports,
+                        template_expressions.idents.clone(),
+                        description,
+                        operation,
+                        response
+                    ),
+                    None => request_without_body(
+                        &mut imports,
+                        template_expressions.idents.clone(),
+                        description,
+                        operation,
+                        response
+                    ),
                 }
             })
             .collect::<Vec<_>>();
@@ -85,7 +98,7 @@ impl ToTokens for PathModule<'_> {
         let description = quote!(#![doc = #description]);
         tokens.append_all(description);
 
-        let imports = super::imports(&imports);
+        let imports = super::imports(&imports, None);
 
         tokens.append_all(quote! {
             #( pub mod #child_modules; )*
@@ -95,6 +108,7 @@ impl ToTokens for PathModule<'_> {
             use std::str::FromStr;
 
             #imports
+            use crate::odata::*;
             use crate::pagination::*;
             use crate::*;
 
@@ -132,6 +146,60 @@ fn delta_response_value(operation: &Operation) -> TokenStream {
     return_type(&element, Reference::Own, Some("'response"))
 }
 
+/// Construct a response property for OData queries, such as `$select` and
+/// `$expand`.
+///
+/// Returns `None` if the operation success response has no body.
+fn odata_target_property(operation: &Operation) -> Option<Property> {
+    let Success::WithBody(body) = &operation.success else {
+        return None;
+    };
+
+    let mut property = body.property.clone();
+
+    // Operations with responses of type `*CollectionResponse` don't apply the
+    // query to that type, they apply it to the type in the collection.
+    if operation.pageable
+        && let RustType::NamedSchema(custom_type) = &property.rust_type
+        && let Some(base_name) = custom_type
+            .original_name()
+            .strip_suffix("CollectionResponse")
+    {
+        assert!(
+            crate::SUPPORTED_TYPES.contains(base_name),
+            "a {base_name}CollectionResponse type should not be present if {base_name} is not a supported type"
+        );
+        property.name = base_name.to_string();
+        property.rust_type = RustType::NamedSchema(base_name.into());
+        property.is_ref = false;
+
+        // This only works if all `*CollectionResponse` types aren't collections
+        // of collections, which seems to be the case. If it ever stops being
+        // the case, this will need to do something more complicated, since we
+        // don't have direct access to the underlying base type here.
+        property.is_collection = false;
+    }
+
+    if operation.is_delta {
+        property.is_collection = false;
+    }
+
+    Some(property)
+}
+
+/// Get the Rust identifier for the OData query-option target type with the
+/// given generated suffix.
+///
+/// Returns `None` if the operation success response has no body or if the OData
+/// target is not a custom Graph type.
+fn odata_target_ident(operation: &Operation, suffix: &str) -> Option<Ident> {
+    let property = odata_target_property(operation)?;
+    let RustType::NamedSchema(custom_type) = property.rust_type else {
+        return None;
+    };
+    Some(format_ident!("{}{}", custom_type.as_pascal_case(), suffix))
+}
+
 /// Generate the struct and implementation of a request that doesn't take a
 /// body.
 fn request_without_body(
@@ -148,20 +216,22 @@ fn request_without_body(
     let method = operation.method;
 
     let selectable = selectable(operation);
-    let selection_type = if selectable {
-        let Success::WithBody(ref selection_body) = operation.success else {
-            panic!("selectable request with no response type: {operation:?}");
+    let expandable = expandable(operation);
+    let filterable = filterable(operation);
+    let selection_type = selectable
+        .then(|| odata_target_ident(operation, "Selection"))
+        .flatten();
+    let selectable = selection_type.is_some();
+    let expand_type = expandable
+        .then(|| odata_target_ident(operation, "Expand"))
+        .flatten();
+    let expandable = expand_type.is_some();
+    if selectable || expandable {
+        let Some(query_target) = odata_target_property(operation) else {
+            panic!("queryable request with no response type: {operation:?}");
         };
-        let RustType::NamedSchema(ref selection_type) = selection_body.property.rust_type else {
-            panic!("non-custom selectable response type: {operation:?}");
-        };
-        let selection_type = format_ident!("{}Selection", selection_type.as_pascal_case());
-        imports.push(selection_body.property.clone());
-        Some(selection_type)
-    } else {
-        None
+        imports.push(query_target);
     }
-    .map(|s| format_ident!("{s}"));
 
     let mut unnamed_body_types = Vec::new();
     if let Success::WithBody(resp_body) = &operation.success
@@ -176,6 +246,8 @@ fn request_without_body(
         lifetime: None,
         body_line: None,
         selection_type: selection_type.clone(),
+        expand_type: expand_type.clone(),
+        filterable,
     };
     let impl_def = ImplDef {
         method,
@@ -183,6 +255,8 @@ fn request_without_body(
         template_expressions,
         arg: None,
         selectable,
+        expandable,
+        filterable,
     };
     let operation_def = OperationDef {
         method: method.to_string(),
@@ -190,8 +264,15 @@ fn request_without_body(
         body: None,
         response: response.clone(),
         selectable,
+        expandable,
+        filterable,
     };
     let select_def = SelectDef { selection_type };
+    let expand_def = ExpandDef {
+        expand_type,
+        method,
+    };
+    let filter_def = FilterDef { method, filterable };
     let delta_def = operation.is_delta.then(|| DeltaDef { response });
     RequestDef {
         unnamed_body_types,
@@ -199,6 +280,8 @@ fn request_without_body(
         impl_def,
         operation_def,
         select_def,
+        expand_def,
+        filter_def,
         delta_def,
     }
 }
@@ -220,6 +303,7 @@ fn request_with_body(
     }
 
     let method = operation.method;
+    let filterable = filterable(operation);
 
     let mut body = op_body.property.rust_type.base_token(false, Reference::Own);
     let body_lifetime = match op_body.property.rust_type {
@@ -245,6 +329,8 @@ fn request_with_body(
         lifetime: body_lifetime.clone(),
         body_line: Some(quote!(body: OperationBody<#body>,)),
         selection_type: None,
+        expand_type: None,
+        filterable,
     };
     let impl_def = ImplDef {
         method,
@@ -252,6 +338,8 @@ fn request_with_body(
         template_expressions,
         arg: Some(quote!(body: OperationBody<#body>)),
         selectable: false,
+        expandable: false,
+        filterable,
     };
     let operation_def = OperationDef {
         method: method.to_string(),
@@ -259,10 +347,17 @@ fn request_with_body(
         body: Some(body),
         response,
         selectable: false,
+        expandable: false,
+        filterable,
     };
     let select_def = SelectDef {
         selection_type: None,
     };
+    let expand_def = ExpandDef {
+        expand_type: None,
+        method,
+    };
+    let filter_def = FilterDef { method, filterable };
     assert!(
         !operation.is_delta,
         "deltas are not supported for requests with a body"
@@ -273,6 +368,8 @@ fn request_with_body(
         impl_def,
         operation_def,
         select_def,
+        expand_def,
+        filter_def,
         delta_def: None,
     }
 }
@@ -326,6 +423,8 @@ pub struct RequestDef {
     impl_def: ImplDef,
     operation_def: OperationDef,
     select_def: SelectDef,
+    expand_def: ExpandDef,
+    filter_def: FilterDef,
     delta_def: Option<DeltaDef>,
 }
 
@@ -337,6 +436,8 @@ impl ToTokens for RequestDef {
             impl_def,
             operation_def,
             select_def,
+            expand_def,
+            filter_def,
             delta_def,
         } = self;
         tokens.append_all(
@@ -349,6 +450,8 @@ impl ToTokens for RequestDef {
             #impl_def
             #operation_def
             #select_def
+            #expand_def
+            #filter_def
             #delta_def
         })
     }
@@ -360,6 +463,8 @@ struct StructDef {
     lifetime: Option<TokenStream>,
     body_line: Option<TokenStream>,
     selection_type: Option<Ident>,
+    expand_type: Option<Ident>,
+    filterable: bool,
 }
 
 impl ToTokens for StructDef {
@@ -370,10 +475,16 @@ impl ToTokens for StructDef {
             lifetime,
             body_line: body,
             selection_type,
+            expand_type,
+            filterable,
         } = self;
         let selection_line = selection_type
             .as_ref()
             .map(|selection_type| quote!(selection: Selection<#selection_type>,));
+        let expand_line = expand_type
+            .as_ref()
+            .map(|expand_type| quote!(expansion: ExpansionList<#expand_type>,));
+        let filter_line = filterable.then(|| quote!(filter: FilterQuery,));
         tokens.append_all(quote! {
             #description
             #[derive(Debug)]
@@ -381,6 +492,8 @@ impl ToTokens for StructDef {
                 template_expressions: TemplateExpressions,
                 #body
                 #selection_line
+                #expand_line
+                #filter_line
             }
         })
     }
@@ -392,6 +505,8 @@ struct ImplDef {
     template_expressions: Vec<Ident>,
     arg: Option<TokenStream>,
     selectable: bool,
+    expandable: bool,
+    filterable: bool,
 }
 
 impl ToTokens for ImplDef {
@@ -402,6 +517,8 @@ impl ToTokens for ImplDef {
             template_expressions,
             arg,
             selectable,
+            expandable,
+            filterable,
         } = self;
         let body_line = if arg.is_some() {
             Some(quote!(body,))
@@ -410,6 +527,16 @@ impl ToTokens for ImplDef {
         };
         let selection_line = if *selectable {
             Some(quote!(selection: Selection::default(),))
+        } else {
+            None
+        };
+        let expand_line = if *expandable {
+            Some(quote!(expansion: ExpansionList::default(),))
+        } else {
+            None
+        };
+        let filter_line = if *filterable {
+            Some(quote!(filter: FilterQuery::default(),))
         } else {
             None
         };
@@ -423,6 +550,8 @@ impl ToTokens for ImplDef {
                         },
                         #body_line
                         #selection_line
+                        #expand_line
+                        #filter_line
                     }
                 }
             }
@@ -436,6 +565,8 @@ struct OperationDef {
     body: Option<TokenStream>,
     response: TokenStream,
     selectable: bool,
+    expandable: bool,
+    filterable: bool,
 }
 
 impl ToTokens for OperationDef {
@@ -446,18 +577,47 @@ impl ToTokens for OperationDef {
             body,
             response,
             selectable,
+            expandable,
+            filterable,
         } = self;
         let upper_method = format_ident!("{}", method.to_ascii_uppercase());
         let method = format_ident!("{method}");
 
-        let build_uri = if *selectable {
+        let append_selection = selectable.then(|| {
+            quote! {
+                if let Some((select, selection)) = self.selection.pair() {
+                    params.append_pair(select, &selection);
+                }
+            }
+        });
+        let append_filter = filterable.then(|| {
+            quote! {
+                if let Some((filter, expression)) = self.filter.pair() {
+                    params.append_pair(filter, &expression);
+                }
+            }
+        });
+        let append_expand = expandable.then(|| {
+            quote! {
+                if let Some((expand, expansion)) = self.expansion.pair() {
+                    params.append_pair(expand, &expansion);
+                }
+            }
+        });
+
+        let build_uri = if *selectable || *expandable || *filterable {
             quote! {
                 let mut params = Serializer::new(String::new());
-                let (select, selection) = self.selection.pair();
-                params.append_pair(select, &selection);
+                #append_selection
+                #append_expand
+                #append_filter
                 let params = params.finish();
                 let path = format_path(&self.template_expressions);
-                let uri = format!("{path}?{params}").parse::<http::uri::Uri>().unwrap();
+                let uri = if params.is_empty() {
+                    path.parse::<http::uri::Uri>().unwrap()
+                } else {
+                    format!("{path}?{params}").parse::<http::uri::Uri>().unwrap()
+                };
             }
         } else {
             quote!(let uri = format_path(&self.template_expressions).parse::<http::uri::Uri>().unwrap();)
@@ -521,7 +681,7 @@ impl ToTokens for SelectDef {
                         self.selection.select(properties);
                     }
 
-                    fn extend<P: IntoIterator<Item = Self::Properties>>(&mut self, properties: P) {
+                    fn extend_selection<P: IntoIterator<Item = Self::Properties>>(&mut self, properties: P) {
                         self.selection.extend(properties);
                     }
                 }
@@ -530,14 +690,78 @@ impl ToTokens for SelectDef {
     }
 }
 
-fn selectable(request: &Operation) -> bool {
+struct FilterDef {
+    method: Method,
+    filterable: bool,
+}
+
+impl ToTokens for FilterDef {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Self { method, filterable } = self;
+        if *filterable {
+            tokens.append_all(quote! {
+                impl Filter for #method {
+                    fn filter(&mut self, expression: FilterExpression) {
+                        self.filter.set(expression);
+                    }
+                }
+            })
+        }
+    }
+}
+
+struct ExpandDef {
+    expand_type: Option<Ident>,
+    method: Method,
+}
+
+impl ToTokens for ExpandDef {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        if let Self {
+            expand_type: Some(expand_type),
+            method,
+        } = self
+        {
+            tokens.append_all(quote! {
+                impl Expand for #method {
+                    type Properties = #expand_type;
+
+                    fn expand<P: IntoIterator<Item = Self::Properties>>(&mut self, properties: P) {
+                        self.expansion.expand(properties);
+                    }
+
+                    fn extend_expand<P: IntoIterator<Item = Self::Properties>>(
+                        &mut self,
+                        properties: P,
+                    ) {
+                        self.expansion.extend(properties);
+                    }
+                }
+            })
+        }
+    }
+}
+
+fn queryable(request: &Operation, query: &'static str) -> bool {
     if let Some(parameters) = &request.parameters {
         parameters
             .iter()
-            .any(|p| p.name == Some("$select".to_string()))
+            .any(|p| p.name.as_deref() == Some(query) && p.r#in.as_deref() == Some("query"))
     } else {
         false
     }
+}
+
+fn selectable(request: &Operation) -> bool {
+    queryable(request, "$select")
+}
+
+fn filterable(request: &Operation) -> bool {
+    queryable(request, "$filter")
+}
+
+fn expandable(request: &Operation) -> bool {
+    queryable(request, "$expand")
 }
 
 impl ToTokens for Method {

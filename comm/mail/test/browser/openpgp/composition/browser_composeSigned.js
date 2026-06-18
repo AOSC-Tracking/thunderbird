@@ -100,7 +100,7 @@ add_setup(async function () {
 });
 
 /**
- * Tests composition of a message that is signed only shows as signed in the
+ * Tests composition of a message that is signed-only shows as signed in the
  * Outbox, and has header-protection header.
  */
 add_task(async function testSignedMessageComposition() {
@@ -112,11 +112,26 @@ add_task(async function testSignedMessageComposition() {
   const cwc = await open_compose_new_mail();
   const composeWin = cwc;
 
+  // Show Bcc input.
+  EventUtils.synthesizeMouseAtCenter(
+    cwc.document.getElementById("addr_bccShowAddressRowButton"),
+    {},
+    cwc
+  );
+
   await setup_msg_contents(
     cwc,
     "alice@openpgp.example, carol@example.com",
     "Compose Signed Message",
     "This is a signed message composition test."
+  );
+
+  await setup_msg_contents(
+    cwc,
+    "blind@example.org",
+    "Compose Signed Message",
+    "This is a signed message composition test.",
+    "bccAddrInput"
   );
 
   await OpenPGPTestUtils.toggleMessageSigning(composeWin);
@@ -149,6 +164,12 @@ add_task(async function testSignedMessageComposition() {
     )
   );
 
+  Assert.equal(
+    lines.filter(line => line.includes("Bcc: blind@example.org")).length,
+    1,
+    "should not include Bcc in the protected headers (only in real headers)"
+  );
+
   Assert.ok(
     OpenPGPTestUtils.hasSignedIconState(aboutMessage.document, "ok"),
     "message has signed icon"
@@ -166,7 +187,7 @@ add_task(async function testSignedMessageComposition() {
   );
 
   // Delete the message so other tests work.
-  EventUtils.synthesizeKey("VK_DELETE");
+  EventUtils.synthesizeKey("KEY_Delete");
   // Restore pref to original value
   Services.prefs.clearUserPref(autocryptPrefName);
 });
@@ -222,7 +243,7 @@ add_task(async function testSignedMessageWithKeyComposition() {
   );
 
   // Delete the message so other tests work.
-  EventUtils.synthesizeKey("VK_DELETE");
+  EventUtils.synthesizeKey("KEY_Delete");
 });
 
 /*
@@ -375,7 +396,7 @@ add_task(async function testSignedEncryptedMessageComposition() {
   );
 
   // Delete the message so other tests work.
-  EventUtils.synthesizeKey("VK_DELETE");
+  EventUtils.synthesizeKey("KEY_Delete");
 });
 
 /**
@@ -438,7 +459,7 @@ add_task(async function testSignedEncryptedMessageWithKeyComposition() {
   );
 
   // Delete the message so other tests work.
-  EventUtils.synthesizeKey("VK_DELETE");
+  EventUtils.synthesizeKey("KEY_Delete");
 });
 
 registerCleanupFunction(async function tearDown() {

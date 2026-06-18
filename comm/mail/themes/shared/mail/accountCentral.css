@@ -2,9 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-@import url("chrome://messenger/skin/messenger.css");
-@import url("chrome://messenger/skin/icons.css");
-
 html {
   block-size: 100%;
 }
@@ -101,7 +98,13 @@ body {
   overflow: hidden;
   margin-block: 0;
   /* Prevents UI jumping when dynamically changing the content. */
-  min-block-size: 21px;
+  @media (-moz-platform: linux), (-moz-platform: windows) {
+    min-block-size: 21px;
+  }
+
+  @media (-moz-platform: macos) {
+    min-block-size: 17px;
+  }
 }
 
 aside.settings-btn-container {
@@ -423,7 +426,7 @@ aside.settings-btn-container {
 
 .btn-link:hover {
   color: inherit;
-  background-color: var(--panel-dimmed) !important;
+  background-color: var(--panel-background-color-dimmed) !important;
 }
 
 .resource-link:hover {

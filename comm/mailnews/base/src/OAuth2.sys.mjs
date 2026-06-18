@@ -12,11 +12,11 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { openLinkExternally } from "resource:///modules/LinkHelper.sys.mjs";
 
 const lazy = {};
-ChromeUtils.defineLazyGetter(
-  lazy,
-  "l10n",
-  () => new Localization(["messenger/messenger.ftl"], true)
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  OAuth2PageGenerator:
+    "moz-src:///comm/mailnews/base/src/OAuth2PageGenerator.sys.mjs",
+  MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
+});
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
   "useExternalBrowser",
@@ -29,8 +29,40 @@ const log = console.createInstance({
   maxLogLevelPref: "mailnews.oauth.loglevel",
 });
 
-// Only allow one connecting window per endpoint.
-var gConnecting = {};
+/**
+ * Map to a lock allowing only one connecting internal window per endpoint.
+ *
+ * @type {Map<string, boolean>}
+ */
+var gConnecting = new Map();
+
+// Rate limit external browser requests with a per-endpoint cooldown.
+const COOLDOWN_MS = 3 * 1000;
+/**
+ * Maps endpoints to the cooldown time for that endpoint. Currently set to 3
+ * seconds after the last external browser launch for that endpoint.
+ *
+ * @type {Map<string, number>}
+ */
+var gCooldown = new Map();
+
+/**
+ * @param {string} base64 - Data encoded in base64.
+ * @returns {string} - The same encoded data, but with standard substitutions
+ *   for URL safety.
+ */
+function toBase64URL(base64) {
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+/**
+ * @param {number} byteLength - Length of the token in bytes.
+ * @returns {string} - Returns a URL-valid base64 endcoding of the token.
+ */
+function generateRandomURLToken(byteLength) {
+  const bytes = CryptoUtils.generateRandomBytes(byteLength);
+  return ChromeUtils.base64URLEncode(bytes, { pad: false });
+}
 
 /**
  * @param {string} redirectURI
@@ -108,6 +140,7 @@ OAuth2.prototype = {
   telemetryData: {},
 
   _isRetrying: false,
+  _authorizationState: null,
   _requestRedirectURI: null,
 
   /**
@@ -133,9 +166,14 @@ OAuth2.prototype = {
     if (this.refreshToken) {
       this.requestAccessToken(this.refreshToken, true);
     } else if (!aWithUI) {
+      log.warn("Attempted OAuth flow with no UI");
       this._reject('{ "error": "auth_noui" }');
-    } else if (gConnecting[this.authorizationEndpoint]) {
+    } else if (gConnecting.get(this.authorizationEndpoint)) {
+      log.warn("Attempted OAuth flow with a window already active");
       this._reject("Window already open");
+    } else if ((gCooldown.get(this.authorizationEndpoint) ?? 0) > Date.now()) {
+      log.warn("Attempted OAuth flow with a cooldown still active");
+      this._reject("Cooldown still active");
     } else {
       this.telemetryData.reason = aRefresh ? "refresh" : "no refresh token";
       this.requestAuthorization();
@@ -164,25 +202,24 @@ OAuth2.prototype = {
       authEndpointURL.searchParams.append("scope", this.scope);
     }
 
+    this._authorizationState = generateRandomURLToken(32);
+    authEndpointURL.searchParams.append("state", this._authorizationState);
+
     // See rfc7636
     if (this.usePKCE) {
-      // Convert base64 to base64url (rfc4648#section-5)
-      const to_b64url = b =>
-        b.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-
       authEndpointURL.searchParams.append("code_challenge_method", "S256");
 
       // rfc7636#section-4.1
       //  code_verifier = high-entropy cryptographic random STRING ... with a minimum
       //  length of 43 characters and a maximum length of 128 characters.
-      const code_verifier = to_b64url(
-        btoa(CryptoUtils.generateRandomBytesLegacy(64))
-      );
+      const code_verifier = generateRandomURLToken(64);
       this.codeVerifier = code_verifier;
 
       // rfc7636#section-4.2
       //  code_challenge = BASE64URL-ENCODE(SHA256(ASCII(code_verifier)))
-      const code_challenge = to_b64url(CryptoUtils.sha256Base64(code_verifier));
+      const code_challenge = toBase64URL(
+        CryptoUtils.sha256Base64(code_verifier)
+      );
       authEndpointURL.searchParams.append("code_challenge", code_challenge);
     }
 
@@ -202,6 +239,7 @@ OAuth2.prototype = {
       lazy.useExternalBrowser &&
       isLoopbackHttpRedirect(this.redirectionEndpoint)
     ) {
+      this.telemetryData.where = "external";
       this.request = new ExternalRequest(this);
       if (!this.request.startLoopbackRedirectListener()) {
         this.finishAuthorizationRequest();
@@ -213,6 +251,7 @@ OAuth2.prototype = {
         return;
       }
     } else {
+      this.telemetryData.where = "internal";
       this.request = new InternalRequest(this);
     }
     this._requestRedirectURI = this.request.redirectURI;
@@ -232,11 +271,28 @@ OAuth2.prototype = {
     }
   },
   finishAuthorizationRequest() {
-    gConnecting[this.authorizationEndpoint] = false;
+    gConnecting.set(this.authorizationEndpoint, false);
     if (this.request) {
       this.request.close();
       this.request = null;
     }
+  },
+
+  /**
+   * Check if the redirect URL result should be handled as successful
+   * authorization.
+   *
+   * @param {URL} url - The parsed URL the flow was redirected to.
+   * @returns {boolean} If the URL indicates a successful authorization.
+   */
+  checkResultURL(url) {
+    if (
+      this._authorizationState &&
+      this._authorizationState !== url.searchParams.get("state")
+    ) {
+      return false;
+    }
+    return url.searchParams.has("code");
   },
 
   /**
@@ -245,7 +301,18 @@ OAuth2.prototype = {
   onAuthorizationReceived(aURL) {
     log.info("OAuth2 authorization response received: url=" + aURL);
     const url = new URL(aURL);
-    if (url.searchParams.has("code")) {
+    // Check the state param matches the value we created earlier.
+    const expectedState = this._authorizationState;
+    this._authorizationState = null;
+    if (expectedState && url.searchParams.get("state") !== expectedState) {
+      this.onAuthorizationFailed(
+        Cr.NS_ERROR_FAILURE,
+        '{ "error": "invalid_state" }',
+        "state mismatch"
+      );
+      return;
+    }
+    if (this.checkResultURL(url)) {
       // @see RFC 6749 section 4.1.2: Authorization Response
       this.requestAccessToken(url.searchParams.get("code"), false);
     } else {
@@ -311,6 +378,8 @@ OAuth2.prototype = {
         data.append("code_verifier", this.codeVerifier);
       }
     }
+
+    log.debug(`Sending request to the token endpoint with data: ${data}`);
 
     fetch(this.tokenEndpoint, {
       method: "POST",
@@ -416,6 +485,14 @@ OAuth2.prototype = {
   },
 };
 
+/**
+ * Reset the global cooldown state.
+ */
+OAuth2.clearCooldowns = function () {
+  log.debug("Clearing all OAuth cooldowns");
+  gCooldown.clear();
+};
+
 class InternalRequest {
   /**
    * Constructor for internal requests using Thunderbird's browser.
@@ -437,7 +514,7 @@ class InternalRequest {
    */
   start(authEndpointURL) {
     this.url = authEndpointURL.href;
-    gConnecting[this.oauth.authorizationEndpoint] = true;
+    gConnecting.set(this.oauth.authorizationEndpoint, true);
 
     const windowPrivacy = Services.prefs.getBoolPref(
       "mailnews.oauth.usePrivateBrowser",
@@ -566,9 +643,12 @@ class ExternalRequest {
     openLinkExternally(authURI, { addToHistory: false });
 
     // Normally, we'd do the following:
-    // gConnecting[this.oauth.authorizationEndpoint] = true;
+    // gConnecting.set(this.oauth.authorizationEndpoint, true);
     // But because we can't tell if the tab closes with no interaction, doing
     // so could lock out any future OAuth requests.
+    const endpoint = this.oauth.authorizationEndpoint;
+    gCooldown.set(endpoint, Date.now() + COOLDOWN_MS);
+
     return true;
   }
 
@@ -664,12 +744,14 @@ class ExternalRequest {
         if (!this._outputStream) {
           return;
         }
-        const response =
+        const response = lazy.MailStringUtils.stringToByteString(
           `HTTP/1.1 ${statusLine}\r\n` +
-          "Content-Type: text/html; charset=utf-8\r\n" +
-          "Cache-Control: no-store\r\n" +
-          "Connection: close\r\n\r\n" +
-          body;
+            "Content-Type: text/html; charset=utf-8\r\n" +
+            "Content-Security-Policy: default-src 'none'; img-src data:; style-src 'unsafe-inline'\r\n" +
+            "Cache-Control: no-store\r\n" +
+            "Connection: close\r\n\r\n" +
+            body
+        );
         this._outputStream.write(response, response.length);
 
         // Cleanly close after the first response to ensure it's fully flushed.
@@ -682,12 +764,23 @@ class ExternalRequest {
           return;
         }
         this._receivedRequest = true;
-        this._respond(
-          "200 OK",
-          `<!doctype html><html><body>${lazy.l10n.formatValueSync(
-            "oauth2-loopback-success"
-          )}</body></html>`
-        );
+
+        // If this will be treated as an error by onAuthorizationRecevied, show
+        // the error page instead of the success page.
+        const parsedUrl = new URL(url);
+        if (this._oauth.checkResultURL(parsedUrl)) {
+          lazy.OAuth2PageGenerator.generateSuccessPage()
+            .then(pageSource => {
+              this._respond("200 OK", pageSource);
+            })
+            .catch(error => log.error(error));
+        } else {
+          lazy.OAuth2PageGenerator.generateErrorPage()
+            .then(pageSource => {
+              this._respond("200 OK", pageSource);
+            })
+            .catch(error => log.error(error));
+        }
         Services.tm.dispatchToMainThread(() => {
           this._oauth.finishAuthorizationRequest();
           this._oauth.onAuthorizationReceived(url);
@@ -699,12 +792,11 @@ class ExternalRequest {
           return;
         }
         this._receivedRequest = true;
-        this._respond(
-          "400 Bad Request",
-          `<!doctype html><html><body>${lazy.l10n.formatValueSync(
-            "oauth2-loopback-failure"
-          )}</body></html>`
-        );
+        lazy.OAuth2PageGenerator.generateErrorPage()
+          .then(pageSource => {
+            this._respond("400 Bad Request", pageSource);
+          })
+          .catch(error => log.error(error));
         Services.tm.dispatchToMainThread(() => {
           this._oauth.finishAuthorizationRequest();
           this._oauth.onAuthorizationFailed(

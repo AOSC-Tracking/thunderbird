@@ -44,17 +44,13 @@ class nsMsgThreadedDBView : public nsMsgGroupView {
   virtual void OnHeaderAddedOrDeleted() override;
   void ClearPrevIdArray();
   virtual nsresult RemoveByIndex(nsMsgViewIndex index) override;
-  nsMsgViewIndex GetInsertInfoForNewHdr(nsIMsgDBHdr* newHdr,
-                                        nsMsgViewIndex threadIndex,
-                                        int32_t targetLevel);
-  void MoveThreadAt(nsMsgViewIndex threadIndex);
 
   // these are used to save off the previous view so that bopping back and forth
   // between two views is quick (e.g., threaded and flat sorted by date).
   bool m_havePrevView;
   nsTArray<nsMsgKey> m_prevKeys;  // this is used for caching non-threaded view.
   nsTArray<uint32_t> m_prevFlags;
-  nsTArray<uint8_t> m_prevLevels;
+  nsTArray<uint32_t> m_prevLevels;
 };
 
 #endif  // COMM_MAILNEWS_BASE_SRC_NSMSGTHREADEDDBVIEW_H_

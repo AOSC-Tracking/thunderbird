@@ -72,6 +72,7 @@ typedef enum {
 #define CLS_NEWSURL "Thunderbird.Url.news"
 #define CLS_FEEDURL "Thunderbird.Url.feed"
 #define CLS_WEBCALURL "Thunderbird.Url.webcal"
+#define CLS_NET_THUNDERBIRDURL "Thunderbird.Url.net.thunderbird"
 #define CLS_ICS "ThunderbirdICS"
 #define SOP "\\shell\\open\\command"
 #define VAL_OPEN "\"%APPPATH%\" \"%1\""
@@ -91,6 +92,8 @@ static SETTING gMailSettings[] = {
     {MAKE_KEY_NAME1(CLS_MAILTOURL, SOP), "", VAL_COMPOSE_OPEN,
      APP_PATH_SUBSTITUTION},
     {MAKE_KEY_NAME1(CLS_MIDURL, SOP), "", VAL_OPEN, APP_PATH_SUBSTITUTION},
+    {MAKE_KEY_NAME1(CLS_NET_THUNDERBIRDURL, SOP), "", VAL_OPEN,
+     APP_PATH_SUBSTITUTION},
 
     // Protocol Handlers
     {MAKE_KEY_NAME1("mailto", SOP), "", VAL_COMPOSE_OPEN,
@@ -119,6 +122,11 @@ static SETTING gCalendarSettings[] = {
     {MAKE_KEY_NAME1(CLS_WEBCALURL, SOP), "", VAL_OPEN, APP_PATH_SUBSTITUTION},
     {MAKE_KEY_NAME1("webcal", SOP), "", VAL_OPEN, APP_PATH_SUBSTITUTION},
     {MAKE_KEY_NAME1("webcals", SOP), "", VAL_OPEN, APP_PATH_SUBSTITUTION},
+};
+
+static SETTING gNetThunderbirdSettings[] = {
+    {MAKE_KEY_NAME1("net.thunderbird", SOP), "", VAL_OPEN,
+     APP_PATH_SUBSTITUTION},
 };
 
 nsresult GetHelperPath(nsAutoString& aPath) {
@@ -216,6 +224,11 @@ nsWindowsShellService::IsDefaultClient(bool aStartupCheck, uint16_t aApps,
   // RSS / feed protocol shell integration is not working so return true
   // until it is fixed (bug 445823).
   if (aApps & nsIShellService::RSS) *aIsDefaultClient &= true;
+  if (aApps & nsIShellService::NET_THUNDERBIRD) {
+    *aIsDefaultClient &=
+        TestForDefault(gNetThunderbirdSettings,
+                       sizeof(gNetThunderbirdSettings) / sizeof(SETTING));
+  }
 
   return NS_OK;
 }
@@ -235,6 +248,9 @@ nsWindowsShellService::SetDefaultClient(bool aForAllUsers, uint16_t aApps) {
     if (aApps & nsIShellService::NEWS) params.AppendLiteral(" News");
 
     if (aApps & nsIShellService::CALENDAR) params.AppendLiteral(" Calendar");
+
+    if (aApps & nsIShellService::NET_THUNDERBIRD)
+      params.AppendLiteral(" NetThunderbird");
   }
 
   return LaunchHelper(appHelperPath, params);

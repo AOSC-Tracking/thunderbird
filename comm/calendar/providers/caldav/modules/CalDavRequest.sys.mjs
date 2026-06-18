@@ -212,6 +212,11 @@ class CalDavRequestBase {
 
     // If any other header is used, it should be added here. We might want
     // to just copy all headers over to the new channel.
+    if (aOldChannel.URI.prePath == aNewChannel.URI.prePath) {
+      // Don't send the Authorization header to another server. Ask for
+      // authorization again.
+      copyHeader("Authorization");
+    }
     copyHeader("Depth");
     copyHeader("Originator");
     copyHeader("Recipient");
@@ -220,9 +225,7 @@ class CalDavRequestBase {
     copyHeader("Accept");
 
     aNewChannel.requestMethod = aOldChannel.requestMethod;
-    this.session.prepareRedirect(aOldChannel, aNewChannel).then(() => {
-      aCallback.onRedirectVerifyCallback(Cr.NS_OK);
-    });
+    aCallback.onRedirectVerifyCallback(Cr.NS_OK);
   }
 }
 
@@ -425,7 +428,7 @@ class CalDavSimpleResponse extends CalDavResponseBase {
 
     this.nsirequest = aLoader.request.QueryInterface(Ci.nsIHttpChannel);
 
-    this.#streamStatus = aStatus;
+    this.#streamError = new Components.Exception("Connection error", aStatus);
     if (Components.isSuccessCode(aStatus)) {
       this._onresponded(this);
     } else {
@@ -442,16 +445,16 @@ class CalDavSimpleResponse extends CalDavResponseBase {
     }
   }
 
-  #streamStatus;
+  #streamError;
   #certError = false;
 
   /**
    * The status of the underlying stream, e.g. NS_ERROR_CONNECTION_REFUSED.
    *
-   * @type {nsresult}
+   * @type {Exception}
    */
-  get streamStatus() {
-    return this.#streamStatus;
+  get streamError() {
+    return this.#streamError;
   }
 
   /** If the response had a certificate error. */

@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { SyntheticMessage } from "resource://testing-common/mailnews/MessageGenerator.sys.mjs";
+
 /**
  * A remote folder to sync from the server. While initiating a test, an array of
  * folders is given to the server, which will use it to populate the contents of
@@ -315,16 +317,93 @@ export class MockServer {
   /**
    * Change the parent folder of a folder.
    *
+   * This allows selection of whether the resulting ID is stable because we have
+   * observed that Graph and EWS differ in how they handle folder moves: EWS IDs
+   * appear to be stable while Graph IDs appear to change.
+   *
    * @param {string} id - The id of the folder to change the parent of.
    * @param {string} newParentId - The id of the new parent folder.
+   * @param {string} idStable - Whether or not to assign a new ID.
+   *
+   * @returns {string?} The resulting ID.
    */
-  reparentFolderById(id, newParentId) {
+  reparentFolderById(id, newParentId, idStable = true) {
     const childFolder = this.#idToFolder.get(id);
-    if (!!childFolder && this.#idToFolder.has(newParentId)) {
-      childFolder.parentId = newParentId;
-      this.updatedFolderIds.push(id);
-      this.folderChanges.push(["update", id]);
+    const newParentFolder = this.#idToFolder.get(newParentId);
+
+    if (!childFolder) {
+      throw new Error(`Folder ${id} does not exist.`);
     }
+
+    if (!newParentFolder) {
+      throw new Error(`Folder ${newParentId} does not exist.`);
+    }
+
+    childFolder.parentId = newParentId;
+
+    let newId;
+    if (idStable) {
+      newId = id;
+    } else {
+      newId = `moved-folder-${id}`;
+      childFolder.id = newId;
+
+      // Update the child items of the moved folder.
+      for (const item of this.getItemsInFolder(childFolder)) {
+        item.parentId = newId;
+      }
+
+      // Update the child folders of the moved folder.
+      for (const folder of this.folders) {
+        if (folder.parentId == id) {
+          folder.parentId = newId;
+        }
+      }
+    }
+
+    this.updatedFolderIds.push(newId);
+    this.folderChanges.push(["update", newId]);
+
+    return newId;
+  }
+
+  /**
+   * Copy the given source folder into the destination folder with the given id.
+   *
+   * @param {RemoteFolder} sourceFolder
+   * @param {string} destinationFolderId
+   *
+   * @returns {string} The ID of the newly copied folder.
+   */
+  copyFolderToId(sourceFolder, destinationFolderId) {
+    const sourceFolderId = sourceFolder.id;
+    const newFolderId = `${sourceFolderId}_copy`;
+    const folderCopy = new RemoteFolder(
+      newFolderId,
+      destinationFolderId,
+      sourceFolder.displayName,
+      newFolderId
+    );
+    this.appendRemoteFolder(folderCopy);
+    // Make copies of the items that belong to the source folder
+    // and place them in the destination folder.
+    for (const [itemId, itemInfo] of this.items()) {
+      if (itemInfo.parentId === sourceFolderId) {
+        const newItemId = `${itemId}_copy`;
+        this.addItemToFolder(
+          newItemId,
+          newFolderId,
+          itemInfo.syntheticMessage
+            ? new SyntheticMessage(
+                itemInfo.syntheticMessage.headers,
+                itemInfo.syntheticMessage.bodyPart,
+                itemInfo.syntheticMessage.metaState
+              )
+            : null
+        );
+      }
+    }
+    return newFolderId;
   }
 
   /**
@@ -502,7 +581,7 @@ export class MockServer {
     for (const change of changes) {
       const changeKind = change[0];
       const itemId = change[2];
-      if (changeKind == "created") {
+      if (changeKind == "create") {
         createdInRange.add(itemId);
       }
       currentStateById.set(itemId, changeKind);
@@ -511,6 +590,8 @@ export class MockServer {
     const flattenedChanges = changes.filter(([kind, _parentId, itemId]) => {
       switch (kind) {
         case "create":
+        case "update":
+        case "readflag":
           // If the change is an item creation, remove it if the item was
           // deleted afterwards.
           return currentStateById.get(itemId) != "delete";

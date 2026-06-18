@@ -33,6 +33,7 @@ pub struct GraphType {
     description: Option<TokenStream>,
     pub(crate) properties: Vec<Property>,
     pub(crate) kind: TypeKind,
+    has_expansions: bool,
 }
 
 impl GraphType {
@@ -41,6 +42,7 @@ impl GraphType {
         description: Option<String>,
         properties: Vec<Property>,
         kind: TypeKind,
+        has_expansions: bool,
     ) -> Self {
         let name = String::from(name);
         let description = description.map(|doc| quote!(#[doc = #doc]));
@@ -50,6 +52,7 @@ impl GraphType {
             description,
             properties,
             kind,
+            has_expansions,
         }
     }
 
@@ -65,18 +68,25 @@ impl ToTokens for GraphType {
             description,
             properties,
             kind,
+            has_expansions,
         } = self;
 
         let name = format_ident!("{}", pascalize(name));
 
-        let imports = super::imports(properties);
+        let imports = super::imports(properties, Some(&snakeify(&name.to_string())));
+        let expand_ident = format_ident!("{}Expand", name);
         let select_variants = select_variants(properties);
+        let single_value_extended_properties_expand_impl = (*has_expansions)
+            .then(|| single_value_extended_properties_expand_impl(&expand_ident, properties));
+        let single_value_extended_properties_impl = matches!(kind, TypeKind::Named)
+            .then(|| single_value_extended_properties_impl(&name, properties));
 
         // Generating documentation for methods of unnamed types seems to cause
         // some weird bug with rustc's diagnostics that means we end up with
         // leftover unused imports even after running Clippy, see
         // https://github.com/rust-lang/rust/issues/155098
         let function_defs = function_defs(properties, matches!(kind, TypeKind::Named));
+        let expand_def = (*has_expansions).then(|| expand_def(expand_ident, properties));
 
         // Unnamed types typically represent the body of requests or responses,
         // where selection is not relevant.
@@ -84,6 +94,7 @@ impl ToTokens for GraphType {
             TypeKind::Named => {
                 let selection_ident = format_ident!("{}Selection", name);
                 let selection = quote! {
+                    ///Properties that can be selected from this type.
                     #[derive(Copy, Clone, Debug, Display, PartialEq, Eq)]
                     #[strum(serialize_all = "camelCase")]
                     pub enum #selection_ident {
@@ -114,12 +125,15 @@ impl ToTokens for GraphType {
             use serde::{Deserialize, Serialize};
             use serde_json::Value;
             use std::borrow::Cow;
+            use std::fmt;
             use strum::Display;
 
             #imports
+            use crate::odata::ExpandOptions;
             use crate::{Error, PropertyMap};
 
             #selection
+            #expand_def
 
             #description
             #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -142,6 +156,8 @@ impl ToTokens for GraphType {
                 }
                 #(#function_defs)*
             }
+            #single_value_extended_properties_expand_impl
+            #single_value_extended_properties_impl
         ))
     }
 }
@@ -207,6 +223,7 @@ impl ToTokens for MethodDef {
 fn select_variants(properties: &[Property]) -> Vec<TokenStream> {
     let mut select_variants = properties
         .iter()
+        .filter(|p| !p.navigation_property)
         .filter_map(|p| {
             let name = pascalize(&p.name);
             let ident = format_ident!("{name}");
@@ -225,6 +242,86 @@ fn select_variants(properties: &[Property]) -> Vec<TokenStream> {
     select_variants.sort_by_key(|a| a.to_string());
     select_variants
 }
+fn expand_def(expand_ident: Ident, properties: &[Property]) -> TokenStream {
+    let expand_variants = expand_variants(properties);
+    if expand_variants.is_empty() {
+        quote! {
+            ///Zero-variant enum that cannot be instantiated.
+            ///
+            /// None of the types that can be expanded from this type are
+            /// currently supported. This enum is used to indicate that any
+            /// attempts to expand this Graph type will fail to compile.
+            #[derive(Clone, Debug)]
+            pub enum #expand_ident {}
+
+            impl fmt::Display for #expand_ident {
+                fn fmt(&self, _: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+                    match *self {}
+                }
+            }
+        }
+    } else {
+        let expand_display_arms = expand_display_arms(properties, &expand_ident);
+        quote! {
+            ///Types that are syntactically valid to expand for this type.
+            ///
+            /// Being present in this enum does not guarantee Graph can expand
+            /// the property for any particular path.
+            #[derive(Clone, Debug, strum::EnumDiscriminants)]
+            #[strum_discriminants(name(ExpandNames))]
+            #[strum_discriminants(vis(pub(self)))]
+            #[strum_discriminants(derive(Display))]
+            #[strum_discriminants(strum(serialize_all = "camelCase"))]
+            pub enum #expand_ident {
+                #(#expand_variants),*
+            }
+
+            impl fmt::Display for #expand_ident {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    match self {
+                        #(#expand_display_arms),*
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn expand_variants(properties: &[Property]) -> Vec<TokenStream> {
+    let mut expand_variants = properties
+        .iter()
+        .filter(|p| p.navigation_property)
+        .filter_map(|p| {
+            let RustType::NamedSchema(custom_type) = &p.rust_type else {
+                return None;
+            };
+
+            let name = pascalize(&p.name);
+            let ident = format_ident!("{name}");
+            let inner = format_ident!("{}Selection", custom_type.as_pascal_case());
+            Some(quote!(#ident(ExpandOptions<#inner>)))
+        })
+        .collect::<Vec<_>>();
+    expand_variants.sort_by_key(|a| a.to_string());
+    expand_variants
+}
+
+fn expand_display_arms(properties: &[Property], expand_ident: &Ident) -> Vec<TokenStream> {
+    let mut expand_arms = properties
+        .iter()
+        .filter(|p| p.navigation_property && matches!(p.rust_type, RustType::NamedSchema(_)))
+        .map(|p| {
+            let variant = format_ident!("{}", pascalize(&p.name));
+            quote! {
+                #expand_ident::#variant(opt) => {
+                    opt.full_format(f, ExpandNames::from(self))
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    expand_arms.sort_by_key(|a| a.to_string());
+    expand_arms
+}
 
 fn function_defs(properties: &[Property], generate_doc: bool) -> Vec<MethodDef> {
     // Collect the generated function defs into [getter def, setter def] pairs
@@ -242,7 +339,7 @@ fn function_defs(properties: &[Property], generate_doc: bool) -> Vec<MethodDef> 
                 Some(quote!(#[doc = #doc]))
             } else if p.is_ref {
                 let ref_type = &p.rust_type.base_token(false, Reference::Own);
-                let doc_str = format!("Accessor to inhereted properties from `{ref_type}`.");
+                let doc_str = format!("Accessor to inherited properties from `{ref_type}`.");
                 Some(quote!(#[doc = #doc_str]))
             } else {
                 None
@@ -300,6 +397,55 @@ fn function_defs(properties: &[Property], generate_doc: bool) -> Vec<MethodDef> 
     // Sort by the name of the getter, then flatten the pairs
     function_defs.sort();
     function_defs.into_iter().flatten().collect()
+}
+
+fn has_single_value_extended_properties(properties: &[Property]) -> bool {
+    properties.iter().any(|prop| {
+        prop.name == "singleValueExtendedProperties"
+            && prop.navigation_property
+            && matches!(prop.rust_type, RustType::NamedSchema(_))
+            && prop.is_collection
+    })
+}
+
+fn single_value_extended_properties_expand_impl(
+    expand_name: &Ident,
+    properties: &[Property],
+) -> Option<TokenStream> {
+    if !has_single_value_extended_properties(properties) {
+        return None;
+    }
+
+    Some(quote! {
+        impl crate::extended_properties::SingleValueExtendedPropertiesExpand for #expand_name {
+            ///Construct [`Self::SingleValueExtendedProperties`].
+            fn svleps(
+                options: ExpandOptions<SingleValueLegacyExtendedPropertySelection>,
+            ) -> Self {
+                Self::SingleValueExtendedProperties(options)
+            }
+        }
+    })
+}
+
+fn single_value_extended_properties_impl(
+    name: &Ident,
+    properties: &[Property],
+) -> Option<TokenStream> {
+    if !has_single_value_extended_properties(properties) {
+        return None;
+    }
+
+    Some(quote! {
+        impl<'a> crate::extended_properties::SingleValueExtendedPropertiesType<'a> for #name<'a> {
+            ///Wrapper for [`Self::single_value_extended_properties`].
+            fn all_svleps(
+                &'a self,
+            ) -> Result<Vec<SingleValueLegacyExtendedProperty<'a>>, Error> {
+                self.single_value_extended_properties()
+            }
+        }
+    })
 }
 
 fn getter_body(prop: &Property) -> TokenStream {

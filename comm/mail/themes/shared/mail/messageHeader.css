@@ -238,6 +238,10 @@ mail-tagfield[collapsed] {
   list-style-image: var(--icon-trash);
 }
 
+.hdrTrashButton[data-imap-deleted="true"] {
+  list-style-image: var(--icon-restore);
+}
+
 .hdrMoreButton {
   list-style-image: var(--icon-kebab);
 }
@@ -518,7 +522,7 @@ button.email-action-button {
 :root[lwt-tree] {
   & #singleMessage,
   & #attachmentView {
-    background-color: var(--toolbar-bgcolor) !important;
+    background-color: var(--toolbar-background-color) !important;
     background-image: none !important;
     color: var(--lwt-text-color);
   }

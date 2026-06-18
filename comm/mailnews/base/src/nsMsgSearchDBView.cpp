@@ -19,7 +19,6 @@
 #include "nsMsgGroupThread.h"
 #include "nsMsgMessageFlags.h"
 #include "nsIMsgSearchSession.h"
-#include "nsServiceManagerUtils.h"
 #include "nsIMsgImapMailFolder.h"
 
 using mozilla::Preferences;
@@ -464,8 +463,9 @@ nsresult nsMsgSearchDBView::AddHdrFromFolder(nsIMsgDBHdr* msgHdr,
                    "threadRoot incorrect, or level incorrect");
 
       bool moveThread = false;
-      if (m_sortType == nsMsgViewSortType::byDate ||
-          m_sortType == nsMsgViewSortType::byReceived) {
+      if ((m_sortType == nsMsgViewSortType::byDate ||
+           m_sortType == nsMsgViewSortType::byReceived) &&
+          !mSortThreadsByRoot) {
         uint32_t newestMsgInThread = 0, msgDate = 0;
         viewThread->GetNewestMsgDate(&newestMsgInThread);
         msgHdr->GetDateInSeconds(&msgDate);
@@ -479,7 +479,7 @@ nsresult nsMsgSearchDBView::AddHdrFromFolder(nsIMsgDBHdr* msgHdr,
           // Since we know posInThread, we just want to insert the new hdr
           // at threadIndex + posInThread, and then rebuild the view until we
           // get to a sibling of the new hdr.
-          uint8_t newMsgLevel = viewThread->ChildLevelAt(posInThread);
+          uint32_t newMsgLevel = viewThread->ChildLevelAt(posInThread);
           InsertMsgHdrAt(threadIndex + posInThread, msgHdr, msgKey, msgFlags,
                          newMsgLevel);
 
@@ -574,7 +574,7 @@ void nsMsgSearchDBView::MoveThreadAt(nsMsgViewIndex threadIndex) {
 
   nsTArray<nsMsgKey> threadKeys;
   nsTArray<uint32_t> threadFlags;
-  nsTArray<uint8_t> threadLevels;
+  nsTArray<uint32_t> threadLevels;
   nsCOMArray<nsIMsgFolder> threadFolders;
 
   if (threadIsExpanded) {
@@ -688,15 +688,6 @@ NS_IMETHODIMP
 nsMsgSearchDBView::OnSearchDone(nsresult status) {
   // This batch began in OnNewSearch.
   if (mJSTree) mJSTree->EndUpdateBatch();
-
-  // We want to set imap delete model once the search is over because setting
-  // next message after deletion will happen before deleting the message and
-  // search scope can change with every search.
-
-  // Set to default in case it is non-imap folder.
-  mDeleteModel = nsMsgImapDeleteModels::MoveToTrash;
-  nsIMsgFolder* curFolder = m_folders.SafeObjectAt(0);
-  if (curFolder) GetImapDeleteModel(curFolder);
 
   return NS_OK;
 }
@@ -842,11 +833,11 @@ nsresult nsMsgSearchDBView::RemoveByIndex(nsMsgViewIndex index) {
 
       // Bump up the level of all the descendants of the message
       // that was removed, if the thread was expanded.
-      uint8_t removedLevel = m_levels[index];
+      uint32_t removedLevel = m_levels[index];
       nsMsgViewIndex i = index + 1;
       if (i < m_levels.Length() && m_levels[i] > removedLevel) {
         // Promote the child of the removed message.
-        uint8_t promotedLevel = m_levels[i];
+        uint32_t promotedLevel = m_levels[i];
         m_levels[i] = promotedLevel - 1;
         i++;
         // Now promote all the children of the promoted message.
@@ -1021,17 +1012,12 @@ nsresult nsMsgSearchDBView::ProcessNextFolder(nsIMsgWindow* window) {
   NS_ASSERTION(curFolder, "curFolder is null");
   nsTArray<RefPtr<nsIMsgDBHdr>> const& msgs = m_hdrsForEachFolder[mCurIndex];
 
-  // Set to default in case it is non-imap folder.
-  mDeleteModel = nsMsgImapDeleteModels::MoveToTrash;
-  nsCOMPtr<nsIMsgImapMailFolder> imapFolder = do_QueryInterface(curFolder);
-  if (imapFolder) {
-    GetImapDeleteModel(curFolder);
-  }
+  nsMsgImapDeleteModel deleteModel = GetServerDeleteModel(curFolder);
 
   const bool mCommandIsDelete = mCommand == nsMsgViewCommandType::deleteMsg ||
                                 mCommand == nsMsgViewCommandType::deleteNoTrash;
   m_deletingRows = !(
-      (mCommandIsDelete && mDeleteModel == nsMsgImapDeleteModels::IMAPDelete) ||
+      (mCommandIsDelete && deleteModel == nsMsgImapDeleteModels::IMAPDelete) ||
       mCommand == nsMsgViewCommandType::copyMessages);
   if (m_deletingRows) {
     m_totalMessagesInView -= msgs.Length();
@@ -1041,7 +1027,7 @@ nsresult nsMsgSearchDBView::ProcessNextFolder(nsIMsgWindow* window) {
   if (mCommandIsDelete) {
     const bool deleteStorage =
         mCommand == nsMsgViewCommandType::deleteNoTrash ||
-        mDeleteModel == nsMsgImapDeleteModels::DeleteNoTrash;
+        deleteModel == nsMsgImapDeleteModels::DeleteNoTrash;
     if (!deleteStorage) {
       curFolder->MarkMessagesRead(msgs, true);
     }
@@ -1077,9 +1063,6 @@ nsresult nsMsgSearchDBView::ProcessNextFolder(nsIMsgWindow* window) {
     m_deletingRows = false;
     SetSuppressChangeNotifications(false);
   }
-
-  // Reset to default.
-  mDeleteModel = nsMsgImapDeleteModels::MoveToTrash;
 
   return rv;
 }
@@ -1367,7 +1350,7 @@ nsresult nsMsgSearchDBView::ListIdsInThread(
       uint32_t msgFlags;
       msgHdr->GetMessageKey(&msgKey);
       msgHdr->GetFlags(&msgFlags);
-      uint8_t level = (threadedView) ? viewThread->ChildLevelAt(i) : 1;
+      uint32_t level = (threadedView) ? viewThread->ChildLevelAt(i) : 1;
       SetMsgHdrAt(msgHdr, viewIndex, msgKey, msgFlags & ~MSG_VIEW_FLAGS, level);
       (*pNumListed)++;
       viewIndex++;

@@ -589,7 +589,18 @@ imAccount.prototype = {
     const passwordURI = "im://" + this.protocol.id;
     let logins;
     try {
-      logins = Services.logins.findLogins(passwordURI, null, passwordURI);
+      let finished = false;
+      logins = Services.logins
+        .searchLoginsAsync({
+          origin: passwordURI,
+          httpRealm: passwordURI,
+        })
+        .then(result => (logins = result))
+        .finally(() => (finished = true));
+      Services.tm.spinEventLoopUntilOrQuit(
+        "imAccount.password",
+        () => finished
+      );
     } catch (e) {
       this._handlePrimaryPasswordException(e);
       return "";
@@ -648,14 +659,17 @@ imAccount.prototype = {
       ""
     );
     try {
-      const logins = Services.logins.findLogins(passwordURI, null, passwordURI);
+      const logins = await Services.logins.searchLoginsAsync({
+        origin: passwordURI,
+        httpRealm: passwordURI,
+      });
       let saved = false;
       for (const login of logins) {
         if (newLogin.matches(login, true)) {
           if (password) {
-            Services.logins.modifyLogin(login, newLogin);
+            await Services.logins.modifyLoginAsync(login, newLogin);
           } else {
-            Services.logins.removeLogin(login);
+            await Services.logins.removeLoginAsync(login);
           }
           saved = true;
           break;
@@ -731,6 +745,11 @@ imAccount.prototype = {
 
   // Delete the account (from the preferences, mozStorage, and call unInit).
   remove() {
+    let finished = false;
+    this._removeInternal().finally(() => (finished = true));
+    Services.tm.spinEventLoopUntilOrQuit("imAccount.remove", () => finished);
+  },
+  async _removeInternal() {
     const login = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(
       Ci.nsILoginInfo
     );
@@ -738,10 +757,13 @@ imAccount.prototype = {
     // Note: the normalizedName may not be exactly right if the
     // protocol plugin is missing.
     login.init(passwordURI, null, passwordURI, this.normalizedName, "", "", "");
-    const logins = Services.logins.findLogins(passwordURI, null, passwordURI);
+    const logins = await Services.logins.searchLoginsAsync({
+      origin: passwordURI,
+      httpRealm: passwordURI,
+    });
     for (const l of logins) {
       if (login.matches(l, true)) {
-        Services.logins.removeLogin(l);
+        await Services.logins.removeLoginAsync(l);
         break;
       }
     }

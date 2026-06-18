@@ -348,7 +348,7 @@ export async function setData(dialogWindow, iframeWindow, data) {
       for (const attachment of attachments) {
         if (attachment.tooltipText.includes(data.attachment.remove)) {
           synthesizeMouseAtCenter(attachment, {}, iframeWindow);
-          synthesizeKey("VK_DELETE", {}, dialogWindow);
+          synthesizeKey("KEY_Delete", {}, dialogWindow);
         }
       }
     }
@@ -405,7 +405,7 @@ export async function saveAndCloseItemDialog(dialogWindow) {
  * @param {Window} dialogWindow
  */
 export function cancelItemDialog(dialogWindow) {
-  synthesizeKey("VK_ESCAPE", {}, dialogWindow);
+  synthesizeKey("KEY_Escape", {}, dialogWindow);
 }
 
 /**
@@ -662,7 +662,7 @@ async function setTimezone(dialogWindow, iframeWindow, timezone) {
  * @param {string} value
  */
 export async function menulistSelect(menulist, value) {
-  const win = menulist.ownerGlobal;
+  const win = menulist.documentGlobal;
   Assert.report(
     false,
     undefined,

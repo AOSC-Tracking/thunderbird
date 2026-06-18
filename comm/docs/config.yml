@@ -9,6 +9,7 @@ doc_trees:
     backend: mailnews/base/docs
     build: docs/build
     calendar: calendar/docs
+    cxx: docs/cxx
     documentation: docs/docs
     frontend: mail/base/docs
     inappnotifications: mail/components/inappnotifications/docs
@@ -18,6 +19,7 @@ doc_trees:
     rust: rust/docs
     storybook: mail/components/storybook/docs
     telemetry: docs/telemetry
+    testing: docs/testing
 
 python_package_dirs: []
 

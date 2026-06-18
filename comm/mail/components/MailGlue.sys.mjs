@@ -569,7 +569,7 @@ MailGlue.prototype = {
         ) {
           Services.scriptloader.loadSubScript(
             "chrome://messenger/content/customElements.js",
-            doc.ownerGlobal
+            doc.documentGlobal
           );
         }
         break;
@@ -950,6 +950,12 @@ MailGlue.prototype = {
             },
           });
           await lazy.checkInstalledExtensions();
+          Services.prefs.addObserver(
+            "extensions.experiments.suppressed",
+            () => {
+              lazy.checkInstalledExtensions();
+            }
+          );
         },
       },
       {
@@ -1373,7 +1379,6 @@ function reportPreferences() {
     "general.smoothScroll",
     "intl.regional_prefs.use_os_locales",
     "layers.acceleration.disabled",
-    "mail.accounthub.enabled",
     "mail.accounthub.addressbook.enabled",
     "mail.biff.play_sound",
     "mail.close_message_window.on_delete",
@@ -1392,6 +1397,8 @@ function reportPreferences() {
     "mailnews.database.global.indexer.enabled",
     "mailnews.mark_message_read.auto",
     "mailnews.mark_message_read.delay",
+    "mailnews.oauth.usePrivateBrowser",
+    "mailnews.oauth.useExternalBrowser",
     "mailnews.scroll_to_new_message",
     "mailnews.start_page.enabled",
     "privacy.clearOnShutdown.cache",
@@ -1606,8 +1613,8 @@ function reportEwsAccounts() {
     return;
   }
 
-  // We typically don't reuse EWS clients when using them in e.g. `EwsFolder` or
-  // `EwsIncomingServer`, but the implementation of the *telemetry* method if
+  // We typically don't reuse EWS clients when using them in e.g. `ExchangeFolder` or
+  // `ExchangeIncomingServer`, but the implementation of the *telemetry* method if
   // `IExchangeClient` is completely stateless, so client reuse is not an issue here.
   const ewsClient = Cc["@mozilla.org/messenger/ews-client;1"].createInstance(
     Ci.IExchangeClient

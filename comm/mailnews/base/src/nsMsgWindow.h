@@ -6,37 +6,22 @@
 #ifndef COMM_MAILNEWS_BASE_SRC_NSMSGWINDOW_H_
 #define COMM_MAILNEWS_BASE_SRC_NSMSGWINDOW_H_
 
-#include "nsIAuthPrompt.h"
 #include "nsIMsgWindow.h"
-#include "nsITransactionManager.h"
-#include "nsIMsgFolder.h"
 #include "nsCOMPtr.h"
-#include "nsIURIContentListener.h"
 #include "nsWeakReference.h"
 #include "nsIWeakReferenceUtils.h"
 #include "nsIInterfaceRequestor.h"
 
-class nsMsgWindow : public nsIMsgWindow,
-                    public nsIURIContentListener,
-                    public nsSupportsWeakReference {
+class nsMsgWindow : public nsIMsgWindow, public nsSupportsWeakReference {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
 
   nsMsgWindow();
   nsresult Init();
   NS_DECL_NSIMSGWINDOW
-  NS_DECL_NSIURICONTENTLISTENER
 
  protected:
   virtual ~nsMsgWindow();
-  nsCOMPtr<nsITransactionManager> mTransactionManager;
-  // These are used by the backend protocol code to attach
-  // notification callbacks to channels, e.g., nsIBadCertListner2.
-  nsCOMPtr<nsIInterfaceRequestor> mNotificationCallbacks;
-
-  // let's not make this a strong ref - we don't own it.
-  nsWeakPtr mRootDocShellWeak;
-  nsWeakPtr mMessageWindowDocShellWeak;
 };
 
 #endif  // COMM_MAILNEWS_BASE_SRC_NSMSGWINDOW_H_

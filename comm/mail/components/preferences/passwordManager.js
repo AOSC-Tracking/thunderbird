@@ -218,9 +218,9 @@ const signonsTreeView = {
 
     return "";
   },
-  setCellText(row, col, value) {
+  async setCellText(row, col, value) {
     const table = GetVisibleLogins();
-    function _editLogin(field) {
+    async function _editLogin(field) {
       if (value == table[row][field]) {
         return;
       }
@@ -228,18 +228,18 @@ const signonsTreeView = {
       table[row][field] = value;
       table[row].timePasswordChanged = Date.now();
       reloadDisplay = false;
-      Services.logins.modifyLogin(existingLogin, table[row]);
+      await Services.logins.modifyLoginAsync(existingLogin, table[row]);
       reloadDisplay = true;
       signonsTree.invalidateRow(row);
     }
 
     if (col.id == "userCol") {
-      _editLogin("username");
+      await _editLogin("username");
     } else if (col.id == "passwordCol") {
       if (!value) {
         return;
       }
-      _editLogin("password");
+      await _editLogin("password");
     }
   },
   getParentIndex() {
@@ -505,7 +505,7 @@ async function AskUserShowPasswords() {
 async function FinalizeSignonDeletions(syncNeeded) {
   reloadDisplay = false;
   for (let s = 0; s < deletedSignons.length; s++) {
-    Services.logins.removeLogin(deletedSignons[s]);
+    await Services.logins.removeLoginAsync(deletedSignons[s]);
   }
   reloadDisplay = true;
   // If the deletion has been performed in a filtered view, reflect the deletion in the unfiltered table.
@@ -733,10 +733,9 @@ function UpdateContextMenu() {
 
 async function masterPasswordLogin(noPasswordCallback) {
   // This doesn't harm if passwords are not encrypted
-  const tokendb = Cc["@mozilla.org/security/pk11tokendb;1"].createInstance(
-    Ci.nsIPK11TokenDB
+  const token = Cc["@mozilla.org/security/internalkeytoken;1"].createInstance(
+    Ci.nsIPKCS11Token
   );
-  const token = tokendb.getInternalKeyToken();
 
   const isOSAuthEnabled = LoginHelper.getOSAuthEnabled();
 

@@ -2,17 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use ms_graph_tb::{OperationBody, paths::me::messages, types::message::Message};
+use std::sync::Arc;
+
+use ms_graph_tb::{
+    OperationBody,
+    paths::me::messages::{self, message_id::r#move},
+};
 use nsstring::nsCString;
 use protocol_shared::{
-    authentication::credentials::AuthenticationProvider,
+    ServerType,
     client::DoOperation,
     safe_xpcom::{
         SafeEwsSimpleOperationListener, SafeListener, SimpleOperationSuccessArgs, UseLegacyFallback,
     },
 };
 use thin_vec::ThinVec;
-use xpcom::RefCounted;
 
 use crate::{client::XpComGraphClient, error::XpComGraphError};
 
@@ -21,8 +25,8 @@ struct DoMoveMessage {
     pub message_ids: Vec<String>,
 }
 
-impl<ServerT: AuthenticationProvider + RefCounted>
-    DoOperation<XpComGraphClient<ServerT>, XpComGraphError> for DoMoveMessage
+impl<ServerT: ServerType> DoOperation<XpComGraphClient<ServerT>, XpComGraphError>
+    for DoMoveMessage
 {
     const NAME: &'static str = "move messages";
     type Okay = ThinVec<String>;
@@ -32,19 +36,32 @@ impl<ServerT: AuthenticationProvider + RefCounted>
         &mut self,
         client: &XpComGraphClient<ServerT>,
     ) -> Result<Self::Okay, XpComGraphError> {
-        let mut new_message_ids = ThinVec::new();
-
         // Note: the C++ consumer code expects the order of new messages IDs to
         // match that of the old ones (so that e.g. `new_message_ids[0]` is the
         // new ID for `self.message_ids[0]`).
-        for message_id in &self.message_ids {
-            let message = client
-                .send_move_message_request(self.destination_folder_id.clone(), message_id.clone())
-                .await?;
+        let requests = self
+            .message_ids
+            .iter()
+            .map(|message_id| {
+                client.move_message_request(self.destination_folder_id.clone(), message_id.clone())
+            })
+            .collect();
 
-            let message_id = message.outlook_item().entity().id()?.to_string();
-            new_message_ids.push(message_id);
-        }
+        let responses = client
+            .send_batch_request_json_response(requests, Default::default())
+            .await?;
+
+        let new_message_ids = responses
+            .iter()
+            .filter_map(|response| {
+                response
+                    .outlook_item()
+                    .entity()
+                    .id()
+                    .ok()
+                    .map(ToString::to_string)
+            })
+            .collect();
 
         Ok(new_message_ids)
     }
@@ -53,29 +70,32 @@ impl<ServerT: AuthenticationProvider + RefCounted>
         self,
         new_message_ids: Self::Okay,
     ) -> <Self::Listener as SafeListener>::OnSuccessArg {
+        // If we have a length mismatch, that means something went wrong, but
+        // perhaps not the entire request, so we need to tell the client to
+        // requery the server to see what happened to the messages.
+        let fallback = if new_message_ids.len() == self.message_ids.len() {
+            UseLegacyFallback::No
+        } else {
+            UseLegacyFallback::Yes
+        };
+
         let new_message_ids = new_message_ids.iter().map(nsCString::from).collect();
 
         SimpleOperationSuccessArgs {
             new_ids: new_message_ids,
-            use_legacy_fallback: UseLegacyFallback::No,
+            use_legacy_fallback: fallback,
         }
     }
 
     fn into_failure_arg(self) -> <Self::Listener as SafeListener>::OnFailureArg {}
 }
 
-impl<ServerT: AuthenticationProvider + RefCounted> XpComGraphClient<ServerT> {
+impl<ServerT: ServerType> XpComGraphClient<ServerT> {
     /// Moves messages via Graph.
     ///
-    /// Because we don't currently support [batching requests] (see [bug
-    /// 2031761]), this performs a [message move] request for each message.
-    ///
-    /// [batching requests]:
-    ///     https://learn.microsoft.com/en-us/graph/json-batching
     /// [message move]: https://learn.microsoft.com/en-us/graph/api/message-move
-    /// [bug 2031761]: https://bugzilla.mozilla.org/show_bug.cgi?id=2031761
     pub(crate) async fn move_messages(
-        self,
+        self: Arc<XpComGraphClient<ServerT>>,
         destination_folder_id: String,
         message_ids: Vec<String>,
         listener: SafeEwsSimpleOperationListener,
@@ -87,29 +107,21 @@ impl<ServerT: AuthenticationProvider + RefCounted> XpComGraphClient<ServerT> {
         operation.handle_operation(&self, &listener).await;
     }
 
-    /// Performs a [message move] request for the given message.
-    ///
-    /// Returns the [`Message`] object corresponding to the updated message
-    /// after its move. This object should also contain an *updated* ID, since
-    /// the API documentation indicates a move is performed by copying then
-    /// deleting the message on the server side (which seems to be the case in
-    /// practice too).
+    /// Creates a [message move] request for the given message.
     ///
     /// [message move]: https://learn.microsoft.com/en-us/graph/api/message-move
-    pub(crate) async fn send_move_message_request<'m>(
+    pub(crate) fn move_message_request<'m>(
         &'m self,
         destination_folder_id: String,
         message_id: String,
-    ) -> Result<Message<'m>, XpComGraphError> {
+    ) -> r#move::Post<'m> {
         let body = messages::message_id::r#move::PostRequestBody::new()
             .set_destination_id(destination_folder_id);
 
-        let request = messages::message_id::r#move::Post::new(
-            self.endpoint.to_string(),
+        messages::message_id::r#move::Post::new(
+            self.base_url().to_string(),
             message_id,
             OperationBody::JSON(body),
-        );
-
-        self.send_request_json_response(request).await
+        )
     }
 }

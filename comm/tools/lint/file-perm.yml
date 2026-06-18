@@ -35,22 +35,25 @@ file-perm:
         - .yaml
         - .yml
     support-files:
-        - 'tools/lint/file-perm/**'
+        - 'tools/lint/mozcheck/**'
     type: external
     payload: commlint:lint_wrapper
-    wraps: file-perm:lint
+    wraps: mozcheck:lint
+    check: file-perm
 
 maybe-shebang-file-perm:
     description: "File permission check for files that might have `#!` header."
     include:
         - .
-    allow-shebang: true
+    check-config:
+        allow-shebang: true
     extensions:
         - .js
         - .py
         - .sh
     support-files:
-        - 'tools/lint/file-perm/**'
+        - 'tools/lint/mozcheck/**'
     type: external
     payload: commlint:lint_wrapper
-    wraps: file-perm:lint
+    wraps: mozcheck:lint
+    check: file-perm

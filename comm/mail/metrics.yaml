@@ -160,6 +160,7 @@ mail:
 
   preferences_boolean:
     type: labeled_boolean
+    lifetime: application
     description: Values of boolean preferences.
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1757993
@@ -187,7 +188,6 @@ mail:
       - layers.acceleration.disabled
       - layout.css.always_underline_links
       - ldap_2.autoComplete.useDirectory
-      - mail.accounthub.enabled
       - mail.accounthub.addressbook.enabled
       - mail.biff.alert.show_preview
       - mail.biff.alert.show_sender
@@ -215,6 +215,8 @@ mail:
       - mail.enable_autocomplete
       - mail.fixed_width_messages
       - mail.forward_add_extension
+      - mail.inappnotifications.isFlatpak
+      - mail.inappnotifications.isSnap
       - mail.inappnotifications.pkceUpgradeForYahooAol
       - mail.mdn.report.enabled
       - mail.minimizeToTray
@@ -239,6 +241,8 @@ mail:
       - mailnews.mark_message_read.auto
       - mailnews.mark_message_read.delay
       - mailnews.message_display.disable_remote_image
+      - mailnews.oauth.usePrivateBrowser
+      - mailnews.oauth.useExternalBrowser
       - mailnews.scroll_to_new_message
       - mailnews.sendformat.auto_downgrade
       - mailnews.start_page.enabled
@@ -263,6 +267,7 @@ mail:
 
   preferences_integer:
     type: labeled_string
+    lifetime: application
     description: Values of integer preferences.
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1800775
@@ -549,6 +554,11 @@ mail:
         type: string
       result:
         description: If the authentication succeeded or was cancelled.
+        type: string
+      where:
+        description: >
+          Where the authentication was shown. Possible values are "internal",
+          for a window inside Thunderbird, or "external" for a browser.
         type: string
 
   import:
