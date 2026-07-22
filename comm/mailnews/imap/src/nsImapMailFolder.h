@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -76,7 +75,7 @@ class nsImapMailCopyState : public nsISupports {
   nsCString m_newMsgKeywords;  // ditto
   // If the server supports UIDPLUS, this is the UID for the append,
   // if we're doing an append.
-  nsMsgKey m_appendUID;
+  ImapUid m_appendUID;
 
  private:
   virtual ~nsImapMailCopyState();

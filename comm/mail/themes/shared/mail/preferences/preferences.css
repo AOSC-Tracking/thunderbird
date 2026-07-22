@@ -372,7 +372,7 @@ html|input[type="number"] {
 
   &::-moz-number-spin-up:hover,
   &::-moz-number-spin-down:hover {
-    background-color: var(--button-background-color-hover);
+    background-color: var(--button-hover-background-color);
     color: var(--button-text-color-hover);
   }
 }
@@ -513,7 +513,7 @@ treechildren::-moz-tree-cell-text(selected) {
 
 .updateSettingCrossUserWarningContainer {
   background: var(--background-color-box-info);
-  border: 1px solid var(--in-content-box-info-border);
+  border: 1px solid var(--border-color-box-info);
   border-radius: 5px;
   padding: 2px 8px 8px;
   margin-block-end: 17px;
@@ -622,24 +622,19 @@ treechildren::-moz-tree-cell-text(selected) {
  * toolkit element overrides
  */
 
-#preferencesContainer richlistbox {
+richlistbox:not(#categories) {
   appearance: none;
   background-color: var(--background-color-box);
   color: var(--color-text-base);
 
   & richlistitem {
     padding: 0.3em;
+    padding-inline-start: 12px;
     margin: 0;
     border: none;
     border-radius: 0;
     background-image: none;
-  }
-}
 
-#containerBox richlistbox,
-#identitiesList richlistbox,
-#preferencesContainer richlistbox {
-  & richlistitem {
     &:hover {
       color: var(--text-color-list-item-hover);
       background-color: var(--background-color-list-item-hover);
@@ -677,10 +672,6 @@ treechildren::-moz-tree-cell-text(selected) {
 #primaryMessengerLocale {
   margin-inline: 0 4px;
   min-inline-size: 20em;
-}
-
-#selectedLocales > richlistitem {
-  padding-inline-start: 13px;
 }
 
 #availableLocales {
@@ -1169,19 +1160,7 @@ calendar-notifications-setting {
 
 .align-baseline {
   align-items: baseline;
-}
-
-.label-experiment {
-  font-size: 0.85rem;
-  font-weight: 700;
-  line-height: 1;
-  text-transform: uppercase;
-  display: inline-block;
-  padding: 3px;
-  background-color: var(--color-warning-default);
-  color: var(--color-yellow-90);
-  border-radius: 3px;
-  margin-inline-start: 12px;
+  gap: calc(4 * var(--space-step));
 }
 
 /* QR Export for Mobile */
@@ -1675,7 +1654,7 @@ qr-code-wizard {
   min-inline-size: 20px;
   max-block-size: 20px;
   max-inline-size: 20px;
-  list-style-image: url("chrome://global/skin/icons/arrow-down-12.svg");
+  list-style-image: var(--icon-nav-down-sm);
   background-color: transparent;
   padding: 3px;
 }
@@ -1685,7 +1664,7 @@ qr-code-wizard {
 }
 
 .arrowhead.up {
-  list-style-image: url("chrome://global/skin/icons/arrow-up-12.svg");
+  list-style-image: var(--icon-nav-up-sm);
 }
 
 .doh-label {

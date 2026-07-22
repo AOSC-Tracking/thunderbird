@@ -51,6 +51,7 @@ ChromeUtils.defineESModuleGetters(
 );
 
 ChromeUtils.defineESModuleGetters(this, {
+  AccountColorUtils: "moz-src:///comm/mail/modules/AccountColorUtils.sys.mjs",
   CalMetronome: "resource:///modules/CalMetronome.sys.mjs",
   FolderPaneUtils: "resource:///modules/FolderPaneUtils.sys.mjs",
   FolderTreeProperties: "resource:///modules/FolderTreeProperties.sys.mjs",
@@ -165,6 +166,7 @@ window.addEventListener("DOMContentLoaded", async event => {
 
   UIDensity.registerWindow(window);
   UIFontSize.registerWindow(window);
+  AccountColorUtils.registerWindow(window);
 
   messagePane = document.getElementById("messagePane");
   messagePane.addEventListener("request-count-update", threadPaneHeader);
@@ -1134,6 +1136,7 @@ var folderPane = {
               ? "server"
               : "both"
           );
+          folderRow.setAccountIndicatorColor();
           folderPane._insertInServerOrder(folderType.list, folderRow);
           return;
         }
@@ -2395,9 +2398,11 @@ var folderPane = {
         serverKeys.indexOf(a.dataset.serverKey) -
         serverKeys.indexOf(b.dataset.serverKey)
     );
-    list.replaceChildren(...serverRows);
-    if (selected) {
-      setTimeout(() => selected.classList.add("selected"));
+    if (serverRows.some((row, index) => list.children[index] != row)) {
+      list.replaceChildren(...serverRows);
+      if (selected) {
+        setTimeout(() => selected.classList.add("selected"));
+      }
     }
   },
 
@@ -2692,6 +2697,7 @@ var folderPane = {
       }
     }
   },
+
   /**
    * Perform a function on all rows representing a server.
    *
@@ -5187,13 +5193,20 @@ var threadPane = {
    */
   updateClassList() {
     if (!gFolder) {
-      threadTree.classList.remove("is-outgoing");
+      threadTree.classList.remove("is-outgoing", "is-unified");
       return;
     }
 
     threadTree.classList.toggle(
       "is-outgoing",
       ThreadPaneColumns.isOutgoing(gFolder)
+    );
+
+    threadTree.classList.toggle(
+      "is-unified",
+      gViewWrapper?.isSynthetic ||
+        FolderUtils.isSmartVirtualFolder(gFolder) ||
+        FolderUtils.isSmartTagsFolder(gFolder)
     );
   },
 

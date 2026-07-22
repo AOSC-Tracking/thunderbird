@@ -1,4 +1,3 @@
-/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -150,6 +149,7 @@ struct MimeObject {
                        */
 
   MimeObject* parent; /* Backpointer to a MimeContainer object. */
+  int32_t partDepth;  /* Nesting depth from the root MIME object. */
 
   MimeDisplayOptions* options; /* Display preferences set by caller. */
 

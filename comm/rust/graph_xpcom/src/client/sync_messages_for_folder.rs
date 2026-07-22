@@ -5,7 +5,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use ms_graph_tb::{
-    Error, Select, define_svlep,
+    Select, define_svlep,
     extended_properties::{SingleValueExtendedPropertiesOp, SingleValueExtendedPropertiesType},
     pagination::{DeltaItem, DeltaResponse},
     paths::me::mail_folders::mail_folder_id::messages,
@@ -19,7 +19,8 @@ use protocol_shared::{
     ServerType,
     client::DoOperation,
     headerblock_xpcom::{HeaderBlock, rfc5322_header},
-    safe_xpcom::SafeEwsMessageSyncListener,
+    headers::Mailbox,
+    safe_xpcom::SafeExchangeMessageSyncListener,
 };
 use time::{
     OffsetDateTime,
@@ -32,7 +33,7 @@ use crate::{client::XpComGraphClient, error::XpComGraphError};
 define_svlep!(PID_TAG_MESSAGE_SIZE, Integer, 0x0E08);
 
 struct DoSyncMessagesForFolder<'a> {
-    pub listener: &'a SafeEwsMessageSyncListener,
+    pub listener: &'a SafeExchangeMessageSyncListener,
     pub folder_id: String,
     pub sync_state_token: Option<String>,
 }
@@ -42,7 +43,7 @@ impl<ServerT: ServerType> DoOperation<XpComGraphClient<ServerT>, XpComGraphError
 {
     const NAME: &'static str = "sync folder hierarchy";
     type Okay = ();
-    type Listener = SafeEwsMessageSyncListener;
+    type Listener = SafeExchangeMessageSyncListener;
 
     async fn do_operation(
         &mut self,
@@ -75,7 +76,7 @@ impl<ServerT: ServerType> DoOperation<XpComGraphClient<ServerT>, XpComGraphError
                     MessageSelection::ToRecipients,
                 ];
 
-                let base_url = client.base_url().to_string();
+                let base_url = client.base_api_url()?.to_string();
                 let folder_id = self.folder_id.clone();
                 let mut request = messages::delta::Get::new(base_url, folder_id);
                 request.select(select_properties);
@@ -175,7 +176,7 @@ impl<ServerT: ServerType> DoOperation<XpComGraphClient<ServerT>, XpComGraphError
 impl<ServerT: ServerType> XpComGraphClient<ServerT> {
     pub async fn sync_messages_for_folder(
         self: Arc<XpComGraphClient<ServerT>>,
-        listener: SafeEwsMessageSyncListener,
+        listener: SafeExchangeMessageSyncListener,
         folder_id: String,
         sync_state_token: Option<String>,
     ) {
@@ -207,14 +208,14 @@ fn headers_for_message(message: &Message) -> Option<RefPtr<IHeaderBlock>> {
 
     // From
     if let Ok(from_recipient) = message.from()
-        && let Some(value) = recipient_to_rfc5322(&from_recipient)
+        && let Some(value) = recipient_to_string(&from_recipient)
     {
         header_fields.insert(rfc5322_header::FROM.to_string(), value);
     }
 
     // Sender
     if let Ok(sender) = message.sender()
-        && let Some(value) = recipient_to_rfc5322(&sender)
+        && let Some(value) = recipient_to_string(&sender)
     {
         header_fields.insert(rfc5322_header::SENDER.to_string(), value);
     }
@@ -250,10 +251,7 @@ fn headers_for_message(message: &Message) -> Option<RefPtr<IHeaderBlock>> {
 
     // Priority
     if let Ok(importance) = message.importance() {
-        header_fields.insert(
-            rfc5322_header::PRIORITY.to_string(),
-            importance.string().unwrap_or("normal").to_string(),
-        );
+        header_fields.insert(rfc5322_header::PRIORITY.to_string(), importance.to_string());
     }
 
     if let Ok(internet_message_headers) = message.internet_message_headers() {
@@ -280,27 +278,25 @@ fn overlay_internet_message_headers(
 fn flatten_recipients(recipients: &Vec<Recipient<'_>>) -> String {
     recipients
         .iter()
-        .filter_map(|recipient| recipient_to_rfc5322(recipient))
+        .filter_map(|recipient| recipient_to_string(recipient))
         .collect::<Vec<String>>()
         .join(", ")
-}
-
-fn recipient_to_rfc5322(from_recipient: &Recipient<'_>) -> Option<String> {
-    from_recipient
-        .email_address()
-        .and_then(|email_address| {
-            if let Ok(Some(name)) = email_address.name()
-                && let Ok(Some(address)) = email_address.address()
-            {
-                Ok(format!("{name} <{address}>"))
-            } else {
-                Err(Error::UnexpectedResponse(String::new()))
-            }
-        })
-        .ok()
 }
 
 fn iso8601_date_time_to_rfc2822(iso8601_date_time: &str) -> Option<String> {
     let parsed = OffsetDateTime::parse(iso8601_date_time, &Iso8601::DEFAULT).ok()?;
     parsed.format(&Rfc2822).ok()
+}
+
+fn recipient_to_string<'a>(recipient: &'a Recipient<'a>) -> Option<String> {
+    let email_address_info = recipient.email_address().ok()?;
+    let name = email_address_info.name().ok()?;
+    let email_address = email_address_info.address().ok()?;
+
+    let mailbox = Mailbox {
+        name,
+        email_address,
+    };
+
+    Some(mailbox.to_string())
 }

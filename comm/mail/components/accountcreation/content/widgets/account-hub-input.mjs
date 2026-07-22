@@ -46,30 +46,26 @@ class AccountHubInput extends HTMLElement {
   #error;
 
   /**
-   * Returns the value of the input element.
+   * The value of the input element.
    *
-   * @returns {string}
+   * @type {string}
    */
   get value() {
     return this.#input.value;
   }
 
-  /**
-   * Returns the number value of the input element.
-   *
-   * @returns {number}
-   */
-  get valueAsNumber() {
-    return this.#input.valueAsNumber;
+  set value(newValue) {
+    this.#input.value = newValue;
   }
 
   /**
-   * Sets the value of the input element.
+   * The number value of the input element.
    *
-   * @param {string} newValue - Attribute value to be applied to the input.
+   * @type {number}
+   * @readonly
    */
-  set value(newValue) {
-    this.#input.value = newValue;
+  get valueAsNumber() {
+    return this.#input.valueAsNumber;
   }
 
   connectedCallback() {
@@ -90,6 +86,7 @@ class AccountHubInput extends HTMLElement {
     this.#input.id = `${this.id}Input`;
     this.#input.type = this.getAttribute("type");
     this.#input.className = this.getAttribute("classes");
+    this.#input.ariaLabelledByElements = [this.#label];
 
     this.#label.htmlFor = this.#input.id;
     this.#error.id = `${this.#input.id}ErrorMessage`;
@@ -121,9 +118,7 @@ class AccountHubInput extends HTMLElement {
 
     switch (attribute) {
       case "l10n-label-id": {
-        const labelText = await document.l10n.formatValue(newValue);
         document.l10n.setAttributes(this.#label, newValue);
-        this.#input.ariaLabel = labelText;
         break;
       }
       case "l10n-error-id": {

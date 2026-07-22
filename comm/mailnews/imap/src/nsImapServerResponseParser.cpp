@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1319,15 +1318,15 @@ void nsImapServerResponseParser::parse_address(nsAutoCString& addressLine) {
       char* mailboxName = CreateNilString();
       if (ContinueParse()) {
         AdvanceToNextToken();
-        char* hostName = CreateNilString();
+        char* hostname = CreateNilString();
         AdvanceToNextToken();
         if (mailboxName) {
           addressLine += mailboxName;
         }
-        if (hostName) {
+        if (hostname) {
           addressLine += '@';
-          addressLine += hostName;
-          PR_Free(hostName);
+          addressLine += hostname;
+          PR_Free(hostname);
         }
         if (personalName) {
           addressLine += " (";

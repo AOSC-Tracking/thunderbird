@@ -24,7 +24,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   AccountCreationUtils:
     "resource:///modules/accountcreation/AccountCreationUtils.sys.mjs",
-  Sanitizer: "resource:///modules/accountcreation/Sanitizer.sys.mjs",
+  InputSanitizer: "resource:///modules/accountcreation/InputSanitizer.sys.mjs",
 });
 
 export function AccountConfig() {
@@ -239,13 +239,13 @@ AccountConfig.prototype = {
   },
 
   validateSocketType() {
-    this.incoming.socketType = lazy.Sanitizer.enum(
+    this.incoming.socketType = lazy.InputSanitizer.enum(
       this.incoming.socketType,
       [0, 1, 2, 3],
       0
     );
 
-    this.outgoing.socketType = lazy.Sanitizer.enum(
+    this.outgoing.socketType = lazy.InputSanitizer.enum(
       this.outgoing.socketType,
       [0, 1, 2, 3],
       0
@@ -390,6 +390,48 @@ AccountConfig.prototype = {
   },
 
   /**
+   * True if all servers use GSSAPI as authentication method and no password
+   * entry is required.
+   *
+   * @returns {boolean}
+   */
+  isGssapiOnly() {
+    return (
+      this.incoming.auth === Ci.nsMsgAuthMethod.GSSAPI &&
+      (this.configureOutgoingFromIncoming() ||
+        this.outgoing.auth === Ci.nsMsgAuthMethod.GSSAPI)
+    );
+  },
+
+  /**
+   * True if the incoming and outgoing server authentication methods do not
+   * require password entry.
+   *
+   * @returns {boolean}
+   */
+  usesPasswordlessAuthentication() {
+    return (
+      this.authDoesNotRequirePassword(this.incoming.auth) &&
+      (this.configureOutgoingFromIncoming() ||
+        this.authDoesNotRequirePassword(this.outgoing.auth))
+    );
+  },
+
+  /**
+   * True if a server authentication method does not require password entry.
+   *
+   * @param {Ci.nsMsgAuthMethod} authMethod - Authentication method.
+   * @returns {boolean}
+   */
+  authDoesNotRequirePassword(authMethod) {
+    return [
+      Ci.nsMsgAuthMethod.none,
+      Ci.nsMsgAuthMethod.GSSAPI,
+      Ci.nsMsgAuthMethod.OAuth2,
+    ].includes(authMethod);
+  },
+
+  /**
    * True if either the incoming or outgoing config is configured with a
    * password.
    *
@@ -487,16 +529,16 @@ AccountConfig.replaceVariables = function (
   emailfull,
   password
 ) {
-  lazy.Sanitizer.nonemptystring(emailfull);
+  lazy.InputSanitizer.nonemptystring(emailfull);
   const emailsplit = emailfull.split("@");
   lazy.AccountCreationUtils.assert(
     emailsplit.length == 2,
     "email address not in expected format: must contain exactly one @"
   );
-  const emaillocal = lazy.Sanitizer.nonemptystring(emailsplit[0]);
-  const emaildomain = lazy.Sanitizer.hostname(emailsplit[1]);
-  lazy.Sanitizer.label(realname);
-  lazy.Sanitizer.nonemptystring(realname);
+  const emaillocal = lazy.InputSanitizer.nonemptystring(emailsplit[0]);
+  const emaildomain = lazy.InputSanitizer.hostname(emailsplit[1]);
+  lazy.InputSanitizer.label(realname);
+  lazy.InputSanitizer.nonemptystring(realname);
 
   const otherVariables = {};
   otherVariables.EMAILADDRESS = emailfull;

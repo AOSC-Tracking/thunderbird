@@ -20,6 +20,9 @@ tags = [
 support-files = ["images/**"]
 tags = ["addrbook"]
 
+["test_ext_addressBook_bug_2038134.js"]
+tags = ["addrbook"]
+
 ["test_ext_addressBook_provider.js"]
 tags = ["addrbook"]
 
@@ -50,6 +53,8 @@ prefs = ["dom.security.https_first=false"]
 ["test_ext_identities_mv3_event_pages.js"]
 
 ["test_ext_messages_listInlineTextParts.js"]
+
+["test_ext_messages_send.js"]
 
 ["test_ext_messenger_settings.js"]
 

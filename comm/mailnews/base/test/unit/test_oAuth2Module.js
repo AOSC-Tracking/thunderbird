@@ -839,17 +839,83 @@ add_task(async function testOverrideIssuer() {
   );
 });
 
-add_task(async function testExternalRequest() {
+/**
+ * Tests that issuer verification behaves as expected, in both the configured
+ * and unconfigured cases.
+ */
+add_task(async function testIssuerIdentification() {
+  const mod1 = new OAuth2Module();
+  mod1.initFromHostname("gmail.com", "user@gmail.com", "imap");
+  Assert.ok(
+    mod1._oauth.checkResultURL(
+      new URL("http://localhost/?code=foo&iss=https://accounts.google.com")
+    ),
+    "Should accept exact issuer identification match."
+  );
+  Assert.ok(
+    mod1._oauth.checkResultURL(
+      new URL(
+        "http://localhost/?code=foo&iss=https%3A%2F%2Faccounts.google.com"
+      )
+    ),
+    "Should accept url-encoded issuer identification match."
+  );
+  Assert.ok(
+    !mod1._oauth.checkResultURL(
+      // has an unacceptable trailing /
+      new URL("http://localhost/?code=foo&iss=https://accounts.google.com/")
+    ),
+    "Should reject any mismatch when issuer identification is configured."
+  );
+  Assert.ok(
+    !mod1._oauth.checkResultURL(new URL("http://localhost/?code=auth_code")),
+    "Should reject missing 'iss' when issuer identification is configured."
+  );
+
+  const mod2 = new OAuth2Module();
+  mod2.initFromHostname("test.test", "user@test.test", "imap");
+  Assert.ok(
+    mod2._oauth.checkResultURL(
+      new URL("http://localhost/?code=foo&iss=https://oauth.test.test/issuer")
+    ),
+    "Should accept matching domains when issuer identification is unconfigured."
+  );
+  Assert.ok(
+    !mod2._oauth.checkResultURL(
+      new URL("http://localhost/?code=foo&iss=http://oauth.test.test/issuer")
+    ),
+    "Should always reject mismatched issuer protocol."
+  );
+  Assert.ok(
+    !mod2._oauth.checkResultURL(
+      new URL("http://localhost/?code=foo&iss=https://bad.test.test/issuer")
+    ),
+    "Should always reject issuers on a different domain than expected."
+  );
+
+  OAuth2TestUtils.forgetObjects();
+});
+
+async function subtestExternalRequest(useCustomScheme) {
   Services.fog.testResetFOG();
   Services.prefs.setBoolPref("mailnews.oauth.useExternalBrowser", true);
+  Services.prefs.setBoolPref(
+    "mailnews.oauth.useSchemeRedirect",
+    useCustomScheme
+  );
   await OAuth2TestUtils.startServer();
 
+  const hostname = useCustomScheme ? "net.thunderbird.test" : "external.test";
   try {
     const mod = new OAuth2Module();
     Assert.ok(
-      mod.initFromHostname("external.test", "romeo@foo.invalid", "imap"),
-      "external.test should initialize for OAuth"
+      mod.initFromHostname(hostname, "romeo@foo.invalid", "imap"),
+      `${hostname} should initialize for OAuth`
     );
+    if (useCustomScheme) {
+      // monkey patching this is the simplest way to avoid querying the OS
+      mod._oauth.canUseSchemeRedirect = () => true;
+    }
 
     const externalOAuthURL = OAuth2TestUtils.promiseExternalOAuthURL();
     const deferred = Promise.withResolvers();
@@ -884,7 +950,7 @@ add_task(async function testExternalRequest() {
     Assert.equal(logins.length, 1, "a login should have been added");
     Assert.equal(
       logins[0].hostname,
-      "oauth://external.test",
+      `oauth://${hostname}`,
       "login origin should use the external test issuer"
     );
     Assert.equal(
@@ -907,15 +973,26 @@ add_task(async function testExternalRequest() {
     OAuth2TestUtils.forgetObjects();
     OAuth2TestUtils.stopServer();
     Services.prefs.clearUserPref("mailnews.oauth.useExternalBrowser");
+    Services.prefs.clearUserPref("mailnews.oauth.useSchemeRedirect");
   }
   OAuth2TestUtils.checkTelemetry([
     {
-      issuer: "external.test",
+      issuer: hostname,
       reason: "no refresh token",
       result: "succeeded",
-      where: "external",
+      where: useCustomScheme
+        ? "external-net-thunderbird"
+        : "external-localhost",
     },
   ]);
+}
+
+add_task(async function testExternalRequest() {
+  await subtestExternalRequest(false);
+});
+
+add_task(async function testNetThunderbirdRequest() {
+  await subtestExternalRequest(true);
 });
 
 /**
@@ -1040,7 +1117,7 @@ add_task(async function testExternalRequestRejectsMismatchedState() {
       "access token should not be set"
     );
     Assert.equal(
-      await Services.logins.countLogins(
+      await Services.logins.countLoginsAsync(
         "oauth://external.test",
         "",
         "test_mail"
@@ -1059,7 +1136,7 @@ add_task(async function testExternalRequestRejectsMismatchedState() {
       issuer: "external.test",
       reason: "no refresh token",
       result: "state mismatch",
-      where: "external",
+      where: "external-localhost",
     },
   ]);
 });
@@ -1123,7 +1200,7 @@ add_task(async function testExternalRequestToInvalidEndpoint() {
       issuer: "external.test",
       reason: "no refresh token",
       result: "authorization failed",
-      where: "external",
+      where: "external-localhost",
     },
   ]);
 });
@@ -1233,7 +1310,7 @@ add_task(async function testGetUsernameFromAccessToken() {
       issuer: "external.test",
       reason: "no refresh token",
       result: "succeeded",
-      where: "external",
+      where: "external-localhost",
     },
   ]);
 });

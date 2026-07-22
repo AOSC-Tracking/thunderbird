@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -57,10 +56,10 @@ class nsImapNamespaceList {
   nsImapNamespace* GetDefaultNamespaceOfType(EIMAPNamespaceType type);
   int AddNewNamespace(nsImapNamespace* ns);
   nsImapNamespace* GetNamespaceForMailbox(const char* boxname);
-  static nsImapNamespace* GetNamespaceForFolder(const char* hostName,
+  static nsImapNamespace* GetNamespaceForFolder(const char* hostname,
                                                 const char* canonicalFolderName,
                                                 char delimiter);
-  static bool GetFolderIsNamespace(const char* hostName,
+  static bool GetFolderIsNamespace(const char* hostname,
                                    const char* canonicalFolderName,
                                    char delimiter,
                                    nsImapNamespace* namespaceForFolder);
@@ -69,7 +68,7 @@ class nsImapNamespaceList {
   static void SuggestHierarchySeparatorForNamespace(
       nsImapNamespace* namespaceForFolder, char delimiterFromFolder);
   static nsCString GenerateFullFolderNameWithDefaultNamespace(
-      const char* hostName, const char* canonicalFolderName, const char* owner,
+      const char* hostname, const char* canonicalFolderName, const char* owner,
       EIMAPNamespaceType nsType, nsImapNamespace** nsUsed);
 
  protected:

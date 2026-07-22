@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -237,7 +236,18 @@ nsMsgNewsFolder::UpdateFolder(nsIMsgWindow* aWindow) {
       // and send a folder loaded notification to the front end.
       rv = GetNewMessages(aWindow, nullptr);
     }
-    if (rv != NS_MSG_ERROR_OFFLINE) return rv;
+    if (rv != NS_MSG_ERROR_OFFLINE) {
+      // For the server root folder there are no running URLs that will fire
+      // kFolderLoaded, so notify immediately.
+      // For newsgroup folders, nsMsgDBFolder::OnStopRunningUrl fires
+      // kFolderLoaded when the async download completes.
+      bool isNewsServer = false;
+      GetIsServer(&isNewsServer);
+      if (isNewsServer) {
+        NotifyFolderEvent(kFolderLoaded);
+      }
+      return rv;
+    }
   }
   // We're not getting messages because either get_messages_on_select is
   // false or we're offline. Send an immediate folder loaded notification.
@@ -689,18 +699,6 @@ nsresult nsMsgNewsFolder::GetNewsMessages(nsIMsgWindow* aMsgWindow,
                                           nsIUrlListener* aUrlListener) {
   nsresult rv = NS_OK;
 
-  bool isNewsServer = false;
-  rv = GetIsServer(&isNewsServer);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (isNewsServer) {
-    nsCOMPtr<nsIMsgIncomingServer> server;
-    rv = GetServer(getter_AddRefs(server));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    return server->PerformExpand(aMsgWindow);
-  }
-
   nsCOMPtr<nsINntpService> nntpService =
       do_GetService("@mozilla.org/messenger/nntpservice;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -709,12 +707,27 @@ nsresult nsMsgNewsFolder::GetNewsMessages(nsIMsgWindow* aMsgWindow,
   rv = GetNntpServer(getter_AddRefs(nntpServer));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIURI> resultUri;
-  rv = nntpService->GetNewNews(nntpServer, mURI, aGetOld, this, aMsgWindow,
-                               getter_AddRefs(resultUri));
-  if (aUrlListener && NS_SUCCEEDED(rv) && resultUri) {
-    nsCOMPtr<nsIMsgMailNewsUrl> msgUrl(do_QueryInterface(resultUri));
-    if (msgUrl) msgUrl->RegisterListener(aUrlListener);
+  bool isNewsServer = false;
+  rv = GetIsServer(&isNewsServer);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!isNewsServer) {
+    nsCOMPtr<nsIURI> resultUri;
+    rv = nntpService->GetNewNews(nntpServer, mURI, aGetOld, this, aMsgWindow,
+                                 getter_AddRefs(resultUri));
+    if (aUrlListener && NS_SUCCEEDED(rv) && resultUri) {
+      nsCOMPtr<nsIMsgMailNewsUrl> msgUrl(do_QueryInterface(resultUri));
+      if (msgUrl) msgUrl->RegisterListener(aUrlListener);
+    }
+  } else {
+    for (auto folder : mSubFolders) {
+      nsCString uri;
+      rv = folder->GetURI(uri);
+      NS_ENSURE_SUCCESS(rv, rv);
+      nsCOMPtr<nsIURI> resultUri;
+      nntpService->GetNewNews(nntpServer, uri, aGetOld, aUrlListener,
+                              aMsgWindow, getter_AddRefs(resultUri));
+    }
   }
   return rv;
 }
@@ -853,10 +866,10 @@ NS_IMETHODIMP nsMsgNewsFolder::GetUrlForSignon(nsAString& result) {
   if (singleSignon) {
     // Do not include username in the url when interacting with LoginManager.
     nsCString serverURI = "news://"_ns;
-    nsCString hostName;
-    rv = server->GetHostName(hostName);
+    nsCString hostname;
+    rv = server->GetHostname(hostname);
     NS_ENSURE_SUCCESS(rv, rv);
-    serverURI.Append(hostName);
+    serverURI.Append(hostname);
     rv = NS_MutateURI(NS_STANDARDURLMUTATOR_CONTRACTID)
              .SetSpec(serverURI)
              .Finalize(url);

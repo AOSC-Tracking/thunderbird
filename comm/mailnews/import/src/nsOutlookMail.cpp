@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -410,7 +409,7 @@ NS_IMETHODIMP ImportMailboxRunnable::Run() {
       if (NS_SUCCEEDED(rv)) {  // No errors & really imported
         (*mMsgCount)++;
         nsCOMPtr<nsIMsgDBHdr> msgHdr;
-        rv = db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(msgHdr));
+        rv = db->CreateNewHdr(getter_AddRefs(msgHdr));
         if (NS_FAILED(rv)) {
           IMPORT_LOG1("*** Error creating DB header for mailbox: %S\n",
                       (const wchar_t*)mName);

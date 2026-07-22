@@ -11,7 +11,7 @@ use ms_graph_tb::{
 use protocol_shared::{
     ServerType,
     client::DoOperation,
-    safe_xpcom::{SafeEwsSimpleOperationListener, SafeListener, UseLegacyFallback},
+    safe_xpcom::{SafeExchangeSimpleOperationListener, SafeListener, UseLegacyFallback},
 };
 
 use crate::error::XpComGraphError;
@@ -28,15 +28,16 @@ impl<ServerT: ServerType> DoOperation<XpComGraphClient<ServerT>, XpComGraphError
 {
     const NAME: &'static str = "create folder";
     type Okay = String;
-    type Listener = SafeEwsSimpleOperationListener;
+    type Listener = SafeExchangeSimpleOperationListener;
 
     async fn do_operation(
         &mut self,
         client: &XpComGraphClient<ServerT>,
     ) -> Result<Self::Okay, XpComGraphError> {
         let folder_config = MailFolder::new().set_display_name(Some(self.name.clone()));
+        let base_api_url = client.base_api_url()?;
         let request = child_folders::Post::new(
-            client.base_url().to_string(),
+            base_api_url.to_string(),
             self.parent_id.clone(),
             OperationBody::JSON(folder_config),
         );
@@ -61,7 +62,7 @@ impl<ServerT: ServerType> DoOperation<XpComGraphClient<ServerT>, XpComGraphError
 impl<ServerT: ServerType> XpComGraphClient<ServerT> {
     pub(crate) async fn create_folder(
         self: Arc<XpComGraphClient<ServerT>>,
-        listener: SafeEwsSimpleOperationListener,
+        listener: SafeExchangeSimpleOperationListener,
         parent_id: String,
         name: String,
     ) {

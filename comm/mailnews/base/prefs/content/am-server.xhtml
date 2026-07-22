@@ -92,17 +92,17 @@
           <xul:label
             value="&serverName.label;"
             accesskey="&serverName.accesskey;"
-            control="server.hostName"
+            control="server.hostname"
           />
         </div>
         <div class="input-container" style="grid-row: 2">
           <xul:label
             id="fixedServerName"
             collapsed="collapsed"
-            use="server.hostName"
+            use="server.hostname"
           />
           <html:input
-            id="server.hostName"
+            id="server.hostname"
             type="text"
             wsm_persist="true"
             size="20"
@@ -357,7 +357,7 @@
             />
 
             <!-- hidden elements for data transfer to and from advanced... dialog -->
-            <hbox flex="1" hidefor="imap,nntp" hidden="hidden">
+            <hbox flex="1" hidefor="imap,nntp,ews" hidden="hidden">
               <checkbox
                 hidden="hidden"
                 wsm_persist="true"
@@ -709,7 +709,7 @@
               wsm_persist="true"
               id="server.popAdvancedButton"
               prefstring="mail.server.%serverkey%.advanced.disable"
-              hidefor="imap,nntp"
+              hidefor="imap,nntp,ews"
             />
           </hbox>
           <hbox align="center">

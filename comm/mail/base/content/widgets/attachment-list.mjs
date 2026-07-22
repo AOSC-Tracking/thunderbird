@@ -5,6 +5,10 @@
 /* global MozElements */
 /* global goDoCommand */
 
+var { makeMozIconSrcSet } = ChromeUtils.importESModule(
+  "resource:///modules/MozIconUtils.mjs"
+);
+
 /**
  * The MozAttachmentlist widget lists attachments for a mail. This is typically used to show
  * attachments while writing a new mail as well as when reading mails.
@@ -20,24 +24,11 @@ class MozAttachmentlist extends MozElements.RichListBox {
     );
 
     this.addEventListener("keypress", event => {
-      switch (event.key) {
-        case " ":
-          // Allow plain spacebar to select the focused item.
-          if (!event.shiftKey && !event.ctrlKey) {
-            this.addItemToSelection(this.currentItem);
-          }
-          // Prevent inbuilt scrolling.
-          event.preventDefault();
-          break;
-
-        case "Enter":
-          if (this.currentItem && !event.ctrlKey && !event.shiftKey) {
-            this.addItemToSelection(this.currentItem);
-            this.currentItem.dispatchEvent(
-              new CustomEvent("command", { bubbles: true, cancelable: true })
-            );
-          }
-          break;
+      if (event.key == " " && !event.shiftKey && !event.ctrlKey) {
+        // Allow plain spacebar to select the focused item.
+        this.addItemToSelection(this.currentItem);
+        // Prevent inbuilt scrolling.
+        event.preventDefault();
       }
     });
 
@@ -72,7 +63,13 @@ class MozAttachmentlist extends MozElements.RichListBox {
       );
 
     this.addEventListener("keydown", event => {
-      if (event.key == "Enter") {
+      if (
+        event.key == "Enter" &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.shiftKey
+      ) {
         goDoCommand("cmd_openAttachment");
       }
     });
@@ -282,7 +279,7 @@ class MozAttachmentlist extends MozElements.RichListBox {
           iconName = url.fileName;
         }
       }
-      src = `moz-icon://${iconName}?size=16&contentType=${type}&scale=1 1x, moz-icon://${iconName}?size=16&contentType=${type}&scale=2 2x, moz-icon://${iconName}?size=16&contentType=${type}&scale=3 3x`;
+      src = makeMozIconSrcSet(iconName, 16, { contentType: type });
       srcset = true;
     }
 
@@ -383,7 +380,7 @@ class MozAttachmentlist extends MozElements.RichListBox {
   }
 
   /**
-   * Find the attachmentitem node for the specified nsIMsgAttachment.
+   * Get the attachment item node for the specified nsIMsgAttachment.
    */
   findItemForAttachment(aAttachment) {
     for (let i = 0; i < this.itemCount; i++) {

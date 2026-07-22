@@ -181,11 +181,15 @@
                 data-l10n-id="prompt-delete-label"
                 preference="calendar.item.promptDelete"/>
     </hbox>
+#ifndef MOZ_ESR
     <separator/>
     <vbox>
       <hbox class="align-baseline">
         <html:legend data-l10n-id="new-calendar-legend"></html:legend>
-        <html:span class="label-experiment" data-l10n-id="label-experiment"></html:span>
+        <html:span
+          class="badge experimental"
+          role="presentation"
+          data-l10n-id="label-experiment"></html:span>
       </hbox>
       <vbox>
         <checkbox id="calendarDialog"
@@ -195,5 +199,6 @@
                       class="tip-caption indent"/>
       </vbox>
     </vbox>
+#endif
   </html:fieldset>
   </html:div>

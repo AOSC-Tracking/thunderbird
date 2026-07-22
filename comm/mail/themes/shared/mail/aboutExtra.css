@@ -15,6 +15,16 @@ body {
 .main-search,
 .main-heading {
   background: var(--layout-background-0);
+  /* Nova overrides */
+  --button-background-color: transparent;
+  --button-background-color-ghost: transparent;
+  --button-background-color-ghost-hover: var(--button-background-color-hover);
+  --button-background-color-ghost-active: var(--button-background-color-active);
+  --button-border-color-ghost: var(--button-border-color);
+  --button-border-color-ghost-hover: var(--button-border-color-hover);
+  --button-border-color-ghost-active: var(--button-border-color-active);
+  --button-icon-fill: color-mix(in srgb, currentColor 20%, transparent);
+  --button-icon-stroke: currentColor;
 }
 
 #full {
@@ -24,48 +34,8 @@ body {
 #sidebar {
   background-color: var(--sidebar-background);
 
-  & > #categories {
-    inline-size: inherit;
-    padding-inline-end: 0;
-
-    & > .category {
-      border-radius: var(--button-border-radius);
-      -moz-context-properties: fill, fill-opacity, stroke;
-      fill: color-mix(in srgb, currentColor 20%, transparent);
-      stroke: currentColor;
-
-      &[name="discover"] {
-        background-image: var(--addons-manager-recommendations);
-      }
-
-      &[name="extension"] {
-        background-image: var(--addons-manager-extensions);
-      }
-
-      &[name="theme"] {
-        background-image: var(--addons-manager-themes);
-      }
-
-      &[name="dictionary"] {
-        background-image: var(--addons-manager-dictionaries);
-      }
-
-      &[name="locale"] {
-        background-image: var(--addons-manager-languages);
-      }
-
-      &[name="sitepermission"] {
-        background-image: var(--addons-manager-site-permissions);
-      }
-
-      &[name="available-updates"] {
-        background-image: var(--addons-manager-available-updates);
-      }
-
-      &[name="recent-updates"] {
-        background-image: var(--addons-manager-recent-updates);
-      }
-    }
+  & #category-plugin {
+    display: none;
   }
 }
 
@@ -74,58 +44,8 @@ button[name="plugin"] {
   display: none;
 }
 
-.sidebar-footer-list > li {
-  margin-inline: 6px;
-  border-radius: var(--button-border-radius);
-}
-
-#categories > .category {
-  padding-inline-start: 34px;
-}
-
-@media (max-width: 830px) {
-  #main {
-    margin-inline-start: 28px;
-  }
-
-  #categories > .category {
-    padding-inline-start: 34px;
-    padding-inline-end: 10px;
-    background-position-x: 10px;
-    background-position-y: 12px;
-  }
-
-  .sidebar-footer-list > li > a {
-    margin-inline: auto;
-  }
-}
-
-/* Temporary styles for the supernova icons */
-#preferencesButton .sidebar-footer-icon,
-.page-options-menu > .more-options-button {
-  -moz-context-properties: fill, stroke, stroke-opacity;
-  fill: color-mix(in srgb, currentColor 20%, transparent);
-  stroke: currentColor;
-}
-
-/* Settings icon override */
-#preferencesButton .sidebar-footer-icon {
-  content: var(--icon-settings);
-}
-
-.page-options-menu > .more-options-button {
-  background-image: url("chrome://messenger/skin/icons/new/touch/settings.svg");
-  background-size: 24px;
-  inline-size: 32px;
-  block-size: 32px;
-  border: none;
-  background-color: transparent;
-}
-
-.more-options-button {
-  -moz-context-properties: stroke;
-  stroke: currentColor;
-  background-image: var(--icon-more);
+#content {
+  --main-margin-start: 28px;
 }
 
 /* Hide in extension details the private browsing section */
@@ -137,6 +57,10 @@ section > .addon-detail-row-private-browsing,
 /* Hide the options entry in the options menu, as we have a dedicated button */
 addon-options panel-item[action="preferences"] {
   display: none;
+}
+
+.theme-enable-button {
+  --button-border: none;
 }
 
 .extension-options-button {
@@ -169,7 +93,7 @@ recommended-addon-card .addon.card:hover {
 panel-list {
   --panel-list-background-color: var(--color-surface-subtle);
   --panel-list-color: var(--color-text-base);
-  --panel-list-border-color: var(--color-surface-border-intense);
+  --panel-list-border-color: var(--color-surface-border);
   --panel-list-border-radius: 8px;
   padding: 4px;
 }
@@ -177,8 +101,8 @@ panel-list {
 panel-item::part(button) {
   border-radius: 3px;
   background-position-x: 3px;
-  --button-background-color-hover: var(--background-color-list-item-hover);
-  --button-background-color-active: var(--background-color-list-item-hover);
+  --button-background-color-hover: var(--button-hover-background-color);
+  --button-background-color-active: var(--button-active-background-color);
 }
 
 panel-item[action="remove"]::part(button) {

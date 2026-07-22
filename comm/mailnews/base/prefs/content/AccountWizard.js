@@ -1,5 +1,4 @@
-/* -*- Mode: JavaScript; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -194,7 +193,7 @@ function FinishAccount() {
 // use: to prepopulate the wizard with account information
 function AccountDataToPageData(accountData, pageData) {
   var server = accountData.incomingServer;
-  pageData.hostname = server.hostName;
+  pageData.hostname = server.hostname;
   pageData.prettyName = server.prettyName || "";
 
   var identity;
@@ -231,7 +230,7 @@ function PageDataToAccountData(pageData, accountData) {
     identity.fullName = pageData.fullName;
   }
 
-  server.hostName = pageData.hostname;
+  server.hostname = pageData.hostname;
   if (pageData.prettyName) {
     server.prettyName = pageData.prettyName;
   }
@@ -240,15 +239,15 @@ function PageDataToAccountData(pageData, accountData) {
 // given an accountData structure, create an account
 // (but don't fill in any fields, that's for finishAccount()
 function createAccount(accountData) {
-  const hostName = accountData.incomingServer.hostName;
+  const hostname = accountData.incomingServer.hostname;
   // If we're here, the server must not be associated with any account, so reuse
   // it.
-  let server = NntpUtils.findServer(hostName);
+  let server = NntpUtils.findServer(hostname);
 
   if (!server) {
-    dump(`MailServices.accounts.createIncomingServer(${hostName})\n`);
+    dump(`MailServices.accounts.createIncomingServer(${hostname})\n`);
     // Create a (actual) server.
-    server = MailServices.accounts.createIncomingServer(null, hostName, "nntp");
+    server = MailServices.accounts.createIncomingServer(null, hostname, "nntp");
   }
 
   dump("MailServices.accounts.createAccount()\n");

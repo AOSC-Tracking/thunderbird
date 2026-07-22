@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -201,10 +200,10 @@ nsresult nsMsgPurgeService::PerformPurge() {
         nsresult rv = server->GetType(type);
         NS_ENSURE_SUCCESS(rv, rv);
 
-        nsCString hostName;
-        server->GetHostName(hostName);
+        nsCString hostname;
+        server->GetHostname(hostname);
         MOZ_LOG(MsgPurgeLogModule, mozilla::LogLevel::Info,
-                ("[%d] %s (%s)", serverIndex, hostName.get(), type.get()));
+                ("[%d] %s (%s)", serverIndex, hostname.get(), type.get()));
 
         nsCOMPtr<nsISpamSettings> spamSettings;
         rv = server->GetSpamSettings(getter_AddRefs(spamSettings));

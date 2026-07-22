@@ -1,9 +1,11 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsImapUtils.h"
+
+#include <fmt/format.h>
+
 #include "nsCOMPtr.h"
 #include "prsystem.h"
 #include "prprf.h"
@@ -12,15 +14,16 @@
 #include "nsImapFlagAndUidState.h"
 #include "nsImapNamespace.h"
 #include "nsIImapFlagAndUidState.h"
+#include "nsString.h"
 
-nsresult nsImapURI2FullName(const char* rootURI, const char* hostName,
+nsresult nsImapURI2FullName(const char* rootURI, const char* hostname,
                             const char* uriStr, char** name) {
   nsAutoCString uri(uriStr);
   nsAutoCString fullName;
   if (uri.Find(rootURI) != 0) return NS_ERROR_FAILURE;
   fullName = Substring(uri, strlen(rootURI));
   uri = fullName;
-  int32_t hostStart = uri.Find(hostName);
+  int32_t hostStart = uri.Find(hostname);
   if (hostStart <= 0) return NS_ERROR_FAILURE;
   fullName = Substring(uri, hostStart);
   uri = fullName;
@@ -175,12 +178,12 @@ NS_IMETHODIMP nsImapMailboxSpec::SetUnicharPathName(
   return NS_OK;
 }
 
-NS_IMETHODIMP nsImapMailboxSpec::GetHostName(nsACString& aHostName) {
+NS_IMETHODIMP nsImapMailboxSpec::GetHostname(nsACString& aHostName) {
   aHostName = mHostName;
   return NS_OK;
 }
 
-NS_IMETHODIMP nsImapMailboxSpec::SetHostName(const nsACString& aHostName) {
+NS_IMETHODIMP nsImapMailboxSpec::SetHostname(const nsACString& aHostName) {
   mHostName = aHostName;
   return NS_OK;
 }
@@ -338,4 +341,50 @@ void AppendUid(nsCString& msgIds, ImapUid uid) {
   char buf[20];
   PR_snprintf(buf, sizeof(buf), "%u", uid);
   msgIds.Append(buf);
+}
+
+nsCString UidSetFromUids(mozilla::Span<const ImapUid> uids) {
+  nsTArray<ImapUid> sortedUids(uids);
+  sortedUids.Sort();
+
+  nsTArray<nsCString> fragments;
+  size_t i = 0;
+  while (i < sortedUids.Length()) {
+    // Collect a range (which might just be a single UID).
+    ImapUid first = sortedUids[i];
+    ImapUid last = first;
+    ++i;
+    MOZ_ASSERT(first != 0);  // Not a valid UID.
+    while (i < sortedUids.Length()) {
+      ImapUid uid = sortedUids[i];
+      MOZ_ASSERT(uid >= last);
+      uint32_t distance = uid - last;
+      if (distance == 0) {
+        // Duplicate UID. Ignore and keep going.
+        ++i;
+      } else if (distance == 1) {
+        // Consecutive UID - extend the range.
+        ++last;
+        ++i;
+      } else {
+        // Hit a gap, so that's the end of this range.
+        break;
+      }
+    }
+
+    switch (last - first) {
+      case 0:
+        fragments.AppendElement(nsFmtCString("{}", first));
+        break;
+      case 1:
+        // Don't bother emitting a trivially-small range.
+        fragments.AppendElement(nsFmtCString("{},{}", first, last));
+        break;
+      default:
+        fragments.AppendElement(nsFmtCString("{}:{}", first, last));
+        break;
+    }
+  }
+
+  return StringJoin(","_ns, fragments);
 }

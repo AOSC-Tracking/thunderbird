@@ -1,4 +1,3 @@
-/* -*- indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -631,12 +630,12 @@ export class MessengerContentHandler {
             .finalize();
 
           if (headers.get("X-Unsent") == "1") {
-            getOrOpen3PaneWindow().then(win => {
+            getOrOpen3PaneWindow().then(() => {
               const msgWindow = Cc[
                 "@mozilla.org/messenger/msgwindow;1"
               ].createInstance(Ci.nsIMsgWindow);
               MailServices.compose.OpenComposeWindow(
-                win,
+                null,
                 {},
                 fileURL.spec,
                 Ci.nsIMsgCompType.Draft,
@@ -723,7 +722,7 @@ export class MessengerContentHandler {
       } else if (uri.toLowerCase().endsWith(".msf")) {
         lazy.MorkParser.dumpFile(cmdLine.resolveFile(uri).path);
       } else {
-        getOrOpen3PaneWindow().then(win => {
+        getOrOpen3PaneWindow().then(() => {
           // This must be a regular filename. Use it to create a new message
           // with attachment.
           const msgParams = Cc[
@@ -752,7 +751,7 @@ export class MessengerContentHandler {
             msgParams.format = Ci.nsIMsgCompFormat.Default;
             msgParams.composeFields = composeFields;
 
-            MailServices.compose.OpenComposeWindowWithParams(win, msgParams);
+            MailServices.compose.OpenComposeWindowWithParams(null, msgParams);
           } catch (e) {
             // Let protocol handlers try to take care.
             openURI(cmdLine.resolveURI(uri));

@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -971,10 +970,10 @@ NS_IMETHODIMP nsImapUrl::GetUri(nsACString& aURI) {
     }
     nsCString fullFolderPath("/");
     fullFolderPath.Append(m_userName);
-    nsAutoCString hostName;
-    rv = GetHost(hostName);
+    nsAutoCString hostname;
+    rv = GetHost(hostname);
     fullFolderPath.Append('@');
-    fullFolderPath.Append(hostName);
+    fullFolderPath.Append(hostname);
     fullFolderPath.Append('/');
     fullFolderPath.Append(canonicalPath);
 

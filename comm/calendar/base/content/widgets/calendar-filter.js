@@ -405,7 +405,7 @@ calFilter.prototype = {
    * @returns {boolean} Returns true if the item matches the filter properties
    *   currently applied, false otherwise.
    */
-  // eslint-disable-next-line complexity
+
   propertyFilter(aItem) {
     let result;
     const props = this.mFilterProperties;
@@ -1313,6 +1313,11 @@ let CalendarFilteredViewMixin = Base =>
       const iterator = cal.iterate.streamValues(this.#filter.getItems(calendar));
       this.#iterators.add(iterator);
       const items = await Array.fromAsync(iterator);
+      if (!this.#iterators.has(iterator)) {
+        // #invalidate() cancelled this refresh while we were awaiting results.
+        // Don't add stale items to the (now cleared) view of a newer refresh.
+        return;
+      }
       this.addItems(items.flat());
       this.#iterators.delete(iterator);
     }

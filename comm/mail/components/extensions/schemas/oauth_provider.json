@@ -22,6 +22,11 @@
                 "type": "string",
                 "optional": true
               },
+              "issuerIdentifier": {
+                "description": "The OAuth authorization server issuer identifier, as defined by RFC 9207. If provided, it <em>must</em> be an exact string match to what the provider gives in the iss field.",
+                "type": "string",
+                "optional": true
+              },
               "authorizationEndpoint": {
                 "description": "OAuth authorization endpoint address.",
                 "type": "string",
@@ -34,11 +39,15 @@
               },
               "redirectionEndpoint": {
                 "description": "OAuth redirection endpoint.",
-                "type": "string",
-                "format": "url"
+                "type": "string"
               },
               "usePKCE": {
                 "description": "If the authorization uses PKCE.",
+                "type": "boolean",
+                "optional": true
+              },
+              "useExternalBrowser": {
+                "description": "If the login flow should use the system web browser. If true, the redirectionEndpoint <em>must</em> be a loopback address, so an origin of http://127.0.0.1 or http://localhost.",
                 "type": "boolean",
                 "optional": true
               },

@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -710,7 +709,7 @@ nsresult nsMsgAccountManager::createKeyedServer(
   server->SetKey(key);
   server->SetType(type);
   server->SetUsername(username);
-  server->SetHostName(hostname);
+  server->SetHostname(hostname);
   server->GetPort(&port);
   FindServer(username, hostname, type, port, getter_AddRefs(existingServer));
   // don't allow duplicate servers.
@@ -1319,7 +1318,7 @@ nsresult nsMsgAccountManager::LoadAccounts() {
        * This loop gets run for every incoming server, and is passed a
        * duplicate account. It checks that the server is not deferred to the
        * duplicate account. If it is, then it looks up the information for the
-       * duplicate account's server (username, hostName, type), and finds an
+       * duplicate account's server (username, hostname, type), and finds an
        * account with a server with the same username, hostname, and type, and
        * if it finds one, defers to that account instead. Generally, this will
        * be a Local Folders account, since 2.0 has a bug where duplicate Local
@@ -1359,14 +1358,14 @@ nsresult nsMsgAccountManager::LoadAccounts() {
               continue;
             }
             nsCString userName;
-            nsCString hostName;
+            nsCString hostname;
             nsCString type;
             serverPrefBranch->GetCharPref("userName", userName);
-            serverPrefBranch->GetCharPref("hostname", hostName);
+            serverPrefBranch->GetCharPref("hostname", hostname);
             serverPrefBranch->GetCharPref("type", type);
 
             nsCOMPtr<nsIMsgIncomingServer> server;
-            FindServer(userName, hostName, type, 0, getter_AddRefs(server));
+            FindServer(userName, hostname, type, 0, getter_AddRefs(server));
             if (server) {
               nsCOMPtr<nsIMsgAccount> replacement;
               FindAccountForServer(server, getter_AddRefs(replacement));
@@ -1993,7 +1992,7 @@ nsresult nsMsgAccountManager::findServerInternal(
     if (!server) continue;
 
     nsCString thisHostname;
-    rv = server->GetHostName(thisHostname);
+    rv = server->GetHostname(thisHostname);
     if (NS_FAILED(rv)) continue;
 
     // URL mutation expects percent-escaping in the hostname, which

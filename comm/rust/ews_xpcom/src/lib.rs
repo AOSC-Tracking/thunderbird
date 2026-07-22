@@ -16,8 +16,9 @@ use nsstring::{nsACString, nsCString};
 use protocol_shared::{
     client::ProtocolClient,
     safe_xpcom::{
-        SafeEwsFolderListener, SafeEwsMessageCreateListener, SafeEwsMessageFetchListener,
-        SafeEwsMessageSyncListener, SafeEwsSimpleOperationListener, SafeUrlListener, uri::SafeUri,
+        SafeExchangeFolderListener, SafeExchangeMessageCreateListener,
+        SafeExchangeMessageFetchListener, SafeExchangeMessageSyncListener,
+        SafeExchangeSimpleOperationListener, SafeUrlListener, uri::SafeUri,
     },
     xpcom_io,
 };
@@ -35,6 +36,8 @@ use xpcom::{
 };
 
 use client::XpComEwsClient;
+
+use crate::server_version::get_root_pref_branch;
 
 mod client;
 mod error;
@@ -150,13 +153,18 @@ impl XpcomEwsBridge {
         endpoint: &nsACString,
         server: &nsIMsgIncomingServer,
     ) -> Result<(), nsresult> {
-        let endpoint = Url::parse(&endpoint.to_utf8()).map_err(|_| NS_ERROR_INVALID_ARG)?;
+        let endpoint_url = Url::parse(&endpoint.to_utf8()).or(Err(NS_ERROR_INVALID_ARG))?;
         let server = RefPtr::new(server);
 
-        let client = XpComEwsClient::new(endpoint, server)?;
+        let client = XpComEwsClient::new(endpoint_url, server)?;
         self.client
             .set(Arc::new(client))
-            .map_err(|_| NS_ERROR_ALREADY_INITIALIZED)?;
+            .or(Err(NS_ERROR_ALREADY_INITIALIZED))?;
+
+        // If the client successfully initialized and the user is connecting to an Office365
+        // account, set the pref value to indicate that they've set up an Office365+EWS account.
+        // This operation is best-effort; failures here do not affect the client initialization.
+        let _ = maybe_set_ews_o365_pref(endpoint);
 
         Ok(())
     }
@@ -210,7 +218,7 @@ impl XpcomEwsBridge {
         // this scope, so spawn it as a detached `moz_task`.
         moz_task::spawn_local(
             "sync_folder_hierarchy",
-            client.sync_folder_hierarchy(SafeEwsFolderListener::new(listener), sync_state),
+            client.sync_folder_hierarchy(SafeExchangeFolderListener::new(listener), sync_state),
         )
         .detach();
 
@@ -239,7 +247,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "create_folder",
             client.create_folder(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 parent_id.to_utf8().into(),
                 name.to_utf8().into(),
             ),
@@ -251,12 +259,12 @@ impl XpcomEwsBridge {
 
     xpcom_method!(delete_folder => DeleteFolder(
         listener: *const IExchangeSimpleOperationListener,
-        folder_ids: *const ThinVec<nsCString>
+        folder_id: *const nsACString
     ));
     fn delete_folder(
         &self,
         listener: &IExchangeSimpleOperationListener,
-        folder_ids: &ThinVec<nsCString>,
+        folder_id: &nsACString,
     ) -> Result<(), nsresult> {
         let client = self.client()?;
 
@@ -265,11 +273,8 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "delete_folder",
             client.delete_folder(
-                SafeEwsSimpleOperationListener::new(listener),
-                folder_ids
-                    .iter()
-                    .map(|s| s.to_utf8().into_owned())
-                    .collect(),
+                SafeExchangeSimpleOperationListener::new(listener),
+                folder_id.to_string(),
             ),
         )
         .detach();
@@ -279,39 +284,29 @@ impl XpcomEwsBridge {
 
     xpcom_method!(empty_folder => EmptyFolder(
         listener: *const IExchangeSimpleOperationListener,
-        folder_ids: *const ThinVec<nsCString>,
+        folder_id: *const nsACString,
         subfolder_ids: *const ThinVec<nsCString>,
         message_ids: *const ThinVec<nsCString>
     ));
     fn empty_folder(
         &self,
         listener: &IExchangeSimpleOperationListener,
-        folder_ids: &ThinVec<nsCString>,
+        folder_id: &nsACString,
         subfolder_ids: &ThinVec<nsCString>,
         message_ids: &ThinVec<nsCString>,
     ) -> Result<(), nsresult> {
         let client = self.client()?;
 
-        let folder_ids = folder_ids
-            .iter()
-            .map(|s| s.to_utf8().into_owned())
-            .collect();
-        let subfolder_ids = subfolder_ids
-            .iter()
-            .map(|s| s.to_utf8().into_owned())
-            .collect();
-        let message_ids = message_ids
-            .iter()
-            .map(|s| s.to_utf8().into_owned())
-            .collect();
+        let subfolder_ids = subfolder_ids.iter().map(ToString::to_string).collect();
+        let message_ids = message_ids.iter().map(ToString::to_string).collect();
 
         // The client operation is async and we want it to survive the end of
         // this scope, so spawn it as a detached `moz_task`.
         moz_task::spawn_local(
             "empty_folder",
             client.empty_folder(
-                SafeEwsSimpleOperationListener::new(listener),
-                folder_ids,
+                SafeExchangeSimpleOperationListener::new(listener),
+                folder_id.to_string(),
                 subfolder_ids,
                 message_ids,
             ),
@@ -339,7 +334,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "update_folder",
             client.update_folder(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 folder_id.to_utf8().into_owned(),
                 folder_name.to_utf8().into_owned(),
             ),
@@ -375,7 +370,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "sync_messages_for_folder",
             client.sync_messages_for_folder(
-                SafeEwsMessageSyncListener::new(listener),
+                SafeExchangeMessageSyncListener::new(listener),
                 folder_id.to_utf8().into_owned(),
                 sync_state,
             ),
@@ -401,7 +396,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "get_message",
             client.get_message(
-                SafeEwsMessageFetchListener::new(listener),
+                SafeExchangeMessageFetchListener::new(listener),
                 id.to_utf8().into(),
             ),
         )
@@ -428,7 +423,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "change_read_status",
             client.change_read_status(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 message_ids.clone(),
                 is_read,
             ),
@@ -456,7 +451,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "change_flag_status",
             client.change_flag_status(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 message_ids.clone(),
                 is_flagged,
             ),
@@ -486,7 +481,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "change_read_status_all",
             client.change_read_status_all(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 folder_ids.clone(),
                 is_read,
                 suppress_read_receipts,
@@ -525,7 +520,7 @@ impl XpcomEwsBridge {
                 is_draft,
                 is_read,
                 content,
-                SafeEwsMessageCreateListener::new(listener),
+                SafeExchangeMessageCreateListener::new(listener),
             ),
         )
         .detach();
@@ -549,7 +544,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "move_items",
             client.copy_move_item::<MoveItem>(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 destination_folder_id.to_string(),
                 item_ids.iter().map(ToString::to_string).collect(),
             ),
@@ -575,7 +570,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "copy_items",
             client.copy_move_item::<CopyItem>(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 destination_folder_id.to_string(),
                 item_ids.iter().map(ToString::to_string).collect(),
             ),
@@ -601,7 +596,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "move_folders",
             client.copy_move_folder::<MoveFolder>(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 destination_folder_id.to_string(),
                 folder_ids.iter().map(ToString::to_string).collect(),
             ),
@@ -627,7 +622,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "copy_folders",
             client.copy_move_folder::<CopyFolder>(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 destination_folder_id.to_string(),
                 folder_ids.iter().map(ToString::to_string).collect(),
             ),
@@ -653,7 +648,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "delete_messages",
             client.delete_messages(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 ews_ids.clone(),
             ),
         )
@@ -680,7 +675,7 @@ impl XpcomEwsBridge {
         moz_task::spawn_local(
             "mark_items_as_junk",
             client.mark_as_junk(
-                SafeEwsSimpleOperationListener::new(listener),
+                SafeExchangeSimpleOperationListener::new(listener),
                 ews_ids.clone(),
                 is_junk,
                 legacy_destination_folder_id.to_string(),
@@ -700,4 +695,35 @@ impl XpcomEwsBridge {
         let client = self.client.get().ok_or(NS_ERROR_NOT_INITIALIZED)?.clone();
         Ok(client)
     }
+}
+
+/// If the given `endpoint` is an Office365 account, set a pref to indicate the user has configured
+/// an Office365 Account with EWS.
+///
+/// Returns an error if the endpoint cannot be parsed or if the pref cannot be set.
+///
+/// # Arguments
+///
+/// * `endpoint` - The EWS endpoint URL string
+fn maybe_set_ews_o365_pref(endpoint: &nsACString) -> Result<(), nsresult> {
+    // Parse the endpoint URL. If parsing fails, we can't determine the server type.
+    let server_url = Url::parse(&endpoint.to_utf8()).or(Err(NS_ERROR_INVALID_ARG))?;
+
+    // Extract the host (domain) from the URL. This matches the behavior in `record_telemetry`.
+    let domain = server_url.host_str().ok_or(nserror::NS_ERROR_INVALID_ARG)?;
+
+    // Check if the domain ends with any of the known Office365 base domains.
+    if OFFICE365_BASE_DOMAINS
+        .into_iter()
+        .any(|o365_base_domain| domain.ends_with(o365_base_domain))
+    {
+        // Set the preference to indicate this is an Office365+EWS account.
+        let root_pref_branch = get_root_pref_branch().or(Err(nserror::NS_ERROR_FAILURE))?;
+        // SAFETY: get_root_pref_branch will only return Ok with a non-null pointer.
+        unsafe {
+            root_pref_branch.SetBoolPref(c"mail.exchange.hasMicrosoft365EwsAccount".as_ptr(), true);
+        }
+    }
+
+    Ok(())
 }

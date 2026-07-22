@@ -1,5 +1,3 @@
-/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set sts=2 sw=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -37,6 +35,17 @@ ExtensionPreferencesManager.addSetting("readerDisplayAttachmentsInline", {
   },
 });
 
+ExtensionPreferencesManager.addSetting("composeInlineSpellCheckEnabled", {
+  permission: "messengerSettings",
+  prefNames: ["mail.spellcheck.inline"],
+  setCallback(value) {
+    return { "mail.spellcheck.inline": !!value };
+  },
+  getCallback() {
+    return Services.prefs.getBoolPref("mail.spellcheck.inline");
+  },
+});
+
 this.messengerSettings = class extends ExtensionAPI {
   getAPI(context) {
     function makeSettingsAPI(options) {
@@ -54,6 +63,9 @@ this.messengerSettings = class extends ExtensionAPI {
 
     return {
       messengerSettings: {
+        composeInlineSpellCheckEnabled: makeSettingsAPI({
+          name: "composeInlineSpellCheckEnabled",
+        }),
         messageLineLengthLimit: makeSettingsAPI({
           name: "messageLineLengthLimit",
           readOnly: true,

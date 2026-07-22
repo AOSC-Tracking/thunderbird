@@ -60,6 +60,8 @@ support-files = ["xml/**"]
 
 ["browser_accountColors.js"]
 
+["browser_accountColorsUnifiedFolders.js"]
+
 ["browser_accountHub.js"]
 tags = ["accounthub"]
 
@@ -88,6 +90,9 @@ tags = ["accounthub"]
 tags = ["accounthub"]
 
 ["browser_accountHubExchange.js"]
+tags = ["accounthub"]
+
+["browser_accountHubGssapi.js"]
 tags = ["accounthub"]
 
 ["browser_accountHubManualConfig.js"]

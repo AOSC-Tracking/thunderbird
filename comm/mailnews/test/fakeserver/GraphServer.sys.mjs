@@ -11,6 +11,8 @@ import {
 
 import { CommonUtils } from "resource://services-common/utils.sys.mjs";
 
+import { SyntheticMessage } from "resource://testing-common/mailnews/MessageGenerator.sys.mjs";
+
 /**
  * A recipient to a `GraphMessage`. Note that the structure of this class does
  * *not* match the structure of the `recipient` type from the Graph API.
@@ -265,9 +267,14 @@ export class GraphServer extends MockServer {
       }
     }
 
-    const resourcePath = request.path.startsWith("/v1.0")
-      ? request.path.substring(5)
-      : request.path;
+    if (!request.path.startsWith("/v1.0")) {
+      // Make sure all of the endpoints always include the version string. This
+      // is to mimic what M365 does and catch nonconformance in testing.
+      throw new Error(`Invalid API version in request: ${request.path}`);
+    }
+
+    // Strip the API version to get the actual resource path.
+    const resourcePath = request.path.substring(5);
 
     if (resourcePath === "/$batch") {
       this.#handleBatchRequest(request, response);
@@ -429,6 +436,11 @@ export class GraphServer extends MockServer {
           resourcePath.endsWith("/move")
         ) {
           responseJsonObject = this.#moveMessages(resourcePath, requestBody);
+        } else if (
+          resourcePath.startsWith("/me/messages") &&
+          resourcePath.endsWith("/copy")
+        ) {
+          responseJsonObject = this.#copyMessages(resourcePath, requestBody);
         }
         break;
 
@@ -443,6 +455,10 @@ export class GraphServer extends MockServer {
       case "DELETE":
         if (resourcePath.startsWith("/me/mailFolders")) {
           this.#deleteFolder(resourcePath);
+          // There is no body, so we return 204 No Content to indicate success.
+          return new HttpResponseData(204, "No Content");
+        } else if (resourcePath.startsWith("/me/messages")) {
+          this.#deleteMessage(resourcePath);
           // There is no body, so we return 204 No Content to indicate success.
           return new HttpResponseData(204, "No Content");
         }
@@ -653,8 +669,13 @@ export class GraphServer extends MockServer {
       folder => folder.distinguishedId == "drafts"
     )[0];
 
+    // Create a new item, with an empty `SyntheticMessage`. The
+    // `SyntheticMessage` is currently mostly used to hold metadata such as the
+    // message's read status; it's fine to leave it empty since we're unlikely
+    // to have any test that needs to retrieve a message created here via the
+    // API (since it would have already been created locally at the same time).
     const newItemId = "created-item-" + this.itemsCreated;
-    this.addItemToFolder(newItemId, draftFolder.id);
+    this.addItemToFolder(newItemId, draftFolder.id, new SyntheticMessage());
     this.itemsCreated += 1;
 
     const message = new GraphMessage(newItemId, [], false, atob(requestBody));
@@ -676,8 +697,7 @@ export class GraphServer extends MockServer {
    * @param {string} requestBody
    */
   #updateMessage(resourcePath, requestBody) {
-    const pathParts = resourcePath.split("/");
-    const messageId = pathParts[pathParts.length - 1];
+    const messageId = resourcePath.split("/").at(-1);
 
     const parsedReq = JSON.parse(requestBody);
 
@@ -702,6 +722,13 @@ export class GraphServer extends MockServer {
       message.dsnRequested = parsedReq.isDeliveryReceiptRequested;
     }
 
+    // Set the read status if necessary, for which we need to get the relevant
+    // `ItemInfo` (so we can access its `SyntheticMessage`).
+    if (parsedReq.hasOwnProperty("isRead")) {
+      const item = this.getItemInfo(messageId);
+      item.syntheticMessage.metaState.read = parsedReq.isRead;
+    }
+
     // Note: returning only the ID should be fine for now because we don't
     // actually look at the response from this request (beyond basic things like
     // the HTTP status code), but in the future we'll probably want to expand
@@ -718,8 +745,7 @@ export class GraphServer extends MockServer {
    * @param {string} requestBody
    */
   #updateFolder(resourcePath, requestBody) {
-    const pathParts = resourcePath.split("/");
-    const folderId = pathParts[pathParts.length - 1];
+    const folderId = resourcePath.split("/").at(-1);
 
     const parsedReq = JSON.parse(requestBody);
 
@@ -906,8 +932,7 @@ export class GraphServer extends MockServer {
    */
   #moveMessages(resourcePath, requestBody) {
     // Extract the message ID, i.e. the second-to-last section of the path.
-    const pathParts = resourcePath.split("/");
-    const messageId = pathParts[pathParts.length - 2];
+    const messageId = resourcePath.split("/").at(-2);
 
     const parsedReq = JSON.parse(requestBody);
 
@@ -928,6 +953,36 @@ export class GraphServer extends MockServer {
   }
 
   /**
+   * Handle POST /me/messages/{messageId}/copy
+   *
+   * @param {string} resourcePath
+   * @param {string} requestBody
+   */
+  #copyMessages(resourcePath, requestBody) {
+    // Extract the message ID, i.e. the second-to-last section of the path.
+    const messageId = resourcePath.split("/").at(-2);
+
+    const parsedReq = JSON.parse(requestBody);
+
+    const folderId = parsedReq.DestinationId;
+    if (!folderId) {
+      dump(`${requestBody}\n`);
+      throw new Error("missing destination ID for move");
+    }
+
+    const newId = messageId + "_copy";
+    const newMessage = this.getItemInfo(messageId).syntheticMessage.clone();
+    this.addItemToFolder(newId, folderId, newMessage);
+
+    // Note: returning only the ID should be fine for now because that's the
+    // only bit of the message we actually use, but in the future we'll probably
+    // want to expand this response with more fields.
+    return {
+      id: newId,
+    };
+  }
+
+  /**
    * Handle POST /me/mailFolders/{folderId}/move
    *
    * @param {string} resourcePath
@@ -935,8 +990,7 @@ export class GraphServer extends MockServer {
    */
   #moveFolder(resourcePath, requestBody) {
     // Extract the folder ID, i.e. the second-to-last section of the path.
-    const pathParts = resourcePath.split("/");
-    const folderId = pathParts[pathParts.length - 2];
+    const folderId = resourcePath.split("/").at(-2);
 
     const parsedReq = JSON.parse(requestBody);
 
@@ -969,8 +1023,7 @@ export class GraphServer extends MockServer {
    */
   #copyFolder(resourcePath, requestBody) {
     // Extract the folder ID, i.e. the second-to-last section of the path.
-    const pathParts = resourcePath.split("/");
-    const folderId = pathParts[pathParts.length - 2];
+    const folderId = resourcePath.split("/").at(-2);
 
     const parsedReq = JSON.parse(requestBody);
 
@@ -997,14 +1050,22 @@ export class GraphServer extends MockServer {
    * @param {string} resourcePath
    */
   #deleteFolder(resourcePath) {
-    const pathParts = resourcePath.split("/");
-    const folderId = pathParts[pathParts.length - 2];
-
+    const folderId = resourcePath.split("/").at(-1);
     this.deleteRemoteFolderById(folderId);
   }
 
+  /**
+   * Handle DELETE /me/messages/{messageId}
+   *
+   * @param {string} resourcePath
+   */
+  #deleteMessage(resourcePath) {
+    const messageId = resourcePath.split("/").at(-1);
+    this.deleteItem(messageId);
+  }
+
   get #endpoint() {
-    return `http://127.0.0.1:${this.port}`;
+    return `http://127.0.0.1:${this.port}/v1.0`;
   }
 }
 

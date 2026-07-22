@@ -243,11 +243,11 @@ add_task(async function testMoveItemGraph() {
   await subtestMoveItem(graphServer, graphIncomingServer);
 });
 
-add_task(async function test_copy_item() {
+async function subtestCopyItem(mockServer, incomingServer) {
   const [folder1, folder2, msgs] = await setup_item_copymove_structure(
     "copy",
-    ewsServer,
-    ewsIncomingServer
+    mockServer,
+    incomingServer
   );
 
   const headers = [];
@@ -283,6 +283,14 @@ add_task(async function test_copy_item() {
       `${folder2.name} should contain a message with the subject \"${subject}\"`
     );
   }
+}
+
+add_task(async function testCopyItemEws() {
+  subtestCopyItem(ewsServer, ewsIncomingServer);
+});
+
+add_task(async function testCopyItemGraph() {
+  subtestCopyItem(graphServer, graphIncomingServer);
 });
 
 add_task(async function test_move_copy_messages_from_another_server() {
@@ -511,15 +519,15 @@ add_task(async function test_copy_file_message() {
   Assert.equal(serverMessage.parentId, "copyFileMessage");
 });
 
-add_task(async function test_mark_as_read() {
-  const folderName = "markRead";
-  ewsServer.appendRemoteFolder(new RemoteFolder(folderName, "root"));
+async function runMarkAsReadTest(mockServer, incomingServer) {
+  const folderName = `mark_read_${incomingServer.type}`;
+  mockServer.appendRemoteFolder(new RemoteFolder(folderName, "root"));
 
   const syntheticMessages = generator.makeMessages({ count: 3 });
-  ewsServer.addMessages(folderName, syntheticMessages);
+  mockServer.addMessages(folderName, syntheticMessages);
 
-  const rootFolder = ewsIncomingServer.rootFolder;
-  ewsIncomingServer.getNewMessages(rootFolder, null, null);
+  const rootFolder = incomingServer.rootFolder;
+  incomingServer.getNewMessages(rootFolder, null, null);
 
   const folder = await TestUtils.waitForCondition(
     () => rootFolder.getChildNamed(folderName),
@@ -537,11 +545,11 @@ add_task(async function test_mark_as_read() {
   );
   const messages = [...folder.messages];
 
-  const serverMessage0 = ewsServer.getItem(syntheticMessages[0].messageId);
+  const serverMessage0 = mockServer.getItem(syntheticMessages[0].messageId);
   Assert.ok(!serverMessage0.syntheticMessage.metaState.read);
-  const serverMessage1 = ewsServer.getItem(syntheticMessages[1].messageId);
+  const serverMessage1 = mockServer.getItem(syntheticMessages[1].messageId);
   Assert.ok(!serverMessage1.syntheticMessage.metaState.read);
-  const serverMessage2 = ewsServer.getItem(syntheticMessages[2].messageId);
+  const serverMessage2 = mockServer.getItem(syntheticMessages[2].messageId);
   Assert.ok(!serverMessage2.syntheticMessage.metaState.read);
 
   // Mark some messages as read.
@@ -585,6 +593,14 @@ add_task(async function test_mark_as_read() {
     serverMessage0.syntheticMessage.metaState.read,
     "message 0 should still be marked as read on the server"
   );
+}
+
+add_task(async function test_mark_as_read_ews() {
+  await runMarkAsReadTest(ewsServer, ewsIncomingServer);
+});
+
+add_task(async function test_mark_as_read_graph() {
+  await runMarkAsReadTest(graphServer, graphIncomingServer);
 });
 
 /**
@@ -824,22 +840,22 @@ add_task(async function test_change_flag_status() {
   );
 });
 
-add_task(async function test_hard_delete_item() {
-  const folderName = "hard_delete";
-  ewsServer.appendRemoteFolder(
+async function runHardDeleteTest(mockServer, incomingServer) {
+  const folderName = `hard_delete_${incomingServer.type}`;
+  mockServer.appendRemoteFolder(
     new RemoteFolder(folderName, "root", folderName, folderName)
   );
 
-  const rootFolder = ewsIncomingServer.rootFolder;
-  await syncFolder(ewsIncomingServer, rootFolder);
+  const rootFolder = incomingServer.rootFolder;
+  await syncFolder(incomingServer, rootFolder);
 
   const folder = rootFolder.getChildNamed(folderName);
   Assert.ok(!!folder, `${folderName} folder should exist.`);
 
   const message = generator.makeMessages({ count: 1 })[0];
-  ewsServer.addItemToFolder("message_to_delete", folderName, message);
+  mockServer.addItemToFolder("message_to_delete", folderName, message);
 
-  await syncFolder(ewsIncomingServer, folder);
+  await syncFolder(incomingServer, folder);
 
   const messageHeaders = [...folder.messages];
   Assert.equal(
@@ -858,4 +874,69 @@ add_task(async function test_hard_delete_item() {
   // Message should no longer be in the inbox.
   const matchingMessages = [...folder.messages];
   Assert.equal(matchingMessages.length, 0, "Message should have been deleted.");
+}
+
+add_task(async function test_hard_delete_item_ews() {
+  await runHardDeleteTest(ewsServer, ewsIncomingServer);
+});
+
+add_task(async function test_hard_delete_item_graph() {
+  await runHardDeleteTest(graphServer, graphIncomingServer);
+});
+
+/**
+ * Run a test for deleting items from the trash for the given mock/incoming
+ * server combo.
+ *
+ * @param {MockServer} mockServer
+ * @param {nsIMsgIncomingServer} incomingServer
+ */
+async function runDeleteItemFromTrashTest(mockServer, incomingServer) {
+  const rootFolder = incomingServer.rootFolder;
+  await syncFolder(incomingServer, rootFolder);
+
+  const trashFolder = rootFolder.getChildNamed("Deleted Items");
+  Assert.ok(!!trashFolder, "Trash folder should exist.");
+
+  const messages = generator.makeMessages({ count: 1 });
+  const messageId = "delete_from_trash";
+  mockServer.addItemToFolder(messageId, "deleteditems", messages[0]);
+
+  await syncFolder(incomingServer, trashFolder);
+
+  Assert.equal(
+    trashFolder.getTotalMessages(false),
+    1,
+    "Should be one message in trash"
+  );
+
+  const trashFolderMessage = [...trashFolder.messages][0];
+
+  const eventPromise = PromiseTestUtils.promiseFolderEvent(
+    trashFolder,
+    "DeleteOrMoveMsgCompleted"
+  );
+  trashFolder.deleteMessages(
+    [trashFolderMessage],
+    null,
+    false,
+    false,
+    null,
+    false
+  );
+  await eventPromise;
+
+  Assert.equal(
+    trashFolder.getTotalMessages(false),
+    0,
+    "Should be zero messages in trash"
+  );
+}
+
+add_task(async function test_delete_item_from_trash_ews() {
+  await runDeleteItemFromTrashTest(ewsServer, ewsIncomingServer);
+});
+
+add_task(async function test_delete_item_from_trash_graph() {
+  await runDeleteItemFromTrashTest(graphServer, graphIncomingServer);
 });

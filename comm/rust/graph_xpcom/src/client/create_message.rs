@@ -10,7 +10,7 @@ use ms_graph_tb::types::message::Message;
 use ms_graph_tb::{OperationBody, paths::me::messages};
 use protocol_shared::ServerType;
 use protocol_shared::client::DoOperation;
-use protocol_shared::safe_xpcom::SafeEwsMessageCreateListener;
+use protocol_shared::safe_xpcom::SafeExchangeMessageCreateListener;
 
 use crate::{client::XpComGraphClient, error::XpComGraphError};
 
@@ -27,7 +27,7 @@ impl<ServerT: ServerType> DoOperation<XpComGraphClient<ServerT>, XpComGraphError
 {
     const NAME: &'static str = "create message";
     type Okay = ();
-    type Listener = SafeEwsMessageCreateListener;
+    type Listener = SafeExchangeMessageCreateListener;
 
     async fn do_operation(
         &mut self,
@@ -45,7 +45,7 @@ impl<ServerT: ServerType> DoOperation<XpComGraphClient<ServerT>, XpComGraphError
         // to check the response, since it should just be the original message
         // with the added properties (and all we need to send is the ID, which
         // we already have).
-        let base_url = client.base_url().to_string();
+        let base_url = client.base_api_url()?.to_string();
         let message_update = Message::new()
             .set_is_draft(Some(self.is_draft))
             .set_is_read(Some(self.is_read));
@@ -83,7 +83,7 @@ impl<ServerT: ServerType> XpComGraphClient<ServerT> {
         is_draft: bool,
         is_read: bool,
         content: Vec<u8>,
-        listener: SafeEwsMessageCreateListener,
+        listener: SafeExchangeMessageCreateListener,
     ) {
         let operation = DoCreateMessage {
             folder_id,
@@ -117,7 +117,9 @@ impl<ServerT: ServerType> XpComGraphClient<ServerT> {
             body: content.as_bytes().to_vec(),
         };
 
-        let request = messages::Post::new(self.base_url().to_string(), body);
+        let base_url = self.base_api_url()?.to_string();
+
+        let request = messages::Post::new(base_url, body);
         let message = self
             .send_request_json_response(request, Default::default())
             .await?;
@@ -130,7 +132,7 @@ impl<ServerT: ServerType> XpComGraphClient<ServerT> {
             // create the message the same way in both cases and we move it if a
             // folder was specified.
             let message_id = message.outlook_item().entity().id()?.to_string();
-            let request = self.move_message_request(folder_id, message_id);
+            let request = self.move_message_request(folder_id, message_id)?;
             self.send_request_json_response(request, Default::default())
                 .await
         } else {

@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -517,9 +516,6 @@ nsSubscribableServer::GetChildURIs(const nsACString& aPath,
   // So pull them out in reverse to get the right order
   // in the subscribe dialog.
   SubscribeTreeNode* current = node->lastChild;
-  // return failure if there are no children.
-  if (!current) return NS_ERROR_FAILURE;
-
   while (current) {
     NS_ASSERTION(!current->name.IsEmpty(), "no name");
     if (current->name.IsEmpty()) {

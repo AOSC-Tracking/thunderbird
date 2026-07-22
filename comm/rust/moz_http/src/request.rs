@@ -18,7 +18,7 @@ use xpcom::interfaces::{
     nsITransportSecurityInfo, nsIURI, nsIUploadChannel, nsSecurityFlags,
 };
 use xpcom::{RefPtr, getter_addrefs};
-use xpcom_async::XpComFuture;
+use xpcom_async_glue::AsyncChannelOpener;
 
 use crate::error::{Error, TransportSecurityInfo};
 use crate::response::Response;
@@ -59,6 +59,10 @@ struct RequestBody<'b> {
 }
 
 /// A builder to create and send HTTP requests.
+///
+/// Ideally this would also have a `build()` method that returns a request-like
+/// struct, however this isn't trivial to support in contexts when acquiring
+/// ownership of the request's body without cloning is difficult.
 #[must_use]
 pub struct RequestBuilder<'rb> {
     url: &'rb Url,
@@ -208,7 +212,7 @@ impl<'rb> RequestBuilder<'rb> {
         }
 
         // Send the request through the nsIChannel.
-        let bytes = match XpComFuture::from(channel.clone()).await {
+        let bytes = match AsyncChannelOpener::from(channel.clone()).await {
             Ok((_channel, bytes)) => bytes,
             Err(err) => {
                 // If we got an error back from Necko, ask the NSS errors

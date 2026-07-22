@@ -20,10 +20,13 @@ form {
   --hub-menuitem-background-color-selected: var(--color-primary-default);
   --hub-form-input-line-height: 1em;
   --hub-form-label-font-size: 1rem;
-  --hub-form-label-line-height: 1rlh;
+  --hub-form-label-line-height: 1.5rem;
   --hub-form-label-padding: var(--space-step);
   --hub-form-label-height: calc(var(--hub-form-label-line-height) + 2 * var(--hub-form-label-padding));
   --hub-form-input-block-padding: 12px;
+  --hub-config-confirm-space-small: calc(var(--space-step) * 2);
+  --hub-config-confirm-space-medium: calc(var(--space-step) * 3);
+  --hub-config-confirm-space-large: calc(var(--space-step) * 4);
 
   grid-row: header / footer;
 
@@ -238,11 +241,12 @@ form {
       color: light-dark(var(--color-critical-default), var(--color-critical-pressed));
       display: none;
       position: absolute;
-      inset-block-end: calc(-1 * var(--hub-form-input-line-height) - 5px);
+      inset-block-end: calc(-1 * var(--hub-form-input-line-height) - var(--space-step));
       white-space: nowrap;
       text-overflow: ellipsis;
       overflow: hidden;
       inline-size: -moz-available;
+      font-size: var(--hub-input-error-message-font-size);
 
       &.security-warning {
         white-space: normal;
@@ -289,14 +293,22 @@ form {
     padding-inline-end: 48px;
   }
 
-  legend {
-    margin-block: 0 10px;
-    background-color: var(--hub-account-primary-button-background);
-    border-radius: 7px;
-    padding: 5px 10px;
-    font-size: 0.9rem;
-    text-transform: uppercase;
-    color: var(--hub-button-color);
+  .manual-config-server-header {
+    color: var(--color-primary-pressed);
+    font-size: 1.154rem;
+    margin-block: 0;
+    font-weight: 500;
+  }
+
+  .manual-config-server-fields {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: unset;
+    border: none;
+    padding-block: 0;
+    padding-inline: 0;
+    margin-inline: 0;
+    gap: var(--hub-manual-config-gap);
   }
 }
 
@@ -311,6 +323,13 @@ div:has(legend) {
 
   &:has(label.animated) {
     padding-block-start: calc(var(--hub-form-label-height) - var(--hub-form-input-block-padding));
+  }
+
+  /* Hide the helper text if there is a visible error message, as it will
+   * errantly visually overlap otherwise. Use 'visibility' to avoid
+   * element collapse and incorrect spacing. */
+  &:has(:is(:user-invalid, .manual-input:invalid, .warning) ~ .input-error-message) + .account-hub-form-small-comment {
+    visibility: hidden;
   }
 
   &:has(.security-warning) {
@@ -425,6 +444,13 @@ div:has(legend) {
     stroke: currentColor;
   }
 
+  &.error a,
+  &.success a,
+  &.warning a,
+  &.info a {
+    color: inherit;
+  }
+
   &.error {
     background-color: var(--color-critical-soft);
     color: light-dark(var(--color-critical-pressed-light), var(--color-text-base-dark));
@@ -498,8 +524,12 @@ div:has(legend) {
     line-height: normal;
     border: 1px solid transparent;
 
-    &.recommended-protocol .info-badge {
-      display: flex;
+    & .badge:not(.experimental) {
+      display: none;
+    }
+
+    &.recommended-protocol .badge:not(.experimental) {
+      display: initial;
     }
 
     & .config-title {
@@ -565,14 +595,16 @@ div:has(legend) {
         padding-block: var(--hub-config-option-padding-block);
       }
 
-      & .info-badge {
-        background-color: light-dark(var(--color-primary-soft), transparent);
-        color: light-dark(var(--color-primary-default), currentColor);
-      }
-
       & input[type="radio"]:checked {
         border-width: 2px;
         border-color: var(--color-surface-base);
+      }
+
+      @media (prefers-color-scheme: light) {
+        & .badge:not(.experimental) {
+          background-color: var(--color-surface-base);
+          color: var(--color-primary-default);
+        }
       }
     }
   }
@@ -583,9 +615,9 @@ div:has(legend) {
   inset-block-start: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--hub-config-confirm-space-large);
   background-color: var(--color-surface-base);
-  padding: 6px;
+  padding: var(--hub-config-confirm-space-medium);
   border: 1px solid var(--color-primary-default);
   border-radius: 10px;
 
@@ -595,20 +627,31 @@ div:has(legend) {
     margin-inline: auto;
   }
 
+  &.config-selection {
+    gap: 0;
+    &.single {
+      gap: var(--hub-config-confirm-space-medium);
+    }
+
+    &.is-showing-shared-config .shared-config-item,
+    &:not(.is-showing-shared-config) .config-common {
+      display: none;
+    }
+  }
+
   & .selection-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-rows: auto;
-    gap: 12px;
-    padding-inline: 12px;
+    gap: var(--hub-config-confirm-space-medium);
 
     & .config-column {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: var(--hub-config-confirm-space-medium);
 
       .credentials-confirmation & {
-        gap: 12px;
+        gap: var(--hub-config-confirm-space-large);
         padding-block: 15px;
       }
     }
@@ -622,16 +665,30 @@ div:has(legend) {
     }
   }
 
-  & .config-item-icon {
-    block-size: 18px;
-    inline-size: 18px;
-    -moz-context-properties: fill, stroke, stroke-opacity;
-    fill: light-dark(color-mix(in srgb, #bdbdbd 20%, transparent), color-mix(in srgb, #3d4d67 20%, transparent));
-    stroke: light-dark(#bdbdbd, #3d4d67);
-
-    &.lighter {
-      fill: light-dark(color-mix(in srgb, #bdbdbd 5%, transparent), color-mix(in srgb, #3d4d67 5%, transparent));
+  & .config-common {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hub-config-confirm-space-medium);
+    & .config-header {
+      margin-block-start: calc(var(--space-step) * 7);
     }
+  }
+
+  & .config-row {
+    display: flex;
+    flex-direction: row;
+    gap: var(--hub-config-confirm-space-large);
+  }
+
+  & .config-item-icon {
+    block-size: 16px;
+    inline-size: 16px;
+    -moz-context-properties: fill, stroke, stroke-opacity;
+    fill: light-dark(
+      color-mix(in srgb, var(--color-text-secondary-light) 20%, transparent),
+      color-mix(in srgb, var(--color-surface-deep-dark) 20%, transparent)
+    );
+    stroke: var(--color-text-secondary);
 
     .config-protocols & {
       block-size: 30px;
@@ -639,30 +696,37 @@ div:has(legend) {
     }
   }
 
-  & .config-protocols {
-    background-color: var(--color-primary-soft);
-    padding-block: 10px;
-    border-radius: 6px;
-
-    & .protocol-title {
-      color: light-dark(#2176d6, #feffff);
-      font-weight: 500;
-      font-size: 1.3rem;
-      display: inline-block;
-      text-transform: uppercase;
-    }
-
-    & .protocol-data {
-      font-size: 1rem;
-      color: var(--color-text-secondary);
-    }
-  }
-
+  & .config-header,
   & .config-detail {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 9px;
+  }
+
+  & .config-header {
+    background-color: var(--color-primary-soft);
+    padding: var(--space-step) var(--hub-config-confirm-space-small);
+    gap: var(--hub-config-confirm-space-small);
+    border-radius: var(--button-border-radius);
+
+    & .header-title {
+      color: var(--color-text-base);
+      font-weight: 500;
+      font-size: 1.2rem;
+      display: inline-block;
+      margin: 0;
+    }
+
+    & .header-data {
+      font-size: 1rem;
+      color: var(--color-text-secondary);
+      text-transform: uppercase;
+      margin: 0;
+    }
+  }
+
+  & .config-detail {
+    gap: var(--hub-config-confirm-space-medium);
 
     .config-protocols & {
       padding-block: 0;
@@ -672,11 +736,10 @@ div:has(legend) {
       overflow: hidden;
       display: flex;
       flex-direction: column;
+      align-items: baseline;
       gap: 2px;
 
       & p {
-        overflow: hidden;
-        text-overflow: ellipsis;
         line-height: normal;
         margin: 0;
 
@@ -693,12 +756,38 @@ div:has(legend) {
           color: var(--color-text-base);
           font-weight: 400;
           font-size: 1rem;
+          text-wrap: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
       }
 
-      & .info-badge {
+      & .info {
         font-size: 0.8rem;
         line-height: 1;
+      }
+    }
+
+    .config-selection & {
+      gap: var(--hub-config-confirm-space-small);
+      padding-inline-start: var(--hub-config-confirm-space-large);
+
+      & .config-item-data {
+        flex-wrap: nowrap;
+        flex-direction: row;
+        gap: var(--hub-config-confirm-space-small);
+        inline-size: 100%;
+        justify-content: flex-start;
+
+        .config-row & {
+          flex-wrap: wrap;
+        }
+
+        & .title {
+          /* Ensure labels don't get truncated */
+          overflow: visible;
+          font-size: 0.9rem;
+        }
       }
     }
   }
@@ -831,6 +920,17 @@ div:has(legend) {
 .custom-action-container {
   grid-column: 1 / -1;
   text-align: end;
+  margin-block-start: calc(var(--space-step) * 6);
+  padding-block-end: var(--hub-config-confirm-space-medium);
+
+  .credentials-confirmation & {
+    padding-block-end: var(--hub-config-confirm-space-small);
+  }
+
+  & .button.link-button {
+    min-block-size: 0;
+    font-size: 0.9rem;
+  }
 }
 
 .email-input-container {
@@ -1069,26 +1169,4 @@ button.account-hub-option-button {
 .confirmation-question {
   text-align: center;
   margin-block: 0;
-}
-
-.info-badge {
-  display: none;
-  text-transform: uppercase;
-  font-size: 0.9rem;
-  font-weight: 600;
-  padding: 2px;
-  border: 1px solid transparent;
-  border-radius: 3px;
-
-  &.addon {
-    display: flex;
-    background-color: var(--color-warning-soft);
-    color: var(--color-text-warning);
-  }
-
-  &.warning {
-    display: inline-block;
-    background-color: light-dark(var(--color-warning-default-light), var(--color-warning-soft-dark));
-    color: light-dark(var(--color-text-base-light), var(--color-text-warning-dark));
-  }
 }

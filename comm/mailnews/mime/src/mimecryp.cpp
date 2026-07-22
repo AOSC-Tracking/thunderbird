@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -429,8 +428,10 @@ static int MimeEncrypted_emit_buffered_child(MimeObject* obj) {
     ct = MimeHeaders_get(enc->hdrs, HEADER_CONTENT_TYPE, true, false);
   }
 
-  body =
-      mime_create((ct ? ct : TEXT_PLAIN), enc->hdrs, obj->options, false, obj);
+  body = mime_create((ct ? ct : TEXT_PLAIN), enc->hdrs, obj->options, false,
+                     mime_child_part_depth(obj), obj);
+  PR_FREEIF(ct);
+  if (!body) return MIME_OUT_OF_MEMORY;
 
   if (obj->options->decompose_file_p) {
     if (mime_typep(body, (MimeObjectClass*)&mimeMultipartClass))
@@ -439,10 +440,6 @@ static int MimeEncrypted_emit_buffered_child(MimeObject* obj) {
       obj->options->decompose_file_init_fn(obj->options->stream_closure,
                                            enc->hdrs);
   }
-
-  PR_FREEIF(ct);
-
-  if (!body) return MIME_OUT_OF_MEMORY;
   status = ((MimeContainerClass*)obj->clazz)->add_child(obj, body);
   if (status < 0) {
     mime_free(body);

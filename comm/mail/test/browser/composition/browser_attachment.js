@@ -147,6 +147,33 @@ function check_no_attachment_size(win, index) {
 }
 
 /**
+ * Ensure the attachment icon image loaded.
+ *
+ * @param {Window} win - The compose window.
+ * @param {integer} index - The attachment to examine, as an index into the listbox.
+ */
+async function check_attachment_icon_loaded(win, index) {
+  const bucket = win.document.getElementById("attachmentBucket");
+  const item = bucket.querySelectorAll("richlistitem.attachmentItem")[index];
+  const icon = item.querySelector("img.attachmentcell-icon");
+
+  await TestUtils.waitForCondition(
+    () => icon.complete,
+    `Icon should finish loading for attachment #${index}`
+  );
+
+  Assert.greater(
+    icon.naturalWidth,
+    0,
+    `Icon should have a natural width for attachment #${index}`
+  );
+  Assert.ok(
+    !icon.matches(":-moz-broken"),
+    `Icon should not be broken for attachment #${index}`
+  );
+}
+
+/**
  * Make sure that the total size of all attachments is what we expect.
  *
  * @param {Window} win - The compose window.
@@ -196,6 +223,30 @@ add_task(async function test_file_attachment() {
   check_total_attachment_size(cwc, 1);
 
   await close_compose_window(cwc);
+});
+
+add_task(async function test_file_attachment_icon_with_space() {
+  const cwc = await open_compose_new_mail();
+  const path = PathUtils.join(PathUtils.tempDir, "ubik final.txt");
+
+  await IOUtils.writeUTF8(path, rawAttachment);
+  const file = new FileUtils.File(path);
+  const url = Services.io.newFileURI(file).spec;
+
+  await add_attachments(cwc, url, file.fileSize);
+
+  const bucket = cwc.document.getElementById("attachmentBucket");
+  Assert.equal(bucket.itemCount, 1, "Should add one attachment.");
+  Assert.equal(
+    bucket.getItemAtIndex(0).attachment.name,
+    "ubik final.txt",
+    "Should keep the attachment filename."
+  );
+
+  await check_attachment_icon_loaded(cwc, 0);
+
+  await close_compose_window(cwc);
+  await IOUtils.remove(path);
 });
 
 add_task(async function test_webpage_attachment() {
@@ -280,6 +331,19 @@ function subtest_open_attachment(cwc) {
 }
 
 add_task(async function test_open_attachment() {
+  // Force the "what do you want to do?" dialog to always appear for text/plain,
+  // regardless of whether we have any system or profile handler registered for
+  // .txt files.
+  const handlerSvc = Cc["@mozilla.org/uriloader/handler-service;1"].getService(
+    Ci.nsIHandlerService
+  );
+  const mimeSvc = Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService);
+  const txtHandlerInfo = mimeSvc.getFromTypeAndExtension("text/plain", "txt");
+  txtHandlerInfo.preferredAction = Ci.nsIHandlerInfo.alwaysAsk;
+  txtHandlerInfo.alwaysAskBeforeHandling = true;
+  handlerSvc.store(txtHandlerInfo);
+  registerCleanupFunction(() => handlerSvc.remove(txtHandlerInfo));
+
   const cwc = await open_compose_new_mail();
 
   // set up our external file for attaching
@@ -307,6 +371,80 @@ add_task(async function test_open_attachment() {
   );
   await dialogPromise;
 
+  await close_compose_window(cwc);
+});
+
+add_task(async function test_open_attachment_keyboard() {
+  // Force the "what do you want to do?" dialog to always appear for text/plain.
+  const handlerSvc = Cc["@mozilla.org/uriloader/handler-service;1"].getService(
+    Ci.nsIHandlerService
+  );
+  const mimeSvc = Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService);
+  const txtHandlerInfo = mimeSvc.getFromTypeAndExtension("text/plain", "txt");
+  txtHandlerInfo.preferredAction = Ci.nsIHandlerInfo.alwaysAsk;
+  txtHandlerInfo.alwaysAskBeforeHandling = true;
+  handlerSvc.store(txtHandlerInfo);
+  registerCleanupFunction(() => handlerSvc.remove(txtHandlerInfo));
+
+  const cwc = await open_compose_new_mail();
+
+  const file = new FileUtils.File(getTestFilePath("data/attachment.txt"));
+  const fileHandler = Services.io
+    .getProtocolHandler("file")
+    .QueryInterface(Ci.nsIFileProtocolHandler);
+  const url = fileHandler.getURLSpecFromActualFile(file);
+
+  await add_attachments(cwc, url, file.fileSize);
+
+  // Now, open the attachment by pressing Enter.
+  const bucket = cwc.document.getElementById("attachmentBucket");
+  const dialogPromise = BrowserTestUtils.promiseAlertDialog(
+    null,
+    "chrome://mozapps/content/downloads/unknownContentType.xhtml",
+    { callback: subtest_open_attachment }
+  );
+  bucket.focus();
+  bucket.selectedIndex = 0;
+  EventUtils.synthesizeKey("KEY_Enter", {}, cwc);
+  await dialogPromise;
+
+  await close_compose_window(cwc);
+});
+
+add_task(async function test_open_attachment_modifier_key() {
+  const cwc = await open_compose_new_mail();
+
+  const file = new FileUtils.File(getTestFilePath("data/attachment.txt"));
+  const fileHandler = Services.io
+    .getProtocolHandler("file")
+    .QueryInterface(Ci.nsIFileProtocolHandler);
+  const url = fileHandler.getURLSpecFromActualFile(file);
+
+  await add_attachments(cwc, url, file.fileSize);
+
+  // Accel+Enter should NOT call cmd_openAttachment.
+  const bucket = cwc.document.getElementById("attachmentBucket");
+  bucket.focus();
+  bucket.selectedIndex = 0;
+
+  let cmdOpenCalled = false;
+  const origGoDoCommand = cwc.goDoCommand;
+  cwc.goDoCommand = function (command) {
+    if (command === "cmd_openAttachment") {
+      cmdOpenCalled = true;
+    }
+    origGoDoCommand.call(this, command);
+  };
+
+  const modifier =
+    AppConstants.platform == "macosx" ? { metaKey: true } : { ctrlKey: true };
+  EventUtils.synthesizeKey("KEY_Enter", modifier, cwc);
+  Assert.ok(
+    !cmdOpenCalled,
+    `${AppConstants.platform == "macosx" ? "Cmd" : "Ctrl"}+Enter should not call cmd_openAttachment`
+  );
+
+  cwc.goDoCommand = origGoDoCommand;
   await close_compose_window(cwc);
 });
 

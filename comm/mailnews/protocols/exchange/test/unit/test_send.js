@@ -67,9 +67,7 @@ add_setup(async () => {
   exchangeOutgoingServer = graphOutgoingServer.QueryInterface(
     Ci.IExchangeOutgoingServer
   );
-  exchangeOutgoingServer.initialize(
-    `http://127.0.0.1:${graphServer.port}/v1.0`
-  );
+  exchangeOutgoingServer.initialize(`http://127.0.0.1:${graphServer.port}/`);
 
   // Configure the outgoing servers to use Basic/password auth (which we map to
   // `nsMsgAuthMethod.passwordCleartext`).
@@ -234,6 +232,10 @@ add_task(async function test_moved_to_fcc_folder() {
     () => fccFolder.getTotalMessages(false) == 1,
     "waiting for sent message to be moved to the FCC folder"
   );
+
+  // The message should be marked as read in the sent messages folder.
+  const message = fccFolder.msgDatabase.enumerateMessages().getNext();
+  Assert.ok(message.isRead, "Sent message should be marked as read.");
 });
 
 /**

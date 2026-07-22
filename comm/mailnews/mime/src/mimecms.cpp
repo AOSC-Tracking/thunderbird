@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -938,6 +937,8 @@ static int MimeCMS_eof(MimeClosure crypto_closure, bool abort_p) {
       MimeCMSGetFromSender(data->self, from_addr, from_name, sender_addr,
                            sender_name, msg_date);
 
+      data->smimeSink->SignatureProcessingStarted(aRelativeNestLevel,
+                                                  data->url);
       MimeCMSRequestAsyncSignatureVerification(
           data->content_info, from_addr.get(), from_name.get(),
           sender_addr.get(), sender_name.get(), msg_date.get(), data->smimeSink,

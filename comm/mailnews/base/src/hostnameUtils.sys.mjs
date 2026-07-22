@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -263,10 +262,10 @@ export function isLegalIPv6Address(aHostName) {
   // TODO: support Zone indices in Link-local addresses? Currently they are rejected.
   // http://en.wikipedia.org/wiki/IPv6_address#Link-local_addresses_and_zone_indices
 
-  const hostName = ipComponents.join(":");
+  const hostname = ipComponents.join(":");
   // Treat 0000:0000:0000:0000:0000:0000:0000:0000 as an invalid IPv6 address.
-  return hostName != "0000:0000:0000:0000:0000:0000:0000:0000"
-    ? hostName
+  return hostname != "0000:0000:0000:0000:0000:0000:0000:0000"
+    ? hostname
     : null;
 }
 

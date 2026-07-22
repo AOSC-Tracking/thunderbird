@@ -576,11 +576,15 @@ export const MailNotificationManager = new (class {
       wrappedJSObject: newMsgKeys,
     });
     args.appendElement(this);
+
+    // Hint the OS to create the window at the primary monitor's origin so it
+    // inherits the correct DPI scaling from the start.  The alert queries the
+    // primary screen directly via nsIScreenManager to position itself.
     Services.ww.openWindow(
       null,
       "chrome://messenger/content/newmailalert.xhtml",
       "_blank",
-      "chrome,dialog,titlebar=no,alert=yes",
+      "chrome,dialog,titlebar=no,alert=yes,left=0,top=0",
       args
     );
     this._customizedAlertShown = true;

@@ -12,6 +12,9 @@ const { OSKeyStore } = ChromeUtils.importESModule(
 const { OSKeyStoreTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/OSKeyStoreTestUtils.sys.mjs"
 );
+const { CreateInBackend } = ChromeUtils.importESModule(
+  "resource:///modules/accountcreation/CreateInBackend.sys.mjs"
+);
 
 add_task(async () => {
   await testCheckboxes(
@@ -812,10 +815,6 @@ add_task(async function testPrimaryPassword() {
     ).then(() => BrowserTestUtils.promiseAlertDialog("accept"));
     await SimpleTest.promiseFocus(prefsWindow);
     Assert.ok(token.hasPassword, "there should be a primary password");
-    Assert.ok(
-      token.checkPassword(newPassword),
-      `the primary password should be "${newPassword}"`
-    );
     Assert.ok(
       passwordCheckbox.checked,
       "the primary password checkbox should be checked"

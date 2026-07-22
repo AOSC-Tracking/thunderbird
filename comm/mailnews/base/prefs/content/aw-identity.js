@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -69,7 +68,13 @@ function checkForEmail() {
   if (pageData.email) {
     email.value = pageData.email;
   }
-  if (email.value == "" && "@mozilla.org/userinfo;1" in Cc) {
+  if (
+    email.value == "" &&
+    "@mozilla.org/userinfo;1" in Cc &&
+    !Cu.isInAutomation
+    // Don't fetch the email address in tests, it may try to access the
+    // address book and time out with a permissions prompt.
+  ) {
     email.value = Cc["@mozilla.org/userinfo;1"].getService(
       Ci.nsIUserInfo
     ).emailAddress;

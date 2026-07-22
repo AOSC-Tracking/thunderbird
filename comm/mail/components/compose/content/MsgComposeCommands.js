@@ -92,6 +92,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   ComposeUtils: "resource:///modules/ComposeUtils.sys.mjs",
   MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
+  makeMozIconImageSet: "resource:///modules/MozIconUtils.mjs",
   QuoteSanitizer: "resource:///modules/QuoteSanitizer.sys.mjs",
 });
 
@@ -2285,19 +2286,14 @@ function addAttachCloudMenuItems(aParentMenu) {
       }
       if (!addedFiles.find(f => f.name == upload.name || f.url == upload.url)) {
         const fileItem = document.createXULElement("menuitem");
-        const fileUrl =
-          "list-style-image: image-set('moz-icon://" +
-          upload.name +
-          "?size=16&scale=1' 1x, 'moz-icon://" +
-          upload.name +
-          "?size=16&scale=2' 2x, 'moz-icon://" +
-          upload.name +
-          "?size=16&scale=3' 3x)";
         fileItem.cloudFileUpload = upload;
         fileItem.cloudFileAccount = account;
         fileItem.setAttribute("label", upload.name);
         fileItem.setAttribute("class", "menuitem-iconic");
-        fileItem.setAttribute("style", fileUrl);
+        fileItem.setAttribute(
+          "style",
+          `list-style-image: ${lazy.makeMozIconImageSet(upload.name, 16)}`
+        );
         aParentMenu.appendChild(fileItem);
         addedFiles.push({ name: upload.name, url: upload.url });
       }
@@ -4771,14 +4767,17 @@ async function ComposeStartup() {
           if (uri instanceof Ci.nsIFileURL) {
             if (uri.file.exists()) {
               attachment.size = uri.file.fileSize;
+              // Rebuild a standard-compliant URI from the native file path.
+              attachment.url = PathUtils.toFileURI(uri.file.path);
             } else {
               attachment = null;
             }
+          } else {
+            attachment.url = uri.spec;
           }
 
           // Only want to attach if a file that exists or it is not a file.
           if (attachment) {
-            attachment.url = uri.spec;
             composeFields.addAttachment(attachment);
           } else {
             const title = getComposeBundle().getString("errorFileAttachTitle");
@@ -6571,8 +6570,12 @@ async function CompleteGenericSendMessage(msgType) {
       progress
     );
   } catch (ex) {
-    console.warn(`GenericSendMessage FAILED: ${ex.message}`, ex);
     ToggleWindowLock(false);
+    if (ex?.result == Cr.NS_ERROR_ABORT) {
+      // The user cancelled the send; this is not an error.
+      return;
+    }
+    console.warn(`GenericSendMessage FAILED: ${ex.message}`, ex);
     return;
   } finally {
     if (gAutoSaving) {
@@ -6816,16 +6819,34 @@ function showAddressRowButtonOnDragover(event) {
  * @param {Event} event - The DOM drop event on a recipient disclosure label.
  */
 function showAddressRowButtonOnDrop(event) {
-  if (event.dataTransfer.types.includes("text/pills")) {
-    // If the dragged data includes the type "text/pills", we believe that
-    // the user is dragging our own pills, so we try to move the selected pills
-    // to the address row of the recipient label they were dropped on (Cc, Bcc,
-    // etc.), which will also show the row if needed. If there are no selected
-    // pills (so "text/pills" was generated elsewhere), moveSelectedPills() will
-    // bail out and we'll do nothing.
-    const row = document.getElementById(event.target.dataset.addressRow);
-    document.getElementById("recipientsContainer").moveSelectedPills(row);
+  if (!event.dataTransfer.types.includes("text/pills")) {
+    return;
   }
+  const row = document.getElementById(event.target.dataset.addressRow);
+  const recipientsArea = document.getElementById("recipientsContainer");
+  // The drag may have started in another compose window; find the recipients
+  // area it came from so its pills can be removed there.
+  const sourceRecipientsArea =
+    event.dataTransfer.mozSourceNode?.ownerDocument.getElementById(
+      "recipientsContainer"
+    );
+  if (!sourceRecipientsArea || sourceRecipientsArea == recipientsArea) {
+    // Same-window drag: move the selected pills to the address row of the
+    // recipient label they were dropped on (Cc, Bcc, etc.), which will also
+    // show the row if needed. If there are no selected pills (so "text/pills"
+    // was generated elsewhere), moveSelectedPills() will bail out and we'll
+    // do nothing.
+    recipientsArea.moveSelectedPills(row);
+    return;
+  }
+  const addresses = JSON.parse(event.dataTransfer.getData("text/pills"));
+  recipientsArea.createDNDPills(
+    row.querySelector(".address-container"),
+    addresses,
+    false,
+    null,
+    sourceRecipientsArea
+  );
 }
 
 /**
@@ -7999,7 +8020,7 @@ function ComposeCanClose() {
       window,
       getComposeBundle().getString("saveDlogTitle"),
       getComposeBundle().getFormattedString("saveDlogMessages3", [
-        draftsFolder.name,
+        draftsFolder.localizedName,
       ]),
       Services.prompt.BUTTON_TITLE_SAVE * Services.prompt.BUTTON_POS_0 +
         Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1 +
@@ -10567,7 +10588,7 @@ function DisplaySaveFolderDlg(folderURI) {
     const bundle = getComposeBundle();
     const SaveDlgTitle = bundle.getString("SaveDialogTitle");
     const dlgMsg = bundle.getFormattedString("SaveDialogMsg", [
-      msgfolder.name,
+      msgfolder.localizedName,
       msgfolder.server.prettyName,
     ]);
 

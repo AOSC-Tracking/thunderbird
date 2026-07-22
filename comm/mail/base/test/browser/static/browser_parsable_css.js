@@ -63,6 +63,11 @@ if (!Services.prefs.getBoolPref("dom.select.customizable_select.enabled")) {
     errorMessage: /Unknown pseudo-class or pseudo-element ‘picker’./i,
     isFromDevTools: false,
   });
+  ignoreList.push({
+    sourceName: /\bforms\.css$/i,
+    errorMessage: /Unknown pseudo-class or pseudo-element ‘checkmark’./i,
+    isFromDevTools: false,
+  });
 }
 
 if (!Services.prefs.getBoolPref("layout.css.fake-webkit-scrollbar.enabled")) {
@@ -113,6 +118,14 @@ if (!Services.prefs.getBoolPref("dom.viewTransitions.enabled")) {
   ignoreList.push({
     sourceName: /\b(ua)\.css$/i,
     errorMessage: /Unknown property.*view-transition/i,
+    isFromDevTools: false,
+  });
+}
+
+if (!Services.prefs.getBoolPref("dom.headingoffset.enabled")) {
+  ignoreList.push({
+    sourceName: /\b(html)\.css$/i,
+    errorMessage: /Unknown pseudo-class.*heading/i,
     isFromDevTools: false,
   });
 }

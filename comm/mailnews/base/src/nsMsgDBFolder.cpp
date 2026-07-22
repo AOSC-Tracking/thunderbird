@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -24,8 +23,6 @@
 #include "nsIDocShell.h"
 #include "nsIMsgWindow.h"
 #include "nsIWindowMediator.h"
-#include "nsIPrompt.h"
-#include "nsIInterfaceRequestorUtils.h"
 #include "nsIAbCard.h"
 #include "nsISpamSettings.h"
 #include "nsIMsgFilterPlugin.h"
@@ -89,6 +86,9 @@ static LazyLogModule gFolderLockLog("FolderLock");
 
 static PRTime gtimeOfLastPurgeCheck;  // variable to know when to check for
                                       // purge threshold
+
+// Guard to prevent re-entrant auto-compaction.
+static bool gAutoCompactInProgress;
 
 #define PREF_MAIL_PROMPT_PURGE_THRESHOLD "mail.prompt_purge_threshold"
 #define PREF_MAIL_PURGE_THRESHOLD_MB "mail.purge_threshold_mb"
@@ -1558,6 +1558,18 @@ class AutoCompactEvent : public mozilla::Runnable {
 nsresult nsMsgDBFolder::HandleAutoCompactEvent(nsIMsgWindow* aWindow) {
   MOZ_LOG(gCompactLog, LogLevel::Debug, ("Performing AutoCompactEvent check"));
 
+  // Prevent re-entrant auto-compaction. The compact dialog is modal and
+  // spins the event loop, which can allow the autosync timer or additional
+  // AutoCompactEvents to fire. Those nested operations may commit or modify
+  // the same Mork database, corrupting iterators (bug 554482).
+  if (gAutoCompactInProgress) {
+    MOZ_LOG(gCompactLog, LogLevel::Debug,
+            ("AutoCompactEvent already in progress, skipping"));
+    return NS_OK;
+  }
+  gAutoCompactInProgress = true;
+  auto guard = mozilla::MakeScopeExit([&] { gAutoCompactInProgress = false; });
+
   nsCOMPtr<nsIMsgAccountManager> accountMgr =
       mozilla::components::AccountManager::Service();
   nsTArray<RefPtr<nsIMsgIncomingServer>> allServers;
@@ -2461,11 +2473,11 @@ bool nsMsgDBFolder::PromptForMasterPasswordIfNecessary() {
     return false;
   }
 
-  bool result;
-  rv = token->CheckPassword(EmptyCString(), &result);
+  bool hasPassword;
+  rv = token->GetHasPassword(&hasPassword);
   NS_ENSURE_SUCCESS(rv, false);
 
-  if (result) {
+  if (!hasPassword) {
     // We don't have a master password, so this function isn't supported,
     // therefore just tell account manager we've authenticated and return true.
     accountManager->SetUserNeedsToAuthenticate(false);
@@ -2473,18 +2485,19 @@ bool nsMsgDBFolder::PromptForMasterPasswordIfNecessary() {
   }
 
   // We have a master password, so try and login to the slot.
-  rv = token->Login(false);
+  rv = token->Login();
   if (NS_FAILED(rv)) {
     // Login failed, so we didn't get a password (e.g. prompt cancelled).
     return false;
   }
 
   // Double-check that we are now logged in
-  rv = token->IsLoggedIn(&result);
+  bool isLoggedIn;
+  rv = token->GetIsLoggedIn(&isLoggedIn);
   NS_ENSURE_SUCCESS(rv, false);
 
-  accountManager->SetUserNeedsToAuthenticate(!result);
-  return result;
+  accountManager->SetUserNeedsToAuthenticate(!isLoggedIn);
+  return isLoggedIn;
 }
 
 // this gets called after the last junk mail classification has run.
@@ -4223,35 +4236,6 @@ NS_IMETHODIMP nsMsgDBFolder::SetSizeOnDisk(int64_t aSizeOnDisk) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgDBFolder::GetSizeOnDiskWithSubFolders(int64_t* sizeOnDisk) {
-  NS_ENSURE_ARG_POINTER(sizeOnDisk);
-
-  int64_t totalSize;
-
-  // Get the size of the current folder.
-  nsresult rv = GetSizeOnDisk(&totalSize);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Iterate over all sub-folders, and add their size to the total.
-  for (auto folder : mSubFolders) {
-    // Ignore virtual folders.
-    uint32_t folderFlags;
-    folder->GetFlags(&folderFlags);
-    if (!(folderFlags & nsMsgFolderFlags::Virtual)) {
-      // Get the nested size on disk for the sub-folder, so it includes any
-      // sub-folder it might have.
-      int64_t size;
-      rv = folder->GetSizeOnDiskWithSubFolders(&size);
-      NS_ENSURE_SUCCESS(rv, rv);
-      totalSize += size;
-    }
-  }
-
-  *sizeOnDisk = totalSize;
-
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgDBFolder::GetUsername(nsACString& userName) {
   nsresult rv;
   nsCOMPtr<nsIMsgIncomingServer> server;
@@ -4260,12 +4244,12 @@ NS_IMETHODIMP nsMsgDBFolder::GetUsername(nsACString& userName) {
   return server->GetUsername(userName);
 }
 
-NS_IMETHODIMP nsMsgDBFolder::GetHostname(nsACString& hostName) {
+NS_IMETHODIMP nsMsgDBFolder::GetHostname(nsACString& hostname) {
   nsresult rv;
   nsCOMPtr<nsIMsgIncomingServer> server;
   rv = GetServer(getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv, rv);
-  return server->GetHostName(hostName);
+  return server->GetHostname(hostname);
 }
 
 NS_IMETHODIMP nsMsgDBFolder::GetNewMessages(nsIMsgWindow*,

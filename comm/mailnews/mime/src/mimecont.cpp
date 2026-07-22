@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -159,6 +158,11 @@ static int MimeContainer_add_child(MimeObject* parent, MimeObject* child) {
   cont->nchildren++;
 
   child->parent = parent;
+  if (!child->partDepth) {
+    child->partDepth = mime_child_part_depth(parent);
+  }
+  NS_ASSERTION(child->partDepth == mime_child_part_depth(parent),
+               "unexpected MIME part depth");
 
   /* Copy this object's options into the child. */
   child->options = parent->options;

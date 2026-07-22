@@ -1,5 +1,4 @@
-/* -*- Mode: JavaScript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -36,6 +35,9 @@ var { UpdateUtils } = ChromeUtils.importESModule(
 );
 var { TagUtils } = ChromeUtils.importESModule(
   "resource:///modules/TagUtils.sys.mjs"
+);
+var { makeMozIconImageSet, makeMozIconSrcSet } = ChromeUtils.importESModule(
+  "resource:///modules/MozIconUtils.mjs"
 );
 
 XPCOMUtils.defineLazyServiceGetters(this, {
@@ -86,15 +88,10 @@ Preferences.addAll([
   { id: "font.language.group", type: "string" },
   { id: "intl.regional_prefs.use_os_locales", type: "bool" },
   { id: "mailnews.database.global.indexer.enabled", type: "bool" },
-  { id: "mailnews.labels.description.1", type: "wstring" },
   { id: "mailnews.labels.color.1", type: "string" },
-  { id: "mailnews.labels.description.2", type: "wstring" },
   { id: "mailnews.labels.color.2", type: "string" },
-  { id: "mailnews.labels.description.3", type: "wstring" },
   { id: "mailnews.labels.color.3", type: "string" },
-  { id: "mailnews.labels.description.4", type: "wstring" },
   { id: "mailnews.labels.color.4", type: "string" },
-  { id: "mailnews.labels.description.5", type: "wstring" },
   { id: "mailnews.labels.color.5", type: "string" },
   { id: "mail.addressDisplayFormat", type: "int" },
   { id: "mail.showCondensedAddresses", type: "bool" },
@@ -124,7 +121,7 @@ if (AppConstants.platform == "win") {
 var ICON_URL_APP = "";
 
 if (AppConstants.MOZ_WIDGET_GTK) {
-  ICON_URL_APP = `moz-icon://dummy.exe?size=16&scale=1 1x, moz-icon://dummy.exe?size=16&scale=2 2x, moz-icon://dummy.exe?size=16&scale=3 3x`;
+  ICON_URL_APP = makeMozIconSrcSet("dummy.exe", 16);
 } else {
   ICON_URL_APP = "chrome://messenger/skin/preferences/application.png";
 }
@@ -562,7 +559,10 @@ var gGeneralPane = {
       soundUrlLocation.label = this.convertURLToLocalFile(
         soundUrlLocation.value
       ).leafName;
-      soundUrlLocation.style.backgroundImage = `image-set("moz-icon://${soundUrlLocation.label}?size=16&scale=1" 1x, "moz-icon://${soundUrlLocation.label}?size=16&scale=2" 2x, "moz-icon://${soundUrlLocation.label}?size=16&scale=3" 3x)`;
+      soundUrlLocation.style.backgroundImage = makeMozIconImageSet(
+        soundUrlLocation.label,
+        16
+      );
     }
   },
 
@@ -2026,10 +2026,6 @@ var gGeneralPane = {
       return aHandlerApp.uriTemplate;
     }
 
-    if (aHandlerApp instanceof Ci.nsIWebContentHandlerInfo) {
-      return aHandlerApp.uri;
-    }
-
     return false;
   },
 
@@ -2141,10 +2137,6 @@ var gGeneralPane = {
       return this._getIconURLForWebApp(aHandlerApp.uriTemplate);
     }
 
-    if (aHandlerApp instanceof Ci.nsIWebContentHandlerInfo) {
-      return this._getIconURLForWebApp(aHandlerApp.uri);
-    }
-
     // We know nothing about other kinds of handler apps.
     return "";
   },
@@ -2155,7 +2147,7 @@ var gGeneralPane = {
       .QueryInterface(Ci.nsIFileProtocolHandler)
       .getURLSpecFromActualFile(aFile);
 
-    return `moz-icon://${urlSpec}?size=16&scale=1 1x, moz-icon://${urlSpec}?size=16&scale=2 2x, moz-icon://${urlSpec}?size=16&scale=3 3x`;
+    return makeMozIconSrcSet(urlSpec, 16);
   },
 
   _getIconURLForWebApp(aWebAppURITemplate) {

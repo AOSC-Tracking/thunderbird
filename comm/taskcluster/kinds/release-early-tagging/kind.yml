@@ -14,23 +14,39 @@ task-defaults:
     description: Release Promotion version tag for buildN
     run-on-projects: []
     shipping-phase: promote
-    worker-type: tree
+    worker-type: lando
     worker:
-        implementation: treescript
-        tags: ['buildN']
-        bump: false
-        dontbuild: true
-        push:
+        implementation: scriptworker-lando
+        repo-param-prefix: comm_
+        lando-repo:
             by-project:
-                comm-(beta|release|esr.*): true
-                default: false
+                comm-beta: thunderbird-desktop-beta
+                comm-release: thunderbird-desktop-release
+                comm-esr153: thunderbird-desktop-esr153
+                try-comm-central:
+                    by-release-type:
+                        beta: staging-thunderbird-beta
+                        release: staging-thunderbird-release
+                        esr153: staging-thunderbird-esr153
+                        default: ""
+                default: ""
+        actions:
+            - tag:
+                  types: ["buildN"]
 
+                  # Used to map hg revisions to the git revisions that scriptworker-lando needs
+                  hg-repo-url:
+                      by-project:
+                          comm-beta: https://hg.mozilla.org/releases/comm-beta
+                          comm-release: https://hg.mozilla.org/releases/comm-release
+                          comm-esr140: https://hg.mozilla.org/releases/comm-esr140
+                          comm-esr153: https://hg.mozilla.org/releases/comm-esr153
+                          try-comm-central: https://hg.mozilla.org/try-comm-central
+                          default: ""
 
 tasks:
     thunderbird:
         name: thunderbird-tag-buildN
-        worker:
-            repo-param-prefix: comm_
         shipping-product: thunderbird
         treeherder:
             platform: thunderbird-release/opt

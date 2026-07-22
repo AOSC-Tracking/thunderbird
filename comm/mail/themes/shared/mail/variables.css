@@ -8,7 +8,6 @@
 
 :host,
 :root {
-  --account-color: var(--selected-item-color);
   --transition-duration: 200ms;
   --transition-timing: ease;
   --lwt-additional-images: none;
@@ -20,15 +19,20 @@
   --autocomplete-popup-highlight-background: var(--selected-item-color);
   --autocomplete-popup-highlight-color: var(--selected-item-text-color);
   --button-background-color: var(--layout-background-3);
+  --button-background-color-hover: var(--button-hover-background-color);
+  --button-background-color-active: var(--button-active-background-color);
   --button-hover-text-color: inherit;
   --button-hover-background-color: light-dark(var(--layout-background-2), var(--layout-background-4));
   --button-active-background-color: light-dark(var(--layout-background-4), var(--layout-background-2));
   --button-border-color: light-dark(var(--layout-border-1), var(--layout-border-2));
   --button-border-radius: 3px;
   --button-border-size: 1px;
+  --button-border: var(--button-border-size) solid var(--button-border-color);
   --button-text-color: var(--layout-color-1);
+  --button-min-height: 32px;
   --button-margin: 6px;
   --button-padding: 6px;
+  --button-padding-wide: 6px 14px;
 
   --button-primary-background-color: var(--selected-item-color);
   --button-primary-hover-background-color: color-mix(in srgb, var(--selected-item-color) 80%, black);
@@ -45,10 +49,7 @@
   --button-destructive-border-color: light-dark(var(--color-red-80), var(--color-red-50));
   --button-link-text-color: light-dark(var(--color-blue-60), var(--color-blue-40));
   --button-link-active-text-color: light-dark(var(--color-blue-70), var(--color-blue-50));
-  --button-pressed-shadow: light-dark(
-    inset 0 1px 3px color-mix(in srgb, var(--color-gray-90) 30%, transparent),
-    inset 0 1px 3px color-mix(in srgb, var(--color-black) 50%, transparent)
-  );
+  --button-pressed-shadow: inset 0 3px 5px -3px light-dark(color-mix(in srgb, var(--color-gray-90) 30%, transparent), var(--color-black));
   --button-pressed-indicator-shadow: light-dark(0 1px 0 rgba(255, 255, 255, 0.5), 0 1px 0 rgba(0, 0, 0, 0.25));
   --button-pressed-indicator-padding: 6px;
   --chrome-content-separator-color: light-dark(var(--color-gray-30), var(--color-gray-90));
@@ -56,6 +57,7 @@
   --focus-outline-offset: 2px;
   --focus-outline: 2px solid var(--focus-outline-color);
   --input-border-color: color-mix(in srgb, currentColor 41%, transparent);
+  --input-text-border-radius: var(--button-border-radius);
   --new-folder-color: light-dark(var(--color-blue-60), var(--color-blue-40));
   --lwt-header-image: none;
   --search-bar-color: inherit;
@@ -68,9 +70,12 @@
   --selected-item-text-color: var(--sidebar-highlight-text-color, AccentColorText);
   --sidebar-header-gap: 9px;
   --sidebar-header-spacing: 9px;
-  --sidebar-background: var(--sidebar-background-color, var(--layout-background-1));
-  --sidebar-color: var(--sidebar-text-color, var(--layout-color-1));
-  --sidebar-border: var(--sidebar-border-color, var(--layout-border-0));
+  --sidebar-background-color: var(--layout-background-1);
+  --sidebar-text-color: var(--layout-color-1);
+  --sidebar-border-color: var(--layout-border-0);
+  --sidebar-background: var(--sidebar-background-color);
+  --sidebar-color: var(--sidebar-text-color);
+  --sidebar-border: var(--sidebar-border-color);
 
   --tab-min-height: 33px;
   --lwt-tabs-border-color: var(--sidebar-border);
@@ -126,6 +131,7 @@
   --button-background-color-primary: var(--button-primary-background-color);
   --button-background-color-primary-hover: var(--button-primary-hover-background-color);
   --button-background-color-primary-active: var(--button-primary-active-background-color);
+  --button-background-color-primary-disabled: var(--button-background-color-primary);
   --button-border-color-primary: var(--button-primary-border-color);
   --button-border-color-primary-hover: var(--button-primary-border-color);
   --border-radius-medium: var(--button-border-radius);
@@ -185,6 +191,7 @@
   @media (prefers-contrast) {
     --button-text-color: ButtonText;
     --button-background-color: ButtonFace;
+    --button-background-color-hover: ButtonFace;
     --button-border-color: ButtonText;
     --button-hover-text-color: SelectedItemText;
     --button-hover-background-color: SelectedItem;
@@ -281,8 +288,10 @@
 
 :root[uidensity="compact"] {
   --tab-min-height: 30px;
+  --button-min-height: 30px;
   --button-margin: 3px;
   --button-padding: 3px;
+  --button-padding-wide: 3px 9px;
   --button-pressed-indicator-padding: 9px;
   --sidebar-header-gap: 6px;
   --sidebar-header-spacing: 4px 6px 3px;

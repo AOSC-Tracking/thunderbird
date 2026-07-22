@@ -226,6 +226,14 @@ workers:
                 by-release-level:
                     production: comm-3-tree
                     staging: comm-1-tree
+        lando:
+            provisioner: scriptworker-k8s
+            implementation: scriptworker-lando
+            os: linux
+            worker-type:
+                by-release-level:
+                    production: '{trust-domain}-3-lando'
+                    staging: '{trust-domain}-1-lando'
         t-linux-docker(-noscratch)?(-amd)?:
             provisioner: comm-t
             implementation: docker-worker
@@ -242,6 +250,11 @@ workers:
             os: macosx
             worker-type: 'gecko-{alias}'
         t-osx-1400-r8:
+            provisioner: releng-hardware
+            implementation: generic-worker
+            os: macosx
+            worker-type: 'gecko-{alias}'
+        t-osx-1500-m4:
             provisioner: releng-hardware
             implementation: generic-worker
             os: macosx

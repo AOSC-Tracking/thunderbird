@@ -22,7 +22,7 @@ namespace {
 
 // Traits class for a reference type, specialized for parameters which are
 // already references.
-template <typename T>
+template <typename T, bool IsXpcom = std::is_base_of<nsISupports, T>::value>
 struct RefType {
   typedef T& type;
 };
@@ -52,19 +52,38 @@ struct RefType<const nsIID&> {
   typedef const nsIID& type;
 };
 
+// For ref-counted pointers, hold a smartptr instead of a bare reference, to
+// prevent the the main thread releasing the object before the Runnable gets
+// run.
+template <typename T>
+struct RefType<T*, true> {
+  typedef nsCOMPtr<T> type;
+};
+
 class SyncRunnableBase : public mozilla::Runnable {
  public:
   nsresult Result() { return mResult; }
 
   mozilla::Monitor& Monitor() { return mMonitor; }
 
+  bool IsCompleted() const MOZ_NO_THREAD_SAFETY_ANALYSIS { return mCompleted; }
+
  protected:
   SyncRunnableBase()
       : mozilla::Runnable("SyncRunnableBase"),
         mResult(NS_ERROR_UNEXPECTED),
+        mCompleted(false),
         mMonitor("SyncRunnableBase") {}
 
+  void Complete(nsresult aResult) {
+    mozilla::MonitorAutoLock lock(mMonitor);
+    mResult = aResult;
+    mCompleted = true;
+    lock.Notify();
+  }
+
   nsresult mResult;
+  bool mCompleted MOZ_GUARDED_BY(mMonitor);
   mozilla::Monitor mMonitor;
 };
 
@@ -77,8 +96,7 @@ class SyncRunnable0 : public SyncRunnableBase {
       : mReceiver(receiver), mMethod(method) {}
 
   NS_IMETHOD Run() {
-    mResult = (mReceiver->*mMethod)();
-    mozilla::MonitorAutoLock(mMonitor).Notify();
+    Complete((mReceiver->*mMethod)());
     return NS_OK;
   }
 
@@ -97,8 +115,7 @@ class SyncRunnable1 : public SyncRunnableBase {
       : mReceiver(receiver), mMethod(method), mArg1(arg1) {}
 
   NS_IMETHOD Run() {
-    mResult = (mReceiver->*mMethod)(mArg1);
-    mozilla::MonitorAutoLock(mMonitor).Notify();
+    Complete((mReceiver->*mMethod)(mArg1));
     return NS_OK;
   }
 
@@ -120,8 +137,7 @@ class SyncRunnable2 : public SyncRunnableBase {
       : mReceiver(receiver), mMethod(method), mArg1(arg1), mArg2(arg2) {}
 
   NS_IMETHOD Run() {
-    mResult = (mReceiver->*mMethod)(mArg1, mArg2);
-    mozilla::MonitorAutoLock(mMonitor).Notify();
+    Complete((mReceiver->*mMethod)(mArg1, mArg2));
     return NS_OK;
   }
 
@@ -149,8 +165,7 @@ class SyncRunnable3 : public SyncRunnableBase {
         mArg3(arg3) {}
 
   NS_IMETHOD Run() {
-    mResult = (mReceiver->*mMethod)(mArg1, mArg2, mArg3);
-    mozilla::MonitorAutoLock(mMonitor).Notify();
+    Complete((mReceiver->*mMethod)(mArg1, mArg2, mArg3));
     return NS_OK;
   }
 
@@ -183,8 +198,7 @@ class SyncRunnable4 : public SyncRunnableBase {
         mArg4(arg4) {}
 
   NS_IMETHOD Run() {
-    mResult = (mReceiver->*mMethod)(mArg1, mArg2, mArg3, mArg4);
-    mozilla::MonitorAutoLock(mMonitor).Notify();
+    Complete((mReceiver->*mMethod)(mArg1, mArg2, mArg3, mArg4));
     return NS_OK;
   }
 
@@ -220,8 +234,7 @@ class SyncRunnable5 : public SyncRunnableBase {
         mArg5(arg5) {}
 
   NS_IMETHOD Run() {
-    mResult = (mReceiver->*mMethod)(mArg1, mArg2, mArg3, mArg4, mArg5);
-    mozilla::MonitorAutoLock(mMonitor).Notify();
+    Complete((mReceiver->*mMethod)(mArg1, mArg2, mArg3, mArg4, mArg5));
     return NS_OK;
   }
 
@@ -242,7 +255,9 @@ nsresult DispatchSyncRunnable(SyncRunnableBase* r) {
     mozilla::MonitorAutoLock lock(r->Monitor());
     nsresult rv = NS_DispatchToMainThread(r);
     if (NS_FAILED(rv)) return rv;
-    lock.Wait();
+    while (!r->IsCompleted()) {
+      lock.Wait();
+    }
   }
   return r->Result();
 }
@@ -366,7 +381,7 @@ NS_SYNCRUNNABLEMETHOD1(ImapMailFolderSink, HeaderFetchCompleted,
                        nsIImapProtocol*)
 NS_SYNCRUNNABLEMETHOD1(ImapMailFolderSink, SetBiffStateAndUpdate, int32_t)
 NS_SYNCRUNNABLEMETHOD3(ImapMailFolderSink, ProgressStatusString,
-                       nsIImapProtocol*, const char*, const nsACString&)
+                       nsIImapProtocol*, const nsACString&, const nsACString&)
 NS_SYNCRUNNABLEMETHOD4(ImapMailFolderSink, PercentProgress, nsIImapProtocol*,
                        nsACString const&, int64_t, int64_t)
 NS_SYNCRUNNABLEMETHOD0(ImapMailFolderSink, ClearFolderRights)
@@ -421,7 +436,7 @@ NS_SYNCRUNNABLEMETHOD1(ImapServerSink, SuspendUrl, nsIImapUrl*)
 NS_SYNCRUNNABLEMETHOD2(ImapServerSink, RetryUrl, nsIImapUrl*,
                        nsIImapMockChannel*)
 NS_SYNCRUNNABLEMETHOD0(ImapServerSink, AbortQueuedUrls)
-NS_SYNCRUNNABLEMETHOD2(ImapServerSink, GetImapStringByName, const char*,
+NS_SYNCRUNNABLEMETHOD2(ImapServerSink, GetImapStringByName, const nsACString&,
                        nsAString&)
 NS_SYNCRUNNABLEMETHOD2(ImapServerSink, PromptLoginFailed, nsIMsgWindow*,
                        int32_t*)

@@ -22,6 +22,16 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "useExternalBrowser",
   "mailnews.oauth.useExternalBrowser"
 );
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "useSchemeRedirect",
+  "mailnews.oauth.useSchemeRedirect"
+);
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["messenger/oauth.ftl"], true)
+);
 
 const log = console.createInstance({
   prefix: "mailnews.oauth",
@@ -65,27 +75,6 @@ function generateRandomURLToken(byteLength) {
 }
 
 /**
- * @param {string} redirectURI
- * @returns {boolean}
- */
-function isLoopbackHttpRedirect(redirectURI) {
-  try {
-    const uri = Services.io.newURI(redirectURI);
-    if (!uri.schemeIs("http")) {
-      return false;
-    }
-
-    const principal = Services.scriptSecurityManager.createContentPrincipal(
-      uri,
-      {}
-    );
-    return principal.isLoopbackHost;
-  } catch (e) {
-    return false;
-  }
-}
-
-/**
  * Constructor for the OAuth2 object.
  *
  * @class
@@ -94,25 +83,35 @@ function isLoopbackHttpRedirect(redirectURI) {
  * @param {object} issuerDetails
  * @param {string} issuerDetails.authorizationEndpoint - The authorization
  *   endpoint as defined by RFC 6749 Section 3.1.
+ * @param {?string} issuerDetails.issuerIdentifier - The expected issuer
+ *   identifier, as defined by RFC 9207.
  * @param {string} issuerDetails.clientId - The client_id as specified by RFC
  *   6749 Section 2.3.1.
  * @param {string} issuerDetails.clientSecret - The client_secret as specified
  *   in RFC 6749 section 2.3.1. Will not be included in the requests if null.
  * @param {boolean} issuerDetails.usePKCE - Whether to use PKCE as specified
  *   in RFC 7636 during the oauth registration process
+ * @param {boolean} issuerDetails.useExternalBrowser - Whether to use the
+ *   external browser OAuth login flow.
  * @param {string} issuerDetails.redirectionEndpoint - The redirect_uri as
  *   specified by RFC 6749 section 3.1.2.
+ * @param {?string} issuerDetails.schemeRedirect - A net.thunderbird
+ *   redirect_uri to use if we're configured to handle those. If set, it should
+ *   normally be: net.thunderbird://oauth2/callback
  * @param {string} issuerDetails.tokenEndpoint - The token endpoint as defined
  *   by RFC 6749 Section 3.2.
  */
 export function OAuth2(scope, issuerDetails) {
   this.scope = scope;
   this.authorizationEndpoint = issuerDetails.authorizationEndpoint;
+  this.issuerIdentifier = issuerDetails.issuerIdentifier || null;
   this.clientId = issuerDetails.clientId;
   this.consumerSecret = issuerDetails.clientSecret || null;
   this.usePKCE = issuerDetails.usePKCE;
+  this.useExternalBrowser = issuerDetails.useExternalBrowser;
   this.redirectionEndpoint =
     issuerDetails.redirectionEndpoint || "http://localhost";
+  this.schemeRedirect = issuerDetails.schemeRedirect;
   this.tokenEndpoint = issuerDetails.tokenEndpoint;
 
   this.extraAuthParams = [];
@@ -191,7 +190,15 @@ OAuth2.prototype = {
     return this.tokenExpires - OAUTH_GRACE_TIME_MS < Date.now();
   },
 
-  requestAuthorization() {
+  /**
+   * Do the OAuth2 authorization flow. Will use PKCE when available and tries
+   * to use an external browser for the flow when allowed.
+   *
+   * @param {boolean} [isReauthentication=false] - If this isn't the initial
+   *  authorization for this provider, this should be true. Will trigger a
+   *  prompt before opening the external browser when true.
+   */
+  requestAuthorization(isReauthentication = false) {
     const authEndpointURL = new URL(this.authorizationEndpoint);
 
     authEndpointURL.searchParams.append("response_type", "code");
@@ -235,11 +242,29 @@ OAuth2.prototype = {
         authEndpointURL.toString()
     );
 
-    if (
-      lazy.useExternalBrowser &&
-      isLoopbackHttpRedirect(this.redirectionEndpoint)
-    ) {
-      this.telemetryData.where = "external";
+    if (lazy.useExternalBrowser && this.useExternalBrowser) {
+      if (isReauthentication) {
+        const [title, description] = lazy.l10n.formatValuesSync([
+          { id: "oauth-reauthorize-title" },
+          {
+            id: "oauth-reauthorize-description",
+            args: {
+              hostname: authEndpointURL.hostname,
+              username: authEndpointURL.searchParams.get("login_hint"),
+            },
+          },
+        ]);
+        if (!Services.prompt.confirm(null, title, description)) {
+          this.finishAuthorizationRequest();
+          this.onAuthorizationFailed(
+            Cr.NS_ERROR_ABORT,
+            '{ "error": "user_cancel" }',
+            "User canceled reauthentication"
+          );
+          return;
+        }
+      }
+      this.telemetryData.where = "external-localhost";
       this.request = new ExternalRequest(this);
       if (!this.request.startLoopbackRedirectListener()) {
         this.finishAuthorizationRequest();
@@ -250,6 +275,13 @@ OAuth2.prototype = {
         );
         return;
       }
+    } else if (
+      this.schemeRedirect &&
+      lazy.useSchemeRedirect &&
+      this.canUseSchemeRedirect()
+    ) {
+      this.telemetryData.where = "external-net-thunderbird";
+      this.request = new URLCallbackRequest(this);
     } else {
       this.telemetryData.where = "internal";
       this.request = new InternalRequest(this);
@@ -260,6 +292,7 @@ OAuth2.prototype = {
       this.request.redirectURI
     );
 
+    Services.obs.addObserver(this, "quit-application-granted");
     if (!this.request.start(authEndpointURL)) {
       this.finishAuthorizationRequest();
       // Only the ExternalRequest construction is fallible here.
@@ -272,6 +305,7 @@ OAuth2.prototype = {
   },
   finishAuthorizationRequest() {
     gConnecting.set(this.authorizationEndpoint, false);
+    Services.obs.removeObserver(this, "quit-application-granted");
     if (this.request) {
       this.request.close();
       this.request = null;
@@ -291,6 +325,31 @@ OAuth2.prototype = {
       this._authorizationState !== url.searchParams.get("state")
     ) {
       return false;
+    }
+    const iss = url.searchParams.get("iss");
+    if (this.issuerIdentifier) {
+      if (iss !== this.issuerIdentifier) {
+        log.warn(
+          `Unexpected issuer: requested ${this.issuerIdentifier}, found ${iss}.`
+        );
+        return false;
+      }
+    } else if (iss) {
+      // An issuer field was present when not required. This means either:
+      //   1. An OAuth provider that doesn't advertise RFC 9207 support is
+      //      behaving maliciously and trying to trick us into sending it
+      //      credentials for another provider who does, or
+      //   2. The provider has implemented support for RFC 9207 since
+      //      OAuth2Providers.sys.mjs was last updated for them.
+      // The spec tells us to assume the first scenario, but that would cause
+      // quite a bit of breakage until an update can ship, so we instead do a
+      // best effort check that the issuer and authorization endpoint are using
+      // the same domain (which is not technically required, but has been true
+      // for all providers so far).
+      if (new URL(iss).origin != new URL(this.authorizationEndpoint).origin) {
+        log.warn(`Unexpected issuer: expected no issuer, found ${iss}.`);
+        return false;
+      }
     }
     return url.searchParams.has("code");
   },
@@ -410,7 +469,7 @@ OAuth2.prototype = {
             // typically (but not always) means the refresh token was bad.
             this.telemetryData.reason = "invalid grant";
             this._isRetrying = true;
-            this.requestAuthorization();
+            this.requestAuthorization(true);
           } else {
             this.recordTelemetry(
               this._isRetrying ? "failed after retrying" : "failed"
@@ -483,14 +542,42 @@ OAuth2.prototype = {
       delete this.telemetryData.reason;
     }
   },
+
+  /**
+   * Check with the OS if we can handle net.thunderbird URLs.
+   *
+   * This is only a method to make it easier to monkey patch in tests.
+   *
+   * @returns {boolean} - Whether this Thunderbird instance can handle
+   *   net.thunderbird URLs.
+   */
+  canUseSchemeRedirect() {
+    const shellSvc = Cc["@mozilla.org/mail/shell-service;1"].getService(
+      Ci.nsIShellService
+    );
+    return shellSvc.isDefaultClient(false, Ci.nsIShellService.NET_THUNDERBIRD);
+  },
+
+  /**
+   * Fired on quit-application-granted to tidy up open requests.
+   */
+  observe() {
+    this.finishAuthorizationRequest();
+    this.onAuthorizationFailed(
+      Cr.NS_ERROR_ABORT,
+      '{ "error": "application_closed" }',
+      "application closed"
+    );
+  },
 };
 
 /**
- * Reset the global cooldown state.
+ * Reset the global state variables.
  */
-OAuth2.clearCooldowns = function () {
-  log.debug("Clearing all OAuth cooldowns");
+OAuth2.clearState = function () {
+  log.debug("Clearing state");
   gCooldown.clear();
+  gConnecting.clear();
 };
 
 class InternalRequest {
@@ -620,7 +707,62 @@ class InternalRequest {
   }
 }
 
+class URLCallbackRequest {
+  /**
+   * All active URLCallbackRequest objects, keyed by the value of the state
+   * request parameter.
+   *
+   * @type {Map<string, URLCallbackRequest>}
+   */
+  static instances = new Map();
+
+  /**
+   * Constructor for URL callback requests using Thunderbird's custom scheme.
+   *
+   * @param {OAuth2} oauth
+   */
+  constructor(oauth) {
+    this.oauth = oauth;
+    this.redirectURI = oauth.schemeRedirect;
+    URLCallbackRequest.instances.set(this.oauth._authorizationState, this);
+  }
+
+  /**
+   * @param {URL} authEndpointURL - Authorization endpoint, with params.
+   * @returns {boolean}
+   */
+  start(authEndpointURL) {
+    const authURI = Services.io.newURI(authEndpointURL.href);
+    openLinkExternally(authURI, { addToHistory: false });
+    return true;
+  }
+
+  /**
+   * The request has completed and can be closed.
+   */
+  close() {}
+
+  /**
+   * The user was redirected to a net.thunderbird:// URL after authentication
+   * and the state matches this object's state.
+   *
+   * @param {string} url
+   */
+  urlReceived(url) {
+    URLCallbackRequest.instances.delete(this.oauth._authorizationState);
+    this.oauth.finishAuthorizationRequest();
+    this.oauth.onAuthorizationReceived(url);
+  }
+}
+
 class ExternalRequest {
+  /**
+   * Reference to the window that initialized this request.
+   *
+   * @type {WeakRef<Window>}
+   */
+  #sourceWindow;
+
   /**
    * Constructor for external requests using the system web browser. The object
    * should not be used until `startLoopbackRedirectListener` is called.
@@ -639,6 +781,13 @@ class ExternalRequest {
    * @returns {boolean} - True on success, false if the browser fails to launch.
    */
   start(authEndpointURL) {
+    // Get the current window of the application, so we can return to it when
+    // the flow finishes.
+    const recentWindow = Services.wm.getMostRecentWindow(null);
+    if (recentWindow) {
+      // Avoid holding a hard reference to the window.
+      this.#sourceWindow = new WeakRef(recentWindow);
+    }
     const authURI = Services.io.newURI(authEndpointURL.href);
     openLinkExternally(authURI, { addToHistory: false });
 
@@ -658,6 +807,7 @@ class ExternalRequest {
   close() {
     this._active = false;
     this.closeLoopbackRedirectListener();
+    this.#sourceWindow = null;
   }
 
   /**
@@ -747,7 +897,7 @@ class ExternalRequest {
         const response = lazy.MailStringUtils.stringToByteString(
           `HTTP/1.1 ${statusLine}\r\n` +
             "Content-Type: text/html; charset=utf-8\r\n" +
-            "Content-Security-Policy: default-src 'none'; img-src data:; style-src 'unsafe-inline'\r\n" +
+            "Content-Security-Policy: default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'sha256-IREggE8e7pWHduQVJzPyqoCVQ62B/ZgkFu3129qNUkM='\r\n" +
             "Cache-Control: no-store\r\n" +
             "Connection: close\r\n\r\n" +
             body
@@ -782,6 +932,9 @@ class ExternalRequest {
             .catch(error => log.error(error));
         }
         Services.tm.dispatchToMainThread(() => {
+          // Focus return needs to happen first, before the window reference is
+          // cleaned up.
+          this._returnFocus();
           this._oauth.finishAuthorizationRequest();
           this._oauth.onAuthorizationReceived(url);
         });
@@ -798,6 +951,7 @@ class ExternalRequest {
           })
           .catch(error => log.error(error));
         Services.tm.dispatchToMainThread(() => {
+          this._returnFocus();
           this._oauth.finishAuthorizationRequest();
           this._oauth.onAuthorizationFailed(
             Cr.NS_ERROR_FAILURE,
@@ -873,11 +1027,55 @@ class ExternalRequest {
           this._fail();
         }
       },
+      _returnFocus: () => this.#returnFocus(),
     };
 
     socket.asyncListen(listener);
     this._loopbackRedirectListener = listener;
-    this.redirectURI = callbackPrefix;
+    // URL serialisation adds "/" for an empty path, but OAuth redirect URI
+    // matching may be exact.
+    this.redirectURI = callbackPrefix.replace(/\/$/, "");
     return true;
+  }
+
+  /**
+   * Return focus to the window that initialized the external browser OAuth
+   * flow.
+   * Does nothing if the application already has focus again.
+   */
+  #returnFocus() {
+    // Request focus for the application only if it isn't active already.
+    if (Services.focus.activeWindow) {
+      return;
+    }
+    const window =
+      this.#sourceWindow?.deref() ?? Services.wm.getMostRecentWindow(null);
+    this.#sourceWindow = null;
+    if (!window) {
+      return;
+    }
+    // Restore the window, in case it was minimized.
+    window.restore();
+    window.focus();
+  }
+}
+
+export class OAuth2URLHandler {
+  QueryInterface = ChromeUtils.generateQI(["nsIObserver"]);
+
+  observe(subject, topic, data) {
+    if (topic != "net-thunderbird-url") {
+      return;
+    }
+
+    const url = URL.parse(data);
+    if (
+      (url.host == "oauth2" && url.pathname != "/callback") ||
+      (url.host == "oauth" && url.pathname != "/yahoo")
+    ) {
+      return;
+    }
+    const state = url.searchParams.get("state");
+    URLCallbackRequest.instances.get(state)?.urlReceived(data);
   }
 }

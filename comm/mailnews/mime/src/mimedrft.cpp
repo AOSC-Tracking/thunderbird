@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- *
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * This Original Code has been modified by IBM Corporation. Modifications made
@@ -651,7 +649,7 @@ static void mime_insert_all_headers(char** body, MimeHeaders* headers,
     }
 
     /* Skip over whitespace after colon. */
-    while (contents <= end && IS_SPACE(*contents)) contents++;
+    while (contents < end && IS_SPACE(*contents)) contents++;
 
     /* Take off trailing whitespace... */
     while (end > contents && IS_SPACE(end[-1])) end--;
@@ -1748,6 +1746,8 @@ int mime_decompose_file_init_fn(MimeClosure stream_closure,
       MimeHeaders_get(headers, HEADER_CONTENT_DISPOSITION, false, false));
   bool isAttachmentDisposition =
       mime_disposition_is_attachment(contentDisposition);
+  nsCString partName;
+  partName.Adopt(MimeHeaders_get_name(headers, mdd->options));
 
   // Allow a later body part to replace an earlier unusable messageBody
   // candidate.
@@ -1759,8 +1759,25 @@ int mime_decompose_file_init_fn(MimeClosure stream_closure,
     nAttachments = mdd->attachments.Length();
   }
 
-  if (!mdd->messageBody && !isAttachmentDisposition &&
-      (!nAttachments || mime_type_can_replace_message_body(contentType))) {
+  // A later text part following an existing plain-text messageBody continues
+  // the body rather than being an attachment: Apple Mail splits a plain-text
+  // compose into separate text/plain parts around an inline image. HTML compose
+  // uses a single body part, so this only matters for plain text. We keep the
+  // messageBody branch's !isAttachmentDisposition guard and also require no
+  // name, since a named text part is a real attachment, not a continuation.
+  bool appendToMessageBody =
+      mdd->messageBody && !isAttachmentDisposition && partName.IsEmpty() &&
+      mime_type_is_message_body(mdd->messageBody->m_type) &&
+      mime_type_is_message_body(contentType) &&
+      mdd->messageBody->m_type.LowerCaseFindASCII("text/html") == kNotFound &&
+      contentType.LowerCaseFindASCII("text/html") == kNotFound;
+
+  if (appendToMessageBody) {
+    newAttachment = mdd->messageBody;
+    creatingMsgBody = true;
+  } else if (!mdd->messageBody && !isAttachmentDisposition &&
+             (!nAttachments ||
+              mime_type_can_replace_message_body(contentType))) {
     // if we've been told to use an override charset then do so....otherwise use
     // the charset inside the message header...
     if (mdd->options->override_charset) {
@@ -1794,7 +1811,7 @@ int mime_decompose_file_init_fn(MimeClosure stream_closure,
   char* workURLSpec = nullptr;
   char* contLoc = nullptr;
 
-  newAttachment->m_realName.Adopt(MimeHeaders_get_name(headers, mdd->options));
+  newAttachment->m_realName.Assign(partName);
   contLoc = MimeHeaders_get(headers, HEADER_CONTENT_LOCATION, false, false);
   if (!contLoc)
     contLoc = MimeHeaders_get(headers, HEADER_CONTENT_BASE, false, false);
@@ -1841,7 +1858,10 @@ int mime_decompose_file_init_fn(MimeClosure stream_closure,
       MimeHeaders_get(headers, HEADER_X_MOZILLA_CLOUD_PART, false, false));
 
   nsCOMPtr<nsIFile> tmpFile = nullptr;
-  {
+  if (appendToMessageBody) {
+    // Reuse the body part's existing temp file; the new text is appended below.
+    tmpFile = mdd->messageBody->m_tmpFile;
+  } else {
     // Let's build a temp file with an extension based on the content-type:
     // nsmail.<extension>
 
@@ -1904,10 +1924,17 @@ int mime_decompose_file_init_fn(MimeClosure stream_closure,
 
   newAttachment->m_tmpFile = mdd->tmpFile;
 
-  rv = MsgNewBufferedFileOutputStream(getter_AddRefs(mdd->tmpFileStream),
-                                      tmpFile, PR_WRONLY | PR_CREATE_FILE,
-                                      00600);
+  rv = MsgNewBufferedFileOutputStream(
+      getter_AddRefs(mdd->tmpFileStream), tmpFile,
+      appendToMessageBody ? PR_WRONLY | PR_APPEND : PR_WRONLY | PR_CREATE_FILE,
+      00600);
   if (NS_FAILED(rv)) return MIME_UNABLE_TO_OPEN_TMP_FILE;
+
+  // Separate the appended text from the body text already in the file.
+  if (appendToMessageBody) {
+    uint32_t separatorBytes;
+    mdd->tmpFileStream->Write(MSG_LINEBREAK, MSG_LINEBREAK_LEN, &separatorBytes);
+  }
 
   // For now, we are always going to decode all of the attachments
   // for the message. This way, we have native data

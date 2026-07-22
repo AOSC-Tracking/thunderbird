@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1056,13 +1055,13 @@ NS_IMETHODIMP nsMsgLocalMailFolder::GetSizeOnDisk(int64_t* aSize) {
   if (folderFlags & nsMsgFolderFlags::Virtual) mFolderSize = 0;
 
   if (mFolderSize == kSizeUnknown) {
-    nsCOMPtr<nsIFile> file;
-    rv = GetFilePath(getter_AddRefs(file));
+    nsCOMPtr<nsIMsgPluggableStore> msgStore;
+    rv = GetMsgStore(getter_AddRefs(msgStore));
     NS_ENSURE_SUCCESS(rv, rv);
     // Use a temporary variable so that we keep mFolderSize on kSizeUnknown
-    // if GetFileSize() fails.
+    // if EstimateFolderSize() fails.
     int64_t folderSize;
-    rv = file->GetFileSize(&folderSize);
+    rv = msgStore->EstimateFolderSize(this, &folderSize);
     NS_ENSURE_SUCCESS(rv, rv);
 
     mFolderSize = folderSize;
@@ -1409,6 +1408,10 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
     NS_ERROR("Destination is the root folder. Cannot move/copy here");
     if (isMove) srcFolder->NotifyFolderEvent(kDeleteOrMoveMsgFailed);
     return OnCopyCompleted(srcSupport, false);
+  }
+  if (srcHdrs.IsEmpty()) {
+    NS_WARNING("Cannot copy an empty message array");
+    return NS_ERROR_INVALID_ARG;
   }
 
   // If allowUndo is true, this should be a user-initiated action.
@@ -2030,7 +2033,7 @@ nsresult nsMsgLocalMailFolder::InitCopyMsgHdrAndFileStream() {
   // See also test_copyToInvalidDB.js.
   if (mCopyState->m_destDB) {
     rv = mCopyState->m_destDB->CreateNewHdr(
-        nsMsgKey_None, getter_AddRefs(mCopyState->m_newHdr));
+        getter_AddRefs(mCopyState->m_newHdr));
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
@@ -3334,7 +3337,7 @@ nsMsgLocalMailFolder::AddMessageBatch(
       if (!mGettingNewMessages) newMailParser->DisableFilters();
 
       nsCOMPtr<nsIMsgDBHdr> newHdr;
-      rv = db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(newHdr));
+      rv = db->CreateNewHdr(getter_AddRefs(newHdr));
       NS_ENSURE_SUCCESS(rv, rv);
 
       nsCOMPtr<nsIOutputStream> outStream;

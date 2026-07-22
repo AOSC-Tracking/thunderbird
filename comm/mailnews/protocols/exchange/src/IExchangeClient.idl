@@ -182,10 +182,12 @@ interface IExchangeClient : nsISupports
 
   /**
    * Changes the read/unread status of all messages in the listed folders on the
-   * Exchange server, if the server supports it (Exchange 2013 on).
+   * Exchange server, if the server provides a dedicated operation to do this.
    *
-   * If the server is too old, the listener will use the success callback with
-   * the use_legacy_fallback flag set, but the items will not be marked read.
+   * If the server does not provide such an operation, the listener will use the
+   * success callback with the use_legacy_fallback flag set, but the items will
+   * not be marked read, and the consumer is then expected to use
+   * `changeReadStatus` on the individual messages instead.
    *
    * @param folderIds - The IDs of the folders which read/unread status to
    *   change.
@@ -225,16 +227,16 @@ interface IExchangeClient : nsISupports
   void deleteMessages(in IExchangeSimpleOperationListener listener, in Array<AUTF8String> messageIds);
 
   /**
-   * Deletes the folders with the given IDs from the server.
+   * Deletes the folder with the given ID from the server.
    *
    * @param listener - Listener to indicate the success or failure of the
    *   folder deletion operation.
-   * @param folderIds - The IDs of the folders to delete.
+   * @param folderId - The ID of the folder to delete.
    */
-  void deleteFolder(in IExchangeSimpleOperationListener listener, in Array<AUTF8String> folderIds);
+  void deleteFolder(in IExchangeSimpleOperationListener listener, in AUTF8String folderId);
 
   /**
-   * Empties the folders with the given IDs from the server (deletes all
+   * Empties the folder with the given ID from the server (deletes all
    * messages and subfolders).
    *
    * @param listener - Listener to indicate the success or failure of the empty
@@ -242,14 +244,13 @@ interface IExchangeClient : nsISupports
    *   unset, the `useLegacyFallback` argument is true iff EmptyFolder was
    *   unsupported and the workaround was used (which hopefully shouldn't
    *   matter).
-   * @param folderIds - The IDs of the folders to empty. Only used if the
-   *   EmptyFolder operation is supported.
+   * @param folderId - The ID of the folder to empty.
    * @param subfolderIds - The IDs of the child folders of the given
    *   folderIds. Only used if EmptyFolder operation is not supported.
    * @param messageIds - The IDs of the messages in the folders listed in
    *   folderIds. Only used if EmptyFolder operation is not supported.
    */
-  void emptyFolder(in IExchangeSimpleOperationListener listener, in Array<AUTF8String> folderIds, in Array<AUTF8String> subfolderIds, in Array<AUTF8String> messageIds);
+  void emptyFolder(in IExchangeSimpleOperationListener listener, in AUTF8String folderId, in Array<AUTF8String> subfolderIds, in Array<AUTF8String> messageIds);
 
   /**
    * Renames a folder on the Exchange server.

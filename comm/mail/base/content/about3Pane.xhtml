@@ -105,10 +105,11 @@
     <template id="folderTemplate">
       <div class="container">
         <div class="twisty">
-          <img class="twisty-icon" src="chrome://global/skin/icons/arrow-down-12.svg" alt="" />
+          <img class="twisty-icon" src="chrome://messenger/skin/icons/new/nav-down-sm.svg" alt="" />
         </div>
         <img class="new-icon" alt="" />
         <img class="icon" alt="" />
+        <span class="account-indicator"></span>
         <span class="name" tabindex="-1"></span>
         <span class="folder-count-badge unread-count"></span>
         <span class="folder-count-badge total-count" hidden="hidden"></span>
@@ -459,8 +460,7 @@
               label="&filtersCmd2.label;"
               accesskey="&filtersCmd2.accesskey;"/>
     <menuitem id="folderPaneContext-manageTags"
-              label="&manageTags.label;"
-              accesskey="&manageTags.accesskey;"/>
+              data-l10n-id="tags-manage"/>
     <menuitem id="folderPaneContext-resetSort"
               data-l10n-id="folder-pane-context-reset-sort"/>
     <menuseparator/>

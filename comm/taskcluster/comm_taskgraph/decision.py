@@ -63,9 +63,9 @@ PER_PROJECT_PARAMETERS = {
         "target_tasks_method": "mozilla_release_tasks",
         "release_type": "release",
     },
-    "comm-esr128": {
-        "target_tasks_method": "mozilla_esr128_tasks",
-        "release_type": "esr128",
+    "comm-esr153": {
+        "target_tasks_method": "mozilla_esr153_tasks",
+        "release_type": "esr153",
     },
 }
 
@@ -155,11 +155,12 @@ def get_decision_parameters(graph_config, parameters):
     if options.get("target_tasks_method"):
         parameters["target_tasks_method"] = options["target_tasks_method"]
 
-    # ..but can be overridden by the commit message: if it contains the special
-    # string "DONTBUILD" and this is an on-push decision task, then use the
-    # special 'nothing' target task method.
-    if "DONTBUILD" in commit_message and options["tasks_for"] == "hg-push":
-        parameters["target_tasks_method"] = "nothing"
+    # If the commit message contains "DONTBUILD" and this is an on-push
+    # decision task, mark it so the morph phase can drop all tasks and so
+    # that is_backstop knows not to count this push as a backstop.
+    parameters["dontbuild"] = (
+        "DONTBUILD" in commit_message and options["tasks_for"] == "hg-push"
+    )
 
     del parameters["backstop"]
     parameters["backstop"] = is_backstop(

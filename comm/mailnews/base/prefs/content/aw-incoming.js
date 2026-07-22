@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,10 +12,10 @@ var { NntpUtils } = ChromeUtils.importESModule(
 );
 
 function incomingPageValidate() {
-  const hostName = cleanUpHostName(document.getElementById("newsServer").value);
+  const hostname = cleanUpHostName(document.getElementById("newsServer").value);
 
   let hasAccount = false;
-  const server = NntpUtils.findServer(hostName);
+  const server = NntpUtils.findServer(hostname);
   if (server) {
     // It's OK if a server exists, as long as it's not used by any account.
     hasAccount = MailServices.accounts.findAccountForServer(server);
@@ -24,7 +23,7 @@ function incomingPageValidate() {
   // Can advance if it's a legal host name and we do not already have a server
   // in use with the same host name.
   document.querySelector("wizard").canAdvance =
-    !!isLegalHostNameOrIP(hostName) && !hasAccount;
+    !!isLegalHostNameOrIP(hostname) && !hasAccount;
 }
 
 function incomingPageUnload() {

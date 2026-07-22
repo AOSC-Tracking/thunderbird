@@ -265,9 +265,9 @@ export var MailUtils = {
       aMsgHdrs.length > Services.prefs.getIntPref("mailnews.open_tab_warning")
     ) {
       const [title, message] = lazy.l10n.formatValuesSync([
-        "open-tab-warning-confirmation-title",
+        "open-tabs-warning-confirmation-title",
         {
-          id: "open-tab-warning-confirmation",
+          id: "open-tabs-warning-confirmation",
           args: { count: aMsgHdrs.length },
         },
       ]);
@@ -937,7 +937,7 @@ export var MailUtils = {
         console.warn("No news server set up.");
         return;
       }
-      url.hostname = firstNntpServer.hostName;
+      url.hostname = firstNntpServer.hostname;
       url.port = firstNntpServer.port;
     }
     if (!url.port) {
@@ -989,7 +989,7 @@ export var MailUtils = {
     }
     let spec = "news:";
     if (server) {
-      spec += `//${server.hostName}`;
+      spec += `//${server.hostname}`;
       if (server.port != Ci.nsINntpUrl.DEFAULT_NNTP_PORT) {
         spec += `:${server.port}`;
       }

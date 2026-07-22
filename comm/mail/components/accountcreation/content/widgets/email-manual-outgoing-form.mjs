@@ -9,8 +9,8 @@ const { AccountConfig } = ChromeUtils.importESModule(
   "resource:///modules/accountcreation/AccountConfig.sys.mjs"
 );
 
-const { Sanitizer } = ChromeUtils.importESModule(
-  "resource:///modules/accountcreation/Sanitizer.sys.mjs"
+const { InputSanitizer } = ChromeUtils.importESModule(
+  "resource:///modules/accountcreation/InputSanitizer.sys.mjs"
 );
 
 const { OAuth2Providers } = ChromeUtils.importESModule(
@@ -196,13 +196,36 @@ class EmailOutgoingForm extends AccountHubStep {
   #adjustOAuth2Visibility(accountConfig) {
     // Get current config.
     const config = accountConfig || this.getConfig();
+    let outgoingDetails = "";
 
-    // If the smtp hostname supports OAuth2, enable it.
-    const outgoingDetails = OAuth2Providers.getHostnameDetails(
-      config.outgoing.hostname,
-      config.outgoing.type ? config.outgoing.type : "smtp"
-    );
+    // If the smtp hostname supports OAuth2, enable it. We have to parse the
+    // fresh value because if it isn't valid, the config will produce a stale
+    // hostname.
+    try {
+      const host = InputSanitizer.hostname(this.#outgoingHostname.value);
+      outgoingDetails =
+        host &&
+        OAuth2Providers.getHostnameDetails(
+          host,
+          config.outgoing.type ? config.outgoing.type : "smtp"
+        );
+    } catch {
+      outgoingDetails = "";
+    }
+
     this.querySelector("#outgoingAuthMethodOAuth2").hidden = !outgoingDetails;
+
+    // Reset the auth method as Normal Password if OAuth is selected
+    // and isn't supported.
+    if (
+      !outgoingDetails &&
+      this.querySelector("#outgoingAuthMethod").value ==
+        Ci.nsMsgAuthMethod.OAuth2
+    ) {
+      this.querySelector("#outgoingAuthMethod").value =
+        Ci.nsMsgAuthMethod.passwordCleartext;
+    }
+
     if (outgoingDetails) {
       gAccountSetupLogger.debug(
         `OAuth2 details for outgoing server ${config.outgoing.hostname} is ${outgoingDetails}`
@@ -292,7 +315,7 @@ class EmailOutgoingForm extends AccountHubStep {
 
     try {
       const input = this.#outgoingHostname.value;
-      config.outgoing.hostname = Sanitizer.hostname(input);
+      config.outgoing.hostname = InputSanitizer.hostname(input);
       this.#outgoingHostname.value = config.outgoing.hostname;
       this.#outgoingHostname.setCustomValidity("");
       this.#outgoingHostname.setAttribute("aria-invalid", false);
@@ -308,7 +331,7 @@ class EmailOutgoingForm extends AccountHubStep {
     }
 
     try {
-      config.outgoing.port = Sanitizer.integerRange(
+      config.outgoing.port = InputSanitizer.integerRange(
         this.#outgoingPort.valueAsNumber,
         1,
         65535
@@ -327,10 +350,10 @@ class EmailOutgoingForm extends AccountHubStep {
       );
     }
 
-    config.outgoing.socketType = Sanitizer.integer(
+    config.outgoing.socketType = InputSanitizer.integer(
       this.#outgoingConnectionSecurity.value
     );
-    config.outgoing.auth = Sanitizer.integer(
+    config.outgoing.auth = InputSanitizer.integer(
       this.#outgoingAuthenticationMethod.value
     );
 
@@ -363,12 +386,12 @@ class EmailOutgoingForm extends AccountHubStep {
     this.#outgoingHostname.value = config.outgoing.hostname;
     this.#outgoingUsername.value = config.outgoing.username;
 
-    this.#outgoingConnectionSecurity.value = Sanitizer.enum(
+    this.#outgoingConnectionSecurity.value = InputSanitizer.enum(
       config.outgoing.socketType,
       [-1, 0, 1, 2, 3],
       0
     );
-    this.#outgoingAuthenticationMethod.value = Sanitizer.enum(
+    this.#outgoingAuthenticationMethod.value = InputSanitizer.enum(
       config.outgoing.auth,
       [0, 1, 3, 4, 5, 6, 10],
       0

@@ -47,9 +47,9 @@ const EWS_SCOPES = {
 
 const GRAPH_SCOPES = {
   exchange:
-    "https://graph.microsoft.com/User.Read https://graph.microsoft.com/MailboxFolder.ReadWrite",
+    "https://graph.microsoft.com/User.Read https://graph.microsoft.com/MailboxFolder.ReadWrite https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send",
   graph:
-    "https://graph.microsoft.com/User.Read https://graph.microsoft.com/MailboxFolder.ReadWrite",
+    "https://graph.microsoft.com/User.Read https://graph.microsoft.com/MailboxFolder.ReadWrite https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send",
 
   // The `offline_access` scope instructs the Microsoft backend to provide a
   // refresh token, which we can then store and avoid needing to trigger a new
@@ -110,6 +110,7 @@ var kHostnames = new Map([
   // For testing purposes.
   ["mochi.test", ["test.test", "test_scope"]],
   ["external.test", ["external.test", "test_mail"]],
+  ["net.thunderbird.test", ["net.thunderbird.test", "test_mail"]],
   [
     "test.test",
     [
@@ -146,23 +147,32 @@ const kIssuersWithoutExchangeSupport = new Set([
 ]);
 
 /**
- * @typedef issuerDetails
+ * @typedef IssuerDetails
  * The information required to perform OAuth authentication with an provider.
  * See RFC6749 for more information.
  *
  * @property {string} name - An internal name Thunderbird uses to identify the
  *   details object. Usually but not necessarily the hostname of the endpoints.
- * @property {boolean} builtIn - If the details are in `kIssuers`, below.
- * @property {string} clientId
- * @property {string} [clientSecret]
- * @property {string} authorizationEndpoint
- * @property {string} [redirectionEndpoint]
- * @property {string} tokenEndpoint
- * @property {boolean} [usePKCE] - The issuer uses PKCE (RFC7636)
+ * @property {boolean} builtIn - If the details are built-in to the shipped
+ *   `kIssuers` map. `registerProvider` always sets this to false.
+ * @property {string} clientId - Identifies the OAuth client to the server.
+ * @property {string} [clientSecret] - "Secret" to verify the clientId, if the
+ *   server requires it.
+ * @property {string} [issuerIdentifier] - The issuer identifier, as defined by
+ *   RFC9207, if one is expected.
+ * @property {string} authorizationEndpoint - OAuth authorization endpoint URL.
+ * @property {string} tokenEndpoint - OAuth token endpoint URL.
+ * @property {string} [redirectionEndpoint] - OAuth redirection endpoint.
+ * @property {boolean} [usePKCE] - The issuer uses PKCE (RFC7636).
+ * @property {boolean} [useExternalBrowser] - Whether to use the external
+ *   browser OAuth login flow.
+ * @property {string} [schemeRedirect] - Alternative redirection endpoint if
+ *   using the net.thunderbird:// scheme. Only built-in providers can provide
+ *   this, and it will only be used if this instance is configured to.
  */
 
 /**
- * Map of issuers to issuerDetails. Issuer is a unique string for the
+ * Map of issuers to IssuerDetails. Issuer is a unique string for the
  * organization that a Thunderbird account was registered at.
  *
  * For the moment these details are hard-coded, since dynamic client
@@ -180,9 +190,11 @@ var kIssuers = new Map([
       clientId:
         "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com",
       clientSecret: "kSmqreRr0qwBWJgbf5Y-PjSU",
+      issuerIdentifier: "https://accounts.google.com",
       authorizationEndpoint: "https://accounts.google.com/o/oauth2/auth",
       tokenEndpoint: "https://www.googleapis.com/oauth2/v3/token",
       usePKCE: true,
+      useExternalBrowser: true,
     },
   ],
   [
@@ -217,6 +229,10 @@ var kIssuers = new Map([
       authorizationEndpoint: "https://api.login.yahoo.com/oauth2/request_auth",
       tokenEndpoint: "https://api.login.yahoo.com/oauth2/get_token",
       redirectionEndpoint: "https://127.0.0.1",
+      // This isn't the normal net.thunderbird URL because Yahoo set it and we
+      // can't change it (though its uniqueness also helps with their lack of
+      // support for issuer identification).
+      schemeRedirect: "net.thunderbird://oauth/yahoo",
       usePKCE: true,
     },
   ],
@@ -243,7 +259,7 @@ var kIssuers = new Map([
       // https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-protocols#endpoints
       authorizationEndpoint: `https://login.microsoftonline.com/common/oauth2/v2.0/authorize`,
       tokenEndpoint: `https://login.microsoftonline.com/common/oauth2/v2.0/token`,
-      redirectionEndpoint: "https://localhost",
+      useExternalBrowser: true,
     },
   ],
 
@@ -253,9 +269,11 @@ var kIssuers = new Map([
       name: "www.fastmail.com",
       builtIn: true,
       clientId: "35f141ae",
+      issuerIdentifier: "https://api.fastmail.com",
       authorizationEndpoint: "https://api.fastmail.com/oauth/authorize",
       tokenEndpoint: "https://api.fastmail.com/oauth/refresh",
       usePKCE: true,
+      useExternalBrowser: true,
     },
   ],
 
@@ -278,11 +296,13 @@ var kIssuers = new Map([
       name: "auth.tb.pro",
       builtIn: true,
       clientId: "desktop",
+      issuerIdentifier: "https://auth.tb.pro/realms/tbpro",
       authorizationEndpoint:
         "https://auth.tb.pro/realms/tbpro/protocol/openid-connect/auth",
       tokenEndpoint:
         "https://auth.tb.pro/realms/tbpro/protocol/openid-connect/token",
       usePKCE: true,
+      useExternalBrowser: true,
     },
   ],
 
@@ -292,11 +312,13 @@ var kIssuers = new Map([
       name: "auth-stage.tb.pro",
       builtIn: true,
       clientId: "desktop",
+      issuerIdentifier: "https://auth-stage.tb.pro/realms/tbpro",
       authorizationEndpoint:
         "https://auth-stage.tb.pro/realms/tbpro/protocol/openid-connect/auth",
       tokenEndpoint:
         "https://auth-stage.tb.pro/realms/tbpro/protocol/openid-connect/token",
       usePKCE: true,
+      useExternalBrowser: true,
     },
   ],
 
@@ -324,6 +346,21 @@ var kIssuers = new Map([
       authorizationEndpoint: "https://oauth.test.test/form",
       tokenEndpoint: "https://oauth.test.test/token",
       redirectionEndpoint: "http://localhost",
+      usePKCE: true,
+      useExternalBrowser: true,
+    },
+  ],
+  [
+    "net.thunderbird.test",
+    {
+      name: "net.thunderbird.test",
+      builtIn: true,
+      clientId: "test_client_id",
+      clientSecret: "test_secret",
+      authorizationEndpoint: "https://oauth.test.test/form",
+      tokenEndpoint: "https://oauth.test.test/token",
+      redirectionEndpoint: "http://localhost",
+      schemeRedirect: "net.thunderbird://oauth2/callback",
       usePKCE: true,
     },
   ],
@@ -477,27 +514,13 @@ export var OAuth2Providers = {
    * Add a provider at run-time. This will typically only be called by the
    * extension API.
    *
-   * @param {string} issuer - To identify this provider in the login manager.
-   * @param {string} clientId - Identifies the OAuth client to the server.
-   * @param {string} clientSecret - Identifies the OAuth client to the server.
-   * @param {string} authorizationEndpoint - OAuth authorization endpoint address.
-   * @param {string} tokenEndpoint - OAuth token endpoint address.
-   * @param {string} redirectionEndpoint - OAuth redirection endpoint.
-   * @param {boolean} usePKCE - If the authorization uses PKCE.
+   * @param {IssuerDetails} details - OAuth provider details. `builtIn` and
+   *   `schemeRedirect` are ignored and overwritten.
    * @param {string[]} hostnames - One or more hostnames which use this OAuth provider.
    * @param {string} scopes - The scopes to request when using this OAuth provider.
    */
-  registerProvider(
-    issuer,
-    clientId,
-    clientSecret,
-    authorizationEndpoint,
-    tokenEndpoint,
-    redirectionEndpoint,
-    usePKCE,
-    hostnames,
-    scopes
-  ) {
+  registerProvider(details, hostnames, scopes) {
+    const issuer = details.name;
     if (kIssuers.has(issuer)) {
       throw new Error(`Issuer ${issuer} already registered.`);
     }
@@ -507,15 +530,10 @@ export var OAuth2Providers = {
       }
     }
     const issuerDetails = {
-      name: issuer,
+      ...details,
       builtIn: false,
-      clientId,
-      clientSecret,
-      authorizationEndpoint,
-      tokenEndpoint,
-      redirectionEndpoint,
-      usePKCE,
     };
+    delete issuerDetails.schemeRedirect;
     Object.freeze(issuerDetails);
     kIssuers.set(issuer, issuerDetails);
     for (const hostname of hostnames) {

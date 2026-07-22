@@ -45,7 +45,7 @@ const serverDebugLevel = 0;
  * Create and start a single server.
  *
  * @param {ServerDef} def - The server definition.
- * @returns {EwsServer|IMAPServer|NNTPServer|POP3Server|SMTPServer}
+ * @returns {IMAPServer|POP3Server|SMTPServer|EwsServer|NNTPServer|GraphServer}
  */
 async function createServer({
   type,
@@ -79,7 +79,7 @@ async function createServer({
  * Create and start multiple servers.
  *
  * @param {ServerDef[]} serverDefs - The server definitions.
- * @returns {IMAPServer[]|POP3Server[]|SMTPServer[]} - The created servers,
+ * @returns {(IMAPServer|POP3Server|SMTPServer|EwsServer|NNTPServer|GraphServer)[]} The created servers,
  *   in the same order as the definitions given.
  */
 async function createServers(serverDefs) {
@@ -330,10 +330,35 @@ const serverDefs = {
       hostname: "test.test",
       port: 119,
     },
+    tls: {
+      type: "nntp",
+      baseOptions: {
+        tlsCertFile: "valid",
+      },
+      hostname: "test.test",
+      port: 563,
+      aliases: [["mitm.test.test", 563]],
+    },
     expiredTLS: {
       type: "nntp",
       baseOptions: { tlsCertFile: "expired" },
       hostname: "expired.test.test",
+      port: 563,
+    },
+    notYetValidTLS: {
+      type: "nntp",
+      baseOptions: {
+        tlsCertFile: "notyetvalid",
+      },
+      hostname: "notyetvalid.test.test",
+      port: 563,
+    },
+    selfSignedTLS: {
+      type: "nntp",
+      baseOptions: {
+        tlsCertFile: "selfsigned",
+      },
+      hostname: "selfsigned.test.test",
       port: 563,
     },
   },

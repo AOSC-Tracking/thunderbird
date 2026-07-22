@@ -654,6 +654,7 @@ img.invisible-on-broken:-moz-broken {
 
 #notification-popup {
   --panel-padding: 8px;
+  --button-padding: var(--button-padding-wide);
   margin-block: 0;
 
   &::part(content) {
@@ -1406,12 +1407,12 @@ panel[type="arrow"].panel-block-padding::part(content) {
 
   &:not([disabled]):hover {
     color: var(--button-text-color-hover);
-    background-color: var(--button-background-color-hover);
+    background-color: var(--button-hover-background-color);
 
     &:active {
       border-color: var(--button-border-color-active);
       color: var(--button-text-color-active);
-      background-color: var(--button-background-color-active);
+      background-color: var(--button-active-background-color);
     }
   }
 
@@ -1468,11 +1469,11 @@ panel[type="arrow"].panel-block-padding::part(content) {
 
     &:hover,
     & > toolbarbutton:hover {
-      background-color: var(--button-background-color-hover);
+      background-color: var(--button-hover-background-color);
       color: var(--button-text-color-hover);
 
       &:active {
-        background-color: var(--button-background-color-active);
+        background-color: var(--button-active-background-color);
         color: var(--button-text-color-active);
         border-color: var(--button-border-color-active);
       }

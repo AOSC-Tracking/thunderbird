@@ -112,7 +112,7 @@ export class NntpClient {
     } else {
       // Start a new connection.
       this._authenticated = false;
-      const hostname = this._server.hostName.toLowerCase();
+      const hostname = this._server.hostname.toLowerCase();
       const useSecureTransport = this._server.isSecure;
       this._logger.debug(
         `Connecting to ${useSecureTransport ? "snews" : "news"}://${hostname}:${
@@ -144,7 +144,7 @@ export class NntpClient {
     this.runningUri = runningUri;
     if (!this.runningUri) {
       this.runningUri = Services.io
-        .newURI(`news://${this._server.hostName}:${this._server.port}`)
+        .newURI(`news://${this._server.hostname}:${this._server.port}`)
         .QueryInterface(Ci.nsIMsgMailNewsUrl);
     }
     if (msgWindow) {
@@ -160,6 +160,10 @@ export class NntpClient {
    */
   _onOpen = () => {
     this._logger.debug("Connected");
+    Services.obs.notifyObservers(
+      this.runningUri,
+      "server-connection-succeeded"
+    );
     const timeout = this._server.connectionTimeout;
     if (timeout > 0) {
       this._socket.transport.setTimeout(
@@ -267,7 +271,7 @@ export class NntpClient {
    *
    * @param {TCPSocketErrorEvent} event - The error event.
    */
-  _onError = event => {
+  _onError = async event => {
     if (event.errorCode == Cr.NS_ERROR_NET_TIMEOUT && !this.runningUri) {
       // This should be the scheduled timeout, just close the connection
       // without indicating any error.
@@ -327,7 +331,7 @@ export class NntpClient {
 
       MailServices.mailSession.alertUser(
         lazy.messengerBundle.formatStringFromName(errorName, [
-          this._server.hostName,
+          this._server.hostname,
         ]),
         this.runningUri,
         silent
@@ -338,13 +342,52 @@ export class NntpClient {
     }
 
     MailServices.feedback.reportStatus("");
+
+    // `_onClose` should not run before `_onError` finishes, so it will wait
+    // for this promise.
+    const { promise, resolve } = Promise.withResolvers();
+    this._promiseErrorHandled = promise;
+
+    const secInfo =
+      await event.target.transport?.tlsSocketControl?.asyncGetSecurityInfo();
+    if (secInfo && this.runningUri) {
+      this._logger.error(`SecurityError info: ${secInfo.errorCodeString}`);
+      if (secInfo.handshakeCertificates.length) {
+        const chain = secInfo.handshakeCertificates.map(
+          c => c.commonName + "; serial# " + c.serialNumber
+        );
+        this._logger.error(`SecurityError cert chain: ${chain.join(" <- ")}`);
+      }
+      this.runningUri.failedSecInfo = secInfo;
+      const nssErrorsService = Cc[
+        "@mozilla.org/nss_errors_service;1"
+      ].getService(Ci.nsINSSErrorsService);
+      try {
+        if (
+          nssErrorsService.getErrorClass(event.errorCode) ==
+          Ci.nsINSSErrorsService.ERROR_CLASS_BAD_CERT
+        ) {
+          MailServices.mailSession.alertCertError(secInfo, this.runningUri);
+        }
+      } catch (e) {
+        // Not an NSS error.
+      }
+    }
     this.quit(event.errorCode);
+    this._actionDone(event.errorCode);
+
+    // Let `_onClose` continue.
+    resolve();
   };
 
   /**
    * The close event handler.
    */
-  _onClose = () => {
+  _onClose = async () => {
+    // Wait for `_onError` to finish.
+    await this._promiseErrorHandled;
+    delete this._promiseErrorHandled;
+
     this._logger.debug("Connection closed.");
   };
 
@@ -1146,7 +1189,7 @@ export class NntpClient {
     };
     const l10nId = statusToId(status);
     const statusMessage = lazy.l10n.formatValueSync(l10nId, {
-      host: this._server.hostName,
+      host: this._server.hostname,
     });
     MailServices.feedback.reportStatus(statusMessage);
   }

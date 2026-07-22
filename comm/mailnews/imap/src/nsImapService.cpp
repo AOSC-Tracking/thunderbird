@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -43,7 +42,6 @@
 #include "nsIMsgParseMailMsgState.h"
 #include "nsIOutputStream.h"
 #include "nsIDocShell.h"
-#include "nsIMessengerWindowService.h"
 #include "nsIWindowMediator.h"
 #include "nsIPrompt.h"
 #include "nsIWindowWatcher.h"
@@ -59,6 +57,7 @@
 #include "mozilla/Components.h"
 #include "mozilla/LoadInfo.h"
 #include "mozilla/Preferences.h"
+#include "nsWhitespaceTokenizer.h"
 
 using mozilla::Preferences;
 using mozilla::net::LoadInfo;
@@ -1692,7 +1691,8 @@ nsresult nsImapService::OfflineAppendFromFile(
       aDstFolder->GetServer(getter_AddRefs(dstServer));
       rv = dstServer->GetMsgStore(getter_AddRefs(msgStore));
       NS_ENSURE_SUCCESS(rv, rv);
-      rv = destDB->CreateNewHdr(fakeKey, getter_AddRefs(newMsgHdr));
+      rv = destDB->CreateNewHdrWithSpecificMsgKey(fakeKey,
+                                                  getter_AddRefs(newMsgHdr));
       NS_ENSURE_SUCCESS(rv, rv);
       rv = msgStore->GetNewMsgOutputStream(aDstFolder,
                                            getter_AddRefs(outputStream));
@@ -1722,8 +1722,9 @@ nsresult nsImapService::OfflineAppendFromFile(
       // if (NS_SUCCEEDED(rv) && bytesRead > 0)
       msgParser->SetState(nsIMsgParseMailMsgState::ParseHeadersState);
       msgParser->SetNewMsgHdr(newMsgHdr);
-      // set the new key to fake key so the msg hdr will have that for a key
-      msgParser->SetNewKey(fakeKey);
+      // Set the new UID to fake key so the msg hdr will have that for a key.
+      // See https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
+      msgParser->SetMsgUid((ImapUid)fakeKey);
       bool needMoreData = false;
       char* newLine = nullptr;
       uint32_t numBytesInLine = 0;
@@ -2123,7 +2124,7 @@ nsresult nsImapService::GetServerFromUrl(nsIImapUrl* aImapUrl,
   nsresult rv;
   nsCString folderName;
   nsAutoCString userPass;
-  nsAutoCString hostName;
+  nsAutoCString hostname;
   nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(aImapUrl);
 
   // if we can't get a folder name out of the url then I think this is an error
@@ -2447,12 +2448,6 @@ NS_IMETHODIMP nsImapService::NewChannel(nsIURI* aURI, nsILoadInfo* aLoadInfo,
         // null out this channel, so it'll stop trying to run the url.
         *aRetVal = nullptr;
         rv = NS_OK;
-      } else {
-        // Got IMAP folder URL from command line (most likely).
-        // Set action to nsImapSelectFolder (x-application-imapfolder), so
-        // ::HandleContent will handle it.
-        imapUrl->SetImapAction(nsIImapUrl::nsImapSelectFolder);
-        HandleContent("x-application-imapfolder", nullptr, channel);
       }
     }
   }
@@ -2765,11 +2760,67 @@ NS_IMETHODIMP nsImapService::FetchCustomMsgAttribute(
   return rv;
 }
 
+namespace {
+
+/**
+ * Strips keywords that contain characters invalid for an IMAP atom (RFC 3501)
+ * or characters that break Thunderbird's internal URL parser (e.g., '>').
+ */
+static void SanitizeKeywords(const nsACString& aKeywords,
+                             nsACString& aSafeKeywords) {
+  aSafeKeywords.Truncate();
+
+  // Parse space-separated keywords
+  bool first = true;
+
+  nsCWhitespaceTokenizer tokenizer(aKeywords);
+  while (tokenizer.hasMoreTokens()) {
+    const nsACString& token = tokenizer.nextToken();
+    if (token.IsEmpty()) {
+      continue;
+    }
+
+    bool isValid = true;
+
+    // Check for specific invalid symbols as defined in RFC 3501 atom-specials,
+    // and also for symbols that break Thunderbird's internal URL parser.
+    // We also exclude the ampersand since it is used in MUTF-7 encoding and
+    // seems to confuse some IMAP servers when used in keywords.
+    for (uint32_t i = 0; i < token.Length(); i++) {
+      unsigned char c = token.CharAt(i);
+      if (mozilla::IsAsciiAlphanumeric(c)) {
+        continue;
+      }
+      if (c <= 0x20 || c >= 0x7F || strchr("()[]{}%*\"\\<>;&", c)) {
+        isValid = false;
+        break;
+      }
+    }
+
+    if (isValid) {
+      if (!first) {
+        aSafeKeywords.Append(' ');
+      }
+      aSafeKeywords.Append(token);
+      first = false;
+    }
+  }
+}
+
+}  // namespace
+
 NS_IMETHODIMP nsImapService::StoreCustomKeywords(
     nsIMsgFolder* anImapFolder, nsIMsgWindow* aMsgWindow,
     const nsACString& flagsToAdd, const nsACString& flagsToSubtract,
     const nsACString& uids, nsIURI** aURL) {
   NS_ENSURE_ARG_POINTER(anImapFolder);
+
+  // Ensure bad tags from RSS feeds or legacy databases cannot crash the IMAP
+  // socket or break the internal '>' URL parser.
+  nsAutoCString safeFlagsToAdd;
+  nsAutoCString safeFlagsToSubtract;
+  SanitizeKeywords(flagsToAdd, safeFlagsToAdd);
+  SanitizeKeywords(flagsToSubtract, safeFlagsToSubtract);
 
   nsCOMPtr<nsIImapUrl> imapUrl;
   nsAutoCString urlSpec;
@@ -2796,12 +2847,13 @@ NS_IMETHODIMP nsImapService::StoreCustomKeywords(
       urlSpec.Append('>');
       urlSpec.Append(uids);
       urlSpec.Append('>');
-      urlSpec.Append(flagsToAdd);
+      urlSpec.Append(safeFlagsToAdd);
       urlSpec.Append('>');
-      urlSpec.Append(flagsToSubtract);
+      urlSpec.Append(safeFlagsToSubtract);
       rv = mailNewsUrl->SetSpecInternal(urlSpec);
-      if (NS_SUCCEEDED(rv))
+      if (NS_SUCCEEDED(rv)) {
         rv = GetImapConnectionAndLoadUrl(imapUrl, nullptr, aURL);
+      }
     }
   }  // if we have a url to run....
 
@@ -2905,42 +2957,5 @@ NS_IMETHODIMP nsImapService::GetCacheStorage(nsICacheStorage** result) {
 NS_IMETHODIMP nsImapService::HandleContent(
     const char* aContentType, nsIInterfaceRequestor* aWindowContext,
     nsIRequest* request) {
-  NS_ENSURE_ARG_POINTER(request);
-
-  nsresult rv;
-  nsCOMPtr<nsIChannel> aChannel = do_QueryInterface(request, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (PL_strcasecmp(aContentType, "x-application-imapfolder") == 0) {
-    nsCOMPtr<nsIURI> uri;
-    rv = aChannel->GetURI(getter_AddRefs(uri));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    if (uri) {
-      request->Cancel(NS_BINDING_ABORTED);
-      nsCOMPtr<nsIWindowMediator> mediator(
-          do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv));
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      nsAutoCString uriStr;
-      rv = uri->GetSpec(uriStr);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      // imap uri's are unescaped, so unescape the url.
-      nsCString unescapedUriStr;
-      MsgUnescapeString(uriStr, 0, unescapedUriStr);
-      nsCOMPtr<nsIMessengerWindowService> messengerWindowService =
-          do_GetService("@mozilla.org/messenger/windowservice;1", &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      rv = messengerWindowService->OpenMessengerWindowWithUri(
-          "mail:3pane", unescapedUriStr, nsMsgKey_None);
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
-  } else {
-    // The content-type was not x-application-imapfolder
-    return NS_ERROR_WONT_HANDLE_CONTENT;
-  }
-
-  return rv;
+  return NS_ERROR_WONT_HANDLE_CONTENT;
 }

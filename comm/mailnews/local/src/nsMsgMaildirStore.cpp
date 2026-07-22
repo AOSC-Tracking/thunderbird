@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,7 +8,6 @@
 
 #include "FolderPopulation.h"
 #include "MailNewsTypes.h"
-#include "nsMsgMessageFlags.h"
 #include "prprf.h"
 #include "msgCore.h"
 #include "nsMsgMaildirStore.h"
@@ -19,7 +17,6 @@
 #include "nsIInputStream.h"
 #include "nsIInputStreamPump.h"
 #include "nsIRandomAccessStream.h"
-#include "nsCOMArray.h"
 #include "nsIFile.h"
 #include "nsLocalFile.h"
 #include "nsNetUtil.h"
@@ -113,39 +110,62 @@ nsresult MaildirScanner::BeginScan(nsIFile* maildirPath,
 // invoked.
 void MaildirScanner::NextFile() {
   nsCOMPtr<nsIFile> f;
-  if (NS_SUCCEEDED(mStatus)) {
+  bool gotValidStream = false;
+
+  // Loop until we successfully start an async read, or run out of files.
+  while (!gotValidStream && NS_SUCCEEDED(mStatus)) {
     mStatus = mDirEnumerator->GetNextFile(getter_AddRefs(f));
-  }
-  if (NS_SUCCEEDED(mStatus) && f) {
-    // Try and provide the listener a sensible(ish) envDate.
-    PRTime mtime;
-    nsresult rv = f->GetLastModifiedTime(&mtime);
+
+    // If enumeration failed or we reached the end of the directory, break out.
+    if (NS_FAILED(mStatus) || !f) {
+      break;
+    }
+
+    // Shouldn't have any subdirs in here, but if we do, skip 'em.
+    bool isDir = false;
+    if (NS_SUCCEEDED(f->IsDirectory(&isDir)) && isDir) {
+      continue;
+    }
+
+    // Try to open the file before notifying the listener
+    nsCOMPtr<nsIInputStream> stream;
+    nsresult rv = NS_NewLocalFileInputStream(getter_AddRefs(stream), f);
     if (NS_FAILED(rv)) {
+      MOZ_LOG_FMT(MailDirLog, mozilla::LogLevel::Error,
+                  "Folder scan failed opening file '{}' ({}). Skipping.",
+                  f->HumanReadablePath(), rv);
+      continue;
+    }
+    // We now have a guaranteed valid stream. Proceed with parsing.
+
+    PRTime mtime;
+    if (NS_FAILED(f->GetLastModifiedTime(&mtime))) {
       mtime = 0;
     }
 
-    // Start streaming the next message.
     nsAutoString storeToken;
     f->GetLeafName(storeToken);
+
+    // Notify the listener that a valid message is starting.
     mStatus = mScanListener->OnStartMessage(NS_ConvertUTF16toUTF8(storeToken),
                                             ""_ns, mtime);
 
-    nsCOMPtr<nsIInputStream> stream;
-    if (NS_SUCCEEDED(mStatus)) {
-      mStatus = NS_NewLocalFileInputStream(getter_AddRefs(stream), f);
-    }
     nsCOMPtr<nsIInputStreamPump> pump;
     if (NS_SUCCEEDED(mStatus)) {
       mStatus = NS_NewInputStreamPump(getter_AddRefs(pump), stream.forget());
     }
+
     if (NS_SUCCEEDED(mStatus)) {
       mPump = pump;  // Keep the pump in existence until we're done.
       mStatus = mPump->AsyncRead(this);
+      gotValidStream =
+          true;  // Break the loop and wait for the async callbacks.
     }
   }
 
-  if (!f || NS_FAILED(mStatus)) {
-    // We've finished (or failed).
+  // If we exit the loop without a valid stream, we are either finished
+  // or a fatal error occurred. Clean up and stop the scan.
+  if (!gotValidStream || NS_FAILED(mStatus)) {
     mScanListener->OnStopScan(mStatus);
     mPump = nullptr;
     mKungFuDeathGrip = nullptr;
@@ -198,12 +218,12 @@ nsMsgMaildirStore::nsMsgMaildirStore() {
   // Hostname is part of the traditional maildir file naming.
   // A blank or truncated hostname isn't ideal, but neither is it fatal - it
   // doesn't add any real uniqueness to our filenames.
-  char hostName[64];
-  if (PR_GetSystemInfo(PR_SI_HOSTNAME, hostName, sizeof hostName) ==
+  char hostname[64];
+  if (PR_GetSystemInfo(PR_SI_HOSTNAME, hostname, sizeof hostname) ==
       PR_SUCCESS) {
     // NUL-terminator is not guaranteed if truncated.
-    hostName[sizeof hostName - 1] = '\0';
-    mHostname = hostName;
+    hostname[sizeof hostname - 1] = '\0';
+    mHostname = hostname;
   }
 }
 
@@ -1298,6 +1318,16 @@ NS_IMETHODIMP nsMsgMaildirStore::EstimateFolderSize(nsIMsgFolder* folder,
   rv = folder->GetFilePath(getter_AddRefs(cur));
   NS_ENSURE_SUCCESS(rv, rv);
   cur->Append(u"cur"_ns);
+
+  // The cur/ subdirectory may not exist yet (e.g. no messages have been
+  // delivered). Treat that as a size of 0, the same way the mbox store
+  // treats a missing mbox file.
+  bool exists = false;
+  rv = cur->Exists(&exists);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!exists) {
+    return NS_OK;
+  }
 
   nsCOMPtr<nsIDirectoryEnumerator> dirEnumerator;
   rv = cur->GetDirectoryEntries(getter_AddRefs(dirEnumerator));

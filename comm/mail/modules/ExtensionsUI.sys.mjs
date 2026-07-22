@@ -199,8 +199,8 @@ for (const perm of [
   "accountsRead",
   "addressBooks",
   "compose",
-  "compose-send",
-  "compose-save",
+  "compose.send",
+  "compose.save",
   "experiment",
   "messagesImport",
   "messagesModify",
@@ -208,6 +208,8 @@ for (const perm of [
   "messagesMove",
   "messagesDelete",
   "messagesRead",
+  "messages.save",
+  "messages.send",
   "messagesUpdate",
   "messagesTags",
   "messagesTagsList",
@@ -813,7 +815,7 @@ var gXPInstallObserver = {
         // name.
         options.name = install.addon.name;
         const messageString = lazy.l10n.formatValueSync(
-          "webext-install-suppressed-message"
+          "webext-install-suppressed-message-2"
         );
 
         PopupNotifications.show(

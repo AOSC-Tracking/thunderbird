@@ -9,8 +9,8 @@ const { AccountConfig } = ChromeUtils.importESModule(
   "resource:///modules/accountcreation/AccountConfig.sys.mjs"
 );
 
-const { Sanitizer } = ChromeUtils.importESModule(
-  "resource:///modules/accountcreation/Sanitizer.sys.mjs"
+const { InputSanitizer } = ChromeUtils.importESModule(
+  "resource:///modules/accountcreation/InputSanitizer.sys.mjs"
 );
 
 const { OAuth2Providers } = ChromeUtils.importESModule(
@@ -150,14 +150,10 @@ class EmailIncomingForm extends AccountHubStep {
       this.#updateConfigInputsVisibility(this.#incomingProtocol.value >= 4);
       this.#configChanged();
       this.#adjustPortToSSLAndProtocol();
+      this.#adjustOAuth2Visibility();
     });
 
     this.#incomingExchangeUrl.addEventListener("input", () => {
-      // Skip validation while there isn't a URL with a full host in the field
-      // to avoid inserting a slash into the host through the validation.
-      if (/^[^/]+\/\/[^/]+$/.test(this.#incomingExchangeUrl.value)) {
-        return;
-      }
       this.#configChanged();
       this.#adjustOAuth2Visibility();
     });
@@ -258,6 +254,7 @@ class EmailIncomingForm extends AccountHubStep {
   #adjustOAuth2Visibility(accountConfig) {
     // Get current config.
     const config = accountConfig || this.getIncomingUserConfig();
+    let incomingDetails = "";
 
     // If it's an exchange account and the experimental pref to allow
     // OAuth customization is enabled, always allow OAuth since they
@@ -269,11 +266,22 @@ class EmailIncomingForm extends AccountHubStep {
     if (oauthCustomizationEnabled && config.isExchangeConfig()) {
       this.querySelector("#incomingAuthMethodOAuth2").hidden = false;
     } else {
-      const host = config.getConfiguredHost();
+      // We get the input value here instead of using the config, because the
+      // config isn't updated until the value is valid, which leads to stale
+      // data.
+      try {
+        const host = config.isExchangeConfig()
+          ? URL.parse(InputSanitizer.url(this.#incomingExchangeUrl.value))
+              ?.hostname
+          : InputSanitizer.hostname(this.#incomingHostname.value);
 
-      // If the incoming server hostname supports OAuth2, enable it.
-      const incomingDetails =
-        host && OAuth2Providers.getHostnameDetails(host, config.incoming.type);
+        // If the incoming server hostname supports OAuth2, enable it.
+        incomingDetails =
+          host &&
+          OAuth2Providers.getHostnameDetails(host, config.incoming.type);
+      } catch (error) {
+        incomingDetails = "";
+      }
 
       this.querySelector("#incomingAuthMethodOAuth2").hidden = !incomingDetails;
       if (incomingDetails) {
@@ -281,6 +289,22 @@ class EmailIncomingForm extends AccountHubStep {
           `OAuth2 details for incoming server ${config.incoming.hostname} is ${incomingDetails}`
         );
       }
+    }
+
+    // If OAuth isn't an option, we reset the Authentication option to default,
+    // "Normal Password".
+    if (
+      !(
+        (oauthCustomizationEnabled && config.isExchangeConfig()) ||
+        incomingDetails
+      ) &&
+      this.#incomingAuthenticationMethod.value == Ci.nsMsgAuthMethod.OAuth2
+    ) {
+      this.#incomingAuthenticationMethod.value =
+        Ci.nsMsgAuthMethod.passwordCleartext;
+      config.incoming.auth = InputSanitizer.integer(
+        this.#incomingAuthenticationMethod.value
+      );
     }
 
     this.#currentConfig = config;
@@ -386,14 +410,17 @@ class EmailIncomingForm extends AccountHubStep {
     config.source = AccountConfig.kSourceUser;
 
     // Update the type based on the current selection.
-    config.incoming.type = Sanitizer.translate(this.#incomingProtocol.value, {
-      1: "imap",
-      2: "pop3",
-      3: "exchange",
-      4: "ews",
-      5: "graph",
-      0: null,
-    });
+    config.incoming.type = InputSanitizer.translate(
+      this.#incomingProtocol.value,
+      {
+        1: "imap",
+        2: "pop3",
+        3: "exchange",
+        4: "ews",
+        5: "graph",
+        0: null,
+      }
+    );
 
     // An EWS configuration won't have any of the default fields available to
     // edit.
@@ -403,7 +430,7 @@ class EmailIncomingForm extends AccountHubStep {
       config = this.#getDefaultConfigValues(config);
     }
 
-    config.incoming.auth = Sanitizer.integer(
+    config.incoming.auth = InputSanitizer.integer(
       this.#incomingAuthenticationMethod.value
     );
     config.incoming.username = this.#incomingUsername.value;
@@ -431,13 +458,13 @@ class EmailIncomingForm extends AccountHubStep {
     assert(config instanceof AccountConfig);
     this.#updateConfigInputsVisibility(config.isExchangeConfig());
 
-    this.#incomingProtocol.value = Sanitizer.translate(
+    this.#incomingProtocol.value = InputSanitizer.translate(
       config.incoming.type,
       { imap: 1, pop3: 2, exchange: 3, ews: 4, graph: 5 },
       1
     );
     this.#incomingHostname.value = config.incoming.hostname;
-    this.#incomingConnectionSecurity.value = Sanitizer.enum(
+    this.#incomingConnectionSecurity.value = InputSanitizer.enum(
       config.incoming.socketType,
       [-1, 0, 1, 2, 3],
       0
@@ -457,7 +484,7 @@ class EmailIncomingForm extends AccountHubStep {
         `https://${config.incoming.hostname}`) ||
       "";
 
-    this.#incomingAuthenticationMethod.value = Sanitizer.enum(
+    this.#incomingAuthenticationMethod.value = InputSanitizer.enum(
       config.incoming.auth,
       [0, 3, 4, 5, 6, 10],
       0
@@ -477,7 +504,7 @@ class EmailIncomingForm extends AccountHubStep {
   #getDefaultConfigValues(config) {
     try {
       const inHostnameValue = this.#incomingHostname.value;
-      config.incoming.hostname = Sanitizer.hostname(inHostnameValue);
+      config.incoming.hostname = InputSanitizer.hostname(inHostnameValue);
       this.#incomingHostname.value = config.incoming.hostname;
       this.#incomingHostname.setCustomValidity("");
       this.#incomingHostname.setAttribute("aria-invalid", false);
@@ -493,7 +520,7 @@ class EmailIncomingForm extends AccountHubStep {
     }
 
     try {
-      config.incoming.port = Sanitizer.integerRange(
+      config.incoming.port = InputSanitizer.integerRange(
         this.#incomingPort.valueAsNumber,
         1,
         65535
@@ -512,7 +539,7 @@ class EmailIncomingForm extends AccountHubStep {
       );
     }
 
-    config.incoming.socketType = Sanitizer.integer(
+    config.incoming.socketType = InputSanitizer.integer(
       this.#incomingConnectionSecurity.value
     );
 
@@ -527,9 +554,18 @@ class EmailIncomingForm extends AccountHubStep {
    * @returns {AccountConfig}
    */
   #getExchangeConfigValues(config) {
+    // Skip validation while there isn't a URL with a full host in the field
+    // to avoid inserting a slash into the host through the validation.
+    // Reset the exchange host in case there was a URL with a full host
+    // previously and the url was edited.
+    if (/^[^/]+\/\/[^/]+$/.test(this.#incomingExchangeUrl.value)) {
+      config.incoming.hostname = "";
+      return config;
+    }
+
     try {
       const inExchangeUrl = this.#incomingExchangeUrl.value;
-      config.incoming.exchangeURL = Sanitizer.url(inExchangeUrl);
+      config.incoming.exchangeURL = InputSanitizer.url(inExchangeUrl);
       this.#incomingExchangeUrl.value = config.incoming.exchangeURL;
       this.#incomingExchangeUrl.setCustomValidity("");
       this.#incomingExchangeUrl.setAttribute("aria-invalid", false);
@@ -542,6 +578,7 @@ class EmailIncomingForm extends AccountHubStep {
       }
     } catch (error) {
       gAccountSetupLogger.warn(error);
+      config.incoming.hostname = "";
       this.#incomingExchangeUrl.setCustomValidity(error._message);
       this.#incomingExchangeUrl.setAttribute("aria-invalid", true);
       this.#incomingExchangeUrl.setAttribute(

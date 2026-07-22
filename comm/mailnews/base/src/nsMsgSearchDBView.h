@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -67,8 +66,7 @@ class nsMsgSearchDBView : public nsMsgGroupView,
                                          nsIMsgDBHdr** msgHdr) override;
   virtual nsresult OnNewHeader(nsIMsgDBHdr* newHdr, nsMsgKey parentKey,
                                bool ensureListed) override;
-  NS_IMETHOD GetFolderForViewIndex(nsMsgViewIndex index,
-                                   nsIMsgFolder** folder) override;
+  nsIMsgFolder* GetFolderForViewIndex(nsMsgViewIndex index) override;
 
   NS_IMETHOD OnAnnouncerGoingAway(nsIDBChangeAnnouncer* instigator) override;
 

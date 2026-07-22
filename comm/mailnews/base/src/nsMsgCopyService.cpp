@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,7 +8,6 @@
 #include "nsIFile.h"
 #include "nsIMsgFolderNotificationService.h"
 #include "nsIMsgTransactionService.h"
-#include "nsServiceManagerUtils.h"
 #include "nsMsgUtils.h"
 #include "mozilla/Components.h"
 #include "mozilla/Logging.h"
@@ -108,7 +106,13 @@ nsMsgCopyService::nsMsgCopyService() {}
 nsMsgCopyService::~nsMsgCopyService() {
   int32_t i = m_copyRequests.Length();
 
-  while (i-- > 0) ClearRequest(m_copyRequests.ElementAt(i), NS_ERROR_FAILURE);
+  while (i-- > 0) {
+    nsCopyRequest* req = m_copyRequests.ElementAt(i);
+    // Don't notify listeners during XPCOM shutdown; services they depend on
+    // (localization, prompts, etc.) may already be torn down.
+    req->m_listener = nullptr;
+    ClearRequest(req, NS_ERROR_FAILURE);
+  }
 }
 
 void nsMsgCopyService::LogCopyCompletion(nsISupports* aSrc,
@@ -296,10 +300,11 @@ nsresult nsMsgCopyService::DoNextCopy() {
         // returns.
         rv = dstFolder->CopyFolder(srcFolder, isMove, copyRequest->m_msgWindow,
                                    copyRequest->m_listener);
-        // If CopyFolder() fails (e.g. destination folder already exists),
-        // it won't send a completion notification (NotifyCompletion()).
-        // So copyRequest will still exist, and we need to ditch it.
-        if (NS_FAILED(rv)) {
+        // CopyFolder() may fail after it already removed the request (local
+        // folders can call NotifyCompletion() synchronously, e.g. when
+        // moving/copying a folder with no messages directly in it). We need
+        // to check first, then clean up only if it's still there.
+        if (NS_FAILED(rv) && m_copyRequests.Contains(copyRequest)) {
           ClearRequest(copyRequest, rv);
         }
       } else if (copyRequest->m_requestType == nsCopyFileMessageType) {

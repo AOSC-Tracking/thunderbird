@@ -8,13 +8,11 @@ import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
-
 ChromeUtils.defineESModuleGetters(lazy, {
   CardDAVDirectory: "resource:///modules/CardDAVDirectory.sys.mjs",
-
   ContextualIdentityService:
     "resource://gre/modules/ContextualIdentityService.sys.mjs",
-
+  enforcePrimaryPassword: "resource:///modules/PrimaryPassword.sys.mjs",
   MsgAuthPrompt: "resource:///modules/MsgAsyncPrompter.sys.mjs",
   OAuth2Module: "resource:///modules/OAuth2Module.sys.mjs",
 });
@@ -86,6 +84,7 @@ export var CardDAVUtils = {
    * @param {integer} [details.userContextId] - See _contextForUsername.
    *
    * @returns {Promise<object>} - Resolves to an object with getters for:
+   *    - url, the final URL after following redirects
    *    - status, the HTTP response code
    *    - statusText, the HTTP response message
    *    - text, the returned data as a String
@@ -231,6 +230,9 @@ export var CardDAVUtils = {
             return;
           }
           resolve({
+            get url() {
+              return new URL(finalChannel.URI.spec);
+            },
             get status() {
               return finalChannel.responseStatus;
             },
@@ -383,6 +385,8 @@ export var CardDAVUtils = {
         response = await CardDAVUtils.makeRequest(urlCandidate, requestParams);
         if (response.status == 207 && response.dom) {
           log.log(`${urlCandidate} ... success`);
+          // Use the final (redirected) URL for resolving relative paths.
+          url = response.url;
         } else {
           log.log(
             `${urlCandidate} ... response was "${response.status} ${response.statusText}"`
@@ -668,6 +672,9 @@ export class NotificationCallbacks {
         ""
       );
       try {
+        if (!lazy.enforcePrimaryPassword()) {
+          return;
+        }
         await Services.logins.addLoginAsync(newLoginInfo);
       } catch (ex) {
         console.error(ex);
@@ -676,22 +683,33 @@ export class NotificationCallbacks {
   }
   asyncOnChannelRedirect(oldChannel, newChannel, flags, callback) {
     /**
-     * Copy the given header from the old channel to the new one, ignoring missing headers
+     * Get the named header from the old channel, or null if there was no such header.
      *
-     * @param {string} header - The header to copy
+     * @param {string} header - The header to get.
+     * @returns {?string}
      */
-    function copyHeader(header) {
+    function getHeader(header) {
       try {
-        const headerValue = oldChannel.getRequestHeader(header);
-        if (headerValue) {
-          newChannel.setRequestHeader(header, headerValue, false);
-        }
+        return oldChannel.getRequestHeader(header);
       } catch (e) {
         if (e.result != Cr.NS_ERROR_NOT_AVAILABLE) {
           // The header could possibly not be available, ignore that
           // case but throw otherwise
           throw e;
         }
+      }
+      return null;
+    }
+
+    /**
+     * Copy the given header from the old channel to the new one, ignoring missing headers
+     *
+     * @param {string} header - The header to copy
+     */
+    function copyHeader(header) {
+      const headerValue = getHeader(header);
+      if (headerValue) {
+        newChannel.setRequestHeader(header, headerValue, false);
       }
     }
 
@@ -702,9 +720,11 @@ export class NotificationCallbacks {
     // If any other header is used, it should be added here. We might want
     // to just copy all headers over to the new channel.
     if (oldChannel.URI.prePath == newChannel.URI.prePath) {
-      // Don't send the Authorization header to another server. Ask for
-      // authorization again.
       copyHeader("Authorization");
+    } else if (getHeader("Authorization")) {
+      // Don't send the Authorization header to another server. Abandon the request.
+      callback.onRedirectVerifyCallback(Cr.NS_ERROR_ABORT);
+      return;
     }
     copyHeader("Depth");
     copyHeader("Originator");

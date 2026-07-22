@@ -728,7 +728,7 @@ pref("mail.forward_add_extension", true);
 // Prefix of for mail forwards. E.g. "Fwd" -> subject will be Fwd: <subject>
 pref("mail.forward_subject_prefix", "Fwd");
 
-// RFC 2646=======
+// RFC 2646
 pref("mailnews.send_plaintext_flowed", true);
 // prompt user when crossing folders
 pref("mailnews.nav_crosses_folders", 1);
@@ -857,22 +857,16 @@ pref("mail.server.default.retainBy", 1);
 
 pref("mailnews.ui.junk.manualMarkAsJunkMarksRead", true);
 
-// default description and color prefs for tags
-// (we keep the .labels. names for backwards compatibility)
-pref("mailnews.labels.description.1", "chrome://messenger/locale/messenger.properties");
-pref("mailnews.labels.description.2", "chrome://messenger/locale/messenger.properties");
-pref("mailnews.labels.description.3", "chrome://messenger/locale/messenger.properties");
-pref("mailnews.labels.description.4", "chrome://messenger/locale/messenger.properties");
-pref("mailnews.labels.description.5", "chrome://messenger/locale/messenger.properties");
-// default: red
+// Color prefs for the five default tags (derived from the legacy labels).
+// Important: red
 pref("mailnews.labels.color.1", "#FF0000");
-// default: orange
+// Work: orange
 pref("mailnews.labels.color.2", "#FF9900");
-// default: green
+// Personal: green
 pref("mailnews.labels.color.3", "#009900");
-// default: blue
+// To Do: blue
 pref("mailnews.labels.color.4", "#3333FF");
-// default: purple
+// Later: purple
 pref("mailnews.labels.color.5", "#993399");
 
 //default null headers
@@ -1068,12 +1062,10 @@ pref("mailnews.oauth.loglevel", "Warn");
 // existing session information to cause interference when signing into multiple
 // accounts.
 pref("mailnews.oauth.usePrivateBrowser", false);
-
-#ifdef NIGHTLY_BUILD
+// Use the system browser for OAuth instead of a Thunderbird window.
 pref("mailnews.oauth.useExternalBrowser", true);
-#else
-pref("mailnews.oauth.useExternalBrowser", false);
-#endif
+// Use a net.thunderbird: URL instead of localhost for redirection.
+pref("mailnews.oauth.useSchemeRedirect", true);
 
 pref("test.loghelper.loglevel", "Warn");
 

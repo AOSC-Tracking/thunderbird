@@ -8,8 +8,8 @@
 #include "ExchangeFolderCopyHandler.h"
 #include "ExchangeMessageCopyHandler.h"
 #include "ExchangeMessageCopyHandler.h"
-#include "EwsMessageSync.h"
-#include "EwsCopyMoveTransaction.h"
+#include "ExchangeMessageSync.h"
+#include "ExchangeCopyMoveTransaction.h"
 #include "IExchangeClient.h"
 #include "IExchangeIncomingServer.h"
 #include "IHeaderBlock.h"
@@ -17,7 +17,6 @@
 #include "ErrorList.h"
 #include "FolderCompactor.h"
 #include "FolderPopulation.h"
-#include "MailNewsTypes.h"
 #include "MsgOperationListener.h"
 #include "nsAutoSyncState.h"
 #include "nsIInputStream.h"
@@ -743,11 +742,11 @@ NS_IMETHODIMP ExchangeFolder::CopyItemsOnSameServer(
               txns->GetTransactionManager(getter_AddRefs(txnMgr));
               NS_ENSURE_STATE(txnMgr);
 
-              RefPtr<EwsCopyMoveTransaction> undoTransaction =
-                  aIsMove ? EwsCopyMoveTransaction::ForMove(
+              RefPtr<ExchangeCopyMoveTransaction> undoTransaction =
+                  aIsMove ? ExchangeCopyMoveTransaction::ForMove(
                                 srcFolder, self.get(), msgWindow,
                                 newHeaders.Clone())
-                          : EwsCopyMoveTransaction::ForCopy(
+                          : ExchangeCopyMoveTransaction::ForCopy(
                                 srcFolder, self.get(), msgWindow,
                                 srcHdrs.Clone(), newHeaders.Clone());
               undoTransaction->SetTransactionType(
@@ -956,16 +955,15 @@ nsresult ExchangeFolder::HandleDeleteOperation(
 
   // If any ancestor of this folder is the trash folder, then hard delete.
   bool isInTrashFolder = false;
-  nsCOMPtr<nsIMsgFolder> parent;
-  GetParent(getter_AddRefs(parent));
-  while (parent) {
+  nsCOMPtr<nsIMsgFolder> folder = this;
+  while (folder) {
     bool isTrashFolder = false;
-    MOZ_TRY(parent->GetFlag(nsMsgFolderFlags::Trash, &isTrashFolder));
+    MOZ_TRY(folder->GetFlag(nsMsgFolderFlags::Trash, &isTrashFolder));
     if (isTrashFolder) {
       isInTrashFolder = true;
       break;
     }
-    parent->GetParent(getter_AddRefs(parent));
+    folder->GetParent(getter_AddRefs(folder));
   }
 
   // Check the delete model to see if this should be a permanent delete.
@@ -1134,7 +1132,7 @@ NS_IMETHODIMP ExchangeFolder::DeleteSelf(nsIMsgWindow* aWindow) {
     nsCOMPtr<IExchangeClient> client;
     nsresult rv = self->GetProtocolClient(getter_AddRefs(client));
     NS_ENSURE_SUCCESS(rv, rv);
-    return client->DeleteFolder(listener, {folderId});
+    return client->DeleteFolder(listener, folderId);
   };
 
   const auto onSoftDelete = [self = RefPtr(this), window = RefPtr(aWindow)](
@@ -1240,8 +1238,7 @@ NS_IMETHODIMP ExchangeFolder::EmptyTrash(nsIUrlListener* aListener) {
   rv = GetProtocolClient(getter_AddRefs(client));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = client->EmptyFolder(listener, {trashExchangeId}, subFolderIds,
-                           messageIds);
+  rv = client->EmptyFolder(listener, trashExchangeId, subFolderIds, messageIds);
   if (NS_SUCCEEDED(rv) && aListener) {
     rv = aListener->OnStartRunningUrl(trashUri);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -1436,7 +1433,7 @@ nsresult ExchangeFolder::SyncMessages(nsIMsgWindow* window,
     }
   };
 
-  return EwsPerformMessageSync(this, onSyncStart, onSyncStop);
+  return ExchangePerformMessageSync(this, onSyncStart, onSyncStop);
 }
 
 nsAutoSyncState* ExchangeFolder::AutoSyncState() {

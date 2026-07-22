@@ -2249,6 +2249,7 @@ class TreeViewTableHeader extends HTMLTableSectionElement {
     this.setAttribute("is", "tree-view-table-header");
     this.classList.add("tree-table-header");
     this.row = document.createElement("tr");
+    this.row.setAttribute("role", "toolbar"); // Roving tabindex is used.
     this.appendChild(this.row);
 
     this.addEventListener("keypress", this);
@@ -2416,6 +2417,7 @@ class TreeViewTableHeader extends HTMLTableSectionElement {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     this.dispatchEvent(
       new CustomEvent("shift-column", {
         bubbles: true,

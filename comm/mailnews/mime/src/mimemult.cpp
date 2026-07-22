@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -448,7 +447,7 @@ static int MimeMultipart_create_child(MimeObject* obj) {
    */
 
   body = mime_create(((ct && *ct) ? ct : (dct ? dct : TEXT_PLAIN)), mult->hdrs,
-                     obj->options, false, obj);
+                     obj->options, false, mime_child_part_depth(obj), obj);
   PR_FREEIF(ct);
   if (!body) return MIME_OUT_OF_MEMORY;
   status = ((MimeContainerClass*)obj->clazz)->add_child(obj, body);

@@ -125,6 +125,11 @@ export class NntpIncomingServer extends MsgIncomingServer {
     this._subscribableServer = null;
   }
 
+  /**
+   * @param {nsIMsgWindow} msgWindow
+   * @param {boolean} forceToServer
+   * @param {boolean} getOnlyNew
+   */
   startPopulating(msgWindow, forceToServer, getOnlyNew) {
     this._startPopulating(msgWindow, forceToServer, getOnlyNew);
   }
@@ -151,8 +156,8 @@ export class NntpIncomingServer extends MsgIncomingServer {
       );
       this._groups.push(name);
     } catch (e) {
-      // Group names with double dot, like alt.binaries.sounds..mp3.zappa are
-      // not working. Bug 1788572.
+      // Groups names with double dots do not conform to RFC 5536 - 3.1.4.
+      // and are not supported
       console.error(`Failed to add group ${name}`, e);
     }
   }
@@ -225,14 +230,22 @@ export class NntpIncomingServer extends MsgIncomingServer {
     return this._subscribable.getChildURIs(path);
   }
 
-  /** @see nsIUrlListener */
-  OnStartRunningUrl() {}
+  /**
+   * @param {nsIURI} _url
+   * @see {nsIUrlListener}
+   */
+  OnStartRunningUrl(_url) {}
 
-  OnStopRunningUrl() {
+  /**
+   * @param {nsIURI} _url
+   * @param {nsresult} _exitCode
+   * @see {nsIUrlListener}
+   */
+  OnStopRunningUrl(_url, _exitCode) {
     this.stopPopulating(this._msgWindow);
   }
 
-  /** @see nsIMsgIncomingServer */
+  /** @see {nsIMsgIncomingServer} */
   get serverRequiresPasswordForBiff() {
     return false;
   }
@@ -345,7 +358,7 @@ export class NntpIncomingServer extends MsgIncomingServer {
         suffix = ".rc";
       }
       this._newsrcFilePath = this.newsrcRootPath;
-      this._newsrcFilePath.append(`${prefix}${this.hostName}${suffix}`);
+      this._newsrcFilePath.append(`${prefix}${this.hostname}${suffix}`);
       this._newsrcFilePath.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o644);
       this.newsrcFilePath = this._newsrcFilePath;
     }
@@ -523,7 +536,7 @@ export class NntpIncomingServer extends MsgIncomingServer {
       "# This is a generated file!  Do not edit.",
       "",
       "version=2",
-      `newsrcname=${this.hostName}`,
+      `newsrcname=${this.hostname}`,
       `lastgroupdate=${Math.floor(Date.now() / 1000)}`,
       "uniqueid=0",
       "",

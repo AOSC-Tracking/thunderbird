@@ -1,4 +1,3 @@
-/* -*- Mode: JavaScript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -48,6 +47,28 @@ const providers = {
         •       Organized by me
         •       1 Ticket
         Join<https://test.zoom.us/j/12345>
+      `,
+    },
+    {
+      joinLink: "https://test.zoom.us/j/12345?pwd=aBc67.8",
+      description: `
+        View event<https://test.zoom.us/j/12345?pwd=aBc67.8>
+        [https://file-paa.zoom.us/anlksdc6]
+        •       Oct 5, 2024 8:45 AM - Oct 5, 2024 3:30 PM EDT
+        •       Organized by me
+        •       1 Ticket
+        Join<https://test.zoom.us/j/12345?pwd=aBc67.8>
+      `,
+    },
+    {
+      joinLink: "https://test.zoom.us/j/12345?pwd=aBc67.8&jst=2",
+      description: `
+        View event<https://test.zoom.us/j/12345?pwd=aBc67.8&jst=2>
+        [https://file-paa.zoom.us/anlksdc6]
+        •       Oct 5, 2024 8:45 AM - Oct 5, 2024 3:30 PM EDT
+        •       Organized by me
+        •       1 Ticket
+        Join<https://test.zoom.us/j/12345?pwd=aBc67.8&jst=2>
       `,
     },
   ],

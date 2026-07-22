@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -146,7 +145,7 @@ NS_IMETHODIMP nsImapIncomingServer::SetKey(
 NS_IMETHODIMP
 nsImapIncomingServer::GetConstructedPrettyName(nsACString& retval) {
   nsAutoCString username;
-  nsAutoCString hostName;
+  nsAutoCString hostname;
   nsresult rv;
 
   nsCOMPtr<nsIMsgAccountManager> accountManager =
@@ -165,12 +164,12 @@ nsImapIncomingServer::GetConstructedPrettyName(nsACString& retval) {
   } else {
     rv = GetUsername(username);
     NS_ENSURE_SUCCESS(rv, rv);
-    rv = GetHostName(hostName);
+    rv = GetHostname(hostname);
     NS_ENSURE_SUCCESS(rv, rv);
-    if (!username.IsEmpty() && !hostName.IsEmpty()) {
+    if (!username.IsEmpty() && !hostname.IsEmpty()) {
       CopyASCIItoUTF16(username, emailAddress);
       emailAddress.Append('@');
-      emailAddress.Append(NS_ConvertASCIItoUTF16(hostName));
+      emailAddress.Append(NS_ConvertASCIItoUTF16(hostname));
     }
   }
 
@@ -238,8 +237,7 @@ nsImapIncomingServer::GetUsingSubscription(bool* bVal) {
 NS_IMETHODIMP
 nsImapIncomingServer::SetUsingSubscription(bool bVal) {
   bool oldVal = bVal;
-  bool hadPref =
-      NS_SUCCEEDED(GetBoolValue("using_subscription", &oldVal));
+  bool hadPref = NS_SUCCEEDED(GetBoolValue("using_subscription", &oldVal));
 
   nsresult rv = SetBoolValue("using_subscription", bVal);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -255,8 +253,7 @@ nsImapIncomingServer::SetUsingSubscription(bool bVal) {
   if (hadPref && oldVal != bVal && hostSession && !serverKey.IsEmpty()) {
     // Applies the flip between "subscribed-only" (LSUB) and "all folders"
     // (LIST) immediately, so the folder pane updates without a restart.
-    hostSession->SetHaveWeEverDiscoveredFoldersForHost(serverKey.get(),
-                                                       false);
+    hostSession->SetHaveWeEverDiscoveredFoldersForHost(serverKey.get(), false);
     PerformExpand(nullptr);
   }
   return NS_OK;
@@ -1610,8 +1607,8 @@ bool nsImapIncomingServer::AllDescendantsAreNoSelect(
 NS_IMETHODIMP
 nsImapIncomingServer::PromptLoginFailed(nsIMsgWindow* aMsgWindow,
                                         int32_t* aResult) {
-  nsAutoCString hostName;
-  GetHostName(hostName);
+  nsAutoCString hostname;
+  GetHostname(hostname);
 
   nsAutoCString userName;
   GetUsername(userName);
@@ -1634,7 +1631,7 @@ nsImapIncomingServer::PromptLoginFailed(nsIMsgWindow* aMsgWindow,
 
   nsString message;
   AutoTArray<nsString, 2> formatStrings2;
-  CopyUTF8toUTF16(hostName, *formatStrings2.AppendElement());
+  CopyUTF8toUTF16(hostname, *formatStrings2.AppendElement());
   CopyUTF8toUTF16(userName, *formatStrings2.AppendElement());
   rv = bundle->FormatStringFromName("mailServerLoginFailed2", formatStrings2,
                                     message);
@@ -1676,12 +1673,12 @@ nsImapIncomingServer::FEAlert(const nsAString& aAlertString,
   GetStringBundle();
 
   if (m_stringBundle) {
-    nsAutoCString hostName;
-    nsresult rv = GetPrettyName(hostName);
+    nsAutoCString hostname;
+    nsresult rv = GetPrettyName(hostname);
     if (NS_SUCCEEDED(rv)) {
       nsString message;
       nsString tempString(aAlertString);
-      AutoTArray<nsString, 2> params = {NS_ConvertUTF8toUTF16(hostName),
+      AutoTArray<nsString, 2> params = {NS_ConvertUTF8toUTF16(hostname),
                                         tempString};
 
       rv = m_stringBundle->FormatStringFromName("imapServerAlert", params,
@@ -1729,11 +1726,11 @@ nsImapIncomingServer::FEAlertWithName(const char* aMsgName,
   nsString message;
 
   if (m_stringBundle) {
-    nsAutoCString hostName;
-    nsresult rv = GetHostName(hostName);
+    nsAutoCString hostname;
+    nsresult rv = GetHostname(hostname);
     if (NS_SUCCEEDED(rv)) {
       AutoTArray<nsString, 1> params;
-      CopyUTF8toUTF16(hostName, *params.AppendElement());
+      CopyUTF8toUTF16(hostname, *params.AppendElement());
       rv = m_stringBundle->FormatStringFromName(aMsgName, params, message);
       if (NS_SUCCEEDED(rv)) {
         aUrl->SetErrorCode(nsDependentCString(aMsgName));
@@ -1778,10 +1775,10 @@ NS_IMETHODIMP nsImapIncomingServer::FEAlertFromServer(
     // For untagged BYE greeting show the string on a new line.
     message.Insert("\r\n", 0);
   }
-  nsAutoCString hostName;
-  GetPrettyName(hostName);
+  nsAutoCString hostname;
+  GetPrettyName(hostname);
 
-  AutoTArray<nsString, 3> formatStrings = {NS_ConvertUTF8toUTF16(hostName)};
+  AutoTArray<nsString, 3> formatStrings = {NS_ConvertUTF8toUTF16(hostname)};
 
   const char* msgName;
   nsString fullMessage;
@@ -1845,20 +1842,19 @@ nsresult nsImapIncomingServer::GetStringBundle() {
 }
 
 NS_IMETHODIMP
-nsImapIncomingServer::GetImapStringByName(const char* msgName,
+nsImapIncomingServer::GetImapStringByName(const nsACString& msgName,
                                           nsAString& aString) {
-  nsresult rv = NS_OK;
-  GetStringBundle();
+  nsresult rv = GetStringBundle();
+  NS_ENSURE_SUCCESS(rv, rv);
   if (m_stringBundle) {
     nsString res_str;
-    rv = m_stringBundle->GetStringFromName(msgName, res_str);
+    rv = m_stringBundle->GetStringFromName(PromiseFlatCString(msgName).get(),
+                                           res_str);
+    NS_ENSURE_SUCCESS(rv, rv);
     aString.Assign(res_str);
-    if (NS_SUCCEEDED(rv)) return rv;
+    return rv;
   }
-  aString.AssignLiteral("String Name ");
-  // mscott: FIX ME
-  aString.AppendASCII(msgName);
-  return NS_OK;
+  return NS_ERROR_FAILURE;
 }
 
 nsresult nsImapIncomingServer::ResetFoldersToUnverified(
@@ -2018,8 +2014,8 @@ nsImapIncomingServer::PromptPassword(nsIMsgWindow* aMsgWindow,
   nsAutoCString userName;
   GetUsername(userName);
 
-  nsAutoCString hostName;
-  GetHostName(hostName);
+  nsAutoCString hostname;
+  GetHostname(hostname);
 
   nsresult rv = GetStringBundle();
   NS_ENSURE_SUCCESS(rv, rv);
@@ -2034,7 +2030,7 @@ nsImapIncomingServer::PromptPassword(nsIMsgWindow* aMsgWindow,
 
   AutoTArray<nsString, 2> formatStrings2;
   CopyUTF8toUTF16(userName, *formatStrings2.AppendElement());
-  CopyUTF8toUTF16(hostName, *formatStrings2.AppendElement());
+  CopyUTF8toUTF16(hostname, *formatStrings2.AppendElement());
 
   nsString passwordText;
   rv = m_stringBundle->FormatStringFromName("imapEnterServerPasswordPrompt",

@@ -21,7 +21,7 @@
 
 #define SYNC_STATE_PROPERTY "ewsSyncStateToken"
 
-extern mozilla::LazyLogModule gEwsLog;
+extern mozilla::LazyLogModule gExchangeLog;
 
 /**
  * Helper class to coordinate creating a message on both the remote server
@@ -129,7 +129,7 @@ class MessageCreateHandler : public IExchangeMessageCreateListener {
 
     // Create a (detached) nsIMsgDBHdr.
     nsCOMPtr<nsIMsgDBHdr> tmpHdr;
-    MOZ_TRY(db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(tmpHdr)));
+    MOZ_TRY(db->CreateNewHdr(getter_AddRefs(tmpHdr)));
     bool isLive;
     MOZ_TRY(tmpHdr->GetIsLive(&isLive));
     MOZ_ASSERT(!isLive);
@@ -162,7 +162,7 @@ class MessageCreateHandler : public IExchangeMessageCreateListener {
     nsresult rv = LocalCopyOfflineMessageContent(mFolder, msgStream, liveHdr);
     if (NS_FAILED(rv)) {
       MOZ_LOG_FMT(
-          gEwsLog, mozilla::LogLevel::Warning,
+          gExchangeLog, mozilla::LogLevel::Warning,
           "MessageCreateHandler - failed writing offline copy (serverId={})",
           serverId);
     }

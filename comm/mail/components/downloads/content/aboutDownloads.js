@@ -1,5 +1,3 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80 filetype=javascript: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11,6 +9,7 @@
 ChromeUtils.defineESModuleGetters(this, {
   Downloads: "resource://gre/modules/Downloads.sys.mjs",
   DownloadUtils: "resource://gre/modules/DownloadUtils.sys.mjs",
+  makeMozIconSrcSet: "resource:///modules/MozIconUtils.mjs",
 });
 
 window.addEventListener("load", () => {
@@ -183,14 +182,7 @@ function DownloadItem(aDownload) {
     this._sender = "";
   }
   this._fileName = this._htmlEscape(PathUtils.filename(aDownload.target.path));
-  this._iconUrl =
-    "moz-icon://" +
-    this._fileName +
-    "?size=32&scale=1 1x, moz-icon://" +
-    this._fileName +
-    "?size=32&scale=2 2x, moz-icon://" +
-    this._fileName +
-    "?size=32&scale=3 3x";
+  this._iconUrl = makeMozIconSrcSet(this._fileName, 32);
   this._startDate = this._htmlEscape(
     DownloadUtils.getReadableDates(aDownload.startTime)[0]
   );

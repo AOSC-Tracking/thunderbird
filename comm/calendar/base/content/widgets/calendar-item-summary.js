@@ -12,6 +12,7 @@
 // Wrap in a block to prevent leaking to window scope.
 {
   var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+  var { makeMozIconSrcSet } = ChromeUtils.importESModule("resource:///modules/MozIconUtils.mjs");
   var { recurrenceStringFromItem } = ChromeUtils.importESModule(
     "resource:///modules/calendar/calRecurrenceUtils.sys.mjs"
   );
@@ -166,6 +167,29 @@
                     oncontextmenu="openDescriptionContextMenu(event);">
             </iframe>
           </box>
+
+          <splitter id="itemsCommentsSplitter"
+                    class="item-summary-splitter"
+                    collapse="after"
+                    orient="vertical"
+                    state="open"/>
+
+          <!-- Comment -->
+          <box class="item-comments-box" hidden="hidden">
+            <box class="item-comment-box" orient="vertical">
+              <spacer class="default-spacer"/>
+              <hbox class="calendar-caption" align="center">
+                <label data-l10n-id="header-comment"
+                       class="header"/>
+                <separator class="groove" flex="1"/>
+              </hbox>
+              <iframe class="item-comment"
+                      type="content"
+                      flex="1"
+                      oncontextmenu="openDescriptionContextMenu(event);">
+              </iframe>
+            </box>
+          </box>
         </box>
 
         <!-- URL link -->
@@ -288,6 +312,7 @@
         return;
       }
       this.hasConnected = true;
+      window.MozXULElement.insertFTLIfNeeded("calendar/calendar-item-summary.ftl");
 
       this.appendChild(this.constructor.fragment);
 
@@ -495,6 +520,9 @@
       if (descriptionText) {
         await this.updateDescription(descriptionText, item.descriptionHTML);
       }
+
+      const commentText = item.getProperty("COMMENT")?.trim();
+      await this.updateComment(commentText);
 
       const attachments = item.getAttachments();
       if (attachments.length) {
@@ -707,6 +735,63 @@
     }
 
     /**
+     * Update the comment part of the UI.
+     *
+     * @param {string} commentText - The value of the COMMENT property.
+     */
+    async updateComment(commentText) {
+      this.querySelector("#itemsCommentsSplitter").toggleAttribute("hidden", !commentText);
+      this.querySelector(".item-comments-box").toggleAttribute("hidden", !commentText);
+      const itemComment = this.querySelector(".item-comment");
+
+      if (itemComment.contentDocument.readyState != "complete") {
+        // Wait for the iframe's document to load.
+        await new Promise(resolve => {
+          itemComment._listener = {
+            QueryInterface: ChromeUtils.generateQI([
+              "nsIWebProgressListener",
+              "nsISupportsWeakReference",
+            ]),
+            onStateChange(webProgress, request, stateFlags) {
+              if (stateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
+                itemComment.browsingContext.webProgress.removeProgressListener(this);
+                delete itemComment._listener;
+                resolve();
+              }
+            },
+          };
+          itemComment.browsingContext.webProgress.addProgressListener(
+            itemComment._listener,
+            Ci.nsIWebProgress.NOTIFY_STATE_ALL
+          );
+        });
+      }
+
+      const docFragment = cal.view.textToHtmlDocumentFragment(
+        commentText,
+        itemComment.contentDocument,
+        null
+      );
+
+      // Make any links open in the user's default browser, not in Thunderbird.
+      for (const anchor of docFragment.querySelectorAll("a")) {
+        anchor.addEventListener("click", function (event) {
+          event.preventDefault();
+          if (event.isTrusted) {
+            launchBrowser(anchor.getAttribute("href"), event);
+          }
+        });
+      }
+
+      itemComment.contentDocument.body.appendChild(docFragment);
+
+      const link = itemComment.contentDocument.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "chrome://messenger/skin/shared/editorContent.css";
+      itemComment.contentDocument.head.appendChild(link);
+    }
+
+    /**
      * Update the attachments part of the UI.
      *
      * @param {calIAttachment[]} attachments - Array of attachment objects.
@@ -742,16 +827,7 @@
               }
             }
           }
-          icon.setAttribute(
-            "srcset",
-            "moz-icon://" +
-              iconSrc +
-              "?size=16&scale=1 1x, moz-icon://" +
-              iconSrc +
-              "?size=16&scale=2 2x, moz-icon://" +
-              iconSrc +
-              "?size=16&scale=3 3x"
-          );
+          icon.setAttribute("srcset", makeMozIconSrcSet(iconSrc, 16));
 
           this.querySelector(".item-attachment-cell").appendChild(attachment);
           attCounter++;

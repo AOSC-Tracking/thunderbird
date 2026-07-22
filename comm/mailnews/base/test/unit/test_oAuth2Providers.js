@@ -173,43 +173,38 @@ add_task(function testMicrosoftHostnameDetails() {
     {
       issuer: "login.microsoftonline.com",
       allScopes:
-        "https://graph.microsoft.com/User.Read https://graph.microsoft.com/MailboxFolder.ReadWrite offline_access",
+        "https://graph.microsoft.com/User.Read https://graph.microsoft.com/MailboxFolder.ReadWrite https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send offline_access",
       requiredScopes:
-        "https://graph.microsoft.com/User.Read https://graph.microsoft.com/MailboxFolder.ReadWrite offline_access",
+        "https://graph.microsoft.com/User.Read https://graph.microsoft.com/MailboxFolder.ReadWrite https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send offline_access",
     }
   );
 });
 
 add_task(function testRegisterUnregister() {
   Assert.throws(
-    () => OAuth2Providers.registerProvider("test.test"),
+    () => OAuth2Providers.registerProvider({ name: "test.test" }),
     /Issuer test\.test already registered/,
     "registering an existing provider should fail"
   );
   Assert.throws(
     () =>
-      OAuth2Providers.registerProvider(
-        "oauth.test",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        ["mochi.test"]
-      ),
+      OAuth2Providers.registerProvider({ name: "oauth.test" }, ["mochi.test"]),
     /Hostname mochi\.test already registered/,
     "registering an existing hostname should fail"
   );
 
   OAuth2Providers.registerProvider(
-    "oauth.test",
-    "my_client_id",
-    "my_secret",
-    "https://oauth.test/auth",
-    "https://oauth.test/token",
-    "https://localhost/",
-    true,
+    {
+      name: "oauth.test",
+      builtIn: true,
+      clientId: "my_client_id",
+      clientSecret: "my_secret",
+      authorizationEndpoint: "https://oauth.test/auth",
+      tokenEndpoint: "https://oauth.test/token",
+      redirectionEndpoint: "https://localhost/",
+      usePKCE: true,
+      useExternalBrowser: true,
+    },
     ["mail.test"],
     "my_scope"
   );
@@ -234,6 +229,7 @@ add_task(function testRegisterUnregister() {
       tokenEndpoint: "https://oauth.test/token",
       redirectionEndpoint: "https://localhost/",
       usePKCE: true,
+      useExternalBrowser: true,
     },
     "issuer details should be registered"
   );

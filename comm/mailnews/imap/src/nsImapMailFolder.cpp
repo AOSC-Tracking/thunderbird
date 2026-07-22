@@ -261,16 +261,6 @@ nsresult nsImapMailFolder::AddDirectorySeparator(nsIFile* path) {
   return NS_OK;
 }
 
-static bool nsShouldIgnoreFile(nsString& name) {
-  if (StringEndsWith(name, NS_LITERAL_STRING_FROM_CSTRING(SUMMARY_SUFFIX),
-                     nsCaseInsensitiveStringComparator)) {
-    name.SetLength(name.Length() -
-                   SUMMARY_SUFFIX_LENGTH);  // truncate the string
-    return false;
-  }
-  return true;
-}
-
 NS_IMETHODIMP nsImapMailFolder::AddSubfolder(const nsACString& aName,
                                              nsIMsgFolder** aChild) {
   NS_ENSURE_ARG_POINTER(aChild);
@@ -427,33 +417,37 @@ nsresult nsImapMailFolder::CreateSubFolders(nsIFile* path) {
   bool hasMore = false;
   while (NS_SUCCEEDED(directoryEnumerator->HasMoreElements(&hasMore)) &&
          hasMore) {
-    nsCOMPtr<nsIFile> currentFolderPath;
-    rv = directoryEnumerator->GetNextFile(getter_AddRefs(currentFolderPath));
-    if (NS_FAILED(rv) || !currentFolderPath) continue;
+    nsCOMPtr<nsIFile> currentFile;
+    rv = directoryEnumerator->GetNextFile(getter_AddRefs(currentFile));
+    if (NS_FAILED(rv) || !currentFile) {
+      continue;
+    }
 
-    nsAutoString currentFolderNameStr;    // online name
-    nsAutoString currentFolderDBNameStr;  // possibly munged name
-    currentFolderPath->GetLeafName(currentFolderNameStr);
+    nsAutoString currentFolderNameStr;
+    currentFile->GetLeafName(currentFolderNameStr);
+
     // Skip if not an .msf file.
-    // (NOTE: nsShouldIgnoreFile() strips the trailing ".msf" here)
-    if (nsShouldIgnoreFile(currentFolderNameStr)) continue;
+    if (!StringEndsWith(currentFolderNameStr,
+                        NS_LITERAL_STRING_FROM_CSTRING(SUMMARY_SUFFIX),
+                        nsCaseInsensitiveStringComparator)) {
+      continue;
+    }
+
+    // Explicitly strip the trailing ".msf" to get the base local folder name.
+    currentFolderNameStr.SetLength(currentFolderNameStr.Length() -
+                                   SUMMARY_SUFFIX_LENGTH);
+
+    // Save the on-disk local name before currentFolderNameStr gets modified.
+    nsAutoString currentFolderLocalNameStr = currentFolderNameStr;
 
     // OK, here we need to get the online name from the folder cache if we can.
-    // If we can, use that to create the sub-folder
-    nsCOMPtr<nsIFile> curFolder = new nsLocalFile();
-    rv = curFolder->InitWithFile(currentFolderPath);
-    NS_ENSURE_SUCCESS(rv, rv);
-    nsCOMPtr<nsIFile> dbFile = new nsLocalFile();
-    rv = dbFile->InitWithFile(currentFolderPath);
-    NS_ENSURE_SUCCESS(rv, rv);
-    // don't strip off the .msf in currentFolderPath.
-    currentFolderPath->SetLeafName(currentFolderNameStr);
-    currentFolderDBNameStr = currentFolderNameStr;
+    // If we can, use that to create the sub-folder.
     nsAutoString utfLeafName = currentFolderNameStr;
 
     if (!mail_panorama_enabled_AtStartup()) {
       nsCOMPtr<nsIMsgFolderCacheElement> cacheElement;
-      rv = GetFolderCacheElemFromFile(dbFile, getter_AddRefs(cacheElement));
+      rv =
+          GetFolderCacheElemFromFile(currentFile, getter_AddRefs(cacheElement));
       if (NS_SUCCEEDED(rv) && cacheElement) {
         nsCString onlineFullUtfName;
 
@@ -466,7 +460,7 @@ nsresult nsImapMailFolder::CreateSubFolders(nsIFile* path) {
         rv = cacheElement->GetCachedInt32("hierDelim", &hierarchyDelimiter);
         if (NS_SUCCEEDED(rv) &&
             hierarchyDelimiter == kOnlineHierarchySeparatorUnknown) {
-          currentFolderPath->Remove(false);
+          currentFile->Remove(false);
           continue;  // blow away .msf files for folders with unknown delimiter.
         }
         rv = cacheElement->GetCachedString("onlineName", onlineFullUtfName);
@@ -486,16 +480,21 @@ nsresult nsImapMailFolder::CreateSubFolders(nsIFile* path) {
     }
 
     // make the imap folder remember the file spec it was created with.
-    nsCOMPtr<nsIFile> msfFilePath = new nsLocalFile();
-    rv = msfFilePath->InitWithFile(currentFolderPath);
-    if (NS_SUCCEEDED(rv) && msfFilePath) {
-      // leaf name is the db name w/o .msf (nsShouldIgnoreFile strips it off)
-      // so this trims the .msf off the file spec.
-      msfFilePath->SetLeafName(currentFolderDBNameStr);
+    nsCOMPtr<nsIFile> folderPath = new nsLocalFile();
+    rv = folderPath->InitWithFile(currentFile);
+
+    // If we can't initialize the path, bail out and move to the next file.
+    if (NS_FAILED(rv) || !folderPath) {
+      continue;
     }
+
+    // leaf name is the local name w/o .msf,
+    // so this trims the .msf off the file spec.
+    folderPath->SetLeafName(currentFolderLocalNameStr);
+
     // Use the name as the uri for the folder.
     nsCOMPtr<nsIMsgFolder> child;
-    AddSubfolderWithPath(NS_ConvertUTF16toUTF8(utfLeafName), msfFilePath,
+    AddSubfolderWithPath(NS_ConvertUTF16toUTF8(utfLeafName), folderPath,
                          getter_AddRefs(child));
     if (child) {
       // use the unicode name as the "pretty" name. Set it so it won't be
@@ -959,10 +958,19 @@ NS_IMETHODIMP nsImapMailFolder::CreateClientSubfolderInfo(
       rv = CopyFolderNameToUTF16(folderName, unicodeName);
       if (NS_SUCCEEDED(rv)) child->SetName(NS_ConvertUTF16toUTF8(unicodeName));
 
-      // store the online name as the mailbox name in the db folder info
-      // I don't think anyone uses the mailbox name, so we'll use it
-      // to restore the online name when blowing away an imap db.
-      if (folderInfo) folderInfo->SetMailboxName(onlineName);
+      if (folderInfo) {
+        // store the online name as the mailbox name in the db folder info
+        // I don't think anyone uses the mailbox name, so we'll use it
+        // to restore the online name when blowing away an imap db.
+        folderInfo->SetMailboxName(onlineName);
+        // Optimistically assume the server supports user flags, forwarded
+        // status, and MDN sent status until a future SELECT proves otherwise.
+        uint32_t imapFlags = 0;
+        folderInfo->GetUint32Property("imapFlags", 0, &imapFlags);
+        imapFlags |= kImapMsgSupportUserFlag | kImapMsgSupportForwardedFlag |
+                     kImapMsgSupportMDNSentFlag;
+        folderInfo->SetUint32Property("imapFlags", imapFlags);
+      }
     }
 
     unusedDB->SetSummaryValid(true);
@@ -2009,6 +2017,8 @@ nsresult nsImapMailFolder::BuildIdsAndKeyArray(
     nsresult rv = msgDBHdr->GetMessageKey(&key);
     if (NS_SUCCEEDED(rv)) keyArray.AppendElement(key);
   }
+  // TODO: msgKey->UID- mapping.
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
   return AllocateUidStringFromKeys(keyArray, msgIds);
 }
 
@@ -2018,40 +2028,11 @@ nsresult nsImapMailFolder::BuildIdsAndKeyArray(
 nsresult nsImapMailFolder::AllocateUidStringFromKeys(
     const nsTArray<nsMsgKey>& keys, nsCString& msgIds) {
   if (keys.IsEmpty()) return NS_ERROR_INVALID_ARG;
-  nsresult rv = NS_OK;
-  uint32_t startSequence;
-  startSequence = keys[0];
-  uint32_t curSequenceEnd = startSequence;
-  uint32_t total = keys.Length();
-  // sort keys and then generate ranges instead of singletons!
-  nsTArray<nsMsgKey> sorted(keys.Clone());
-  sorted.Sort();
-  for (uint32_t keyIndex = 0; keyIndex < total; keyIndex++) {
-    uint32_t curKey = sorted[keyIndex];
-    uint32_t nextKey =
-        (keyIndex + 1 < total) ? sorted[keyIndex + 1] : 0xFFFFFFFF;
-    bool lastKey = (nextKey == 0xFFFFFFFF);
 
-    if (lastKey) curSequenceEnd = curKey;
-    if (nextKey == (uint32_t)curSequenceEnd + 1 && !lastKey) {
-      curSequenceEnd = nextKey;
-      continue;
-    }
-    if (curSequenceEnd > startSequence) {
-      AppendUid(msgIds, startSequence);
-      msgIds += ':';
-      AppendUid(msgIds, curSequenceEnd);
-      if (!lastKey) msgIds += ',';
-      startSequence = nextKey;
-      curSequenceEnd = startSequence;
-    } else {
-      startSequence = nextKey;
-      curSequenceEnd = startSequence;
-      AppendUid(msgIds, sorted[keyIndex]);
-      if (!lastKey) msgIds += ',';
-    }
-  }
-  return rv;
+  // TODO: msgKey->UID- mapping.
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
+  msgIds = UidSetFromUids(keys);
+  return NS_OK;
 }
 
 nsresult nsImapMailFolder::MarkMessagesImapDeleted(nsTArray<nsMsgKey>* keyArray,
@@ -2459,6 +2440,9 @@ NS_IMETHODIMP nsImapMailFolder::OnNewIdleMessages() {
 
 NS_IMETHODIMP nsImapMailFolder::UpdateImapMailboxInfo(
     nsIImapProtocol* aProtocol, nsIMailboxSpec* aSpec) {
+  NS_ENSURE_ARG_POINTER(aProtocol);
+  NS_ENSURE_ARG_POINTER(aSpec);
+
   nsresult rv;
   ChangeNumPendingTotalMessages(-mNumPendingTotalMessages);
   ChangeNumPendingUnread(-mNumPendingUnreadMessages);
@@ -2650,7 +2634,7 @@ NS_IMETHODIMP nsImapMailFolder::UpdateImapMailboxInfo(
     bool gettingNewMessages;
     GetGettingNewMessages(&gettingNewMessages);
     if (gettingNewMessages)
-      ProgressStatusString(aProtocol, "imapNoNewMessages", EmptyCString());
+      ProgressStatusString(aProtocol, "imapNoNewMessages"_ns, ""_ns);
     SetPerformingBiff(false);
   }
   aSpec->GetNumMessages(&m_numServerTotalMessages);
@@ -2841,7 +2825,7 @@ nsresult nsImapMailFolder::ParseAdoptedHeaderLine(const char* aMessageLine,
   // but they never contain partial lines
   const char* str = aMessageLine;
   m_curMsgUid = uid;
-  m_msgParser->SetNewKey(m_curMsgUid);
+  m_msgParser->SetMsgUid(uid);
   // m_envelope_pos, for local folders,
   // is the msg key. Setting this will set the msg key for the new header.
 
@@ -3840,13 +3824,6 @@ NS_IMETHODIMP nsImapMailFolder::SetAdminUrl(const nsACString& adminUrl) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsImapMailFolder::GetHdrParser(
-    nsIMsgParseMailMsgState** aHdrParser) {
-  NS_ENSURE_ARG_POINTER(aHdrParser);
-  NS_IF_ADDREF(*aHdrParser = m_msgParser);
-  return NS_OK;
-}
-
 // this is used to issue an arbitrary imap command on the passed in msgs.
 // It assumes the command needs to be run in the selected state.
 NS_IMETHODIMP nsImapMailFolder::IssueCommandOnMsgs(const nsACString& command,
@@ -4474,6 +4451,7 @@ nsImapMailFolder::OnlineCopyCompleted(nsIImapProtocol* aProtocol,
 
 NS_IMETHODIMP
 nsImapMailFolder::CloseMockChannel(nsIImapMockChannel* aChannel) {
+  NS_ENSURE_ARG_POINTER(aChannel);
   aChannel->Close();
   return NS_OK;
 }
@@ -5163,12 +5141,18 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
             nsCOMPtr<nsIMsgFolder> srcFolder =
                 do_QueryInterface(m_copyState->m_srcSupport);
             if (srcFolder) {
-              nsIMsgFolder* arrived = m_copyState->m_arrFolder;
-              copyService->NotifyCompletion(m_copyState->m_srcSupport,
-                                            arrived ? arrived : this,
+              // NotifyCompletion() starts the next queued move which re-enters
+              // nsImapMailFolder::InitCopyState(). This fails if `m_copyState`
+              // is still set. So clear it here while keeping the references we
+              // need.
+              nsCOMPtr<nsISupports> src = m_copyState->m_srcSupport;
+              nsCOMPtr<nsIMsgFolder> arrived = m_copyState->m_arrFolder;
+              m_copyState = nullptr;
+              copyService->NotifyCompletion(src, arrived ? arrived.get() : this,
                                             aExitCode);
+            } else {
+              m_copyState = nullptr;
             }
-            m_copyState = nullptr;
           }
           break;
         case nsIImapUrl::nsImapRenameFolder:
@@ -5429,25 +5413,29 @@ nsImapMailFolder::NotifySearchHit(nsIMsgMailNewsUrl* aUrl,
 }
 
 NS_IMETHODIMP
-nsImapMailFolder::SetAppendMsgUid(ImapUid aKey, nsIImapUrl* aUrl) {
+nsImapMailFolder::SetAppendMsgUid(ImapUid uid, nsIImapUrl* url) {
   nsresult rv;
   nsCOMPtr<nsISupports> copyState;
-  if (aUrl) aUrl->GetCopyState(getter_AddRefs(copyState));
+  if (url) url->GetCopyState(getter_AddRefs(copyState));
   if (copyState) {
     nsCOMPtr<nsImapMailCopyState> mailCopyState =
         do_QueryInterface(copyState, &rv);
     if (NS_FAILED(rv)) return rv;
 
+    // TODO: UID->msgKey mapping?
+    // Until Bug 1806770 is done, UID and nsMsgKey continue to be
+    // interchangeable. https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
+    nsMsgKey msgKey = (nsMsgKey)uid;
     if (mailCopyState->m_undoMsgTxn)  // CopyMessages()
     {
       RefPtr<nsImapMoveCopyMsgTxn> msgTxn;
       msgTxn = mailCopyState->m_undoMsgTxn;
-      msgTxn->AddDstKey(aKey);
+      msgTxn->AddDstKey(msgKey);
     } else if (mailCopyState->m_listener)  // CopyFileMessage();
                                            // Draft/Template goes here
     {
-      mailCopyState->m_appendUID = aKey;
-      mailCopyState->m_listener->SetMessageKey(aKey);
+      mailCopyState->m_appendUID = uid;
+      mailCopyState->m_listener->SetMessageKey(msgKey);
     }
   }
   return NS_OK;
@@ -6208,7 +6196,7 @@ nsresult nsImapMailFolder::DisplayStatusMsg(nsIImapUrl* aImapUrl,
 
 NS_IMETHODIMP
 nsImapMailFolder::ProgressStatusString(nsIImapProtocol* aProtocol,
-                                       const char* aMsgName,
+                                       const nsACString& aMsgName,
                                        const nsACString& mailboxName) {
   nsCOMPtr<nsIMsgIncomingServer> server;
   nsresult rv = GetServer(getter_AddRefs(server));
@@ -6218,7 +6206,8 @@ nsImapMailFolder::ProgressStatusString(nsIImapProtocol* aProtocol,
   nsString progressMsg;
   if (serverSink) serverSink->GetImapStringByName(aMsgName, progressMsg);
   if (progressMsg.IsEmpty())
-    IMAPGetStringByName(aMsgName, getter_Copies(progressMsg));
+    IMAPGetStringByName(PromiseFlatCString(aMsgName).get(),
+                        getter_Copies(progressMsg));
 
   if (aProtocol && !progressMsg.IsEmpty()) {
     nsCOMPtr<nsIImapUrl> imapUrl;
@@ -6379,7 +6368,7 @@ nsImapMailFolder::SetUrlState(nsIImapProtocol* aProtocol,
   // no point in doing anything...
   if (!mPath) return NS_OK;
   if (!isRunning) {
-    ProgressStatusString(aProtocol, "imapDone", EmptyCString());
+    ProgressStatusString(aProtocol, "imapDone"_ns, ""_ns);
     m_urlRunning = false;
     // if no protocol, then we're reading from the mem or disk cache
     // and we don't want to end the offline download just yet.
@@ -6672,8 +6661,9 @@ nsresult nsImapMailFolder::CopyMessagesOffline(
 
           // Generate a fake key which is very unlikely to clash with any
           // UIDs that appear once this operation has been played out on the
-          // IMAP server (Because IMAP uses server-side UIDs as msgKeys -
-          // Bug 1806770).
+          // IMAP server (Because IMAP uses server-side UIDs as msgKeys).
+          // TODO: Figure out a better approach as part of Bug 1806770.
+          // https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
           nsMsgKey fakeKey;
           destDB->GetNextFakeOfflineMsgKey(&fakeKey);
 
@@ -7564,7 +7554,7 @@ nsImapMailCopyState::nsImapMailCopyState()
       m_allowUndo(false),
       m_eatLF(false),
       m_newMsgFlags(0),
-      m_appendUID(nsMsgKey_None) {}
+      m_appendUID(ImapUid_None) {}
 
 nsImapMailCopyState::~nsImapMailCopyState() {
   PR_Free(m_dataBuffer);
@@ -7642,7 +7632,8 @@ nsresult nsImapMailFolder::CopyFileToOfflineStore(nsIFile* srcFile,
   }
 
   nsCOMPtr<nsIMsgDBHdr> fakeHdr;
-  rv = mDatabase->CreateNewHdr(msgKey, getter_AddRefs(fakeHdr));
+  rv = mDatabase->CreateNewHdrWithSpecificMsgKey(msgKey,
+                                                 getter_AddRefs(fakeHdr));
   NS_ENSURE_SUCCESS(rv, rv);
   fakeHdr->SetUint32Property("pseudoHdr", 1);
 
@@ -7755,8 +7746,13 @@ nsresult nsImapMailFolder::OnCopyCompleted(nsISupports* srcSupport,
   // store, and add a kMoveResult offline op.
   if (NS_SUCCEEDED(rv) && m_copyState) {
     nsCOMPtr<nsIFile> srcFile(do_QueryInterface(srcSupport));
-    if (srcFile)
-      (void)CopyFileToOfflineStore(srcFile, m_copyState->m_appendUID);
+    if (srcFile) {
+      // TODO: UID->msgKey mapping.
+      // Until Bug 1806770 is done, UID and nsMsgKey continue to be
+      // interchangeable. https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
+      nsMsgKey msgKey = (nsMsgKey)m_copyState->m_appendUID;
+      (void)CopyFileToOfflineStore(srcFile, msgKey);
+    }
   }
   m_copyState = nullptr;
   nsCOMPtr<nsIMsgCopyService> copyService =
@@ -8553,6 +8549,8 @@ NS_IMETHODIMP nsImapMailFolder::FetchMsgPreviewText(
   if (!keysToFetchFromServer.IsEmpty()) {
     uint32_t msgCount = keysToFetchFromServer.Length();
     nsAutoCString messageIds;
+    // TODO: map msgKeys->UIDs
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=2031552
     AllocateImapUidString(keysToFetchFromServer.Elements(), msgCount, nullptr,
                           messageIds);
     nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();

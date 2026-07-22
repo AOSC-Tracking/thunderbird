@@ -13,15 +13,15 @@ const TITLE2 = "Day View Event Changed";
 const DESC = "Day View Event Description";
 
 add_setup(async function () {
+  document.getElementById("toolbar-menubar").removeAttribute("autohide");
   const calendar = CalendarTestUtils.createCalendar();
   registerCleanupFunction(() => {
     CalendarTestUtils.removeCalendar(calendar);
   });
-
-  await CalendarTestUtils.setCalendarView(window, "day");
 });
 
 add_task(async function testDayView() {
+  await CalendarTestUtils.setCalendarView(window, "day");
   await CalendarTestUtils.goToDate(window, 2009, 1, 1);
 
   const dayView = document.getElementById("day-view");
@@ -81,6 +81,7 @@ add_task(async function testDayView() {
 });
 
 add_task(async function testDayViewDateLabel() {
+  await CalendarTestUtils.setCalendarView(window, "day");
   await CalendarTestUtils.goToDate(window, 2022, 4, 13);
 
   const heading = CalendarTestUtils.dayView.getColumnHeading(window);
@@ -102,12 +103,13 @@ add_task(async function testDayViewCurrentDayHighlight() {
 
   // When displaying days which are not the current day, there should be no
   // highlight.
+  await CalendarTestUtils.setCalendarView(window, "day");
   await CalendarTestUtils.goToDate(window, 2022, 4, 13);
 
   let container = CalendarTestUtils.dayView.getColumnContainer(window);
   Assert.ok(
     !container.classList.contains("day-column-today"),
-    "the displayed date should not be highlighted if it is not the current day"
+    "the displayed date should not be highlighted as the current day"
   );
 
   // When displaying the current day, it should be highlighted.
@@ -116,19 +118,20 @@ add_task(async function testDayViewCurrentDayHighlight() {
   container = CalendarTestUtils.dayView.getColumnContainer(window);
   Assert.ok(
     container.classList.contains("day-column-today"),
-    "the displayed date should be highlighted if it is the current day"
+    "the displayed date should be highlighted as the current day"
   );
 });
 
 add_task(async function testDayViewWorkDayHighlight() {
   // The test configuration sets Sunday to be a work day, so it should not have
   // the weekend background.
+  await CalendarTestUtils.setCalendarView(window, "day");
   await CalendarTestUtils.goToDate(window, 2022, 4, 10);
 
   let container = CalendarTestUtils.dayView.getColumnContainer(window);
   Assert.ok(
     !container.classList.contains("day-column-weekend"),
-    "the displayed date should not be highlighted if it is a work day"
+    "the displayed date should be not be highlighted as a day off"
   );
 
   await CalendarTestUtils.goToDate(window, 2022, 4, 13);
@@ -136,11 +139,12 @@ add_task(async function testDayViewWorkDayHighlight() {
   container = CalendarTestUtils.dayView.getColumnContainer(window);
   Assert.ok(
     container.classList.contains("day-column-weekend"),
-    "the displayed date should be highlighted if it is not a work day"
+    "the displayed date should be highlighted as a day off"
   );
 });
 
 add_task(async function testDayViewNavbar() {
+  await CalendarTestUtils.setCalendarView(window, "day");
   await CalendarTestUtils.goToDate(window, 2022, 4, 13);
 
   const intervalDescription = CalendarTestUtils.getNavBarIntervalDescription(window);
@@ -163,26 +167,148 @@ add_task(async function testDayViewNavbar() {
   );
 });
 
-add_task(async function testDayViewTodayButton() {
-  // Though this code is cribbed from the CalendarTestUtils, it should be
-  // duplicated in case the utility implementation changes.
-  const todayButton = CalendarTestUtils.getNavBarTodayButton(window);
-
-  EventUtils.synthesizeMouseAtCenter(todayButton, {}, window);
-  await CalendarTestUtils.ensureViewLoaded(window);
-
+function checkDisplayedDate(expectedDate) {
   const displayedDate = CalendarTestUtils.dayView.getEventColumn(window).date;
 
-  const today = new Date();
   Assert.equal(
     displayedDate.year,
-    today.getUTCFullYear(),
+    expectedDate.getUTCFullYear(),
     "year of displayed date should be this year"
   );
   Assert.equal(
     displayedDate.month,
-    today.getUTCMonth(),
+    expectedDate.getUTCMonth(),
     "month of displayed date should be this month"
   );
-  Assert.equal(displayedDate.day, today.getUTCDate(), "day of displayed date should be today");
+  Assert.equal(
+    displayedDate.day,
+    expectedDate.getUTCDate(),
+    `day of displayed date should be ${expectedDate.getUTCDate()}`
+  );
+}
+
+add_task(async function testDayViewNavigationButtons() {
+  await CalendarTestUtils.setCalendarView(window, "day");
+
+  const previousButton = document.getElementById("previousViewButton");
+  const todayButton = CalendarTestUtils.getNavBarTodayButton(window);
+  const nextButton = document.getElementById("nextViewButton");
+
+  Assert.deepEqual(
+    document.l10n.getAttributes(previousButton),
+    { id: "calendar-nav-button-prev-tooltip-day", args: null },
+    "previous button label should have the right tooltip"
+  );
+  Assert.deepEqual(
+    document.l10n.getAttributes(nextButton),
+    { id: "calendar-nav-button-next-tooltip-day", args: null },
+    "next button label should have the right tooltip"
+  );
+
+  const yesterday = new Date();
+  yesterday.setUTCHours(-2);
+  const today = new Date();
+  const tomorrow = new Date();
+  tomorrow.setUTCHours(26);
+
+  info("today button");
+  EventUtils.synthesizeMouseAtCenter(todayButton, {}, window);
+  await CalendarTestUtils.ensureViewLoaded(window);
+  checkDisplayedDate(today);
+
+  info("forward button");
+  EventUtils.synthesizeMouseAtCenter(nextButton, {}, window);
+  await CalendarTestUtils.ensureViewLoaded(window);
+  checkDisplayedDate(tomorrow);
+
+  info("back button");
+  EventUtils.synthesizeMouseAtCenter(previousButton, {}, window);
+  await CalendarTestUtils.ensureViewLoaded(window);
+  checkDisplayedDate(today);
+
+  info("back button");
+  EventUtils.synthesizeMouseAtCenter(previousButton, {}, window);
+  await CalendarTestUtils.ensureViewLoaded(window);
+  checkDisplayedDate(yesterday);
+
+  info("forward button");
+  EventUtils.synthesizeMouseAtCenter(nextButton, {}, window);
+  await CalendarTestUtils.ensureViewLoaded(window);
+  checkDisplayedDate(today);
 });
+
+add_task(async function testDayViewNavigationMenuItems() {
+  await CalendarTestUtils.setCalendarView(window, "day");
+
+  async function openMenus(...menus) {
+    const menu = menus.shift();
+    menu.openMenu(true);
+    await BrowserTestUtils.waitForPopupEvent(menu.menupopup, "shown");
+    if (menus.length) {
+      await openMenus(...menus);
+    }
+  }
+
+  async function closeMenus(...menus) {
+    for (const menu of menus) {
+      await BrowserTestUtils.waitForPopupEvent(menu.menupopup, "hidden");
+    }
+  }
+
+  const goMenu = document.getElementById("menu_Go");
+  const todayMenuItem = document.getElementById("calendar-go-to-today-menuitem");
+  const nextMenu = document.getElementById("goNextMenu");
+  const nextMenuItem = document.getElementById("calendar-go-menu-next");
+  const previousMenu = document.getElementById("goPreviousMenu");
+  const previousMenuItem = document.getElementById("calendar-go-menu-previous");
+
+  const yesterday = new Date();
+  yesterday.setUTCHours(-2);
+  const today = new Date();
+  const tomorrow = new Date();
+  tomorrow.setUTCHours(26);
+
+  info("today menu item");
+  await openMenus(goMenu);
+  goMenu.menupopup.activateItem(todayMenuItem);
+  await closeMenus(goMenu);
+
+  await CalendarTestUtils.ensureViewLoaded(window);
+  checkDisplayedDate(today);
+
+  info("forward menu item");
+  await openMenus(goMenu, nextMenu);
+  Assert.equal(nextMenuItem.label, "Day");
+  Assert.equal(nextMenuItem.accessKey, "D");
+  nextMenu.menupopup.activateItem(nextMenuItem);
+  await closeMenus(nextMenu, goMenu);
+
+  await CalendarTestUtils.ensureViewLoaded(window);
+  checkDisplayedDate(tomorrow);
+
+  info("back menu item");
+  await openMenus(goMenu, previousMenu);
+  Assert.equal(previousMenuItem.label, "Day");
+  Assert.equal(previousMenuItem.accessKey, "D");
+  previousMenu.menupopup.activateItem(previousMenuItem);
+  await closeMenus(previousMenu, goMenu);
+
+  await CalendarTestUtils.ensureViewLoaded(window);
+  checkDisplayedDate(today);
+
+  info("back menu item");
+  await openMenus(goMenu, previousMenu);
+  EventUtils.synthesizeMouseAtCenter(previousMenuItem, {}, window);
+  await closeMenus(previousMenu, goMenu);
+
+  await CalendarTestUtils.ensureViewLoaded(window);
+  checkDisplayedDate(yesterday);
+
+  info("forward menu item");
+  await openMenus(goMenu, nextMenu);
+  EventUtils.synthesizeMouseAtCenter(nextMenuItem, {}, window);
+  await closeMenus(nextMenu, goMenu);
+
+  await CalendarTestUtils.ensureViewLoaded(window);
+  checkDisplayedDate(today);
+}).skip(AppConstants.platform == "macosx");

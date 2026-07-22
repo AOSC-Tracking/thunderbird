@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -6,10 +5,8 @@
 #include "nsMsgTagService.h"
 
 #include "mozilla/Preferences.h"
-#include "nsMsgI18N.h"
-#include "nsIPrefLocalizedString.h"
 #include "nsMsgUtils.h"
-#include "nsServiceManagerUtils.h"
+#include "mozilla/intl/Localization.h"
 
 using mozilla::Preferences;
 
@@ -19,8 +16,6 @@ using mozilla::Preferences;
 #define TAG_PREF_SUFFIX_TAG ".tag"
 #define TAG_PREF_SUFFIX_COLOR ".color"
 #define TAG_PREF_SUFFIX_ORDINAL ".ordinal"
-
-static bool gMigratingKeys = false;
 
 // Comparator to set sort order in GetAllTags().
 struct CompareMsgTags {
@@ -103,7 +98,7 @@ nsMsgTagService::~nsMsgTagService() {} /* destructor code */
 NS_IMETHODIMP nsMsgTagService::GetTagForKey(const nsACString& key,
                                             nsAString& _retval) {
   nsAutoCString prefName(key);
-  if (!gMigratingKeys) ToLowerCase(prefName);
+  ToLowerCase(prefName);
   prefName.AppendLiteral(TAG_PREF_SUFFIX_TAG);
   return GetUnicharPref(prefName.get(), _retval);
 }
@@ -193,39 +188,81 @@ NS_IMETHODIMP nsMsgTagService::AddTagForKey(const nsACString& key,
   return RefreshKeyCache();
 }
 
-/* void addTag (in wstring tag, in long color); */
 NS_IMETHODIMP nsMsgTagService::AddTag(const nsAString& tag,
                                       const nsACString& color,
                                       const nsACString& ordinal) {
-  // figure out key from tag. Apply transformation stripping out
-  // illegal characters like <SP> and then convert to imap mod utf7.
-  // Then, check if we have a tag with that key yet, and if so,
-  // make it unique by appending A, AA, etc.
-  // Should we use an iterator?
-  nsAutoString transformedTag(tag);
-  transformedTag.ReplaceChar(u" ()/{%*<>\\\"", u'_');
   nsAutoCString key;
-  CopyUTF16toMUTF7(transformedTag, key);
-  // We have an imap server that converts keys to upper case so we're going
-  // to normalize all keys to lower case (upper case looks ugly in prefs.js)
+
+  // Convert the UTF-16 tag string to UTF-8.
+  // This allows us to hex-encode multi-byte international characters safely.
+  NS_ConvertUTF16toUTF8 utf8Tag(tag);
+  const char* cur = utf8Tag.BeginReading();
+  const char* end = utf8Tag.EndReading();
+
+  for (; cur < end; ++cur) {
+    // Cast to unsigned char so hex conversion (0x80 - 0xFF) doesn't sign-extend
+    unsigned char c = static_cast<unsigned char>(*cur);
+
+    // Fast-pass: Safe ASCII alphanumeric characters are kept as-is.
+    if (mozilla::IsAsciiAlphanumeric(c)) {
+      key.Append(c);
+      continue;
+    }
+
+    // Standard safe ASCII symbols, explicitly excluding our custom escape
+    // character '=' and characters not allowed for IMAP keywords, see
+    // storeCustomKeywords in nsIImapService.idl.
+    if (c > 0x20 && c < 0x7F && !strchr("=()[]{}%*\"\\<>;&", c)) {
+      key.Append(c);
+      continue;
+    }
+
+    // For special characters we use our Modified Quoted-Printable encoding.
+    // e.g., Space becomes "=20", '=' becomes "=3d", etc.
+    key.AppendPrintf("=%02x", c);
+  }
+
+  // If the tag was completely empty, ensure a base string.
+  if (key.IsEmpty()) {
+    key.AssignLiteral("tag");
+  }
+
+  // Lowercase the entire key to comply with Thunderbird's internal
+  // architecture. Because hex encoding (e.g., =D0) is case-insensitive,
+  // lowercasing it to (=d0) is mathematically harmless and 100% lossless for
+  // reverse-decoding.
   ToLowerCase(key);
+
   nsAutoCString prefName(key);
+  uint32_t suffixCount = 1;
+
   while (true) {
     nsAutoString tagValue;
     nsresult rv = GetTagForKey(prefName, tagValue);
-    if (NS_FAILED(rv) || tagValue.IsEmpty() || tagValue.Equals(tag))
+
+    // If we couldn't find an existing tag for this key, or the existing key
+    // happens to map to the exact same display string, we use it.
+    if (NS_FAILED(rv) || tagValue.IsEmpty() || tagValue.Equals(tag)) {
       return AddTagForKey(prefName, tag, color, ordinal);
-    prefName.Append('A');
+    }
+
+    // Collision detected. Reset prefName back to the base key and append an
+    // incrementing number. (e.g., my_tag_1)
+    prefName = key;
+    prefName.AppendLiteral("_");
+    prefName.AppendInt(suffixCount);
+    suffixCount++;
   }
+
   NS_ASSERTION(false, "can't get here");
-  return NS_ERROR_FAILURE;
+  return NS_ERROR_UNEXPECTED;
 }
 
 /* long getColorForKey (in string key); */
 NS_IMETHODIMP nsMsgTagService::GetColorForKey(const nsACString& key,
                                               nsACString& _retval) {
   nsAutoCString prefName(key);
-  if (!gMigratingKeys) ToLowerCase(prefName);
+  ToLowerCase(prefName);
   prefName.AppendLiteral(TAG_PREF_SUFFIX_COLOR);
   nsCString color;
   nsresult rv = m_tagPrefBranch->GetCharPref(prefName.get(), color);
@@ -233,40 +270,27 @@ NS_IMETHODIMP nsMsgTagService::GetColorForKey(const nsACString& key,
   return NS_OK;
 }
 
-/* long getSelectorForKey (in ACString key, out AString selector); */
 NS_IMETHODIMP nsMsgTagService::GetSelectorForKey(const nsACString& key,
                                                  nsAString& _retval) {
-  // Our keys are the result of MUTF-7 encoding. For CSS selectors we need
+  // Our keys are strictly IMAP safe atoms. For CSS selectors we need
   // to reduce this to 0-9A-Za-z_ with a leading alpha character.
   // We encode non-alphanumeric characters using _ as an escape character
   // and start with a leading T in all cases. This way users defining tags
   // "selected" or "focus" don't collide with inbuilt "selected" or "focus".
 
-  // Calculate length of selector string.
-  const char* in = key.BeginReading();
-  size_t outLen = 1;
-  while (*in) {
-    if (('0' <= *in && *in <= '9') || ('A' <= *in && *in <= 'Z') ||
-        ('a' <= *in && *in <= 'z')) {
-      outLen++;
-    } else {
-      outLen += 3;
-    }
-    in++;
-  }
+  _retval.AssignLiteral(u"T");
 
-  // Now fill selector string.
-  _retval.SetCapacity(outLen);
-  _retval.Assign('T');
-  in = key.BeginReading();
-  while (*in) {
-    if (('0' <= *in && *in <= '9') || ('A' <= *in && *in <= 'Z') ||
-        ('a' <= *in && *in <= 'z')) {
-      _retval.Append(*in);
+  const char* cur = key.BeginReading();
+  const char* end = key.EndReading();
+
+  for (; cur < end; ++cur) {
+    char c = *cur;
+
+    if (mozilla::IsAsciiAlphanumeric(c)) {
+      _retval.Append(static_cast<char16_t>(c));
     } else {
-      _retval.AppendPrintf("_%02x", *in);
+      _retval.AppendPrintf("_%02x", static_cast<unsigned char>(c));
     }
-    in++;
   }
 
   return NS_OK;
@@ -289,7 +313,7 @@ NS_IMETHODIMP nsMsgTagService::SetColorForKey(const nsACString& key,
 NS_IMETHODIMP nsMsgTagService::GetOrdinalForKey(const nsACString& key,
                                                 nsACString& _retval) {
   nsAutoCString prefName(key);
-  if (!gMigratingKeys) ToLowerCase(prefName);
+  ToLowerCase(prefName);
   prefName.AppendLiteral(TAG_PREF_SUFFIX_ORDINAL);
   nsCString ordinal;
   nsresult rv = m_tagPrefBranch->GetCharPref(prefName.get(), ordinal);
@@ -314,7 +338,7 @@ NS_IMETHODIMP nsMsgTagService::SetOrdinalForKey(const nsACString& key,
 NS_IMETHODIMP nsMsgTagService::DeleteKey(const nsACString& key) {
   // clear the associated prefs
   nsAutoCString prefName(key);
-  if (!gMigratingKeys) ToLowerCase(prefName);
+  ToLowerCase(prefName);
   prefName.Append('.');
 
   nsTArray<nsCString> prefNames;
@@ -401,26 +425,29 @@ nsresult nsMsgTagService::SetupLabelTags() {
   if (NS_SUCCEEDED(rv) && prefVersion > 1) {
     return rv;
   }
-  nsCOMPtr<nsIPrefLocalizedString> pls;
-  nsString ucsval;
+
   nsAutoCString labelKey("$label1");
+  nsAutoCString fluentId("tags-label-");  // Base Fluent ID
+  RefPtr<mozilla::intl::Localization> l10n =
+      mozilla::intl::Localization::Create({"messenger/messenger.ftl"_ns}, true);
   for (int32_t i = 0; i < 5;) {
-    prefString.AssignLiteral("mailnews.labels.description.");
-    prefString.AppendInt(i + 1);
-    rv = Preferences::GetComplex(prefString.get(),
-                                 NS_GET_IID(nsIPrefLocalizedString),
-                                 getter_AddRefs(pls));
+    fluentId.Truncate(11);  // reset to "tags-label-"
+    fluentId.AppendInt(i + 1);
+
+    nsAutoCString description;
+    rv = LocalizeMessage(l10n, fluentId, {}, description);
     NS_ENSURE_SUCCESS(rv, rv);
-    pls->ToString(getter_Copies(ucsval));
 
     prefString.AssignLiteral("mailnews.labels.color.");
     prefString.AppendInt(i + 1);
-    nsCString csval;
-    rv = Preferences::GetCString(prefString.get(), csval);
+    nsAutoCString color;
+    rv = Preferences::GetCString(prefString.get(), color);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = AddTagForKey(labelKey, ucsval, csval, EmptyCString());
+    rv = AddTagForKey(labelKey, NS_ConvertUTF8toUTF16(description), color,
+                      EmptyCString());
     NS_ENSURE_SUCCESS(rv, rv);
+
     labelKey.SetCharAt(++i + '1', 6);
   }
   m_tagPrefBranch->SetIntPref(TAG_PREF_VERSION, 2);

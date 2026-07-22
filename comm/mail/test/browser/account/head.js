@@ -398,29 +398,35 @@ function subtest_config_results(template, configType) {
   );
 
   Assert.equal(
-    template.l10n.getAttributes(template.querySelector("#incomingSocketType"))
-      .id,
+    template.querySelector("#incomingPort").textContent,
+    configType === "pop" ? "995" : "993",
+    `${configType}: Incoming port should be as expected`
+  );
+
+  Assert.equal(
+    template.querySelector("#outgoingPort").textContent,
+    "465",
+    `${configType}: Outgoing port should be as expected`
+  );
+
+  Assert.equal(
+    template.l10n.getAttributes(template.querySelector("#sharedSocketType")).id,
     "account-hub-result-ssl",
     `${configType}: Incoming socketType should be as expected`
   );
 
   Assert.equal(
-    template.l10n.getAttributes(template.querySelector("#outgoingSocketType"))
-      .id,
-    "account-hub-result-ssl",
-    `${configType}: Outgoing socketType should be as expected`
+    template.l10n.getAttributes(
+      template.querySelector("#sharedAuthenticationType")
+    ).id,
+    "account-hub-result-auth-password",
+    `${configType}: Authentication type should be expected`
   );
 
   Assert.equal(
-    template.querySelector("#incomingUsername").textContent,
+    template.querySelector("#sharedUsername").textContent,
     "john.doe",
     `${configType}: Incoming username should be expected username`
-  );
-
-  Assert.equal(
-    template.querySelector("#outgoingUsername").textContent,
-    "john.doe",
-    `${configType}: Outgoing username should be expected username`
   );
 }
 
@@ -455,12 +461,10 @@ async function subtest_verify_account_hub_account(tab, user, type) {
       expected: user.email.split("@")[0],
     },
     "incoming server hostname": {
-      // Note: N in the hostName is uppercase
-      actual: incoming.hostName,
+      actual: incoming.hostname,
       expected: `${type}.${user.incomingHost}`,
     },
     "outgoing server hostname": {
-      // And this is lowercase
       actual: outgoing.serverURI.host,
       expected: `smtp.${user.outgoingHost}`,
     },

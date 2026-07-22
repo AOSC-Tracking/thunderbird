@@ -9,7 +9,9 @@ use nsstring::nsCString;
 use protocol_shared::{
     ServerType,
     client::DoOperation,
-    safe_xpcom::{SafeEwsSimpleOperationListener, SimpleOperationSuccessArgs, UseLegacyFallback},
+    safe_xpcom::{
+        SafeExchangeSimpleOperationListener, SimpleOperationSuccessArgs, UseLegacyFallback,
+    },
 };
 use thin_vec::ThinVec;
 
@@ -25,12 +27,13 @@ impl<ServerT: ServerType> DoOperation<XpComGraphClient<ServerT>, XpComGraphError
 
     type Okay = ThinVec<String>;
 
-    type Listener = SafeEwsSimpleOperationListener;
+    type Listener = SafeExchangeSimpleOperationListener;
 
     async fn do_operation(
         &mut self,
         client: &XpComGraphClient<ServerT>,
     ) -> Result<Self::Okay, XpComGraphError> {
+        let base_api_url = client.base_api_url()?;
         let requests = self
             .folder_ids
             .iter()
@@ -38,7 +41,7 @@ impl<ServerT: ServerType> DoOperation<XpComGraphClient<ServerT>, XpComGraphError
                 let body = paths::me::mail_folders::mail_folder_id::r#move::PostRequestBody::new()
                     .set_destination_id(self.destination_folder_id.clone());
                 paths::me::mail_folders::mail_folder_id::r#move::Post::new(
-                    client.base_url().to_string(),
+                    base_api_url.to_string(),
                     folder_id.clone(),
                     OperationBody::JSON(body),
                 )
@@ -92,7 +95,7 @@ impl<ServerT: ServerType> XpComGraphClient<ServerT> {
         self: Arc<XpComGraphClient<ServerT>>,
         destination_folder_id: String,
         folder_ids: Vec<String>,
-        listener: SafeEwsSimpleOperationListener,
+        listener: SafeExchangeSimpleOperationListener,
     ) {
         let operation = DoMoveFolder {
             destination_folder_id,

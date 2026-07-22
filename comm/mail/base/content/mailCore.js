@@ -1,5 +1,4 @@
-/* -*- Mode: JS; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -431,12 +430,16 @@ async function toMessengerWindow() {
   return messengerWindow.tabmail?.globalOverlay ? null : messengerWindow;
 }
 
-function focusOnMail(tabNo, event) {
+/**
+ * @param {integer} tabNo - Tab index.
+ * @param {?KeyBoardEvent} event - Event that triggered focus, if any.
+ */
+function focusOnMail(tabNo, event = null) {
   // this is invoked by accel-<number>
-  var topWindow = Services.wm.getMostRecentWindow("mail:3pane");
+  const topWindow = Services.wm.getMostRecentWindow("mail:3pane");
   if (topWindow) {
     topWindow.focus();
-    const tabmail = document.getElementById("tabmail");
+    const tabmail = topWindow.document.getElementById("tabmail");
     if (tabmail.globalOverlay) {
       return;
     }
