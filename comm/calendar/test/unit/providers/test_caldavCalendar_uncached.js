@@ -38,7 +38,6 @@ add_task(async function () {
   Assert.ok(await calendar.getItem("5a9fa76c-93f3-4ad8-9f00-9e52aedd2821"));
 
   info("creating the item");
-  calendarObserver._batchRequired = true;
   calendarObserver._onLoadPromise = Promise.withResolvers();
   await runAddItem(calendar);
   await calendarObserver._onLoadPromise.promise;
@@ -69,6 +68,51 @@ add_task(async function testCalendarWithNoPrivSupport() {
   Assert.ok(!calendar.readOnly, "calendar was not marked read-only");
 
   cal.manager.unregisterCalendar(calendar);
+});
+
+/**
+ * Writability is derived from "current-user-privilege-set" per RFC 3744.
+ */
+add_task(async function testReadOnlyFromPrivilegeSet() {
+  const cases = [
+    {
+      privileges:
+        "<d:privilege><d:read/></d:privilege><d:privilege><d:write-properties/></d:privilege>",
+      readOnly: true,
+      desc: "read + write-properties (read-only share)",
+    },
+    {
+      privileges:
+        "<d:privilege><d:read/></d:privilege><d:privilege><d:write-content/></d:privilege>",
+      readOnly: false,
+      desc: "read + write-content",
+    },
+    {
+      privileges: "<d:privilege><d:read/></d:privilege><d:privilege><d:bind/></d:privilege>",
+      readOnly: false,
+      desc: "read + bind",
+    },
+  ];
+
+  const uri = `${CalDAVServer.origin}/calendars/alice/test/`;
+  for (const { privileges, readOnly, desc } of cases) {
+    CalDAVServer.privileges = privileges;
+    calendarObserver._onLoadPromise = Promise.withResolvers();
+
+    const calendar = createCalendar("caldav", uri, false);
+    await calendarObserver._onLoadPromise.promise;
+
+    Assert.equal(
+      calendar.readOnly,
+      readOnly,
+      `calendar with ${desc} should be ${readOnly ? "read-only" : "writable"}`
+    );
+
+    cal.manager.unregisterCalendar(calendar);
+  }
+
+  // Restore the default privilege set for any later tests.
+  CalDAVServer.privileges = "<d:privilege><d:all/></d:privilege>";
 });
 
 /**
@@ -113,7 +157,6 @@ add_task(async function testPutSpecialCharactersInUID() {
   event.startDate = cal.createDateTime("20200303T205500Z");
   event.endDate = cal.createDateTime("20200303T210200Z");
 
-  calendarObserver._batchRequired = true;
   calendarObserver._onLoadPromise = Promise.withResolvers();
   calendarObserver._onAddItemPromise = Promise.withResolvers();
   const storedEvent = await calendar.addItem(event);

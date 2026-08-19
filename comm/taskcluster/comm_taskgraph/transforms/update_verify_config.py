@@ -7,13 +7,13 @@ Transform the beetmover task into an actual task description.
 
 from urllib.parse import urlsplit
 
+from mozilla_taskgraph.util.attributes import release_level
+from mozilla_taskgraph.worker_types import get_release_config
 from taskgraph.transforms.base import TransformSequence
 from taskgraph.util.schema import resolve_keyed_by
 
 from gecko_taskgraph.transforms.task import get_branch_repo, get_branch_rev
 from gecko_taskgraph.transforms.update_verify_config import ensure_wrapped_singlequote
-from gecko_taskgraph.util.attributes import release_level
-from gecko_taskgraph.util.scriptworker import get_release_config
 
 transforms = TransformSequence()
 
@@ -29,7 +29,7 @@ INCLUDE_VERSION_REGEXES = {
     # Same as nonbeta, except for the esr suffix
     "esr": r"'^\d+\.\d+(\.\d+)?esr$'",
     # Previous esr versions, for update testing before we update users to a new esr
-    "esr153-next": r"'^(91|102|115|128|140)\.\d+(\.\d+)?$'",
+    "esr153-next": r"'^(91|102|115|128|140)\.\d+(\.\d+)?esr$'",
 }
 
 MAR_CHANNEL_ID_OVERRIDE_REGEXES = {
@@ -119,7 +119,9 @@ def add_command(config, tasks):
                 platform=task["attributes"]["build_platform"],
                 **{
                     "release-type": config.params["release_type"],
-                    "release-level": release_level(config.params),
+                    "release-level": release_level(
+                        config.graph_config["release-branches"], config.params
+                    ),
                 },
             )
             # ignore things that resolved to null

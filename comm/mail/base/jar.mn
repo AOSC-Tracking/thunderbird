@@ -32,6 +32,7 @@ messenger.jar:
     content/messenger/FilterListDialog.xhtml        (content/FilterListDialog.xhtml)
     content/messenger/globalOverlay.js              (content/globalOverlay.js)
     content/messenger/glodaFacetTab.js              (content/glodaFacetTab.js)
+    content/messenger/glodaListTab.js               (content/glodaListTab.js)
     content/messenger/glodaFacetView.js             (content/glodaFacetView.js)
     content/messenger/glodaFacetView.xhtml          (content/glodaFacetView.xhtml)
     content/messenger/glodaFacetViewWrapper.xhtml   (content/glodaFacetViewWrapper.xhtml)
@@ -58,7 +59,7 @@ messenger.jar:
 *   content/messenger/messenger.xhtml               (content/messenger.xhtml)
     content/messenger/webextensions.css             (content/webextensions.css)
 #ifdef XP_WIN
-    content/messenger/minimizeToTray.js             (content/minimizeToTray.js)
+    content/messenger/closeToTray.mjs               (content/closeToTray.mjs)
 #endif
     content/messenger/migrationProgress.js          (content/migrationProgress.js)
     content/messenger/migrationProgress.xhtml       (content/migrationProgress.xhtml)
@@ -95,8 +96,10 @@ messenger.jar:
 
     content/messenger/CustomElementUtils.mjs        (content/modules/CustomElementUtils.mjs)
     content/messenger/DarkReader.mjs                (content/modules/DarkReader.mjs)
+    content/messenger/FolderCommands.mjs            (content/modules/FolderCommands.mjs)
     content/messenger/FolderReorderListener.mjs     (content/modules/FolderReorderListener.mjs)
     content/messenger/FolderSelectionDataAdapter.mjs (content/modules/FolderSelectionDataAdapter.mjs)
+    content/messenger/SubscribeCommands.mjs         (content/modules/SubscribeCommands.mjs)
     content/messenger/ThreadPaneColumns.mjs         (content/modules/ThreadPaneColumns.mjs)
     content/messenger/TreeDataAdapter.mjs           (content/modules/TreeDataAdapter.mjs)
     content/messenger/TreeSelection.mjs             (content/modules/TreeSelection.mjs)

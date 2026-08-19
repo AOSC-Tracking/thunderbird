@@ -27,6 +27,40 @@ add_setup(async function () {
   });
 });
 
+add_task(async function test_headerButtonsStayPutWhenHeaderContentChanges() {
+  const controls = header.shadowRoot.querySelector("#headerButtonsContainer");
+  const getControlsTop = () => Math.round(controls.getBoundingClientRect().top);
+  const initialTop = getControlsTop();
+
+  header.showBrandingHeader();
+  await TestUtils.waitForCondition(
+    () =>
+      BrowserTestUtils.isVisible(
+        header.shadowRoot.querySelector("#brandingHeader")
+      ),
+    "waiting for branding header to show"
+  );
+  Assert.equal(
+    getControlsTop(),
+    initialTop,
+    "Header buttons should not move when the branding header is shown"
+  );
+
+  header.showSubheader();
+  await TestUtils.waitForCondition(
+    () =>
+      BrowserTestUtils.isVisible(
+        header.shadowRoot.querySelector("#accountHubHeaderSubheader")
+      ),
+    "waiting for subheader to show"
+  );
+  Assert.equal(
+    getControlsTop(),
+    initialTop,
+    "Header buttons should not move when the subheader is shown"
+  );
+});
+
 add_task(async function test_titleHasFluentId() {
   const titleFluentId = header.l10n.getAttributes(
     header.querySelector("#title")
@@ -84,5 +118,44 @@ add_task(async function test_rendersSubheaderTextCorrectly() {
     subheaderTextAttribute,
     subheaderText,
     "Step subheader text attribute should match subheader text content"
+  );
+});
+
+add_task(async function test_setTitleUpdatesTitleId() {
+  step.setTitle("account-hub-manual-config-imap-title");
+
+  const title = header.querySelector("#title");
+
+  Assert.equal(
+    step.getAttribute("title-id"),
+    "account-hub-manual-config-imap-title",
+    "setTitle should update the title-id attribute"
+  );
+  Assert.equal(
+    header.l10n.getAttributes(title).id,
+    "account-hub-manual-config-imap-title",
+    "Changing title-id should update the header title l10n id"
+  );
+});
+
+add_task(async function test_setTitleClearsTitleId() {
+  step.setTitle("account-hub-manual-config-pop3-title");
+  step.setTitle();
+
+  const title = header.querySelector("#title");
+
+  Assert.ok(
+    !step.hasAttribute("title-id"),
+    "setTitle without an id should remove the title-id attribute"
+  );
+  Assert.equal(
+    header.l10n.getAttributes(title).id,
+    null,
+    "Removing title-id should clear the title l10n id"
+  );
+  Assert.equal(
+    title.textContent,
+    "",
+    "Removing title-id should clear title text"
   );
 });

@@ -49,7 +49,7 @@ impl Get {
 }
 impl Operation for Get {
     const METHOD: Method = Method::GET;
-    type Response<'response> = Message<'response>;
+    type Response = Message;
     fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let mut params = Serializer::new(String::new());
         if let Some((select, selection)) = self.selection.pair() {
@@ -67,10 +67,8 @@ impl Operation for Get {
                 .parse::<http::uri::Uri>()
                 .unwrap()
         };
-        let request = http::Request::builder()
-            .uri(uri)
-            .method(Self::METHOD)
-            .body(vec![])?;
+        let request = http::Request::builder().uri(uri).method(Self::METHOD);
+        let request = request.body(vec![])?;
         Ok(request)
     }
 }
@@ -94,14 +92,14 @@ impl Expand for Get {
 }
 #[doc = "Update eventMessage\n\nUpdate the properties of an eventMessage object.\n\nMore information available via [Microsoft documentation](https://learn.microsoft.com/graph/api/eventmessage-update?view=graph-rest-1.0)."]
 #[derive(Debug)]
-pub struct Patch<'body> {
+pub struct Patch {
     template_expressions: TemplateExpressions,
-    body: OperationBody<Message<'body>>,
+    body: OperationBody<Message>,
     selection: Selection<MessageSelection>,
 }
-impl<'body> Patch<'body> {
+impl Patch {
     #[must_use]
-    pub fn new(endpoint: String, message_id: String, body: OperationBody<Message<'body>>) -> Self {
+    pub fn new(endpoint: String, message_id: String, body: OperationBody<Message>) -> Self {
         Self {
             template_expressions: TemplateExpressions {
                 endpoint,
@@ -112,9 +110,9 @@ impl<'body> Patch<'body> {
         }
     }
 }
-impl Operation for Patch<'_> {
+impl Operation for Patch {
     const METHOD: Method = Method::PATCH;
-    type Response<'response> = Message<'response>;
+    type Response = Message;
     fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let mut params = Serializer::new(String::new());
         if let Some((select, selection)) = self.selection.pair() {
@@ -138,12 +136,12 @@ impl Operation for Patch<'_> {
         let request = http::Request::builder()
             .uri(uri)
             .method(Self::METHOD)
-            .header("Content-Type", content_type)
-            .body(body)?;
+            .header("Content-Type", content_type);
+        let request = request.body(body)?;
         Ok(request)
     }
 }
-impl<'body> Select for Patch<'body> {
+impl Select for Patch {
     type Properties = MessageSelection;
     fn select<P: IntoIterator<Item = Self::Properties>>(&mut self, properties: P) {
         self.selection.select(properties);
@@ -170,15 +168,13 @@ impl Delete {
 }
 impl Operation for Delete {
     const METHOD: Method = Method::DELETE;
-    type Response<'response> = ();
+    type Response = ();
     fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let uri = format_path(&self.template_expressions)
             .parse::<http::uri::Uri>()
             .unwrap();
-        let request = http::Request::builder()
-            .uri(uri)
-            .method(Self::METHOD)
-            .body(vec![])?;
+        let request = http::Request::builder().uri(uri).method(Self::METHOD);
+        let request = request.body(vec![])?;
         Ok(request)
     }
 }

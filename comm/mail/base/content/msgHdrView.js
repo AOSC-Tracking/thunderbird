@@ -40,6 +40,23 @@ ChromeUtils.defineESModuleGetters(this, {
     "resource:///modules/calendar/calCalendarDeactivator.sys.mjs",
 });
 
+ChromeUtils.defineLazyGetter(this, "gQuickLookManager", () => {
+  // QuickLookManager.sys.mjs and the nsIMacQuickLook interface it depends on
+  // are only built and packaged on macOS. On other platforms the module's
+  // resource URL does not resolve, and merely referencing it in
+  // ChromeUtils.importESModule() trips CheckForBrokenChromeURL (a try/catch
+  // does not prevent that, since the broken-URL check happens before JS
+  // throws). Gate on the Mac-only interface so the import is never reached
+  // off macOS.
+  if (!("nsIMacQuickLook" in Ci)) {
+    return null;
+  }
+  const { QuickLookManager } = ChromeUtils.importESModule(
+    "resource:///modules/QuickLookManager.sys.mjs"
+  );
+  return QuickLookManager;
+});
+
 XPCOMUtils.defineLazyServiceGetter(
   this,
   "gDbService",
@@ -1519,6 +1536,10 @@ function ClearCurrentHeaders() {
   currentAttachments = [];
   currentCharacterSet = "";
 
+  if (gQuickLookManager?.isAvailable) {
+    gQuickLookManager.close();
+  }
+
   // Get rid of earlier event handlers on #attachmentName.
   const attachmentName = document.getElementById("attachmentName");
   attachmentName.replaceWith(attachmentName.cloneNode(true));
@@ -1691,6 +1712,7 @@ function onShowAttachmentItemContextMenu() {
   const contextMenu = document.getElementById("attachmentItemContext");
   const openMenu = document.getElementById("context-openAttachment");
   const saveMenu = document.getElementById("context-saveAttachment");
+  const copyToFolderMenu = document.getElementById("context-copyToFolder");
   const detachMenu = document.getElementById("context-detachAttachment");
   const deleteMenu = document.getElementById("context-deleteAttachment");
   const copyUrlMenuSep = document.getElementById(
@@ -1745,6 +1767,14 @@ function onShowAttachmentItemContextMenu() {
   );
   openFolderMenu.hidden = !allFileAttachment || !allAllowedURL;
   openFolderMenu.disabled = allDeleted;
+
+  const allRfc822 = selectedAttachments.every(
+    attachment =>
+      attachment.contentType == "message/rfc822" ||
+      /[?&]filename=.*\.eml(&|$)/.test(attachment.url)
+  );
+  copyToFolderMenu.hidden = !allRfc822 || !allAllowedURL;
+  copyToFolderMenu.disabled = allDeleted;
 
   Enigmail.hdrView.onShowAttachmentContextMenu();
 }
@@ -1908,6 +1938,12 @@ async function displayAttachmentsForExpandedView() {
 
     var attachmentList = document.getElementById("attachmentList");
     attachmentList.controllers.appendController(AttachmentListController);
+
+    if (gQuickLookManager?.isAvailable) {
+      attachmentList.addEventListener("quicklook", event => {
+        gQuickLookManager.toggle(currentAttachments, event.detail.index);
+      });
+    }
 
     toggleAttachmentList(false);
 
@@ -2323,6 +2359,34 @@ function TryHandleAllAttachments(action) {
   } catch (e) {
     console.error(e);
   }
+}
+
+/**
+ * Copy message/rfc822 attachments to a selected folder.
+ *
+ * @param {Event} event - The command event from the folder-menupopup.
+ * @param {AttachmentInfo[]} attachments - Selected AttachmentInfo objects.
+ */
+async function HandleCopyAttachmentToFolder(event, attachments) {
+  const folder = event.target._folder;
+  if (!folder || folder.isServer || !folder.canFileMessages) {
+    return;
+  }
+
+  for (const attachment of attachments) {
+    if (
+      attachment.contentType != "message/rfc822" &&
+      !/[?&]filename=.*\.eml(&|$)/.test(attachment.url)
+    ) {
+      continue;
+    }
+    try {
+      await attachment.importToFolder(folder);
+    } catch (ex) {
+      console.error(`Importing message to ${folder.URI} FAILED.`, ex);
+    }
+  }
+  MailUtils.updateFolderAsync(folder).catch(console.warn);
 }
 
 /**
@@ -3294,11 +3358,29 @@ const gMessageHeader = {
     const target =
       event.currentTarget.parentNode.triggerNode ||
       event.currentTarget.parentNode.headerField;
-    navigator.clipboard.writeText(
-      window.getSelection().isCollapsed
-        ? target.textContent
-        : window.getSelection().toString()
-    );
+
+    // If the user actively highlighted something, honor their exact selection.
+    if (!window.getSelection().isCollapsed) {
+      navigator.clipboard.writeText(window.getSelection().toString());
+      return;
+    }
+
+    // Otherwise, find the data-header-name to look up the exact value.
+    const headerName =
+      target.dataset.headerName ||
+      target.closest("[data-header-name]")?.dataset.headerName;
+
+    let textToCopy = "";
+
+    if (headerName && currentHeaderData[headerName]) {
+      // Grab the exact value.
+      textToCopy = currentHeaderData[headerName].headerValue;
+    } else {
+      // Fallback for custom/edge-case UI elements not in the data model.
+      textToCopy = target.textContent;
+    }
+
+    navigator.clipboard.writeText(textToCopy.trim());
   },
 
   /**

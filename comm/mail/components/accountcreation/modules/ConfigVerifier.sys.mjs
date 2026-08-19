@@ -8,6 +8,8 @@ import { OAuth2Providers } from "resource:///modules/OAuth2Providers.sys.mjs";
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  CreateInBackend:
+    "resource:///modules/accountcreation/CreateInBackend.sys.mjs",
   OAuth2Module: "resource:///modules/OAuth2Module.sys.mjs",
 });
 ChromeUtils.defineLazyGetter(
@@ -38,6 +40,7 @@ export class ConfigVerifier {
    */
   constructor(msgWindow, abortSignal) {
     this.msgWindow = msgWindow;
+    this._triedBothUsernames = false;
     this._log = console.createInstance({
       prefix: "mail.setup",
       maxLogLevel: "Warn",
@@ -130,8 +133,12 @@ export class ConfigVerifier {
   tryNextLogon(url) {
     this._log.debug("Trying next logon variation");
     // check if we tried full email address as username
-    if (this.config.incoming.username != this.config.identity.emailAddress) {
+    if (
+      !this._triedBothUsernames &&
+      this.config.incoming.username != this.config.identity.emailAddress
+    ) {
       this._log.debug("Changing username to email address.");
+      this._triedBothUsernames = true;
       this.config.usernameSaved = this.config.incoming.username;
       this.config.incoming.username = this.config.identity.emailAddress;
       this.config.outgoing.username = this.config.identity.emailAddress;
@@ -150,6 +157,16 @@ export class ConfigVerifier {
       this.config.usernameSaved = null;
       this.server.username = this.config.incoming.username;
       this.server.password = this.config.incoming.password;
+      // If the saved username came from the initial guess config, it has not
+      // been tried with this auth method yet, so verify it now. If the
+      // e-mail address branch above ran instead, the restored username
+      // already failed with this auth method; fall through to the next auth
+      // method.
+      if (!this._triedBothUsernames) {
+        this._triedBothUsernames = true;
+        this.verifyLogon();
+        return;
+      }
     }
 
     // sec auth seems to have failed, and we've tried both
@@ -185,6 +202,7 @@ export class ConfigVerifier {
         this.config.outgoing.auth = this.config.incoming.auth;
       }
       this._log.debug(`Trying next auth method: ${this.server.authMethod}`);
+      this._triedBothUsernames = false;
       this.verifyLogon();
       return;
     }
@@ -353,6 +371,7 @@ export class ConfigVerifier {
     this.alter = alter;
     return new Promise((resolve, reject) => {
       this.config = config;
+      this._triedBothUsernames = false;
       this.successCallback = resolve;
       this.errorCallback = reject;
       if (
@@ -423,6 +442,10 @@ export class ConfigVerifier {
         if (config.incoming.easURL) {
           this.server.setStringValue("eas_url", config.incoming.easURL);
         }
+        lazy.CreateInBackend.applyExchangeOAuthSettings(
+          this.server,
+          config.incoming
+        );
 
         this.verifyLogon();
       } catch (e) {

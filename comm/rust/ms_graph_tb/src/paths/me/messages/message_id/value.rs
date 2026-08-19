@@ -38,15 +38,13 @@ impl Get {
 }
 impl Operation for Get {
     const METHOD: Method = Method::GET;
-    type Response<'response> = Vec<u8>;
+    type Response = Vec<u8>;
     fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let uri = format_path(&self.template_expressions)
             .parse::<http::uri::Uri>()
             .unwrap();
-        let request = http::Request::builder()
-            .uri(uri)
-            .method(Self::METHOD)
-            .body(vec![])?;
+        let request = http::Request::builder().uri(uri).method(Self::METHOD);
+        let request = request.body(vec![])?;
         Ok(request)
     }
 }
@@ -70,7 +68,7 @@ impl Put {
 }
 impl Operation for Put {
     const METHOD: Method = Method::PUT;
-    type Response<'response> = ();
+    type Response = ();
     fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let uri = format_path(&self.template_expressions)
             .parse::<http::uri::Uri>()
@@ -84,8 +82,8 @@ impl Operation for Put {
         let request = http::Request::builder()
             .uri(uri)
             .method(Self::METHOD)
-            .header("Content-Type", content_type)
-            .body(body)?;
+            .header("Content-Type", content_type);
+        let request = request.body(body)?;
         Ok(request)
     }
 }
@@ -107,15 +105,13 @@ impl Delete {
 }
 impl Operation for Delete {
     const METHOD: Method = Method::DELETE;
-    type Response<'response> = ();
+    type Response = ();
     fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let uri = format_path(&self.template_expressions)
             .parse::<http::uri::Uri>()
             .unwrap();
-        let request = http::Request::builder()
-            .uri(uri)
-            .method(Self::METHOD)
-            .body(vec![])?;
+        let request = http::Request::builder().uri(uri).method(Self::METHOD);
+        let request = request.body(vec![])?;
         Ok(request)
     }
 }

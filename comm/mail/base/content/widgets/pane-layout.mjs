@@ -139,15 +139,15 @@ class PaneLayout extends HTMLBodyElement {
   #initialize() {
     this.folderPaneSplitter = this.querySelector("#folderPaneSplitter");
     this.folderPaneSplitter.addEventListener("splitter-resized", this);
-    this.#setValues(this.folderPaneSplitter, ["width"]);
 
     this.messagePaneSplitter = this.querySelector("#messagePaneSplitter");
     this.messagePaneSplitter.addEventListener("splitter-collapsed", this);
     this.messagePaneSplitter.addEventListener("splitter-expanded", this);
     this.messagePaneSplitter.addEventListener("splitter-resized", this);
-    this.#setValues(this.messagePaneSplitter, ["height", "width"]);
 
     this.#setLayout(this.layoutPreference);
+    this.#setValues(this.folderPaneSplitter, ["width"]);
+    this.#setValues(this.messagePaneSplitter, ["height", "width"]);
   }
 
   /**
@@ -180,17 +180,40 @@ class PaneLayout extends HTMLBodyElement {
     switch (preference) {
       case 1:
         this.classList.add("layout-wide");
-        this.messagePaneSplitter.resizeDirection = "vertical";
+        this.#configureMessagePaneSplitter("vertical", [
+          "threadPane",
+          "folderPane",
+        ]);
         break;
       case 2:
         this.classList.add("layout-vertical");
-        this.messagePaneSplitter.resizeDirection = "horizontal";
+        this.#configureMessagePaneSplitter("horizontal", [
+          "threadPane",
+          "folderPane",
+        ]);
         break;
       default:
         this.classList.add("layout-classic");
-        this.messagePaneSplitter.resizeDirection = "vertical";
+        // In Classic view the folder pane is a full-height column spanning
+        // the thread, splitter, and message rows. Locking its height
+        // inflates the minimum of every row it spans, preventing the thread
+        // pane from shrinking and leaving a gap above the message pane.
+        this.#configureMessagePaneSplitter("vertical", ["threadPane"]);
         break;
     }
+  }
+
+  /**
+   * Point the message pane splitter at the right resize axis and lock
+   * targets for the current layout.
+   *
+   * @param {"vertical"|"horizontal"} direction - The resize direction.
+   * @param {string[]} lockIds - IDs of the panes to lock while resizing with
+   *   the window.
+   */
+  #configureMessagePaneSplitter(direction, lockIds) {
+    this.messagePaneSplitter.setAttribute("resize-lock-ids", lockIds.join(","));
+    this.messagePaneSplitter.resizeDirection = direction;
   }
 }
 customElements.define("pane-layout", PaneLayout, { extends: "body" });

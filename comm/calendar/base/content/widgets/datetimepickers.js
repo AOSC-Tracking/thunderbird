@@ -719,13 +719,8 @@
 
       if (this.getAttribute("type") == "forever") {
         this._valueIsForever = false;
-        this._foreverString = cal.l10n.getString(
-          "calendar-event-dialog",
-          "eventRecurrenceForeverLabel"
-        );
-
         this._foreverItem = document.createXULElement("button");
-        this._foreverItem.setAttribute("label", this._foreverString);
+        document.l10n.setAttributes(this._foreverItem, "event-recurrence-forever");
         this._popup.appendChild(document.createXULElement("menuseparator"));
         this._popup.appendChild(this._foreverItem);
 
@@ -862,7 +857,7 @@
 
     set _inputBoxValue(val) {
       if (val == "forever") {
-        this._inputField.value = this._foreverString;
+        this._inputField.value = this._foreverItem.label;
         return;
       }
       this._inputField.value = formatDate(val);
@@ -1327,7 +1322,9 @@
     // SHORT NUMERIC DATE, such as 2002-03-04, 4/3/2002, or CE2002Y03M04D.
     // Made of digits & nonDigits.  (Nondigits may be unicode letters
     // which do not match \w, esp. in CJK locales.)
-    parseShortDateRegex = /^\D*(\d+)\D+(\d+)\D+(\d+)\D?$/;
+    // Allow trailing non-digits (e.g. an era marker such as the narrow "A" that
+    // some locales' short date format now appends: "4/6/2002 A").
+    parseShortDateRegex = /^\D*(\d+)\D+(\d+)\D+(\d+)\D*$/;
     // Make sure to use UTC date and timezone here to avoid the pattern
     // detection to fail if the probe date output would have an timezone
     // offset due to our lack of support of historic timezone definitions.

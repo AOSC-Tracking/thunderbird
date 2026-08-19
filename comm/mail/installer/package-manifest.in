@@ -105,6 +105,7 @@
 #ifdef XP_MACOSX
 @BINPATH@/@MOZ_CHILD_PROCESS_NAME@.app/
 @BINPATH@/@MOZ_EME_PROCESS_NAME@.app/
+@BINPATH@/@MOZ_GPU_PROCESS_NAME@.app/
 #ifdef NIGHTLY_BUILD
 #ifndef MOZ_NO_SMART_CARDS
 @BINPATH@/@MOZ_PKCS11_PROCESS_NAME@.app/
@@ -141,11 +142,15 @@
 ; We don't have a complete view of which dlls to expect when doing an artifact
 ; build because we haven't run the relevant parts of configure, so we guess
 ; here and trust what came from our source build.
-#if defined(MOZ_ARTIFACT_BUILDS) && defined(XP_WIN)
+#ifdef MOZ_ARTIFACT_BUILDS
+#ifdef XP_WIN
 @BINPATH@/vcruntime*.dll
 @BINPATH@/msvcp*.dll
-@BINPATH@/libEGL.dll
-@BINPATH@/libGLESv2.dll
+#endif
+#if defined(XP_WIN) || defined(XP_MACOSX)
+@BINPATH@/libEGL@DLL_SUFFIX@
+@BINPATH@/libGLESv2@DLL_SUFFIX@
+#endif
 #endif
 
 ; Optional RSS extension
@@ -351,8 +356,8 @@
 
 ; ANGLE GLES-on-D3D rendering library
 #ifdef MOZ_ANGLE_RENDERER
-@BINPATH@/libEGL.dll
-@BINPATH@/libGLESv2.dll
+@BINPATH@/libEGL@DLL_SUFFIX@
+@BINPATH@/libGLESv2@DLL_SUFFIX@
 #endif # MOZ_ANGLE_RENDERER
 
 #ifdef MOZ_DXCOMPILER

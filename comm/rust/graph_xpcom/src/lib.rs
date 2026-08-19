@@ -13,7 +13,8 @@ use protocol_shared::{
     safe_xpcom::{
         SafeExchangeFolderListener, SafeExchangeMessageCreateListener,
         SafeExchangeMessageFetchListener, SafeExchangeMessageSyncListener,
-        SafeExchangeSimpleOperationListener, SafeUrlListener, uri::SafeUri,
+        SafeExchangeSimpleOperationListener, SafeUrlListener,
+        calendar_listener::SafeCalendarListener, uri::SafeUri,
     },
     xpcom_io,
 };
@@ -24,15 +25,14 @@ use xpcom::{
     RefPtr,
     interfaces::{
         IExchangeFolderListener, IExchangeMessageCreateListener, IExchangeMessageFetchListener,
-        IExchangeMessageSyncListener, IExchangeSimpleOperationListener, nsIInputStream,
-        nsIMsgIncomingServer, nsIURI, nsIUrlListener,
+        IExchangeMessageSyncListener, IExchangeSimpleOperationListener,
+        IGraphCalendarDiscoveryListener, nsIInputStream, nsIMsgIncomingServer, nsIURI,
+        nsIUrlListener,
     },
     nsIID, xpcom_method,
 };
 
 use crate::client::XpComGraphClient;
-
-extern crate xpcom;
 
 mod client;
 mod error;
@@ -56,7 +56,7 @@ pub unsafe extern "C" fn NS_CreateGraphClient(iid: &nsIID, result: *mut *mut c_v
 
 /// `XpcomEwsBridge` provides an XPCOM interface implementation for mediating
 /// between C++ consumers and an async Rust Graph API client.
-#[xpcom::xpcom(implement(IExchangeClient), atomic)]
+#[xpcom::xpcom(implement(IExchangeClient, IGraphCalendarClient), atomic)]
 pub struct XpcomGraphBridge {
     client: OnceCell<Arc<XpComGraphClient<nsIMsgIncomingServer>>>,
 }
@@ -350,11 +350,21 @@ impl XpcomGraphBridge {
     ));
     fn change_flag_status(
         &self,
-        _listener: &IExchangeSimpleOperationListener,
-        _message_ids: &ThinVec<nsCString>,
-        _is_flagged: bool,
+        listener: &IExchangeSimpleOperationListener,
+        message_ids: &ThinVec<nsCString>,
+        is_flagged: bool,
     ) -> Result<(), nsresult> {
-        Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
+        let client = self.client()?;
+        let message_ids = message_ids.into_iter().map(ToString::to_string).collect();
+        let listener = SafeExchangeSimpleOperationListener::new(listener);
+
+        moz_task::spawn_local(
+            "change_flag_status",
+            client.change_flag_status(message_ids, is_flagged, listener),
+        )
+        .detach();
+
+        Ok(())
     }
 
     xpcom_method!(change_read_status_all => ChangeReadStatusAll(
@@ -554,12 +564,43 @@ impl XpcomGraphBridge {
     ));
     fn mark_items_as_junk(
         &self,
-        _listener: &IExchangeSimpleOperationListener,
-        _ews_ids: &ThinVec<nsCString>,
+        listener: &IExchangeSimpleOperationListener,
+        ews_ids: &ThinVec<nsCString>,
         _is_junk: bool,
-        _legacy_destination_folder_id: &nsACString,
+        legacy_destination_folder_id: &nsACString,
     ) -> Result<(), nsresult> {
-        Err(nserror::NS_ERROR_NOT_IMPLEMENTED)
+        let client = self.client()?;
+
+        let ews_ids = ews_ids.iter().map(ToString::to_string).collect();
+        let legacy_destination_folder_id = legacy_destination_folder_id.to_utf8().into_owned();
+
+        // NOTE: The is_junk parameter is unused because the Graph 1.0 API does not support a mark
+        // as junk operation. Instead, we use the caller-supplied legacy_destination_folder_id
+        // parameter to initiate a move to the caller-requested folder.
+        moz_task::spawn_local(
+            "mark_items_as_junk",
+            client.mark_items_as_junk(
+                legacy_destination_folder_id,
+                ews_ids,
+                SafeExchangeSimpleOperationListener::new(listener),
+            ),
+        )
+        .detach();
+
+        Ok(())
+    }
+
+    xpcom_method!(detect_calendars => DetectCalendars(
+        listener: *const IGraphCalendarDiscoveryListener
+    ));
+    fn detect_calendars(&self, listener: &IGraphCalendarDiscoveryListener) -> Result<(), nsresult> {
+        let client = self.client()?;
+
+        let listener = SafeCalendarListener::new(listener);
+
+        moz_task::spawn_local("detect_calendars", client.detect_calendars(listener)).detach();
+
+        Ok(())
     }
 
     /// Gets a new reference to the Graph client if initialized. The client is

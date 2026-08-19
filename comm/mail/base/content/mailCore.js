@@ -599,15 +599,6 @@ function openActivityMgr() {
     .show(window);
 }
 
-/**
- * Open the folder properties of current folder with the quota tab selected.
- */
-function openFolderQuota() {
-  document
-    .getElementById("tabmail")
-    .currentAbout3Pane?.folderPane.editFolder(undefined, "QuotaTab");
-}
-
 function openIMAccountMgr() {
   var win = Services.wm.getMostRecentWindow("Messenger:Accounts");
   if (win) {
@@ -794,6 +785,20 @@ function safeModeRestart() {
       "resource:///modules/MailUtils.sys.mjs"
     );
     MailUtils.restartApplication();
+  }
+}
+
+/**
+ * Dispatch a cancelable close event and close the window.
+ */
+function requestWindowClose() {
+  const closeEvent = new CustomEvent("close", {
+    bubbles: true,
+    cancelable: true,
+  });
+
+  if (window.dispatchEvent(closeEvent)) {
+    window.close();
   }
 }
 

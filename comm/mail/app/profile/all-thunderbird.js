@@ -232,6 +232,10 @@ pref("extensions.startupScanScopes", 4);
 pref("extensions.update.requireBuiltInCerts", false);
 pref("extensions.install.requireBuiltInCerts", false);
 
+// Disable the Rust password storage backend until Thunderbird compatibility
+// issues are resolved. See bug 2053724.
+pref("signon.storage.rust.enabled", false);
+
 // Allow experiments and suppress unsigned warnings.
 pref("extensions.experiments.enabled", true);
 pref("extensions.ui.disableUnsignedWarnings", true);
@@ -592,9 +596,8 @@ pref("spellchecker.dictionaries.download.url", "https://addons.thunderbird.net/%
 pref("alerts.totalOpenTime", 10000);
 #endif
 
-// Don't show a prompt for external applications (http(s):// will never prompt).
+// Whether to prompt for external applications (http(s):// will never prompt).
 pref("mail.external_protocol_requires_permission", false);
-
 
 // analyze urls in mail messages for scams
 pref("mail.phishing.detection.enabled", true);
@@ -696,6 +699,11 @@ pref("gloda.facetview.hidetimeline", true);
 // 2 - default to "relevance", but remember user preference when it is changed
 // 3 - default to "date", but remember user preference when it is changed
 pref("gloda.facetview.sortby", 2);
+
+// Whether to open global search results as a table list view instead of the
+// faceted search view. Defaults to false (facet view). When true, results open
+// directly in a table list, equivalent to clicking "Show results as list".
+pref("gloda.show_as_list_by_default", false);
 
 // Enable gloda by default!
 pref("mailnews.database.global.indexer.enabled", true);
@@ -1415,7 +1423,8 @@ pref("toolkit.telemetry.bhrPing.enabled", true);
 #endif
 
 #ifdef XP_WIN
-pref("mail.minimizeToTray", false);
+pref("mail.closeToTray", false);
+pref("mail.closeToTray.startInTray", false);
 #endif
 
 pref("prompts.defaultModalType", 3);

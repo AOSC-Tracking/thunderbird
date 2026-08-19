@@ -88,6 +88,7 @@ Preferences.addAll([
   { id: "font.language.group", type: "string" },
   { id: "intl.regional_prefs.use_os_locales", type: "bool" },
   { id: "mailnews.database.global.indexer.enabled", type: "bool" },
+  { id: "gloda.show_as_list_by_default", type: "bool" },
   { id: "mailnews.labels.color.1", type: "string" },
   { id: "mailnews.labels.color.2", type: "string" },
   { id: "mailnews.labels.color.3", type: "string" },
@@ -115,7 +116,10 @@ Preferences.addAll([
   { id: "mail.folder_widget.max_recent", type: "int" },
 ]);
 if (AppConstants.platform == "win") {
-  Preferences.add({ id: "mail.minimizeToTray", type: "bool" });
+  Preferences.addAll([
+    { id: "mail.closeToTray", type: "bool" },
+    { id: "mail.closeToTray.startInTray", type: "bool" },
+  ]);
 }
 
 var ICON_URL_APP = "";
@@ -215,6 +219,10 @@ var gGeneralPane = {
         "click",
         this.sort.bind(this, header.getAttribute("sort-type"))
       );
+    }
+
+    if (AppConstants.platform == "win") {
+      this.updateCloseToTray();
     }
 
     this.updateStartPage();
@@ -667,6 +675,11 @@ var gGeneralPane = {
       systemNotification.disabled = !Preferences.get("mail.biff.show_alert")
         .value;
     }
+  },
+
+  updateCloseToTray() {
+    const startInTray = document.getElementById("startInTray");
+    startInTray.disabled = !Preferences.get("mail.closeToTray").value;
   },
 
   async updateWebSearch() {
@@ -3062,3 +3075,9 @@ Preferences.get("mail.biff.show_alert").on(
   "change",
   gGeneralPane.updateShowAlert
 );
+if (AppConstants.platform == "win") {
+  Preferences.get("mail.closeToTray").on(
+    "change",
+    gGeneralPane.updateCloseToTray
+  );
+}

@@ -1046,11 +1046,11 @@ async function subtest_more_widget_display(node, showAll = false) {
   const maxLines = Services.prefs.getIntPref(LINES_PREF);
 
   if (showAll) {
-    await BrowserTestUtils.waitForCondition(
+    await TestUtils.waitForCondition(
       () => numLines > maxLines,
       `Currently visible lines are more than the number of max lines. ${numLines} > ${maxLines}`
     );
-    await BrowserTestUtils.waitForCondition(
+    await TestUtils.waitForCondition(
       () =>
         !aboutMessage.document
           .getElementById("expandedtoBox")
@@ -1058,12 +1058,12 @@ async function subtest_more_widget_display(node, showAll = false) {
       "The `more` button doesn't exist."
     );
   } else {
-    await BrowserTestUtils.waitForCondition(
+    await TestUtils.waitForCondition(
       () => numLines <= maxLines,
       `Currently visible lines are fewer than the number of max lines. ${numLines} <= ${maxLines}`
     );
     // Test that we've got a "more" button and that it's visible.
-    await BrowserTestUtils.waitForCondition(
+    await TestUtils.waitForCondition(
       () =>
         !aboutMessage.document.getElementById("expandedtoBox").moreButton
           .hidden,
@@ -1263,7 +1263,7 @@ add_task(async function test_show_all_header_mode() {
       "The view all headers checkbox was updated to the correct state"
     );
 
-    await BrowserTestUtils.waitForCondition(
+    await TestUtils.waitForCondition(
       () =>
         aboutMessage.document.getElementById("expandedsubjectBox").value
           .textContent,
@@ -1449,6 +1449,57 @@ add_task(async function test_folder_db_listener() {
     aboutMessage.gFolderDBListener.selectedFolder,
     "The current folder was stored correctly"
   );
+});
+
+/**
+ * Test that right-clicking a header and copying it yields the pure, raw
+ * backend value from currentHeaderData, ignoring the UI presentation.
+ */
+add_task(async function test_copy_string_clean_value() {
+  await be_in_folder(folder);
+
+  const hdr = folder.msgDatabase.getMsgHdrForMessageID(
+    gInterestingMessage.messageId
+  );
+  const curMessage = await select_click_row(
+    about3Pane.gDBView.findIndexOfMsgHdr(hdr, false)
+  );
+
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
+
+  const subjectBox = aboutMessage.document.getElementById("expandedsubjectBox");
+
+  // Mock the clipboard to safely capture the output without OS permission errors
+  let copiedText = "";
+  const originalWriteText = aboutMessage.navigator.clipboard.writeText;
+  aboutMessage.navigator.clipboard.writeText = async text => {
+    copiedText = text;
+  };
+
+  // Find the actual copy popup in the DOM
+  const popup = aboutMessage.document.getElementById("copyPopup");
+
+  // Prime the popup with our target element (simulating right-click context)
+  popup.headerField = subjectBox;
+
+  // Find the menu item that triggers the copyString command
+  const copyItem = popup.querySelector("menuitem[oncommand*='copyString']");
+  Assert.ok(copyItem, "Found the copy menu item in the DOM");
+
+  aboutMessage.getSelection().removeAllRanges();
+
+  // Simulate the user clicking 'Copy' to securely execute gMessageHeader.copyString
+  copyItem.click();
+
+  Assert.equal(
+    copiedText,
+    gInterestingMessage.subject,
+    "The copied text should strictly match the backend subject value, with no UI labels attached"
+  );
+
+  // Restore the original clipboard behavior.
+  aboutMessage.navigator.clipboard.writeText = originalWriteText;
 });
 
 /**

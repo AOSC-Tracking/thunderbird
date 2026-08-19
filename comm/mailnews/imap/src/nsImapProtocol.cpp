@@ -130,6 +130,32 @@ nsIMsgWindow** getter_AddRefs(AutoProxyReleaseMsgWindow& aSmartPtr) {
   return aSmartPtr.StartAssignment();
 }
 
+class ImapInputStreamCallback final : public nsIInputStreamCallback {
+ public:
+  NS_DECL_THREADSAFE_ISUPPORTS
+  NS_DECL_NSIINPUTSTREAMCALLBACK
+
+  explicit ImapInputStreamCallback(nsIInputStreamCallback* aCallback)
+      : mCallback(aCallback) {}
+
+ private:
+  ~ImapInputStreamCallback() {
+    // AsyncWait may release its callback on any thread, but nsImapProtocol
+    // owns main-thread-only objects.
+    NS_ReleaseOnMainThread("ImapInputStreamCallback::mCallback",
+                           mCallback.forget());
+  }
+
+  nsCOMPtr<nsIInputStreamCallback> mCallback;
+};
+
+NS_IMPL_ISUPPORTS(ImapInputStreamCallback, nsIInputStreamCallback)
+
+NS_IMETHODIMP ImapInputStreamCallback::OnInputStreamReady(
+    nsIAsyncInputStream* aStream) {
+  return mCallback->OnInputStreamReady(aStream);
+}
+
 NS_IMPL_ISUPPORTS(nsMsgImapHdrXferInfo, nsIImapHeaderXferInfo)
 
 nsMsgImapHdrXferInfo::nsMsgImapHdrXferInfo() : m_hdrInfos(kNumHdrsToXfer) {
@@ -197,7 +223,7 @@ NS_IMPL_ISUPPORTS(nsMsgImapLineDownloadCache, nsIImapHeaderInfo)
 // **** helper class for downloading line ****
 nsMsgImapLineDownloadCache::nsMsgImapLineDownloadCache() {
   fLineInfo = (msg_line_info*)PR_CALLOC(sizeof(msg_line_info));
-  fLineInfo->uidOfMessage = ImapUid_None;
+  fLineInfo->uidOfMessage = 0;
   m_msgSize = 0;
 }
 
@@ -625,7 +651,7 @@ nsImapProtocol::nsImapProtocol()
   mFolderHighestUID = 0;
   m_notifySearchHit = false;
   m_preferPlainText = false;
-  m_uidValidity = ImapUid_None;
+  m_uidValidity = 0;
 }
 
 nsresult nsImapProtocol::Configure(int32_t TooFastTime, int32_t IdealTime,
@@ -807,7 +833,7 @@ nsresult nsImapProtocol::SetupWithUrl(nsIURI* aURL, nsISupports* aConsumer) {
     mFolderLastModSeq = 0;
     mFolderTotalMsgCount = 0;
     mFolderHighestUID = 0;
-    m_uidValidity = ImapUid_None;
+    m_uidValidity = 0;
     if (folder) {
       nsCOMPtr<nsIMsgDatabase> folderDB;
       nsCOMPtr<nsIDBFolderInfo> folderInfo;
@@ -1605,7 +1631,8 @@ bool nsImapProtocol::HandleIdleResponses() {
       nsCOMPtr<nsIAsyncInputStream> asyncInputStream =
           do_QueryInterface(m_inputStream);
       if (asyncInputStream) {
-        asyncInputStream->AsyncWait(this, 0, 0, nullptr);
+        RefPtr callback = MakeRefPtr<ImapInputStreamCallback>(this);
+        asyncInputStream->AsyncWait(callback, 0, 0, nullptr);
         Log("HandleIdleResponses", nullptr, "idle mode async waiting");
       }
     }
@@ -1779,28 +1806,13 @@ bool nsImapProtocol::ProcessCurrentURL() {
   bool logonFailed = false;
   bool anotherUrlRun = false;
   bool rerunningUrl = false;
-  bool isExternalUrl;
   bool validUrl = true;
 
   PseudoInterrupt(false);  // clear this if left over from previous url.
 
   m_runningUrl->GetRerunningUrl(&rerunningUrl);
-  m_runningUrl->GetExternalLinkUrl(&isExternalUrl);
   m_runningUrl->GetValidUrl(&validUrl);
   m_runningUrl->GetImapAction(&m_imapAction);
-
-  if (isExternalUrl) {
-    if (m_imapAction == nsIImapUrl::nsImapSelectFolder) {
-      // we need to send a start request so that the doc loader
-      // will call HandleContent on the imap service so we
-      // can abort this url, and run a new url in a new msg window
-      // to run the folder load url and get off this crazy merry-go-round.
-      if (m_channelListener) {
-        m_channelListener->OnStartRequest(m_mockChannel);
-      }
-      return false;
-    }
-  }
 
   if (!m_imapMailFolderSink && m_imapProtocolSink) {
     // This occurs when running another URL in the main thread loop
@@ -2712,14 +2724,11 @@ void nsImapProtocol::ProcessSelectedStateURL() {
                  m_imapMailFolderSink)  // we need to fetch older headers
       {
         nsTArray<ImapUid> msgIdList;
-        bool more;
-        m_imapMailFolderSink->GetMsgHdrsToDownload(
-            &more, &m_progressExpectedNumber, msgIdList);
+        m_imapMailFolderSink->GetMsgHdrsToDownload(msgIdList);
+        m_progressExpectedNumber = msgIdList.Length();
         if (msgIdList.Length() > 0) {
           FolderHeaderDump(msgIdList);
-          m_runningUrl->SetMoreHeadersToDownload(more);
-          // We're going to be re-running this url.
-          if (more) m_runningUrl->SetRerunningUrl(true);
+          m_runningUrl->SetMoreHeadersToDownload(false);
         }
         HeaderFetchCompleted();
       } else {
@@ -2761,7 +2770,7 @@ void nsImapProtocol::ProcessSelectedStateURL() {
       // browser context.
       if (!DeathSignalReceived())
         uidValidityOk =
-            m_uidValidity == ImapUid_None ||
+            m_uidValidity == 0 ||
             m_uidValidity == GetServerStateParser().FolderUIDValidity();
     }
 
@@ -3140,9 +3149,7 @@ void nsImapProtocol::ProcessSelectedStateURL() {
                   ParseUidString(trashIdString.get(), msgUids);
 
                   // Re-create trashIdString as a ascending range or ranges.
-                  trashIdString.Truncate();
-                  nsImapMailFolder::AllocateUidStringFromKeys(msgUids,
-                                                              trashIdString);
+                  trashIdString = UidSetFromUids(msgUids);
 
                   // Imap SELECT trash folder and do UID Expunge on messages
                   // just moved to trash. However, don't do a folder update to
@@ -3326,9 +3333,7 @@ void nsImapProtocol::ProcessSelectedStateURL() {
             }
           }
         } break;
-        case nsIImapUrl::nsImapOnlineToOfflineCopy:
-        case nsIImapUrl::nsImapOnlineToOfflineMove: {
-          // Only happens for copy between servers, not for move.
+        case nsIImapUrl::nsImapOnlineToOfflineCopy: {
           nsCString messageIdString;
           nsresult rv = m_runningUrl->GetListOfMessageIds(messageIdString);
           if (NS_SUCCEEDED(rv)) {
@@ -3345,33 +3350,7 @@ void nsImapProtocol::ProcessSelectedStateURL() {
               copyStatus = GetServerStateParser().LastCommandSuccessful()
                                ? ImapOnlineCopyStateType::kSuccessfulCopy
                                : ImapOnlineCopyStateType::kFailedCopy;
-
               m_imapMailFolderSink->OnlineCopyCompleted(this, copyStatus);
-              if (GetServerStateParser().LastCommandSuccessful() &&
-                  (m_imapAction == nsIImapUrl::nsImapOnlineToOfflineMove)) {
-                // Note: action nsImapOnlineToOfflineMove never occurs.
-                Store(messageIdString, "+FLAGS (\\Deleted \\Seen)",
-                      bMessageIdsAreUids);
-                if (GetServerStateParser().LastCommandSuccessful()) {
-                  copyStatus = ImapOnlineCopyStateType::kSuccessfulDelete;
-                  // Only when pref "expunge_after_delete" is set: if server is
-                  // UIDPLUS capable, expunge the UIDs just marked deleted;
-                  // otherwise, go ahead and expunge the full mailbox of ALL
-                  // emails marked as deleted in mailbox, not just the ones
-                  // marked as deleted here.
-                  if (gExpungeAfterDelete) {
-                    if (GetServerStateParser().GetCapabilityFlag() &
-                        kUidplusCapability) {
-                      UidExpunge(messageIdString);
-                    } else {
-                      Expunge();
-                    }
-                  }
-                } else {
-                  copyStatus = ImapOnlineCopyStateType::kFailedDelete;
-                }
-                m_imapMailFolderSink->OnlineCopyCompleted(this, copyStatus);
-              }
             }
           } else
             HandleMemoryFailure();
@@ -4330,7 +4309,7 @@ void nsImapProtocol::ProcessMailboxUpdate(bool handlePossibleUndo) {
               }
               ImapUid uid = 0;
               m_flagState->GetUidOfMessage(topIndex, &uid);
-              if (uid && uid != ImapUid_None) {
+              if (uid && uid != 0) {
                 if (uid > mFolderHighestUID) {
                   numNewUIDs++;
                   MOZ_LOG(IMAP_CS, LogLevel::Debug,
@@ -4435,17 +4414,14 @@ void nsImapProtocol::ProcessMailboxUpdate(bool handlePossibleUndo) {
       new_spec->mBoxFlags |= kJustExpunged;
 
     if (m_imapMailFolderSink) {
-      bool more;
       m_imapMailFolderSink->UpdateImapMailboxInfo(this, new_spec);
-      m_imapMailFolderSink->GetMsgHdrsToDownload(
-          &more, &m_progressExpectedNumber, msgIdList);
+      m_imapMailFolderSink->GetMsgHdrsToDownload(msgIdList);
+      m_progressExpectedNumber = msgIdList.Length();
       // Assert that either it's empty string OR it must be header string.
       MOZ_ASSERT((m_stringIndex == IMAP_EMPTY_STRING_INDEX) ||
                  (m_stringIndex == IMAP_HEADERS_STRING_INDEX));
       m_progressCurrentNumber[m_stringIndex] = 0;
-      m_runningUrl->SetMoreHeadersToDownload(more);
-      // We're going to be re-running this url if there are more headers.
-      if (more) m_runningUrl->SetRerunningUrl(true);
+      m_runningUrl->SetMoreHeadersToDownload(false);
     }
   }
 
@@ -5333,8 +5309,8 @@ void nsImapProtocol::ProgressEventFunctionUsingName(const char* aMsgName) {
     return;
   }
   if (m_imapMailFolderSink && !m_lastProgressStringName.Equals(aMsgName)) {
-    m_imapMailFolderSink->ProgressStatusString(this, nsCString(aMsgName),
-                                               ""_ns);
+    m_imapMailFolderSink->ProgressStatusString(
+        this, nsDependentCString(aMsgName), ""_ns);
     m_lastProgressStringName.Assign(aMsgName);
   }
 }
@@ -5342,8 +5318,8 @@ void nsImapProtocol::ProgressEventFunctionUsingName(const char* aMsgName) {
 void nsImapProtocol::ProgressEventFunctionUsingNameWithString(
     const char* msgName, const char* mailboxName) {
   if (m_imapMailFolderSink) {
-    m_imapMailFolderSink->ProgressStatusString(this, nsCString(msgName),
-                                               nsCString(mailboxName));
+    m_imapMailFolderSink->ProgressStatusString(
+        this, nsDependentCString(msgName), nsDependentCString(mailboxName));
   }
 }
 
@@ -8079,14 +8055,6 @@ void nsImapProtocol::ProcessAuthenticatedStateURL() {
     case nsIImapUrl::nsImapSubscribe:
       sourceMailbox = OnCreateServerSourceFolderPathString();
       OnSubscribe(sourceMailbox.get());  // used to be called subscribe
-
-      if (GetServerStateParser().LastCommandSuccessful()) {
-        bool shouldList;
-        // if url is an external click url, then we should list the folder
-        // after subscribing to it, so we can select it.
-        m_runningUrl->GetExternalLinkUrl(&shouldList);
-        if (shouldList) OnListFolder(sourceMailbox.get(), true);
-      }
       break;
     case nsIImapUrl::nsImapUnsubscribe:
       sourceMailbox = OnCreateServerSourceFolderPathString();
@@ -9434,7 +9402,7 @@ nsresult nsImapMockChannel::OpenCacheEntry() {
 
   nsCOMPtr<nsIImapMailFolderSink> folderSink;
   rv = imapUrl->GetImapMailFolderSink(getter_AddRefs(folderSink));
-  ImapUid uidValidity = ImapUid_None;
+  ImapUid uidValidity = 0;
   if (folderSink) folderSink->GetUidValidity(&uidValidity);
 
   // If we're storing the message in the offline store, don't
@@ -9790,16 +9758,12 @@ NS_IMETHODIMP nsImapMockChannel::AsyncOpen(nsIStreamListener* aListener) {
   imapUrl->GetExternalLinkUrl(&externalLink);
 
   if (externalLink) {
-    // for security purposes, only allow imap urls originating from external
-    // sources perform a limited set of actions. Currently the allowed set
-    // includes: 1) folder selection 2) message fetch 3) message part fetch
-
-    if (!(imapAction == nsIImapUrl::nsImapSelectFolder ||
-          imapAction == nsIImapUrl::nsImapMsgFetch ||
-          imapAction == nsIImapUrl::nsImapOpenMimePart ||
+    // For security purposes, only allow IMAP URLs originating from external
+    // sources to fetch messages.
+    if (!(imapAction == nsIImapUrl::nsImapMsgFetch ||
           imapAction == nsIImapUrl::nsImapMsgFetchPeek))
-      return NS_ERROR_FAILURE;  // abort the running of this url....it failed a
-                                // security check
+      // Abort the running of this url... it failed a security check.
+      return NS_ERROR_FAILURE;
   }
 
   if (ReadFromLocalCache()) {

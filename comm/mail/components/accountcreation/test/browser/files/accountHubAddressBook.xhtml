@@ -21,6 +21,20 @@
       xmlns="http://www.w3.org/1999/xhtml"
     >
       <header id="accountHubHeader" class="hub-header">
+        <div id="headerButtonsContainer">
+          <button id="minimizeButton"
+                  class="button button-flat button-round icon-button icon-only modal-close-button"
+                  data-l10n-id="account-hub-minimize-button"
+                  type="button">
+            <img class="icon-minimize" src="" alt="" />
+          </button>
+          <button id="closeButton"
+                  class="button button-flat button-round icon-button icon-only modal-close-button"
+                  data-l10n-id="account-hub-close-button"
+                  type="button">
+            <img class="icon-close-lg" src="" alt="" />
+          </button>
+        </div>
         <div id="brandingHeader" class="branding-header" hidden="hidden">
           <img src="chrome://branding/content/logo-gradient.svg" alt="" />
           <h1 class="account-hub-title">
@@ -28,20 +42,6 @@
             <span class="branding-header-title" aria-hidden="hidden"></span>
             <span class="account-hub-welcome-text screen-reader-only" data-l10n-id="account-hub-welcome-text"></span>
           </h1>
-          <div id="headerButtonsContainer">
-            <button id="minimizeButton"
-                    class="button button-flat button-round icon-button icon-only modal-close-button"
-                    data-l10n-id="account-hub-minimize-button"
-                    type="button">
-              <img class="icon-minimize" src="" alt="" />
-            </button>
-            <button id="closeButton"
-                    class="button button-flat button-round icon-button icon-only modal-close-button"
-                    data-l10n-id="account-hub-close-button"
-                    type="button">
-              <img class="icon-close-lg" src="" alt="" />
-            </button>
-          </div>
         </div>
         <slot name="middle-content"></slot>
         <!-- Title Text for Email Setup -->
@@ -193,7 +193,7 @@
             >
               <img
                 class="address-book-option-icon remote-address-book-icon"
-                data-l10n-id="address-book-add-remote-icon"
+                data-l10n-id="address-book-add-remote-icon2"
               />
               <span
                 class="option-title"
@@ -201,7 +201,27 @@
               </span>
               <span
                 class="option-data"
-                data-l10n-id="address-book-add-remote-description"
+                data-l10n-id="address-book-add-remote-carddav-description"
+              >
+              </span>
+            </button>
+            <button
+              id="newLdapAddressBook"
+              class="account-hub-option-button"
+              name="subview"
+              value="ldapAccountSubview"
+            >
+              <img
+                class="address-book-option-icon ldap-address-book-icon"
+                data-l10n-id="address-book-add-ldap-icon2"
+              />
+              <span
+                class="option-title"
+                data-l10n-id="address-book-add-ldap-button">
+              </span>
+              <span
+                class="option-data"
+                data-l10n-id="address-book-add-ldap-description"
               >
               </span>
             </button>
@@ -222,26 +242,6 @@
               <span
                 class="option-data"
                 data-l10n-id="address-book-add-local-description"
-              >
-              </span>
-            </button>
-            <button
-              id="newLdapAddressBook"
-              class="account-hub-option-button"
-              name="subview"
-              value="ldapAccountSubview"
-            >
-              <img
-                class="address-book-option-icon ldap-address-book-icon"
-                data-l10n-id="address-book-add-ldap-icon"
-              />
-              <span
-                class="option-title"
-                data-l10n-id="address-book-add-ldap">
-              </span>
-              <span
-                class="option-data"
-                data-l10n-id="address-book-add-ldap-description"
               >
               </span>
             </button>

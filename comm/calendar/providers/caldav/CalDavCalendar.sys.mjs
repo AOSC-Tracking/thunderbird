@@ -1671,8 +1671,9 @@ CalDavCalendar.prototype = {
           // Don't clear this.readOnly, only set it. The user may have write
           // privileges but not want to use them.
           if (!this.readOnly && privs && privs instanceof Set) {
-            this.readOnly = !["D:write", "D:write-content", "D:write-properties", "D:all"].some(
-              priv => privs.has(priv)
+            // Privileges that permit writing, per RFC 3744.
+            this.readOnly = !["D:write", "D:write-content", "D:bind", "D:all"].some(priv =>
+              privs.has(priv)
             );
           }
 
@@ -2504,7 +2505,9 @@ function calDavObserver(aCalendar) {
   this.mCalendar = aCalendar;
 }
 
+/** @type {calIObserver} */
 calDavObserver.prototype = {
+  QueryInterface: ChromeUtils.generateQI(["calIObserver"]),
   mCalendar: null,
   mInBatch: false,
 

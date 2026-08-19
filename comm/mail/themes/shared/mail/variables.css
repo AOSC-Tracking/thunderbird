@@ -18,6 +18,9 @@
   --panelui-subview-transition-duration: 150ms;
   --autocomplete-popup-highlight-background: var(--selected-item-color);
   --autocomplete-popup-highlight-color: var(--selected-item-text-color);
+  --autocomplete-box-padding: 3px;
+  --autocomplete-item-padding: 3px;
+  --autocomplete-item-radius: var(--button-border-radius);
   --button-background-color: var(--layout-background-3);
   --button-background-color-hover: var(--button-hover-background-color);
   --button-background-color-active: var(--button-active-background-color);
@@ -111,7 +114,8 @@
   --toolbarbutton-active-boxshadow: light-dark(0 1px 1px var(--lwt-toolbarbutton-active-background, var(--toolbarbutton-default-active-boxshadow)) inset, none);
   --toolbarbutton-checked-background: light-dark(var(--lwt-toolbarbutton-hover-background, rgba(200, 200, 200, 0.5)), rgba(0, 0, 0, 0.25));
   --toolbarbutton-icon-fill-attention: var(--lwt-toolbarbutton-icon-fill-attention, var(--selected-item-color));
-  --toolbarseparator-color: color-mix(in srgb, currentColor 20%, transparent);
+  --toolbarseparator-color: var(--color-surface-border);
+  --panel-separator-color: var(--color-surface-border);
   --toolbar-field-color: var(--layout-color-1);
   --toolbar-field-background-color: var(--layout-background-1);
   --toolbar-field-focus-border-color: var(--selected-item-color);
@@ -140,7 +144,7 @@
 
   --drop-indicator-z-index: 3;
 
-  & :is(menupopup, panel) {
+  & :is(menupopup, panel):not(.autoscroller) {
     --panel-background-color: var(--color-surface-subtle);
     --panel-text-color: var(--color-text-base);
     --panel-border-color: var(--color-surface-border-intense);
@@ -288,6 +292,9 @@
 
 :root[uidensity="compact"] {
   --tab-min-height: 30px;
+  --autocomplete-box-padding: 0;
+  --autocomplete-item-padding: 0;
+  --autocomplete-item-radius: 0;
   --button-min-height: 30px;
   --button-margin: 3px;
   --button-padding: 3px;
@@ -325,6 +332,7 @@
 
 :root[uidensity="touch"] {
   --tab-min-height: 39px;
+  --autocomplete-item-padding: 8px 3px;
   --button-pressed-indicator-padding: 3px;
   --sidebar-header-gap: 12px;
   --hub-body-elements-column-gap: 42px;

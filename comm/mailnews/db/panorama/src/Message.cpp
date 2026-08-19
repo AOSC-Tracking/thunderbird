@@ -4,7 +4,6 @@
 
 #include "Message.h"
 
-#include "DatabaseCore.h"
 #include "mozilla/Components.h"
 #include "mozilla/Try.h"
 #include "nsIMsgAccountManager.h"
@@ -41,20 +40,20 @@ NS_IMETHODIMP Message::GetStringProperty(const char* propertyName,
   if (nsDependentCString(propertyName).EqualsLiteral("keywords")) {
     return MessageDB().GetMessageTags(mKey, propertyValue);
   }
-  return MessageDB().GetMessageProperty(mKey, nsCString(propertyName),
+  return MessageDB().GetMessageProperty(mKey, nsDependentCString(propertyName),
                                         propertyValue);
 }
 
 NS_IMETHODIMP Message::GetUint32Property(const char* propertyName,
                                          uint32_t* propertyValue) {
   NS_ENSURE_ARG_POINTER(propertyValue);
-  return MessageDB().GetMessageProperty(mKey, nsCString(propertyName),
+  return MessageDB().GetMessageProperty(mKey, nsDependentCString(propertyName),
                                         *propertyValue);
 }
 
 NS_IMETHODIMP Message::SetUint32Property(const char* propertyName,
                                          uint32_t propertyValue) {
-  return MessageDB().SetMessageProperty(mKey, nsCString(propertyName),
+  return MessageDB().SetMessageProperty(mKey, nsDependentCString(propertyName),
                                         propertyValue);
 }
 
@@ -101,11 +100,11 @@ NS_IMETHODIMP Message::MarkHasAttachments(bool hasAttachments) {
 
 NS_IMETHODIMP Message::GetPriority(nsMsgPriorityValue* priority) {
   NS_ENSURE_ARG_POINTER(priority);
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return MessageDB().GetMessagePriority(mKey, *priority);
 }
 
 NS_IMETHODIMP Message::SetPriority(nsMsgPriorityValue priority) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return MessageDB().SetMessagePriority(mKey, priority);
 }
 
 NS_IMETHODIMP Message::GetFlags(uint32_t* flags) {
@@ -352,15 +351,6 @@ NS_IMETHODIMP Message::SetAccountKey(const nsACString& accountKey) {
 NS_IMETHODIMP Message::GetFolder(nsIMsgFolder** aFolder) {
   NS_ENSURE_ARG_POINTER(aFolder);
   return FolderDB().GetMsgFolderForFolder(FolderId(), aFolder);
-}
-
-NS_IMETHODIMP Message::GetUidOnServer(uint32_t* uidOnServer) {
-  NS_ENSURE_ARG_POINTER(uidOnServer);
-  return MessageDB().GetMessageUidOnServer(mKey, *uidOnServer);
-}
-
-NS_IMETHODIMP Message::SetUidOnServer(uint32_t uidOnServer) {
-  return MessageDB().SetMessageUidOnServer(mKey, uidOnServer);
 }
 
 NS_IMETHODIMP Message::GetIsLive(bool* isLive) {

@@ -72,6 +72,7 @@ export class ImapDaemon {
     this.commandToFail = "";
     // This can be used to simulate timeouts on large copies
     this.copySleep = 0;
+    this._handlers = new Set();
   }
   synchronize(mailbox, update) {
     if (this.syncFunc) {
@@ -216,6 +217,55 @@ export class ImapDaemon {
       mailbox._messages = [];
       mailbox.flags.push("\\Noselect");
     }
+  }
+
+  /**
+   * Return live protocol handlers, optionally restricted to a mailbox.
+   * Each handler represents one client connection.
+   *
+   * @param {ImapMailbox|string} [mailbox]
+   * @returns {IMAP_RFC3501_handler[]}
+   */
+  getConnections(mailbox) {
+    if (typeof mailbox == "string") {
+      mailbox = this.getMailbox(mailbox);
+      if (!mailbox) {
+        return [];
+      }
+    }
+    const handlers = [];
+    for (const handler of this._handlers) {
+      if (!handler._reader?.isRunning) {
+        this._handlers.delete(handler);
+      } else if (!mailbox || handler._selectedMailbox == mailbox) {
+        handlers.push(handler);
+      }
+    }
+    return handlers;
+  }
+
+  /**
+   * Send an unsolicited server response to connections with a mailbox
+   * selected. By default only connections waiting in IDLE receive it.
+   *
+   * @param {ImapMailbox|string} mailbox
+   * @param {string|string[]} responses
+   * @param {object} [options]
+   * @param {boolean} [options.idleOnly=true]
+   * @returns {number} The number of connections notified.
+   */
+  sendUnsolicited(mailbox, responses, { idleOnly = true } = {}) {
+    if (!Array.isArray(responses)) {
+      responses = [responses];
+    }
+    let notified = 0;
+    for (const handler of this.getConnections(mailbox)) {
+      if (!idleOnly || handler.idling) {
+        handler.sendUnsolicited(responses.join("\r\n"));
+        notified++;
+      }
+    }
+    return notified;
   }
 }
 
@@ -381,6 +431,18 @@ export class ImapMailbox {
   }
 }
 
+/**
+ * A single message stored in a fakeserver mailbox.
+ *
+ * Optional per-instance test hooks:
+ *  - `_truncateBodyAt` {integer}: if set, the server never delivers body octets
+ *    at or beyond this offset, while RFC822.SIZE keeps reporting the true
+ *    (larger) size. A chunked BODY[]<start.count> fetch then receives a chunk
+ *    shorter than requested once it reaches the offset, simulating a server
+ *    that stops sending data partway through (e.g. a premature connection
+ *    close) without any protocol error. Useful for exercising truncated /
+ *    incomplete download handling.
+ */
 export class ImapMessage {
   constructor(URI, uid, flags) {
     this._URI = URI;
@@ -723,6 +785,8 @@ export class IMAP_RFC3501_handler {
     this.kUidCommands = ["FETCH", "STORE", "SEARCH", "COPY"];
 
     this._daemon = daemon;
+    this._daemon._handlers.add(this);
+    this._reader = null;
     this.closing = false;
     this.dropOnStartTLS = false;
     // map: property = auth scheme {String}, value = start function on this obj
@@ -827,6 +891,8 @@ export class IMAP_RFC3501_handler {
   resetTest() {
     this._state = IMAP_STATE_NOT_AUTHED;
     this._multiline = false;
+    this._idling = false;
+    this._selectedMailbox = null;
     this._nextAuthFunction = undefined; // should be in RFC2195_ext, but too lazy
   }
   onStartup() {
@@ -1575,6 +1641,7 @@ export class IMAP_RFC3501_handler {
   }
 
   postCommand(reader) {
+    this._reader = reader;
     if (this.closing) {
       this.closing = false;
       reader.closeSocket();
@@ -1586,6 +1653,17 @@ export class IMAP_RFC3501_handler {
     if (this._lastCommand == reader.watchWord) {
       reader.stopTest();
     }
+  }
+
+  get idling() {
+    return this._idling;
+  }
+
+  sendUnsolicited(response) {
+    if (!this._reader?.isRunning) {
+      throw new Error("IMAP connection is not running");
+    }
+    this._reader.send(response);
   }
   onServerFault(e) {
     return (
@@ -1600,6 +1678,12 @@ export class IMAP_RFC3501_handler {
     FAST: ["FLAGS", "INTERNALDATE", "RFC822.SIZE"],
     FULL: ["FLAGS", "INTERNALDATE", "RFC822.SIZE" /* , "ENVELOPE", "BODY" */],
   };
+
+  // Parses `set`, returning the matching messages in the selected mailbox.
+  // If `uid` is falsy, `set` is treated as a sequence set.
+  // If `uid` is true, `set` is treated as a UID set.
+  // If `ids` is passed in (as an array), it will be filled out with the ids
+  // (sequence numbers) of the matching messages within the mailbox.
   _parseSequenceSet(set, uid, ids /* optional */) {
     if (typeof set == "number") {
       if (uid) {
@@ -1712,6 +1796,17 @@ export class IMAP_RFC3501_handler {
       if (parts[3]) {
         response += "<" + parts[3][0] + ">";
         text = message.getText(parts[3][0], parts[3][1]);
+        // Honour the optional `_truncateBodyAt` truncation hook (see the
+        // ImapMessage class documentation): never deliver octets past that
+        // offset, so a chunked fetch receives a short final chunk.
+        if (message._truncateBodyAt !== undefined) {
+          const start = parts[3][0];
+          if (start >= message._truncateBodyAt) {
+            text = "";
+          } else if (start + text.length > message._truncateBodyAt) {
+            text = text.substring(0, message._truncateBodyAt - start);
+          }
+        }
       } else {
         text = message.getText();
       }
@@ -1929,6 +2024,36 @@ export function mixinExtension(handler, extension) {
     }
   }
 }
+
+// Support for IDLE (RFC 2177).
+export var IMAP_RFC2177_extension = {
+  preload(toBeThis) {
+    toBeThis._preRFC2177_onMultiline = toBeThis.onMultiline;
+  },
+  kCapabilities: ["IDLE"],
+  _enabledCommands: {
+    2: ["IDLE"],
+  },
+  _argFormat: {
+    IDLE: [],
+  },
+  IDLE() {
+    this._idling = true;
+    this._multiline = true;
+    return "+ idling";
+  },
+  onMultiline(line) {
+    if (!this._idling) {
+      return this._preRFC2177_onMultiline(line);
+    }
+    if (line.toUpperCase() != "DONE") {
+      return undefined;
+    }
+    this._idling = false;
+    this._multiline = false;
+    return `${this._tag} OK IDLE terminated`;
+  },
+};
 
 // Support for Gmail extensions: XLIST and X-GM-EXT-1
 export var IMAP_GMAIL_extension = {
@@ -2290,7 +2415,7 @@ export var IMAP_RFC4315_extension = {
     if (mailbox) {
       var first = mailbox.uidnext;
     }
-    let response = this._preRFC4315COPY(args);
+    let response = this._preRFC4315COPY(args, true);
     if (response.indexOf("OK") == 0) {
       const last = mailbox.uidnext - 1;
       response =
@@ -2312,7 +2437,7 @@ export var IMAP_RFC4315_extension = {
     if (mailbox) {
       var first = mailbox.uidnext;
     }
-    let response = this._preRFC4315MOVE(args);
+    let response = this._preRFC4315MOVE(args, true);
     if (response.includes("OK MOVE")) {
       const last = mailbox.uidnext - 1;
       response = response.replace(

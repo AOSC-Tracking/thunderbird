@@ -51,6 +51,8 @@ tags = ["foldernames"]
 
 ["test_imapAutoSync.js"]
 
+["test_imapBiff.js"]
+
 ["test_imapChunks.js"]
 
 ["test_imapClientid.js"]
@@ -89,6 +91,8 @@ tags = ["foldernames"]
 
 ["test_imapStoreMsgOffline.js"]
 
+["test_imapTruncatedOfflineBody.js"]
+
 ["test_imapUndo.js"]
 
 ["test_imapUrls.js"]
@@ -105,6 +109,8 @@ run-if = [
 ["test_localToImapFilter.js"]
 
 ["test_localToImapFilterQuarantine.js"]
+
+["test_lockedFlagsImap.js"]
 
 ["test_lsub.js"]
 

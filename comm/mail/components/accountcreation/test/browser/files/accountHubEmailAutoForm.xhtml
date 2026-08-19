@@ -15,6 +15,20 @@
       xmlns="http://www.w3.org/1999/xhtml"
     >
       <header id="accountHubHeader" class="hub-header">
+        <div id="headerButtonsContainer">
+          <button id="minimizeButton"
+                  class="button button-flat button-round icon-button icon-only modal-close-button"
+                  data-l10n-id="account-hub-minimize-button"
+                  type="button">
+            <img class="icon-minimize" src="" alt="" />
+          </button>
+          <button id="closeButton"
+                  class="button button-flat button-round icon-button icon-only modal-close-button"
+                  data-l10n-id="account-hub-close-button"
+                  type="button">
+            <img class="icon-close-lg" src="" alt="" />
+          </button>
+        </div>
         <div id="brandingHeader" class="branding-header" hidden="hidden">
           <img src="chrome://branding/content/logo-gradient.svg" alt="" />
           <h1 class="account-hub-title">
@@ -22,20 +36,6 @@
             <span class="branding-header-title" aria-hidden="hidden"></span>
             <span class="account-hub-welcome-text screen-reader-only" data-l10n-id="account-hub-welcome-text"></span>
           </h1>
-          <div id="headerButtonsContainer">
-            <button id="minimizeButton"
-                    class="button button-flat button-round icon-button icon-only modal-close-button"
-                    data-l10n-id="account-hub-minimize-button"
-                    type="button">
-              <img class="icon-minimize" src="" alt="" />
-            </button>
-            <button id="closeButton"
-                    class="button button-flat button-round icon-button icon-only modal-close-button"
-                    data-l10n-id="account-hub-close-button"
-                    type="button">
-              <img class="icon-close-lg" src="" alt="" />
-            </button>
-          </div>
         </div>
         <!-- Title Text for Email Setup -->
         <h1 id="accountHubHeaderTitle"
@@ -91,19 +91,18 @@
       </div>
     </template>
     <template id="accountHubEmailAutoFormTemplate" xmlns="http://www.w3.org/1999/xhtml">
-      <div class="account-hub-thundermail-header" slot="middle-content" hidden="hidden">
-        <button class="account-hub-thundermail-button">
-          <img class="account-hub-thundermail-icon" src="" alt="" />
-          <span data-l10n-id="account-hub-thundermail-button"></span>
-        </button>
-        <div class="account-hub-thundermail-divider">
-          <span class="account-hub-thundermail-divider-line"></span>
-          <span class="account-hub-thundermail-divider-text" data-l10n-id="account-hub-thundermail-divider-text"></span>
-          <span class="account-hub-thundermail-divider-line"></span>
-        </div>
-      </div>
       <form id="autoConfigEmailForm" class="account-hub-form" slot="content">
         <div class="hub-body email-form-body">
+          <div class="account-hub-thundermail-header">
+            <button class="account-hub-thundermail-button" type="button">
+              <img class="account-hub-thundermail-icon" src="" alt="" />
+              <span data-l10n-id="account-hub-thundermail-button"></span>
+            </button>
+            <div class="account-hub-thundermail-divider">
+              <span class="account-hub-thundermail-divider-text" data-l10n-id="account-hub-thundermail-divider-text"></span>
+            </div>
+            <h1 class="account-hub-thundermail-title" data-l10n-id="account-hub-email-setup-header"></h1>
+          </div>
           <div class="input-control">
             <input id="realName"
                   type="text"

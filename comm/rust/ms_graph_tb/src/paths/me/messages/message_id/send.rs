@@ -38,15 +38,13 @@ impl Post {
 }
 impl Operation for Post {
     const METHOD: Method = Method::POST;
-    type Response<'response> = ();
+    type Response = ();
     fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let uri = format_path(&self.template_expressions)
             .parse::<http::uri::Uri>()
             .unwrap();
-        let request = http::Request::builder()
-            .uri(uri)
-            .method(Self::METHOD)
-            .body(vec![])?;
+        let request = http::Request::builder().uri(uri).method(Self::METHOD);
+        let request = request.body(vec![])?;
         Ok(request)
     }
 }

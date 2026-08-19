@@ -289,8 +289,16 @@ export class GraphServer extends MockServer {
     const requestBody = CommonUtils.readBytesFromInputStream(
       request.bodyInputStream
     );
+
+    const requestHeaders = new Map(
+      [...request.headers].map(headerName => [
+        headerName.data,
+        request.getHeader(headerName.data),
+      ])
+    );
     const httpResponseData = this.#dispatchRequest(
       method,
+      requestHeaders,
       resourcePath,
       resourceQuery,
       requestBody
@@ -318,11 +326,13 @@ export class GraphServer extends MockServer {
     for (const batchRequestItem of batchRequest.requests) {
       const id = batchRequestItem.id;
       const method = batchRequestItem.method;
+      const headers = new Map(Object.entries(batchRequestItem.headers));
       const path = batchRequestItem.url;
       const body = batchRequestItem.body;
 
       const itemResponseData = this.#dispatchRequest(
         method,
+        headers,
         path,
         null,
         JSON.stringify(body)
@@ -360,12 +370,19 @@ export class GraphServer extends MockServer {
    * Dispatch a request to the appropriate handler.
    *
    * @param {string} requestMethod
+   * @param {Map<string, string>} requestHeaders
    * @param {string} resourcePath
    * @param {string} resourceQuery
    * @param {string} requestBody
    * @returns {HttpResponseData} The response status code and content for the request.
    */
-  #dispatchRequest(requestMethod, resourcePath, resourceQuery, requestBody) {
+  #dispatchRequest(
+    requestMethod,
+    requestHeaders,
+    resourcePath,
+    resourceQuery,
+    requestBody
+  ) {
     // Try to find a handler that matches the method and path for the request.
     let responseJsonObject = {};
     let pathMatch;
@@ -373,6 +390,8 @@ export class GraphServer extends MockServer {
       case "GET":
         if (resourcePath === "/me") {
           responseJsonObject = this.#me();
+        } else if (resourcePath === "/me/calendars") {
+          responseJsonObject = this.#calendars();
         } else if (
           (pathMatch = /\/me\/mailFolders\/([\w\-]+)\/messages\/delta/.exec(
             resourcePath
@@ -380,6 +399,7 @@ export class GraphServer extends MockServer {
         ) {
           const folderName = pathMatch[1];
           responseJsonObject = this.#syncFolderMessages(
+            requestHeaders,
             folderName,
             resourceQuery
           );
@@ -390,6 +410,7 @@ export class GraphServer extends MockServer {
         ) {
           const folderName = pathMatch[1];
           responseJsonObject = this.#syncFolderMessages(
+            requestHeaders,
             folderName,
             resourceQuery
           );
@@ -492,6 +513,40 @@ export class GraphServer extends MockServer {
       surname: "Vance",
       userPrincipalName: "AdeleV@contoso.com",
       id: "87d349ed-44d7-43e1-9a83-5f2406dee5bd",
+    };
+  }
+
+  /**
+   * Handle the GET /me/calendars resource.
+   *
+   * @returns {object}
+   */
+  #calendars() {
+    return {
+      "@odata.context":
+        "https://graph.microsoft.com/v1.0/$metadata#me/calendars",
+      value: [
+        {
+          "@odata.id":
+            "https://graph.microsoft.com/v1.0/users('ddfcd489-628b-40d7-b48b-57002df800e5@1717622f-1d94-4d0c-9d74-709fad664b77')/calendars('AAMkAGI2TGuLAAA=')",
+          id: "AAMkAGI2TGuLAAA=",
+          name: "New Calendar",
+          color: "auto",
+          changeKey: "nfZyf7VcrEKLNoU37KWlkQAAA0x0+w==",
+          canShare: true,
+          canViewPrivateItems: true,
+          hexColor: "",
+          canEdit: true,
+          allowedOnlineMeetingProviders: ["teamsForBusiness"],
+          defaultOnlineMeetingProvider: "teamsForBusiness",
+          isTallyingResponses: true,
+          isRemovable: false,
+          owner: {
+            name: "Samantha Booth",
+            address: "samanthab@contoso.com",
+          },
+        },
+      ],
     };
   }
 
@@ -729,6 +784,15 @@ export class GraphServer extends MockServer {
       item.syntheticMessage.metaState.read = parsedReq.isRead;
     }
 
+    if (parsedReq.flag?.flagStatus) {
+      const item = this.getItemInfo(messageId);
+      item.syntheticMessage.metaState.graphFlagStatus =
+        parsedReq.flag.flagStatus;
+      item.syntheticMessage.metaState.flagged =
+        parsedReq.flag.flagStatus == "flagged";
+      this.itemChanges.push(["update", item.parentId, messageId]);
+    }
+
     // Note: returning only the ID should be fine for now because we don't
     // actually look at the response from this request (beyond basic things like
     // the HTTP status code), but in the future we'll probably want to expand
@@ -831,10 +895,20 @@ export class GraphServer extends MockServer {
   /**
    * Handles GET /me/mailFolders/{folderId}/delta
    *
+   * @param {Map<string, string>} requestHeaders - The map of headers included
+   *   in the request.
    * @param {string} folderName - The name of the folder to sync.
    * @param {string} queryString - The query parameters from the request.
    */
-  #syncFolderMessages(folderName, queryString) {
+  #syncFolderMessages(requestHeaders, folderName, queryString) {
+    const preferHeaderValue = requestHeaders.get("prefer");
+    let maxPageSizeMatch;
+    if (
+      (maxPageSizeMatch = /odata\.maxpagesize=([0-9]+)/.exec(preferHeaderValue))
+    ) {
+      this.lastMaxMessagePageSize = parseInt(maxPageSizeMatch[1]);
+    }
+
     const params = new URLSearchParams(queryString);
     let offset;
     if (params.has("$skiptoken")) {
@@ -873,6 +947,13 @@ export class GraphServer extends MockServer {
             .toMessageString()
             .slice(0, 10),
           isRead: item.syntheticMessage.metaState.read,
+          flag: {
+            flagStatus:
+              item.syntheticMessage.metaState.graphFlagStatus ??
+              (item.syntheticMessage.metaState.flagged
+                ? "flagged"
+                : "notFlagged"),
+          },
           toRecipients: syntheticRecipientsToGraph(item.syntheticMessage.to),
           ccRecipients: syntheticRecipientsToGraph(item.syntheticMessage.cc),
         };

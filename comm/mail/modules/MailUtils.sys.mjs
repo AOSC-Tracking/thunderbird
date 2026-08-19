@@ -877,6 +877,10 @@ export var MailUtils = {
    */
   handleNewsUri(uri, win) {
     // @see {@link https://datatracker.ietf.org/doc/html/rfc5538#section-2.2}
+    if (!URL.canParse(uri)) {
+      console.warn(`Malformed news URI: ${uri}`);
+      return;
+    }
     const url = new URL(uri);
     if (url.pathname.length <= 1) {
       return;
@@ -941,7 +945,7 @@ export var MailUtils = {
       url.port = firstNntpServer.port;
     }
     if (!url.port) {
-      url.port = Ci.nsINntpUrl.DEFAULT_NNTP_PORT;
+      url.port = Ci.nsINntpIncomingServer.DEFAULT_NNTP_PORT;
     }
 
     const tempFile = Services.dirsvc.get("TmpD", Ci.nsIFile);
@@ -990,7 +994,7 @@ export var MailUtils = {
     let spec = "news:";
     if (server) {
       spec += `//${server.hostname}`;
-      if (server.port != Ci.nsINntpUrl.DEFAULT_NNTP_PORT) {
+      if (server.port != Ci.nsINntpIncomingServer.DEFAULT_NNTP_PORT) {
         spec += `:${server.port}`;
       }
       spec += "/";
@@ -1257,41 +1261,3 @@ export var MailUtils = {
     await promise;
   },
 };
-
-/**
- * A class that listens to notifications about folders, and deals with them
- * appropriately.
- *
- * @implements {nsIObserver}
- */
-class FolderNotificationManager {
-  QueryInterface = ChromeUtils.generateQI(["nsIObserver"]);
-
-  static #manager = null;
-
-  static init() {
-    if (FolderNotificationManager.#manager) {
-      return;
-    }
-    FolderNotificationManager.#manager = new FolderNotificationManager();
-  }
-
-  constructor() {
-    Services.obs.addObserver(this, "profile-before-change");
-    Services.obs.addObserver(this, "folder-attention");
-  }
-
-  observe(subject, topic) {
-    switch (topic) {
-      case "profile-before-change":
-        Services.obs.removeObserver(this, "profile-before-change");
-        Services.obs.removeObserver(this, "folder-attention");
-        return;
-      case "folder-attention":
-        MailUtils.displayFolderIn3Pane(
-          subject.QueryInterface(Ci.nsIMsgFolder).URI
-        );
-    }
-  }
-}
-FolderNotificationManager.init();

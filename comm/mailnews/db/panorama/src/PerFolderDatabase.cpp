@@ -172,7 +172,7 @@ NS_IMETHODIMP PerFolderDatabase::GetMsgHdrForMessageID(const char* messageID,
 
   RefPtr<Message> message;
   nsresult rv = MessageDB().GetMessageForMessageID(
-      mFolderId, nsCString(messageID), getter_AddRefs(message));
+      mFolderId, nsDependentCString(messageID), getter_AddRefs(message));
   if (NS_FAILED(rv)) {
     return NS_ERROR_ILLEGAL_VALUE;
   }
@@ -208,24 +208,6 @@ NS_IMETHODIMP PerFolderDatabase::ContainsKey(nsMsgKey key, bool* contains) {
     *contains = false;
   }
   return NS_OK;
-}
-
-NS_IMETHODIMP PerFolderDatabase::GetMsgKeysForUIDs(
-    const nsTArray<uint32_t>& uids, nsTArray<nsMsgKey>& aRetVal) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-NS_IMETHODIMP PerFolderDatabase::GetMsgUIDsForKeys(
-    const nsTArray<nsMsgKey>& keys, nsTArray<uint32_t>& aRetVal) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-NS_IMETHODIMP PerFolderDatabase::ContainsUID(uint32_t uid, bool* aRetVal) {
-  NS_ENSURE_ARG_POINTER(aRetVal);
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-NS_IMETHODIMP PerFolderDatabase::GetMsgHdrForUID(uint32_t uid,
-                                                 nsIMsgDBHdr** aRetVal) {
-  NS_ENSURE_ARG_POINTER(aRetVal);
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP PerFolderDatabase::CreateNewHdr(nsIMsgDBHdr** aRetVal) {
@@ -306,7 +288,7 @@ NS_IMETHODIMP PerFolderDatabase::AddMsgHdr(RawHdr* msg, bool notify,
   nsresult rv = MessageDB().AddMessage(
       mFolderId, msg->messageId, msg->references, msg->date, msg->sender,
       msg->recipients, msg->ccList, msg->bccList, msg->subject, msg->flags,
-      msg->keywords, &key);
+      msg->keywords, msg->priority, &key);
   NS_ENSURE_SUCCESS(rv, rv);
   MOZ_ASSERT(key != nsMsgKey_None);
 
@@ -549,7 +531,7 @@ NS_IMETHODIMP PerFolderDatabase::UndoDelete(nsIMsgDBHdr* msgHdr) {
 }
 NS_IMETHODIMP PerFolderDatabase::SetStringProperty(
     nsMsgKey key, const char* propertyName, const nsACString& propertyValue) {
-  return MessageDB().SetMessageProperty(key, nsCString(propertyName),
+  return MessageDB().SetMessageProperty(key, nsDependentCString(propertyName),
                                         propertyValue);
 }
 NS_IMETHODIMP PerFolderDatabase::SetStringPropertyByHdr(
@@ -947,64 +929,65 @@ NS_IMETHODIMP FolderInfo::ChangeExpungedBytes(int32_t aDelta) {
 }
 NS_IMETHODIMP FolderInfo::GetCharProperty(const char* propertyName,
                                           nsACString& propertyValue) {
-  return FolderDB().GetFolderProperty(mFolderId, nsCString(propertyName),
-                                      propertyValue);
+  return FolderDB().GetFolderProperty(
+      mFolderId, nsDependentCString(propertyName), propertyValue);
 }
 NS_IMETHODIMP FolderInfo::SetCharProperty(const char* propertyName,
                                           const nsACString& propertyValue) {
-  return FolderDB().SetFolderProperty(mFolderId, nsCString(propertyName),
-                                      propertyValue);
+  return FolderDB().SetFolderProperty(
+      mFolderId, nsDependentCString(propertyName), propertyValue);
 }
 NS_IMETHODIMP FolderInfo::GetUint32Property(const char* propertyName,
                                             uint32_t defaultValue,
                                             uint32_t* propertyValue) {
   NS_ENSURE_ARG_POINTER(propertyValue);
   *propertyValue = defaultValue;
-  return FolderDB().GetFolderProperty(mFolderId, nsCString(propertyName),
-                                      (int64_t*)propertyValue);
+  return FolderDB().GetFolderProperty(
+      mFolderId, nsDependentCString(propertyName), (int64_t*)propertyValue);
 }
 NS_IMETHODIMP FolderInfo::SetUint32Property(const char* propertyName,
                                             uint32_t propertyValue) {
-  return FolderDB().SetFolderProperty(mFolderId, nsCString(propertyName),
-                                      (int64_t)propertyValue);
+  return FolderDB().SetFolderProperty(
+      mFolderId, nsDependentCString(propertyName), (int64_t)propertyValue);
 }
 NS_IMETHODIMP FolderInfo::GetInt64Property(const char* propertyName,
                                            int64_t defaultValue,
                                            int64_t* propertyValue) {
   NS_ENSURE_ARG_POINTER(propertyValue);
   *propertyValue = defaultValue;
-  return FolderDB().GetFolderProperty(mFolderId, nsCString(propertyName),
-                                      propertyValue);
+  return FolderDB().GetFolderProperty(
+      mFolderId, nsDependentCString(propertyName), propertyValue);
 }
 NS_IMETHODIMP FolderInfo::SetInt64Property(const char* propertyName,
                                            int64_t propertyValue) {
-  return FolderDB().SetFolderProperty(mFolderId, nsCString(propertyName),
-                                      propertyValue);
+  return FolderDB().SetFolderProperty(
+      mFolderId, nsDependentCString(propertyName), propertyValue);
 }
 NS_IMETHODIMP FolderInfo::GetBooleanProperty(const char* propertyName,
                                              bool defaultValue,
                                              bool* propertyValue) {
   *propertyValue = defaultValue;
-  return FolderDB().GetFolderProperty(mFolderId, nsCString(propertyName),
-                                      (int64_t*)propertyValue);
+  return FolderDB().GetFolderProperty(
+      mFolderId, nsDependentCString(propertyName), (int64_t*)propertyValue);
 }
 NS_IMETHODIMP FolderInfo::SetBooleanProperty(const char* propertyName,
                                              bool propertyValue) {
-  return FolderDB().SetFolderProperty(mFolderId, nsCString(propertyName),
-                                      (int64_t)propertyValue);
+  return FolderDB().SetFolderProperty(
+      mFolderId, nsDependentCString(propertyName), (int64_t)propertyValue);
 }
 NS_IMETHODIMP FolderInfo::GetProperty(const char* propertyName,
                                       nsAString& propertyValue) {
   nsAutoCString value;
-  nsresult rv =
-      FolderDB().GetFolderProperty(mFolderId, nsCString(propertyName), value);
+  nsresult rv = FolderDB().GetFolderProperty(
+      mFolderId, nsDependentCString(propertyName), value);
   NS_ENSURE_SUCCESS(rv, rv);
   propertyValue.Assign(NS_ConvertUTF8toUTF16(value));
   return NS_OK;
 }
 NS_IMETHODIMP FolderInfo::SetProperty(const char* propertyName,
                                       const nsAString& propertyValue) {
-  return FolderDB().SetFolderProperty(mFolderId, nsCString(propertyName),
+  return FolderDB().SetFolderProperty(mFolderId,
+                                      nsDependentCString(propertyName),
                                       NS_ConvertUTF16toUTF8(propertyValue));
 }
 NS_IMETHODIMP FolderInfo::GetTransferInfo(nsIPropertyBag2** _retval) {

@@ -192,9 +192,12 @@ adding-opensearch-provider-failed-title = Adding OpenSearch Provider Failed
 # $url (String) - URL an OpenSearch provider was requested for.
 adding-opensearch-provider-failed-text = Could not add OpenSearch Provider for { $url }.
 
-minimize-to-tray-label =
-    .label = When { -brand-short-name } is minimized, move it to the tray
-    .accesskey = m
+close-to-tray-label =
+    .label = When { -brand-short-name } is closed, move it to the tray
+    .accesskey = c
+start-in-tray-label =
+    .label = Start { -brand-short-name } in the tray
+    .accesskey = S
 
 new-message-arrival = When new messages arrive:
 mail-play-sound-label =
@@ -241,6 +244,10 @@ mail-browse-sound-button =
 enable-gloda-search-label =
     .label = Enable Global Search and Indexer
     .accesskey = G
+
+gloda-show-results-as-list-label =
+    .label = Show global search results as a list by default
+    .accesskey = L
 
 datetime-formatting-legend = Date and Time Formatting
 language-selector-legend = Language

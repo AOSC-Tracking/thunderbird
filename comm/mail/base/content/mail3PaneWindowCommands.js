@@ -32,7 +32,6 @@ var DefaultController = {
       case "cmd_undo":
       case "cmd_redo":
       case "cmd_sendUnsentMsgs":
-      case "cmd_subscribe":
       case "cmd_getNewMessages":
       case "cmd_getMsgsForAuthAccounts":
       case "cmd_getNextNMessages":
@@ -77,8 +76,6 @@ var DefaultController = {
         return SetupUndoRedoCommand(command);
       case "cmd_sendUnsentMsgs":
         return IsSendUnsentMsgsEnabled(null);
-      case "cmd_subscribe":
-        return IsSubscribeEnabled();
       case "cmd_getNewMessages":
       case "cmd_getMsgsForAuthAccounts":
         return IsGetNewMessagesEnabled();
@@ -142,9 +139,6 @@ var DefaultController = {
           MailOfflineMgr.goOnlineToSendMessages(msgWindow);
         }
         return;
-      case "cmd_subscribe":
-        MsgSubscribe();
-        return;
       case "cmd_stop":
         document.getElementById("tabmail").currentTabInfo.chromeBrowser.stop();
         return;
@@ -192,7 +186,7 @@ function CloseTabOrWindow() {
   }
   if (tabmail.tabInfo.length == 1) {
     if (Services.prefs.getBoolPref("mail.tabs.closeWindowWithLastTab")) {
-      window.close();
+      requestWindowClose();
     }
   } else {
     tabmail.removeCurrentTab();
@@ -249,28 +243,6 @@ function IsSendUnsentMsgsEnabled(unsentMsgsFolder) {
     hasUnsentMessages = msgSendlater?.hasUnsentMessages(identity);
   } catch (error) {}
   return hasUnsentMessages;
-}
-
-/**
- * Determine whether there exists any server for which to show the Subscribe dialog.
- */
-function IsSubscribeEnabled() {
-  // If there are any IMAP or News servers, we can show the dialog any time and
-  // it will properly show those.
-  for (const server of MailServices.accounts.allServers) {
-    if (server.type == "imap" || server.type == "nntp") {
-      return true;
-    }
-  }
-
-  // RSS accounts use a separate Subscribe dialog that we can only show when
-  // such an account is selected.
-  const preselectedFolder = GetFirstSelectedMsgFolder();
-  if (preselectedFolder && preselectedFolder.server.type == "rss") {
-    return true;
-  }
-
-  return false;
 }
 
 /**

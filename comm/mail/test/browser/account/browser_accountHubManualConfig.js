@@ -12,14 +12,22 @@ const { ConfigVerifier } = ChromeUtils.importESModule(
 const { GuessConfig } = ChromeUtils.importESModule(
   "resource:///modules/accountcreation/GuessConfig.sys.mjs"
 );
+const { ServerTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/ServerTestUtils.sys.mjs"
+);
 
 const PREF_NAME = "mailnews.auto_config_url";
 const PREF_VALUE = Services.prefs.getCharPref(PREF_NAME);
 const GSSAPI_TEST_EMAIL = "badtest@example.localhost";
+const EXCHANGE_TEST_EMAIL = "testExchange@exchange.test";
+const EXCHANGE_TEST_PASSWORD = "hunter2";
+const EXCHANGE_TEST_URL = "http://exchange.test/EWS/Exchange.asmx"; // eslint-disable-line @microsoft/sdl/no-insecure-url
 
 let gssapiSandbox;
 let gssapiDialog;
 let gssapiCurrentStep;
+let manualConfigPrefPushed = false;
+const MANUAL_CONFIG_PREF = "mail.accounthub.manualconfig.enabled";
 
 // The guessConfig requests make this test take a long time, so we need a
 // longer timeout.
@@ -34,6 +42,7 @@ add_setup(function () {
 });
 
 registerCleanupFunction(async function () {
+  await cleanupManualConfigPref();
   // Restore the original pref.
   Services.prefs.setCharPref(PREF_NAME, PREF_VALUE);
   await cleanupGssapiTest();
@@ -106,7 +115,7 @@ add_task(async function test_account_email_advanced_setup_incoming() {
   // The dialog should automatically close after clicking advanced config
   await BrowserTestUtils.waitForEvent(dialog, "close");
 
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => tabmail.selectedTab != oldTab,
     "The tab should change to the account settings tab"
   );
@@ -214,7 +223,7 @@ add_task(async function test_account_email_advanced_setup_outgoing() {
   // The dialog should automatically close after clicking advanced config
   await BrowserTestUtils.waitForEvent(dialog, "close");
 
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => tabmail.selectedTab != oldTab,
     "The tab should change to the account settings tab"
   );
@@ -761,7 +770,7 @@ add_task(async function test_direct_to_manual_config() {
 
   // Clicking the manual config button should lead to the incoming config form
   // with some prefilled data.
-  EventUtils.synthesizeMouseAtCenter(manualConfigButton, {});
+  manualConfigButton.click();
 
   const incomingConfigTemplate = dialog.querySelector(
     "#emailIncomingConfigSubview"
@@ -832,12 +841,12 @@ add_task(async function test_account_invalid_email_advanced_setup_incoming() {
   await BrowserTestUtils.waitForEvent(dialog, "close");
   const accountTab = tabmail.selectedTab;
 
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => accountTab != oldTab,
     "The tab should change to the account settings tab"
   );
 
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => !!accountTab.browser.contentWindow.currentAccount,
     "The new account should have been created"
   );
@@ -927,7 +936,7 @@ add_task(async function test_direct_to_manual_gssapi_skips_password_step() {
   const manualConfigButton = emailTemplate.querySelector(
     "#manualConfiguration"
   );
-  EventUtils.synthesizeMouseAtCenter(manualConfigButton, {});
+  manualConfigButton.click();
 
   const incomingConfigTemplate = gssapiDialog.querySelector(
     "#emailIncomingConfigSubview"
@@ -1097,16 +1106,611 @@ add_task(async function test_direct_to_manual_gssapi_skips_password_step() {
   await cleanupGssapiTest();
 });
 
+add_task(async function test_config_found_manual_config_pref_enabled() {
+  await enableManualConfigPref();
+
+  const dialog = await subtest_open_account_hub_dialog();
+
+  const emailUser = {
+    name: "John Doe",
+    email: "john.doe@momo.invalid",
+    password: "abc12345",
+    incomingHost: "mail.momo.invalid",
+    incomingPort: 123,
+    outgoingHost: "mail.momo.invalid",
+    outgoingPort: 465,
+  };
+
+  await subtest_fill_initial_config_fields(dialog, emailUser);
+  const configFoundTemplate = dialog.querySelector("email-config-found");
+
+  await TestUtils.waitForCondition(
+    () =>
+      BrowserTestUtils.isVisible(configFoundTemplate.querySelector("#imap")),
+    "The IMAP config option should be visible"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(
+    configFoundTemplate.querySelector("#editConfiguration"),
+    {}
+  );
+
+  const protocolSelectTemplate = dialog.querySelector(
+    "#emailProtocolSelectSubview"
+  );
+
+  const manualConfigTemplate = dialog.querySelector(
+    "#emailManualConfigSubview"
+  );
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isVisible(manualConfigTemplate),
+    "The manual config template should be in view"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(protocolSelectTemplate),
+    "The protocol select template should stay hidden"
+  );
+
+  await subtest_close_account_hub_dialog(dialog, manualConfigTemplate);
+  await cleanupManualConfigPref();
+});
+
+add_task(async function test_direct_to_manual_config_pref_enabled() {
+  await enableManualConfigPref();
+
+  const dialog = await subtest_open_account_hub_dialog();
+
+  const emailTemplate = dialog.querySelector("email-auto-form");
+  const nameInput = emailTemplate.querySelector("#realName");
+  const emailInput = emailTemplate.querySelector("#email");
+
+  // Ensure fields are empty.
+  nameInput.value = "";
+  emailInput.value = "";
+
+  await fillInvalidUserInfo(nameInput, emailInput);
+
+  const manualConfigButton = emailTemplate.querySelector(
+    "#manualConfiguration"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(manualConfigButton),
+    "Manual config button should be visible"
+  );
+
+  manualConfigButton.click();
+
+  const protocolSelectTemplate = dialog.querySelector(
+    "#emailProtocolSelectSubview"
+  );
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    protocolSelectTemplate
+  );
+  subtest_assert_protocol_select_chrome(dialog, protocolSelectTemplate);
+  Assert.ok(
+    protocolSelectTemplate.querySelector(
+      `input[name="protocol-select"][value="imap"]`
+    ).checked,
+    "The direct manual config flow should default to IMAP"
+  );
+
+  await subtest_select_protocol_and_continue(dialog, "microsoft");
+
+  const exchangeSettingsSubview = dialog.querySelector(
+    "#emailExchangeSettingsSubview"
+  );
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    exchangeSettingsSubview
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(
+      dialog.querySelector("#emailManualConfigSubview")
+    ),
+    "The new manual config form should stay hidden for Microsoft"
+  );
+  const exchangeTypeSubview = dialog.querySelector("#emailExchangeTypeSubview");
+  Assert.ok(
+    BrowserTestUtils.isHidden(exchangeTypeSubview),
+    "The Exchange type subview should stay hidden before Exchange settings are complete"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(
+    dialog.querySelector("#emailFooter #back"),
+    {}
+  );
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    protocolSelectTemplate
+  );
+  Assert.ok(
+    protocolSelectTemplate.querySelector(
+      `input[name="protocol-select"][value="microsoft"]`
+    ).checked,
+    "Back navigation should return to protocol select with Microsoft selected"
+  );
+
+  await subtest_select_protocol_and_continue(dialog, "pop3");
+
+  const manualConfigTemplate = dialog.querySelector(
+    "#emailManualConfigSubview"
+  );
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    manualConfigTemplate
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(exchangeTypeSubview),
+    "The Exchange type subview should stay hidden for POP3"
+  );
+  Assert.equal(
+    manualConfigTemplate.captureState().incoming.type,
+    "pop3",
+    "The manual config form should use the selected POP3 protocol"
+  );
+
+  await subtest_close_account_hub_dialog(dialog, manualConfigTemplate);
+  await cleanupManualConfigPref();
+});
+
+add_task(async function test_exchange_type_submission_pref_enabled() {
+  await enableManualConfigPref();
+
+  const dialog = await subtest_open_account_hub_dialog();
+
+  const emailTemplate = dialog.querySelector("email-auto-form");
+  const nameInput = emailTemplate.querySelector("#realName");
+  const emailInput = emailTemplate.querySelector("#email");
+
+  // Ensure fields are empty.
+  nameInput.value = "";
+  emailInput.value = "";
+
+  await fillInvalidUserInfo(nameInput, emailInput);
+
+  const manualConfigButton = emailTemplate.querySelector(
+    "#manualConfiguration"
+  );
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isVisible(manualConfigButton),
+    "Manual config button should be visible"
+  );
+
+  manualConfigButton.click();
+
+  const protocolSelectTemplate = dialog.querySelector(
+    "#emailProtocolSelectSubview"
+  );
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    protocolSelectTemplate
+  );
+
+  await subtest_select_protocol_and_continue(dialog, "microsoft");
+
+  const exchangeSettingsSubview = dialog.querySelector(
+    "#emailExchangeSettingsSubview"
+  );
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    exchangeSettingsSubview
+  );
+
+  const serviceURL = exchangeSettingsSubview.querySelector("#serviceURL");
+  const serviceURLInput = serviceURL.querySelector("input");
+  const exchangeSettingsCompleted = BrowserTestUtils.waitForEvent(
+    exchangeSettingsSubview,
+    "config-updated",
+    false,
+    event => event.detail.completed
+  );
+  EventUtils.synthesizeMouseAtCenter(serviceURLInput, {});
+  EventUtils.sendString(
+    "https://outlook.office365.com/EWS/Exchange.asmx",
+    window
+  );
+  await exchangeSettingsCompleted;
+
+  const footerForward = dialog.querySelector("#emailFooter #forward");
+  Assert.ok(!footerForward.disabled, "Continue button should be enabled");
+  EventUtils.synthesizeMouseAtCenter(footerForward, {});
+
+  const exchangeTypeSubview = dialog.querySelector("#emailExchangeTypeSubview");
+  await BrowserTestUtils.waitForAttributeRemoval("hidden", exchangeTypeSubview);
+
+  Assert.equal(
+    exchangeTypeSubview.querySelector("#exchangeTypeUsername").value,
+    "badtest@example.localhost",
+    "The Exchange type form should use the configured email as the username"
+  );
+
+  const ewsCard = exchangeTypeSubview.querySelector(
+    'account-hub-radio-card-large[value="ews"]'
+  );
+  EventUtils.synthesizeMouseAtCenter(ewsCard, {});
+
+  const authenticationSelect = exchangeTypeSubview.querySelector(
+    "#exchangeTypeAuthentication"
+  );
+  authenticationSelect.value = String(Ci.nsMsgAuthMethod.passwordCleartext);
+  authenticationSelect.select.dispatchEvent(
+    new Event("change", { bubbles: true })
+  );
+
+  Assert.ok(!footerForward.disabled, "Continue button should be enabled");
+  EventUtils.synthesizeMouseAtCenter(footerForward, {});
+
+  const passwordSubview = dialog.querySelector("#emailPasswordSubview");
+  await BrowserTestUtils.waitForAttributeRemoval("hidden", passwordSubview);
+  Assert.ok(
+    BrowserTestUtils.isHidden(exchangeTypeSubview),
+    "Submitting the Exchange type form should move to the password step"
+  );
+
+  await subtest_close_account_hub_dialog(dialog, passwordSubview);
+  await cleanupManualConfigPref();
+});
+
+add_task(
+  async function test_exchange_type_full_account_creation_pref_enabled() {
+    await enableManualConfigPref();
+    const existingOutgoingServerKeys = new Set(
+      MailServices.outgoingServer.servers.map(server => server.key)
+    );
+    const ewsServer = await ServerTestUtils.createServer({
+      type: "ews",
+      options: {
+        username: EXCHANGE_TEST_EMAIL,
+        password: EXCHANGE_TEST_PASSWORD,
+      },
+      hostname: "exchange.test",
+      port: 80,
+    });
+    let account;
+    let currentStep;
+    let dialog;
+
+    try {
+      dialog = await subtest_open_account_hub_dialog();
+
+      const emailTemplate = dialog.querySelector("email-auto-form");
+      const nameInput = emailTemplate.querySelector("#realName");
+      const emailInput = emailTemplate.querySelector("#email");
+
+      // Ensure fields are empty.
+      nameInput.value = "";
+      emailInput.value = "";
+
+      await fillUserInfo(
+        nameInput,
+        emailInput,
+        "Test User",
+        EXCHANGE_TEST_EMAIL
+      );
+
+      const manualConfigButton = emailTemplate.querySelector(
+        "#manualConfiguration"
+      );
+      await TestUtils.waitForCondition(
+        () => BrowserTestUtils.isVisible(manualConfigButton),
+        "Manual config button should be visible"
+      );
+      manualConfigButton.click();
+
+      const protocolSelectTemplate = dialog.querySelector(
+        "#emailProtocolSelectSubview"
+      );
+      await BrowserTestUtils.waitForAttributeRemoval(
+        "hidden",
+        protocolSelectTemplate
+      );
+      currentStep = protocolSelectTemplate;
+
+      await subtest_select_protocol_and_continue(dialog, "microsoft");
+
+      const exchangeSettingsSubview = dialog.querySelector(
+        "#emailExchangeSettingsSubview"
+      );
+      await BrowserTestUtils.waitForAttributeRemoval(
+        "hidden",
+        exchangeSettingsSubview
+      );
+      currentStep = exchangeSettingsSubview;
+
+      const serviceURL = exchangeSettingsSubview.querySelector("#serviceURL");
+      const serviceURLInput = serviceURL.querySelector("input");
+      const exchangeSettingsCompleted = BrowserTestUtils.waitForEvent(
+        exchangeSettingsSubview,
+        "config-updated",
+        false,
+        event => event.detail.completed
+      );
+      EventUtils.synthesizeMouseAtCenter(serviceURLInput, {});
+      EventUtils.sendString(EXCHANGE_TEST_URL, window);
+      await exchangeSettingsCompleted;
+
+      const footerForward = dialog.querySelector("#emailFooter #forward");
+      Assert.ok(!footerForward.disabled, "Continue button should be enabled");
+      EventUtils.synthesizeMouseAtCenter(footerForward, {});
+
+      const exchangeTypeSubview = dialog.querySelector(
+        "#emailExchangeTypeSubview"
+      );
+      await BrowserTestUtils.waitForAttributeRemoval(
+        "hidden",
+        exchangeTypeSubview
+      );
+      currentStep = exchangeTypeSubview;
+
+      Assert.equal(
+        exchangeTypeSubview.querySelector("#exchangeTypeUsername").value,
+        EXCHANGE_TEST_EMAIL,
+        "The Exchange type form should use the configured email as the username"
+      );
+
+      const ewsCard = exchangeTypeSubview.querySelector(
+        'account-hub-radio-card-large[value="ews"]'
+      );
+      EventUtils.synthesizeMouseAtCenter(ewsCard, {});
+
+      const authenticationSelect = exchangeTypeSubview.querySelector(
+        "#exchangeTypeAuthentication"
+      );
+      authenticationSelect.value = String(Ci.nsMsgAuthMethod.passwordCleartext);
+      authenticationSelect.select.dispatchEvent(
+        new Event("change", { bubbles: true })
+      );
+
+      Assert.ok(!footerForward.disabled, "Continue button should be enabled");
+      EventUtils.synthesizeMouseAtCenter(footerForward, {});
+
+      const passwordSubview = dialog.querySelector("#emailPasswordSubview");
+      await BrowserTestUtils.waitForAttributeRemoval("hidden", passwordSubview);
+      currentStep = passwordSubview;
+      await fillPasswordInput(passwordSubview, EXCHANGE_TEST_PASSWORD);
+
+      const accountPromise = waitForAccountByEmail(EXCHANGE_TEST_EMAIL);
+      Assert.ok(!footerForward.disabled, "Continue button should be enabled");
+      EventUtils.synthesizeMouseAtCenter(footerForward, {});
+      account = await accountPromise;
+
+      // Creating an account with no address books and calendars should lead to
+      // the success view.
+      const successStep = dialog.querySelector("email-added-success");
+      await BrowserTestUtils.waitForAttributeRemoval("hidden", successStep);
+      currentStep = successStep;
+
+      const identity = account.defaultIdentity;
+      const incoming = account.incomingServer;
+      Assert.equal(incoming.type, "ews", "Should create an EWS account");
+      Assert.equal(
+        incoming.username,
+        EXCHANGE_TEST_EMAIL,
+        "Should save the Exchange username"
+      );
+      Assert.equal(
+        incoming.authMethod,
+        Ci.nsMsgAuthMethod.passwordCleartext,
+        "Should save the selected Exchange authentication method"
+      );
+      Assert.equal(
+        incoming.getStringValue("ews_url"),
+        EXCHANGE_TEST_URL,
+        "Should save the manually configured Exchange URL"
+      );
+      Assert.equal(
+        identity.fullName,
+        "Test User",
+        "Should save the configured real name"
+      );
+      Assert.equal(
+        identity.email,
+        EXCHANGE_TEST_EMAIL,
+        "Should save the configured email address"
+      );
+    } finally {
+      if (account) {
+        MailServices.accounts.removeAccount(account);
+      }
+      for (const outgoingServer of Array.from(
+        MailServices.outgoingServer.servers
+      )) {
+        if (!existingOutgoingServerKeys.has(outgoingServer.key)) {
+          MailServices.outgoingServer.deleteServer(outgoingServer);
+        }
+      }
+      ewsServer.stop();
+      await Services.logins.removeAllLoginsAsync();
+      if (dialog?.open && currentStep) {
+        await subtest_close_account_hub_dialog(dialog, currentStep);
+      }
+      await subtest_clear_status_bar();
+      await cleanupManualConfigPref();
+    }
+  }
+);
+
+add_task(
+  async function test_exchange_type_advanced_configuration_pref_enabled() {
+    await enableManualConfigPref();
+
+    const existingOutgoingServerKeys = new Set(
+      MailServices.outgoingServer.servers.map(server => server.key)
+    );
+    const tabmail = document.getElementById("tabmail");
+    let account;
+    let accountTab;
+
+    try {
+      const dialog = await subtest_open_account_hub_dialog();
+      const emailTemplate = dialog.querySelector("email-auto-form");
+      const nameInput = emailTemplate.querySelector("#realName");
+      const emailInput = emailTemplate.querySelector("#email");
+
+      // Ensure fields are empty.
+      nameInput.value = "";
+      emailInput.value = "";
+
+      await fillInvalidUserInfo(nameInput, emailInput);
+
+      const manualConfigButton = emailTemplate.querySelector(
+        "#manualConfiguration"
+      );
+      await TestUtils.waitForCondition(
+        () => BrowserTestUtils.isVisible(manualConfigButton),
+        "Manual config button should be visible"
+      );
+      manualConfigButton.click();
+
+      const protocolSelectTemplate = dialog.querySelector(
+        "#emailProtocolSelectSubview"
+      );
+      await BrowserTestUtils.waitForAttributeRemoval(
+        "hidden",
+        protocolSelectTemplate
+      );
+
+      await subtest_select_protocol_and_continue(dialog, "microsoft");
+
+      const exchangeSettingsSubview = dialog.querySelector(
+        "#emailExchangeSettingsSubview"
+      );
+      await BrowserTestUtils.waitForAttributeRemoval(
+        "hidden",
+        exchangeSettingsSubview
+      );
+
+      const serviceURL = exchangeSettingsSubview.querySelector("#serviceURL");
+      const serviceURLInput = serviceURL.querySelector("input");
+      const exchangeSettingsCompleted = BrowserTestUtils.waitForEvent(
+        exchangeSettingsSubview,
+        "config-updated",
+        false,
+        event => event.detail.completed
+      );
+      EventUtils.synthesizeMouseAtCenter(serviceURLInput, {});
+      EventUtils.sendString(
+        "https://outlook.office365.com/EWS/Exchange.asmx",
+        window
+      );
+      await exchangeSettingsCompleted;
+
+      const footerForward = dialog.querySelector("#emailFooter #forward");
+      Assert.ok(!footerForward.disabled, "Continue button should be enabled");
+      EventUtils.synthesizeMouseAtCenter(footerForward, {});
+
+      const exchangeTypeSubview = dialog.querySelector(
+        "#emailExchangeTypeSubview"
+      );
+      await BrowserTestUtils.waitForAttributeRemoval(
+        "hidden",
+        exchangeTypeSubview
+      );
+
+      const ewsCard = exchangeTypeSubview.querySelector(
+        'account-hub-radio-card-large[value="ews"]'
+      );
+      EventUtils.synthesizeMouseAtCenter(ewsCard, {});
+
+      const authenticationSelect = exchangeTypeSubview.querySelector(
+        "#exchangeTypeAuthentication"
+      );
+      authenticationSelect.value = String(Ci.nsMsgAuthMethod.passwordCleartext);
+      authenticationSelect.select.dispatchEvent(
+        new Event("change", { bubbles: true })
+      );
+
+      const oldTab = tabmail.selectedTab;
+      const promptPromise = BrowserTestUtils.promiseAlertDialog("accept");
+      const dialogClosedPromise = BrowserTestUtils.waitForEvent(
+        dialog,
+        "close"
+      );
+      exchangeTypeSubview
+        .querySelector("#advancedConfigurationExchange")
+        .click();
+
+      await promptPromise;
+      await dialogClosedPromise;
+      accountTab = tabmail.selectedTab;
+
+      await TestUtils.waitForCondition(
+        () => accountTab != oldTab,
+        "The tab should change to the account settings tab"
+      );
+      await TestUtils.waitForCondition(
+        () => !!accountTab.browser.contentWindow.currentAccount,
+        "The new account should have been created"
+      );
+
+      account = accountTab.browser.contentWindow.currentAccount;
+      const incoming = account.incomingServer;
+      Assert.equal(incoming.type, "ews", "Should create an EWS account");
+      Assert.equal(
+        incoming.username,
+        "badtest@example.localhost",
+        "Should save the Exchange username"
+      );
+      Assert.equal(
+        incoming.authMethod,
+        Ci.nsMsgAuthMethod.passwordCleartext,
+        "Should save the selected Exchange authentication method"
+      );
+      Assert.equal(
+        incoming.getStringValue("ews_url"),
+        "https://outlook.office365.com/EWS/Exchange.asmx",
+        "Should save the Exchange URL"
+      );
+    } finally {
+      if (accountTab && tabmail.tabInfo.includes(accountTab)) {
+        tabmail.closeTab(accountTab);
+      }
+      if (account) {
+        MailServices.accounts.removeAccount(account);
+      }
+      for (const outgoingServer of Array.from(
+        MailServices.outgoingServer.servers
+      )) {
+        if (!existingOutgoingServerKeys.has(outgoingServer.key)) {
+          MailServices.outgoingServer.deleteServer(outgoingServer);
+        }
+      }
+      await subtest_clear_status_bar();
+      await cleanupManualConfigPref();
+    }
+  }
+);
+
+async function enableManualConfigPref() {
+  await SpecialPowers.pushPrefEnv({
+    set: [[MANUAL_CONFIG_PREF, true]],
+  });
+  manualConfigPrefPushed = true;
+}
+
+async function cleanupManualConfigPref() {
+  if (!manualConfigPrefPushed) {
+    return;
+  }
+  manualConfigPrefPushed = false;
+  await SpecialPowers.popPrefEnv();
+}
+
 async function fillInvalidUserInfo(nameInput, emailInput) {
+  await fillUserInfo(nameInput, emailInput, "Test User", GSSAPI_TEST_EMAIL);
+}
+
+async function fillUserInfo(nameInput, emailInput, name, email) {
   EventUtils.synthesizeMouseAtCenter(nameInput, {});
 
   let inputEvent = BrowserTestUtils.waitForEvent(
     nameInput,
     "input",
     false,
-    event => event.target.value === "Test User"
+    event => event.target.value === name
   );
-  EventUtils.sendString("Test User", window);
+  EventUtils.sendString(name, window);
   await inputEvent;
 
   const focusEvent = BrowserTestUtils.waitForEvent(emailInput, "focus");
@@ -1117,10 +1721,49 @@ async function fillInvalidUserInfo(nameInput, emailInput) {
     emailInput,
     "input",
     false,
-    event => event.target.value === "badtest@example.localhost"
+    event => event.target.value === email
   );
-  EventUtils.sendString("badtest@example.localhost", window);
+  EventUtils.sendString(email, window);
   await inputEvent;
+}
+
+async function fillPasswordInput(passwordStep, password) {
+  const passwordInput = passwordStep.querySelector("#password");
+
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isVisible(passwordInput),
+    "The password form input should be visible."
+  );
+  EventUtils.synthesizeMouseAtCenter(passwordInput, {});
+
+  const inputEvent = BrowserTestUtils.waitForEvent(
+    passwordInput,
+    "input",
+    true,
+    event => event.target.value === password
+  );
+  EventUtils.sendString(password, window);
+  await inputEvent;
+}
+
+function waitForAccountByEmail(email) {
+  return new Promise(resolve => {
+    const listener = {
+      onServerLoaded() {
+        const matchingAccount = MailServices.accounts.accounts.find(
+          account => account.defaultIdentity?.email === email
+        );
+        if (matchingAccount) {
+          MailServices.accounts.removeIncomingServerListener(listener);
+          resolve(matchingAccount);
+        }
+      },
+      onServerUnloaded() {},
+      onServerChanged() {},
+    };
+    MailServices.accounts.addIncomingServerListener(listener);
+    listener.onServerLoaded();
+  });
 }
 
 async function cleanupGssapiTest() {
@@ -1145,4 +1788,52 @@ async function cleanupGssapiTest() {
   }
   gssapiDialog = null;
   gssapiCurrentStep = null;
+}
+
+async function subtest_select_protocol_and_continue(dialog, protocol) {
+  await subtest_select_protocol(dialog, protocol);
+
+  const footerForward = dialog.querySelector("#emailFooter #forward");
+  EventUtils.synthesizeMouseAtCenter(footerForward, {});
+}
+
+async function subtest_select_protocol(dialog, protocol) {
+  const protocolSelectTemplate = dialog.querySelector(
+    "#emailProtocolSelectSubview"
+  );
+  const protocolInput = protocolSelectTemplate.querySelector(
+    `input[name="protocol-select"][value="${protocol}"]`
+  );
+
+  EventUtils.synthesizeMouseAtCenter(protocolInput, {});
+  Assert.ok(protocolInput.checked, `${protocol} should be selected`);
+
+  const footerForward = dialog.querySelector("#emailFooter #forward");
+  Assert.ok(!footerForward.disabled, "Continue button should be enabled");
+}
+
+function subtest_assert_protocol_select_chrome(dialog, protocolSelectTemplate) {
+  const footerForward = dialog.querySelector("#emailFooter #forward");
+  Assert.equal(
+    document.l10n.getAttributes(footerForward).id,
+    "account-hub-email-set-up-account-button",
+    "The protocol select screen should use the set up account forward button"
+  );
+  const protocolSelectHeader =
+    protocolSelectTemplate.shadowRoot.querySelector("account-hub-header");
+  const notification = protocolSelectHeader.shadowRoot.querySelector(
+    "#emailFormNotification"
+  );
+  const notificationTitle = protocolSelectHeader.shadowRoot.querySelector(
+    "#emailFormNotificationTitle .localized-title"
+  );
+  Assert.equal(
+    document.l10n.getAttributes(notificationTitle).id,
+    "account-hub-email-protocol-select-notification",
+    "The protocol select screen should show the required information notification"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(notification),
+    "The protocol select screen should show the notification bar"
+  );
 }

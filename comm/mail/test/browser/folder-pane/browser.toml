@@ -30,6 +30,8 @@ skip-if = [
   "true", # TODO
 ]
 
+["browser_dragDropAttachedMessages.js"]
+
 ["browser_folderNamesInRecentMode.js"]
 skip-if = [
   "true", # TODO

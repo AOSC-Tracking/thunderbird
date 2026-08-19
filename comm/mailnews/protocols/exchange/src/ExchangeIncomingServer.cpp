@@ -544,7 +544,8 @@ NS_IMETHODIMP ExchangeIncomingServer::GetPassword(nsAString& password) {
   // takes care of updating `m_password`.
   nsAutoCString value;
   MOZ_TRY(mPasswordModule->GetCachedPassword(value));
-  if (value.IsEmpty() && authMethod == nsMsgAuthMethod::passwordCleartext) {
+  if (value.IsEmpty() && (authMethod == nsMsgAuthMethod::passwordCleartext ||
+                          authMethod == nsMsgAuthMethod::NTLM)) {
     MOZ_TRY(GetPasswordWithoutUI());
   }
 
@@ -724,7 +725,8 @@ NS_IMETHODIMP ExchangeIncomingServer::GetProtocolClient(
   return NS_OK;
 }
 
-nsresult ExchangeIncomingServer::GetTrashFolder(nsIMsgFolder** trashFolder) {
+NS_IMETHODIMP
+ExchangeIncomingServer::GetTrashFolder(nsIMsgFolder** trashFolder) {
   NS_ENSURE_ARG_POINTER(trashFolder);
 
   *trashFolder = nullptr;
@@ -894,13 +896,21 @@ nsresult GetDetailsForHostname(ExchangeIncomingServer* server,
                                ExchangeOAuth2CustomDetails** details) {
   NS_ENSURE_ARG_POINTER(details);
 
+  nsAutoCString type;
+  nsresult rv = server->GetType(type);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   nsAutoCString hostname;
-  nsresult rv = server->GetHostname(hostname);
+  rv = server->GetHostname(hostname);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAutoCString username;
+  rv = server->GetUsername(username);
   NS_ENSURE_SUCCESS(rv, rv);
 
   RefPtr<ExchangeOAuth2CustomDetails> result;
-  rv = ExchangeOAuth2CustomDetails::ForHostname(hostname,
-                                                getter_AddRefs(result));
+  rv = ExchangeOAuth2CustomDetails::ForAccount(type, hostname, username,
+                                                       getter_AddRefs(result));
   NS_ENSURE_SUCCESS(rv, rv);
 
   result.forget(details);

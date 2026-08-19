@@ -42,7 +42,6 @@
 #include "nsIMessenger.h"
 #include "nsIDocShell.h"
 #include "nsIPrompt.h"
-#include "nsIPop3URL.h"
 #include "nsIMsgMailSession.h"
 #include "nsNetCID.h"
 #include "nsISpamSettings.h"
@@ -247,8 +246,8 @@ NS_IMETHODIMP nsMsgLocalMailFolder::ParseFolder(nsIMsgWindow* window,
                         prettyPath.get(), static_cast<uint32_t>(rv));
     NS_WARNING(msg.get());
     msg.Append("\nRepairing the folder may fix this issue."_ns);
-    MsgLogToConsole4(NS_ConvertUTF8toUTF16(msg), nsCString(__FILE__), __LINE__,
-                     nsIScriptError::errorFlag);
+    MsgLogToConsole4(NS_ConvertUTF8toUTF16(msg), nsDependentCString(__FILE__),
+                     __LINE__, nsIScriptError::errorFlag);
     if (listener) {
       // Avoid synchronous re-entrancy: notify the listener via the event loop
       // to ensure the initiating caller has returned and cleared the stack.
@@ -2213,15 +2212,28 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
   mCopyState->m_LineReader.Flush(
       std::bind(&nsMsgLocalMailFolder::CopyLine, this, std::placeholders::_1));
 
+  // Committing a header is only correct once the parser has finalized it, which
+  // happens at the blank line between headers and body. An empty, headerless,
+  // or truncated source never reaches that point, so its header is never parsed
+  // and carries no date (rendering as 1970). Treat such input as a failed copy
+  // and discard it rather than persisting an empty, dateless placeholder.
+  if (aCopySucceeded && !mCopyState->m_writeFailed &&
+      mCopyState->m_parseMsgState) {
+    nsMailboxParseState parseState;
+    mCopyState->m_parseMsgState->GetState(&parseState);
+    if (parseState == nsIMsgParseMailMsgState::ParseHeadersState) {
+      // Mark the copy as failed and let the shared cleanup path below discard
+      // the in-progress message.
+      aCopySucceeded = false;
+    }
+  }
+
   // we are the destination folder for a move/copy
   nsresult rv = aCopySucceeded ? NS_OK : NS_ERROR_FAILURE;
 
   if (!aCopySucceeded || mCopyState->m_writeFailed) {
     if (mCopyState->m_fileStream) {
-      if (mCopyState->m_curDstKey != nsMsgKey_None) {
-        mCopyState->m_msgStore->DiscardNewMessage(this,
-                                                  mCopyState->m_fileStream);
-      }
+      mCopyState->m_msgStore->DiscardNewMessage(this, mCopyState->m_fileStream);
       mCopyState->m_fileStream = nullptr;
     }
 
@@ -2695,8 +2707,13 @@ nsresult nsMsgLocalMailFolder::CopyMessagesTo(nsTArray<nsMsgKey>& keyArray,
         new CopyMessageStreamListener(this, isMove);
 
     nsCOMPtr<nsIURI> dummyNull;
+    // Pass moveMessage=false to the source message service to prevent it
+    // from independently deleting source messages (e.g. IMAP's
+    // nsImapOnlineToOfflineMove action). The destination (this local folder)
+    // handles source deletion in EndMove() after confirming the copy
+    // succeeded, which correctly gates on errors like "out of space".
     rv = mCopyState->m_messageService->CopyMessages(
-        keyArray, srcFolder, streamListener, isMove, nullptr, aMsgWindow,
+        keyArray, srcFolder, streamListener, false, nullptr, aMsgWindow,
         getter_AddRefs(dummyNull));
   }
 
@@ -2731,7 +2748,12 @@ nsresult nsMsgLocalMailFolder::CopyMessageTo(nsISupports* message,
     RefPtr<CopyMessageStreamListener> streamListener =
         new CopyMessageStreamListener(this, isMove);
 
-    rv = mCopyState->m_messageService->CopyMessage(uri, streamListener, isMove,
+    // Pass moveMessage=false to the source message service to prevent it
+    // from independently deleting source messages (e.g. IMAP's
+    // nsImapOnlineToOfflineMove action). The destination (this local folder)
+    // handles source deletion in EndMove() after confirming the copy
+    // succeeded, which correctly gates on errors like "out of space".
+    rv = mCopyState->m_messageService->CopyMessage(uri, streamListener, false,
                                                    nullptr, aMsgWindow);
   }
 
@@ -2968,28 +2990,6 @@ nsresult nsMsgLocalMailFolder::CreateBaseMessageURI(const nsACString& aURI) {
 }
 
 NS_IMETHODIMP
-nsMsgLocalMailFolder::OnStartRunningUrl(nsIURI* aUrl) {
-  nsresult rv;
-  nsCOMPtr<nsIPop3URL> popurl = do_QueryInterface(aUrl, &rv);
-  if (NS_SUCCEEDED(rv)) {
-    nsAutoCString aSpec;
-    rv = aUrl->GetSpec(aSpec);
-    NS_ENSURE_SUCCESS(rv, rv);
-    if (strstr(aSpec.get(), "uidl=")) {
-      nsCOMPtr<nsIPop3Sink> popsink;
-      rv = popurl->GetPop3Sink(getter_AddRefs(popsink));
-      if (NS_SUCCEEDED(rv)) {
-        popsink->SetBaseMessageUri(mBaseMessageURI);
-        nsCString messageuri;
-        popurl->GetMessageUri(messageuri);
-        popsink->SetOrigMessageUri(messageuri);
-      }
-    }
-  }
-  return nsMsgDBFolder::OnStartRunningUrl(aUrl);
-}
-
-NS_IMETHODIMP
 nsMsgLocalMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
   // If we just finished a DownloadMessages call, reset...
   if (mDownloadInProgress) {
@@ -3000,10 +3000,9 @@ nsMsgLocalMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
 
   if (mFlags & nsMsgFolderFlags::Inbox) {
     // if we are the inbox and running pop url
-    nsresult rv;
-    nsCOMPtr<nsIPop3URL> popurl = do_QueryInterface(aUrl, &rv);
-    (void)popurl;
-    if (NS_SUCCEEDED(rv)) {
+    bool isPop = false, isPop3 = false;
+    if ((NS_SUCCEEDED(aUrl->SchemeIs("pop", &isPop)) && isPop) ||
+        (NS_SUCCEEDED(aUrl->SchemeIs("pop3", &isPop3)) && isPop3)) {
       nsCOMPtr<nsIMsgIncomingServer> server;
       GetServer(getter_AddRefs(server));
       // this is the deferred to account, in the global inbox case

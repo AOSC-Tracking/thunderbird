@@ -384,9 +384,7 @@ interface nsIMsgFolder : nsISupports {
   readonly attribute boolean hasFolderOrSubfolderNewMessages;
 
   /**
-   * Return the first new message in the folder.
-   * If there are no new messages, accessing this will throw an
-   * error.
+   * Return the first new message in the folder, or null if there are none.
    */
   readonly attribute nsIMsgDBHdr firstNewMessage;
 
@@ -514,7 +512,7 @@ interface nsIMsgFolder : nsISupports {
    *
    * @param srcFolder - Source folder of an operation.
    * @param messages - The array of nsIMsgHdrs in source folder which will be
-   *   moved/copied.
+   *   moved/copied. This must be non-empty.
    * @param isMove - false for copy operation, true for move operation.
    * @param msgWindow - Window for notification callbacks, can be null.
    * @param listener - Listener which receives operation notifications.

@@ -45,7 +45,7 @@
 #include "nsIMsgTransactionService.h"
 #include "nsMsgReadStateTxn.h"
 #include "prmem.h"
-#include "nsIPKCS11Token.h"
+#include "ScopedNSSTypes.h"
 #include "nsMsgUtils.h"
 #include "nsIMsgFilterService.h"
 #include "nsDirectoryServiceUtils.h"
@@ -557,16 +557,24 @@ NS_IMETHODIMP nsMsgDBFolder::SetGettingNewMessages(bool gettingNewMessages) {
 }
 
 NS_IMETHODIMP nsMsgDBFolder::GetFirstNewMessage(nsIMsgDBHdr** firstNewMessage) {
-  // If there's not a db then there can't be new messages.  Return failure since
-  // you should use HasNewMessages first.
-  if (!mDatabase) return NS_ERROR_FAILURE;
+  NS_ENSURE_ARG_POINTER(firstNewMessage);
+  *firstNewMessage = nullptr;
 
-  nsresult rv;
+  if (!mDatabase) {
+    return NS_OK;
+  }
+
   nsMsgKey key;
-  rv = mDatabase->GetFirstNew(&key);
-  if (NS_FAILED(rv)) return rv;
+  nsresult rv = mDatabase->GetFirstNew(&key);
+  if (NS_FAILED(rv) || key == nsMsgKey_None) {
+    return NS_OK;
+  }
 
-  return mDatabase->GetMsgHdrForKey(key, firstNewMessage);
+  rv = mDatabase->GetMsgHdrForKey(key, firstNewMessage);
+  if (NS_FAILED(rv)) {
+    *firstNewMessage = nullptr;
+  }
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgDBFolder::ClearNewMessages() {
@@ -2456,7 +2464,6 @@ nsresult nsMsgDBFolder::NotifyHdrsNotBeingClassified() {
 // Returns true if: a) there is no need to prompt or b) the user is already
 // logged in or c) the user logged in successfully.
 bool nsMsgDBFolder::PromptForMasterPasswordIfNecessary() {
-  nsresult rv;
   nsCOMPtr<nsIMsgAccountManager> accountManager =
       mozilla::components::AccountManager::Service();
 
@@ -2467,16 +2474,13 @@ bool nsMsgDBFolder::PromptForMasterPasswordIfNecessary() {
   if (!userNeedsToAuthenticate) return true;
 
   // Do we have a master password?
-  nsCOMPtr<nsIPKCS11Token> token(
-      do_CreateInstance("@mozilla.org/security/internalkeytoken;1"));
-  if (!token) {
+  mozilla::UniquePK11SlotInfo slot(PK11_GetInternalKeySlot());
+  if (!slot) {
     return false;
   }
 
-  bool hasPassword;
-  rv = token->GetHasPassword(&hasPassword);
-  NS_ENSURE_SUCCESS(rv, false);
-
+  bool hasPassword =
+      PK11_NeedLogin(slot.get()) && !PK11_NeedUserInit(slot.get());
   if (!hasPassword) {
     // We don't have a master password, so this function isn't supported,
     // therefore just tell account manager we've authenticated and return true.
@@ -2485,17 +2489,13 @@ bool nsMsgDBFolder::PromptForMasterPasswordIfNecessary() {
   }
 
   // We have a master password, so try and login to the slot.
-  rv = token->Login();
-  if (NS_FAILED(rv)) {
+  if (PK11_Authenticate(slot.get(), true, nullptr) != SECSuccess) {
     // Login failed, so we didn't get a password (e.g. prompt cancelled).
     return false;
   }
 
   // Double-check that we are now logged in
-  bool isLoggedIn;
-  rv = token->GetIsLoggedIn(&isLoggedIn);
-  NS_ENSURE_SUCCESS(rv, false);
-
+  bool isLoggedIn = PK11_IsLoggedIn(slot.get(), nullptr);
   accountManager->SetUserNeedsToAuthenticate(!isLoggedIn);
   return isLoggedIn;
 }
@@ -4009,6 +4009,10 @@ NS_IMETHODIMP nsMsgDBFolder::SetFlag(uint32_t flag) {
 }
 
 NS_IMETHODIMP nsMsgDBFolder::ClearFlag(uint32_t flag) {
+  if (flag & mLockedFlags) {
+    return NS_OK;
+  }
+
   // If calling this function causes us to open the db (i.e., it was not
   // open before), we're going to close the db before returning.
   bool dbWasOpen = mDatabase != nullptr;
@@ -4037,6 +4041,10 @@ NS_IMETHODIMP nsMsgDBFolder::GetFlag(uint32_t flag, bool* _retval) {
 }
 
 NS_IMETHODIMP nsMsgDBFolder::ToggleFlag(uint32_t flag) {
+  if (flag & mLockedFlags) {
+    return NS_OK;
+  }
+
   mFlags ^= flag;
   OnFlagChange(flag);
 
@@ -4069,6 +4077,8 @@ NS_IMETHODIMP nsMsgDBFolder::OnFlagChange(uint32_t flag) {
 }
 
 NS_IMETHODIMP nsMsgDBFolder::SetFlags(uint32_t aFlags) {
+  aFlags |= mLockedFlags;
+
   if (mFlags != aFlags) {
     uint32_t changedFlags = aFlags ^ mFlags;
     mFlags = aFlags;
@@ -4986,8 +4996,8 @@ nsresult nsMsgDBFolder::ThrowConfirmationPrompt(nsIMsgWindow* msgWindow,
   nsCOMPtr<nsIPromptService> dlgService(
       do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
-  dlgService->Confirm(domWindow, nullptr, nsString(confirmString).get(),
-                      confirmed);
+  dlgService->Confirm(domWindow, nullptr,
+                      PromiseFlatString(confirmString).get(), confirmed);
   return NS_OK;
 }
 

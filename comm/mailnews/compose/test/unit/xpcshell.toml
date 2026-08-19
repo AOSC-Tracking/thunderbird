@@ -45,6 +45,8 @@ skip-if = [
 
 ["test_messageHeaders.js"]
 
+["test_mimeEncoder.js"]
+
 ["test_nsIMsgCompFields.js"]
 
 ["test_nsMsgCompose1.js"]
@@ -81,6 +83,8 @@ requesttimeoutfactor = 2
 ["test_smtp8bitMime.js"]
 
 ["test_smtpAuthMethods.js"]
+
+["test_smtpCancel.js"]
 
 ["test_smtpClient.js"]
 

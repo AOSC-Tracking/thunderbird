@@ -5,7 +5,6 @@
 use std::ops::Deref;
 
 use base64::prelude::*;
-use cstr::cstr;
 
 use moz_http::{Client, Response};
 use nserror::nsresult;
@@ -154,6 +153,12 @@ pub trait AuthenticationProvider {
     /// Retrieves the password to use if using Basic auth.
     fn password(&self) -> Result<nsString, nsresult>;
 
+    /// Retrieves the hostname for the provider.
+    fn hostname(&self) -> Result<nsCString, nsresult>;
+
+    /// Retrieves the server's type string.
+    fn server_type(&self) -> Result<nsCString, nsresult>;
+
     /// Creates and initializes an OAuth2 module.
     ///
     /// `None` is returned if OAuth2 is not supported for the provider's domain.
@@ -161,9 +166,6 @@ pub trait AuthenticationProvider {
         &self,
         override_details: &IOAuth2CustomDetails,
     ) -> Result<Option<RefPtr<msgIOAuth2Module>>, nsresult>;
-
-    /// Retrieves the identifer to use for collecting custom OAuth details for the provider.
-    fn oauth_details_identifier(&self) -> Result<nsCString, nsresult>;
 
     /// Creates an instance of [`Credentials`] from this provider.
     fn get_credentials(&self) -> Result<Credentials, nsresult> {
@@ -174,15 +176,22 @@ pub trait AuthenticationProvider {
             }),
             nsMsgAuthMethod::OAuth2 => {
                 // Get the OAuth details.
-                let oauth_details_identifier = self.oauth_details_identifier()?;
-                let interop_factory = create_instance::<IExchangeLanguageInteropFactory>(cstr!(
-                    "@mozilla.org/messenger/exchange-interop;1"
-                ))
+                let server_type = self.server_type()?;
+                let hostname = self.hostname()?;
+                let username = self.username()?;
+                let interop_factory = create_instance::<IExchangeLanguageInteropFactory>(
+                    c"@mozilla.org/messenger/exchange-interop;1",
+                )
                 .ok_or(Err::<RefPtr<IExchangeLanguageInteropFactory>, _>(
                     nserror::NS_ERROR_FAILURE,
                 ))?;
                 let override_details = getter_addrefs(|p| unsafe {
-                    interop_factory.CreateOAuth2Details(&raw const *oauth_details_identifier, p)
+                    interop_factory.CreateOAuth2Details(
+                        &raw const *server_type,
+                        &raw const *hostname,
+                        &raw const *username,
+                        p,
+                    )
                 })?;
 
                 // Ensure the OAuth2 module indicated it can support this provider.
@@ -235,7 +244,15 @@ impl AuthenticationProvider for nsIMsgIncomingServer {
         Ok(password)
     }
 
-    fn oauth_details_identifier(&self) -> Result<nsCString, nsresult> {
+    fn server_type(&self) -> Result<nsCString, nsresult> {
+        let mut server_type = nsCString::new();
+
+        unsafe { self.GetType(&raw mut *server_type) }.to_result()?;
+
+        Ok(server_type)
+    }
+
+    fn hostname(&self) -> Result<nsCString, nsresult> {
         let mut hostname = nsCString::from("");
         unsafe { self.GetHostname(&raw mut *hostname) }.to_result()?;
         Ok(hostname)
@@ -246,7 +263,7 @@ impl AuthenticationProvider for nsIMsgIncomingServer {
         override_details: &IOAuth2CustomDetails,
     ) -> Result<Option<RefPtr<msgIOAuth2Module>>, nsresult> {
         let oauth2_module =
-            create_instance::<msgIOAuth2Module>(cstr!("@mozilla.org/mail/oauth2-module;1")).ok_or(
+            create_instance::<msgIOAuth2Module>(c"@mozilla.org/mail/oauth2-module;1").ok_or(
                 Err::<RefPtr<msgIOAuth2Module>, _>(nserror::NS_ERROR_FAILURE),
             )?;
 
@@ -289,7 +306,15 @@ impl AuthenticationProvider for nsIMsgOutgoingServer {
         Ok(password)
     }
 
-    fn oauth_details_identifier(&self) -> Result<nsCString, nsresult> {
+    fn server_type(&self) -> Result<nsCString, nsresult> {
+        let mut server_type = nsCString::new();
+
+        unsafe { self.GetType(&raw mut *server_type) }.to_result()?;
+
+        Ok(server_type)
+    }
+
+    fn hostname(&self) -> Result<nsCString, nsresult> {
         let uri = getter_addrefs(|p| unsafe { self.GetServerURI(p) })?;
         let mut hostname = nsCString::from("");
         unsafe { uri.GetHost(&raw mut *hostname) }.to_result()?;
@@ -301,7 +326,7 @@ impl AuthenticationProvider for nsIMsgOutgoingServer {
         override_details: &IOAuth2CustomDetails,
     ) -> Result<Option<RefPtr<msgIOAuth2Module>>, nsresult> {
         let oauth2_module =
-            create_instance::<msgIOAuth2Module>(cstr!("@mozilla.org/mail/oauth2-module;1")).ok_or(
+            create_instance::<msgIOAuth2Module>(c"@mozilla.org/mail/oauth2-module;1").ok_or(
                 Err::<RefPtr<msgIOAuth2Module>, _>(nserror::NS_ERROR_FAILURE),
             )?;
 

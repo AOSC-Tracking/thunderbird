@@ -169,6 +169,30 @@ ExchangeFolder::ExchangeFolder()
 
 ExchangeFolder::~ExchangeFolder() = default;
 
+NS_IMETHODIMP
+ExchangeFolder::SetStringProperty(const char* propertyName,
+                                  const nsACString& propertyValue) {
+  if (!strcmp(propertyName, kExchangeIdProperty)) {
+    // See EXCHANGE_DISTINGUISHED_IDS.
+    mLockedFlags = 0;
+    if (propertyValue.EqualsLiteral("inbox"))
+      mLockedFlags |= nsMsgFolderFlags::Inbox;
+    if (propertyValue.EqualsLiteral("deleteditems"))
+      mLockedFlags |= nsMsgFolderFlags::Trash;
+    if (propertyValue.EqualsLiteral("drafts"))
+      mLockedFlags |= nsMsgFolderFlags::Drafts;
+    if (propertyValue.EqualsLiteral("outbox"))
+      mLockedFlags |= nsMsgFolderFlags::Queue;
+    if (propertyValue.EqualsLiteral("sentitems"))
+      mLockedFlags |= nsMsgFolderFlags::SentMail;
+    if (propertyValue.EqualsLiteral("junkemail"))
+      mLockedFlags |= nsMsgFolderFlags::Junk;
+    if (propertyValue.EqualsLiteral("archive"))
+      mLockedFlags |= nsMsgFolderFlags::Archive;
+  }
+  return nsMsgDBFolder::SetStringProperty(propertyName, propertyValue);
+}
+
 nsresult ExchangeFolder::CreateBaseMessageURI(const nsACString& aURI) {
   nsCOMPtr<nsIURI> folderUri;
   nsresult rv =
@@ -514,6 +538,11 @@ NS_IMETHODIMP ExchangeFolder::UpdateFolder(nsIMsgWindow* aWindow) {
 
 NS_IMETHODIMP ExchangeFolder::Rename(const nsACString& aNewName,
                                      nsIMsgWindow* msgWindow) {
+  // Virtual folders are just a local operation.
+  if (mFlags & nsMsgFolderFlags::Virtual) {
+    return nsMsgDBFolder::Rename(aNewName, msgWindow);
+  }
+
   nsAutoCString currentName;
   nsresult rv = GetName(currentName);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -815,6 +844,13 @@ NS_IMETHODIMP ExchangeFolder::CopyFolder(
     nsIMsgCopyServiceListener* aCopyListener) {
   NS_ENSURE_ARG_POINTER(aSrcFolder);
 
+  // If this is a virtual folder, then it's a pure local copy.
+  uint32_t srcFolderFlags;
+  aSrcFolder->GetFlags(&srcFolderFlags);
+  if (srcFolderFlags & nsMsgFolderFlags::Virtual) {
+    return LocalCopyVirtualFolder(aSrcFolder, this, aIsMoveFolder);
+  }
+
   nsresult rv = NS_OK;
 
   auto notifyFailureOnExit = GuardCopyServiceExit(aSrcFolder, this, rv);
@@ -1109,6 +1145,13 @@ NS_IMETHODIMP ExchangeFolder::DeleteMessages(
 }
 
 NS_IMETHODIMP ExchangeFolder::DeleteSelf(nsIMsgWindow* aWindow) {
+  // If it's a virtual folder, we just need to delete it locally.
+  uint32_t folderFlags;
+  GetFlags(&folderFlags);
+  if (folderFlags & nsMsgFolderFlags::Virtual) {
+    return nsMsgDBFolder::DeleteSelf(aWindow);
+  }
+
   bool deletable = false;
   nsresult rv = GetDeletable(&deletable);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1264,6 +1307,13 @@ NS_IMETHODIMP ExchangeFolder::CompactAll(nsIUrlListener* aListener,
     NS_ENSURE_SUCCESS(rv, rv);
     int64_t expungedBytes = 0;
     for (auto folder : allDescendants) {
+      // Can't compact virtual folders.
+      uint32_t flags;
+      folder->GetFlags(&flags);
+      if (flags & nsMsgFolderFlags::Virtual) {
+        continue;
+      }
+
       // If folder doesn't currently have a DB, expungedBytes might be out of
       // whack. Also the compact might do a folder reparse first, which could
       // change the expungedBytes count (via Expunge flag in
@@ -1316,24 +1366,13 @@ nsresult ExchangeFolder::GetProtocolClient(IExchangeClient** exchangeClient) {
 
 nsresult ExchangeFolder::GetTrashFolder(nsIMsgFolder** result) {
   NS_ENSURE_ARG_POINTER(result);
-  nsCOMPtr<nsIMsgFolder> rootFolder;
 
-  nsresult rv = GetRootFolder(getter_AddRefs(rootFolder));
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  nsresult rv = GetServer(getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIMsgFolder> trashFolder;
-  rootFolder->GetFolderWithFlags(nsMsgFolderFlags::Trash,
-                                 getter_AddRefs(trashFolder));
-
-  // `GetFolderWithFlags()` returns NS_OK even if no folder was found, so we
-  // need to check whether it returned it returned a valid folder.
-  if (!trashFolder) {
-    return NS_ERROR_FAILURE;
-  }
-
-  trashFolder.forget(result);
-
-  return NS_OK;
+  nsCOMPtr<IExchangeIncomingServer> exchangeServer(do_QueryInterface(server));
+  return exchangeServer->GetTrashFolder(result);
 }
 
 nsresult ExchangeFolder::SyncMessages(nsIMsgWindow* window,

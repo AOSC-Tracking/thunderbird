@@ -49,7 +49,7 @@ impl Get {
 }
 impl Operation for Get {
     const METHOD: Method = Method::GET;
-    type Response<'response> = Paginated<MailFolderCollectionResponse<'response>>;
+    type Response = Paginated<MailFolderCollectionResponse>;
     fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let mut params = Serializer::new(String::new());
         if let Some((select, selection)) = self.selection.pair() {
@@ -70,10 +70,8 @@ impl Operation for Get {
                 .parse::<http::uri::Uri>()
                 .unwrap()
         };
-        let request = http::Request::builder()
-            .uri(uri)
-            .method(Self::METHOD)
-            .body(vec![])?;
+        let request = http::Request::builder().uri(uri).method(Self::METHOD);
+        let request = request.body(vec![])?;
         Ok(request)
     }
 }
@@ -102,18 +100,14 @@ impl Filter for Get {
 }
 #[doc = "Create child folder\n\nUse this API to create a new child mailFolder. If you intend a new folder to be hidden, you must set the isHidden property to true on creation.\n\nMore information available via [Microsoft documentation](https://learn.microsoft.com/graph/api/mailfolder-post-childfolders?view=graph-rest-1.0)."]
 #[derive(Debug)]
-pub struct Post<'body> {
+pub struct Post {
     template_expressions: TemplateExpressions,
-    body: OperationBody<MailFolder<'body>>,
+    body: OperationBody<MailFolder>,
     selection: Selection<MailFolderSelection>,
 }
-impl<'body> Post<'body> {
+impl Post {
     #[must_use]
-    pub fn new(
-        endpoint: String,
-        mail_folder_id: String,
-        body: OperationBody<MailFolder<'body>>,
-    ) -> Self {
+    pub fn new(endpoint: String, mail_folder_id: String, body: OperationBody<MailFolder>) -> Self {
         Self {
             template_expressions: TemplateExpressions {
                 endpoint,
@@ -124,9 +118,9 @@ impl<'body> Post<'body> {
         }
     }
 }
-impl Operation for Post<'_> {
+impl Operation for Post {
     const METHOD: Method = Method::POST;
-    type Response<'response> = MailFolder<'response>;
+    type Response = MailFolder;
     fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
         let mut params = Serializer::new(String::new());
         if let Some((select, selection)) = self.selection.pair() {
@@ -150,12 +144,12 @@ impl Operation for Post<'_> {
         let request = http::Request::builder()
             .uri(uri)
             .method(Self::METHOD)
-            .header("Content-Type", content_type)
-            .body(body)?;
+            .header("Content-Type", content_type);
+        let request = request.body(body)?;
         Ok(request)
     }
 }
-impl<'body> Select for Post<'body> {
+impl Select for Post {
     type Properties = MailFolderSelection;
     fn select<P: IntoIterator<Item = Self::Properties>>(&mut self, properties: P) {
         self.selection.select(properties);

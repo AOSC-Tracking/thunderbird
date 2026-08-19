@@ -352,12 +352,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
   // send notification to copy service listener.
   nsresult OnCopyCompleted(nsISupports* srcSupport, nsresult exitCode);
 
-  static nsresult AllocateUidStringFromKeys(const nsTArray<nsMsgKey>& keys,
-                                            nsCString& msgIds);
-  static nsresult BuildIdsAndKeyArray(
-      const nsTArray<RefPtr<nsIMsgDBHdr>>& messages, nsCString& msgIds,
-      nsTArray<nsMsgKey>& keyArray);
-
   // these might end up as an nsIImapMailFolder attribute.
   nsresult SetSupportedUserFlags(uint32_t userFlags);
   nsresult GetSupportedUserFlags(uint32_t* userFlags);
@@ -375,6 +369,7 @@ class nsImapMailFolder : public nsMsgDBFolder,
   void FindUidsToDelete(const nsTArray<ImapUid>& existingUids,
                         nsTArray<ImapUid>& uidsToFetch,
                         nsIImapFlagAndUidState* flagState, uint32_t boxFlags);
+  nsresult HandleUidInvalidation(ImapUid newUidValidity);
   void PrepareToAddHeadersToMailDB(nsIImapProtocol* aProtocol);
   void TweakHeaderFlags(nsIImapProtocol* aProtocol, nsIMsgDBHdr* tweakMe);
 
@@ -554,7 +549,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
   nsTHashMap<nsCStringHashKey, nsMsgKey> m_pseudoHdrs;
 
   nsTArray<ImapUid> m_uidsToFetch;
-  uint32_t m_totalUidsToFetch;
 
   /**
    * delete if appropriate local storage for messages in this folder

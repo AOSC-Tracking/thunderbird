@@ -149,13 +149,6 @@ dialog {
   }
 }
 
-.account-hub-view:not([hidden]) {
-  display: grid;
-  grid-template: "header" min-content "body" 1fr "footer" min-content;
-  text-align: center;
-  z-index: 1;
-}
-
 .account-hub-step {
   grid-area: body;
   display: grid;
@@ -175,11 +168,16 @@ dialog {
   padding-block-end: 2px;
 }
 
-.account-hub-address-book-form {
+.account-hub-address-book-form,
+.account-hub-exchange-settings-form {
   justify-content: start;
 }
 
-.account-hub-view:not([hidden]) {
+.account-hub-view {
+  display: grid;
+  grid-template: "header" min-content "body" 1fr "footer" min-content;
+  text-align: center;
+  z-index: 1;
   max-block-size: 90vh;
   padding-inline: 20px;
   padding-block-start: 40px;
@@ -290,6 +288,7 @@ dialog {
 /* Header */
 
 header {
+  display: flow-root;
   position: relative;
   font-weight: 300;
   font-size: 1.8rem;
@@ -328,7 +327,7 @@ header {
   }
 }
 
-#headerButtonsContainer:not([hidden]) {
+#headerButtonsContainer {
   display: flex;
   align-items: center;
   gap: 3px;
@@ -535,7 +534,8 @@ header {
   }
 
   &.account-select-body,
-  &.credentials-confirmation-body {
+  &.credentials-confirmation-body,
+  &.protocol-select-select-body {
     max-inline-size: 500px;
   }
 
@@ -564,6 +564,31 @@ header {
   &.remote-ab-form-body {
     gap: var(--hub-address-book-remote-form-gap);
   }
+
+  #exchangeTypeForm & {
+    --hub-body-elements-column-gap: calc(5 * var(--space-step));
+    max-inline-size: 644px;
+
+    & .align-self-end {
+      justify-self: end;
+    }
+
+    & .exchange-types {
+      & .recommended-description,
+      & .badge {
+        display: none;
+      }
+      & .recommended {
+        & .recommended-description,
+        & .badge {
+          display: initial;
+        }
+        .legacy-text {
+          display: none;
+        }
+      }
+    }
+  }
 }
 
 .hub-body-column {
@@ -582,6 +607,128 @@ header {
   flex-wrap: wrap;
   justify-content: center;
 }
+
+/* stylelint-disable stylelint-plugin-mozilla/use-design-tokens */
+.account-hub-protocol-select-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 20px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.account-hub-protocol-select-card {
+  position: relative;
+  display: block;
+  inline-size: 148px;
+  block-size: 127px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 1, 2, 0.1);
+  border-radius: 8px;
+
+  &:has(input:checked) {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.14);
+  }
+
+  & input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  & .account-hub-protocol-select-card-content {
+    display: grid;
+    grid-template-rows: 56px 69px;
+    box-sizing: border-box;
+    block-size: 100%;
+    overflow: hidden;
+    border: 1px solid var(--color-primary-default);
+    border-radius: 8px;
+  }
+
+  & .account-hub-protocol-select-card-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    box-sizing: border-box;
+    block-size: 57px;
+    border-radius: 8px 8px 0 0;
+    inline-size: calc(100% + 2px);
+    min-inline-size: 0;
+    padding-inline: 3px;
+    color: var(--color-primary-pressed);
+    background-color: var(--color-primary-soft);
+    font-size: 1.15rem;
+    line-height: 1.1;
+    position: relative;
+    inset-inline-start: -1px;
+    inset-block-start: -1px;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+
+  & input[type="radio"]:checked + .account-hub-protocol-select-card-content .account-hub-protocol-select-card-header {
+    background-color: var(--color-primary-default);
+    color: var(--color-surface-base);
+  }
+
+  & .account-hub-protocol-select-card-icon {
+    content: var(--icon-mail);
+    inline-size: 16px;
+    block-size: 16px;
+    flex: 0 0 auto;
+    -moz-context-properties: fill, stroke;
+    fill: rgb(from var(--color-text-brand) r g b / 20%);
+    stroke: currentcolor;
+  }
+
+  & input[type="radio"]:checked + .account-hub-protocol-select-card-content .account-hub-protocol-select-card-icon {
+    fill: rgb(from var(--color-surface-base) r g b / 20%);
+  }
+
+  & .account-hub-protocol-select-card-body {
+    background: var(--color-surface-base);
+    display: grid;
+    place-items: center;
+    border-radius: 0 0 8px 8px;
+    box-sizing: border-box;
+    inline-size: 100%;
+    min-inline-size: 0;
+    padding: 3px;
+    color: var(--color-text-base);
+    font-size: 1rem;
+    text-align: center;
+    font-weight: 400;
+    overflow-wrap: anywhere;
+  }
+
+  & .account-hub-protocol-select-card-badge {
+    position: absolute;
+    inset-block-start: -10px;
+    inset-inline-start: 50%;
+    transform: translateX(-50%);
+    display: none;
+    padding: 3px 6px;
+    border-radius: 3px;
+    color: var(--color-surface-base);
+    background-color: var(--color-primary-default);
+    font-size: 0.769rem;
+    font-weight: 700;
+    line-height: 1;
+    text-transform: uppercase;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+    z-index: 1;
+  }
+
+  &.recommended .account-hub-protocol-select-card-badge {
+    display: block;
+  }
+}
+/* stylelint-enable stylelint-plugin-mozilla/use-design-tokens */
 
 .button-account {
   inline-size: 170px;
@@ -766,7 +913,7 @@ header {
   }
 }
 
-.account-hub-form-small-comment {
+.account-hub-form-small-comment:not([hidden]) {
   display: inline-block;
   font-size: 0.85rem;
   color: var(--color-text-muted);
@@ -869,7 +1016,6 @@ header {
 }
 
 .account-hub-thundermail-header {
-  margin-block-start: 53px;
   display: none;
   flex-direction: column;
   align-items: center;
@@ -911,10 +1057,21 @@ header {
       vertical-align: middle;
     }
   }
+
+  & .account-hub-thundermail-title {
+    color: var(--color-text-base);
+    font-size: 1.7rem;
+    font-weight: 400;
+    margin-block: 0;
+  }
 }
 
 /* stylelint-disable-next-line media-query-no-invalid */
 @media -moz-pref("mail.accounthub.thundermail.enabled") {
+  :host([hide-title-on-thundermail]) #accountHubHeaderTitle {
+    display: none;
+  }
+
   .account-hub-thundermail-header {
     display: flex;
   }

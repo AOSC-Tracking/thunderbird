@@ -41,26 +41,67 @@ const IgnoredAlarmsStore = {
    */
   maxItemsPerCalendar: 1500,
 
-  _getCache(item) {
-    return item.calendar.getProperty("alarms.ignored")?.split(",") || [];
+  _getCache(calendar) {
+    return calendar.getProperty("alarms.ignored")?.split(",") || [];
+  },
+
+  _entryId(entry) {
+    const sep = entry.lastIndexOf("|");
+    return sep == -1 ? entry : entry.substring(0, sep);
   },
 
   /**
-   * Adds an item to the store. No alarms will be created for this item again.
+   * Adds an item to the store, optionally recording the acknowledgement time so
+   * only alarms at or before it are suppressed (future occurrences still fire).
    *
    * @param {calIItemBase} item
+   * @param {calIDateTime} [ackTime] - Time the alarm was dismissed.
    */
-  add(item) {
-    const cache = this._getCache(item);
+  add(item, ackTime) {
+    const cache = this._getCache(item.calendar);
     const id = item.parentItem.hashId;
-    if (!cache.includes(id)) {
-      if (cache.length >= this.maxItemsPerCalendar) {
-        cache[0] = id;
-      } else {
-        cache.push(id);
-      }
+    const entry = ackTime ? `${id}|${ackTime.icalString}` : id;
+    const index = cache.findIndex(existing => this._entryId(existing) == id);
+    if (index != -1) {
+      cache[index] = entry;
+    } else if (cache.length >= this.maxItemsPerCalendar) {
+      cache[0] = entry;
+    } else {
+      cache.push(entry);
     }
     item.calendar.setProperty("alarms.ignored", cache.join(","));
+  },
+
+  /**
+   * Returns the locally stored acknowledgement time for the item, or null when
+   * it is absent or was stored without one (legacy entries).
+   *
+   * @param {calIItemBase} item
+   * @returns {calIDateTime|null}
+   */
+  getAck(item) {
+    const id = item.parentItem.hashId;
+    for (const entry of this._getCache(item.calendar)) {
+      const sep = entry.lastIndexOf("|");
+      if (sep != -1 && entry.substring(0, sep) == id) {
+        return cal.createDateTime(entry.substring(sep + 1));
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Drops legacy entries stored without an acknowledgement time, which older
+   * builds used to suppress the whole item. Ack-bearing entries are kept.
+   *
+   * @param {calICalendar} calendar
+   */
+  clearLegacy(calendar) {
+    const cache = this._getCache(calendar);
+    const kept = cache.filter(entry => this._entryId(entry) != entry);
+    if (kept.length != cache.length) {
+      calendar.setProperty("alarms.ignored", kept.join(","));
+    }
   },
 
   /**
@@ -70,7 +111,9 @@ const IgnoredAlarmsStore = {
    * @returns {boolean}
    */
   has(item) {
-    return this._getCache(item).includes(item.parentItem.hashId);
+    return this._getCache(item.calendar).some(
+      entry => this._entryId(entry) == item.parentItem.hashId
+    );
   },
 };
 
@@ -90,19 +133,37 @@ export function CalAlarmService() {
     () => this.initAlarms(cal.manager.getCalendars())
   );
 
+  /** @type {calIObserver} */
   this.calendarObserver = {
     QueryInterface: ChromeUtils.generateQI(["calIObserver"]),
     alarmService: this,
 
-    calendarsInBatch: new Set(),
+    /**
+     * Ids of calendars in batch.
+     *
+     * @type {Set<string>}
+     */
+    calendarIdsInBatch: new Set(),
 
     // calIObserver:
+
+    /**
+     * @param {calICalendar} calendar
+     */
     onStartBatch(calendar) {
-      this.calendarsInBatch.add(calendar);
+      this.calendarIdsInBatch.add(calendar.id);
     },
+
+    /**
+     * @param {calICalendar} calendar
+     */
     onEndBatch(calendar) {
-      this.calendarsInBatch.delete(calendar);
+      this.calendarIdsInBatch.delete(calendar.id);
     },
+
+    /**
+     * @param {calICalendar} calendar
+     */
     onLoad(calendar) {
       // ignore any onLoad events until initial getItems() call of startup has finished:
       if (calendar && this.alarmService.mLoadedCalendars[calendar.id]) {
@@ -112,41 +173,63 @@ export function CalAlarmService() {
       }
     },
 
-    onAddItem(aItem) {
+    /**
+     * @param {calIItemBase} item
+     */
+    onAddItem(item) {
       // If we're in a batch, ignore this notification. We're going to reload anyway.
-      if (!this.calendarsInBatch.has(aItem.calendar)) {
-        this.alarmService.addAlarmsForOccurrences(aItem);
+      if (!this.calendarIdsInBatch.has(item.calendar.id)) {
+        this.alarmService.addAlarmsForOccurrences(item);
       }
     },
-    onModifyItem(aNewItem, aOldItem) {
+
+    /**
+     * @param {calIItemBase} newItem
+     * @param {calIItemBase} oldItem
+     */
+    onModifyItem(newItem, oldItem) {
       // If we're in a batch, ignore this notification. We're going to reload anyway.
-      if (this.calendarsInBatch.has(aNewItem.calendar)) {
+      if (this.calendarIdsInBatch.has(newItem.calendar.id)) {
         return;
       }
 
-      if (!aNewItem.recurrenceId) {
+      if (!newItem.recurrenceId) {
         // deleting an occurrence currently calls modifyItem(newParent, *oldOccurrence*)
-        aOldItem = aOldItem.parentItem;
+        oldItem = oldItem.parentItem;
       }
 
-      this.onDeleteItem(aOldItem);
-      this.onAddItem(aNewItem);
+      this.onDeleteItem(oldItem);
+      this.onAddItem(newItem);
     },
-    onDeleteItem(aDeletedItem) {
-      this.alarmService.removeAlarmsForOccurrences(aDeletedItem);
+
+    /**
+     * @param {calIItemBase} item
+     */
+    onDeleteItem(item) {
+      this.alarmService.removeAlarmsForOccurrences(item);
     },
     onError() {},
-    onPropertyChanged(aCalendar, aName) {
-      switch (aName) {
+
+    /**
+     * @param {calICalendar} calendar
+     * @param {string} name
+     */
+    onPropertyChanged(calendar, name) {
+      switch (name) {
         case "suppressAlarms":
         case "disabled":
         case "notifications.times":
-          this.alarmService.initAlarms([aCalendar]);
+          this.alarmService.initAlarms([calendar]);
           break;
       }
     },
-    onPropertyDeleting(aCalendar, aName) {
-      this.onPropertyChanged(aCalendar, aName);
+
+    /**
+     * @param {calICalendar} calendar
+     * @param {string} name
+     */
+    onPropertyDeleting(calendar, name) {
+      this.onPropertyChanged(calendar, name);
     },
   };
 
@@ -307,9 +390,9 @@ CalAlarmService.prototype = {
       }
 
       // The server did not persist our changes for some reason.
-      // Include the item in the ignored list so we skip displaying alarms for
-      // this item in the future.
-      IgnoredAlarmsStore.add(aItem);
+      // Record the ack locally so alarms up to this point stay dismissed while
+      // future occurrences of the item can still fire.
+      IgnoredAlarmsStore.add(aItem, now);
     }
     // if the calendar of the item is r/o, we simple remove the alarm
     // from the list without modifying the item, so this works like
@@ -327,6 +410,29 @@ CalAlarmService.prototype = {
     this.mObservers.delete(aObserver);
   },
 
+  /**
+   * One-time cleanup for bug 2051453: older builds stored ignore-list entries
+   * without an acknowledgement time and then suppressed the item entirely, so a
+   * single dismiss on an ack-stripping server silenced it forever. Drop those
+   * legacy entries so the items re-arm. Skipped when missed alarms are shown, to
+   * avoid surfacing a burst of past alarms.
+   */
+  migrateClearIgnoredAlarms() {
+    if (Services.prefs.getBoolPref("calendar.alarms.ignored.legacyCleared", false)) {
+      return;
+    }
+    // Skip while missed alarms are shown, to avoid surfacing a burst of past
+    // alarms. Leave the flag unset in that case so the cleanup can still run
+    // later if the user turns the preference off.
+    if (Services.prefs.getBoolPref("calendar.alarms.showmissed", false)) {
+      return;
+    }
+    for (const calendar of cal.manager.getCalendars()) {
+      IgnoredAlarmsStore.clearLegacy(calendar);
+    }
+    Services.prefs.setBoolPref("calendar.alarms.ignored.legacyCleared", true);
+  },
+
   startup() {
     if (this.mStarted) {
       return;
@@ -342,6 +448,8 @@ CalAlarmService.prototype = {
     Services.obs.notifyObservers(null, "alarm-service-startup");
 
     cal.manager.addObserver(this.calendarManagerObserver);
+
+    this.migrateClearIgnoredAlarms();
 
     for (const calendar of cal.manager.getCalendars()) {
       this.observeCalendar(calendar);
@@ -412,10 +520,16 @@ CalAlarmService.prototype = {
     this.mStarted = false;
   },
 
+  /**
+   * @param {calICalendar} calendar
+   */
   observeCalendar(calendar) {
     calendar.addObserver(this.calendarObserver);
   },
 
+  /**
+   * @param {calICalendar} calendar
+   */
   unobserveCalendar(calendar) {
     calendar.removeObserver(this.calendarObserver);
     this.disposeCalendarTimers([calendar]);
@@ -423,9 +537,12 @@ CalAlarmService.prototype = {
   },
 
   addAlarmsForItem(aItem) {
-    if ((aItem.isTodo() && aItem.isCompleted) || IgnoredAlarmsStore.has(aItem)) {
-      // If this is a task and it is completed or the id is in the ignored list,
-      // don't add the alarm.
+    if (aItem.isTodo() && aItem.isCompleted) {
+      return;
+    }
+    const ignoredAck = IgnoredAlarmsStore.getAck(aItem);
+    if (IgnoredAlarmsStore.has(aItem) && !ignoredAck) {
+      // Legacy ignored entry with no recorded ack time: suppress entirely.
       return;
     }
 
@@ -496,7 +613,13 @@ CalAlarmService.prototype = {
         // This alarm is in the past and the calendar is writable, so we
         // could snooze or dismiss alarms. See if it has been previously
         // ack'd.
-        const lastAck = aItem.parentItem.alarmLastAck;
+        // Use the most recent acknowledgement: an offline dismiss recorded
+        // locally (ignoredAck) can be newer than a server-persisted alarmLastAck.
+        const parentAck = aItem.parentItem.alarmLastAck;
+        let lastAck = parentAck || ignoredAck;
+        if (parentAck && ignoredAck && ignoredAck.compare(parentAck) > 0) {
+          lastAck = ignoredAck;
+        }
         if (lastAck && lastAck.compare(alarmDate) >= 0) {
           // The alarm was previously dismissed or snoozed, no further
           // action required.
@@ -852,10 +975,16 @@ CalAlarmService.prototype = {
 
   get isLoading() {
     for (const calId in this.mLoadedCalendars) {
+      // The calendar may have been unregistered since it was recorded as
+      // loading, in which case it no longer counts as loading.
+      const calendar = cal.manager.getCalendarById(calId);
+      if (!calendar) {
+        continue;
+      }
       // We need to exclude calendars which failed to load explicitly, to
       // prevent the alarm dialog staying open after dismissing all
       // alarms if there is a network calendar that failed to load.
-      const currentStatus = cal.manager.getCalendarById(calId).getProperty("currentStatus");
+      const currentStatus = calendar.getProperty("currentStatus");
       if (!this.mLoadedCalendars[calId] && Components.isSuccessCode(currentStatus)) {
         return true;
       }

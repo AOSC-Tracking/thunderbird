@@ -88,14 +88,6 @@ tags = ["caldav", "oauth"]
 
 ["test_extract.js"]
 
-["test_extract_parser.js"]
-
-["test_extract_parser_parse.js"]
-
-["test_extract_parser_service.js"]
-
-["test_extract_parser_tokenize.js"]
-
 ["test_filter.js"]
 
 ["test_filter_mixin.js"]
@@ -138,8 +130,6 @@ tags = ["caldav"]
 ["test_relation.js"]
 
 ["test_rfc3339_parser.js"]
-
-["test_startup_service.js"]
 
 ["test_storage.js"]
 

@@ -4,9 +4,13 @@
 
 // EDITS TO THIS FILE WILL BE OVERWRITTEN
 
+pub mod calendar;
+pub mod calendar_collection_response;
 pub mod directory_object;
 pub mod email_address;
 pub mod entity;
+pub mod followup_flag;
+pub mod followup_flag_status;
 pub mod importance;
 pub mod internet_message_header;
 pub mod item_body;

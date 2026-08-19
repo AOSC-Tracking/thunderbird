@@ -62,6 +62,14 @@ impl<T> DeltaResponse<T> {
             Self::NextLink { value, .. } | Self::DeltaLink { value, .. } => value,
         }
     }
+
+    /// [Take](std::mem::take) the value from the response, replacing it with an
+    /// empty value.
+    pub fn extract_response(&mut self) -> Vec<DeltaItem<T>> {
+        match self {
+            Self::NextLink { value, .. } | Self::DeltaLink { value, .. } => std::mem::take(value),
+        }
+    }
 }
 
 /// An item in a [`DeltaResponse`], and therefore an item that has been added,
@@ -136,6 +144,7 @@ pub enum RemovedReason {
 pub struct NextPage<R> {
     _phantom: PhantomData<R>,
     next_uri: http::Uri,
+    max_page_size: Option<u16>,
 }
 
 impl<R> Clone for NextPage<R> {
@@ -143,6 +152,7 @@ impl<R> Clone for NextPage<R> {
         Self {
             _phantom: PhantomData,
             next_uri: self.next_uri.clone(),
+            max_page_size: None,
         }
     }
 }
@@ -160,6 +170,7 @@ impl<R> TryFrom<NextPageWire> for NextPage<R> {
         Ok(Self {
             _phantom: PhantomData,
             next_uri: value.next_link.try_into()?,
+            max_page_size: None,
         })
     }
 }
@@ -168,19 +179,28 @@ impl<R> NextPage<R> {
     pub fn next_uri(&self) -> &http::Uri {
         &self.next_uri
     }
+
+    pub fn set_max_page_size(&mut self, size: u16) {
+        self.max_page_size = Some(size);
+    }
 }
 
 impl<R: for<'a> Deserialize<'a>> Operation for NextPage<R> {
     const METHOD: Method = Method::GET;
-    type Response<'response> = R;
+    type Response = R;
 
     /// Create an [`http::Request`] object from `Self`. See the struct note, the
     /// URI should not be modified.
     fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
-        let req = http::Request::builder()
+        let mut req = http::Request::builder()
             .uri(&self.next_uri)
-            .method(Method::GET)
-            .body(vec![])?;
+            .method(Method::GET);
+
+        if let Some(page_size) = self.max_page_size {
+            req = req.header("Prefer", format!("odata.maxpagesize={page_size}"));
+        }
+
+        let req = req.body(vec![])?;
 
         Ok(req)
     }
@@ -189,13 +209,32 @@ impl<R: for<'a> Deserialize<'a>> Operation for NextPage<R> {
 #[cfg(test)]
 mod tests {
     use super::{DeltaItem, DeltaResponse, Removed, RemovedDeltaItem};
-    use crate::{Error, Operation, PropertyMap, paths::me::mail_folders, types::mail_folder};
-    use std::borrow::Cow;
+    use crate::{
+        Error, Operation, notnull, paths::me::mail_folders, types::entity::Entity,
+        types::mail_folder,
+    };
+
+    fn simple_mail_folder(
+        id: &str,
+        display_name: &str,
+        parent_folder_id: &str,
+    ) -> mail_folder::MailFolder {
+        mail_folder::MailFolder {
+            child_folder_count: notnull!(0),
+            display_name: notnull!(display_name.to_string()),
+            entity: Entity {
+                id: Some(id.to_string()),
+            },
+            is_hidden: notnull!(false),
+            parent_folder_id: notnull!(parent_folder_id.to_string()),
+            total_item_count: notnull!(0),
+            unread_item_count: notnull!(0),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn deserialize_paginated_with_page() -> Result<(), Error> {
-        use mail_folder::MailFolder;
-
         let json = r#"{
     "@odata.context": "https://graph.microsoft.com/v1.0/me/mailFolders",
     "value": [
@@ -223,38 +262,20 @@ mod tests {
     "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders?%24skip=10"
 }"#;
 
-        let parsed: <mail_folders::Get as Operation>::Response<'_> =
+        let parsed: <mail_folders::Get as Operation>::Response =
             serde_json::from_str(json).unwrap();
         let value = vec![
-            MailFolder {
-                properties: PropertyMap(Cow::Owned(serde_json::Map::from_iter([
-                    ("id".to_string(), "AQMkADYAAAIBXQAAAA==".into()),
-                    ("displayName".to_string(), "Archive".into()),
-                    ("parentFolderId".to_string(), "AQMkADYAAAIBCAAAAA==".into()),
-                    ("childFolderCount".to_string(), 0.into()),
-                    ("unreadItemCount".to_string(), 0.into()),
-                    ("totalItemCount".to_string(), 0.into()),
-                    ("sizeInBytes".to_string(), 0.into()),
-                    ("isHidden".to_string(), false.into()),
-                ]))),
-            },
-            MailFolder {
-                properties: PropertyMap(Cow::Owned(serde_json::Map::from_iter([
-                    ("id".to_string(), "AQMkADYAAAIBCQAAAA==".into()),
-                    ("displayName".to_string(), "Sent Items".into()),
-                    ("parentFolderId".to_string(), "AQMkADYAAAIBCAAAAA==".into()),
-                    ("childFolderCount".to_string(), 0.into()),
-                    ("unreadItemCount".to_string(), 0.into()),
-                    ("totalItemCount".to_string(), 0.into()),
-                    ("sizeInBytes".to_string(), 0.into()),
-                    ("isHidden".to_string(), false.into()),
-                ]))),
-            },
+            simple_mail_folder("AQMkADYAAAIBXQAAAA==", "Archive", "AQMkADYAAAIBCAAAAA=="),
+            simple_mail_folder("AQMkADYAAAIBCQAAAA==", "Sent Items", "AQMkADYAAAIBCAAAAA=="),
         ];
 
         assert_eq!(
-            parsed.response.value().expect("value should be present"),
-            value
+            parsed
+                .response
+                .value
+                .as_ref()
+                .expect("value should be present"),
+            &value
         );
 
         let request = parsed
@@ -272,8 +293,6 @@ mod tests {
 
     #[test]
     fn deserialize_paginated_without_page() {
-        use mail_folder::MailFolder;
-
         let json = r#"{
     "@odata.context": "https://graph.microsoft.com/v1.0/me/mailFolders",
     "value": [
@@ -300,38 +319,20 @@ mod tests {
     ]
 }"#;
 
-        let parsed: <mail_folders::Get as Operation>::Response<'_> =
+        let parsed: <mail_folders::Get as Operation>::Response =
             serde_json::from_str(json).unwrap();
         let value = vec![
-            MailFolder {
-                properties: PropertyMap(Cow::Owned(serde_json::Map::from_iter([
-                    ("id".to_string(), "AQMkADYAAAIBXQAAAA==".into()),
-                    ("displayName".to_string(), "Archive".into()),
-                    ("parentFolderId".to_string(), "AQMkADYAAAIBCAAAAA==".into()),
-                    ("childFolderCount".to_string(), 0.into()),
-                    ("unreadItemCount".to_string(), 0.into()),
-                    ("totalItemCount".to_string(), 0.into()),
-                    ("sizeInBytes".to_string(), 0.into()),
-                    ("isHidden".to_string(), false.into()),
-                ]))),
-            },
-            MailFolder {
-                properties: PropertyMap(Cow::Owned(serde_json::Map::from_iter([
-                    ("id".to_string(), "AQMkADYAAAIBCQAAAA==".into()),
-                    ("displayName".to_string(), "Sent Items".into()),
-                    ("parentFolderId".to_string(), "AQMkADYAAAIBCAAAAA==".into()),
-                    ("childFolderCount".to_string(), 0.into()),
-                    ("unreadItemCount".to_string(), 0.into()),
-                    ("totalItemCount".to_string(), 0.into()),
-                    ("sizeInBytes".to_string(), 0.into()),
-                    ("isHidden".to_string(), false.into()),
-                ]))),
-            },
+            simple_mail_folder("AQMkADYAAAIBXQAAAA==", "Archive", "AQMkADYAAAIBCAAAAA=="),
+            simple_mail_folder("AQMkADYAAAIBCQAAAA==", "Sent Items", "AQMkADYAAAIBCAAAAA=="),
         ];
 
         assert_eq!(
-            parsed.response.value().expect("value should be present"),
-            value
+            parsed
+                .response
+                .value
+                .as_ref()
+                .expect("value should be present"),
+            &value
         );
 
         assert!(parsed.next_page().is_none());
@@ -339,7 +340,6 @@ mod tests {
 
     #[test]
     fn deserialize_delta_with_page() -> Result<(), Error> {
-        use mail_folder::MailFolder;
         let json = r#"{
     "@odata.context": "https://graph.microsoft.com/v1.0/me/mailFolders",
     "value": [
@@ -373,33 +373,19 @@ mod tests {
     "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders?%24skip=10"
 }"#;
 
-        let parsed: <mail_folders::delta::Get as Operation>::Response<'_> =
+        let parsed: <mail_folders::delta::Get as Operation>::Response =
             serde_json::from_str(json).unwrap();
         let value = vec![
-            DeltaItem::Present(MailFolder {
-                properties: PropertyMap(Cow::Owned(serde_json::Map::from_iter([
-                    ("id".to_string(), "AQMkADYAAAIBXQAAAA==".into()),
-                    ("displayName".to_string(), "Archive".into()),
-                    ("parentFolderId".to_string(), "AQMkADYAAAIBCAAAAA==".into()),
-                    ("childFolderCount".to_string(), 0.into()),
-                    ("unreadItemCount".to_string(), 0.into()),
-                    ("totalItemCount".to_string(), 0.into()),
-                    ("sizeInBytes".to_string(), 0.into()),
-                    ("isHidden".to_string(), false.into()),
-                ]))),
-            }),
-            DeltaItem::Present(MailFolder {
-                properties: PropertyMap(Cow::Owned(serde_json::Map::from_iter([
-                    ("id".to_string(), "AQMkADYAAAIBCQAAAA==".into()),
-                    ("displayName".to_string(), "Sent Items".into()),
-                    ("parentFolderId".to_string(), "AQMkADYAAAIBCAAAAA==".into()),
-                    ("childFolderCount".to_string(), 0.into()),
-                    ("unreadItemCount".to_string(), 0.into()),
-                    ("totalItemCount".to_string(), 0.into()),
-                    ("sizeInBytes".to_string(), 0.into()),
-                    ("isHidden".to_string(), false.into()),
-                ]))),
-            }),
+            DeltaItem::Present(simple_mail_folder(
+                "AQMkADYAAAIBXQAAAA==",
+                "Archive",
+                "AQMkADYAAAIBCAAAAA==",
+            )),
+            DeltaItem::Present(simple_mail_folder(
+                "AQMkADYAAAIBCQAAAA==",
+                "Sent Items",
+                "AQMkADYAAAIBCAAAAA==",
+            )),
             DeltaItem::Removed(RemovedDeltaItem {
                 id: "AQMkADYAAAIBDQAAAA==".into(),
                 removed: Removed {
@@ -424,8 +410,6 @@ mod tests {
 
     #[test]
     fn deserialize_delta_without_page() {
-        use mail_folder::MailFolder;
-
         let json = r#"{
     "@odata.context": "https://graph.microsoft.com/v1.0/me/mailFolders/delta()",
     "value": [
@@ -459,33 +443,19 @@ mod tests {
     "@odata.deltaLink": "https://graph.microsoft.com/v1.0/me/mailFolders/delta?$deltatoken=Aa1_Bb2_cC3"
 }"#;
 
-        let parsed: <mail_folders::delta::Get as Operation>::Response<'_> =
+        let parsed: <mail_folders::delta::Get as Operation>::Response =
             serde_json::from_str(json).unwrap();
         let value = vec![
-            DeltaItem::Present(MailFolder {
-                properties: PropertyMap(Cow::Owned(serde_json::Map::from_iter([
-                    ("id".to_string(), "AQMkADYAAAIBXQAAAA==".into()),
-                    ("displayName".to_string(), "Archive".into()),
-                    ("parentFolderId".to_string(), "AQMkADYAAAIBCAAAAA==".into()),
-                    ("childFolderCount".to_string(), 0.into()),
-                    ("unreadItemCount".to_string(), 0.into()),
-                    ("totalItemCount".to_string(), 0.into()),
-                    ("sizeInBytes".to_string(), 0.into()),
-                    ("isHidden".to_string(), false.into()),
-                ]))),
-            }),
-            DeltaItem::Present(MailFolder {
-                properties: PropertyMap(Cow::Owned(serde_json::Map::from_iter([
-                    ("id".to_string(), "AQMkADYAAAIBCQAAAA==".into()),
-                    ("displayName".to_string(), "Sent Items".into()),
-                    ("parentFolderId".to_string(), "AQMkADYAAAIBCAAAAA==".into()),
-                    ("childFolderCount".to_string(), 0.into()),
-                    ("unreadItemCount".to_string(), 0.into()),
-                    ("totalItemCount".to_string(), 0.into()),
-                    ("sizeInBytes".to_string(), 0.into()),
-                    ("isHidden".to_string(), false.into()),
-                ]))),
-            }),
+            DeltaItem::Present(simple_mail_folder(
+                "AQMkADYAAAIBXQAAAA==",
+                "Archive",
+                "AQMkADYAAAIBCAAAAA==",
+            )),
+            DeltaItem::Present(simple_mail_folder(
+                "AQMkADYAAAIBCQAAAA==",
+                "Sent Items",
+                "AQMkADYAAAIBCAAAAA==",
+            )),
             DeltaItem::Removed(RemovedDeltaItem {
                 id: "AQMkADYAAAIBDQAAAA==".into(),
                 removed: Removed {

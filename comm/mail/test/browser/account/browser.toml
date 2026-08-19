@@ -97,6 +97,9 @@ tags = ["accounthub"]
 
 ["browser_accountHubManualConfig.js"]
 
+["browser_accountHubManualConfigForm.js"]
+tags = ["accounthub"]
+
 ["browser_accountHubOAuth.js"]
 tags = ["oauth", "accounthub"]
 
@@ -119,6 +122,8 @@ tags = ["accounthub"]
 tags = ["archive"]
 
 ["browser_certificateCheck.js"]
+
+["browser_copiesAndFolders.js"]
 
 ["browser_deletion.js"]
 

@@ -15,7 +15,7 @@ use crate::module_hierarchy::ModuleName;
 use crate::naming::snakeify;
 use crate::oxidize::structs::GraphStruct;
 
-use super::{Reference, RustType, markup_doc_comment, return_type};
+use super::{RustType, markup_doc_comment, property_type};
 
 /// Code generation state for one extracted API path.
 ///
@@ -118,6 +118,34 @@ impl ToTokens for PathModule<'_> {
     }
 }
 
+/// Generates a setter for a `page_size` property within the current struct.
+///
+/// The property is expected to have the type `Option<u16>`.
+fn page_size_impl() -> TokenStream {
+    quote! {
+        ///Sets the page size to request from the server (via the `Prefer:
+        /// odata.maxpagesize=x` header).
+        pub fn set_max_page_size(&mut self, size: u16) {
+            self.max_page_size = Some(size);
+        }
+    }
+}
+
+/// Generates code that sets the "Prefer: odata.maxpagesize=x" header on the
+/// current request builder.
+///
+/// Although Microsoft's recommendation is that we use `$top` to specify page
+/// sizes, this does not seem to work for delta requests, but this header seems
+/// to do the job. Setting both in the request seems to lead to weird behaviour,
+/// so we only set the header for now.
+fn page_size_header() -> TokenStream {
+    quote! {
+        if let Some(page_size) = self.max_page_size {
+            request = request.header("Prefer", format!("odata.maxpagesize={page_size}"));
+        }
+    }
+}
+
 fn operation_response(operation: &Operation) -> TokenStream {
     if operation.is_delta {
         let response = delta_response_value(operation);
@@ -143,7 +171,7 @@ fn delta_response_value(operation: &Operation) -> TokenStream {
     let mut element = body.property.clone();
     element.is_collection = false;
 
-    return_type(&element, Reference::Own, Some("'response"))
+    property_type(&element)
 }
 
 /// Construct a response property for OData queries, such as `$select` and
@@ -242,34 +270,33 @@ fn request_without_body(
     let struct_def = StructDef {
         description,
         method,
-        lifetime: None,
         body_line: None,
         selection_type: selection_type.clone(),
         expand_type: expand_type.clone(),
         filterable,
+        is_delta: operation.is_delta,
     };
     let impl_def = ImplDef {
         method,
-        lifetime: None,
         template_expressions,
         arg: None,
         selectable,
         expandable,
         filterable,
+        is_delta: operation.is_delta,
     };
     let operation_def = OperationDef {
-        method: method.to_string(),
-        lifetime: None,
-        body: None,
+        method,
+        has_body: false,
         response: response.clone(),
         selectable,
         expandable,
         filterable,
+        is_delta: operation.is_delta,
     };
     let select_def = SelectDef {
         selection_type,
         method,
-        lifetime: None,
     };
     let expand_def = ExpandDef {
         expand_type,
@@ -318,16 +345,7 @@ fn request_with_body(
         imports.push(query_target);
     }
 
-    let mut body = op_body.property.rust_type.base_token(false, Reference::Own);
-    let body_lifetime = match op_body.property.rust_type {
-        RustType::NamedObjectSchema(_) | RustType::UnnamedObjectSchema(_) => Some(quote!(<'body>)),
-        _ => None,
-    };
-    if op_body.property.is_ref
-        || matches!(op_body.property.rust_type, RustType::UnnamedObjectSchema(_))
-    {
-        body = quote!(#body #body_lifetime);
-    }
+    let body = op_body.property.rust_type.base_token();
 
     let mut unnamed_body_types = Vec::new();
     if let RustType::UnnamedObjectSchema(graph_struct) = op_body.property.rust_type {
@@ -341,34 +359,33 @@ fn request_with_body(
     let struct_def = StructDef {
         description,
         method,
-        lifetime: body_lifetime.clone(),
         body_line: Some(quote!(body: OperationBody<#body>,)),
         selection_type: selection_type.clone(),
         expand_type: None,
         filterable,
+        is_delta: false,
     };
     let impl_def = ImplDef {
         method,
-        lifetime: body_lifetime.clone(),
         template_expressions,
         arg: Some(quote!(body: OperationBody<#body>)),
         selectable,
         expandable: false,
         filterable,
+        is_delta: false,
     };
     let operation_def = OperationDef {
-        method: method.to_string(),
-        lifetime: body_lifetime.clone(),
-        body: Some(body),
+        method,
+        has_body: true,
         response,
         selectable,
         expandable: false,
         filterable,
+        is_delta: false,
     };
     let select_def = SelectDef {
         selection_type,
         method,
-        lifetime: body_lifetime,
     };
     let expand_def = ExpandDef {
         expand_type: None,
@@ -477,11 +494,11 @@ impl ToTokens for RequestDef {
 struct StructDef {
     description: Option<TokenStream>,
     method: Method,
-    lifetime: Option<TokenStream>,
     body_line: Option<TokenStream>,
     selection_type: Option<Ident>,
     expand_type: Option<Ident>,
     filterable: bool,
+    is_delta: bool,
 }
 
 impl ToTokens for StructDef {
@@ -489,11 +506,11 @@ impl ToTokens for StructDef {
         let Self {
             description,
             method,
-            lifetime,
             body_line: body,
             selection_type,
             expand_type,
             filterable,
+            is_delta,
         } = self;
         let selection_line = selection_type
             .as_ref()
@@ -502,15 +519,22 @@ impl ToTokens for StructDef {
             .as_ref()
             .map(|expand_type| quote!(expansion: ExpansionList<#expand_type>,));
         let filter_line = filterable.then(|| quote!(filter: FilterQuery,));
+
+        // The maximum page size when listing messages is 1000 (the API for
+        // listing folders does not specify a maximum page size), which fits in
+        // a `u16`.
+        let page_size_line = is_delta.then(|| quote!(max_page_size: Option<u16>));
+
         tokens.append_all(quote! {
             #description
             #[derive(Debug)]
-            pub struct #method #lifetime {
+            pub struct #method {
                 template_expressions: TemplateExpressions,
                 #body
                 #selection_line
                 #expand_line
                 #filter_line
+                #page_size_line
             }
         })
     }
@@ -518,24 +542,24 @@ impl ToTokens for StructDef {
 
 struct ImplDef {
     method: Method,
-    lifetime: Option<TokenStream>,
     template_expressions: Vec<Ident>,
     arg: Option<TokenStream>,
     selectable: bool,
     expandable: bool,
     filterable: bool,
+    is_delta: bool,
 }
 
 impl ToTokens for ImplDef {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self {
             method,
-            lifetime,
             template_expressions,
             arg,
             selectable,
             expandable,
             filterable,
+            is_delta,
         } = self;
         let body_line = if arg.is_some() {
             Some(quote!(body,))
@@ -557,8 +581,12 @@ impl ToTokens for ImplDef {
         } else {
             None
         };
+        let page_size_line = is_delta.then(|| quote!(max_page_size: None,));
+
+        let page_size_impl = is_delta.then(page_size_impl);
+
         tokens.append_all(quote! {
-            impl #lifetime #method #lifetime {
+            impl #method {
                 #[must_use]
                 pub fn new(#( #template_expressions: String, )* #arg) -> Self {
                     Self {
@@ -569,36 +597,38 @@ impl ToTokens for ImplDef {
                         #selection_line
                         #expand_line
                         #filter_line
+                        #page_size_line
                     }
                 }
+
+                #page_size_impl
             }
         })
     }
 }
 
 struct OperationDef {
-    method: String,
-    lifetime: Option<TokenStream>,
-    body: Option<TokenStream>,
+    method: Method,
+    has_body: bool,
     response: TokenStream,
     selectable: bool,
     expandable: bool,
     filterable: bool,
+    is_delta: bool,
 }
 
 impl ToTokens for OperationDef {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let OperationDef {
             method,
-            lifetime,
-            body,
+            has_body,
             response,
             selectable,
             expandable,
             filterable,
+            is_delta,
         } = self;
-        let upper_method = format_ident!("{}", method.to_ascii_uppercase());
-        let method = format_ident!("{method}");
+        let upper_method = format_ident!("{}", method.to_string().to_ascii_uppercase());
 
         let append_selection = selectable.then(|| {
             quote! {
@@ -640,33 +670,40 @@ impl ToTokens for OperationDef {
             quote!(let uri = format_path(&self.template_expressions).parse::<http::uri::Uri>().unwrap();)
         };
 
-        let build_request = match body {
-            None => quote! {
-                let request = http::Request::builder()
-                    .uri(uri)
-                    .method(Self::METHOD)
-                    .body(vec![])?;
-            },
-            Some(_) => quote! {
+        let page_size_hdr = is_delta.then(page_size_header);
+
+        let build_request = if *has_body {
+            quote! {
                 let (body, content_type) = match self.body {
                     OperationBody::JSON(body) => (serde_json::to_vec(&body)?, String::from("application/json")),
                     OperationBody::Other { body, content_type } => (body, content_type),
                 };
 
-                let request = http::Request::builder()
+                let mut request = http::Request::builder()
                     .uri(uri)
                     .method(Self::METHOD)
-                    .header("Content-Type", content_type)
-                    .body(body)?;
-            },
+                    .header("Content-Type", content_type);
+
+                #page_size_hdr
+
+                let request = request.body(body)?;
+            }
+        } else {
+            quote! {
+                let mut request = http::Request::builder()
+                    .uri(uri)
+                    .method(Self::METHOD);
+
+                #page_size_hdr
+
+                let request = request.body(vec![])?;
+            }
         };
 
-        let lifetime = lifetime.as_ref().map(|_| quote!(<'_>));
-
         tokens.append_all(quote! {
-            impl Operation for #method #lifetime {
+            impl Operation for #method {
                 const METHOD: Method = Method::#upper_method;
-                type Response<'response> = #response;
+                type Response = #response;
 
                 fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
                     #build_uri
@@ -683,7 +720,6 @@ impl ToTokens for OperationDef {
 struct SelectDef {
     selection_type: Option<Ident>,
     method: Method,
-    lifetime: Option<TokenStream>,
 }
 
 impl ToTokens for SelectDef {
@@ -691,11 +727,10 @@ impl ToTokens for SelectDef {
         if let Self {
             selection_type: Some(selection_type),
             method,
-            lifetime,
         } = self
         {
             tokens.append_all(quote! {
-                impl #lifetime Select for #method #lifetime {
+                impl Select for #method {
                     type Properties = #selection_type;
 
                     fn select<P: IntoIterator<Item = Self::Properties>>(&mut self, properties: P) {
@@ -764,13 +799,11 @@ impl ToTokens for ExpandDef {
 }
 
 fn queryable(request: &Operation, query: &'static str) -> bool {
-    if let Some(parameters) = &request.parameters {
+    request.parameters.as_ref().is_some_and(|parameters| {
         parameters
             .iter()
             .any(|p| p.name.as_deref() == Some(query) && p.r#in.as_deref() == Some("query"))
-    } else {
-        false
-    }
+    })
 }
 
 fn filterable(request: &Operation) -> bool {
@@ -791,11 +824,7 @@ impl ToTokens for Success {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Self::NoBody => tokens.append_all(quote!(())),
-            Self::WithBody(body) => tokens.append_all(return_type(
-                &body.property,
-                Reference::Own,
-                Some("'response"),
-            )),
+            Self::WithBody(body) => tokens.append_all(property_type(&body.property)),
         }
     }
 }
@@ -807,6 +836,9 @@ struct DeltaDef {
 impl ToTokens for DeltaDef {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self { response } = self;
+        let page_size_impl = page_size_impl();
+        let page_size_hdr = page_size_header();
+
         tokens.append_all(quote! {
             ///Retrieve delta changes using an opaque token from a previous
             /// delta response. The caller must ensure only tokens from this
@@ -814,25 +846,37 @@ impl ToTokens for DeltaDef {
             #[derive(Debug)]
             pub struct GetDelta {
                 token: http::Uri,
+                max_page_size: Option<u16>,
             }
+
+            impl GetDelta {
+                #page_size_impl
+            }
+
             impl TryFrom<&str> for GetDelta {
                 type Error = Error;
 
                 fn try_from(token: &str) -> Result<Self, Self::Error> {
                     let token = http::Uri::from_str(token)?;
-                    Ok(Self { token })
+                    Ok(Self {
+                        token,
+                        max_page_size: None,
+                    })
                 }
             }
 
             impl Operation for GetDelta {
                 const METHOD: Method = Method::GET;
-                type Response<'response> = #response;
+                type Response = #response;
 
                 fn build_request(self) -> Result<http::Request<Vec<u8>>, Error> {
-                    let request = http::Request::builder()
+                    let mut request = http::Request::builder()
                         .uri(&self.token)
-                        .method(Self::METHOD)
-                        .body(vec![])?;
+                        .method(Self::METHOD);
+
+                        #page_size_hdr
+
+                    let request = request.body(vec![])?;
 
                     Ok(request)
                 }

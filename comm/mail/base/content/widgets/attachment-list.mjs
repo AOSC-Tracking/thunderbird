@@ -27,6 +27,12 @@ class MozAttachmentlist extends MozElements.RichListBox {
       if (event.key == " " && !event.shiftKey && !event.ctrlKey) {
         // Allow plain spacebar to select the focused item.
         this.addItemToSelection(this.currentItem);
+        this.dispatchEvent(
+          new CustomEvent("quicklook", {
+            bubbles: true,
+            detail: { index: this.getIndexOfItem(this.currentItem) },
+          })
+        );
         // Prevent inbuilt scrolling.
         event.preventDefault();
       }

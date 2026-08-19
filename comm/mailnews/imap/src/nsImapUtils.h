@@ -14,6 +14,8 @@
 
 class nsImapFlagAndUidState;
 class nsImapProtocol;
+class nsIMsgDBHdr;
+class nsIMsgDatabase;
 
 static const char kImapRootURI[] = "imap:/";
 static const char kImapMessageRootURI[] = "imap-message:/";
@@ -65,6 +67,39 @@ void AppendUid(nsCString& msgIds, ImapUid uid);
  * but the spec implies you shouldn't rely on that.
  */
 nsCString UidSetFromUids(mozilla::Span<const ImapUid> uids);
+
+/**
+ * Returns a list of UIDs for the given messages.
+ * If a message doesn't have a UID, it will _not_ appear in the returned list.
+ * So the size of the returned list may differ to the number of messages passed
+ * in.
+ */
+mozilla::Result<nsTArray<ImapUid>, nsresult> UidsFromHdrs(
+    nsTArray<RefPtr<nsIMsgDBHdr>> const& hdrs);
+
+/**
+ * Returns a list of UIDs for the given message keys.
+ * If any of the keys are nsMsgKey_None, this function will fail.
+ * If a message doesn't have a UID, it will _not_ appear in the returned list.
+ * So the size of the returned list may differ to the number of messages passed
+ * in.
+ */
+mozilla::Result<nsTArray<ImapUid>, nsresult> UidsFromKeys(
+    nsIMsgDatabase* db, nsTArray<nsMsgKey> const& keys);
+
+/**
+ * Get UID for a single message.
+ * The key MUST be a valid message, and not nsMsgKey_None.
+ * Returns 0 if message has no UID.
+ */
+mozilla::Result<ImapUid, nsresult> UidFromKey(nsIMsgDatabase* db, nsMsgKey key);
+
+/**
+ * Get Key of message with the given UID.
+ * The UID passed in MUST be non-zero.
+ * Fails if message not found in database.
+ */
+mozilla::Result<nsMsgKey, nsresult> KeyFromUid(nsIMsgDatabase* db, ImapUid uid);
 
 class nsImapMailboxSpec : public nsIMailboxSpec {
  public:

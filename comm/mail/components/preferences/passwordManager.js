@@ -103,6 +103,11 @@ async function Startup() {
   document.l10n.setAttributes(signonsIntro, "logins-description-all");
   document.l10n.setAttributes(removeAllButton, "remove-all");
 
+  // Don't offer to show passwords if enterprise policies forbid it.
+  if (!Services.policies.isAllowed("passwordReveal")) {
+    togglePasswordsButton.toggleAttribute("hidden", true);
+  }
+
   document
     .getElementsByTagName("treecols")[0]
     .addEventListener("click", event => {
@@ -466,6 +471,12 @@ async function DeleteAllSignons() {
 }
 
 async function TogglePasswordVisible() {
+  // Don't make any change to password visibility if enterprise policies forbid
+  // it.
+  if (!Services.policies.isAllowed("passwordReveal")) {
+    return;
+  }
+
   if (showingPasswords || (await masterPasswordLogin(AskUserShowPasswords))) {
     showingPasswords = !showingPasswords;
     document.l10n.setAttributes(
@@ -777,8 +788,8 @@ async function masterPasswordLogin(noPasswordCallback) {
   // So there's a primary password. Make the user enter it to proceed.
   try {
     // Relogin and ask for the primary password.
-    token.logout();
-    token.login();
+    await token.logout();
+    await token.login();
   } catch (e) {
     // An exception will be thrown if the user cancels the login prompt dialog.
     // User is also logged out of Software Security Device.
