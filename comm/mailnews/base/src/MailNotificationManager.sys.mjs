@@ -130,6 +130,14 @@ export const MailNotificationManager = new (class {
   }
 
   init() {
+    if (this._initialized) {
+      // init() is called both from the 3pane window (messenger.js) and, on
+      // macOS, from application startup (MailGlue), so that the dock badge is
+      // populated even when no mail window is open. Only run once.
+      return;
+    }
+    this._initialized = true;
+
     this._unreadChatCount = 0;
     this._unreadMailCount = 0;
     // @type {Map<string, number>} - A map of folder URIs and the date of the
@@ -525,19 +533,20 @@ export const MailNotificationManager = new (class {
         action.isValidFor(msgHdr)
       );
     }
-    alertsService.showAlert(alert, (subject, topic) => {
-      if (topic != "alertclickcallback") {
-        return;
-      }
-      if (subject?.QueryInterface(Ci.nsIAlertAction)) {
-        Glean.mail.notificationUsedActions[subject.action].add(1);
-        availableActions
-          .find(a => a.action == subject.action)
-          .runAction(msgHdr);
-        return;
-      }
-      // Display the associated message when an alert is clicked.
-      lazy.MailUtils.displayMessageInFolderTab(msgHdr, true);
+    alertsService.showAlertWithCallbacks(alert, {
+      QueryInterface: ChromeUtils.generateQI(["nsIAlertCallbacks"]),
+      onAlertClick(action) {
+        if (action) {
+          Glean.mail.notificationUsedActions[action.action].add(1);
+          availableActions
+            .find(a => a.action == action.action)
+            .runAction(msgHdr);
+          return;
+        }
+        // Display the associated message when an alert is clicked.
+        lazy.MailUtils.displayMessageInFolderTab(msgHdr, true);
+      },
+      onAlertFinished() {},
     });
   }
 

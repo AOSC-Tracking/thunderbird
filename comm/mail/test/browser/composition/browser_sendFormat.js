@@ -257,13 +257,14 @@ async function assertSentMessage(composeWindow, expectMessage, msg) {
   const { isBold, plain, html } = expectMessage;
 
   await send_later(composeWindow);
+  // The next sent message needs to be in a different second, as nsMsgDBView
+  // only looks at seconds when sorting by date.
+  const lastSend = new Date();
+  const nextSend = lastSend.valueOf() + 1000 - lastSend.getMilliseconds();
 
   // Open the "sent" message.
   await be_in_folder(outboxFolder);
-  // Should be the last message in the tree.
   await select_click_row(0);
-  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-  await new Promise(resolve => setTimeout(resolve, 500));
 
   // Test that the sent content type is either text/plain, text/html or
   // multipart/alternative.
@@ -280,19 +281,22 @@ async function assertSentMessage(composeWindow, expectMessage, msg) {
   Assert.ok(!ctParsed.has("hp"));
 
   if (plain && html) {
-    Assert.ok(
-      contentType.startsWith("multipart/alternative"),
-      `Sent contentType "${contentType}" should be multipart: ${msg}`
+    Assert.stringMatches(
+      contentType,
+      /^multipart\/alternative;/,
+      `Sent contentType should be multipart: ${msg}`
     );
   } else if (plain) {
-    Assert.ok(
-      contentType.startsWith("text/plain"),
-      `Sent contentType "${contentType}" should be plain text only: ${msg}`
+    Assert.stringMatches(
+      contentType,
+      /^text\/plain;/,
+      `Sent contentType should be plain text only: ${msg}`
     );
   } else if (html) {
-    Assert.ok(
-      contentType.startsWith("text/html"),
-      `Sent contentType "${contentType}" should be html only: ${msg}`
+    Assert.stringMatches(
+      contentType,
+      /^text\/html;/,
+      `Sent contentType should be html only: ${msg}`
     );
   } else {
     throw new Error("Expected message is missing either plain or html parts");
@@ -302,45 +306,61 @@ async function assertSentMessage(composeWindow, expectMessage, msg) {
   // NOTE: We have set the mailnews.display.html_as preference to show all parts
   // of the message, which means it will show both the plain text and html parts
   // if both were sent.
-  const messageBody =
-    get_about_message().document.getElementById("messagepane").contentDocument
-      .body;
-  const plainBody = messageBody.querySelector(".moz-text-flowed");
-  const htmlBody = messageBody.querySelector(".moz-text-html");
-  Assert.equal(
-    !!plain,
-    !!plainBody,
-    `Message should ${plain ? "" : "not "}have a Plain part: ${msg}`
-  );
-  Assert.equal(
-    !!html,
-    !!htmlBody,
-    `Message should ${html ? "" : "not "}have a HTML part: ${msg}`
-  );
+  /* eslint-disable no-shadow */
+  await SpecialPowers.spawn(
+    get_about_message().getMessagePaneBrowser(),
+    [plain, html, isBold, msg],
+    function (plain, html, isBold, msg) {
+      const PLAIN_MESSAGE_BODY = "Plain message body";
+      const BOLD_MESSAGE_BODY = "Bold message body";
+      const BOLD_MESSAGE_BODY_AS_PLAIN = `*${BOLD_MESSAGE_BODY}*`;
 
-  if (plain) {
-    Assert.ok(
-      BrowserTestUtils.isVisible(plainBody),
-      `Plain part should be visible: ${msg}`
-    );
-    Assert.equal(
-      plainBody.textContent.trim(),
-      isBold ? BOLD_MESSAGE_BODY_AS_PLAIN : PLAIN_MESSAGE_BODY,
-      `Plain text content should match: ${msg}`
-    );
-  }
+      const messageBody = content.document.body;
+      const plainBody = messageBody.querySelector(".moz-text-flowed");
+      const htmlBody = messageBody.querySelector(".moz-text-html");
+      Assert.equal(
+        !!plain,
+        !!plainBody,
+        `Message should ${plain ? "" : "not "}have a Plain part: ${msg}`
+      );
+      Assert.equal(
+        !!html,
+        !!htmlBody,
+        `Message should ${html ? "" : "not "}have a HTML part: ${msg}`
+      );
 
-  if (html) {
-    Assert.ok(
-      BrowserTestUtils.isVisible(htmlBody),
-      `HTML part should be visible: ${msg}`
-    );
-    Assert.equal(
-      htmlBody.textContent.trim(),
-      isBold ? BOLD_MESSAGE_BODY : PLAIN_MESSAGE_BODY,
-      `HTML text content should match: ${msg}`
-    );
-  }
+      if (plain) {
+        Assert.greater(
+          plainBody.clientHeight,
+          0,
+          `Plain part should be visible: ${msg}`
+        );
+        Assert.equal(
+          plainBody.textContent.trim(),
+          isBold ? BOLD_MESSAGE_BODY_AS_PLAIN : PLAIN_MESSAGE_BODY,
+          `Plain text content should match: ${msg}`
+        );
+      }
+
+      if (html) {
+        Assert.greater(
+          htmlBody.clientHeight,
+          0,
+          `HTML part should be visible: ${msg}`
+        );
+        Assert.equal(
+          htmlBody.textContent.trim(),
+          isBold ? BOLD_MESSAGE_BODY : PLAIN_MESSAGE_BODY,
+          `HTML text content should match: ${msg}`
+        );
+      }
+    }
+  );
+  /* eslint-enable no-shadow */
+
+  // Wait before sending the next message.
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, nextSend - Date.now()));
 }
 
 async function saveDraft(composeWindow) {

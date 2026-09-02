@@ -4,14 +4,12 @@
 
 const attrs = ["id", "disabled", "l10n-label-id", "warning", "l10n-error-id"];
 
-const { openLinkExternally } = ChromeUtils.importESModule(
-  "resource:///modules/LinkHelper.sys.mjs"
-);
-
 /**
  * Main action button for in app notifications.
  *
  * @tagname account-hub-select
+ * @attribute {string} help-text-class - Extra class to apply to visible help
+ *   text. Not observed.
  */
 class AccountHubSelect extends HTMLElement {
   static observedAttributes = attrs;
@@ -43,6 +41,13 @@ class AccountHubSelect extends HTMLElement {
    * @type {HTMLElement}
    */
   #error;
+
+  /**
+   * Help text element for additional select context.
+   *
+   * @type {HTMLElement}
+   */
+  #helpText;
 
   /**
    * Mutation observer for sloted options to reflect changes to the select
@@ -98,10 +103,12 @@ class AccountHubSelect extends HTMLElement {
     this.label = this.shadowRoot.querySelector("label");
     this.#slot = this.shadowRoot.querySelector("slot");
     this.#error = this.shadowRoot.querySelector("#securityWarning");
+    this.#helpText = this.shadowRoot.querySelector(
+      ".account-hub-form-small-comment"
+    );
 
     this.#slot.addEventListener("slotchange", this);
     this.select.addEventListener("change", this);
-    this.#error.querySelector("a").addEventListener("click", this);
 
     for (const attr of attrs) {
       this.attributeChangedCallback(attr, "", this.getAttribute(attr));
@@ -139,7 +146,6 @@ class AccountHubSelect extends HTMLElement {
     document.l10n.disconnectRoot(this.shadowRoot);
     this.#slot.removeEventListener("slotchange", this);
     this.select.removeEventListener("change", this);
-    this.#error.querySelector("a").removeEventListener("click", this);
     this.#observer?.disconnect();
   }
 
@@ -235,6 +241,7 @@ class AccountHubSelect extends HTMLElement {
       case "id":
         this.select.id = `${newValue}Select`;
         this.label.setAttribute("for", `${newValue}Select`);
+        this.#helpText.id = `${newValue}SelectHelpText`;
         break;
       case "l10n-label-id": {
         const labelText = await document.l10n.formatValue(newValue);
@@ -249,12 +256,17 @@ class AccountHubSelect extends HTMLElement {
         const isWarning = this.hasAttribute(attr);
         this.select.classList.toggle("warning", isWarning);
         this.select.setAttribute("aria-invalid", isWarning);
+        const errorLink = this.#error.querySelector("a");
         if (isWarning) {
           this.select.setAttribute("aria-describedby", "securityWarning");
           this.#error.setAttribute("role", "alert");
+          if (errorLink) {
+            errorLink.addEventListener("click", this);
+          }
         } else {
-          this.select.removeAttribute("aria-describedby");
+          errorLink.removeEventListener("click", this);
           this.#error.removeAttribute("role");
+          this.#syncDescription();
         }
         break;
       }
@@ -292,12 +304,74 @@ class AccountHubSelect extends HTMLElement {
         break;
       }
       case "click":
-        openLinkExternally(
-          Services.urlFormatter.formatURLPref("app.support.baseURL"),
-          { addToHistory: false }
+        this.dispatchEvent(
+          new CustomEvent("helpLinkClick", {
+            bubbles: true,
+          })
         );
         break;
+      default:
+        break;
     }
+  }
+
+  /**
+   * Set or replace the visible help text for the select.
+   *
+   * @param {string} l10nId - Fluent ID for the help text.
+   * @param {object} [l10nArgs] - Fluent args for the help text.
+   */
+  setHelpText(l10nId, l10nArgs) {
+    this.#helpText.hidden = false;
+    this.#helpText.className = "account-hub-form-small-comment";
+    const className = this.getAttribute("help-text-class");
+    if (className) {
+      this.#helpText.classList.add(className);
+    }
+    document.l10n.setAttributes(this.#helpText, l10nId, l10nArgs);
+    this.#syncDescription();
+  }
+
+  /**
+   * Clear the visible help text.
+   */
+  clearHelpText() {
+    this.#helpText.hidden = true;
+    this.#helpText.className = "account-hub-form-small-comment";
+    this.#helpText.textContent = "";
+    this.#helpText.removeAttribute("data-l10n-id");
+    this.#helpText.removeAttribute("data-l10n-args");
+    this.#syncDescription();
+  }
+
+  /**
+   * Get the human-readable label for an option value.
+   *
+   * @param {string|number} [value=this.value] - Option value.
+   * @returns {string} The option label, or the value when no option matches.
+   */
+  getOptionLabel(value = this.value) {
+    const option = Array.from(this.select.options).find(
+      item => item.value == value
+    );
+    return option?.label || option?.textContent.trim() || String(value);
+  }
+
+  /**
+   * Keep the select's accessible description aligned with its visual state.
+   */
+  #syncDescription() {
+    if (this.select.classList.contains("warning")) {
+      this.select.setAttribute("aria-describedby", "securityWarning");
+      return;
+    }
+
+    if (!this.#helpText.hidden) {
+      this.select.setAttribute("aria-describedby", this.#helpText.id);
+      return;
+    }
+
+    this.select.removeAttribute("aria-describedby");
   }
 }
 

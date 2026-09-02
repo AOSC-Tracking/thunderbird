@@ -243,6 +243,7 @@ add_task(async function testGetRefreshToken() {
 /**
  * Tests that `OAuth2` objects are correctly cached and reused. An object can
  * be reused if:
+ * - it's for the same issuer, and
  * - it's for the same endpoint, and
  * - it's for the same username, and
  * - the scopes it was granted, or the scopes it's requesting if it hasn't
@@ -770,6 +771,8 @@ add_task(async function testOverrideIssuerDetails() {
 
   class TestOAuth2CustomDetails {
     useCustomDetails = true;
+    usePKCE = false;
+    useExternalBrowser = true;
     clientId = "custom_client_id";
     authorizationEndpoint = "https://oauth2.test2.test2/form";
   }
@@ -783,6 +786,16 @@ add_task(async function testOverrideIssuerDetails() {
   Assert.ok(
     isOAuthSupportedWithIssuerDetailOverridesOnly,
     "OAuth should initialize successfully with only issuer detail overrides."
+  );
+  Assert.equal(
+    mod._oauth.usePKCE,
+    false,
+    "UsePKCE should have been customized."
+  );
+  Assert.equal(
+    mod._oauth.useExternalBrowser,
+    true,
+    "UseExternalBrowser should have been customized."
   );
   Assert.equal(
     mod._oauth.clientId,

@@ -8,7 +8,7 @@
  * that move messages between folders.
  */
 
-/* eslint-disable @microsoft/sdl/no-insecure-url */
+/* eslint-disable sdl/no-insecure-url */
 
 const { MockAlertsService } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/MockAlertsService.sys.mjs"
@@ -385,7 +385,7 @@ async function promiseAlert(expectedSender, expectedName) {
     `notification should be about ${expectedName}`
   );
 
-  MockAlertsService.listener.observe(null, "alertfinished", "");
+  MockAlertsService.callbacks.onAlertFinished();
   MockAlertsService.reset();
 }
 

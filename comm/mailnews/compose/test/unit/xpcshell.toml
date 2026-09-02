@@ -31,6 +31,8 @@ skip-if = [
 
 ["test_fccReply.js"]
 
+["test_forwardMergeMixedCharsets.js"]
+
 ["test_forwardInlineAllHeaders.js"]
 
 ["test_forwardInlineMalformedAttachment.js"]
@@ -101,6 +103,8 @@ requesttimeoutfactor = 2
 ["test_smtpProtocols.js"]
 
 ["test_smtpProxy.js"]
+
+["test_smtpQuitClose.js"]
 
 ["test_smtpServer.js"]
 

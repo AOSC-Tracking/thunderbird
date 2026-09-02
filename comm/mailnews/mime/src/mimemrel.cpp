@@ -96,6 +96,7 @@
  */
 
 #include "mimehdrs.h"
+#include "mozilla/ScopeExit.h"
 #include "nsCOMPtr.h"
 #include "mimemrel.h"
 #include "mimepbuf.h"
@@ -113,7 +114,6 @@
 #include "nsMimeTypes.h"
 #include "nsMsgUtils.h"
 #include "nsMsgCompUtils.h"
-#include <ctype.h>
 
 #define MIME_SUPERCLASS mimeMultipartClass
 MimeDefClass(MimeMultipartRelated, MimeMultipartRelatedClass,
@@ -375,6 +375,11 @@ static bool MimeThisIsStartPart(MimeObject* obj, MimeObject* child) {
 char* MakeAbsoluteURL(char* base_url, char* relative_url) {
   char* retString = nullptr;
   nsIURI* base = nullptr;
+  nsIURI* url = nullptr;
+  auto releaseUris = mozilla::MakeScopeExit([&] {
+    NS_IF_RELEASE(url);
+    NS_IF_RELEASE(base);
+  });
 
   // if either is NULL, just return the relative if safe...
   if (!base_url || !relative_url) {
@@ -389,20 +394,15 @@ char* MakeAbsoluteURL(char* base_url, char* relative_url) {
 
   nsAutoCString spec;
 
-  nsIURI* url = nullptr;
   err = nsMimeNewURI(&url, relative_url, base);
-  if (NS_FAILED(err)) goto done;
+  if (NS_FAILED(err)) return nullptr;
 
   err = url->GetSpec(spec);
   if (NS_FAILED(err)) {
-    retString = nullptr;
-    goto done;
+    return nullptr;
   }
   retString = ToNewCString(spec);
 
-done:
-  NS_IF_RELEASE(url);
-  NS_IF_RELEASE(base);
   return retString;
 }
 
@@ -485,6 +485,16 @@ static bool MimeMultipartRelated_output_child_p(MimeObject* obj,
             part = mime_set_url_part(obj->options->url, partnum.get(), false);
         }
         if (part) {
+          // Raw MIME part channels get their content type from the URL. Include
+          // it so related resources which cannot be sniffed, such as SVG, load.
+          if (child->content_type) {
+            char* typedPart =
+                PR_smprintf("%s&type=%s", part, child->content_type);
+            if (typedPart) {
+              PR_Free(part);
+              part = typedPart;
+            }
+          }
           char* name = MimeHeaders_get_name(child->headers, child->options);
           // let's stick the filename in the part so save as will work.
           if (!name) {
@@ -832,6 +842,22 @@ static bool accept_related_part(MimeMultipartRelated* relobj,
           IS_SPACE(relobj->curtag[2]));
 }
 
+static bool hide_related_part_p(MimeMultipartRelated* relobj,
+                                MimeObject* part_obj) {
+  if (!relobj || !part_obj || relobj->is_part_in_hidden_alternative) {
+    return false;
+  }
+
+  // Surface named text/* parts as attachments even when CID-referenced;
+  // they are files the user needs, not inline body content.
+  char* name = MimeHeaders_get_name(part_obj->headers, part_obj->options);
+  bool hasName = name != nullptr;
+  PR_FREEIF(name);
+
+  return !(hasName && part_obj->content_type &&
+           !PL_strncasecmp(part_obj->content_type, "text/", 5));
+}
+
 static int flush_tag(MimeMultipartRelated* relobj) {
   int length = relobj->curtag_length;
   char* buf;
@@ -921,7 +947,7 @@ static int flush_tag(MimeMultipartRelated* relobj) {
           if (status < 0) return status;
           buf = ptr2; /* skip over the cid: URL we substituted */
 
-          if (!relobj->is_part_in_hidden_alternative && value->m_obj)
+          if (hide_related_part_p(relobj, value->m_obj))
             value->m_obj->dontShowAsAttachment = true;
         }
 
@@ -955,7 +981,7 @@ static int flush_tag(MimeMultipartRelated* relobj) {
           if (status < 0) return status;
           buf = ptr2; /* skip over the cid: URL we substituted */
 
-          if (!relobj->is_part_in_hidden_alternative && value->m_obj)
+          if (hide_related_part_p(relobj, value->m_obj))
             value->m_obj->dontShowAsAttachment = true;
         }
       }
@@ -1037,7 +1063,7 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
   const char* dct;
 
   status = ((MimeObjectClass*)&MIME_SUPERCLASS)->parse_eof(obj, abort_p);
-  if (status < 0) goto FAIL;
+  if (status < 0) return status;
 
   if (!relobj->headobj) return 0;
 
@@ -1049,6 +1075,10 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
 
   relobj->real_output_fn = obj->options->output_fn;
   relobj->real_output_closure = obj->options->output_closure;
+  auto restoreOutput = mozilla::MakeScopeExit([&] {
+    obj->options->output_fn = relobj->real_output_fn;
+    obj->options->output_closure = relobj->real_output_closure;
+  });
 
   obj->options->output_fn = mime_multipart_related_output_fn;
   obj->options->output_closure =
@@ -1061,7 +1091,7 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
   PR_FREEIF(ct);
   if (!body) {
     status = MIME_OUT_OF_MEMORY;
-    goto FAIL;
+    return status;
   }
   // replace the existing head object with the new object
   for (int iChild = 0; iChild < cont->nchildren; iChild++) {
@@ -1076,7 +1106,7 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
 
   if (!body->parent) {
     NS_WARNING("unexpected mime multipart related structure");
-    goto FAIL;
+    return status;
   }
 
   body->dontShowAsAttachment =
@@ -1104,7 +1134,7 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
   /* Now that we've added this new object to our list of children,
      start its parser going. */
   status = body->clazz->parse_begin(body);
-  if (status < 0) goto FAIL;
+  if (status < 0) return status;
 
   if (relobj->head_buffer) {
     /* Read it out of memory. */
@@ -1121,14 +1151,15 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
     PR_ASSERT(relobj->file_buffer);
     if (!relobj->file_buffer) {
       status = -1;
-      goto FAIL;
+      return status;
     }
 
     buf = (char*)PR_MALLOC(FILE_IO_BUFFER_SIZE);
     if (!buf) {
       status = MIME_OUT_OF_MEMORY;
-      goto FAIL;
+      return status;
     }
+    auto freeBuffer = mozilla::MakeScopeExit([buf] { PR_Free(buf); });
 
     // First, close the output file to open the input file!
     if (relobj->output_file_stream) relobj->output_file_stream->Close();
@@ -1136,9 +1167,8 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
     nsresult rv = NS_NewLocalFileInputStream(
         getter_AddRefs(relobj->input_file_stream), relobj->file_buffer);
     if (NS_FAILED(rv)) {
-      PR_Free(buf);
       status = MIME_UNABLE_TO_OPEN_TMP_FILE;
-      goto FAIL;
+      return status;
     }
 
     while (1) {
@@ -1158,16 +1188,15 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
         if (status < 0) break;
       }
     }
-    PR_Free(buf);
   }
 
-  if (status < 0) goto FAIL;
+  if (status < 0) return status;
 
   /* Done parsing. */
   status = body->clazz->parse_eof(body, false);
-  if (status < 0) goto FAIL;
+  if (status < 0) return status;
   status = body->clazz->parse_end(body, false);
-  if (status < 0) goto FAIL;
+  if (status < 0) return status;
 
   // Close the head part's decompose stream before replaying children,
   // because decompose_init_count is a nesting counter and each child
@@ -1177,7 +1206,7 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
       (relobj->file_buffer || relobj->head_buffer)) {
     status =
         obj->options->decompose_file_close_fn(obj->options->stream_closure);
-    if (status < 0) goto FAIL;
+    if (status < 0) return status;
   }
 
   // After replaying the head, attachment visibility for related children is
@@ -1195,23 +1224,18 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
 
       status = obj->options->decompose_file_init_fn(
           obj->options->stream_closure, relobj->child_hdrs[i]);
-      if (status < 0) goto FAIL;
+      if (status < 0) return status;
 
       status = MimePartBufferRead(relobj->child_bufs[i],
                                   obj->options->decompose_file_output_fn,
                                   obj->options->stream_closure);
-      if (status < 0) goto FAIL;
+      if (status < 0) return status;
 
       status =
           obj->options->decompose_file_close_fn(obj->options->stream_closure);
-      if (status < 0) goto FAIL;
+      if (status < 0) return status;
     }
   }
-
-FAIL:
-
-  obj->options->output_fn = relobj->real_output_fn;
-  obj->options->output_closure = relobj->real_output_closure;
 
   return status;
 }

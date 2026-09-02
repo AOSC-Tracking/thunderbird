@@ -21,12 +21,12 @@ const PREF_VALUE = Services.prefs.getCharPref(PREF_NAME);
 const GSSAPI_TEST_EMAIL = "badtest@example.localhost";
 const EXCHANGE_TEST_EMAIL = "testExchange@exchange.test";
 const EXCHANGE_TEST_PASSWORD = "hunter2";
-const EXCHANGE_TEST_URL = "http://exchange.test/EWS/Exchange.asmx"; // eslint-disable-line @microsoft/sdl/no-insecure-url
+const EXCHANGE_TEST_URL = "http://exchange.test/EWS/Exchange.asmx"; // eslint-disable-line sdl/no-insecure-url
 
 let gssapiSandbox;
 let gssapiDialog;
 let gssapiCurrentStep;
-let manualConfigPrefPushed = false;
+const manualConfigPrefPushed = false;
 const MANUAL_CONFIG_PREF = "mail.accounthub.manualconfig.enabled";
 
 // The guessConfig requests make this test take a long time, so we need a
@@ -42,13 +42,13 @@ add_setup(function () {
 });
 
 registerCleanupFunction(async function () {
-  await cleanupManualConfigPref();
   // Restore the original pref.
   Services.prefs.setCharPref(PREF_NAME, PREF_VALUE);
   await cleanupGssapiTest();
 });
 
 add_task(async function test_account_email_advanced_setup_incoming() {
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, false);
   // Fill in email auto form and click continue, waiting for config found
   // view to be shown.
   const dialog = await subtest_open_account_hub_dialog();
@@ -132,9 +132,11 @@ add_task(async function test_account_email_advanced_setup_incoming() {
 
   // Confirm that the folder pane is visible.
   Assert.ok(BrowserTestUtils.isVisible(tabmail.currentAbout3Pane.folderTree));
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, true);
 });
 
 add_task(async function test_account_email_advanced_setup_outgoing() {
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, false);
   // Fill in email auto form and click continue, waiting for config found
   // view to be shown.
   const dialog = await subtest_open_account_hub_dialog();
@@ -238,9 +240,11 @@ add_task(async function test_account_email_advanced_setup_outgoing() {
 
   // Confirm that the folder pane is visible.
   Assert.ok(BrowserTestUtils.isVisible(tabmail.currentAbout3Pane.folderTree));
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, true);
 });
 
 add_task(async function test_account_email_manual_form() {
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, false);
   // Fill in email auto form and click continue, waiting for config found
   // view to be shown.
   const dialog = await subtest_open_account_hub_dialog();
@@ -373,9 +377,11 @@ add_task(async function test_account_email_manual_form() {
   Assert.ok(!footerCustom.disabled, "Test button should be enabled");
 
   await subtest_close_account_hub_dialog(dialog, outgoingConfigTemplate);
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, true);
 });
 
 add_task(async function test_pop3_manual_config_flow() {
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, false);
   // Fill in email auto form and click continue, waiting for config found
   // view to be shown.
   const dialog = await subtest_open_account_hub_dialog();
@@ -431,9 +437,11 @@ add_task(async function test_pop3_manual_config_flow() {
   );
 
   await subtest_close_account_hub_dialog(dialog, incomingConfigTemplate);
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, true);
 });
 
 add_task(async function test_invalid_manual_config_flow() {
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, false);
   const dialog = await subtest_open_account_hub_dialog();
 
   const emailTemplate = dialog.querySelector("email-auto-form");
@@ -657,9 +665,11 @@ add_task(async function test_invalid_manual_config_flow() {
   );
   Assert.ok(footerForward.disabled, "Continue button should be disabled");
   await subtest_close_account_hub_dialog(dialog, outgoingConfigTemplate);
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, true);
 });
 
 add_task(async function test_account_email_manual_to_ews() {
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, false);
   const dialog = await subtest_open_account_hub_dialog();
 
   const emailTemplate = dialog.querySelector("email-auto-form");
@@ -741,9 +751,11 @@ add_task(async function test_account_email_manual_to_ews() {
   );
 
   await subtest_close_account_hub_dialog(dialog, passwordSubview);
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, true);
 });
 
 add_task(async function test_direct_to_manual_config() {
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, false);
   const dialog = await subtest_open_account_hub_dialog();
 
   const emailTemplate = dialog.querySelector("email-auto-form");
@@ -788,9 +800,11 @@ add_task(async function test_direct_to_manual_config() {
     "badtest@example.localhost"
   );
   await subtest_close_account_hub_dialog(dialog, incomingConfigTemplate);
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, true);
 });
 
 add_task(async function test_account_invalid_email_advanced_setup_incoming() {
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, false);
   Services.fog.testResetFOG();
   // Fill in email auto form and click continue, incoming config step to show
   // a base invalid configuration.
@@ -910,9 +924,11 @@ add_task(async function test_account_invalid_email_advanced_setup_incoming() {
 
   // Confirm that the folder pane is visible.
   Assert.ok(BrowserTestUtils.isVisible(tabmail.currentAbout3Pane.folderTree));
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, true);
 });
 
 add_task(async function test_direct_to_manual_gssapi_skips_password_step() {
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, false);
   gssapiSandbox = sinon.createSandbox();
   const guessConfigStub = gssapiSandbox
     .stub(GuessConfig, "guessConfig")
@@ -1104,11 +1120,10 @@ add_task(async function test_direct_to_manual_gssapi_skips_password_step() {
   );
 
   await cleanupGssapiTest();
+  Services.prefs.setBoolPref(MANUAL_CONFIG_PREF, true);
 });
 
 add_task(async function test_config_found_manual_config_pref_enabled() {
-  await enableManualConfigPref();
-
   const dialog = await subtest_open_account_hub_dialog();
 
   const emailUser = {
@@ -1151,13 +1166,58 @@ add_task(async function test_config_found_manual_config_pref_enabled() {
     "The protocol select template should stay hidden"
   );
 
-  await subtest_close_account_hub_dialog(dialog, manualConfigTemplate);
-  await cleanupManualConfigPref();
+  // Going back should go back to the config found step.
+  const footerBack = dialog.querySelector("#emailFooter #back");
+  EventUtils.synthesizeMouseAtCenter(footerBack, {});
+
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isVisible(configFoundTemplate),
+    "The config found template should be in view"
+  );
+
+  Assert.ok(
+    BrowserTestUtils.isHidden(manualConfigTemplate),
+    "The manual config template should be hidden"
+  );
+
+  // Going back to the email step and clicking manual config and selecting a
+  // protocol and going back should go back to the protocol step.
+  EventUtils.synthesizeMouseAtCenter(footerBack, {});
+
+  const emailTemplate = dialog.querySelector("#emailAutoConfigSubview");
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isVisible(emailTemplate),
+    "The email template should be in view"
+  );
+
+  emailTemplate.querySelector("#manualConfiguration").click();
+
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isVisible(protocolSelectTemplate),
+    "The protocol select template should be in view"
+  );
+
+  await subtest_select_protocol_and_continue(dialog, "imap");
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isVisible(manualConfigTemplate),
+    "The manual config template should be in view"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(protocolSelectTemplate),
+    "The protocol select template should be hidden"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(footerBack, {});
+
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isVisible(protocolSelectTemplate),
+    "The protocol select template should be in view"
+  );
+
+  await subtest_close_account_hub_dialog(dialog, protocolSelectTemplate);
 });
 
 add_task(async function test_direct_to_manual_config_pref_enabled() {
-  await enableManualConfigPref();
-
   const dialog = await subtest_open_account_hub_dialog();
 
   const emailTemplate = dialog.querySelector("email-auto-form");
@@ -1193,6 +1253,31 @@ add_task(async function test_direct_to_manual_config_pref_enabled() {
       `input[name="protocol-select"][value="imap"]`
     ).checked,
     "The direct manual config flow should default to IMAP"
+  );
+
+  await subtest_select_protocol_and_continue(dialog, "imap");
+
+  const manualConfigTemplate = dialog.querySelector(
+    "#emailManualConfigSubview"
+  );
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    manualConfigTemplate
+  );
+  Assert.equal(
+    manualConfigTemplate.captureState().incoming.type,
+    "imap",
+    "The manual config form should use the selected IMAP protocol"
+  );
+  subtest_assert_manual_config_hostnames_empty(manualConfigTemplate, "IMAP");
+
+  EventUtils.synthesizeMouseAtCenter(
+    dialog.querySelector("#emailFooter #back"),
+    {}
+  );
+  await BrowserTestUtils.waitForAttributeRemoval(
+    "hidden",
+    protocolSelectTemplate
   );
 
   await subtest_select_protocol_and_continue(dialog, "microsoft");
@@ -1233,9 +1318,6 @@ add_task(async function test_direct_to_manual_config_pref_enabled() {
 
   await subtest_select_protocol_and_continue(dialog, "pop3");
 
-  const manualConfigTemplate = dialog.querySelector(
-    "#emailManualConfigSubview"
-  );
   await BrowserTestUtils.waitForAttributeRemoval(
     "hidden",
     manualConfigTemplate
@@ -1249,14 +1331,12 @@ add_task(async function test_direct_to_manual_config_pref_enabled() {
     "pop3",
     "The manual config form should use the selected POP3 protocol"
   );
+  subtest_assert_manual_config_hostnames_empty(manualConfigTemplate, "POP3");
 
   await subtest_close_account_hub_dialog(dialog, manualConfigTemplate);
-  await cleanupManualConfigPref();
 });
 
 add_task(async function test_exchange_type_submission_pref_enabled() {
-  await enableManualConfigPref();
-
   const dialog = await subtest_open_account_hub_dialog();
 
   const emailTemplate = dialog.querySelector("email-auto-form");
@@ -1349,12 +1429,10 @@ add_task(async function test_exchange_type_submission_pref_enabled() {
   );
 
   await subtest_close_account_hub_dialog(dialog, passwordSubview);
-  await cleanupManualConfigPref();
 });
 
 add_task(
   async function test_exchange_type_full_account_creation_pref_enabled() {
-    await enableManualConfigPref();
     const existingOutgoingServerKeys = new Set(
       MailServices.outgoingServer.servers.map(server => server.key)
     );
@@ -1526,15 +1604,12 @@ add_task(
         await subtest_close_account_hub_dialog(dialog, currentStep);
       }
       await subtest_clear_status_bar();
-      await cleanupManualConfigPref();
     }
   }
 );
 
 add_task(
   async function test_exchange_type_advanced_configuration_pref_enabled() {
-    await enableManualConfigPref();
-
     const existingOutgoingServerKeys = new Set(
       MailServices.outgoingServer.servers.map(server => server.key)
     );
@@ -1616,9 +1691,23 @@ add_task(
       const authenticationSelect = exchangeTypeSubview.querySelector(
         "#exchangeTypeAuthentication"
       );
-      authenticationSelect.value = String(Ci.nsMsgAuthMethod.passwordCleartext);
+      authenticationSelect.value = String(Ci.nsMsgAuthMethod.OAuth2);
       authenticationSelect.select.dispatchEvent(
         new Event("change", { bubbles: true })
+      );
+
+      const defaultOauthInput = exchangeTypeSubview.querySelector(
+        "#exchangeTypeDefaultOauth"
+      );
+      Assert.ok(
+        defaultOauthInput.checked,
+        "Should currently be using default OAuth config"
+      );
+
+      EventUtils.synthesizeMouseAtCenter(defaultOauthInput, {});
+      await BrowserTestUtils.waitForAttributeRemoval(
+        "hidden",
+        exchangeTypeSubview.querySelector("#exchangeTypeOauthCustom")
       );
 
       const oldTab = tabmail.selectedTab;
@@ -1654,13 +1743,25 @@ add_task(
       );
       Assert.equal(
         incoming.authMethod,
-        Ci.nsMsgAuthMethod.passwordCleartext,
+        Ci.nsMsgAuthMethod.OAuth2,
         "Should save the selected Exchange authentication method"
       );
       Assert.equal(
         incoming.getStringValue("ews_url"),
         "https://outlook.office365.com/EWS/Exchange.asmx",
         "Should save the Exchange URL"
+      );
+      Assert.ok(
+        !incoming.exchangeOverrideOAuthDetails,
+        "Should not have any OAuth configuration overrides"
+      );
+      Assert.ok(
+        !incoming.exchangeApplicationId,
+        "Should not have an application ID for OAuth set"
+      );
+      Assert.ok(
+        !incoming.exchangeTenantId,
+        "Should not have a tenant ID for OAuth set"
       );
     } finally {
       if (accountTab && tabmail.tabInfo.includes(accountTab)) {
@@ -1677,25 +1778,9 @@ add_task(
         }
       }
       await subtest_clear_status_bar();
-      await cleanupManualConfigPref();
     }
   }
 );
-
-async function enableManualConfigPref() {
-  await SpecialPowers.pushPrefEnv({
-    set: [[MANUAL_CONFIG_PREF, true]],
-  });
-  manualConfigPrefPushed = true;
-}
-
-async function cleanupManualConfigPref() {
-  if (!manualConfigPrefPushed) {
-    return;
-  }
-  manualConfigPrefPushed = false;
-  await SpecialPowers.popPrefEnv();
-}
 
 async function fillInvalidUserInfo(nameInput, emailInput) {
   await fillUserInfo(nameInput, emailInput, "Test User", GSSAPI_TEST_EMAIL);
@@ -1829,11 +1914,27 @@ function subtest_assert_protocol_select_chrome(dialog, protocolSelectTemplate) {
   );
   Assert.equal(
     document.l10n.getAttributes(notificationTitle).id,
-    "account-hub-email-protocol-select-notification",
+    "account-hub-email-protocol-select-additional-info",
     "The protocol select screen should show the required information notification"
   );
   Assert.ok(
     BrowserTestUtils.isVisible(notification),
     "The protocol select screen should show the notification bar"
+  );
+}
+
+function subtest_assert_manual_config_hostnames_empty(
+  manualConfigTemplate,
+  protocol
+) {
+  Assert.equal(
+    manualConfigTemplate.querySelector("#manualIncomingHostname").value,
+    "",
+    `${protocol} manual config should not populate the incoming hostname`
+  );
+  Assert.equal(
+    manualConfigTemplate.querySelector("#manualOutgoingHostname").value,
+    "",
+    `${protocol} manual config should not populate the outgoing hostname`
   );
 }

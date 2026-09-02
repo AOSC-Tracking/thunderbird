@@ -29,6 +29,8 @@ support-files = [
 
 ["test_accountMgrRemoveDefault.js"]
 
+["test_accountMgrRemoveIncomingServer.js"]
+
 ["test_accountMgrUniqueServerKey.js"]
 
 ["test_acctRepair.js"]
@@ -54,6 +56,8 @@ tags = ["compact"]
 ["test_copyChaining.js"]
 
 ["test_copyToInvalidDB.js"]
+
+["test_createSubfolder.js"]
 
 ["test_detachToFile.js"]
 
@@ -150,6 +154,8 @@ tags = ["oauth"]
 tags = ["oauth"]
 
 ["test_postPluginFilters.js"]
+
+["test_relatedItems.js"]
 
 ["test_retention.js"]
 

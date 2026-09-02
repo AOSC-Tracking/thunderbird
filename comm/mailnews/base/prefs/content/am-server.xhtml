@@ -24,6 +24,7 @@
     <link rel="stylesheet" href="chrome://messenger/skin/variables.css" />
     <link rel="stylesheet" href="chrome://messenger/skin/folderMenus.css" />
 
+    <link rel="localization" href="messenger/accountSettings.ftl" />
     <link rel="localization" href="messenger/certError.ftl" />
 
     <script
@@ -198,7 +199,7 @@
               </html:td>
             </html:tr>
             <html:tr>
-              <html:td>
+              <html:td style="vertical-align: baseline">
                 <label
                   value="&authMethod.label;"
                   accesskey="&authMethod.accesskey;"
@@ -206,7 +207,7 @@
                   hidefor="nntp"
                 />
               </html:td>
-              <html:td>
+              <html:td style="vertical-align: baseline">
                 <html:select
                   id="server.authMethod"
                   wsm_persist="true"
@@ -225,6 +226,18 @@
                   <html:option id="authMethod-anysecure" value="8" />
                   <html:option id="authMethod-any" value="9" />
                 </html:select>
+                <html:div
+                  id="oauthProviderInfo"
+                  class="tip-caption"
+                  hidden="hidden"
+                >
+                  <html:a
+                    id="oauthProviderExtensionLink"
+                    class="text-link"
+                    data-l10n-name="extension"
+                    onclick="openOAuthProviderExtension(event)"
+                  ></html:a>
+                </html:div>
               </html:td>
             </html:tr>
           </html:table>
@@ -523,6 +536,78 @@
               prefattribute="value"
               prefstring="mail.server.%serverkey%.override_namespaces"
             />
+            <checkbox
+              hidden="hidden"
+              wsm_persist="true"
+              id="server.oauth2.useCustomDetails"
+              prefattribute="value"
+              preftype="bool"
+              prefstring="mail.server.%serverkey%.oauth2.useCustomDetails"
+              genericattr="true"
+            />
+            <label
+              hidden="hidden"
+              wsm_persist="true"
+              id="server.oauth2.clientId"
+              prefattribute="value"
+              preftype="string"
+              prefstring="mail.server.%serverkey%.oauth2.clientId"
+              genericattr="true"
+            />
+            <label
+              hidden="hidden"
+              wsm_persist="true"
+              id="server.oauth2.authorizationEndpoint"
+              prefattribute="value"
+              preftype="string"
+              prefstring="mail.server.%serverkey%.oauth2.authorizationEndpoint"
+              genericattr="true"
+            />
+            <label
+              hidden="hidden"
+              wsm_persist="true"
+              id="server.oauth2.tokenEndpoint"
+              prefattribute="value"
+              preftype="string"
+              prefstring="mail.server.%serverkey%.oauth2.tokenEndpoint"
+              genericattr="true"
+            />
+            <label
+              hidden="hidden"
+              wsm_persist="true"
+              id="server.oauth2.scopes"
+              prefattribute="value"
+              preftype="string"
+              prefstring="mail.server.%serverkey%.oauth2.scopes"
+              genericattr="true"
+            />
+            <label
+              hidden="hidden"
+              wsm_persist="true"
+              id="server.oauth2.redirectionEndpoint"
+              prefattribute="value"
+              preftype="string"
+              prefstring="mail.server.%serverkey%.oauth2.redirectionEndpoint"
+              genericattr="true"
+            />
+            <checkbox
+              hidden="hidden"
+              wsm_persist="true"
+              id="server.oauth2.usePKCE"
+              prefattribute="value"
+              preftype="bool"
+              prefstring="mail.server.%serverkey%.oauth2.usePKCE"
+              genericattr="true"
+            />
+            <checkbox
+              hidden="hidden"
+              wsm_persist="true"
+              id="server.oauth2.useExternalBrowser"
+              prefattribute="value"
+              preftype="bool"
+              prefstring="mail.server.%serverkey%.oauth2.useExternalBrowser"
+              genericattr="true"
+            />
           </hbox>
 
           <!-- EWS -->
@@ -630,17 +715,27 @@
               hidden="hidden"
             />
             <label
-              id="ews.exchangeRedirectUri"
-              wsm_persist="true"
-              hidden="hidden"
-            />
-            <label
               id="ews.exchangeEndpointHost"
               wsm_persist="true"
               hidden="hidden"
             />
             <label
               id="ews.exchangeOAuthScopes"
+              wsm_persist="true"
+              hidden="hidden"
+            />
+            <label
+              id="ews.exchangeRedirectUri"
+              wsm_persist="true"
+              hidden="hidden"
+            />
+            <checkbox
+              id="ews.exchangeUsePKCE"
+              wsm_persist="true"
+              hidden="hidden"
+            />
+            <checkbox
+              id="ews.exchangeUseExternalBrowser"
               wsm_persist="true"
               hidden="hidden"
             />

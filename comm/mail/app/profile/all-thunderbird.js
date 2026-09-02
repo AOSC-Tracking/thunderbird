@@ -1220,6 +1220,8 @@ pref("devtools.webconsole.filter.debug", true);
 pref("devtools.webconsole.filter.css", false);
 pref("devtools.webconsole.filter.net", false);
 pref("devtools.webconsole.filter.netxhr", false);
+pref("devtools.webconsole.filter.chrome", true);
+pref("devtools.webconsole.filter.content", true);
 
 // Webconsole autocomplete preference
 pref("devtools.webconsole.input.autocomplete",true);
@@ -1240,6 +1242,8 @@ pref("devtools.browserconsole.filter.debug", true);
 pref("devtools.browserconsole.filter.css", false);
 pref("devtools.browserconsole.filter.net", false);
 pref("devtools.browserconsole.filter.netxhr", false);
+pref("devtools.browserconsole.filter.chrome", true);
+pref("devtools.browserconsole.filter.content", true);
 
 // Max number of inputs to store in web console history.
 pref("devtools.webconsole.inputHistoryCount", 300);
@@ -1540,6 +1544,9 @@ pref("mail.inappnotifications.bypass-filtering", false);
 pref("mail.inappnotifications.isFlatpak", false);
 pref("mail.inappnotifications.isSnap", false);
 
+// Offer experimental features in settings.
+pref("mail.offer_experimental_features", true);
+
 #ifdef NIGHTLY_BUILD
 // Enable the new experimental conversation view based on Gloda.
 pref("mail.thread.conversation.enabled", false);
@@ -1556,7 +1563,10 @@ pref("mail.accounthub.addressbook.enabled", true);
 pref("mail.accounthub.thundermail.enabled", true);
 
 // Enable new manual config ui in account hub.
-pref("mail.accounthub.manualconfig.enabled", false);
+pref("mail.accounthub.manualconfig.enabled", true);
+
+// Export to mobile enabled.
+pref("mail.qrexport.enabled", true);
 
 // Export to mobile logging level.
 pref("mail.qrexport.loglevel", "Warn");

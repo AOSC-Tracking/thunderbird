@@ -14,11 +14,23 @@ const { InputSanitizer } = ChromeUtils.importESModule(
   "resource:///modules/accountcreation/InputSanitizer.sys.mjs"
 );
 
-const CONFIG_CHANGE_INPUT_DEBOUNCE_MS = 100;
+const { OAuth2Providers } = ChromeUtils.importESModule(
+  "resource:///modules/OAuth2Providers.sys.mjs"
+);
 
-const { assert } = AccountCreationUtils;
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
+});
+
+const CONFIG_CHANGE_INPUT_DEBOUNCE_MS = 100;
+const DEFAULT_CONFIG_CHANGE_HELP_TEXT_ID =
+  "account-hub-manual-config-value-changed";
+
+const { assert, gAccountSetupLogger, standardPorts } = AccountCreationUtils;
 
 import { AccountHubStep } from "./account-hub-step.mjs";
+import "chrome://messenger/content/tb-banner.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./account-hub-select.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./account-hub-input.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./account-hub-checkbox.mjs"; // eslint-disable-line import/no-unassigned-import
@@ -113,6 +125,20 @@ class EmailManualConfigForm extends AccountHubStep {
   #outgoingAuthenticationMethod;
 
   /**
+   * Warning shown when OAuth is selected for an unsupported incoming hostname.
+   *
+   * @type {import("chrome://messenger/content/tb-banner.mjs").Banner}
+   */
+  #incomingUnsupportedOAuthBanner;
+
+  /**
+   * Warning shown when OAuth is selected for an unsupported outgoing hostname.
+   *
+   * @type {import("chrome://messenger/content/tb-banner.mjs").Banner}
+   */
+  #outgoingUnsupportedOAuthBanner;
+
+  /**
    * Whether the form is currently showing validation errors.
    *
    * @type {boolean}
@@ -139,6 +165,13 @@ class EmailManualConfigForm extends AccountHubStep {
    * @type {?number}
    */
   #configChangeTimer = null;
+
+  /**
+   * Fields the user has interacted with.
+   *
+   * @type {WeakSet<AccountHubInput>}
+   */
+  #touchedInputs = new WeakSet();
 
   connectedCallback() {
     if (this.hasConnected) {
@@ -171,6 +204,12 @@ class EmailManualConfigForm extends AccountHubStep {
     this.#outgoingAuthenticationMethod = this.querySelector(
       "#manualOutgoingAuthMethod"
     );
+    this.#incomingUnsupportedOAuthBanner = this.querySelector(
+      "#manualIncomingUnsupportedOAuthBanner"
+    );
+    this.#outgoingUnsupportedOAuthBanner = this.querySelector(
+      "#manualOutgoingUnsupportedOAuthBanner"
+    );
     this.#sameUsernameCheckbox = this.querySelector("#sameUsername");
     this.#outgoingUsername = this.querySelector("#manualOutgoingUsername");
     this.#sameUsernameCheckbox.setAriaControlsElements(this.#outgoingUsername);
@@ -181,13 +220,51 @@ class EmailManualConfigForm extends AccountHubStep {
   handleEvent(event) {
     switch (event.type) {
       case "input":
-        this.#queueConfigChange();
+        this.#touchedInputs.add(event.currentTarget);
+        this.#clearAutomaticChangeIndicators();
+        this.#queueConfigChange(event.currentTarget);
         break;
       case "change":
+        this.#runConfigChanged();
+        this.#clearAutomaticChangeIndicators();
         if (event.currentTarget == this.#sameUsernameCheckbox) {
           this.#hideOutgoingUsername(this.#sameUsernameCheckbox.checked);
         }
-        this.#runConfigChanged();
+        if (event.currentTarget === this.#incomingConnectionSecurity) {
+          this.#adjustPortToSSLAndProtocol(this.#currentConfig, true);
+        } else if (event.currentTarget === this.#outgoingConnectionSecurity) {
+          this.#adjustPortToSSLAndProtocol(this.#currentConfig, false);
+        }
+        if (event.currentTarget === this.#incomingAuthenticationMethod) {
+          this.#updateUnsupportedOAuthBanner(true);
+        } else if (event.currentTarget === this.#outgoingAuthenticationMethod) {
+          this.#updateUnsupportedOAuthBanner(false);
+        }
+        break;
+      case "click": {
+        if (event.currentTarget.id === "advancedConfigurationManual") {
+          this.dispatchEvent(
+            new CustomEvent("advanced-config", {
+              bubbles: true,
+            })
+          );
+          break;
+        }
+
+        const oauthSupportLink = event.target.closest(
+          'a[data-l10n-name="oauth-support-link"]'
+        );
+        if (oauthSupportLink) {
+          event.preventDefault();
+          lazy.openLinkExternally(oauthSupportLink.href);
+        }
+        break;
+      }
+      case "helpLinkClick":
+        lazy.openLinkExternally(
+          Services.urlFormatter.formatURLPref("app.support.baseURL"),
+          { addToHistory: false }
+        );
         break;
       default:
         break;
@@ -211,19 +288,35 @@ class EmailManualConfigForm extends AccountHubStep {
     ]) {
       field.addEventListener("change", this);
     }
+
+    this.querySelector("#advancedConfigurationManual").addEventListener(
+      "click",
+      this
+    );
+
+    this.#incomingConnectionSecurity.addEventListener("helpLinkClick", this);
+    this.#outgoingConnectionSecurity.addEventListener("helpLinkClick", this);
+    this.#incomingUnsupportedOAuthBanner.addEventListener("click", this);
+    this.#outgoingUnsupportedOAuthBanner.addEventListener("click", this);
   }
 
   /**
    * Sets the state of the manual config form.
    *
    * @param {AccountConfig} configData - An account configuration object.
+   * @param {object} [options]
+   * @param {AccountConfig} [options.previousConfig] - The configuration before
+   *   it was tested and updated.
    */
-  setState(configData) {
+  setState(configData, { previousConfig } = {}) {
     this.#currentConfig = configData;
     this.#updateFields(this.#currentConfig);
     this.#clearQueuedConfigChange();
     this.#isShowingErrors = false;
+    this.#touchedInputs = new WeakSet();
     this.#clearFieldErrors();
+    this.#captureConfig({ showErrors: false, updateCurrentConfig: false });
+    this.#clearAutomaticChangeIndicators();
     this.clearNotifications();
     const incomingType = configData.incoming?.type;
 
@@ -239,6 +332,10 @@ class EmailManualConfigForm extends AccountHubStep {
     }
 
     this.setTitle(incomingTypeId);
+
+    if (previousConfig) {
+      this.#showAutomaticChangeIndicators(previousConfig, this.#currentConfig);
+    }
   }
 
   /**
@@ -257,17 +354,39 @@ class EmailManualConfigForm extends AccountHubStep {
    * @returns {Promise<boolean>} Whether the form is valid.
    */
   async validate() {
+    this.#updateUnsupportedOAuthBanner(true);
+    this.#updateUnsupportedOAuthBanner(false);
     this.#clearQueuedConfigChange();
     const errors = this.#captureConfig({ showErrors: true });
     this.#isShowingErrors = !!errors.length;
 
-    if (!errors.length) {
-      this.clearNotifications();
-      return true;
+    if (errors.length) {
+      await this.#showFieldErrorNotification(errors);
+      return false;
     }
 
-    await this.#showFieldErrorNotification(errors);
-    return false;
+    if (this.#isUnsupportedOAuth(true) || this.#isUnsupportedOAuth(false)) {
+      return false;
+    }
+
+    this.clearNotifications();
+    return true;
+  }
+
+  /**
+   * The inputs that can show validation errors.
+   *
+   * @returns {AccountHubInput[]}
+   */
+  get #validatedInputs() {
+    return [
+      this.#incomingHostname,
+      this.#incomingUsername,
+      this.#incomingPort,
+      this.#outgoingHostname,
+      this.#outgoingUsername,
+      this.#outgoingPort,
+    ];
   }
 
   /**
@@ -290,8 +409,7 @@ class EmailManualConfigForm extends AccountHubStep {
     if (config.incoming.port) {
       this.#incomingPort.value = config.incoming.port;
     } else {
-      // TODO: Add function for adjusting incoming port.
-      // this.#adjustPortToSSLAndProtocol(config);
+      this.#adjustPortToSSLAndProtocol(config, true);
     }
 
     this.#incomingAuthenticationMethod.value = InputSanitizer.enum(
@@ -299,10 +417,9 @@ class EmailManualConfigForm extends AccountHubStep {
       [0, 3, 4, 5, 6, 10],
       0
     );
-    this.#incomingUsername.value = config.incoming.username;
+    this.#updateUnsupportedOAuthBanner(true);
 
-    // TODO: Add function for adjusting incoming Oauth.
-    // this.#adjustOAuth2Visibility(config);
+    this.#incomingUsername.value = config.incoming.username;
 
     this.#outgoingHostname.value = config.outgoing.hostname;
     this.#outgoingUsername.value = config.outgoing.username;
@@ -323,33 +440,267 @@ class EmailManualConfigForm extends AccountHubStep {
       [0, 1, 3, 4, 5, 6, 10],
       0
     );
+    this.#updateUnsupportedOAuthBanner(false);
 
     // If a port number was specified other than "Auto".
     if (config.outgoing.port) {
       this.#outgoingPort.value = config.outgoing.port;
     } else {
-      // TODO: Add function for adjusting outgoing port.
-      // this.#adjustPortToSSLAndProtocol(config);
+      this.#adjustPortToSSLAndProtocol(config, false);
     }
-
-    // TODO: Add function for adjusting outgoing OAuth
-    // this.#adjustOAuth2Visibility(config);
   }
 
   /**
-   * The inputs that can show validation errors.
+   * Automatically fill port field when connection security has changed in,
+   * unless the user entered a non-standard port.
    *
-   * @returns {AccountHubInput[]}
+   * @param {AccountConfig} [accountConfig] - Complete AccountConfig.
+   * @param {boolean} isIncoming - If port to be adjusted is incoming.
    */
-  get #validatedInputs() {
-    return [
-      this.#incomingHostname,
-      this.#incomingUsername,
-      this.#incomingPort,
-      this.#outgoingHostname,
-      this.#outgoingUsername,
-      this.#outgoingPort,
-    ];
+  #adjustPortToSSLAndProtocol(accountConfig, isIncoming = false) {
+    // Get current config.
+    const config = accountConfig || this.#currentConfig;
+    const socketType = isIncoming
+      ? config.incoming.socketType
+      : config.outgoing.socketType;
+    const plainSecurity = socketType == Ci.nsMsgSocketType.plain;
+    const connectionSecurityInput = isIncoming
+      ? this.#incomingConnectionSecurity
+      : this.#outgoingConnectionSecurity;
+
+    // If connection security chosen is none, show insecure connection warning.
+    connectionSecurityInput.toggleAttribute("warning", plainSecurity);
+
+    if (isIncoming) {
+      if (
+        config.incoming.port &&
+        !standardPorts.includes(config.incoming.port)
+      ) {
+        return;
+      }
+
+      switch (config.incoming.type) {
+        case "imap":
+          this.#incomingPort.value =
+            socketType == Ci.nsMsgSocketType.SSL ? 993 : 143;
+          break;
+
+        case "pop3":
+          this.#incomingPort.value =
+            socketType == Ci.nsMsgSocketType.SSL ? 995 : 110;
+          break;
+      }
+
+      config.incoming.port = this.#incomingPort.valueAsNumber;
+      this.#currentConfig = config;
+      return;
+    }
+
+    if (config.outgoing.port && !standardPorts.includes(config.outgoing.port)) {
+      return;
+    }
+
+    // Implicit TLS for SMTP is on port 465.
+    if (socketType == Ci.nsMsgSocketType.SSL) {
+      this.#outgoingPort.value = 465;
+    } else if (
+      (config.outgoing.port == 465 || !config.outgoing.port) &&
+      socketType == Ci.nsMsgSocketType.alwaysSTARTTLS
+    ) {
+      // Implicit TLS for SMTP is on port 465. STARTTLS won't work there.
+      this.#outgoingPort.value = 587;
+    }
+
+    config.outgoing.port = this.#outgoingPort.valueAsNumber;
+    this.#currentConfig = config;
+  }
+
+  /**
+   * If the user changed the incoming port manually, adjust the SSL value,
+   * (only) if the new port is impossible with the old SSL value.
+   *
+   * @param {AccountConfig} [accountConfig] - Complete AccountConfig.
+   */
+  #adjustIncomingSSLToPort(accountConfig) {
+    const config = accountConfig || this.#currentConfig;
+
+    if (!standardPorts.includes(config.incoming.port)) {
+      return;
+    }
+
+    if (config.incoming.type == "imap") {
+      // Implicit TLS for IMAP is on port 993.
+      if (
+        config.incoming.port == 993 &&
+        config.incoming.socketType != Ci.nsMsgSocketType.SSL
+      ) {
+        this.#incomingConnectionSecurity.value = Ci.nsMsgSocketType.SSL;
+      } else if (
+        config.incoming.port == 143 &&
+        config.incoming.socketType == Ci.nsMsgSocketType.SSL
+      ) {
+        this.#incomingConnectionSecurity.value =
+          Ci.nsMsgSocketType.alwaysSTARTTLS;
+      }
+    }
+
+    if (config.incoming.type == "pop3") {
+      // Implicit TLS for POP3 is on port 995.
+      if (
+        config.incoming.port == 995 &&
+        config.incoming.socketType != Ci.nsMsgSocketType.SSL
+      ) {
+        this.#incomingConnectionSecurity.value = Ci.nsMsgSocketType.SSL;
+      } else if (
+        config.incoming.port == 110 &&
+        config.incoming.socketType == Ci.nsMsgSocketType.SSL
+      ) {
+        this.#incomingConnectionSecurity.value =
+          Ci.nsMsgSocketType.alwaysSTARTTLS;
+      }
+    }
+
+    config.incoming.socketType = this.#incomingConnectionSecurity.value;
+
+    this.#currentConfig = config;
+  }
+
+  /**
+   * If the user changed the outgoing port manually, adjust the SSL value,
+   * (only) if the new port is impossible with the old SSL value.
+   *
+   * @param {AccountConfig} [accountConfig] - Complete AccountConfig.
+   */
+  #adjustOutgoingSSLToPort(accountConfig) {
+    const config = accountConfig || this.#currentConfig;
+
+    if (!standardPorts.includes(config.outgoing.port)) {
+      return;
+    }
+
+    if (
+      config.outgoing.port == 465 &&
+      config.outgoing.socketType != Ci.nsMsgSocketType.SSL
+    ) {
+      this.#outgoingConnectionSecurity.value = Ci.nsMsgSocketType.SSL;
+    } else if (
+      (config.outgoing.port == 587 || config.outgoing.port == 25) &&
+      config.outgoing.socketType == Ci.nsMsgSocketType.SSL
+    ) {
+      // Port 587 and port 25 are for plain or STARTTLS. Not for Implicit TLS.
+      this.#outgoingConnectionSecurity.value =
+        Ci.nsMsgSocketType.alwaysSTARTTLS;
+    }
+
+    config.outgoing.socketType = this.#outgoingConnectionSecurity.value;
+    this.#currentConfig = config;
+  }
+
+  /**
+   * Look up the OAuth provider details for the current incoming or outgoing
+   * hostname.
+   *
+   * @param {boolean} isIncoming - If the incoming server is being looked up.
+   * @returns {object|undefined} The OAuth provider details, or undefined when
+   *   the host is unknown or the hostname cannot be parsed.
+   */
+  #getOAuthDetails(isIncoming) {
+    const protocol = isIncoming
+      ? this.#currentConfig.incoming.type
+      : this.#currentConfig.outgoing.type || "smtp";
+    const hostname = isIncoming
+      ? this.#incomingHostname.value
+      : this.#outgoingHostname.value;
+
+    try {
+      const host = InputSanitizer.hostname(hostname);
+      return OAuth2Providers.getHostnameDetails(host, protocol);
+    } catch (error) {
+      // An unparseable hostname cannot be a known OAuth provider.
+      return undefined;
+    }
+  }
+
+  /**
+   * Whether OAuth is selected for a hostname that has no known OAuth details.
+   *
+   * @param {boolean} isIncoming - If the incoming server is being checked.
+   *   Otherwise it checks the outgoing server.
+   * @returns {boolean} Whether an unsupported OAuth hostname is selected.
+   */
+  #isUnsupportedOAuth(isIncoming) {
+    const authenticationMethodSelect = isIncoming
+      ? this.#incomingAuthenticationMethod
+      : this.#outgoingAuthenticationMethod;
+
+    return (
+      authenticationMethodSelect.value == Ci.nsMsgAuthMethod.OAuth2 &&
+      !this.#getOAuthDetails(isIncoming)
+    );
+  }
+
+  /**
+   * Show/hide the OAuth unsupported-host warning for incoming/outgoing servers.
+   *
+   * @param {boolean} isIncoming - If this is for the incoming server.
+   *   Otherwise, this updates the outgoing server.
+   */
+  #updateUnsupportedOAuthBanner(isIncoming) {
+    const oauthDetails = this.#getOAuthDetails(isIncoming);
+    const hostname = isIncoming
+      ? this.#incomingHostname.value
+      : this.#outgoingHostname.value;
+
+    if (oauthDetails) {
+      gAccountSetupLogger.debug(
+        `OAuth2 details for server ${hostname} is,,
+          ${oauthDetails}`
+      );
+    }
+
+    const authenticationMethodSelect = isIncoming
+      ? this.#incomingAuthenticationMethod
+      : this.#outgoingAuthenticationMethod;
+    this.#toggleUnsupportedOAuthBanner(
+      isIncoming,
+      authenticationMethodSelect.value == Ci.nsMsgAuthMethod.OAuth2 &&
+        !oauthDetails
+    );
+  }
+
+  /**
+   * Update OAuth unsupported-host warning visibility.
+   *
+   * @param {boolean} isIncoming - If the incoming banner should be toggled,
+   *   otherwise the outgoing banner will be toggled.
+   * @param {boolean} show - Whether the relevant banner should be shown.
+   */
+  #toggleUnsupportedOAuthBanner(isIncoming, show) {
+    const banner = isIncoming
+      ? this.#incomingUnsupportedOAuthBanner
+      : this.#outgoingUnsupportedOAuthBanner;
+
+    banner.hidden = !show;
+  }
+
+  /**
+   * The fields that should show help text when testing changes their config.
+   *
+   * @returns {Record<string, AccountHubInput|AccountHubSelect>}
+   */
+  get #configChangeFields() {
+    return {
+      "incoming.hostname": this.#incomingHostname,
+      "incoming.username": this.#incomingUsername,
+      "incoming.auth": this.#incomingAuthenticationMethod,
+      "incoming.socketType": this.#incomingConnectionSecurity,
+      "incoming.port": this.#incomingPort,
+      "outgoing.hostname": this.#outgoingHostname,
+      "outgoing.username": this.#outgoingUsername,
+      "outgoing.auth": this.#outgoingAuthenticationMethod,
+      "outgoing.socketType": this.#outgoingConnectionSecurity,
+      "outgoing.port": this.#outgoingPort,
+    };
   }
 
   /**
@@ -358,9 +709,12 @@ class EmailManualConfigForm extends AccountHubStep {
    * @param {object} options
    * @param {boolean} [options.showErrors=false] - Whether invalid fields should
    *   show their error state.
-   * @returns {Array<{input: AccountHubInput, labelId: string}>} Invalid fields.
+   * @param {boolean} [options.updateCurrentConfig=true] - Whether to save the
+   *   parsed config as the current state.
+   * @returns {Array<{input: AccountHubInput, labelId: string, visible: boolean}>}
+   *   Invalid fields.
    */
-  #captureConfig({ showErrors = false } = {}) {
+  #captureConfig({ showErrors = false, updateCurrentConfig = true } = {}) {
     const config = this.#currentConfig.copy();
     const errors = [];
 
@@ -380,6 +734,7 @@ class EmailManualConfigForm extends AccountHubStep {
         this.#incomingHostname.value = value;
       },
       showErrors,
+      updateValue: updateCurrentConfig,
     });
     this.#validateField({
       config,
@@ -391,6 +746,7 @@ class EmailManualConfigForm extends AccountHubStep {
         config.incoming.username = value;
       },
       showErrors,
+      updateValue: updateCurrentConfig,
     });
     this.#validateField({
       config,
@@ -403,6 +759,7 @@ class EmailManualConfigForm extends AccountHubStep {
         config.incoming.port = value;
       },
       showErrors,
+      updateValue: updateCurrentConfig,
     });
 
     config.incoming.socketType = InputSanitizer.integer(
@@ -423,6 +780,7 @@ class EmailManualConfigForm extends AccountHubStep {
         this.#outgoingHostname.value = value;
       },
       showErrors,
+      updateValue: updateCurrentConfig,
     });
 
     if (this.#sameUsernameCheckbox.checked) {
@@ -439,6 +797,7 @@ class EmailManualConfigForm extends AccountHubStep {
           config.outgoing.username = value;
         },
         showErrors,
+        updateValue: updateCurrentConfig,
       });
     }
 
@@ -453,6 +812,7 @@ class EmailManualConfigForm extends AccountHubStep {
         config.outgoing.port = value;
       },
       showErrors,
+      updateValue: updateCurrentConfig,
     });
 
     config.outgoing.socketType = InputSanitizer.integer(
@@ -462,7 +822,9 @@ class EmailManualConfigForm extends AccountHubStep {
       this.#outgoingAuthenticationMethod.value
     );
 
-    this.#currentConfig = config;
+    if (updateCurrentConfig) {
+      this.#currentConfig = config;
+    }
     return errors;
   }
 
@@ -476,28 +838,62 @@ class EmailManualConfigForm extends AccountHubStep {
    * @param {Function} options.parse - Parse and validate the input value.
    * @param {Function} options.update - Update the config with the parsed value.
    * @param {boolean} options.showErrors - Whether to show the input error state.
+   * @param {boolean} options.updateValue - Whether to store the parsed value.
    */
-  #validateField({ errors, input, labelId, parse, update, showErrors }) {
+  #validateField({
+    errors,
+    input,
+    labelId,
+    parse,
+    update,
+    showErrors,
+    updateValue,
+  }) {
     try {
-      update(parse(input));
+      const value = parse(input);
+      if (updateValue) {
+        update(value);
+      }
       input.setErrorState("");
     } catch (error) {
-      if (showErrors) {
-        input.setErrorState(error?._message || "invalid");
-      }
-      errors.push({ input, labelId });
+      const showError = showErrors || this.#touchedInputs.has(input);
+      input.setErrorState(error?._message || "invalid", { showError });
+      errors.push({ input, labelId, visible: showError });
     }
   }
 
   /**
    * Queue a config update after the user stops typing.
+   *
+   * @param {HTMLElement} currentTarget - The element that triggered the config
+   *  change.
    */
-  #queueConfigChange() {
+  #queueConfigChange(currentTarget) {
     this.#clearQueuedConfigChange();
     this.#configChangeTimer = this.ownerDocument.documentGlobal.setTimeout(
       () => {
         this.#configChangeTimer = null;
-        this.#runConfigChanged();
+        switch (currentTarget) {
+          case this.#incomingPort:
+            this.#runConfigChanged();
+            this.#adjustIncomingSSLToPort();
+            break;
+          case this.#outgoingPort:
+            this.#runConfigChanged();
+            this.#adjustOutgoingSSLToPort();
+            break;
+          case this.#incomingHostname:
+            this.#updateUnsupportedOAuthBanner(true);
+            this.#runConfigChanged();
+            break;
+          case this.#outgoingHostname:
+            this.#updateUnsupportedOAuthBanner(false);
+            this.#runConfigChanged();
+            break;
+          default:
+            this.#runConfigChanged();
+            break;
+        }
       },
       CONFIG_CHANGE_INPUT_DEBOUNCE_MS
     );
@@ -528,7 +924,10 @@ class EmailManualConfigForm extends AccountHubStep {
    */
   async #configChanged() {
     const errors = this.#captureConfig({ showErrors: this.#isShowingErrors });
-    const completed = !this.#isShowingErrors || !errors.length;
+    const completed =
+      !errors.some(error => error.visible) &&
+      !this.#isUnsupportedOAuth(true) &&
+      !this.#isUnsupportedOAuth(false);
 
     if (this.#isShowingErrors) {
       if (errors.length) {
@@ -553,6 +952,68 @@ class EmailManualConfigForm extends AccountHubStep {
   #clearFieldErrors() {
     for (const input of this.#validatedInputs) {
       input.setErrorState("");
+    }
+  }
+
+  /**
+   * Show help text next to fields updated by the configuration test.
+   *
+   * @param {AccountConfig} previousConfig - The user-submitted configuration.
+   * @param {AccountConfig} currentConfig - The tested configuration to show.
+   */
+  #showAutomaticChangeIndicators(previousConfig, currentConfig) {
+    assert(previousConfig instanceof AccountConfig);
+    assert(currentConfig instanceof AccountConfig);
+
+    for (const [path, element] of Object.entries(this.#configChangeFields)) {
+      let oldValue = this.#getConfigValue(previousConfig, path);
+      let newValue = this.#getConfigValue(currentConfig, path);
+
+      if (oldValue === newValue) {
+        continue;
+      }
+
+      if (element.localName == "account-hub-select") {
+        oldValue = element.getOptionLabel(oldValue);
+        newValue = element.getOptionLabel(newValue);
+      }
+
+      element.setHelpText(
+        element.getAttribute("config-change-l10n-id") ||
+          DEFAULT_CONFIG_CHANGE_HELP_TEXT_ID,
+        { oldValue, newValue }
+      );
+    }
+  }
+
+  /**
+   * Get a nested value from a configuration object.
+   *
+   * @param {AccountConfig} config - The configuration to read.
+   * @param {string} path - A dot-separated path.
+   * @returns {*} The value at the requested path.
+   */
+  #getConfigValue(config, path) {
+    return path.split(".").reduce((value, key) => value?.[key], config);
+  }
+
+  /**
+   * Clear help text added for automatically updated settings.
+   */
+  #clearAutomaticChangeIndicators() {
+    for (const field of [
+      this.#incomingHostname,
+      this.#incomingUsername,
+      this.#incomingAuthenticationMethod,
+      this.#incomingConnectionSecurity,
+      this.#incomingPort,
+      this.#outgoingHostname,
+      this.#outgoingUsername,
+      this.#outgoingAuthenticationMethod,
+      this.#outgoingConnectionSecurity,
+      this.#outgoingPort,
+    ]) {
+      field.clearHelpText();
     }
   }
 
@@ -649,6 +1110,9 @@ class EmailManualConfigForm extends AccountHubStep {
     this.#outgoingUsername.required = true;
     this.#isShowingErrors = false;
     this.#clearFieldErrors();
+    this.#clearAutomaticChangeIndicators();
+    this.#updateUnsupportedOAuthBanner(true);
+    this.#updateUnsupportedOAuthBanner(false);
     this.clearNotifications();
   }
 }

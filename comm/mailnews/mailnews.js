@@ -227,6 +227,9 @@ pref("mail.addr_book.loglevel", "Warn");
 pref("mail.addr_book.view.startupURI", "moz-abdirectory://?");
 pref("mail.addr_book.view.startupURIisDefault", true);
 
+// Address book where manually added contacts are created.
+pref("mail.addr_book.add_item_default_uri", "jsaddrbook://abook.sqlite");
+
 pref("carddav.setup.loglevel", "Warn");
 pref("carddav.sync.loglevel", "Warn");
 
@@ -501,6 +504,7 @@ pref("mail.default_sendlater_uri", "mailbox://nobody@Local%20Folders/Unsent%20Me
 
 pref("mail.server.default.clientid", "");
 pref("mail.smtpserver.default.clientid", "");
+pref("mail.server.default.oauth2.useExternalBrowser", true);
 
 // This is not to be enabled by default until the prerequisite
 // changes are completed. See here for details:
@@ -1064,8 +1068,10 @@ pref("mailnews.oauth.loglevel", "Warn");
 pref("mailnews.oauth.usePrivateBrowser", false);
 // Use the system browser for OAuth instead of a Thunderbird window.
 pref("mailnews.oauth.useExternalBrowser", true);
+#ifndef MOZ_ESR
 // Use a net.thunderbird: URL instead of localhost for redirection.
 pref("mailnews.oauth.useSchemeRedirect", true);
+#endif
 
 pref("test.loghelper.loglevel", "Warn");
 

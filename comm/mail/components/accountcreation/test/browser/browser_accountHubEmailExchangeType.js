@@ -14,6 +14,7 @@ let subview;
 let graphCard;
 let ewsCard;
 let authenticationSelect;
+let unsupportedOAuthBanner;
 let defaultOauthInput;
 let oauthOptionsWrapperElement;
 let customOauthWrapperElement;
@@ -37,6 +38,9 @@ add_setup(async function () {
   );
   ewsCard = subview.querySelector('account-hub-radio-card-large[value="ews"]');
   authenticationSelect = subview.querySelector("#exchangeTypeAuthentication");
+  unsupportedOAuthBanner = subview.querySelector(
+    "#exchangeTypeUnsupportedOAuthBanner"
+  );
   defaultOauthInput = subview.querySelector("#exchangeTypeDefaultOauth");
   oauthOptionsWrapperElement = subview.querySelector(
     "#exchangeTypeOauthOptions"
@@ -261,6 +265,10 @@ add_task(function test_graphOnlyShowsOauthAuthentication() {
     "OAuth2 should be selected by default for Graph"
   );
   Assert.ok(
+    getAuthenticationOption("incomingAuthMethodSelectOption").hidden,
+    "The empty authentication option should be hidden for Graph"
+  );
+  Assert.ok(
     getAuthenticationOption("incomingAuthMethodCleartext").hidden,
     "Normal password should be hidden for Graph"
   );
@@ -306,6 +314,15 @@ add_task(function test_ewsShowsAllAuthenticationOptions() {
   changeAccountType(ewsCard);
 
   Assert.ok(ewsCard.checked, "EWS should be selected");
+  Assert.ok(
+    !getAuthenticationOption("incomingAuthMethodSelectOption").hidden,
+    "The empty authentication option should be visible for EWS"
+  );
+  Assert.equal(
+    authenticationSelect.value,
+    "",
+    "EWS should require the user to select an authentication method"
+  );
   Assert.ok(
     !getAuthenticationOption("incomingAuthMethodCleartext").hidden,
     "Normal password should be visible for EWS"
@@ -420,13 +437,14 @@ add_task(async function test_uncheckingDefaultOauthShowsCustomOptions() {
 
 add_task(async function test_ewsPasswordStillHidesDefaultOauth() {
   changeAccountType(graphCard);
-  changeAccountType(ewsCard);
   const hiddenPromise = BrowserTestUtils.waitForAttribute(
     "hidden",
     oauthOptionsWrapperElement
   );
-  await selectAuthenticationMethod("incomingAuthMethodCleartext");
+  changeAccountType(ewsCard);
   await hiddenPromise;
+
+  await selectAuthenticationMethod("incomingAuthMethodCleartext");
 
   Assert.equal(
     authenticationSelect.value,
@@ -448,6 +466,25 @@ add_task(async function test_ewsPasswordStillHidesDefaultOauth() {
     [oauthTenantInput, oauthApplicationInput],
     false,
     "Default OAuth checkbox"
+  );
+});
+
+add_task(function test_ewsAuthenticationSelectionSurvivesGraphSwitch() {
+  changeAccountType(ewsCard);
+  changeAuthenticationMethod(String(Ci.nsMsgAuthMethod.NTLM));
+
+  changeAccountType(graphCard);
+  Assert.equal(
+    authenticationSelect.value,
+    String(Ci.nsMsgAuthMethod.OAuth2),
+    "Graph should force OAuth2 authentication"
+  );
+
+  changeAccountType(ewsCard);
+  Assert.equal(
+    authenticationSelect.value,
+    String(Ci.nsMsgAuthMethod.NTLM),
+    "EWS should restore the previously selected authentication method"
   );
 });
 
@@ -481,6 +518,36 @@ add_task(function test_setStatePrefillsAutodiscoveredExchangeConfig() {
   );
 });
 
+add_task(function test_setStateShowsPlaceholderForRecommendedEwsWithoutAuth() {
+  const config = createIncomingConfig("microsoft", 0, "manual-ews@example.com");
+  config.incoming.exchangeURL =
+    "https://outlook.office365.com/EWS/Exchange.asmx";
+
+  subview.setState(config);
+
+  Assert.ok(ewsCard.checked, "An EWS service URL should preselect EWS");
+  Assert.equal(
+    authenticationSelect.value,
+    "",
+    "An EWS recommendation without a found auth method should not preselect authentication"
+  );
+  Assert.equal(
+    getAuthenticationOption("incomingAuthMethodSelectOption").getAttribute(
+      "data-l10n-id"
+    ),
+    "account-hub-select-option",
+    "The authentication dropdown should use the expected empty option Fluent ID"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(oauthOptionsWrapperElement),
+    "OAuth defaults should stay hidden while the EWS auth method is empty"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(unsupportedOAuthBanner),
+    "The unsupported OAuth warning should stay hidden while EWS has no selected auth method"
+  );
+});
+
 add_task(function test_setStatePrefillsDiscoveredGraphConfig() {
   const config = createIncomingConfig(
     "graph",
@@ -505,6 +572,94 @@ add_task(function test_setStatePrefillsDiscoveredGraphConfig() {
   Assert.ok(
     BrowserTestUtils.isVisible(oauthOptionsWrapperElement),
     "OAuth defaults should be visible for a discovered OAuth2 config"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(unsupportedOAuthBanner),
+    "The unsupported OAuth warning should stay hidden for a known Graph service URL"
+  );
+
+  changeAccountType(ewsCard);
+  Assert.equal(
+    authenticationSelect.value,
+    "",
+    "Switching from a recommended Graph config to EWS should not keep OAuth2 selected"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(oauthOptionsWrapperElement),
+    "OAuth defaults should hide when EWS has no selected auth method"
+  );
+});
+
+add_task(async function test_unsupportedOAuthBannerFollowsAuthentication() {
+  const config = createIncomingConfig(
+    "ews",
+    Ci.nsMsgAuthMethod.passwordCleartext,
+    "user@example.com",
+    "https://exchange.example.invalid/EWS/Exchange.asmx"
+  );
+  subview.setState(config);
+
+  Assert.ok(
+    BrowserTestUtils.isHidden(unsupportedOAuthBanner),
+    "The unsupported OAuth warning should be hidden for password authentication"
+  );
+
+  const configUpdated = BrowserTestUtils.waitForEvent(
+    subview,
+    "config-updated"
+  );
+  await selectAuthenticationMethod("incomingAuthMethodOAuth2");
+
+  Assert.ok(
+    BrowserTestUtils.isVisible(unsupportedOAuthBanner),
+    "The unsupported OAuth warning should show for an unknown service URL"
+  );
+  Assert.equal(
+    unsupportedOAuthBanner.getAttribute("role"),
+    "alert",
+    "The unsupported OAuth warning should announce dynamically"
+  );
+  Assert.ok(
+    (await configUpdated).detail.completed,
+    "OAuth should remain usable for an unknown service URL"
+  );
+
+  const bannerHidden = BrowserTestUtils.waitForAttribute(
+    "hidden",
+    unsupportedOAuthBanner
+  );
+  await selectAuthenticationMethod("incomingAuthMethodCleartext");
+  await bannerHidden;
+});
+
+add_task(function test_unsupportedOAuthBannerFollowsAccountType() {
+  const config = createIncomingConfig(
+    "graph",
+    Ci.nsMsgAuthMethod.OAuth2,
+    "user@example.com",
+    "https://exchange.example.invalid/EWS/Exchange.asmx"
+  );
+  subview.setState(config);
+
+  Assert.ok(
+    graphCard.checked,
+    "Graph should be selected from the stored config"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(unsupportedOAuthBanner),
+    "The unsupported OAuth warning should show for Graph with an unknown service URL"
+  );
+
+  changeAccountType(ewsCard);
+  Assert.ok(
+    BrowserTestUtils.isHidden(unsupportedOAuthBanner),
+    "The unsupported OAuth warning should hide after selecting EWS without OAuth"
+  );
+
+  changeAccountType(graphCard);
+  Assert.ok(
+    BrowserTestUtils.isVisible(unsupportedOAuthBanner),
+    "The unsupported OAuth warning should return after selecting Graph"
   );
 });
 
@@ -595,6 +750,43 @@ add_task(function test_captureGraphState() {
     config.incoming.oauthSettings,
     null,
     "Default OAuth should not capture custom OAuth settings"
+  );
+});
+
+add_task(function test_customOauthDetailsPersistAcrossAccountTypes() {
+  changeAccountType(graphCard);
+  setCustomOauthDetails("persisted-tenant", "persisted-client-id");
+
+  changeAccountType(ewsCard);
+  Assert.equal(
+    oauthTenantInput.value,
+    "persisted-tenant",
+    "Custom OAuth tenant should stay in the field after switching to EWS"
+  );
+  Assert.equal(
+    oauthApplicationInput.value,
+    "persisted-client-id",
+    "Custom OAuth application ID should stay in the field after switching to EWS"
+  );
+
+  changeAccountType(graphCard);
+  Assert.equal(
+    oauthTenantInput.value,
+    "persisted-tenant",
+    "Custom OAuth tenant should still be present after switching back to Graph"
+  );
+  Assert.equal(
+    oauthApplicationInput.value,
+    "persisted-client-id",
+    "Custom OAuth application ID should still be present after switching back to Graph"
+  );
+  Assert.ok(
+    !defaultOauthInput.checked,
+    "Custom OAuth should remain selected after switching account types"
+  );
+  Assert.ok(
+    BrowserTestUtils.isVisible(customOauthWrapperElement),
+    "Custom OAuth options should be visible when switching back to Graph"
   );
 });
 

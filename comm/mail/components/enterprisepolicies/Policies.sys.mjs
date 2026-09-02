@@ -594,6 +594,17 @@ export var Policies = {
     },
   },
 
+  DisableExperimentalFeatures: {
+    onBeforeUIStartup(manager, param) {
+      if (param) {
+        lazy.PoliciesUtils.setAndLockPref(
+          "mail.offer_experimental_features",
+          false
+        );
+      }
+    },
+  },
+
   DisableMasterPasswordCreation: {
     onBeforeUIStartup(manager, param) {
       if (param) {
@@ -606,6 +617,14 @@ export var Policies = {
     onBeforeUIStartup(manager, param) {
       if (param) {
         manager.disallowFeature("passwordReveal");
+      }
+    },
+  },
+
+  DisableQRExport: {
+    onBeforeUIStartup(manager, param) {
+      if (param) {
+        lazy.PoliciesUtils.setAndLockPref("mail.qrexport.enabled", false);
       }
     },
   },

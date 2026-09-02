@@ -33,6 +33,8 @@ ChromeUtils.defineESModuleGetters(this, {
     "moz-src:///comm/mail/components/customizableui/CustomizableUI.sys.mjs",
   PanelMultiView:
     "moz-src:///comm/mail/components/customizableui/PanelMultiView.sys.mjs",
+  PanelView:
+    "moz-src:///comm/mail/components/customizableui/PanelMultiView.sys.mjs",
   ExtensionsUI: "resource:///modules/ExtensionsUI.sys.mjs",
   UIDensity: "resource:///modules/UIDensity.sys.mjs",
   XULStoreUtils: "resource:///modules/XULStoreUtils.sys.mjs",
@@ -564,6 +566,9 @@ const PanelUI = {
     const noAccounts = MailServices.accounts.accounts.length == 0;
     event.target.querySelector("#appmenu_searchCmd").disabled = noAccounts;
     event.target.querySelector("#appmenu_filtersCmd").disabled = noAccounts;
+
+    event.target.querySelector("#appmenu_exportmobile").hidden =
+      !Services.prefs.getBoolPref("mail.qrexport.enabled", true);
   },
 
   _updateNotifications(notificationsChanged) {

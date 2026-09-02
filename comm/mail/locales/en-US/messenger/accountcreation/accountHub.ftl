@@ -73,6 +73,8 @@ account-hub-email-confirm-button = Confirm
 
 account-hub-email-find-settings-button = Find settings
 
+account-hub-email-connect-button = Connect
+
 account-hub-result-incoming-legend = Incoming
 
 account-hub-result-outgoing-legend = Outgoing
@@ -144,6 +146,9 @@ account-hub-auth-no-authentication-option =
 
 account-hub-auth-label = Authentication method
 
+account-hub-select-option =
+    .label = Select an option
+
 ## Exchange Type Manual Config Step
 
 account-hub-exchange-type-title = Choose an account type
@@ -175,8 +180,6 @@ account-hub-exchange-type-default-oauth = Use default Microsoft 365 Copilot auth
 account-hub-exchange-type-oauth-tenant = Tenant ID
 
 account-hub-exchange-type-oauth-app = App ID
-
-account-hub-exchange-type-advanced-config = Advanced Configuration
 
 ## Other Account Hub strings (sadly not sorted into sections)
 
@@ -214,7 +217,7 @@ account-hub-email-connect-settings = Connect your email settings
 
 account-hub-email-protocol-select-header = Choose an email account type
 
-account-hub-email-protocol-select-notification = Additional information is required to set up this account
+account-hub-email-protocol-select-additional-info = Additional information is required to set up this account.
 
 account-hub-email-enter-password = Enter your email account password
 
@@ -405,7 +408,7 @@ account-hub-address-book-bind-dn = Bind DN
 
 account-hub-ldap-form = Connect to an LDAP directory
 
-account-hub-advanced-configuration-button = Advanced Configuration
+account-hub-advanced-configuration-button = Advanced configuration
 
 account-hub-ldap-ssl-toggle-label = Use secure connection (SSL)
 
@@ -564,6 +567,21 @@ account-hub-manual-config-outgoing-legend = Outgoing server
 # Label for checkbox that will hide an outgoing username input if it's the same is the incoming
 account-hub-same-username-checkbox = Same username as incoming server
 
+# Variables:
+# $oldValue (String): The value requested before the configuration was tested.
+# $newValue (String): The value found after the configuration was tested.
+account-hub-manual-config-security-changed = Couldn’t find { $oldValue }, but { $newValue } is available.
+
+# Variables:
+# $oldValue (String): The port requested before the configuration was tested.
+# $newValue (String): The port found after the configuration was tested.
+account-hub-manual-config-port-changed = Couldn’t reach Port { $oldValue }, but Port { $newValue } is available.
+
+# Variables:
+# $oldValue (String): The value requested before the configuration was tested.
+# $newValue (String): The value found after the configuration was tested.
+account-hub-manual-config-value-changed = Couldn’t use { $oldValue }, but { $newValue } is available.
+
 account-hub-protocol-imap = Sync across devices
 
 account-hub-protocol-microsoft = Exchange or Microsoft 365
@@ -572,6 +590,8 @@ account-hub-protocol-pop3 = Download to device
 
 account-hub-oauth-unsupported-title = Additional configuration is required
 
-# Note: 'Advanced Configuration' is the text of the link/button at the bottom of the form (e.g., account-hub-exchange-type-advanced-config)
+# Note: 'Advanced configuration' is the text of the link/button at the bottom of the form (e.g., account-hub-exchange-type-advanced-config)
 # 'Account Settings' is the text of the menu option/tab name accessible outside Account Hub
-account-hub-oauth-unsupported-description = { -brand-short-name } can’t automatically configure OAuth2 for this hostname. Select Advanced Configuration to create the account, then complete setup from Account Settings. <a data-l10n-name="oauth-support-link">Get help with OAuth2 setup.</a>
+account-hub-oauth-unsupported-description = { -brand-short-name } can’t automatically configure OAuth2 for this hostname. Select Advanced configuration to create the account, then complete setup from Account Settings. <a data-l10n-name="oauth-support-link">Get help with OAuth2 setup.</a>
+
+account-hub-username-help-text = Often your full email address

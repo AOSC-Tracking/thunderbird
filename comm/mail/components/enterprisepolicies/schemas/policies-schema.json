@@ -238,11 +238,19 @@
       "type": "boolean"
     },
 
+    "DisableExperimentalFeatures": {
+      "type": "boolean"
+    },
+
     "DisableMasterPasswordCreation": {
       "type": "boolean"
     },
 
     "DisablePasswordReveal": {
+      "type": "boolean"
+    },
+
+    "DisableQRExport": {
       "type": "boolean"
     },
 

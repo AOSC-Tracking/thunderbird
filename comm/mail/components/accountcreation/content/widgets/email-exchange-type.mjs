@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { AccountHubStep } from "./account-hub-step.mjs";
+import "chrome://messenger/content/tb-banner.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./account-hub-radio-card-large.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./account-hub-input.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./account-hub-select.mjs"; // eslint-disable-line import/no-unassigned-import
@@ -14,6 +15,14 @@ const { AccountConfig } = ChromeUtils.importESModule(
 const { InputSanitizer } = ChromeUtils.importESModule(
   "resource:///modules/accountcreation/InputSanitizer.sys.mjs"
 );
+const { OAuth2Providers } = ChromeUtils.importESModule(
+  "resource:///modules/OAuth2Providers.sys.mjs"
+);
+
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
+});
 
 const GRAPH_URL_ORIGIN = "https://graph.microsoft.com";
 
@@ -22,6 +31,8 @@ const EXCHANGE_TYPE_FROM_CONFIG = {
   ews: "ews",
   graph: "graph",
 };
+
+const UNSELECTED_AUTH_METHOD = "";
 
 const EXCHANGE_AUTH_METHODS = [
   Ci.nsMsgAuthMethod.passwordCleartext,
@@ -72,6 +83,14 @@ class EmailExchangeType extends AccountHubStep {
   #authenticationSelect;
 
   /**
+   * Warning shown when OAuth is selected for an unsupported Exchange service
+   * URL.
+   *
+   * @type {import("chrome://messenger/content/tb-banner.mjs").Banner}
+   */
+  #unsupportedOAuthBanner;
+
+  /**
    * The container for default and custom OAuth settings.
    *
    * @type {HTMLElement}
@@ -113,6 +132,20 @@ class EmailExchangeType extends AccountHubStep {
    */
   #authenticationOptions;
 
+  /**
+   * The selected Exchange account type.
+   *
+   * @type {string}
+   */
+  #selectedAccountType = "";
+
+  /**
+   * The last authentication method selected for EWS.
+   *
+   * @type {string}
+   */
+  #ewsAuthenticationMethod = UNSELECTED_AUTH_METHOD;
+
   connectedCallback() {
     if (this.hasConnected) {
       return;
@@ -131,10 +164,14 @@ class EmailExchangeType extends AccountHubStep {
     this.#authenticationSelect = this.querySelector(
       "#exchangeTypeAuthentication"
     );
+    this.#unsupportedOAuthBanner = this.querySelector(
+      "#exchangeTypeUnsupportedOAuthBanner"
+    );
     this.#accountTypeCards = this.querySelectorAll(
       "account-hub-radio-card-large"
     );
     this.#authenticationOptions = {
+      selectOption: this.querySelector("#incomingAuthMethodSelectOption"),
       normalPassword: this.querySelector("#incomingAuthMethodCleartext"),
       ntlm: this.querySelector("#incomingAuthMethodNtlm"),
       oauth2: this.querySelector("#incomingAuthMethodOAuth2"),
@@ -160,6 +197,7 @@ class EmailExchangeType extends AccountHubStep {
       "click",
       this
     );
+    this.#unsupportedOAuthBanner.addEventListener("click", this);
 
     this.#updateAuthenticationOptions();
     this.#checkFormValidity();
@@ -173,15 +211,25 @@ class EmailExchangeType extends AccountHubStep {
       case "input":
         this.#checkFormValidity();
         break;
-      case "click":
+      case "click": {
         if (event.currentTarget.id === "advancedConfigurationExchange") {
           this.dispatchEvent(
             new CustomEvent("advanced-config", {
               bubbles: true,
             })
           );
+          break;
+        }
+
+        const oauthSupportLink = event.target.closest(
+          'a[data-l10n-name="oauth-support-link"]'
+        );
+        if (oauthSupportLink) {
+          event.preventDefault();
+          lazy.openLinkExternally(oauthSupportLink.href);
         }
         break;
+      }
     }
   }
 
@@ -189,20 +237,41 @@ class EmailExchangeType extends AccountHubStep {
    * Update the available authentication options based on the account type.
    */
   #updateAuthenticationOptions() {
-    const selectedAccountType =
-      Array.from(this.#accountTypeCards).find(card => card.checked)?.value ||
-      this.#accountTypeCards[0]?.value;
+    const selectedAccountType = this.#getSelectedAccountType();
     const isGraphSelected = selectedAccountType == "graph";
 
+    if (this.#selectedAccountType == "ews") {
+      this.#rememberEwsAuthenticationMethod();
+    }
+
+    this.#authenticationOptions.selectOption.hidden = isGraphSelected;
     this.#authenticationOptions.normalPassword.hidden = isGraphSelected;
     this.#authenticationOptions.ntlm.hidden = isGraphSelected;
 
     if (isGraphSelected) {
       this.#authenticationSelect.value = Ci.nsMsgAuthMethod.OAuth2;
+    } else if (this.#selectedAccountType != "ews") {
+      this.#authenticationSelect.value = this.#ewsAuthenticationMethod;
     }
 
+    this.#selectedAccountType = selectedAccountType;
     this.#updateOauthOptions();
+    this.#updateUnsupportedOAuthBanner();
     this.#checkFormValidity();
+  }
+
+  /**
+   * Remember the selected EWS authentication method while switching away from
+   * EWS or changing the authentication method.
+   */
+  #rememberEwsAuthenticationMethod() {
+    this.#ewsAuthenticationMethod = String(
+      InputSanitizer.enum(
+        this.#authenticationSelect.value,
+        EXCHANGE_AUTH_METHODS,
+        UNSELECTED_AUTH_METHOD
+      )
+    );
   }
 
   /**
@@ -228,13 +297,38 @@ class EmailExchangeType extends AccountHubStep {
   }
 
   /**
+   * Look up OAuth provider details for the configured Exchange service URL.
+   *
+   * @returns {object|undefined} The OAuth provider details, or undefined when the URL
+   *   has no known OAuth provider.
+   */
+  #getOAuthDetails() {
+    const hostname = URL.parse(
+      this.#currentConfig.incoming.exchangeURL
+    )?.hostname;
+    return hostname && OAuth2Providers.getHostnameDetails(hostname, "exchange");
+  }
+
+  /**
+   * Show the OAuth unsupported-service URL warning when appropriate.
+   */
+  #updateUnsupportedOAuthBanner() {
+    this.#unsupportedOAuthBanner.hidden = !(
+      this.#authenticationSelect.value == Ci.nsMsgAuthMethod.OAuth2 &&
+      !this.#getOAuthDetails()
+    );
+  }
+
+  /**
    * Dispatches an event whenever the form validity changes.
    */
   #checkFormValidity() {
+    const completed =
+      Boolean(this.#authenticationSelect.value) && this.#form.checkValidity();
     this.dispatchEvent(
       new CustomEvent("config-updated", {
         bubbles: true,
-        detail: { completed: this.#form.checkValidity() },
+        detail: { completed },
       })
     );
   }
@@ -258,12 +352,27 @@ class EmailExchangeType extends AccountHubStep {
    * @returns {string} Protocol type recommendation
    */
   #getRecommendedAccountType(serviceURL) {
-    const url = new URL(serviceURL);
+    const url = URL.parse(serviceURL);
 
-    if (url.origin === GRAPH_URL_ORIGIN) {
+    if (url?.origin === GRAPH_URL_ORIGIN) {
       return EXCHANGE_TYPE_FROM_CONFIG.graph;
     }
     return EXCHANGE_TYPE_FROM_CONFIG.ews;
+  }
+
+  /**
+   * The Exchange account type recommended by an account configuration.
+   *
+   * @param {AccountConfig} configData - An account configuration object.
+   * @param {string} recommendedType - The recommended account type.
+   * @returns {string} The selected account type.
+   */
+  #getAccountTypeFromConfig(configData, recommendedType) {
+    const incomingType = EXCHANGE_TYPE_FROM_CONFIG[configData.incoming.type];
+    if (incomingType) {
+      return incomingType;
+    }
+    return recommendedType;
   }
 
   /**
@@ -284,13 +393,25 @@ class EmailExchangeType extends AccountHubStep {
       card.querySelector(".recommended-description").hidden = !isRecommended;
     }
 
-    const incomingType =
-      EXCHANGE_TYPE_FROM_CONFIG[configData.incoming.type] || recommendedType;
+    const incomingType = this.#getAccountTypeFromConfig(
+      configData,
+      recommendedType
+    );
     const selectedCard = Array.from(this.#accountTypeCards).find(
       card => card.value == incomingType
     );
     selectedCard.checked = true;
 
+    const authenticationMethod = String(
+      InputSanitizer.enum(
+        configData.incoming.auth,
+        EXCHANGE_AUTH_METHODS,
+        UNSELECTED_AUTH_METHOD
+      )
+    );
+    this.#selectedAccountType = "";
+    this.#ewsAuthenticationMethod =
+      incomingType == "ews" ? authenticationMethod : UNSELECTED_AUTH_METHOD;
     this.#usernameInput.value = configData.incoming.username || "";
     this.#defaultOauthCheckbox.checked =
       !configData.incoming.oauthSettings?.useCustomDetails;
@@ -298,13 +419,10 @@ class EmailExchangeType extends AccountHubStep {
       configData.incoming.oauthSettings?.tenant || "";
     this.#oauthApplicationInput.value =
       configData.incoming.oauthSettings?.clientId || "";
-    this.#authenticationSelect.value = String(
-      InputSanitizer.enum(
-        configData?.incoming?.auth,
-        EXCHANGE_AUTH_METHODS,
-        Ci.nsMsgAuthMethod.OAuth2
-      )
-    );
+    this.#authenticationSelect.value =
+      incomingType == "graph"
+        ? String(Ci.nsMsgAuthMethod.OAuth2)
+        : this.#ewsAuthenticationMethod;
     this.#updateAuthenticationOptions();
   }
 
@@ -323,25 +441,23 @@ class EmailExchangeType extends AccountHubStep {
     config.incoming.hostname = hostname;
     config.incoming.port = 443;
     config.incoming.socketType = Ci.nsMsgSocketType.SSL;
-    config.incoming.auth = InputSanitizer.integer(
-      this.#authenticationSelect.value
-    );
+    config.incoming.auth = this.#authenticationSelect.value
+      ? InputSanitizer.integer(this.#authenticationSelect.value)
+      : 0;
     config.incoming.username = this.#usernameInput.value;
     config.incoming.oauthSettings = null;
 
     if (
       config.incoming.auth == Ci.nsMsgAuthMethod.OAuth2 &&
-      !this.#defaultOauthCheckbox.checked
+      !this.#defaultOauthCheckbox.checked &&
+      this.#oauthTenantInput.value &&
+      this.#oauthApplicationInput.value
     ) {
-      const tenant = InputSanitizer.nonemptystring(
-        this.#oauthTenantInput.value
-      );
+      const tenant = this.#oauthTenantInput.value;
       config.incoming.oauthSettings = {
         useCustomDetails: true,
         tenant,
-        clientId: InputSanitizer.nonemptystring(
-          this.#oauthApplicationInput.value
-        ),
+        clientId: this.#oauthApplicationInput.value,
         authorizationEndpoint: `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`,
         tokenEndpoint: `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
       };

@@ -42,10 +42,20 @@ add_task(function test_setState() {
     "Service URL input should be focused"
   );
   Assert.equal(serviceURL.value, "", "Service URL input value should be empty");
+  Assert.equal(
+    serviceURLInput.ariaInvalid,
+    "false",
+    "Empty service URL input should not show an error on initial render"
+  );
+  Assert.ok(
+    BrowserTestUtils.isHidden(serviceURL.querySelector(".input-warning")),
+    "Empty service URL input should not show a warning icon on initial render"
+  );
 });
 
 add_task(async function test_captureState() {
-  const graphUrl = "https://graph.microsoft.com/v1.0";
+  const graphUrl = "https://graph.microsoft.com/";
+  const graphUrlWithVersion = "https://graph.microsoft.com/v1.0";
 
   const config = new AccountConfig();
   subview.setState(config);
@@ -58,6 +68,17 @@ add_task(async function test_captureState() {
     state.incoming.exchangeURL,
     graphUrl,
     "captureState should reflect current data"
+  );
+
+  serviceURLInput.select();
+  EventUtils.sendString(graphUrlWithVersion);
+
+  state = subview.captureState();
+
+  Assert.equal(
+    state.incoming.exchangeURL,
+    graphUrl,
+    "captureState should strip the version from a Microsoft Graph URL"
   );
 
   serviceURLInput.select();
@@ -102,11 +123,17 @@ add_task(async function test_serviceURLValidation() {
       isValid,
       `${url} should ${isValid ? "complete" : "not complete"} the form`
     );
+    Assert.equal(
+      serviceURLInput.ariaInvalid,
+      String(!isValid),
+      `${url} should ${isValid ? "not " : ""}show an error after input`
+    );
   }
 });
 
 add_task(async function test_serviceURLRestoredBySetState() {
   const graphUrl = "https://graph.microsoft.com/v1.0";
+  const normalizedGraphUrl = "https://graph.microsoft.com/";
 
   const config = new AccountConfig();
   config.incoming.exchangeURL = graphUrl;
@@ -117,9 +144,10 @@ add_task(async function test_serviceURLRestoredBySetState() {
     graphUrl,
     "setState should restore the saved service URL"
   );
+
   Assert.deepEqual(
     subview.captureState().incoming.exchangeURL,
-    graphUrl,
-    "captureState should return the restored service URL"
+    normalizedGraphUrl,
+    "captureState should strip the version from the restored Microsoft Graph URL"
   );
 });

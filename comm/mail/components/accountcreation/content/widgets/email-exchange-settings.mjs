@@ -67,7 +67,7 @@ class EmailExchangeSettings extends AccountHubStep {
   setState(configData) {
     this.#currentConfig = configData;
     this.#serviceURL.value = configData?.incoming.exchangeURL ?? "";
-    this.#updateContinueState();
+    this.#updateContinueState({ showErrors: false });
     this.#serviceURL.focus();
   }
 
@@ -84,8 +84,12 @@ class EmailExchangeSettings extends AccountHubStep {
 
   /**
    * Update the Continue button state based on the service URL input validity.
+   *
+   * @param {object} [options]
+   * @param {boolean} [options.showErrors=true] - Whether invalid fields should
+   *   be exposed visually.
    */
-  #updateContinueState() {
+  #updateContinueState({ showErrors = true } = {}) {
     this.#serviceURL.setErrorState("");
 
     const completed =
@@ -93,7 +97,7 @@ class EmailExchangeSettings extends AccountHubStep {
       this.#isServiceURLValid();
 
     if (!completed) {
-      this.#serviceURL.setErrorState("error");
+      this.#serviceURL.setErrorState("error", { showError: showErrors });
     } else {
       this.#serviceURL.setErrorState("");
     }
@@ -118,6 +122,16 @@ class EmailExchangeSettings extends AccountHubStep {
     try {
       const inputValue = this.#serviceURL.value.trim();
       const url = InputSanitizer.url(inputValue);
+      const parsedURL = URL.parse(url);
+
+      if (
+        parsedURL.origin === "https://graph.microsoft.com" &&
+        ["/v1.0", "/v1.0/"].includes(parsedURL.pathname)
+      ) {
+        parsedURL.pathname = "/";
+        return parsedURL.href;
+      }
+
       return url;
     } catch {
       return "";
