@@ -634,7 +634,6 @@ nsresult nsImapService::DecomposeImapURI(const nsACString& aMessageURI,
 
 NS_IMETHODIMP nsImapService::SaveMessageToDisk(const nsACString& aMessageURI,
                                                nsIFile* aFile,
-                                               bool aAddDummyEnvelope,
                                                nsIUrlListener* aUrlListener,
                                                bool canonicalLineEnding,
                                                nsIMsgWindow* aMsgWindow) {
@@ -660,15 +659,13 @@ NS_IMETHODIMP nsImapService::SaveMessageToDisk(const nsACString& aMessageURI,
     nsCOMPtr<nsIMsgMessageUrl> msgUrl = do_QueryInterface(imapUrl, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
     msgUrl->SetMessageFile(aFile);
-    msgUrl->SetAddDummyEnvelope(aAddDummyEnvelope);
     msgUrl->SetCanonicalLineEnding(canonicalLineEnding);
 
     nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(msgUrl);
     if (mailnewsUrl) mailnewsUrl->SetMsgIsInLocalCache(hasMsgOffline);
 
     nsCOMPtr<nsIStreamListener> saveAsListener;
-    mailnewsUrl->GetSaveAsListener(aAddDummyEnvelope, aFile,
-                                   getter_AddRefs(saveAsListener));
+    mailnewsUrl->GetSaveAsListener(aFile, getter_AddRefs(saveAsListener));
 
     // IMAP code uses UID as msgkey.
     nsAutoCString uid;
@@ -2372,51 +2369,6 @@ NS_IMETHODIMP nsImapService::GetFoldersCreatedAsync(bool* aAsyncCreation) {
   NS_ENSURE_ARG_POINTER(aAsyncCreation);
   *aAsyncCreation = true;
   return NS_OK;
-}
-
-NS_IMETHODIMP nsImapService::GetListOfFoldersWithPath(
-    nsIImapIncomingServer* aServer, nsIMsgWindow* aMsgWindow,
-    const nsACString& folderPath) {
-  nsresult rv;
-  nsCOMPtr<nsIMsgIncomingServer> server = do_QueryInterface(aServer);
-  if (!server) return NS_ERROR_FAILURE;
-
-  nsCOMPtr<nsIMsgFolder> rootMsgFolder;
-  rv = server->GetRootMsgFolder(getter_AddRefs(rootMsgFolder));
-
-  NS_ENSURE_TRUE(NS_SUCCEEDED(rv) && rootMsgFolder, NS_ERROR_FAILURE);
-
-  nsCOMPtr<nsIUrlListener> listener = do_QueryInterface(aServer, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (!listener) return NS_ERROR_FAILURE;
-
-  // Locate the folder so that the correct hierarchical delimiter is used in the
-  // folder pathnames, otherwise root's (ie, '^') is used and this is wrong.
-  nsCOMPtr<nsIMsgFolder> msgFolder;
-  if (rootMsgFolder && !folderPath.IsEmpty()) {
-    // If the folder path contains 'INBOX' of any forms, we need to convert it
-    // to uppercase before finding it under the root folder. We do the same in
-    // PossibleImapMailbox().
-    nsAutoCString tempFolderName(folderPath);
-    nsAutoCString tokenStr, remStr, changedStr;
-    int32_t slashPos = tempFolderName.FindChar('/');
-    if (slashPos > 0) {
-      tokenStr = StringHead(tempFolderName, slashPos);
-      remStr = Substring(tempFolderName, slashPos);
-    } else
-      tokenStr.Assign(tempFolderName);
-
-    if (tokenStr.LowerCaseEqualsLiteral("inbox") &&
-        !tokenStr.EqualsLiteral("INBOX"))
-      changedStr.AppendLiteral("INBOX");
-    else
-      changedStr.Append(tokenStr);
-
-    if (slashPos > 0) changedStr.Append(remStr);
-
-    rv = rootMsgFolder->FindSubFolder(changedStr, getter_AddRefs(msgFolder));
-  }
-  return DiscoverChildren(msgFolder, listener, folderPath);
 }
 
 NS_IMETHODIMP nsImapService::GetListOfFoldersOnServer(

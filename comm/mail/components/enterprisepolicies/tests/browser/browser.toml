@@ -14,6 +14,8 @@ support-files = [
   "extensionsettings.html",
 ]
 
+["browser_policies_differences.js"]
+
 ["browser_policy_app_auto_update.js"]
 skip-if = [
   "os == 'win' && msix", # Updater is disabled in MSIX builds
@@ -55,3 +57,5 @@ run-if = [
 ["browser_policy_masterpassword.js"]
 
 ["browser_policy_passwordmanager.js"]
+
+["browser_policy_pdfviewer.js"]

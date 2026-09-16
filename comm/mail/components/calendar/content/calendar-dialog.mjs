@@ -159,6 +159,8 @@ export class CalendarDialog extends PositionedDialog {
         this.#subviewManager.isDefaultSubviewVisible();
 
       this.setAttribute("is", "calendar-dialog");
+      this.setAttribute("closedby", "closerequest");
+      this.addEventListener("cancel", this);
 
       this.container = document.getElementById("calendarDisplayBox");
       this.#title = this.querySelector(".calendar-dialog-title");
@@ -203,6 +205,9 @@ export class CalendarDialog extends PositionedDialog {
 
   handleEvent(event) {
     switch (event.type) {
+      case "cancel":
+        this.close();
+        break;
       case "click":
         for (const [selector, handler] of Object.entries(this.#clickHandlers)) {
           if (event.target.closest(selector)) {
@@ -460,6 +465,23 @@ export class CalendarDialog extends PositionedDialog {
     this.querySelector("calendar-dialog-reminders-row").setReminders(reminders);
 
     const attendees = event.getAttendees();
+    const organizer = event.organizer;
+
+    if (organizer) {
+      const organizerAttendee = attendees.find(
+        attendee => attendee.id.toLowerCase() == organizer.id.toLowerCase()
+      );
+
+      if (organizerAttendee) {
+        const organizerDisplay = organizerAttendee.clone();
+        organizerDisplay.isOrganizer = true;
+        attendees[attendees.indexOf(organizerAttendee)] = organizerDisplay;
+      } else {
+        const organizerDisplay = organizer.clone();
+        organizerDisplay.participationStatus = "";
+        attendees.push(organizerDisplay);
+      }
+    }
 
     for (const attendeeView of this.querySelectorAll(
       "calendar-dialog-attendees-row"

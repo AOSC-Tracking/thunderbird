@@ -247,6 +247,101 @@ async function test_createFolder() {
   }
 }
 
+// Replica of StringHash in mailnews/base/src/nsMsgUtils.cpp: h = 1, then for
+// each UTF-16 code unit (as two little-endian bytes):
+// h = 0x63c63cd9 * h + 0x9c39c33d + byte (mod 2^32). The result is the 8 hex
+// digits appended by NS_MsgHashIfNecessary. Math.imul is required for the
+// 32-bit multiplication; a plain "*" loses precision.
+function msgHash(name) {
+  let h = 1;
+  for (let i = 0; i < name.length; i++) {
+    const c = name.charCodeAt(i);
+    for (const b of [c & 0xff, (c >> 8) & 0xff]) {
+      h = (Math.imul(0x63c63cd9, h) + 0x9c39c33d + b) >>> 0;
+    }
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * A folder name with an illegal character far into it must still be stored
+ * under a name that fits the 55-character limit (bug 2029781): the hash is
+ * appended after 47 characters, not at the illegal character.
+ */
+async function test_longIllegalNameBounded() {
+  const root = create_temporary_directory();
+  const rootFolder = setup_mailbox("none", root);
+  // Initialize the root and its discovery (see test_createdFolderPersistsRealName
+  // for why this matters for maildir).
+  rootFolder.msgStore.createFolder(rootFolder, "setup");
+
+  const displayName =
+    "a very long folder name with an invalid character far in: and some more text";
+  Assert.greater(
+    displayName.indexOf(":"),
+    47,
+    "the illegal char must be past the 47-char cap"
+  );
+
+  const newFolder = rootFolder.msgStore.createFolder(rootFolder, displayName);
+  Assert.equal(
+    newFolder.filePath.leafName,
+    displayName.slice(0, 47) + msgHash(displayName),
+    "the on-disk name must be capped at 47 chars + the hash"
+  );
+  Assert.equal(newFolder.name, displayName, "the folder keeps its real name");
+}
+
+/**
+ * The folder's real name must be persisted in its summary file when the
+ * folder is created (bug 2063333). A folder whose name contains characters
+ * that can't be used in a filename is stored on disk under a hashed name;
+ * without the real name in the summary, the folder would only keep its name
+ * through the folder cache and lose it once that cache is gone.
+ */
+async function test_createdFolderPersistsRealName() {
+  const root = create_temporary_directory();
+  const rootFolder = setup_mailbox("none", root);
+
+  // Create a plain folder first so the root folder and its discovery are
+  // initialized. Otherwise creating a hashed-name folder as the very first
+  // folder lets the initial disk scan override its in-memory name with the
+  // hashed on-disk name (the maildir store creates the directory before
+  // AddSubfolder; the same ordering was fixed for mbox only in bug 1889653).
+  const setupFolder = rootFolder.msgStore.createFolder(rootFolder, "setup");
+  Assert.ok(setupFolder, "setup folder should be created");
+
+  const displayName = "strange: name";
+  const newFolder = rootFolder.msgStore.createFolder(rootFolder, displayName);
+  Assert.equal(newFolder.name, displayName, "the folder keeps its real name");
+  Assert.notEqual(
+    newFolder.filePath.leafName,
+    displayName,
+    "the on-disk name should be hashed"
+  );
+
+  // The summary must contain the real name, so a fresh folder object (e.g.
+  // after a restart, without the folder cache) can recover it.
+  const dbService = Cc["@mozilla.org/msgDatabase/msgDBService;1"].getService(
+    Ci.nsIMsgDBService
+  );
+  const db = dbService.openDBFromFile(
+    newFolder.summaryFile,
+    null,
+    false,
+    false
+  );
+  try {
+    Assert.equal(
+      db.dBFolderInfo.folderName,
+      displayName,
+      "the summary must contain the folder's real name"
+    );
+  } finally {
+    db.close(true);
+  }
+}
+
 /**
  * Load messages into a msgStore and make sure we can read
  * them back correctly using asyncScan().
@@ -725,6 +820,8 @@ for (const store of localAccountUtils.pluggableStores) {
   add_task(withStore(store, test_discoverChildFolders));
   add_task(withStore(store, test_discoverSubFolders));
   add_task(withStore(store, test_createFolder));
+  add_task(withStore(store, test_longIllegalNameBounded));
+  add_task(withStore(store, test_createdFolderPersistsRealName));
   add_task(withStore(store, test_asyncScan));
   add_task(withStore(store, test_basicReadWrite));
   add_task(withStore(store, test_discardWrites));

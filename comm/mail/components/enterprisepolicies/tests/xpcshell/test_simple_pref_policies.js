@@ -43,20 +43,34 @@ const POLICIES_TESTS = [
     },
   },
 
-  // POLICY: DisableBuiltinPDFViewer
+  // POLICY: DisableDataCollectionSettings
   {
-    policies: { DisableBuiltinPDFViewer: true },
-    lockedPrefs: { "pdfjs.disabled": true },
+    policies: { DisableDataCollectionSettings: false },
+    unlockedPrefs: { "mail.data_collection_settings.enabled": true },
+  },
+  {
+    policies: { DisableDataCollectionSettings: true },
+    lockedPrefs: { "mail.data_collection_settings.enabled": false },
   },
 
   // POLICY: DisableExperimentalFeatures
   {
     policies: { DisableExperimentalFeatures: false },
-    unlockedPrefs: { "mail.offer_experimental_features": true },
+    unlockedPrefs: { "mail.experimental_features_settings.enabled": true },
   },
   {
     policies: { DisableExperimentalFeatures: true },
-    lockedPrefs: { "mail.offer_experimental_features": false },
+    lockedPrefs: { "mail.experimental_features_settings.enabled": false },
+  },
+
+  // POLICY: DisableMessageForwardingFilters
+  {
+    policies: { DisableMessageForwardingFilters: false },
+    unlockedPrefs: { "mail.filters.forward.enabled": true },
+  },
+  {
+    policies: { DisableMessageForwardingFilters: true },
+    lockedPrefs: { "mail.filters.forward.enabled": false },
   },
 
   // POLICY: DisableQRExport
@@ -67,6 +81,16 @@ const POLICIES_TESTS = [
   {
     policies: { DisableQRExport: true },
     lockedPrefs: { "mail.qrexport.enabled": false },
+  },
+
+  // POLICY: DisableUpdateSettings
+  {
+    policies: { DisableUpdateSettings: false },
+    unlockedPrefs: { "mail.update_settings.enabled": true },
+  },
+  {
+    policies: { DisableUpdateSettings: true },
+    lockedPrefs: { "mail.update_settings.enabled": false },
   },
 
   // POLICY: Authentication

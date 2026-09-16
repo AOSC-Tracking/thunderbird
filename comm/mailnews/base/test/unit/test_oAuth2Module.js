@@ -5,11 +5,17 @@
 const { OAuth2Module } = ChromeUtils.importESModule(
   "resource:///modules/OAuth2Module.sys.mjs"
 );
+const { OAuth2CustomDetails } = ChromeUtils.importESModule(
+  "resource:///modules/OAuth2CustomDetails.sys.mjs"
+);
 const { OAuth2TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/OAuth2TestUtils.sys.mjs"
 );
 const { setTimeout } = ChromeUtils.importESModule(
   "resource://gre/modules/Timer.sys.mjs"
+);
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 const { OAuth2PageGenerator } = ChromeUtils.importESModule(
   "moz-src:///comm/mailnews/base/src/OAuth2PageGenerator.sys.mjs"
@@ -766,47 +772,188 @@ add_task(async function testForgetRemovedTokens() {
   OAuth2TestUtils.stopServer();
 });
 
-add_task(async function testOverrideIssuerDetails() {
+function testOverrideIssuerWithDetails(
+  serverType,
+  customDetails,
+  expectedCustomDetails
+) {
   const mod = new OAuth2Module();
-
-  class TestOAuth2CustomDetails {
-    useCustomDetails = true;
-    usePKCE = false;
-    useExternalBrowser = true;
-    clientId = "custom_client_id";
-    authorizationEndpoint = "https://oauth2.test2.test2/form";
-  }
 
   const isOAuthSupportedWithIssuerDetailOverridesOnly = mod.initFromHostname(
     "test.test",
     "oscar@test.invalid",
-    "ews",
-    new TestOAuth2CustomDetails()
+    serverType,
+    customDetails
   );
   Assert.ok(
     isOAuthSupportedWithIssuerDetailOverridesOnly,
-    "OAuth should initialize successfully with only issuer detail overrides."
+    `${serverType}: OAuth should initialize successfully with overrides.`
+  );
+  Assert.equal(
+    mod._loginOrigin,
+    `oauth://${expectedCustomDetails.issuer}`,
+    `${serverType}: issuer should have been customized.`
+  );
+  Assert.equal(
+    mod._scope,
+    expectedCustomDetails.scopes,
+    `${serverType}: scopes should have been customized.`
   );
   Assert.equal(
     mod._oauth.usePKCE,
-    false,
-    "UsePKCE should have been customized."
+    expectedCustomDetails.usePKCE,
+    `${serverType}: usePKCE should have been customized.`
   );
   Assert.equal(
     mod._oauth.useExternalBrowser,
-    true,
-    "UseExternalBrowser should have been customized."
+    expectedCustomDetails.useExternalBrowser,
+    `${serverType}: useExternalBrowser should have been customized.`
   );
   Assert.equal(
     mod._oauth.clientId,
-    "custom_client_id",
-    "ClientID should have been customized."
+    expectedCustomDetails.clientId,
+    `${serverType}: client ID should have been customized.`
   );
   Assert.equal(
     mod._oauth.authorizationEndpoint,
-    "https://oauth2.test2.test2/form",
-    "Authorization endpoint should have been customized."
+    expectedCustomDetails.authorizationEndpoint,
+    `${serverType}: authorization endpoint should have been customized.`
   );
+  Assert.equal(
+    mod._oauth.tokenEndpoint,
+    expectedCustomDetails.tokenEndpoint,
+    `${serverType}: token endpoint should have been customized.`
+  );
+  Assert.equal(
+    mod._oauth.redirectionEndpoint,
+    expectedCustomDetails.redirectionEndpoint,
+    `${serverType}: redirection endpoint should have been customized.`
+  );
+  Assert.equal(
+    mod._oauth.consumerSecret,
+    expectedCustomDetails.clientSecret,
+    `${serverType}: client secret should have been customized.`
+  );
+  Assert.equal(
+    mod._oauth.issuerIdentifier,
+    expectedCustomDetails.issuerIdentifier,
+    `${serverType}: issuer identifier should have been customized.`
+  );
+
+  OAuth2TestUtils.forgetObjects();
+}
+
+add_task(function testOverrideIssuerDetails() {
+  // Each custom details should produce values equal to this:
+  class TestOAuth2CustomDetails {
+    useCustomDetails = true;
+    issuer = "test.test";
+    scopes = "test_mail";
+    usePKCE = false;
+    useExternalBrowser = true;
+    clientId = "custom_client_id";
+    authorizationEndpoint = "https://test.test/common/oauth2/v2.0/authorize";
+    tokenEndpoint = "https://test.test/common/oauth2/v2.0/token";
+    redirectionEndpoint = "https://localhost";
+    clientSecret = "custom_client_secret";
+    issuerIdentifier = "https://issuer.test";
+  }
+
+  const expectedCustomDetails = new TestOAuth2CustomDetails();
+  testOverrideIssuerWithDetails(
+    "test",
+    expectedCustomDetails,
+    expectedCustomDetails
+  );
+
+  const standardPrefsRoot = "mail.server.test-custom-oauth.";
+  const standardPrefs = Services.prefs.getBranch(standardPrefsRoot);
+  standardPrefs.setBoolPref("oauth2.useCustomDetails", true);
+  standardPrefs.setStringPref("oauth2.issuer", expectedCustomDetails.issuer);
+  standardPrefs.setStringPref("oauth2.scopes", expectedCustomDetails.scopes);
+  standardPrefs.setStringPref(
+    "oauth2.clientId",
+    expectedCustomDetails.clientId
+  );
+  standardPrefs.setStringPref(
+    "oauth2.authorizationEndpoint",
+    expectedCustomDetails.authorizationEndpoint
+  );
+  standardPrefs.setStringPref(
+    "oauth2.tokenEndpoint",
+    expectedCustomDetails.tokenEndpoint
+  );
+  standardPrefs.setStringPref(
+    "oauth2.redirectionEndpoint",
+    expectedCustomDetails.redirectionEndpoint
+  );
+  standardPrefs.setStringPref(
+    "oauth2.clientSecret",
+    expectedCustomDetails.clientSecret
+  );
+  standardPrefs.setStringPref(
+    "oauth2.issuerIdentifier",
+    expectedCustomDetails.issuerIdentifier
+  );
+  standardPrefs.setBoolPref("oauth2.usePKCE", expectedCustomDetails.usePKCE);
+  standardPrefs.setBoolPref(
+    "oauth2.useExternalBrowser",
+    expectedCustomDetails.useExternalBrowser
+  );
+
+  const standardDetails = new OAuth2CustomDetails(standardPrefs);
+  for (const serverType of ["imap", "pop3"]) {
+    testOverrideIssuerWithDetails(
+      serverType,
+      standardDetails,
+      expectedCustomDetails
+    );
+  }
+  Services.prefs.deleteBranch(standardPrefsRoot);
+
+  const exchangeFactory = Cc[
+    "@mozilla.org/messenger/exchange-interop;1"
+  ].createInstance(Ci.IExchangeLanguageInteropFactory);
+  for (const serverType of ["ews", "graph"]) {
+    const exchangePrefsRoot = `mail.${serverType}.server.details.test.test.oscar@test.invalid.`;
+    const exchangePrefs = Services.prefs.getBranch(exchangePrefsRoot);
+    exchangePrefs.setBoolPref("useCustomDetails", true);
+    exchangePrefs.setStringPref(
+      "applicationId",
+      expectedCustomDetails.clientId
+    );
+    exchangePrefs.setStringPref("endpointHost", expectedCustomDetails.issuer);
+    exchangePrefs.setStringPref("oauthScopes", expectedCustomDetails.scopes);
+    exchangePrefs.setStringPref(
+      "redirectUri",
+      expectedCustomDetails.redirectionEndpoint
+    );
+    exchangePrefs.setStringPref(
+      "clientSecret",
+      expectedCustomDetails.clientSecret
+    );
+    exchangePrefs.setStringPref(
+      "issuerIdentifier",
+      expectedCustomDetails.issuerIdentifier
+    );
+    exchangePrefs.setBoolPref("usePKCE", expectedCustomDetails.usePKCE);
+    exchangePrefs.setBoolPref(
+      "useExternalBrowser",
+      expectedCustomDetails.useExternalBrowser
+    );
+
+    const exchangeDetails = exchangeFactory.createOAuth2Details(
+      serverType,
+      "test.test",
+      "oscar@test.invalid"
+    );
+    testOverrideIssuerWithDetails(
+      serverType,
+      exchangeDetails,
+      expectedCustomDetails
+    );
+    Services.prefs.deleteBranch(exchangePrefsRoot);
+  }
 });
 
 add_task(async function testOverrideIssuer() {
@@ -919,6 +1066,7 @@ async function subtestExternalRequest(useCustomScheme) {
   await OAuth2TestUtils.startServer();
 
   const hostname = useCustomScheme ? "net.thunderbird.test" : "external.test";
+  let idleConnection;
   try {
     const mod = new OAuth2Module();
     Assert.ok(
@@ -938,6 +1086,31 @@ async function subtestExternalRequest(useCustomScheme) {
     });
 
     const url = await externalOAuthURL;
+    if (!useCustomScheme) {
+      const redirectURI = new URL(
+        new URL(url).searchParams.get("redirect_uri")
+      );
+      const transportService = Cc[
+        "@mozilla.org/network/socket-transport-service;1"
+      ].getService(Ci.nsISocketTransportService);
+      const transport = transportService.createTransport(
+        [],
+        redirectURI.hostname,
+        redirectURI.port,
+        null,
+        null
+      );
+      idleConnection = {
+        transport,
+        inputStream: transport.openInputStream(0, 0, 0),
+        outputStream: transport.openOutputStream(0, 0, 0),
+      };
+      await TestUtils.waitForCondition(
+        () =>
+          mod._oauth.request._loopbackRedirectListener._connections.size == 1,
+        "OAuth listener should accept an idle connection"
+      );
+    }
     await OAuth2TestUtils.submitOAuthURL(url, {
       expectedHint: "romeo@foo.invalid",
       expectedScope: "test_mail",
@@ -982,6 +1155,7 @@ async function subtestExternalRequest(useCustomScheme) {
       "refresh token should have been saved"
     );
   } finally {
+    idleConnection?.transport.close(Cr.NS_OK);
     await Services.logins.removeAllLoginsAsync();
     OAuth2TestUtils.forgetObjects();
     OAuth2TestUtils.stopServer();

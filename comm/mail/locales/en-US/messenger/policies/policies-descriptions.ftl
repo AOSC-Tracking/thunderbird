@@ -43,6 +43,8 @@ policy-DefaultDownloadDirectory = Set the default download directory.
 
 policy-DisableAppUpdate = Prevent { -brand-short-name } from updating.
 
+policy-DisableDataCollectionSettings = Prevent the user from changing data collection settings.
+
 policy-DisableDefaultClientAgent = Prevent the default client agent from taking any actions. Only applicable to Windows; other platforms don’t have the agent.
 
 policy-DisableDeveloperTools = Block access to the developer tools.
@@ -54,6 +56,8 @@ policy-DisableForgetButton = Prevent access to the Forget button.
 policy-DisableFormHistory = Don’t remember search and form history.
 
 policy-DisableMasterPasswordCreation = If true, a master password can’t be created.
+
+policy-DisableMessageForwardingFilters = Prevent message filters from automatically forwarding messages.
 
 policy-DisablePasswordReveal = Do not allow passwords to be revealed in saved logins.
 
@@ -70,6 +74,8 @@ policy-DisableSecurityBypass = Prevent the user from bypassing certain security 
 policy-DisableSystemAddonUpdate = Prevent { -brand-short-name } from installing and updating system add-ons.
 
 policy-DisableTelemetry = Turn off Telemetry.
+
+policy-DisableUpdateSettings = Prevent the user from changing application update settings.
 
 policy-DisplayMenuBar = Display the Menu Bar by default.
 

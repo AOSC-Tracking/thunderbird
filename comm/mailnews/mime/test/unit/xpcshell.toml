@@ -2,6 +2,7 @@
 head = "head_mime.js"
 support-files = [
   "custom_header.js",
+  "../../../../mail/base/test/browser/files/sampleContent.eml",
   "../../../../mail/test/browser/openpgp/data/keys/*",
   "../../../../mail/test/browser/openpgp/data/eml/*",
 ]
@@ -18,8 +19,6 @@ support-files = [
 
 ["test_bug493544.js"]
 
-["test_handlerRegistration.js"]
-
 ["test_hidden_attachments.js"]
 
 ["test_jsmime_charset.js"]
@@ -32,9 +31,15 @@ support-files = [
 
 ["test_mime_recursion.js"]
 
-["test_multipart_related_svg.js"]
+["test_multipartSignedDispatch.js"]
+tags = [
+  "openpgp",
+  "smime",
+]
 
 ["test_multipart_related_start.js"]
+
+["test_multipart_related_svg.js"]
 
 ["test_nsIMsgHeaderParser1.js"]
 
@@ -64,6 +69,8 @@ tags = [
 run-sequentially = true  # Because it set's a pref that must not be active for other tests.
 
 ["test_smime_perm_decrypt.js"]
+
+["test_streamConverter.js"]
 
 ["test_structured_headers.js"]
 

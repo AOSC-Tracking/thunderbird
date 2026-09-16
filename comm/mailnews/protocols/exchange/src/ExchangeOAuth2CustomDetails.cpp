@@ -18,6 +18,8 @@ constexpr auto kTenant = "tenant";
 constexpr auto kRedirectUri = "redirectUri";
 constexpr auto kEndpointHost = "endpointHost";
 constexpr auto kOAuthScopes = "oauthScopes";
+constexpr auto kClientSecret = "clientSecret";
+constexpr auto kIssuerIdentifier = "issuerIdentifier";
 constexpr auto kUsePKCE = "usePKCE";
 constexpr auto kUseExternalBrowser = "useExternalBrowser";
 
@@ -196,6 +198,38 @@ NS_IMETHODIMP ExchangeOAuth2CustomDetails::GetTokenEndpoint(nsACString& value) {
   return NS_OK;
 }
 
+NS_IMETHODIMP ExchangeOAuth2CustomDetails::GetRedirectionEndpoint(
+    nsACString& value) {
+  const auto redirectionEndpoint = GetConfiguredRedirectUri();
+  if (redirectionEndpoint) {
+    value.Assign(*redirectionEndpoint);
+  } else {
+    value.Assign("");
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP ExchangeOAuth2CustomDetails::GetClientSecret(nsACString& value) {
+  const auto clientSecret = GetConfiguredClientSecret();
+  if (clientSecret) {
+    value.Assign(*clientSecret);
+  } else {
+    value.Assign("");
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP ExchangeOAuth2CustomDetails::GetIssuerIdentifier(
+    nsACString& value) {
+  const auto issuerIdentifier = GetConfiguredIssuerIdentifier();
+  if (issuerIdentifier) {
+    value.Assign(*issuerIdentifier);
+  } else {
+    value.Assign("");
+  }
+  return NS_OK;
+}
+
 NS_IMETHODIMP ExchangeOAuth2CustomDetails::GetUsePKCE(bool* value) {
   NS_ENSURE_ARG(value);
   *value = GetConfiguredUsePKCE();
@@ -205,17 +239,6 @@ NS_IMETHODIMP ExchangeOAuth2CustomDetails::GetUsePKCE(bool* value) {
 NS_IMETHODIMP ExchangeOAuth2CustomDetails::GetUseExternalBrowser(bool* value) {
   NS_ENSURE_ARG(value);
   *value = GetConfiguredUseExternalBrowser();
-  return NS_OK;
-}
-
-NS_IMETHODIMP ExchangeOAuth2CustomDetails::GetRedirectionEndpoint(
-    nsACString& value) {
-  const auto redirectionEndpoint = GetConfiguredRedirectUri();
-  if (redirectionEndpoint) {
-    value.Assign(*redirectionEndpoint);
-  } else {
-    value.Assign("");
-  }
   return NS_OK;
 }
 
@@ -292,6 +315,16 @@ ExchangeOAuth2CustomDetails::GetConfiguredEndpointHost() const {
 std::optional<nsAutoCString>
 ExchangeOAuth2CustomDetails::GetConfiguredOAuthScopes() const {
   return GetStringPrefValueOrNone(kOAuthScopes);
+}
+
+std::optional<nsAutoCString>
+ExchangeOAuth2CustomDetails::GetConfiguredClientSecret() const {
+  return GetStringPrefValueOrNone(kClientSecret);
+}
+
+std::optional<nsAutoCString>
+ExchangeOAuth2CustomDetails::GetConfiguredIssuerIdentifier() const {
+  return GetStringPrefValueOrNone(kIssuerIdentifier);
 }
 
 bool ExchangeOAuth2CustomDetails::GetConfiguredUsePKCE() const {

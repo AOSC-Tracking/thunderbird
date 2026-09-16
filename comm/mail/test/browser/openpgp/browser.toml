@@ -24,6 +24,8 @@ tags = ["openpgp"]
 
 ["browser_encryptedUriCleanup.js"]
 
+["browser_encryptedRemoteContentFromFile.js"]
+
 ["browser_inlineOpenPGP.js"]
 
 ["browser_keyWizard.js"]
@@ -35,6 +37,8 @@ run-if = [
 ["browser_openPGPDrafts.js"]
 
 ["browser_perm_decrypt.js"]
+
+["browser_pgpSignedPartDispatch.js"]
 
 ["browser_upload.js"]
 

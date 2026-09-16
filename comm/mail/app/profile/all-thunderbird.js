@@ -149,6 +149,9 @@ pref("app.update.langpack.enabled", true);
   pref("app.update.background.allowUpdatesForUnelevatedInstallations", false);
 #endif
 
+// Whether to show the application update settings in General settings.
+pref("mail.update_settings.enabled", true);
+
 // Release notes URL
 pref("app.releaseNotesURL", "https://live.thunderbird.net/%APP%/releasenotes?locale=%LOCALE%&version=%VERSION%&channel=%CHANNEL%&os=%OS%&buildid=%APPBUILDID%");
 
@@ -179,6 +182,9 @@ pref("datareporting.policy.dataSubmissionPolicyBypassNotification", false);
 pref("datareporting.policy.currentPolicyVersion", 2);
 pref("datareporting.policy.firstRunURL", "https://www.mozilla.org/thunderbird/legal/privacy/");
 #endif
+
+// Whether to show the data collection settings in Privacy & Security.
+pref("mail.data_collection_settings.enabled", true);
 
 // Base URL for web-based support pages.
 pref("app.support.baseURL", "https://support.thunderbird.net/%APP%/%VERSION%/%OS%/%LOCALE%/");
@@ -231,10 +237,6 @@ pref("extensions.startupScanScopes", 4);
 // well since the default value is based on whether add-on signing is required.
 pref("extensions.update.requireBuiltInCerts", false);
 pref("extensions.install.requireBuiltInCerts", false);
-
-// Disable the Rust password storage backend until Thunderbird compatibility
-// issues are resolved. See bug 2053724.
-pref("signon.storage.rust.enabled", false);
 
 // Allow experiments and suppress unsigned warnings.
 pref("extensions.experiments.enabled", true);
@@ -1544,8 +1546,11 @@ pref("mail.inappnotifications.bypass-filtering", false);
 pref("mail.inappnotifications.isFlatpak", false);
 pref("mail.inappnotifications.isSnap", false);
 
+// Enable forwarding messages with message filters.
+pref("mail.filters.forward.enabled", true);
+
 // Offer experimental features in settings.
-pref("mail.offer_experimental_features", true);
+pref("mail.experimental_features_settings.enabled", true);
 
 #ifdef NIGHTLY_BUILD
 // Enable the new experimental conversation view based on Gloda.

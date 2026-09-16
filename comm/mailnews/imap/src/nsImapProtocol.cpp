@@ -55,7 +55,6 @@
 #include "nsIStreamListener.h"
 #include "nsIMsgIncomingServer.h"
 #include "nsIImapIncomingServer.h"
-#include "nsIPrefLocalizedString.h"
 #include "nsImapUtils.h"
 #include "nsIStreamConverterService.h"
 #include "nsIProxyInfo.h"
@@ -94,8 +93,6 @@ LazyLogModule IMAP_CS("IMAP_CS");
 LazyLogModule IMAPCache("IMAPCache");
 extern LazyLogModule IMAP_DC;  // For imap folder discovery
 
-#define ONE_SECOND ((uint32_t)1000)  // one second
-
 #define OUTPUT_BUFFER_SIZE (4096 * 2)
 
 #define IMAP_ENV_HEADERS "From To Cc Bcc Subject Date Message-ID "
@@ -103,8 +100,9 @@ extern LazyLogModule IMAP_DC;  // For imap folder discovery
   "Priority X-Priority References Newsgroups In-Reply-To Content-Type " \
   "Reply-To Received"
 #define IMAP_ENV_AND_DB_HEADERS IMAP_ENV_HEADERS IMAP_DB_HEADERS
-MOZ_RUNINIT static const PRIntervalTime kImapSleepTime =
-    PR_MillisecondsToInterval(60000);
+
+static constexpr uint32_t kSleepTimeSeconds = 60;
+static constexpr uint32_t kIdleWaitSeconds = 2;
 static int32_t gPromoteNoopToCheckCount = 0;
 static const uint32_t kFlagChangesBeforeCheck = 10;
 static const int32_t kMaxSecondsBeforeCheck = 600;
@@ -837,8 +835,14 @@ nsresult nsImapProtocol::SetupWithUrl(nsIURI* aURL, nsISupports* aConsumer) {
     if (folder) {
       nsCOMPtr<nsIMsgDatabase> folderDB;
       nsCOMPtr<nsIDBFolderInfo> folderInfo;
-      folder->GetDBFolderInfoAndDB(getter_AddRefs(folderInfo),
-                                   getter_AddRefs(folderDB));
+      // Avoid creating an empty summary file that is later to be orphaned when
+      // subscribing to a folder.
+      nsCOMPtr<nsIMsgDBService> dbService =
+          do_GetService("@mozilla.org/msgDatabase/msgDBService;1");
+      if (dbService) {
+        dbService->OpenFolderDB(folder, true, getter_AddRefs(folderDB));
+        if (folderDB) folderDB->GetDBFolderInfo(getter_AddRefs(folderInfo));
+      }
       if (folderInfo) {
         nsCString modSeqStr;
         folderInfo->GetCharProperty(kModSeqPropertyName, modSeqStr);
@@ -1479,7 +1483,7 @@ void nsImapProtocol::ImapThreadMainLoop() {
   MOZ_LOG(IMAP, LogLevel::Debug,
           ("ImapThreadMainLoop entering [this=%p]", this));
 
-  PRIntervalTime sleepTime = kImapSleepTime;
+  PRIntervalTime sleepTime = PR_SecondsToInterval(kSleepTimeSeconds);
   bool idlePending = false;
   while (!DeathSignalReceived()) {
     nsresult rv = NS_OK;
@@ -1566,10 +1570,8 @@ void nsImapProtocol::ImapThreadMainLoop() {
             GetServerStateParser().GetCapabilityFlag() & kHasIdleCapability &&
             GetServerStateParser().GetIMAPstate() ==
                 nsImapServerResponseParser::kFolderSelected) {
-          // Set-up short wait time in milliseconds
-          static const PRIntervalTime kIdleWait =
-              PR_MillisecondsToInterval(2000);
-          sleepTime = kIdleWait;
+          // Set-up short wait time.
+          sleepTime = PR_SecondsToInterval(kIdleWaitSeconds);
           idlePending = true;
           Log("ImapThreadMainLoop", nullptr, "idlePending set");
         } else {
@@ -1580,15 +1582,16 @@ void nsImapProtocol::ImapThreadMainLoop() {
     } else {
       // No URL to run detected on wake up.
       if (idlePending) {
-        // Have seen no URLs for the short time (kIdleWait) so go into idle mode
-        // and set the loop sleep time back to its original longer time.
+        // Have seen no URLs for the short time (kIdleWaitSeconds) so go into
+        // idle mode and set the loop sleep time back to its original longer
+        // time.
         Idle();
         if (!m_idle) {
           // Server rejected IDLE. Treat like IDLE not enabled or available.
           m_imapMailFolderSink = nullptr;
         }
         idlePending = false;
-        sleepTime = kImapSleepTime;
+        sleepTime = PR_SecondsToInterval(kSleepTimeSeconds);
       }
     }
     if (!GetServerStateParser().Connected()) break;
@@ -3413,12 +3416,11 @@ nsresult nsImapProtocol::BeginMessageDownLoad(
     {
       // we get here when download the inbox for offline use
       nsCOMPtr<nsIFile> file;
-      bool addDummyEnvelope = true;
       nsCOMPtr<nsIMsgMessageUrl> msgurl = do_QueryInterface(m_runningUrl);
       msgurl->GetMessageFile(getter_AddRefs(file));
-      msgurl->GetAddDummyEnvelope(&addDummyEnvelope);
-      if (file)
-        rv = m_imapMessageSink->SetupMsgWriteStream(file, addDummyEnvelope);
+      if (file) {
+        rv = m_imapMessageSink->SetupMsgWriteStream(file);
+      }
     }
     if (m_imapMailFolderSink && m_runningUrl) {
       nsCOMPtr<nsISupports> copyState;
@@ -3564,23 +3566,6 @@ void nsImapProtocol::FetchMsgAttribute(const nsCString& messageIds,
   m_fetchingWholeMessage = false;
 }
 
-// this routine is used to fetch a message or messages, or headers for a
-// message...
-
-void nsImapProtocol::FallbackToFetchWholeMsg(const nsCString& messageId,
-                                             uint32_t messageSize) {
-  if (m_imapMessageSink && m_runningUrl) {
-    bool shouldStoreMsgOffline;
-    m_runningUrl->GetStoreOfflineOnFallback(&shouldStoreMsgOffline);
-    m_runningUrl->SetStoreResultsOffline(shouldStoreMsgOffline);
-  }
-  FetchTryChunking(messageId,
-                   m_imapAction == nsIImapUrl::nsImapMsgFetchPeek
-                       ? kEveryThingRFC822Peek
-                       : kEveryThingRFC822,
-                   true, nullptr, messageSize, true);
-}
-
 void nsImapProtocol::FetchMessage(const nsCString& messageIds,
                                   nsIMAPeFetchFields whatToFetch,
                                   const char* fetchModifier, uint32_t startByte,
@@ -3676,13 +3661,15 @@ void nsImapProtocol::FetchMessage(const nsCString& messageIds,
           nsCString arbitraryHeaders;
           GetArbitraryHeadersToDownload(arbitraryHeaders);
           for (uint32_t i = 0; i < mCustomDBHeaders.Length(); i++) {
-            if (!CaseInsensitiveFindInReadable(mCustomDBHeaders[i], arbitraryHeaders)) {
+            if (!CaseInsensitiveFindInReadable(mCustomDBHeaders[i],
+                                               arbitraryHeaders)) {
               if (!arbitraryHeaders.IsEmpty()) arbitraryHeaders.Append(' ');
               arbitraryHeaders.Append(mCustomDBHeaders[i]);
             }
           }
           for (uint32_t i = 0; i < mCustomHeaders.Length(); i++) {
-            if (!CaseInsensitiveFindInReadable(mCustomHeaders[i], arbitraryHeaders)) {
+            if (!CaseInsensitiveFindInReadable(mCustomHeaders[i],
+                                               arbitraryHeaders)) {
               if (!arbitraryHeaders.IsEmpty()) arbitraryHeaders.Append(' ');
               arbitraryHeaders.Append(mCustomHeaders[i]);
             }
@@ -4482,7 +4469,7 @@ void nsImapProtocol::FolderMsgDump(mozilla::Span<const ImapUid> msgUids,
 
 void nsImapProtocol::WaitForPotentialListOfBodysToFetch(
     nsTArray<ImapUid>& msgIdList) {
-  PRIntervalTime sleepTime = kImapSleepTime;
+  PRIntervalTime sleepTime = PR_SecondsToInterval(kSleepTimeSeconds);
 
   ReentrantMonitorAutoEnter fetchListMon(m_fetchBodyListMonitor);
   while (!m_fetchBodyListIsNew && !DeathSignalReceived())
@@ -5113,7 +5100,7 @@ void nsImapProtocol::DiscoverMailboxSpec(nsImapMailboxSpec* adoptedBoxSpec) {
         // Don't set the Trash flag if not using the Trash model
         if (GetDeleteIsMoveToTrash() && !onlineTrashFolderExists &&
             CaseInsensitiveFindInReadable(m_trashFolderPath,
-                           adoptedBoxSpec->mAllocatedPathName)) {
+                                          adoptedBoxSpec->mAllocatedPathName)) {
           bool trashExists = false;
           if (StringBeginsWith(m_trashFolderPath, "INBOX/"_ns,
                                nsCaseInsensitiveCStringComparator)) {
@@ -7723,7 +7710,7 @@ bool nsImapProtocol::GetListSubscribedIsBrokenOnServer() {
   // This is a workaround for an issue with LIST(SUBSCRIBED) crashing older
   // versions of Zimbra
   if (CaseInsensitiveFindInReadable("\"NAME\" \"Zimbra\""_ns,
-                     GetServerStateParser().GetServerID())) {
+                                    GetServerStateParser().GetServerID())) {
     nsCString serverID(GetServerStateParser().GetServerID());
     int start = serverID.LowerCaseFindASCII("\"version\" \"") + 11;
     int length = serverID.LowerCaseFindASCII("\" ", start);
@@ -8348,7 +8335,7 @@ nsresult nsImapProtocol::GetPassword(nsString& password,
           if (!m_passwordObtained && !NS_FAILED(m_passwordStatus) &&
               m_passwordStatus != NS_MSG_PASSWORD_PROMPT_CANCELLED &&
               !DeathSignalReceived()) {
-            mon.Wait(PR_MillisecondsToInterval(1000));
+            mon.Wait(PR_SecondsToInterval(1));
           }
 
           if (NS_FAILED(m_passwordStatus) ||

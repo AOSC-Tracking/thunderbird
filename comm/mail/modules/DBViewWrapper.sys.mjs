@@ -760,16 +760,18 @@ DBViewWrapper.prototype = {
    *  for UI reasons like the user de-selecting the node in the tree; we should
    *  always be displaying something when used in a UI context!
    *
-   * @param {boolean} folderIsDead - If true, tells us not to try and tidy up
-   *   on our way out by virtue of the fact that the folder is dead and should
-   *   not be messed with.
+   * @param {object} [options]
+   * @param {boolean} [options.leavingFolder=true] - Whether to run leave-folder
+   *   behaviour before destroying the view. Pass false when not actually
+   *   leaving the folder, e.g. because the view is being rebuilt in place or
+   *   the folder itself went away; then the folder's start/endFolderLoading
+   *   bookkeeping is skipped too, so dead storage isn't rewritten.
    */
-  close(folderIsDead) {
+  close({ leavingFolder = true } = {}) {
     if (this.displayedFolder != null) {
       // onLeavingFolder does all the application-level stuff related to leaving
-      //  the folder (marking as read, etc.)  We only do this when the folder
-      //  is not dead (for obvious reasons).
-      if (!folderIsDead) {
+      //  the folder (marking as read, etc.)
+      if (leavingFolder) {
         // onLeavingFolder must be called before we potentially null out its
         //  msgDatabase, which we will do in the upcoming underlyingFolders loop
         this.onLeavingFolder(); // application logic
@@ -785,7 +787,9 @@ DBViewWrapper.prototype = {
         this._releaseFolderDatabase(this.displayedFolder);
       }
 
-      this.folderLoading = false;
+      // Don't call back into a folder that is being deleted; EndFolderLoading's
+      // UpdateSummaryTotals would reopen/rewrite its storage and cache.
+      this._setFolderLoading(false, !leavingFolder);
       this.displayedFolder = null;
     }
 
@@ -892,7 +896,7 @@ DBViewWrapper.prototype = {
       this._prepareToLoadView(msgDatabase, aFolder);
     }
 
-    this.folderLoading = true;
+    this._setFolderLoading(true);
     if (!this.isVirtual) {
       FolderNotificationHelper.updateFolderAndNotifyOnLoad(
         this.displayedFolder,
@@ -906,7 +910,10 @@ DBViewWrapper.prototype = {
     // if the search is already outstanding.
     // If folder loaded directly from the updateFolderAndNotifyOnLoad above
     // no need to enter it once again now.
-    if (this.folderLoading && this.shouldShowMessagesForFolderImmediately()) {
+    if (
+      this.isFolderLoading() &&
+      this.shouldShowMessagesForFolderImmediately()
+    ) {
       this._enterFolder();
     }
   },
@@ -967,21 +974,37 @@ DBViewWrapper.prototype = {
     this._applyViewChanges();
   },
 
-  get folderLoading() {
+  /**
+   * Whether the displayed folder is currently being loaded.
+   *
+   * @returns {boolean}
+   */
+  isFolderLoading() {
     return this._folderLoading;
   },
-  set folderLoading(aFolderLoading) {
+
+  /**
+   * @param {boolean} aFolderLoading - True when we start loading the folder.
+   * @param {boolean} [aFolderIsDead=false] - If true, the folder is being
+   *   deleted, so don't call startFolderLoading()/endFolderLoading() on it.
+   *   Our own loading state and the listener are still updated.
+   */
+  _setFolderLoading(aFolderLoading, aFolderIsDead = false) {
     if (this._folderLoading == aFolderLoading) {
       return;
     }
     this._folderLoading = aFolderLoading;
-    // tell the folder about what is going on so it can remove its db change
-    //  listener and restore it, respectively.
-    if (aFolderLoading) {
-      this.displayedFolder.startFolderLoading();
-    } else {
-      this.displayedFolder.endFolderLoading();
+    if (!aFolderIsDead) {
+      // tell the folder about what is going on so it can remove its db change
+      // listener and restore it, respectively.
+      if (aFolderLoading) {
+        this.displayedFolder.startFolderLoading();
+      } else {
+        this.displayedFolder.endFolderLoading();
+      }
     }
+    // The listener is still notified even for dead folders, so the UI's
+    // loading state stays in sync with ours (both states are cleared).
     this.listener.onFolderLoading(aFolderLoading);
   },
 
@@ -1262,7 +1285,7 @@ DBViewWrapper.prototype = {
    */
   _folderLoaded(aFolder) {
     if (aFolder == this.displayedFolder) {
-      this.folderLoading = false;
+      this._setFolderLoading(false);
       // If _underlyingFolders is null, DBViewWrapper_open probably got
       // an exception trying to open the db, but after reparsing the local
       // folder, we should have a db, so set up the view based on info
@@ -1341,7 +1364,7 @@ DBViewWrapper.prototype = {
     }
 
     if (aFolder == this.displayedFolder) {
-      this.close();
+      this.close({ leavingFolder: false });
       return;
     }
 
@@ -1555,7 +1578,7 @@ DBViewWrapper.prototype = {
     //  Which is why we always defer to the search if one is active.
     // If we are loading the folder, the load completion will also notify us,
     //  so we should not generate all messages loaded right now.
-    if (!this.searching && !this.folderLoading) {
+    if (!this.searching && !this.isFolderLoading()) {
       this.listener.onMessagesLoaded(true);
     } else if (this.dbView.numMsgsInView > 0) {
       this.listener.onMessagesLoaded(false);

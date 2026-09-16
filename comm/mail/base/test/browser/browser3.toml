@@ -41,6 +41,8 @@ tags = ["oauth"]
 
 ["browser_repairFolder.js"]
 
+["browser_saveAs.js"]
+
 ["browser_searchMessages.js"]
 
 ["browser_smartFolderDelete.js"]
@@ -50,5 +52,7 @@ tags = ["virtualfolders"]
 run-if = [
   "os == 'win'",
 ]
+
+["browser_startupNewStar.js"]
 
 ["browser_statusFeedback.js"]

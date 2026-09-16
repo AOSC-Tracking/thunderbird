@@ -635,7 +635,7 @@ nsresult nsMsgDBFolder::GetFolderCacheElemFromFile(
   return rv;
 }
 
-nsresult nsMsgDBFolder::ReadDBFolderInfo(bool force) {
+nsresult nsMsgDBFolder::ReadDBFolderInfo(bool force, bool cacheOnly) {
   // Since it turns out to be pretty expensive to open and close
   // the DBs all the time, if we have to open it once, get everything
   // we might need while we're here
@@ -658,6 +658,10 @@ nsresult nsMsgDBFolder::ReadDBFolderInfo(bool force) {
         }
       }
     }
+  }
+
+  if (cacheOnly) {
+    return NS_OK;
   }
 
   if (force || !mInitializedFromCache) {
@@ -2634,6 +2638,7 @@ NS_IMETHODIMP nsMsgDBFolder::RemoveFolderListener(nsIFolderListener* listener) {
 }
 
 NS_IMETHODIMP nsMsgDBFolder::SetParent(nsIMsgFolder* aParent) {
+  nsCOMPtr<nsIMsgFolder> oldParent = do_QueryReferent(mParent);
   mParent = do_GetWeakReference(aParent);
   if (aParent) {
     nsresult rv;
@@ -2645,6 +2650,16 @@ NS_IMETHODIMP nsMsgDBFolder::SetParent(nsIMsgFolder* aParent) {
     nsCOMPtr<nsIMsgIncomingServer> server;
     rv = aParent->GetServer(getter_AddRefs(server));
     if (NS_SUCCEEDED(rv) && server) mServer = do_GetWeakReference(server);
+
+    if (!oldParent) {
+      // The folder is being (re-)added to the tree. A folder that was
+      // previously removed (e.g. deleted while it was being loaded) can be
+      // re-used for a new folder with the same name. Its loading state may
+      // have been abandoned without the usual EndFolderLoading cleanup, so
+      // make sure the database listener is re-attached when its database is
+      // (re)opened.
+      mAddListener = true;
+    }
   }
   return NS_OK;
 }
@@ -3519,11 +3534,12 @@ NS_IMETHODIMP nsMsgDBFolder::AddSubfolder(const nsACString& name,
     // 2. This folder object already has a child with the specified URI.
     // In both cases, that means `mSubFolders` already contains a child with the
     // given name. This cannot be treated as an error condition because the
-    // folder lookup service reuses folder objects for the same URI, so a folder
-    // that already exists in the cache with this folder's URI will also already
-    // have children matching the child folder's URI. This can be changed once
-    // dangling folders are removed. See
-    // https://bugzilla.mozilla.org/show_bug.cgi?id=1679333
+    // folder lookup service enforces pointer identity for live (parented)
+    // folders, so a folder cached with this folder's URI that is still in the
+    // tree will also already be in our children list.
+    // NOTE: The FLS no longer reuses parentless cached virtual folders, which
+    // is a step toward bug 1679333. This branch can be further simplified once
+    // all dangling folder paths are removed.
     if (NS_SUCCEEDED(rv)) {
       mSubFolders.AppendObject(folder);
     }

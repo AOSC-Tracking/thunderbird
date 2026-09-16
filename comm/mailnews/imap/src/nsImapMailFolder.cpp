@@ -307,6 +307,15 @@ NS_IMETHODIMP nsImapMailFolder::AddSubfolder(const nsACString& aName,
   rv = CreateDirectoryForFolder(getter_AddRefs(path));
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // The folder URI only contains the online names of its ancestors. Those
+  // names do not necessarily match their on-disk names, which may have a
+  // numeric suffix to avoid a collision. Derive the child's path from the
+  // parent's actual path instead of letting it be reconstructed from the URI.
+  rv = path->Append(NS_MsgHashIfNecessary(aName));
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = folder->SetFilePath(path);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   folder->GetFlags((uint32_t*)&flags);
 
   flags |= nsMsgFolderFlags::Mail;
@@ -1153,7 +1162,9 @@ NS_IMETHODIMP nsImapMailFolder::GetHierarchyDelimiter(
       }
     }
   }
-  ReadDBFolderInfo(false);  // update cache first.
+  // Avoid creating an empty summary file that is later to be orphaned when
+  // subscribing to a folder.
+  ReadDBFolderInfo(false, /* cacheOnly */ true);  // update cache first.
   *aHierarchyDelimiter = m_hierarchyDelimiter;
   return NS_OK;
 }
@@ -3730,14 +3741,6 @@ NS_IMETHODIMP nsImapMailFolder::SetImapFlags(nsTArray<nsMsgKey> const& msgKeys,
                                       flags, true);
 }
 
-// "this" is the parent folder
-NS_IMETHODIMP nsImapMailFolder::PlaybackOfflineFolderCreate(
-    const nsAString& aFolderName, nsIMsgWindow* aWindow, nsIURI** url) {
-  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
-  return imapService->CreateFolder(this, NS_ConvertUTF16toUTF8(aFolderName),
-                                   this, url);
-}
-
 // "this" is the source folder.
 NS_IMETHODIMP
 nsImapMailFolder::ReplayOfflineMoveCopy(const nsTArray<nsMsgKey>& aMsgKeys,
@@ -3872,14 +3875,6 @@ NS_IMETHODIMP nsImapMailFolder::StoreImapFlags(int32_t flags, bool addFlags,
     }
   }
   return rv;
-}
-
-NS_IMETHODIMP nsImapMailFolder::LiteSelect(nsIUrlListener* aUrlListener,
-                                           nsIMsgWindow* aMsgWindow) {
-  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
-  nsCOMPtr<nsIURI> outUri;
-  return imapService->LiteSelectFolder(this, aUrlListener, aMsgWindow,
-                                       getter_AddRefs(outUri));
 }
 
 nsresult nsImapMailFolder::GetFolderOwnerUserName(nsACString& userName) {
@@ -4282,40 +4277,13 @@ void nsImapMailFolder::TweakHeaderFlags(nsIImapProtocol* aProtocol,
 // nsIImapMessageSink.setupMsgWriteStream() implementation.
 // The protocol calls this to start downloading a message to disk.
 NS_IMETHODIMP
-nsImapMailFolder::SetupMsgWriteStream(nsIFile* aFile, bool addDummyEnvelope) {
+nsImapMailFolder::SetupMsgWriteStream(nsIFile* aFile) {
   nsresult rv;
   aFile->Remove(false);
   m_tempMessageStreamBytesWritten = 0;
   rv = MsgNewBufferedFileOutputStream(
       getter_AddRefs(m_tempMessageStream), aFile,
       PR_WRONLY | PR_CREATE_FILE | PR_TRUNCATE, 00700);
-  if (m_tempMessageStream && addDummyEnvelope) {
-    nsAutoCString result;
-    char* ct;
-    uint32_t writeCount;
-    time_t now = time((time_t*)0);
-    ct = ctime(&now);
-    ct[24] = 0;
-    result = "From - ";
-    result += ct;
-    result += MSG_LINEBREAK;
-
-    rv = m_tempMessageStream->Write(result.get(), result.Length(), &writeCount);
-    NS_ENSURE_SUCCESS(rv, rv);
-    m_tempMessageStreamBytesWritten += writeCount;
-
-    result = "X-Mozilla-Status: 0001";
-    result += MSG_LINEBREAK;
-    rv = m_tempMessageStream->Write(result.get(), result.Length(), &writeCount);
-    NS_ENSURE_SUCCESS(rv, rv);
-    m_tempMessageStreamBytesWritten += writeCount;
-
-    result = "X-Mozilla-Status2: 00000000";
-    result += MSG_LINEBREAK;
-    rv = m_tempMessageStream->Write(result.get(), result.Length(), &writeCount);
-    NS_ENSURE_SUCCESS(rv, rv);
-    m_tempMessageStreamBytesWritten += writeCount;
-  }
   return rv;
 }
 
@@ -7141,12 +7109,13 @@ nsImapMailFolder::CopyMessages(
     if (keyArray.IsEmpty()) {
       goto done;
     }
-    auto uids = UidsFromMsgKeys(mDatabase, keyArray);
-    if (uids.isErr()) {
-      rv = uids.unwrapErr();
+
+    auto srcUids = UidsFromHdrs(sortedMsgs);
+    if (srcUids.isErr()) {
+      rv = srcUids.unwrapErr();
       goto done;
     }
-    nsAutoCString messageIds(UidSetFromUids(uids.unwrap()));
+    nsAutoCString messageIds(UidSetFromUids(srcUids.unwrap()));
 
     nsCOMPtr<nsIUrlListener> urlListener;
     rv =
@@ -7416,7 +7385,7 @@ nsImapMailFolder::CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
     // "pure" means the folder AND messages are copied to the destination and
     // then both are removed from source account.
     uint32_t folderFlags = 0;
-    if (srcFolder) srcFolder->GetFlags(&folderFlags);
+    srcFolder->GetFlags(&folderFlags);
 
     // if our source folder is a virtual folder, then it's a pure
     // local copy.
@@ -7445,13 +7414,12 @@ nsImapMailFolder::CopyFolder(nsIMsgFolder* srcFolder, bool isMoveFolder,
     return imapService->MoveFolder(srcFolder, this, this, msgWindow);
   }
 
-  // !sameServer OR it's a copy. Unit tests expect a successful folder
-  // copy within the same IMAP server even though the UI forbids copy and
-  // only allows moves inside the same server. folderCopier, set below,
-  // handles the folder copy within an IMAP server (needed by unit tests) and
-  // the folder move or copy from another account or server into an IMAP
-  // account/server. The folder move from another account is "impure" since
-  // just the messages are moved and the source folder remains in place.
+  // !sameServer OR it's a copy. folderCopier, set below, handles the folder
+  // copy within an IMAP account, offered by the folder pane's "Copy To" menu
+  // and by a copy-drag, and the folder move or copy from another account or
+  // server into an IMAP account/server. The folder move from another account
+  // is "impure" since just the messages are moved and the source folder
+  // remains in place.
   RefPtr<nsImapFolderCopyState> folderCopier = new nsImapFolderCopyState(
       this, srcFolder,
       isMoveFolder,  // Always copy folders; if true only move the messages

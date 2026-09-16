@@ -2,29 +2,31 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mimecms.h"
+
+#include "mimemcms.h"
+#include "mimemoz2.h"
+#include "mimemsg.h"
+#include "mimemsig.h"
+#include "mozilla/Logging.h"
+#include "mozilla/mailnews/MimeHeaderParser.h"
+#include "mozilla/Preferences.h"
+#include "nsComponentManagerUtils.h"
+#include "nsCOMPtr.h"
+#include "nsICMSDecoder.h"
 #include "nsICMSMessage.h"
 #include "nsICMSMessageErrors.h"
-#include "nsICMSDecoder.h"
-#include "mimecms.h"
-#include "mimemcms.h"
-#include "mimemsig.h"
-#include "nsMailHeaders.h"
-#include "nspr.h"
-#include "plstr.h"
-#include "mimemsg.h"
-#include "mimemoz2.h"
-#include "nsIURI.h"
-#include "nsIMsgSMIMESink.h"
-#include "nsCOMPtr.h"
-#include "nsIX509Cert.h"
-#include "nsComponentManagerUtils.h"
-#include "nsThreadUtils.h"
-#include "nsProxyRelease.h"
-#include "mozilla/mailnews/MimeHeaderParser.h"
 #include "nsIMailChannel.h"
-#include "mozilla/Preferences.h"
-#include "mozilla/Logging.h"
+#include "nsIMsgSMIMESink.h"
+#include "nsIURI.h"
+#include "nsIX509Cert.h"
+#include "nsMailHeaders.h"
 #include "nsMimeTypes.h"
+#include "nspr.h"
+#include "nsProxyRelease.h"
+#include "nsThreadUtils.h"
+#include "nsURLHelper.h"
+#include "plstr.h"
 
 using mozilla::Preferences;
 using namespace mozilla::mailnews;
@@ -293,7 +295,8 @@ class SignedStatusRunnable : public mozilla::Runnable {
  public:
   SignedStatusRunnable(const nsMainThreadPtrHandle<nsIMsgSMIMESink>& aSink,
                        int32_t aNestingLevel, int32_t aSignatureStatus,
-                       nsIX509Cert* aSignerCert, const nsCString& aMsgNeckoURL,
+                       const nsCOMPtr<nsISMimeVerificationFailure>& aReason, nsIX509Cert* aSignerCert,
+                       const nsCString& aMsgNeckoURL,
                        const nsCString& aOriginMimePartNumber,
                        const nsCString& aSignatureAlgorithm,
                        const nsCString& aDigestAlgorithm);
@@ -304,6 +307,7 @@ class SignedStatusRunnable : public mozilla::Runnable {
   nsMainThreadPtrHandle<nsIMsgSMIMESink> m_sink;
   int32_t m_nestingLevel;
   int32_t m_signatureStatus;
+  nsCOMPtr<nsISMimeVerificationFailure> m_reason;
   nsCOMPtr<nsIX509Cert> m_signerCert;
   nsCString m_msgNeckoURL;
   nsCString m_originMimePartNumber;
@@ -313,7 +317,7 @@ class SignedStatusRunnable : public mozilla::Runnable {
 
 SignedStatusRunnable::SignedStatusRunnable(
     const nsMainThreadPtrHandle<nsIMsgSMIMESink>& aSink, int32_t aNestingLevel,
-    int32_t aSignatureStatus, nsIX509Cert* aSignerCert,
+    int32_t aSignatureStatus, const nsCOMPtr<nsISMimeVerificationFailure>& aNssReason, nsIX509Cert* aSignerCert,
     const nsCString& aMsgNeckoURL, const nsCString& aOriginMimePartNumber,
     const nsCString& aSignatureAlgorithm, const nsCString& aDigestAlgorithm)
     : mozilla::Runnable("SignedStatusRunnable"),
@@ -321,6 +325,7 @@ SignedStatusRunnable::SignedStatusRunnable(
       m_sink(aSink),
       m_nestingLevel(aNestingLevel),
       m_signatureStatus(aSignatureStatus),
+      m_reason(aNssReason),
       m_signerCert(aSignerCert),
       m_msgNeckoURL(aMsgNeckoURL),
       m_originMimePartNumber(aOriginMimePartNumber),
@@ -329,21 +334,22 @@ SignedStatusRunnable::SignedStatusRunnable(
 
 NS_IMETHODIMP SignedStatusRunnable::Run() {
   mResult = m_sink->SignedStatus(
-      m_nestingLevel, m_signatureStatus, m_signerCert, m_msgNeckoURL,
+      m_nestingLevel, m_signatureStatus, m_reason, m_signerCert, m_msgNeckoURL,
       m_originMimePartNumber, m_signatureAlgorithm, m_digestAlgorithm);
   return NS_OK;
 }
 
 nsresult ProxySignedStatus(const nsMainThreadPtrHandle<nsIMsgSMIMESink>& aSink,
                            int32_t aNestingLevel, int32_t aSignatureStatus,
-                           nsIX509Cert* aSignerCert,
+                           const nsCOMPtr<nsISMimeVerificationFailure> aReason, nsIX509Cert* aSignerCert,
                            const nsCString& aMsgNeckoURL,
                            const nsCString& aOriginMimePartNumber,
                            const nsCString& aSignatureAlgorithm,
                            const nsCString& aDigestAlgorithm) {
-  RefPtr<SignedStatusRunnable> signedStatus = new SignedStatusRunnable(
-      aSink, aNestingLevel, aSignatureStatus, aSignerCert, aMsgNeckoURL,
-      aOriginMimePartNumber, aSignatureAlgorithm, aDigestAlgorithm);
+  RefPtr<SignedStatusRunnable> signedStatus =
+      new SignedStatusRunnable(aSink, aNestingLevel, aSignatureStatus, aReason,
+                               aSignerCert, aMsgNeckoURL, aOriginMimePartNumber,
+                               aSignatureAlgorithm, aDigestAlgorithm);
   nsresult rv = NS_DispatchAndSpinEventLoopUntilComplete(
       "ProxySignedStatus"_ns, mozilla::GetMainThreadSerialEventTarget(),
       do_AddRef(signedStatus));
@@ -372,7 +378,8 @@ nsSMimeVerificationListener::nsSMimeVerificationListener(
 }
 
 NS_IMETHODIMP nsSMimeVerificationListener::Notify(
-    nsICMSMessage* aVerifiedMessage, nsresult aVerificationResultCode) {
+    nsICMSMessage* aVerifiedMessage, nsresult aVerificationResultCode,
+    nsISMimeVerificationFailure* aReason) {
   // Only continue if we have a valid pointer to the UI
   NS_ENSURE_FALSE(mSinkIsNull, NS_OK);
 
@@ -436,11 +443,11 @@ NS_IMETHODIMP nsSMimeVerificationListener::Notify(
   aVerifiedMessage->GetDigestAlgorithmName(digestAlgorithm);
 
   if (NS_IsMainThread()) {
-    mHeaderSink->SignedStatus(mMimeNestingLevel, signature_status, signerCert,
-                              mMsgNeckoURL, mOriginMimePartNumber,
+    mHeaderSink->SignedStatus(mMimeNestingLevel, signature_status, aReason,
+                              signerCert, mMsgNeckoURL, mOriginMimePartNumber,
                               signatureAlgorithm, digestAlgorithm);
   } else {
-    ProxySignedStatus(mHeaderSink, mMimeNestingLevel, signature_status,
+    ProxySignedStatus(mHeaderSink, mMimeNestingLevel, signature_status, aReason,
                       signerCert, mMsgNeckoURL, mOriginMimePartNumber,
                       signatureAlgorithm, digestAlgorithm);
   }
@@ -595,10 +602,14 @@ static MimeClosure MimeCMS_init(MimeObject* obj,
           // If we do not find header=filter, we assume the result of the
           // processing will be shown in the UI.
 
-          if (!strstr(data->url.get(), "?header=filter") &&
-              !strstr(data->url.get(), "&header=filter") &&
-              !strstr(data->url.get(), "?header=attach") &&
-              !strstr(data->url.get(), "&header=attach")) {
+          nsAutoCString query;
+          uri->GetQuery(query);
+
+          nsAutoCString header;
+          mozilla::URLParams::Extract(query, "header"_ns, header);
+
+          if (!header.EqualsLiteral("filter") &&
+              !header.EqualsLiteral("attach")) {
             nsCOMPtr<nsIMailChannel> mailChannel = do_QueryInterface(channel);
             if (mailChannel) {
               mailChannel->GetSmimeSink(getter_AddRefs(data->smimeSink));

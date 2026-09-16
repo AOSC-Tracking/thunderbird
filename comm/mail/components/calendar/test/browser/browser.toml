@@ -30,6 +30,8 @@ subsuite = "thunderbird"
 
 ["browser_calendarDialogCategories.js"]
 
+["browser_calendarDialogCreateReminderForm.js"]
+
 ["browser_calendarDialogDateRow.js"]
 
 ["browser_calendarDialogDescriptionRow.js"]
@@ -57,5 +59,7 @@ subsuite = "thunderbird"
 ["browser_calendarDialogRow.js"]
 
 ["browser_calendarDialogSubviewManager.js"]
+
+["browser_calendarEventCreateEditDialog.js"]
 
 ["browser_positionedDialog.js"]

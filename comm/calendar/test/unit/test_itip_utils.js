@@ -512,6 +512,28 @@ add_task(function test_getAttendeesBySender() {
       expected: ["mailto:user1@example.net", "mailto:user2@example.net"],
     },
     {
+      // The sender's case does not match the attendee id, see bug 1889607.
+      input: {
+        attendees: [
+          { id: "mailto:user1@example.net", sentBy: null },
+          { id: "mailto:user2@example.net", sentBy: null },
+        ],
+        sender: "User1@Example.NET",
+      },
+      expected: ["mailto:user1@example.net"],
+    },
+    {
+      // The sender's case does not match the attendee id or SENT-BY.
+      input: {
+        attendees: [
+          { id: "mailto:User1@example.net", sentBy: null },
+          { id: "mailto:user2@example.net", sentBy: "MAILTO:USER1@example.net" },
+        ],
+        sender: "user1@example.net",
+      },
+      expected: ["mailto:User1@example.net", "mailto:user2@example.net"],
+    },
+    {
       input: { attendees: [], sender: "user1@example.net" },
       expected: [],
     },
@@ -655,6 +677,24 @@ add_task(function test_resolveDelegation() {
       expected: {
         delegatees: "attendee3@example.net",
         delegators: "attendee2@example.net",
+      },
+    },
+    {
+      // The delegation parameter's case differs from the attendee id, see bug 1889607.
+      input: {
+        attendee:
+          'ATTENDEE;DELEGATED-FROM="mailto:Attendee2@Example.NET";CN="Attendee 1":mailto:at' +
+          "tendee1@example.net",
+        attendees: [
+          'ATTENDEE;DELEGATED-FROM="mailto:Attendee2@Example.NET";CN="Attendee 1":mailto:at' +
+            "tendee1@example.net",
+          'ATTENDEE;DELEGATED-TO="mailto:attendee1@example.net";CN="Attendee 2":mailto:atte' +
+            "ndee2@example.net",
+        ],
+      },
+      expected: {
+        delegatees: "",
+        delegators: "Attendee 2 <attendee2@example.net>",
       },
     },
   ];
@@ -873,4 +913,150 @@ add_task(function test_getImipTransport() {
     identity2,
     "returns a transport using the identity of the X-MOZ-INVITED-ATTENDEE property when set"
   );
+});
+
+/**
+ * Tests adaptScheduleAgent assigns the scheduling responsibility as required by
+ * RFC 6638. The configured identity deliberately uses a different case than the
+ * addresses in the event, see bug 1889607.
+ */
+add_task(function test_adaptScheduleAgent() {
+  const account = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
+  identity.email = "Elton.JOHN@example.com";
+  account.addIdentity(identity);
+
+  /**
+   * @param {object} [options]
+   * @param {string} [options.type="caldav"] - The calendar type.
+   * @param {boolean} [options.autoschedule=true] - Whether the server schedules.
+   * @param {boolean} [options.forceEmail=true] - The forceEmailScheduling value.
+   * @returns {object} A calendar stand-in for adaptScheduleAgent.
+   */
+  function mockCalendar({ type = "caldav", autoschedule = true, forceEmail = true } = {}) {
+    return {
+      type,
+      getProperty(key) {
+        switch (key) {
+          case "capabilities.autoschedule.supported":
+            return autoschedule;
+          case "forceEmailScheduling":
+            return forceEmail;
+          case "imip.identity":
+            return identity;
+          default:
+            return null;
+        }
+      },
+    };
+  }
+
+  /**
+   * @param {string} organizerLine - The serialized ORGANIZER property.
+   * @param {string[]} attendeeLines - The serialized ATTENDEE properties.
+   * @param {object} [calendarOptions] - Passed on to mockCalendar().
+   * @returns {calIEvent}
+   */
+  function makeEvent(organizerLine, attendeeLines, calendarOptions) {
+    const event = new CalEvent(CalendarTestUtils.dedent`
+        BEGIN:VEVENT
+        UID:8f1d1a9a-2cf2-4c8b-8b3a-7d0e1a2b3c4d
+        DTSTAMP:20250101T000000Z
+        DTSTART:20250105T100000Z
+        DTEND:20250105T110000Z
+        SUMMARY:Test Event
+        ${[organizerLine, ...attendeeLines].join("\n")}
+        END:VEVENT
+      `);
+    event.calendar = mockCalendar(calendarOptions);
+    return event;
+  }
+
+  const ORGANIZER_SELF = "ORGANIZER:mailto:elton.john@example.com";
+  const ORGANIZER_OTHER = "ORGANIZER:mailto:organizer@example.com";
+  const ATTENDEE_SELF = "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:elton.john@example.com";
+  const ATTENDEE_OTHER = "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:other@example.com";
+
+  info("Attendee triggered action with client-side scheduling enforced");
+  let event = makeEvent(ORGANIZER_OTHER, [ATTENDEE_SELF, ATTENDEE_OTHER]);
+  cal.itip.adaptScheduleAgent(event);
+  Assert.equal(
+    event.organizer.getProperty("SCHEDULE-AGENT"),
+    "CLIENT",
+    "organizer should be marked for client-side scheduling"
+  );
+  for (const attendee of event.getAttendees()) {
+    Assert.ok(
+      !attendee.getProperty("SCHEDULE-AGENT"),
+      `attendee ${attendee.id} should be left alone on an attendee triggered action`
+    );
+  }
+
+  info("Organizer triggered action with client-side scheduling enforced");
+  event = makeEvent(ORGANIZER_SELF, [ATTENDEE_SELF, ATTENDEE_OTHER]);
+  cal.itip.adaptScheduleAgent(event);
+  Assert.ok(
+    !event.organizer.getProperty("SCHEDULE-AGENT"),
+    "organizer should be left alone on an organizer triggered action"
+  );
+  for (const attendee of event.getAttendees()) {
+    Assert.equal(
+      attendee.getProperty("SCHEDULE-AGENT"),
+      "CLIENT",
+      `attendee ${attendee.id} should be marked for client-side scheduling`
+    );
+  }
+
+  info("SCHEDULE-AGENT=NONE is not overwritten");
+  event = makeEvent(ORGANIZER_SELF, [
+    "ATTENDEE;PARTSTAT=NEEDS-ACTION;SCHEDULE-AGENT=NONE:mailto:other@example.com",
+    "ATTENDEE;PARTSTAT=NEEDS-ACTION;SCHEDULE-AGENT=SERVER:mailto:elton.john@example.com",
+  ]);
+  cal.itip.adaptScheduleAgent(event);
+  Assert.equal(
+    event.getAttendeeById("mailto:other@example.com").getProperty("SCHEDULE-AGENT"),
+    "NONE",
+    "SCHEDULE-AGENT=NONE should be kept"
+  );
+  Assert.equal(
+    event.getAttendeeById("mailto:elton.john@example.com").getProperty("SCHEDULE-AGENT"),
+    "CLIENT",
+    "SCHEDULE-AGENT=SERVER should be overwritten"
+  );
+
+  info("Attendee triggered action without client-side scheduling enforced");
+  event = makeEvent(
+    "ORGANIZER;SCHEDULE-AGENT=CLIENT:mailto:organizer@example.com",
+    [ATTENDEE_SELF],
+    { forceEmail: false }
+  );
+  cal.itip.adaptScheduleAgent(event);
+  Assert.ok(
+    !event.organizer.getProperty("SCHEDULE-AGENT"),
+    "client-side scheduling should be handed back to the server for the organizer"
+  );
+
+  info("Organizer triggered action without client-side scheduling enforced");
+  event = makeEvent(
+    ORGANIZER_SELF,
+    ["ATTENDEE;PARTSTAT=NEEDS-ACTION;SCHEDULE-AGENT=CLIENT:mailto:other@example.com"],
+    { forceEmail: false }
+  );
+  cal.itip.adaptScheduleAgent(event);
+  Assert.ok(
+    !event.getAttendeeById("mailto:other@example.com").getProperty("SCHEDULE-AGENT"),
+    "client-side scheduling should be handed back to the server for the attendee"
+  );
+
+  info("Calendars without server-side scheduling are not touched");
+  for (const calendarOptions of [{ type: "storage" }, { autoschedule: false }]) {
+    event = makeEvent(ORGANIZER_OTHER, [ATTENDEE_SELF], calendarOptions);
+    cal.itip.adaptScheduleAgent(event);
+    Assert.ok(
+      !event.organizer.getProperty("SCHEDULE-AGENT"),
+      `no SCHEDULE-AGENT should be added for ${JSON.stringify(calendarOptions)}`
+    );
+  }
+
+  MailServices.accounts.removeAccount(account, true);
 });

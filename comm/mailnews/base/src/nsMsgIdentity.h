@@ -10,6 +10,8 @@
 #include "nsCOMPtr.h"
 #include "nsString.h"
 
+using mozilla::dom::Promise;
+
 class nsMsgIdentity final : public nsIMsgIdentity {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -22,69 +24,11 @@ class nsMsgIdentity final : public nsIMsgIdentity {
   nsCOMPtr<nsIPrefBranch> mDefPrefBranch;
 
  protected:
-  bool checkServerForExistingFolder(nsIMsgFolder* rootFolder,
-                                    const char* prefName, uint32_t folderFlag,
-                                    const nsACString& folderName,
-                                    nsIMsgFolder** retval);
-  nsresult getOrCreateFolder(const char* prefName, uint32_t folderFlag,
-                             const nsACString& folderName,
-                             nsIMsgFolder** retval);
+  nsresult getOrCreateFolderAsync(const char* prefName, uint32_t folderFlag,
+                                  const nsACString& folderName, JSContext* cx,
+                                  Promise** aPromise);
   nsresult setFolderPref(const char* pref, const nsACString& retval,
                          uint32_t folderFlag);
 };
-
-#define NS_IMPL_IDPREF_STR(_postfix, _prefname)           \
-  NS_IMETHODIMP                                           \
-  nsMsgIdentity::Get##_postfix(nsACString& retval) {      \
-    return GetCharAttribute(_prefname, retval);           \
-  }                                                       \
-  NS_IMETHODIMP                                           \
-  nsMsgIdentity::Set##_postfix(const nsACString& value) { \
-    return SetCharAttribute(_prefname, value);            \
-  }
-
-#define NS_IMPL_IDPREF_WSTR(_postfix, _prefname)         \
-  NS_IMETHODIMP                                          \
-  nsMsgIdentity::Get##_postfix(nsAString& retval) {      \
-    return GetUnicharAttribute(_prefname, retval);       \
-  }                                                      \
-  NS_IMETHODIMP                                          \
-  nsMsgIdentity::Set##_postfix(const nsAString& value) { \
-    return SetUnicharAttribute(_prefname, value);        \
-  }
-
-#define NS_IMPL_IDPREF_BOOL(_postfix, _prefname)       \
-  NS_IMETHODIMP                                        \
-  nsMsgIdentity::Get##_postfix(bool* retval) {         \
-    return GetBoolAttribute(_prefname, retval);        \
-  }                                                    \
-  NS_IMETHODIMP                                        \
-  nsMsgIdentity::Set##_postfix(bool value) {           \
-    return mPrefBranch->SetBoolPref(_prefname, value); \
-  }
-
-#define NS_IMPL_IDPREF_INT(_postfix, _prefname)       \
-  NS_IMETHODIMP                                       \
-  nsMsgIdentity::Get##_postfix(int32_t* retval) {     \
-    return GetIntAttribute(_prefname, retval);        \
-  }                                                   \
-  NS_IMETHODIMP                                       \
-  nsMsgIdentity::Set##_postfix(int32_t value) {       \
-    return mPrefBranch->SetIntPref(_prefname, value); \
-  }
-
-#define NS_IMPL_FOLDERPREF_STR(_postfix, _prefName, _folderFlag, _folderName) \
-  NS_IMETHODIMP                                                               \
-  nsMsgIdentity::Get##_postfix##URI(nsACString& retval) {                     \
-    return GetCharAttribute(_prefName, retval);                               \
-  }                                                                           \
-  NS_IMETHODIMP                                                               \
-  nsMsgIdentity::Set##_postfix##URI(const nsACString& value) {                \
-    return setFolderPref(_prefName, value, _folderFlag);                      \
-  }                                                                           \
-  NS_IMETHODIMP                                                               \
-  nsMsgIdentity::GetOrCreate##_postfix(nsIMsgFolder** retval) {               \
-    return getOrCreateFolder(_prefName, _folderFlag, _folderName, retval);    \
-  }
 
 #endif  // COMM_MAILNEWS_BASE_SRC_NSMSGIDENTITY_H_

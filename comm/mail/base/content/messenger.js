@@ -195,6 +195,28 @@ var gMailInit = {
       if (devtoolsMenu) {
         devtoolsMenu.hidden = true;
       }
+    } else {
+      const updateDevtoolsToolboxVisibility = () => {
+        document.getElementById("devtoolsToolbox").hidden =
+          !this.gDevtoolsChromeEnabled || !this.gDevtoolsRemoteEnabled;
+      };
+
+      XPCOMUtils.defineLazyPreferenceGetter(
+        this,
+        "gDevtoolsChromeEnabled",
+        "devtools.chrome.enabled",
+        false,
+        updateDevtoolsToolboxVisibility
+      );
+      XPCOMUtils.defineLazyPreferenceGetter(
+        this,
+        "gDevtoolsRemoteEnabled",
+        "devtools.debugger.remote-enabled",
+        false,
+        updateDevtoolsToolboxVisibility
+      );
+
+      updateDevtoolsToolboxVisibility();
     }
 
     // - initialize tabmail system
@@ -904,7 +926,7 @@ messageFlavorDataProvider.prototype = {
     const messenger = Cc["@mozilla.org/messenger;1"].createInstance(
       Ci.nsIMessenger
     );
-    messenger.saveAs(messageURI.value.data, true, null, file.path, true);
+    messenger.saveAs(messageURI.value.data, null, file.path, true);
   },
 };
 

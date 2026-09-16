@@ -494,7 +494,7 @@ function SaveAsFile(uris) {
   }
 
   if (uris.length == 1) {
-    messenger.saveAs(uris[0], true, null, filenames[0]);
+    messenger.saveAs(uris[0], null, filenames[0]);
   } else {
     messenger.saveMessages(filenames, uris);
   }
@@ -535,36 +535,26 @@ function GenerateFilenameFromMsgHdr(msgHdr) {
   return filename;
 }
 
-function saveAsUrlListener(aUri, aIdentity) {
-  this.uri = aUri;
-  this.identity = aIdentity;
-}
-
-saveAsUrlListener.prototype = {
-  OnStartRunningUrl() {},
-  OnStopRunningUrl() {
-    messenger.saveAs(this.uri, false, this.identity, null);
-  },
-};
-
-function SaveAsTemplate(uri) {
-  if (uri) {
-    const hdr = messenger.msgHdrFromURI(uri);
-    const [identity] = MailUtils.getIdentityForHeader(
-      hdr,
-      Ci.nsIMsgCompType.Template
-    );
-    const templates = MailUtils.getOrCreateFolder(identity.templatesFolderURI);
-    if (!templates.parent) {
-      templates.setFlag(Ci.nsMsgFolderFlags.Templates);
-      const isAsync = templates.server.protocolInfo.foldersCreatedAsync;
-      templates.createStorageIfMissing(new saveAsUrlListener(uri, identity));
-      if (isAsync) {
-        return;
-      }
-    }
-    messenger.saveAs(uri, false, identity, null);
+async function SaveAsTemplate(uri) {
+  if (!uri) {
+    return;
   }
+
+  const hdr = messenger.msgHdrFromURI(uri);
+  const [identity] = MailUtils.getIdentityForHeader(
+    hdr,
+    Ci.nsIMsgCompType.Template
+  );
+  const templatesFolder = await identity.getOrCreateTemplatesFolderAsync();
+  MailServices.copy.copyMessages(
+    hdr.folder,
+    [hdr],
+    templatesFolder,
+    false,
+    null,
+    msgWindow,
+    false
+  );
 }
 
 /**

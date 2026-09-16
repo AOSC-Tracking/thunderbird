@@ -32,6 +32,7 @@
 #include "nsIMsgMailSession.h"
 #include "nsImapNamespace.h"
 #include "nsMsgUtils.h"
+#include "UrlListener.h"
 #include "nsServiceManagerUtils.h"
 #include "nsComponentManagerUtils.h"
 #include "mozilla/Components.h"
@@ -1195,20 +1196,46 @@ NS_IMETHODIMP nsImapIncomingServer::OnlineFolderRename(
       nsCOMPtr<nsIMsgImapMailFolder> folder;
       folder = do_QueryInterface(me, &rv);
       if (NS_SUCCEEDED(rv)) {
+        // What the user configured for this folder. Read it before
+        // RenameLocal(), which replaces the database holding it.
+        uint32_t oldFlags = 0;
+        me->GetFlags(&oldFlags);
+        uint32_t oldSortOrder = nsIMsgFolder::NO_SORT_VALUE;
+        me->GetUserSortOrder(&oldSortOrder);
+        nsCOMPtr<nsIMsgRetentionSettings> retentionSettings;
+        me->GetRetentionSettings(getter_AddRefs(retentionSettings));
+
         folder->RenameLocal(tmpNewName, parent);
         nsCOMPtr<nsIMsgImapMailFolder> parentImapFolder =
             do_QueryInterface(parent);
 
-        if (parentImapFolder)
-          parentImapFolder->RenameClient(msgWindow, me, oldName, tmpNewName);
+        if (!parentImapFolder) return NS_ERROR_FAILURE;
 
+        rv = parentImapFolder->RenameClient(msgWindow, me, oldName, tmpNewName);
+        if (NS_FAILED(rv)) return rv;
+
+        // RenameClient() built the new folder's URI from `tmpNewName` as it is,
+        // so look it up with that and not with a decoded name.
         nsCOMPtr<nsIMsgFolder> newFolder;
-        nsString unicodeNewName;
-        // `tmpNewName` is in MUTF-7 or UTF-8. It needs to be convert to UTF-8.
-        CopyFolderNameToUTF16(tmpNewName, unicodeNewName);
-        CopyUTF16toUTF8(unicodeNewName, tmpNewName);
         rv = GetFolder(tmpNewName, getter_AddRefs(newFolder));
-        if (NS_SUCCEEDED(rv)) {
+        if (NS_SUCCEEDED(rv) && newFolder) {
+          // A folder moved to the trash is being deleted, not renamed.
+          bool inTrash = false;
+          newFolder->IsSpecialFolder(nsMsgFolderFlags::Trash, true, &inTrash);
+          if (!inTrash) {
+            if (retentionSettings) {
+              newFolder->SetRetentionSettings(retentionSettings);
+            }
+            newFolder->SetUserSortOrder(oldSortOrder);
+            // Only the flags a user sets per folder; the others stay as the new
+            // folder got them.
+            constexpr uint32_t kSettingFlags = nsMsgFolderFlags::Offline |
+                                               nsMsgFolderFlags::CheckNew |
+                                               nsMsgFolderFlags::Favorite;
+            uint32_t newFlags = 0;
+            newFolder->GetFlags(&newFlags);
+            newFolder->SetFlags(newFlags | (oldFlags & kSettingFlags));
+          }
           newFolder->NotifyFolderEvent(kRenameCompleted);
         }
       }
@@ -1987,7 +2014,7 @@ nsImapIncomingServer::AsyncGetPassword(nsIImapProtocol* aProtocol,
   }
 
   MOZ_TRY(mPasswordModule->GetCachedPassword(value));
-  if (value.IsEmpty()) {
+  if (!value.IsEmpty()) {
     aPassword = NS_ConvertUTF8toUTF16(value);
   }
 
@@ -2136,36 +2163,6 @@ NS_IMETHODIMP nsImapIncomingServer::GetManageMailAccountUrl(
     nsACString& manageMailAccountUrl) {
   manageMailAccountUrl = m_manageMailAccountUrl;
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsImapIncomingServer::StartPopulatingWithUri(nsIMsgWindow* aMsgWindow,
-                                             bool aForceToServer /*ignored*/,
-                                             const nsACString& uri) {
-  nsresult rv;
-  mDoingSubscribeDialog = true;
-
-  rv = EnsureInner();
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = mInner->StartPopulatingWithUri(aMsgWindow, aForceToServer, uri);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // imap always uses the canonical delimiter form of paths for subscribe ui.
-  rv = SetDelimiter('/');
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = SetShowFullName(false);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCString serverUri;
-  rv = GetServerURI(serverUri);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
-  // If uri = imap://user@host/foo/bar, the serverUri is imap://user@host
-  // to get path from uri, skip over imap://user@host + 1 (for the /).
-  return imapService->GetListOfFoldersWithPath(
-      this, aMsgWindow, Substring(uri, serverUri.Length() + 1));
 }
 
 NS_IMETHODIMP
@@ -2354,14 +2351,25 @@ nsImapIncomingServer::SubscribeToFolder(const nsACString& aName, bool subscribe,
   nsCOMPtr<nsIMsgFolder> msgFolder;
   if (rootMsgFolder && !aName.IsEmpty())
     rv = rootMsgFolder->FindSubFolder(aName, getter_AddRefs(msgFolder));
+  if (!msgFolder) {
+    NS_WARNING("SubscribeToFolder: could not resolve folder");
+    return NS_MSG_ERROR_FOLDER_MISSING;
+  }
 
-  nsCOMPtr<nsIThread> thread(do_GetCurrentThread());
+  // The subscribe URL holds only weak references to folder sinks. Keep the
+  // folder alive for the URL's lifetime to prevent a premature release.
+  RefPtr<UrlListener> keepAlive = new UrlListener();
+  keepAlive->mStopFn = [folder = RefPtr<nsIMsgFolder>(msgFolder)](
+                           nsIURI* aUrl, nsresult aStatus) -> nsresult {
+    (void)folder;
+    return NS_OK;
+  };
 
-  if (subscribe)
-    rv = imapService->SubscribeFolder(msgFolder, aName, nullptr, aUri);
-  else
-    rv = imapService->UnsubscribeFolder(msgFolder, aName, nullptr, nullptr);
-
+  if (subscribe) {
+    rv = imapService->SubscribeFolder(msgFolder, aName, keepAlive, aUri);
+  } else {
+    rv = imapService->UnsubscribeFolder(msgFolder, aName, keepAlive, nullptr);
+  }
   return rv;
 }
 

@@ -12,6 +12,7 @@
 #include "nsMsgFolderFlags.h"
 #include "nsMsgMessageFlags.h"
 #include "nsIDBFolderInfo.h"
+#include "nsIImapService.h"
 #include "nsIMsgMailNewsUrl.h"
 #include "nsIMsgAccountManager.h"
 #include "nsINntpIncomingServer.h"
@@ -30,7 +31,7 @@ nsImapOfflineSync::nsImapOfflineSync() {
   mCurrentPlaybackOpType = nsIMsgOfflineImapOperation::kFlagsChanged;
   m_mailboxupdatesStarted = false;
   m_mailboxupdatesFinished = false;
-  m_createdOfflineFolders = false;
+  m_started = false;
   m_pseudoOffline = false;
   m_KeyIndex = 0;
   mCurrentUIDValidity = 0;
@@ -599,43 +600,6 @@ void nsImapOfflineSync::ProcessEmptyTrash() {
   ClearDB();  // EmptyTrash closes and deletes the trash db.
 }
 
-// returns true if we found a folder to create, false if we're done creating
-// folders.
-bool nsImapOfflineSync::CreateOfflineFolders() {
-  while (m_currentFolder) {
-    uint32_t flags;
-    m_currentFolder->GetFlags(&flags);
-    bool offlineCreate = (flags & nsMsgFolderFlags::CreatedOffline) != 0;
-    if (offlineCreate) {
-      if (CreateOfflineFolder(m_currentFolder)) return true;
-    }
-    AdvanceToNextFolder();
-  }
-  return false;
-}
-
-bool nsImapOfflineSync::CreateOfflineFolder(nsIMsgFolder* folder) {
-  nsCOMPtr<nsIMsgFolder> parent;
-  folder->GetParent(getter_AddRefs(parent));
-
-  nsCOMPtr<nsIMsgImapMailFolder> imapFolder = do_QueryInterface(parent);
-  nsCOMPtr<nsIURI> createFolderURI;
-  nsCString onlineName;
-  imapFolder->GetOnlineName(onlineName);
-
-  NS_ConvertASCIItoUTF16 folderName(onlineName);
-  nsresult rv = imapFolder->PlaybackOfflineFolderCreate(
-      folderName, nullptr, getter_AddRefs(createFolderURI));
-  if (createFolderURI && NS_SUCCEEDED(rv)) {
-    nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl =
-        do_QueryInterface(createFolderURI);
-    if (mailnewsUrl) mailnewsUrl->RegisterListener(this);
-  }
-  return NS_SUCCEEDED(rv) ? true
-                          : false;  // this is asynch, we have to return and be
-                                    // called again by the OfflineOpExitFunction
-}
-
 ImapUid nsImapOfflineSync::GetCurrentUIDValidity() {
   if (m_currentFolder) {
     nsCOMPtr<nsIImapMailFolderSink> imapFolderSink =
@@ -648,29 +612,25 @@ ImapUid nsImapOfflineSync::GetCurrentUIDValidity() {
 /**
  * Playing back offline operations is one giant state machine that runs through
  * ProcessNextOperation.
- * The first state is creating online any folders created offline (we do this
- * first, so we can play back any operations in them in the next pass)
  */
 nsresult nsImapOfflineSync::ProcessNextOperation() {
   nsresult rv = NS_OK;
 
-  // if we haven't created offline folders, and we're updating all folders,
-  // first, find offline folders to create.
-  if (!m_createdOfflineFolders) {
+  // Some annoying hoop-jumping for historical reasons.
+  // See https://bugzilla.mozilla.org/show_bug.cgi?id=2060778 for cleaning
+  // this up.
+  if (!m_started) {
     if (m_singleFolderToUpdate) {
       if (!m_pseudoOffline) {
         AdvanceToFirstIMAPFolder();
-        // Because IMAP folder creation is async, we might exit now and
-        // continue later on (via OnStopRunningUrl()).
-        if (CreateOfflineFolders()) return NS_OK;
       }
     } else {
-      if (CreateOfflineFolders()) return NS_OK;
       m_currentServer = nullptr;
       AdvanceToNextFolder();
     }
-    m_createdOfflineFolders = true;
+    m_started = true;
   }
+
   // if updating one folder only, restore m_currentFolder to that folder
   if (m_singleFolderToUpdate) m_currentFolder = m_singleFolderToUpdate;
 
@@ -754,12 +714,16 @@ nsresult nsImapOfflineSync::ProcessNextOperation() {
           if (!m_pseudoOffline) {
             // there are operations to playback so check uid validity
             SetCurrentUIDValidity(0);  // force initial invalid state
-            // do a lite select here and hook ourselves up as a listener.
-            nsCOMPtr<nsIMsgImapMailFolder> imapFolder =
-                do_QueryInterface(m_currentFolder, &rv);
-            if (imapFolder) rv = imapFolder->LiteSelect(this, m_window);
-            // this is async, we will be called again by OnStopRunningUrl.
-            return rv;
+
+            // Call LiteSelectFolder() to select the current folder without
+            // kicking off a full syncing operation.
+            nsCOMPtr<nsIImapService> imapService =
+                mozilla::components::Imap::Service();
+            nsCOMPtr<nsIURI> unusedUri;
+            // Passing this as UrlListener, so our OnStopRunningUrl() will be
+            // called when this completes.
+            return imapService->LiteSelectFolder(
+                m_currentFolder, this, m_window, getter_AddRefs(unusedUri));
           }
         }
       }
@@ -813,86 +777,73 @@ nsresult nsImapOfflineSync::ProcessNextOperation() {
         // if we did not find a db record that matches the current playback
         // operation, then move to the next playback operation and recurse.
         if (!currentOp) {
-          // we are done with the current type
-          if (mCurrentPlaybackOpType ==
-              nsIMsgOfflineImapOperation::kFlagsChanged) {
-            mCurrentPlaybackOpType = nsIMsgOfflineImapOperation::kAddKeywords;
-            // recurse to deal with next type of operation
-            m_KeyIndex = 0;
-            ProcessNextOperation();
-          } else if (mCurrentPlaybackOpType ==
-                     nsIMsgOfflineImapOperation::kAddKeywords) {
-            mCurrentPlaybackOpType =
-                nsIMsgOfflineImapOperation::kRemoveKeywords;
-            // recurse to deal with next type of operation
-            m_KeyIndex = 0;
-            ProcessNextOperation();
-          } else if (mCurrentPlaybackOpType ==
-                     nsIMsgOfflineImapOperation::kRemoveKeywords) {
-            mCurrentPlaybackOpType = nsIMsgOfflineImapOperation::kMsgCopy;
-            // recurse to deal with next type of operation
-            m_KeyIndex = 0;
-            ProcessNextOperation();
-          } else if (mCurrentPlaybackOpType ==
-                     nsIMsgOfflineImapOperation::kMsgCopy) {
-            mCurrentPlaybackOpType = nsIMsgOfflineImapOperation::kMsgMoved;
-            // recurse to deal with next type of operation
-            m_KeyIndex = 0;
-            ProcessNextOperation();
-          } else if (mCurrentPlaybackOpType ==
-                     nsIMsgOfflineImapOperation::kMsgMoved) {
-            mCurrentPlaybackOpType = nsIMsgOfflineImapOperation::kAppendDraft;
-            // recurse to deal with next type of operation
-            m_KeyIndex = 0;
-            ProcessNextOperation();
-          } else if (mCurrentPlaybackOpType ==
-                     nsIMsgOfflineImapOperation::kAppendDraft) {
-            mCurrentPlaybackOpType =
-                nsIMsgOfflineImapOperation::kAppendTemplate;
-            // recurse to deal with next type of operation
-            m_KeyIndex = 0;
-            ProcessNextOperation();
-          } else if (mCurrentPlaybackOpType ==
-                     nsIMsgOfflineImapOperation::kAppendTemplate) {
-            mCurrentPlaybackOpType = nsIMsgOfflineImapOperation::kDeleteAllMsgs;
+          int32_t nextOp = 0;
+          switch (mCurrentPlaybackOpType) {
+            case nsIMsgOfflineImapOperation::kFlagsChanged:
+              nextOp = nsIMsgOfflineImapOperation::kAddKeywords;
+              break;
+            case nsIMsgOfflineImapOperation::kAddKeywords:
+              nextOp = nsIMsgOfflineImapOperation::kRemoveKeywords;
+              break;
+            case nsIMsgOfflineImapOperation::kRemoveKeywords:
+              nextOp = nsIMsgOfflineImapOperation::kMsgCopy;
+              break;
+            case nsIMsgOfflineImapOperation::kMsgCopy:
+              nextOp = nsIMsgOfflineImapOperation::kMsgMoved;
+              break;
+            case nsIMsgOfflineImapOperation::kMsgMoved:
+              nextOp = nsIMsgOfflineImapOperation::kAppendDraft;
+              break;
+            case nsIMsgOfflineImapOperation::kAppendDraft:
+              nextOp = nsIMsgOfflineImapOperation::kAppendTemplate;
+              break;
+            case nsIMsgOfflineImapOperation::kAppendTemplate:
+              nextOp = nsIMsgOfflineImapOperation::kDeleteAllMsgs;
+              break;
+            default:
+              break;
+          }
+          if (nextOp) {
+            mCurrentPlaybackOpType = nextOp;
             m_KeyIndex = 0;
             ProcessNextOperation();
           } else {
             DeleteAllOfflineOpsForCurrentDB();
             currentFolderFinished = true;
           }
-
         } else {
-          if (mCurrentPlaybackOpType ==
-              nsIMsgOfflineImapOperation::kFlagsChanged)
-            ProcessFlagOperation(currentOp);
-          else if (mCurrentPlaybackOpType ==
-                       nsIMsgOfflineImapOperation::kAddKeywords ||
-                   mCurrentPlaybackOpType ==
-                       nsIMsgOfflineImapOperation::kRemoveKeywords)
-            ProcessKeywordOperation(currentOp);
-          else if (mCurrentPlaybackOpType ==
-                   nsIMsgOfflineImapOperation::kMsgCopy)
-            ProcessCopyOperation(currentOp);
-          else if (mCurrentPlaybackOpType ==
-                   nsIMsgOfflineImapOperation::kMsgMoved)
-            ProcessMoveOperation(currentOp);
-          else if (mCurrentPlaybackOpType ==
-                   nsIMsgOfflineImapOperation::kAppendDraft)
-            ProcessAppendMsgOperation(currentOp,
-                                      nsIMsgOfflineImapOperation::kAppendDraft);
-          else if (mCurrentPlaybackOpType ==
-                   nsIMsgOfflineImapOperation::kAppendTemplate)
-            ProcessAppendMsgOperation(
-                currentOp, nsIMsgOfflineImapOperation::kAppendTemplate);
-          else if (mCurrentPlaybackOpType ==
-                   nsIMsgOfflineImapOperation::kDeleteAllMsgs) {
-            // empty trash is going to delete the db, so we'd better release the
-            // reference to the offline operation first.
-            currentOp = nullptr;
-            ProcessEmptyTrash();
-          } else
-            NS_WARNING("invalid playback op type");
+          switch (mCurrentPlaybackOpType) {
+            case nsIMsgOfflineImapOperation::kFlagsChanged:
+              ProcessFlagOperation(currentOp);
+              break;
+            case nsIMsgOfflineImapOperation::kAddKeywords:
+            case nsIMsgOfflineImapOperation::kRemoveKeywords:
+              ProcessKeywordOperation(currentOp);
+              break;
+            case nsIMsgOfflineImapOperation::kMsgCopy:
+              ProcessCopyOperation(currentOp);
+              break;
+            case nsIMsgOfflineImapOperation::kMsgMoved:
+              ProcessMoveOperation(currentOp);
+              break;
+            case nsIMsgOfflineImapOperation::kAppendDraft:
+              ProcessAppendMsgOperation(
+                  currentOp, nsIMsgOfflineImapOperation::kAppendDraft);
+              break;
+            case nsIMsgOfflineImapOperation::kAppendTemplate:
+              ProcessAppendMsgOperation(
+                  currentOp, nsIMsgOfflineImapOperation::kAppendTemplate);
+              break;
+            case nsIMsgOfflineImapOperation::kDeleteAllMsgs:
+              // empty trash is going to delete the db, so we'd better release
+              // the reference to the offline operation first.
+              currentOp = nullptr;
+              ProcessEmptyTrash();
+              break;
+            default:
+              NS_WARNING("invalid playback op type");
+              break;
+          }
         }
       } else
         currentFolderFinished = true;

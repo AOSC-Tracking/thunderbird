@@ -9,6 +9,8 @@ environment = [
 
 ["test_bccProperty.js"]
 
+["test_imapVirtualFolderReuse.js"]
+
 ["test_bug460636.js"]
 
 ["test_chunkLastLF.js"]
@@ -83,6 +85,8 @@ tags = ["foldernames"]
 
 ["test_imapIDLiteralParenGroup.js"]
 
+["test_imapIDNoParenGroup.js"]
+
 ["test_imapMove.js"]
 
 ["test_imapPasswordFailure.js"]
@@ -147,11 +151,11 @@ tags = ["compact"]
 
 ["test_preserveDataOnMove.js"]
 
+["test_refreshPasswordFromStorageForFetch.js"]
+
 ["test_repairMbox.js"]
 
 ["test_saveImapDraft.js"]
-
-["test_saveTemplate.js"]
 
 ["test_starttlsFailure.js"]
 
@@ -161,6 +165,12 @@ tags = ["compact"]
 
 ["test_subfolderLocation.js"]
 
+["test_subscribeNoSummaryFile.js"]
+
+["test_subscribeWithSubfolder.js"]
+
 ["test_syncChanges.js"]
 
 ["test_trustSpamAssassin.js"]
+
+["test_virtualFolderSuffixedParent.js"]

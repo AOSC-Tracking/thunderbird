@@ -2874,7 +2874,11 @@ var folderPane = {
       FolderUtils.getFolderIcon(gFolder);
 
     // Clean up any existing view wrapper. This will invalidate the thread tree.
-    gViewWrapper?.close();
+    // Rebuilding the selected folder is not leaving it, so we skip leave-folder
+    // behaviour.
+    gViewWrapper?.close({
+      leavingFolder: gViewWrapper?.displayedFolder != gFolder,
+    });
 
     if (gFolder.isServer) {
       document.title = gFolder.server.prettyName;
@@ -5109,7 +5113,7 @@ var threadPane = {
       transferable.getTransferData("text/plain", messageURI);
       messageURI.value.QueryInterface(Ci.nsISupportsString);
 
-      top.messenger.saveAs(messageURI.value.data, true, null, file.path, true);
+      top.messenger.saveAs(messageURI.value.data, null, file.path, true);
     },
   },
 
@@ -6310,7 +6314,6 @@ var folderListener = {
   onFolderAdded(parentFolder, childFolder) {
     folderPane.setSortOrderOnNewFolder(parentFolder, childFolder);
     folderPane.addFolder(parentFolder, childFolder);
-    folderPane.updateFolderRowUIElements();
   },
   onMessageAdded() {},
   onFolderRemoved(parentFolder, childFolder) {
@@ -6323,7 +6326,7 @@ var folderListener = {
       // Clean up the display if the deleted folder was being displayed. At this
       // point, `DBViewWrapper._folderDeleted` has already cleaned up `gDBView`.
       gFolder = null;
-      gViewWrapper?.close(true);
+      gViewWrapper?.close({ leavingFolder: false });
       threadPaneHeader.onFolderSelected();
       threadPane._onSelect(); // Ensure no message is displayed.
     }

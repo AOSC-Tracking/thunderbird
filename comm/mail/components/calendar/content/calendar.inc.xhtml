@@ -7,9 +7,11 @@
 #include calendarDialogDateRowTemplate.inc.xhtml
 #include calendarDialogDescriptionRowTemplate.inc.xhtml
 #include calendarDialogCategoriesTemplate.inc.xhtml
+#include calendarDialogCreateReminderFormTemplate.inc.xhtml
 #include calendarDialogRemindersRowTemplate.inc.xhtml
 #include calendarDialogAcceptanceTemplate.inc.xhtml
 #include calendarDialogAttachmentsListTemplate.inc.xhtml
+#include calendarEventCreateEditDialogTemplate.inc.xhtml
 
 <html:template id="calendarDialogTemplate" xmlns="http://www.w3.org/1999/xhtml">
   <div class="titlebar">
@@ -58,7 +60,7 @@
           <div slot="label">
             <button
               id="joinMeeting"
-              class="button button-primary join-button"
+              class="button button-primary join-button pill-button"
               type="button"
               data-l10n-id="calendar-dialog-join-meeting-button"
             ></button>

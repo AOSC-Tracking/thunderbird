@@ -109,10 +109,6 @@ export class NntpIncomingServer extends MsgIncomingServer {
   }
 
   /** @see nsISubscribableServer */
-  get folderView() {
-    return this._subscribable.folderView;
-  }
-
   get subscribeListener() {
     return this._subscribable.subscribeListener;
   }
@@ -454,7 +450,7 @@ export class NntpIncomingServer extends MsgIncomingServer {
     // There should only be one login stored for this url, however just in case
     // there isn't.
     for (const login of await Services.logins.searchLoginsAsync({
-      origin: signonUrl,
+      origin: Services.io.newURI(signonUrl).prePath,
       httpRealm: signonUrl,
     })) {
       await Services.logins.removeLoginAsync(login);

@@ -5,7 +5,6 @@
 /* import-globals-from ../../../../../toolkit/content/contentAreaUtils.js */
 /* import-globals-from ../../../../mailnews/addrbook/content/abDragDrop.js */
 /* import-globals-from ../../../../mailnews/base/prefs/content/accountUtils.js */
-/* import-globals-from ../../../base/content/contentAreaClick.js */
 /* import-globals-from ../../../base/content/mailCore.js */
 /* import-globals-from ../../../base/content/messenger-customization.js */
 /* import-globals-from ../../../base/content/toolbarIconColor.js */
@@ -364,7 +363,7 @@ const inputObserver = {
       // Interrupt if there's no input proxy, or the input doesn't have an ID,
       // the latter meaning that the autocomplete event was triggered within an
       // already existing pill, so we don't want to create a new pill.
-      if (!input || !input.id) {
+      if (!input?.id) {
         return;
       }
 
@@ -8015,12 +8014,24 @@ function ComposeCanClose() {
     // call window.focus, since we need to pop up a dialog
     // and therefore need to be visible (to prevent user confusion)
     window.focus();
-    const draftsFolder = gCurrentIdentity.getOrCreateDraftsFolder();
+    const messengerBundle = Services.strings.createBundle(
+      "chrome://messenger/locale/messenger.properties"
+    );
+    let draftsFolderName =
+      messengerBundle.GetStringFromName("draftsFolderName");
+    if (gCurrentIdentity.fccFolderURI) {
+      const draftsFolder = MailUtils.getExistingFolder(
+        gCurrentIdentity.fccFolderURI
+      );
+      if (draftsFolder) {
+        draftsFolderName = draftsFolder.localizedName;
+      }
+    }
     const result = Services.prompt.confirmEx(
       window,
       getComposeBundle().getString("saveDlogTitle"),
       getComposeBundle().getFormattedString("saveDlogMessages3", [
-        draftsFolder.localizedName,
+        draftsFolderName,
       ]),
       Services.prompt.BUTTON_TITLE_SAVE * Services.prompt.BUTTON_POS_0 +
         Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1 +

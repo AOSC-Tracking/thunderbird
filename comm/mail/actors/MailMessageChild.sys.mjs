@@ -2,13 +2,98 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { PhishingDetector } from "resource:///modules/PhishingDetector.sys.mjs";
+
 export class MailMessageChild extends JSWindowActorChild {
+  handleEvent(event) {
+    switch (event.type) {
+      case "click":
+        this.onClick(event);
+        break;
+      case "resize":
+        this.onResize(event);
+        break;
+      case "visibilitychange":
+        this.onVisibilityChange(event);
+        break;
+    }
+  }
+
   receiveMessage(message) {
     switch (message.name) {
+      case "MailMessage:AnalyzeMessageBody":
+        return PhishingDetector.analyzeMessageBody(this.document);
       case "MailMessage:GetSelectionForQuoting":
         return this.getSelectionForQuoting();
     }
     return undefined;
+  }
+
+  onClick(event) {
+    const target = event.target;
+
+    // Is this an image that we might want to scale?
+    if (HTMLImageElement.isInstance(target) && target.src) {
+      // Make sure it loaded successfully. No action if not or a broken link.
+      const req = target.getRequest(Ci.nsIImageLoadingContent.CURRENT_REQUEST);
+      if (!req || req.imageStatus & Ci.imgIRequest.STATUS_ERROR) {
+        return;
+      }
+
+      // Is it an image?
+      if (target.localName == "img" && target.hasAttribute("overflowing")) {
+        event.preventDefault();
+        target.toggleAttribute("shrinktofit");
+      }
+    }
+  }
+
+  onResize(event) {
+    const win = event.target;
+    const doc = win.document;
+    // Bail out if it's http content or we don't have images.
+    if (doc?.URL.startsWith("http") || !doc?.images) {
+      return;
+    }
+
+    const availableWidth = Math.max(
+      doc.body.scrollWidth,
+      win.visualViewport.width
+    );
+
+    const adjustImg = img => {
+      if (img.hasAttribute("shrinktofit")) {
+        // overflowing: Whether the image is overflowing visible area.
+        img.toggleAttribute("overflowing", img.naturalWidth > img.clientWidth);
+      } else if (img.hasAttribute("overflowing")) {
+        const isOverflowing = img.clientWidth >= availableWidth;
+        img.toggleAttribute("overflowing", isOverflowing);
+        img.toggleAttribute("shrinktofit", !isOverflowing);
+      }
+    };
+
+    for (const img of doc.querySelectorAll(
+      "img:is([shrinktofit],[overflowing])"
+    )) {
+      if (img.closest("[href]")) {
+        continue;
+      }
+      if (!img.complete) {
+        img.addEventListener("load", event => adjustImg(event.target), {
+          once: true,
+        });
+      } else {
+        adjustImg(img);
+      }
+    }
+  }
+
+  onVisibilityChange(event) {
+    if (event.target.visibilityState == "visible") {
+      this.sendAsyncMessage("MailMessage:VisibilityChange", {
+        uri: event.target.documentGlobal.location.href,
+      });
+    }
   }
 
   /**

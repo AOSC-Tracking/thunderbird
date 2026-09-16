@@ -1,0 +1,635 @@
+/* Any copyright is dedicated to the Public Domain.
+ * http://creativecommons.org/publicdomain/zero/1.0/ */
+
+"use strict";
+
+// Differences from Firefox we knowingly accept, keyed by policy name. Each
+// value is the exact array of diff lines diff() produces for that policy,
+// unchanged context lines included.
+//
+// To build/update this list:
+//  - copy/sync policies from Firefox to Thunderbird,
+//  - make any thunderbird specific adjustements (for missing features etc.)
+//  - remove the entry from the list
+//  - let the test fail
+//  - copy the paste-ready entry the test logs right after "To allow them, add
+//    (or update) this entry to allowedDifferences"
+//  - paste it back in here, then run
+//    `./mach lint --fix -l eslint <this file>` to reindent it
+const allowedDifferences = {
+  BlockAboutProfiles: [
+    "~ onBeforeUIStartup:",
+    "  onBeforeUIStartup(manager, param) {",
+    "        if (param) {",
+    '          lazy.blockAboutPage(manager, "about:profiles");',
+    '-         lazy.blockAboutPage(manager, "about:profilemanager");',
+    '-         lazy.blockAboutPage(manager, "about:editprofile");',
+    '-         lazy.blockAboutPage(manager, "about:deleteprofile");',
+    '-         lazy.blockAboutPage(manager, "about:newprofile");',
+    "        }",
+    "      }",
+  ],
+  DefaultDownloadDirectory: [
+    "~ onBeforeAddons:",
+    "  ...",
+    '          "browser.download.dir",',
+    "          lazy.replacePathVariables(param)",
+    "        );",
+    "+       // If a custom download directory is being used, just lock folder list to 2.",
+    '+       lazy.PoliciesUtils.setAndLockPref("browser.download.folderList", 2);',
+    "      }",
+  ],
+  DisableDeveloperTools: [
+    "~ onBeforeAddons:",
+    "  ...",
+    '          manager.disallowFeature("devtools");',
+    '          lazy.blockAboutPage(manager, "about:debugging");',
+    '          lazy.blockAboutPage(manager, "about:devtools-toolbox");',
+    '-         lazy.blockAboutPage(manager, "about:profiling");',
+    "        }",
+    "      }",
+  ],
+  // Thunderbird defaults DNSOverHTTPS.Locked to false when the key is
+  // omitted because the Thunderbird DoH preferences UI checks the lock
+  // state of network.trr.mode. TODO - reconsider this implementation.
+  DNSOverHTTPS: [
+    "~ onBeforeAddons:",
+    "  onBeforeAddons(manager, param) {",
+    '+       const locked = "Locked" in param ? param.Locked : false;',
+    '        if ("Enabled" in param) {',
+    "          let mode = param.Enabled ? 2 : 5;",
+    "          // Fallback only matters if DOH is enabled.",
+    "          if (param.Fallback === false) {",
+    "            mode = 3;",
+    "          }",
+    "-         lazy.PoliciesUtils.setDefaultPref(",
+    '-           "network.trr.mode",',
+    "-           mode,",
+    "-           param.Locked",
+    "-         );",
+    '+         lazy.PoliciesUtils.setDefaultPref("network.trr.mode", mode, locked);',
+    "        }",
+    '        if ("ProviderURL" in param) {',
+    "          lazy.PoliciesUtils.setDefaultPref(",
+    '            "network.trr.uri",',
+    "            param.ProviderURL.href,",
+    "-           param.Locked",
+    "+           locked",
+    "          );",
+    "        }",
+    '        if ("ExcludedDomains" in param) {',
+    "          lazy.PoliciesUtils.setDefaultPref(",
+    '            "network.trr.excluded-domains",',
+    '            param.ExcludedDomains.join(","),',
+    "-           param.Locked",
+    "+           locked",
+    "          );",
+    "        }",
+    "      }",
+  ],
+  InstallAddonsPermission: [
+    "~ onBeforeUIStartup:",
+    "  ...",
+    "          if (!param.Default) {",
+    '            manager.disallowFeature("installTemporaryAddon");',
+    "            lazy.PoliciesUtils.setAndLockPref(",
+    '-             "browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons",',
+    "-             false",
+    "-           );",
+    "-           lazy.PoliciesUtils.setAndLockPref(",
+    '-             "browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features",',
+    "-             false",
+    "-           );",
+    "-           lazy.PoliciesUtils.setAndLockPref(",
+    '              "extensions.getAddons.showPane",',
+    "              false",
+    "            );",
+    "  ...",
+  ],
+  PasswordManagerEnabled: [
+    "~ onBeforeUIStartup:",
+    "  ...",
+    '            "pref.privacy.disable_button.view_passwords",',
+    "            true",
+    "          );",
+    "-         lazy.PoliciesUtils.setAndLockPref(",
+    '-           "browser.contextual-password-manager.enabled",',
+    "-           false",
+    "-         );",
+    "        }",
+    '        lazy.PoliciesUtils.setAndLockPref("signon.rememberSignons", param);',
+    "      }",
+  ],
+  Preferences: [
+    "~ onBeforeAddons:",
+    "  onBeforeAddons(manager, param) {",
+    "        const allowedPrefixes = [",
+    '          "accessibility.",',
+    '-         "alerts.",',
+    '          "app.update.",',
+    '          "browser.",',
+    '+         "calendar.",',
+    '+         "chat.",',
+    '          "datareporting.policy.",',
+    '-         "devtools.",',
+    '          "dom.",',
+    '          "extensions.",',
+    '          "general.autoScroll",',
+    '          "general.smoothScroll",',
+    '          "geo.",',
+    '          "gfx.",',
+    '-         "identity.fxaccounts.toolbar.",',
+    '          "intl.",',
+    '-         "keyword.enabled",',
+    '          "layers.",',
+    '          "layout.",',
+    '-         "mathml.disabled",',
+    '+         "mail.",',
+    '+         "mailnews.",',
+    '          "media.",',
+    '          "network.",',
+    '          "pdfjs.",',
+    '          "places.",',
+    '-         "pref.",',
+    '          "print.",',
+    '-         "privacy.baselineFingerprintingProtection",',
+    '-         "privacy.fingerprintingProtection",',
+    '-         "privacy.globalprivacycontrol.enabled",',
+    '-         "privacy.userContext.enabled",',
+    '-         "privacy.userContext.ui.enabled",',
+    '-         "sidebar.",',
+    '          "signon.",',
+    '          "spellchecker.",',
+    '-         "svg.context-properties.content.enabled",',
+    '-         "svg.disabled",',
+    '-         "toolkit.legacyUserProfileCustomizations.stylesheets",',
+    '          "ui.",',
+    '-         "webgl.disabled",',
+    '-         "webgl.force-enabled",',
+    '          "widget.",',
+    '-         "xpinstall.enabled",',
+    '-         "xpinstall.whitelist.required",',
+    "        ];",
+    "-       if (!AppConstants.MOZ_REQUIRE_SIGNING) {",
+    '-         allowedPrefixes.push("xpinstall.signatures.required");',
+    "-       }",
+    "        const allowedSecurityPrefs = [",
+    '-         "security.block_fileuri_script_with_wrong_mime",',
+    '-         "security.csp.reporting.enabled",',
+    '          "security.default_personal_cert",',
+    '-         "security.disable_button.openCertManager",',
+    '-         "security.disable_button.openDeviceManager",',
+    '          "security.insecure_connection_text.enabled",',
+    '          "security.insecure_connection_text.pbmode.enabled",',
+    '+         "security.insecure_field_warning.contextual.enabled",',
+    '          "security.mixed_content.block_active_content",',
+    '-         "security.mixed_content.block_display_content",',
+    '-         "security.mixed_content.upgrade_display_content",',
+    '          "security.osclientcerts.autoload",',
+    '-         "security.OCSP.enabled",',
+    '-         "security.OCSP.require",',
+    '-         "security.pki.certificate_transparency.disable_for_hosts",',
+    '-         "security.pki.certificate_transparency.disable_for_spki_hashes",',
+    '-         "security.pki.certificate_transparency.mode",',
+    '-         "security.ssl.enable_ocsp_stapling",',
+    '          "security.ssl.errorReporting.enabled",',
+    '-         "security.ssl.require_safe_negotiation",',
+    '-         "security.storage.encryption.sqlite.enabled",',
+    '-         "security.tls.enable_0rtt_data",',
+    '          "security.tls.hello_downgrade_check",',
+    '          "security.tls.version.enable-deprecated",',
+    '          "security.warn_submit_secure_to_insecure",',
+    '-         "security.webauthn.always_allow_direct_attestation",',
+    "        ];",
+    "        const blockedPrefs = [",
+    '          "app.update.channel",',
+    '          "app.update.lastUpdateTime",',
+    '          "app.update.migrated",',
+    '-         "browser.vpn_promo.disallowed_regions",',
+    "        ];",
+    "  ",
+    "        for (const preference in param) {",
+    "  ...",
+    "              continue;",
+    "            }",
+    "  ",
+    "-           let prefBranch;",
+    '            if (param[preference].Status == "user") {',
+    "-             prefBranch = Services.prefs;",
+    "+             var prefBranch = Services.prefs;",
+    "            } else {",
+    '              prefBranch = Services.prefs.getDefaultBranch("");',
+    "            }",
+    "  ",
+    "-           // Prefs that were previously locked should stay locked,",
+    "-           // but policy can update the value.",
+    "-           const prefWasLocked = Services.prefs.prefIsLocked(preference);",
+    "-           if (prefWasLocked) {",
+    "-             Services.prefs.unlockPref(preference);",
+    "-           }",
+    "            try {",
+    "-             const prefType =",
+    "-               param[preference].Type || typeof param[preference].Value;",
+    "-             switch (prefType) {",
+    "+             switch (typeof param[preference].Value) {",
+    '                case "boolean":',
+    "                  prefBranch.setBoolPref(preference, param[preference].Value);",
+    "                  break;",
+    "  ...",
+    "                  // Preferences implementation, the schema took care of",
+    "                  // automatically converting these values to booleans.",
+    "                  // Since we allow arbitrary prefs now, we have to do",
+    "-                 // something different. See bug 1666836, 1668374, and 1872267.",
+    "- ",
+    "-                 // We only set something as int if it was explicit in policy,",
+    "-                 // the same type as the default pref, or NOT 0/1. Otherwise",
+    "-                 // we set it as bool.",
+    "+                 // something different. See bug 1666836.",
+    "                  if (",
+    '-                   param[preference].Type == "number" ||',
+    "                    prefBranch.getPrefType(preference) == prefBranch.PREF_INT ||",
+    "                    ![0, 1].includes(param[preference].Value)",
+    "                  ) {",
+    "  ...",
+    "              );",
+    "            }",
+    "  ",
+    '-           if (param[preference].Status == "locked" || prefWasLocked) {',
+    '+           if (param[preference].Status == "locked") {',
+    "              Services.prefs.lockPref(preference);",
+    "            }",
+    "          }",
+    "  ...",
+  ],
+};
+
+// List built by just running the test with nothing in it and copy/pasting the
+// result. May evolve.
+const allowedMissing = [
+  "AIControls",
+  "AllowedDomainsForApps",
+  "AllowFileSelectionDialogs",
+  "AutofillAddressEnabled",
+  "AutofillCreditCardEnabled",
+  "AutoLaunchProtocolsFromOrigins",
+  "Bookmarks",
+  "BrowserDataBackup",
+  "CNSA2KeyAgreementEnabled",
+  "Containers",
+  "ContentAnalysis",
+  "DefaultBrowserSettingEnabled",
+  "DefaultSerialGuardSetting",
+  "DisableAccounts",
+  "DisableDefaultBrowserAgent",
+  "DisableEncryptedClientHello",
+  "DisableFeedbackCommands",
+  "DisableFirefoxAccounts",
+  "DisableFirefoxScreenshots",
+  "DisableFirefoxStudies",
+  "DisableForgetButton",
+  "DisableFormHistory",
+  "DisableLaunchOnLogin",
+  "DisablePrivateBrowsing",
+  "DisableProfileImport",
+  "DisableProfileRefresh",
+  "DisableRemoteImprovements",
+  "DisableRemoteSettingsAndAcceptSecurityConsequences",
+  "DisableSetDesktopBackground",
+  "DisableThirdPartyModuleBlocking",
+  "DisplayBookmarksToolbar",
+  "DisplayMenuBar",
+  "DontCheckDefaultBrowser",
+  "EnableTrackingProtection",
+  "EncryptedMediaExtensions",
+  "ExemptDomainFileTypePairsFromFileTypeDownloadWarnings",
+  "FirefoxHome",
+  "FirefoxSuggest",
+  "GenerativeAI",
+  "GoToIntranetSiteForSingleWordEntryInAddressBar",
+  "Homepage",
+  "HttpAllowlist",
+  "HttpsOnlyMode",
+  "IPProtectionAvailable",
+  "LegacyProfiles",
+  "LegacySameSiteCookieBehaviorEnabled",
+  "LegacySameSiteCookieBehaviorEnabledForDomainList",
+  "LocalFileLinks",
+  "LocalNetworkAccess",
+  "ManagedBookmarks",
+  "MicrosoftEntraSSO",
+  "NewTabPage",
+  "NoDefaultBookmarks",
+  "OverrideFirstRunPage",
+  "OverridePostUpdatePage",
+  "PasswordManagerExceptions",
+  "Permissions",
+  "PictureInPicture",
+  "PopupBlocking",
+  "PostQuantumKeyAgreementEnabled",
+  "PrintingEnabled",
+  "PrivateBrowsingModeAvailability",
+  "RelaunchRequired",
+  "SanitizeOnShutdown",
+  "SearchBar",
+  "SearchSuggestEnabled",
+  "ShowHomeButton",
+  "SitePolicies",
+  "SkipTermsOfUse",
+  "StartDownloadsInTempDirectory",
+  "SupportMenu",
+  "TranslateEnabled",
+  "UserMessaging",
+  "UseSystemPrintDialog",
+  "VisualSearchEnabled",
+  "WebsiteFilter",
+  "WindowsSSO",
+  "XSLTEnabled",
+];
+
+function getPolicies(module_name) {
+  const { Policies } = ChromeUtils.importESModule(
+    `resource://${module_name}/Policies.sys.mjs`
+  );
+  return JSON.stringify(Policies, (key, val) =>
+    typeof val === "function" ? val.toString() : val
+  );
+}
+
+// Number of unchanged lines kept around each change in a multi-line diff.
+const DIFF_CONTEXT_LINES = 3;
+
+// Replaces runs of unchanged lines longer than the context window with a single
+// "  ..." marker, so a one line change in a long function stays readable.
+function elideUnchanged(lines) {
+  const keep = new Array(lines.length).fill(false);
+  lines.forEach((line, i) => {
+    if (line.startsWith("  ")) {
+      return;
+    }
+    const from = Math.max(0, i - DIFF_CONTEXT_LINES);
+    const to = Math.min(lines.length - 1, i + DIFF_CONTEXT_LINES);
+    for (let k = from; k <= to; k++) {
+      keep[k] = true;
+    }
+  });
+
+  const elided = [];
+  let inGap = false;
+  lines.forEach((line, i) => {
+    if (keep[i]) {
+      elided.push(line);
+      inGap = false;
+    } else if (!inGap) {
+      elided.push("  ...");
+      inGap = true;
+    }
+  });
+
+  return elided;
+}
+
+// Line-by-line diff of two arrays of lines, prefixing each line with "- ",
+// "+ " or "  " the way a unified diff does.
+function diffLines(oldLines, newLines) {
+  const n = oldLines.length;
+  const m = newLines.length;
+
+  // lcs[i][j] is the length of the longest common subsequence of oldLines[i..]
+  // and newLines[j..]. Walking it forwards yields a minimal edit script.
+  const lcs = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] =
+        oldLines[i] === newLines[j]
+          ? lcs[i + 1][j + 1] + 1
+          : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+
+  const lines = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (oldLines[i] === newLines[j]) {
+      lines.push(`  ${oldLines[i]}`);
+      i++;
+      j++;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      lines.push(`- ${oldLines[i]}`);
+      i++;
+    } else {
+      lines.push(`+ ${newLines[j]}`);
+      j++;
+    }
+  }
+  while (i < n) {
+    lines.push(`- ${oldLines[i++]}`);
+  }
+  while (j < m) {
+    lines.push(`+ ${newLines[j++]}`);
+  }
+
+  return lines;
+}
+
+function diffStrings(oldValue, newValue) {
+  return elideUnchanged(diffLines(oldValue.split("\n"), newValue.split("\n")));
+}
+
+// Renders a value that only exists on one side, `sign` being "-" or "+".
+function oneSided(sign, path, value) {
+  if (typeof value === "string" && value.includes("\n")) {
+    return [
+      `${sign} ${path}:`,
+      ...value.split("\n").map(line => `${sign} ${line}`),
+    ];
+  }
+  return [`${sign} ${path}: ${JSON.stringify(value)}`];
+}
+
+function diff(oldValue, newValue, path = "") {
+  const lines = [];
+
+  // Primitive or function-string leaf: compare directly.
+  if (
+    typeof oldValue !== "object" ||
+    typeof newValue !== "object" ||
+    oldValue === null ||
+    newValue === null
+  ) {
+    if (oldValue === newValue) {
+      return lines;
+    }
+    if (
+      typeof oldValue === "string" &&
+      typeof newValue === "string" &&
+      (oldValue.includes("\n") || newValue.includes("\n"))
+    ) {
+      lines.push(`~ ${path}:`);
+      lines.push(...diffStrings(oldValue, newValue));
+    } else {
+      lines.push(`- ${path}: ${JSON.stringify(oldValue)}`);
+      lines.push(`+ ${path}: ${JSON.stringify(newValue)}`);
+    }
+    return lines;
+  }
+
+  const allKeys = new Set([...Object.keys(oldValue), ...Object.keys(newValue)]);
+
+  for (const key of allKeys) {
+    const keyPath = path ? `${path}.${key}` : key;
+    if (!(key in oldValue)) {
+      lines.push(...oneSided("+", keyPath, newValue[key]));
+    } else if (!(key in newValue)) {
+      lines.push(...oneSided("-", keyPath, oldValue[key]));
+    } else {
+      lines.push(...diff(oldValue[key], newValue[key], keyPath));
+    }
+  }
+
+  return lines;
+}
+
+// Checks an observed diff against its allowedDifferences entry. Both are arrays
+// of lines as produced by diff() and must match exactly; anything else is
+// logged and rejected. Returns the number of mismatching lines and whether any
+// of them is a stale allowedDifferences line, i.e. one that is no longer
+// present in the observed diff.
+function checkAllowedDifferences(policyName, observed) {
+  const allowed = allowedDifferences[policyName];
+  if (!Array.isArray(allowed)) {
+    info(
+      `allowedDifferences.${policyName} must be an array of diff lines, got ${typeof allowed}`
+    );
+    return { mismatches: 1, stale: false };
+  }
+
+  const mismatches = diffLines(allowed, observed).filter(
+    line => !line.startsWith("  ")
+  );
+  let stale = false;
+  for (const line of mismatches) {
+    if (line.startsWith("+ ")) {
+      info(`Found NOT allowed difference for ${policyName}: ${line.slice(2)}`);
+    } else {
+      stale = true;
+      info(
+        `Stale allowedDifferences line for ${policyName}, no longer present: ${line.slice(2)}`
+      );
+    }
+  }
+
+  return { mismatches: mismatches.length, stale };
+}
+
+add_task(function test_check_common_policies() {
+  const tbirdPolicies = JSON.parse(getPolicies("/modules/policies"));
+  const browserPolicies = JSON.parse(
+    getPolicies("testing-common/policies_browser")
+  );
+  const differences = {};
+  const realDifferences = {};
+
+  for (const policyName in tbirdPolicies) {
+    if (policyName === "_cleanup") {
+      continue;
+    }
+    if (!(policyName in browserPolicies)) {
+      info(`Skipping ${policyName} policy: Thunderbird specific`);
+      continue;
+    }
+    const same =
+      JSON.stringify(tbirdPolicies[policyName]) ===
+      JSON.stringify(browserPolicies[policyName]);
+    if (!same) {
+      differences[policyName] = diff(
+        browserPolicies[policyName],
+        tbirdPolicies[policyName]
+      );
+    }
+  }
+
+  for (const policyName in allowedDifferences) {
+    if (!(policyName in tbirdPolicies) || !(policyName in browserPolicies)) {
+      ok(
+        false,
+        `Policy ${policyName} listed in allowedDifferences but not common to both applications. Please fix.`
+      );
+    } else if (!(policyName in differences)) {
+      ok(
+        false,
+        `Policy ${policyName} listed in allowedDifferences but identical to Firefox. Please remove the entry.`
+      );
+    }
+  }
+
+  for (const policyName in differences) {
+    let stale = false;
+    if (policyName in allowedDifferences) {
+      const result = checkAllowedDifferences(
+        policyName,
+        differences[policyName]
+      );
+      if (!result.mismatches) {
+        info(`Skipping ${policyName}: allowed differences.`);
+        continue;
+      }
+      stale = result.stale;
+    }
+
+    info(
+      `No differences allowed for ${policyName} policy:\n${differences[
+        policyName
+      ].join("\n")}`
+    );
+    info(
+      `To allow them, ${
+        stale ? "update" : "add"
+      } this entry to allowedDifferences:\n  ${JSON.stringify(
+        policyName
+      )}: ${JSON.stringify(differences[policyName], null, 2)},`
+    );
+    realDifferences[policyName] = differences[policyName];
+  }
+
+  Assert.equal(
+    Object.keys(realDifferences).length,
+    0,
+    `Policies ${Object.keys(realDifferences)} differs from Firefox`
+  );
+});
+
+add_task(function test_check_missing_policies() {
+  const tbirdPolicies = JSON.parse(getPolicies("/modules/policies"));
+  const browserPolicies = JSON.parse(
+    getPolicies("testing-common/policies_browser")
+  );
+  const missing = [];
+
+  for (const policyName in browserPolicies) {
+    if (policyName === "_cleanup") {
+      continue;
+    }
+    if (allowedMissing.includes(policyName)) {
+      if (policyName in tbirdPolicies) {
+        ok(
+          false,
+          `Policy ${policyName} listed in allowedMissing but present in Thunderbird policies. Please fix.`
+        );
+      }
+
+      info(`Skipping ${policyName} policy: Missing allowed`);
+      continue;
+    }
+    if (!(policyName in tbirdPolicies)) {
+      missing.push(policyName);
+    }
+  }
+
+  const missingStr = missing.map(m => `"${m}"`);
+  Assert.equal(
+    missing.length,
+    0,
+    `Browser Policies are missing: ${missingStr}`
+  );
+});

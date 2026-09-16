@@ -161,10 +161,10 @@ const JSWINDOWACTORS = {
   // message manager groups added.
   FindBar: {
     parent: {
-      esModuleURI: "resource://gre/actors/FindBarParent.sys.mjs",
+      esModuleURI: "moz-src:///toolkit/actors/FindBarParent.sys.mjs",
     },
     child: {
-      esModuleURI: "resource://gre/actors/FindBarChild.sys.mjs",
+      esModuleURI: "moz-src:///toolkit/actors/FindBarChild.sys.mjs",
       events: {
         keypress: { mozSystemGroup: true },
       },
@@ -264,7 +264,11 @@ const JSWINDOWACTORS = {
   },
 
   MailMessage: {
-    child: { esModuleURI: "resource:///actors/MailMessageChild.sys.mjs" },
+    parent: { esModuleURI: "resource:///actors/MailMessageParent.sys.mjs" },
+    child: {
+      esModuleURI: "resource:///actors/MailMessageChild.sys.mjs",
+      events: { click: {}, resize: {}, visibilitychange: {} },
+    },
     messageManagerGroups: ["mail-message"],
   },
 
@@ -282,10 +286,10 @@ const JSWINDOWACTORS = {
 
   NetError: {
     parent: {
-      esModuleURI: "resource://gre/actors/NetErrorParent.sys.mjs",
+      esModuleURI: "moz-src:///toolkit/actors/NetErrorParent.sys.mjs",
     },
     child: {
-      esModuleURI: "resource://gre/actors/NetErrorChild.sys.mjs",
+      esModuleURI: "moz-src:///toolkit/actors/NetErrorChild.sys.mjs",
       events: {
         DOMDocElementInserted: {},
         click: {},
@@ -304,12 +308,12 @@ const JSWINDOWACTORS = {
     ],
   },
 
-  Pdfjs: {
+  PdfJs: {
     parent: {
-      esModuleURI: "resource://pdf.js/PdfjsParent.sys.mjs",
+      esModuleURI: "resource://pdf.js/PdfJsParent.sys.mjs",
     },
     child: {
-      esModuleURI: "resource://pdf.js/PdfjsChild.sys.mjs",
+      esModuleURI: "resource://pdf.js/PdfJsChild.sys.mjs",
     },
     enablePreference: PREF_PDFJS_ISDEFAULT_CACHE_STATE,
     allFrames: true,
@@ -877,7 +881,7 @@ MailGlue.prototype = {
           // appropriately, otherwise we get error messages like the one
           // reported in bug 1635422.
           ChromeUtils.importESModule(
-            "resource://gre/actors/AutoCompleteParent.sys.mjs"
+            "moz-src:///toolkit/actors/AutoCompleteParent.sys.mjs"
           );
         },
       },
