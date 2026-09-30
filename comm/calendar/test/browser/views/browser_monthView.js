@@ -26,9 +26,7 @@ add_task(async function testMonthView() {
 
   // Verify date.
   await TestUtils.waitForCondition(() => {
-    const dateLabel = document.querySelector(
-      '#month-view td[selected="true"] > calendar-month-day-box'
-    );
+    const dateLabel = document.querySelector("#month-view td[selected] > calendar-month-day-box");
     return dateLabel && dateLabel.mDate.icalString == "20090101";
   }, "Inspecting the date");
 
@@ -114,7 +112,9 @@ add_task(async function testMonthViewStartOfWeek() {
   );
 
   // Change the first day of the week to Monday.
-  Services.prefs.setIntPref("calendar.week.start", 1);
+  await SpecialPowers.pushPrefEnv({
+    set: [["calendar.week.start", 1]],
+  });
 
   // Check the view is updated correctly.
   labels = document.querySelectorAll("#month-view calendar-day-label");
@@ -136,7 +136,9 @@ add_task(async function testMonthViewStartOfWeek() {
   );
 
   // Reset the first day of the week to Thursday.
-  Services.prefs.setIntPref("calendar.week.start", 4);
+  await SpecialPowers.pushPrefEnv({
+    set: [["calendar.week.start", 4]],
+  });
 
   // Check the view is updated correctly.
   labels = document.querySelectorAll("#month-view calendar-day-label");

@@ -383,7 +383,7 @@ separator.groove:not([orient="vertical"]) {
 }
 
 tab {
-  &:not([selected="true"]):hover {
+  &:not([selected]):hover {
     border-block-end-color: transparent;
   }
 
@@ -1670,6 +1670,13 @@ qr-code-wizard {
 
 .doh-label {
   display: list-item;
+}
+
+/* stylelint-disable-next-line media-query-no-invalid */
+@media not -moz-pref("mail.community_features.enabled") {
+  #startPageSettings {
+    display: none;
+  }
 }
 
 .hidden-via-pref {

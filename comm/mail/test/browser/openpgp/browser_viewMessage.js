@@ -61,12 +61,10 @@ var aliceAcct;
  */
 add_setup(async function () {
   // This test assumes the standalone message window.
-  Services.prefs.setIntPref(
-    "mail.openMessageBehavior",
-    MailConsts.OpenMessageBehavior.NEW_WINDOW
-  );
-  registerCleanupFunction(() => {
-    Services.prefs.clearUserPref("mail.openMessageBehavior");
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["mail.openMessageBehavior", MailConsts.OpenMessageBehavior.NEW_WINDOW],
+    ],
   });
   aliceAcct = MailServices.accounts.createAccount();
   aliceAcct.incomingServer = MailServices.accounts.createIncomingServer(
@@ -1245,6 +1243,260 @@ add_task(async function testStrippedSig() {
     "should not be say encrypted"
   );
   await BrowserTestUtils.closeWindow(msgc);
+});
+
+/**
+ * Open a message with a single attached public key, shown as #attachmentName
+ * in the attachment bar, and click it. Returns the opened message window, the
+ * about:message window, and a spy array capturing HandleMultipleAttachments
+ * calls (the attachment-open entry point).
+ */
+async function openKeyAttachmentMessage() {
+  const msgc = await open_message_from_file(
+    new FileUtils.File(
+      getTestFilePath(
+        "data/eml/unsigned-unencrypted-key-0x1f10171bfb881b1c-attached.eml"
+      )
+    )
+  );
+  const aboutMessage = get_about_message(msgc);
+
+  // A single attachment is shown as #attachmentName in the attachment bar.
+  const attachmentName = aboutMessage.document.getElementById("attachmentName");
+  Assert.ok(
+    !attachmentName.hidden,
+    "the single attachment should be shown in the attachment bar"
+  );
+
+  const opened = [];
+  const origHandleMultiple = aboutMessage.HandleMultipleAttachments;
+  aboutMessage.HandleMultipleAttachments = (attachments, action) => {
+    opened.push({ attachments, action });
+  };
+  const restore = () => {
+    aboutMessage.HandleMultipleAttachments = origHandleMultiple;
+  };
+
+  return { msgc, aboutMessage, attachmentName, opened, restore };
+}
+
+/**
+ * Test that choosing "Open" in the prompt shown for an attached public key
+ * opens that specific attachment. Regression test: the attachment-bar path
+ * used to open the attachment list's (empty) selection, so nothing happened.
+ */
+add_task(async function testOpenKeyAttachmentFromBar() {
+  const { msgc, aboutMessage, attachmentName, opened, restore } =
+    await openKeyAttachmentMessage();
+
+  try {
+    // Clicking the key attachment shows the import/open prompt; choose "Open".
+    // In the common dialog the third confirmEx button (BUTTON_POS_2, our
+    // "Open" label) maps to the "extra1" button.
+    const dialogPromise = BrowserTestUtils.promiseAlertDialog("extra1");
+    EventUtils.synthesizeMouseAtCenter(
+      attachmentName,
+      { clickCount: 1 },
+      aboutMessage
+    );
+    await dialogPromise;
+
+    await TestUtils.waitForCondition(
+      () => opened.length == 1,
+      "the attachment should be opened once after choosing Open"
+    );
+  } finally {
+    restore();
+  }
+
+  Assert.equal(opened[0].action, "open", "the open action should be requested");
+  Assert.equal(
+    opened[0].attachments.length,
+    1,
+    "exactly one attachment should be opened"
+  );
+  Assert.ok(
+    opened[0].attachments[0].name.endsWith(".asc"),
+    "the clicked key attachment should be opened, not the empty list selection"
+  );
+
+  await BrowserTestUtils.closeWindow(msgc);
+});
+
+/**
+ * Test that choosing "Cancel" in the prompt shown for an attached public key
+ * does nothing (neither imports nor opens the attachment).
+ */
+add_task(async function testCancelKeyAttachmentFromBar() {
+  const { msgc, aboutMessage, attachmentName, opened, restore } =
+    await openKeyAttachmentMessage();
+
+  try {
+    // Clicking the key attachment shows the import/open prompt; choose
+    // "Cancel", which maps to the common dialog's "cancel" button.
+    const dialogPromise = BrowserTestUtils.promiseAlertDialog("cancel");
+    EventUtils.synthesizeMouseAtCenter(
+      attachmentName,
+      { clickCount: 1 },
+      aboutMessage
+    );
+    await dialogPromise;
+
+    // Give the (async) attachment handling a chance to run, then confirm it
+    // did not open anything.
+    await TestUtils.waitForTick();
+    await TestUtils.waitForTick();
+    Assert.equal(
+      opened.length,
+      0,
+      "cancelling the prompt should not open the attachment"
+    );
+  } finally {
+    restore();
+  }
+
+  await BrowserTestUtils.closeWindow(msgc);
+});
+
+/**
+ * Test that dismissing the prompt shown for an attached public key with the
+ * Escape key does nothing (Cancel is the dialog's cancel button, so Escape
+ * maps to it and does not open the attachment).
+ */
+add_task(async function testEscapeKeyAttachmentFromBar() {
+  const { msgc, aboutMessage, attachmentName, opened, restore } =
+    await openKeyAttachmentMessage();
+
+  try {
+    // Dismiss the prompt with the Escape key instead of clicking a button.
+    const dialogPromise = BrowserTestUtils.promiseAlertDialog(null, undefined, {
+      callback: win => EventUtils.synthesizeKey("KEY_Escape", {}, win),
+    });
+    EventUtils.synthesizeMouseAtCenter(
+      attachmentName,
+      { clickCount: 1 },
+      aboutMessage
+    );
+    await dialogPromise;
+
+    await TestUtils.waitForTick();
+    await TestUtils.waitForTick();
+    Assert.equal(
+      opened.length,
+      0,
+      "pressing Escape should not open the attachment"
+    );
+  } finally {
+    restore();
+  }
+
+  await BrowserTestUtils.closeWindow(msgc);
+});
+
+/**
+ * Test that pressing Enter while a key attachment is focused in
+ * #attachmentList opens it the same way a double click does.
+ */
+add_task(async function testEnterOpensKeyAttachment() {
+  const { msgc, aboutMessage, opened, restore } =
+    await openKeyAttachmentMessage();
+
+  // Expand the attachment list and focus its (single) attachment.
+  aboutMessage.toggleAttachmentList(true);
+  const attachmentList = aboutMessage.document.getElementById("attachmentList");
+  attachmentList.focus();
+  attachmentList.selectedIndex = 0;
+
+  try {
+    // Pressing Enter shows the import/open prompt; choose "Open" (BUTTON_POS_2,
+    // the common dialog's "extra1" button) to open the attachment.
+    const dialogPromise = BrowserTestUtils.promiseAlertDialog("extra1");
+    EventUtils.synthesizeKey("KEY_Enter", {}, aboutMessage);
+    await dialogPromise;
+
+    await TestUtils.waitForCondition(
+      () => opened.length == 1,
+      "the focused attachment should be opened once after pressing Enter"
+    );
+  } finally {
+    restore();
+  }
+
+  Assert.equal(opened[0].action, "open", "the open action should be requested");
+  Assert.ok(
+    opened[0].attachments[0].name.endsWith(".asc"),
+    "the focused key attachment should be opened"
+  );
+
+  await BrowserTestUtils.closeWindow(msgc);
+});
+
+/**
+ * Open the key attachment prompt for the bar attachment, read the label of the
+ * non-import (Open/Save) button, then dismiss the prompt with Cancel.
+ */
+async function readKeyAttachmentOpenButtonLabel() {
+  const { msgc, aboutMessage, attachmentName, opened, restore } =
+    await openKeyAttachmentMessage();
+  let label;
+  try {
+    const dialogPromise = BrowserTestUtils.promiseAlertDialog(null, undefined, {
+      callback: win => {
+        const button = win.document.querySelector("dialog").getButton("extra1");
+        label = button.label;
+        // Click the Open/Save button to close the dialog reliably; the spy on
+        // HandleMultipleAttachments swallows the resulting open.
+        button.click();
+      },
+    });
+    EventUtils.synthesizeMouseAtCenter(
+      attachmentName,
+      { clickCount: 1 },
+      aboutMessage
+    );
+    await dialogPromise;
+    // Let the (async) open handling settle before closing the window.
+    await TestUtils.waitForCondition(
+      () => opened.length == 1,
+      "the attachment open should have been handled"
+    );
+  } finally {
+    restore();
+    await BrowserTestUtils.closeWindow(msgc);
+  }
+  return label;
+}
+
+/**
+ * Test that the non-import button is labelled "Open…" when opening a key
+ * attachment with an external application is allowed.
+ */
+add_task(async function testOpenButtonLabelWhenOpenAllowed() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.download.forbid_open_with", false]],
+  });
+  Assert.equal(
+    await readKeyAttachmentOpenButtonLabel(),
+    "Open…",
+    "the button should be labelled Open… when open-with is allowed"
+  );
+  await SpecialPowers.popPrefEnv();
+});
+
+/**
+ * Test that the non-import button is labelled "Save" when opening a key
+ * attachment with an external application is forbidden.
+ */
+add_task(async function testSaveButtonLabelWhenOpenForbidden() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.download.forbid_open_with", true]],
+  });
+  Assert.equal(
+    await readKeyAttachmentOpenButtonLabel(),
+    "Save",
+    "the button should be labelled Save when open-with is forbidden"
+  );
+  await SpecialPowers.popPrefEnv();
 });
 
 registerCleanupFunction(async function tearDown() {

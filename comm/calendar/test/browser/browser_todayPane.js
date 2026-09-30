@@ -27,11 +27,12 @@ const todayPaneStatusButton = document.getElementById("calendar-status-todaypane
 
 add_setup(async function () {
   calendar = CalendarTestUtils.createCalendar();
-  Services.prefs.setIntPref("calendar.agenda.days", 7);
+  await SpecialPowers.pushPrefEnv({
+    set: [["calendar.agenda.days", 7]],
+  });
   registerCleanupFunction(() => {
     CalendarTestUtils.removeCalendar(calendar);
     TodayPane.setDay(cal.dtz.now()); // eslint-disable-line no-restricted-properties
-    Services.prefs.clearUserPref("calendar.agenda.days");
   });
 
   today = cal.dtz.now();
@@ -470,7 +471,8 @@ add_task(async function testOverlapOutside() {
  * Checks that events that happened earlier today are marked as in the past,
  * and events happening now are marked as such.
  *
- * This test may fail if run within a minute either side of midnight.
+ * The assertions are skipped if run within a minute either side of midnight,
+ * because the past and future events are actually happening then.
  *
  * It would be nice to test that as time passes events are changed
  * appropriately, but that means waiting around for minutes and probably won't
@@ -479,10 +481,13 @@ add_task(async function testOverlapOutside() {
 add_task(async function testActive() {
   const now = cal.dtz.now();
 
-  // The event used as the past event runs from midnight until 00:01. It is
-  // still active if this test runs in the first minute of the day.
-  if (now.hour == 0 && now.minute == 0) {
-    info("Skipping active-event assertions at the start of the day");
+  // The event used as the past event runs from midnight until 00:01, and the
+  // one used as the future event from 23:59 until midnight, so they are active
+  // in the first and last minute of the day respectively. The extra minute of
+  // margin at the end of the day keeps the clock from reaching 23:59 between
+  // here and the assertions below.
+  if ((now.hour == 0 && now.minute == 0) || (now.hour == 23 && now.minute >= 58)) {
+    info("Skipping active-event assertions at the start or end of the day");
     return;
   }
 

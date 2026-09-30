@@ -12,7 +12,6 @@ use nserror::{NS_OK, nsresult};
 use nsstring::{nsACString, nsCString, nsString};
 use url::Url;
 use uuid::Uuid;
-use xpcom::components;
 use xpcom::interfaces::nsIObserverService;
 use xpcom::{
     RefPtr, get_service, getter_addrefs,
@@ -23,9 +22,10 @@ use xpcom::{
     },
     xpcom_method,
 };
+use xpcom::{XpCom, components};
 
 use crate::client::ProtocolClient;
-use crate::observers::OutgoingRemovalObserver;
+use crate::observers::{OBSERVER_TOPIC_SMTPSERVER_REMOVED, OutgoingRemovalObserver};
 use crate::safe_xpcom::{SafeMsgOutgoingListener, uri::SafeUri};
 use crate::xpcom_io;
 
@@ -165,15 +165,14 @@ impl<ClientT: SendCapableClient> OutgoingServer<ClientT> {
                 // the client if the server gets removed.
                 let key = self.key()?;
                 let obs = OutgoingRemovalObserver::new_observer(client.clone(), key.to_string())?;
+
+                // Unwrapping should be fine since we're using a known string
+                // here.
+                let topic = CString::new(OBSERVER_TOPIC_SMTPSERVER_REMOVED).unwrap();
+
                 let observer_service = components::Observer::service::<nsIObserverService>()?;
-                unsafe {
-                    observer_service.AddObserver(
-                        obs.coerce(),
-                        c"message-smtpserver-removed".as_ptr(),
-                        false,
-                    )
-                }
-                .to_result()?;
+                unsafe { observer_service.AddObserver(obs.coerce(), topic.as_ptr(), false) }
+                    .to_result()?;
 
                 // We don't need to check the result because this only runs if
                 // no client was set yet.
@@ -420,29 +419,13 @@ impl<ClientT: SendCapableClient> OutgoingServer<ClientT> {
     // Key
     xpcom_method!(key => GetKey() -> nsACString);
     fn key(&self) -> Result<nsCString, nsresult> {
-        // Try to get the server's key from memory, or read it from prefs (and
-        // set it) if it hasn't been set yet. In the future we should be able to
-        // do this with `get_or_try_init`, once it has stabilized and we have a
-        // suitable MSRV.
-        // https://github.com/rust-lang/rust/issues/109737
-        let key = self.key.get();
-
-        let key = match key {
-            Some(key) => key.clone(),
-            None => {
-                let key = self
-                    .read_string_pref(PrefName::Key)?
-                    .ok_or(nserror::NS_ERROR_NOT_INITIALIZED)?;
-
-                // We don't need to check whether the return value is an error,
-                // since this code only runs if the key wasn't already set.
-                _ = self.key.set(key.clone());
-
-                key
-            }
-        };
-
-        Ok(key)
+        // Try to get the server's key from memory. We cannot read it from
+        // prefs, since we need the key to build the pref branch in the first
+        // place.
+        self.key
+            .get()
+            .ok_or(nserror::NS_ERROR_NOT_INITIALIZED)
+            .map(nsCString::clone)
     }
 
     xpcom_method!(set_key => SetKey(key: *const nsACString));
@@ -451,7 +434,11 @@ impl<ClientT: SendCapableClient> OutgoingServer<ClientT> {
             .set(key.into())
             .or(Err(nserror::NS_ERROR_ALREADY_INITIALIZED))?;
 
-        self.store_string_pref(PrefName::Key, key)
+        self.store_string_pref(PrefName::Key, key)?;
+
+        // Also set the key on the password module, so that we correctly notify
+        // when the password changes.
+        unsafe { self.password_module.borrow().SetKey(key) }.to_result()
     }
 
     // UID
@@ -503,8 +490,27 @@ impl<ClientT: SendCapableClient> OutgoingServer<ClientT> {
     // Type
     xpcom_method!(server_type => GetType() -> nsACString);
     fn server_type(&self) -> Result<nsCString, nsresult> {
-        let client = self.client()?;
-        Ok(client.protocol_identifier().into())
+        // The pref that stores the server's type uses a different prefix from
+        // other server properties (see
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=2067685), so we need to
+        // fetch it ourselves.
+        //
+        // An alternative would be to rely on the client to tell us which
+        // protocol it implements, but this can introduce recursion loops (e.g.
+        // when starting a client we might cache authentication data, which
+        // involves getting the account's password, which can involve getting
+        // the server's type).
+        let pref_svc = components::Preferences::service::<nsIPrefService>()?;
+        let root_branch = pref_svc.query_interface::<nsIPrefBranch>().unwrap();
+        let pref_name = format!("mail.smtpserver.{}.type", self.key()?);
+        let pref_name = CString::new(pref_name).unwrap();
+        let mut value = nsCString::new();
+
+        // SAFETY: We've ensured both `pref_name` and `value` are properly
+        // allocated and remain alive until `GetCharPref` returns.
+        unsafe { root_branch.GetCharPref(pref_name.as_ptr(), &raw mut *value) }.to_result()?;
+
+        Ok(value)
     }
 
     // Description
@@ -550,7 +556,7 @@ impl<ClientT: SendCapableClient> OutgoingServer<ClientT> {
 
         // Otherwise, ask it to look it up in the login manager.
         let username = self.username()?;
-        let protocol = self.client()?.protocol_identifier();
+        let protocol = self.server_type()?;
 
         let endpoint_url = self.endpoint_url()?;
         let hostname = match endpoint_url.host() {
@@ -570,7 +576,7 @@ impl<ClientT: SendCapableClient> OutgoingServer<ClientT> {
                 .QueryPasswordFromManagerAndCache(
                     &raw const *username,
                     &raw const *nsCString::from(hostname),
-                    &raw const *nsCString::from(protocol),
+                    &raw const *protocol,
                     &raw mut *password,
                 )
         }
@@ -671,6 +677,13 @@ impl<ClientT: SendCapableClient> OutgoingServer<ClientT> {
             )
         }
         .to_result()
+    }
+
+    xpcom_method!(forget_session_password => ForgetSessionPassword());
+    fn forget_session_password(&self) -> Result<(), nsresult> {
+        // SAFETY: `self.password_module` is instantiated in the constructor, so
+        // it should always be a valid pointer.
+        unsafe { self.password_module.borrow().ForgetSessionPassword() }.to_result()
     }
 
     xpcom_method!(send_mail => SendMailMessage(

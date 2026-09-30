@@ -40,11 +40,8 @@ add_setup(async function () {
     "nss"
   );
 
-  registerCleanupFunction(function () {
-    Services.prefs.clearUserPref(
-      "mailnews.message_display.disable_remote_image"
-    );
-    SmimeUtils.removeCertificates(["NSS Test CA (RSA)", "Bob", "Alice"]);
+  registerCleanupFunction(async function () {
+    await SmimeUtils.removeCertificates(["NSS Test CA (RSA)", "Bob", "Alice"]);
     // Return focus to the main window so the next test doesn't time out.
     Services.focus.focusedWindow = window;
     const mainWindowElement = document.getElementById("button-appmenu");
@@ -64,10 +61,14 @@ add_setup(async function () {
 async function checkFileOpenedEncryptedIsHardBlocked(
   remoteImagesGloballyEnabled
 ) {
-  Services.prefs.setBoolPref(
-    "mailnews.message_display.disable_remote_image",
-    !remoteImagesGloballyEnabled
-  );
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      [
+        "mailnews.message_display.disable_remote_image",
+        !remoteImagesGloballyEnabled,
+      ],
+    ],
+  });
 
   const msgc = await open_message_from_file(
     new FileUtils.File(getTestFilePath("data/alice.remoteimage.env.eml"))
@@ -115,6 +116,7 @@ async function checkFileOpenedEncryptedIsHardBlocked(
   );
 
   await BrowserTestUtils.closeWindow(msgc);
+  await SpecialPowers.popPrefEnv();
 }
 
 /**

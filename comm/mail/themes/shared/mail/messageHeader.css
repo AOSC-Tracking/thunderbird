@@ -284,10 +284,16 @@ mail-tagfield[collapsed] {
 /* ::::: attachment view ::::: */
 
 #attachmentBar {
+  display: flex;
+  align-items: center;
   color: var(--layout-color-1);
   background-color: var(--layout-background-1);
   padding: 3px 0;
   overflow: hidden;
+
+  & > spacer {
+    flex: 1;
+  }
 }
 
 #attachmentToggle {
@@ -346,7 +352,7 @@ mail-tagfield[collapsed] {
     outline-offset: -1px;
   }
 
-  &:is(:hover, [selected="true"]) {
+  &:is(:hover, [selected]) {
     cursor: pointer;
     color: var(--selected-item-text-color);
     background-color: var(--selected-item-color);

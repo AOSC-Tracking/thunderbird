@@ -10,6 +10,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   AccountCreationUtils:
     "resource:///modules/accountcreation/AccountCreationUtils.sys.mjs",
   enforcePrimaryPassword: "resource:///modules/PrimaryPassword.sys.mjs",
+  GuessConfig: "resource:///modules/accountcreation/GuessConfig.sys.mjs",
 });
 
 /**
@@ -26,7 +27,11 @@ async function createAccountInBackend(config) {
     config.incoming.hostname,
     config.incoming.type
   );
-  inServer.port = config.incoming.port;
+  // Don't set a port value if it is unknown. Instead let the incoming server
+  // use its default value.
+  if (config.incoming.port != lazy.GuessConfig.UNKNOWN) {
+    inServer.port = config.incoming.port;
+  }
   inServer.authMethod = config.incoming.auth;
   inServer.password = config.incoming.password;
   // This new CLIENTID is for the outgoing server, and will be applied to the
@@ -156,7 +161,11 @@ async function createAccountInBackend(config) {
     if (config.outgoing.type == "smtp") {
       const smtpServer = outServer.QueryInterface(Ci.nsISmtpServer);
       smtpServer.hostname = config.outgoing.hostname;
-      smtpServer.port = config.outgoing.port;
+      // If the outgoing port is unknown, don't set a port so the default port
+      // will be used.
+      if (config.outgoing.port != lazy.GuessConfig.UNKNOWN) {
+        smtpServer.port = config.outgoing.port;
+      }
 
       // Note: The client ID will only be set on the server if either its own
       // `clientidEnabled` pref, or the default SMTP pref with the same name, is
@@ -193,11 +202,8 @@ async function createAccountInBackend(config) {
 
     outServer.description = config.displayName;
 
-    // If this is the first SMTP server, set it as default
-    if (
-      !MailServices.outgoingServer.defaultServer ||
-      !MailServices.outgoingServer.defaultServer.serverURI.host
-    ) {
+    // If there is no usable outgoing server set as default yet, use this one.
+    if (!MailServices.outgoingServer.defaultServer?.serverURI?.host) {
       MailServices.outgoingServer.defaultServer = outServer;
     }
   }
@@ -404,11 +410,16 @@ function checkIncomingServerAlreadyExists(config) {
 function checkOutgoingServerAlreadyExists(config) {
   lazy.AccountCreationUtils.assert(config instanceof lazy.AccountConfig);
   for (const existingServer of MailServices.outgoingServer.servers) {
+    const existingURI = existingServer.serverURI;
+    if (!existingURI) {
+      // Not fully configured, so it can't be a match.
+      continue;
+    }
     // TODO check username with full email address, too, like for incoming
     if (
       existingServer.type == config.outgoing.type &&
-      existingServer.serverURI.host == config.outgoing.hostname &&
-      existingServer.serverURI.port == config.outgoing.port &&
+      existingURI.host == config.outgoing.hostname &&
+      existingURI.port == config.outgoing.port &&
       existingServer.username == config.outgoing.username
     ) {
       return existingServer;

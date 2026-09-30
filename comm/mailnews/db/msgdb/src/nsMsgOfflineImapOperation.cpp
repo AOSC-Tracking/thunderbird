@@ -20,6 +20,7 @@ NS_IMPL_ISUPPORTS(nsMsgOfflineImapOperation, nsIMsgOfflineImapOperation)
 #define PROP_NEW_FLAGS "newFlags"
 #define PROP_MESSAGE_KEY "msgKey"
 #define PROP_SRC_MESSAGE_KEY "srcMsgKey"
+#define PROP_SRC_UID "srcUid"
 #define PROP_SRC_FOLDER_URI "srcFolderURI"
 #define PROP_MOVE_DEST_FOLDER_URI "moveDest"
 #define PROP_NUM_COPY_DESTS "numCopyDests"
@@ -94,6 +95,8 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::ClearOperation(
     case kMsgCopy:
       NS_ENSURE_TRUE(m_copyDestinations.Length() > 0, NS_ERROR_UNEXPECTED);
       m_copyDestinations.RemoveElementAt(0);
+      // NOTE: Likely bug: shouldn't this also keep kMsgCopy set if there
+      // are more destinations?
       break;
   }
   return m_mdb->SetUint32Property(m_mdbRow, PROP_OPERATION, m_operation);
@@ -122,6 +125,16 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::GetSrcMessageKey(
 NS_IMETHODIMP nsMsgOfflineImapOperation::SetSrcMessageKey(
     nsMsgKey aMessageKey) {
   return m_mdb->SetUint32Property(m_mdbRow, PROP_SRC_MESSAGE_KEY, aMessageKey);
+}
+
+/* attribute unsigned long srcUid; */
+NS_IMETHODIMP nsMsgOfflineImapOperation::GetSrcUid(ImapUid* uid) {
+  NS_ENSURE_ARG(uid);
+  return m_mdb->GetUint32Property(m_mdbRow, PROP_SRC_UID, (uint32_t*)uid, 0);
+}
+
+NS_IMETHODIMP nsMsgOfflineImapOperation::SetSrcUid(ImapUid uid) {
+  return m_mdb->SetUint32Property(m_mdbRow, PROP_SRC_UID, (uint32_t)uid);
 }
 
 /* attribute imapMessageFlagsType flagOperation; */
@@ -338,38 +351,124 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::GetPlayingBack(bool* aPlayingBack) {
   return m_mdb->GetBooleanProperty(m_mdbRow, PROP_PLAYINGBACK, aPlayingBack);
 }
 
-void nsMsgOfflineImapOperation::Log() {
-  if (!MOZ_LOG_TEST(IMAPOffline, LogLevel::Info)) return;
-  //  const long kMoveResult              = 0x8;
-  //  const long kAppendDraft           = 0x10;
-  //  const long kAddedHeader           = 0x20;
-  //  const long kDeletedMsg              = 0x40;
-  //  const long kMsgMarkedDeleted = 0x80;
-  //  const long kAppendTemplate      = 0x100;
-  //  const long kDeleteAllMsgs          = 0x200;
-  if (m_operation & nsIMsgOfflineImapOperation::kFlagsChanged)
-    MOZ_LOG(IMAPOffline, LogLevel::Info,
-            ("msg id %x changeFlag:%x", m_messageKey, m_newFlags));
-  if (m_operation & nsIMsgOfflineImapOperation::kMsgMoved) {
-    nsCString moveDestFolder;
-    GetDestinationFolderURI(moveDestFolder);
-    MOZ_LOG(IMAPOffline, LogLevel::Info,
-            ("msg id %x moveTo:%s", m_messageKey, moveDestFolder.get()));
+// {fmt} support for nsOfflineImapOperationType.
+nsCString format_as(nsOfflineImapOperationType operation) {
+  struct {
+    nsOfflineImapOperationType mask;
+    nsLiteralCString name;
+  } lookup[] = {
+      {nsIMsgOfflineImapOperation::kFlagsChanged, "kFlagsChanged"_ns},
+      {nsIMsgOfflineImapOperation::kMsgMoved, "kMsgMoved"_ns},
+      {nsIMsgOfflineImapOperation::kMsgCopy, "kMsgCopy"_ns},
+      {nsIMsgOfflineImapOperation::kMoveResult, "kMoveResult"_ns},
+      {nsIMsgOfflineImapOperation::kAppendDraft, "kAppendDraft"_ns},
+      {nsIMsgOfflineImapOperation::kAddedHeader, "kAddedHeader"_ns},
+      {nsIMsgOfflineImapOperation::kDeletedMsg, "kDeletedMsg"_ns},
+      {nsIMsgOfflineImapOperation::kMsgMarkedDeleted, "kMsgMarkedDeleted"_ns},
+      {nsIMsgOfflineImapOperation::kAppendTemplate, "kAppendTemplate"_ns},
+      {nsIMsgOfflineImapOperation::kDeleteAllMsgs, "kDeleteAllMsgs"_ns},
+      {nsIMsgOfflineImapOperation::kAddKeywords, "kAddKeywords"_ns},
+      {nsIMsgOfflineImapOperation::kRemoveKeywords, "kRemoveKeywords"_ns},
+  };
+
+  nsTArray<nsCString> fragments;
+  for (auto const& entry : lookup) {
+    if (operation & entry.mask) {
+      fragments.AppendElement(entry.name);
+    }
   }
-  if (m_operation & nsIMsgOfflineImapOperation::kMsgCopy) {
-    nsCString copyDests;
-    m_mdb->GetProperty(m_mdbRow, PROP_COPY_DESTS, getter_Copies(copyDests));
-    MOZ_LOG(IMAPOffline, LogLevel::Info,
-            ("msg id %x moveTo:%s", m_messageKey, copyDests.get()));
+
+  return StringJoin("|"_ns, fragments);
+}
+
+// {fmt} support for XPIDL_nsIMsgOfflineImapOperation.
+nsCString format_as(const nsIMsgOfflineImapOperation& offlineOp) {
+  // Hoop-jumping because XPCOM makes attribute accessors non-const.
+  // And format_as() only matches const references.
+  nsIMsgOfflineImapOperation* op =
+      const_cast<nsIMsgOfflineImapOperation*>(&offlineOp);
+
+  nsOfflineImapOperationType operation;
+  nsMsgKey messageKey;
+  nsMsgKey srcMessageKey;
+  ImapUid srcUid;
+  imapMessageFlagsType flagOperation;
+  imapMessageFlagsType newFlags;
+
+  nsAutoCString destinationFolderURI;
+  nsAutoCString sourceFolderURI;
+  nsAutoCString keywordsToAdd;
+  nsAutoCString keywordsToRemove;
+  uint32_t msgSize;
+  bool playingBack;
+
+  op->GetOperation(&operation);
+  op->GetMessageKey(&messageKey);
+  op->GetSrcMessageKey(&srcMessageKey);
+  op->GetSrcUid(&srcUid);
+  op->GetFlagOperation(&flagOperation);
+  op->GetNewFlags(&newFlags);
+  op->GetDestinationFolderURI(destinationFolderURI);
+  op->GetSourceFolderURI(sourceFolderURI);
+  op->GetKeywordsToAdd(getter_Copies(keywordsToAdd));
+  op->GetKeywordsToRemove(getter_Copies(keywordsToRemove));
+  op->GetMsgSize(&msgSize);
+  op->GetPlayingBack(&playingBack);
+
+  // Grab the (internal) copyDestinations list.
+  // No way to get size, so keep going until error.
+  nsTArray<nsCString> copyDests;
+  int i = 0;
+  while (true) {
+    nsAutoCString uri;
+    nsresult rv = op->GetCopyDestination(i, getter_Copies(uri));
+    if (NS_FAILED(rv)) {
+      break;
+    }
+    copyDests.AppendElement(uri);
+    ++i;
   }
-  if (m_operation & nsIMsgOfflineImapOperation::kAppendDraft)
-    MOZ_LOG(IMAPOffline, LogLevel::Info,
-            ("msg id %x append draft", m_messageKey));
-  if (m_operation & nsIMsgOfflineImapOperation::kAddKeywords)
-    MOZ_LOG(IMAPOffline, LogLevel::Info,
-            ("msg id %x add keyword:%s", m_messageKey, m_keywordsToAdd.get()));
-  if (m_operation & nsIMsgOfflineImapOperation::kRemoveKeywords)
-    MOZ_LOG(IMAPOffline, LogLevel::Info,
-            ("msg id %x remove keyword:%s", m_messageKey,
-             m_keywordsToRemove.get()));
+
+  nsTArray<nsCString> fragments;
+
+  fragments.AppendElement(
+      fmt::format("{} {}:", messageKey, format_as(operation)));
+
+  if (srcMessageKey != nsMsgKey_None) {
+    fragments.AppendElement(fmt::format("srcMessageKey={}", srcMessageKey));
+  }
+  if (srcUid != 0) {
+    fragments.AppendElement(fmt::format("srcUid={}", srcUid));
+  }
+  if (flagOperation) {
+    fragments.AppendElement(fmt::format("flagOperation={}", flagOperation));
+  }
+  if (newFlags) {
+    fragments.AppendElement(fmt::format("newFlags={}", newFlags));
+  }
+  if (!destinationFolderURI.IsEmpty()) {
+    fragments.AppendElement(fmt::format("destFolder={}", destinationFolderURI));
+  }
+  if (!sourceFolderURI.IsEmpty()) {
+    fragments.AppendElement(fmt::format("srcFolder={}", sourceFolderURI));
+  }
+  if (!copyDests.IsEmpty()) {
+    fragments.AppendElement(
+        fmt::format("copyDestinations: {}", fmt::join(copyDests, ",")));
+  }
+  if (!keywordsToAdd.IsEmpty()) {
+    fragments.AppendElement(fmt::format("keywordsToAdd={}", keywordsToAdd));
+  }
+  if (!keywordsToRemove.IsEmpty()) {
+    fragments.AppendElement(
+        fmt::format("keywordsToRemove={}", keywordsToRemove));
+  }
+  if (msgSize) {
+    fragments.AppendElement(fmt::format("msgSize={}", msgSize));
+  }
+  if (playingBack) {
+    fragments.AppendElement("playingBack"_ns);
+  }
+
+  return StringJoin(" "_ns, fragments);
 }

@@ -7,7 +7,7 @@
 #include "nsIPermissionManager.h"
 #include "nsIPrefBranch.h"
 #include "nsIMsgHdr.h"
-#include "nsIEncryptedSMIMEURIsSrvc.h"
+#include "nsIEncryptedMsgURIsService.h"
 #include "nsNetUtil.h"
 #include "nsIMsgComposeService.h"
 #include "nsIDocShellTreeItem.h"
@@ -334,15 +334,16 @@ nsMsgContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
     return acceptContent();
   }
 
-  // Don't load remote content for encrypted messages.
-  nsCOMPtr<nsIEncryptedSMIMEURIsService> encryptedURIService = do_GetService(
-      "@mozilla.org/messenger-smime/smime-encrypted-uris-service;1", &rv);
+  // Don't load remote content for encrypted messages, unless the message is an
+  // integrity-protected message decrypted as its top-level part.
+  nsCOMPtr<nsIEncryptedMsgURIsService> encryptedURIService =
+      do_GetService("@mozilla.org/messenger/encrypted-msg-uris-service;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
-  bool isEncrypted;
-  rv = encryptedURIService->IsEncrypted(aRequestingLocation->GetSpecOrDefault(),
-                                        &isEncrypted);
+  bool encryptedWithoutIntegrity;
+  rv = encryptedURIService->IsEncryptedWithoutIntegrity(
+      aRequestingLocation->GetSpecOrDefault(), &encryptedWithoutIntegrity);
   NS_ENSURE_SUCCESS(rv, rv);
-  if (isEncrypted) {
+  if (encryptedWithoutIntegrity) {
     return rejectContentAndNotify();
   }
 

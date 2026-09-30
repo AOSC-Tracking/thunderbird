@@ -408,10 +408,6 @@ pref("mail.compose.default_to_paragraph", true);
 // we can extract from the URL instead.
 pref("mail.compose.add_link_preview", false);
 
-// hidden pref to ensure a certain number of headers in the message pane
-// to avoid the height of the header area from changing when headers are present / not present
-pref("mailnews.headers.minNumHeaders", 0); // 0 means we ignore this pref
-
 // 0=no header, 1="<author> wrote:", 2="On <date> <author> wrote:"
 // 3="<author> wrote On <date>:", 4=user specified
 pref("mailnews.reply_header_type", 2);
@@ -449,6 +445,19 @@ pref("mailnews.send.loglevel", "Warn");
 /////////////////////////////////////////////////////////////////
 
 pref("browser.hiddenWindowChromeURL", "chrome://messenger/content/hiddenWindowMac.xhtml");
+
+// Default preferences for enterprise builds
+#ifdef MOZ_ENTERPRISE
+pref("enterprise.log_level", "Error");
+// Prompting the signout dialog on quitting/closing the app
+pref("enterprise.prompt_on_signout", true);
+// On Enterprise we want to enforce updates so we force it
+// Bug 2020768: Should those value be set/locked at runtime by FELT only
+//              or is it fine to apply it to any enterprise build?
+pref("app.update.checkOnlyInstance.enabled", false);
+pref("app.update.background.enabled", true);
+pref("mailnews.auto_config.addons_url", "");
+#endif
 
 pref("offline.startup_state",            2);
 // 0 Ask before sending unsent messages when going online
@@ -552,7 +561,9 @@ pref("security.intermediate_preloading_healer.enabled", false);
 // to avoid the race that triggers multiple prompts (see bug 177175).
 pref("security.prompt_for_master_password_on_startup", true);
 
+#if !defined(MOZ_ENTERPRISE)
 pref("general.config.obscure_value", 0); // for MCD .cfg files
+#endif
 
 pref("browser.display.auto_quality_min_font_size", 0);
 
@@ -958,6 +969,7 @@ pref("intl.regional_prefs.use_os_locales", false);
 //  *.liveReload - Switching a langpack will change the language without a restart.
 //  *.liveReloadBidirectional - Allows switching when moving between LTR and RTL
 //      languages without a full restart.
+#if !defined(MOZ_ENTERPRISE)
 pref("intl.multilingual.enabled", true);
 #if defined(RELEASE_OR_BETA)
 pref("intl.multilingual.downloadEnabled", true);
@@ -968,6 +980,12 @@ pref("intl.multilingual.downloadEnabled", false);
 pref("intl.multilingual.liveReload", false);
 pref("intl.multilingual.liveReloadBidirectional", false);
 #endif
+#else // !defined(MOZ_ENTERPRISE)
+pref("intl.multilingual.enabled", false);
+pref("intl.multilingual.downloadEnabled", false);
+pref("intl.multilingual.liveReload", false);
+pref("intl.multilingual.liveReloadBidirectional", false);
+#endif // !defined(MOZ_ENTERPRISE)
 
 // if true, use full page zoom instead of text zoom
 pref("browser.zoom.full", true);
@@ -1548,6 +1566,10 @@ pref("mail.inappnotifications.isSnap", false);
 
 // Enable forwarding messages with message filters.
 pref("mail.filters.forward.enabled", true);
+
+// Offer community features such as donate, get involved, share ideas
+// etc across the application.
+pref("mail.community_features.enabled", true);
 
 // Offer experimental features in settings.
 pref("mail.experimental_features_settings.enabled", true);

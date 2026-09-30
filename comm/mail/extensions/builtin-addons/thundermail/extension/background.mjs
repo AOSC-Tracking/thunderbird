@@ -2,7 +2,7 @@
 (function() {
 	try {
 		var e = "undefined" != typeof window ? window : "undefined" != typeof global ? global : "undefined" != typeof globalThis ? globalThis : "undefined" != typeof self ? self : {};
-		e.SENTRY_RELEASE = { id: "7c32f9769816d000db14315d9a381168500e294f" };
+		e.SENTRY_RELEASE = { id: "fbc799e95a2f1ac419d28b82eb26a94c7c11a212" };
 		e._sentryModuleMetadata = e._sentryModuleMetadata || {}, e._sentryModuleMetadata[new e.Error().stack] = function(e) {
 			for (var n = 1; n < arguments.length; n++) {
 				var a = arguments[n];
@@ -10,11 +10,11 @@
 			}
 			return e;
 		}({}, e._sentryModuleMetadata[new e.Error().stack], {
-			"version": "2.0.11",
+			"version": "2.0.16",
 			"appHost": "background"
 		});
 		var n = new e.Error().stack;
-		n && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[n] = "e569811a-21ce-4edf-9d0d-22d5c95d68be", e._sentryDebugIdIdentifier = "sentry-dbid-e569811a-21ce-4edf-9d0d-22d5c95d68be");
+		n && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[n] = "6c2861fc-d054-43c0-a0e1-6303bb243971", e._sentryDebugIdIdentifier = "sentry-dbid-6c2861fc-d054-43c0-a0e1-6303bb243971");
 	} catch (e) {}
 })();
 var __create$2 = Object.create;
@@ -53,7 +53,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 //#endregion
 //#region src/lib/logger.ts
-var version = "2.0.11";
+var version = "2.0.16";
 var LOG_LEVELS = {
 	debug: 0,
 	info: 1,
@@ -350,6 +350,97 @@ var PENDING_ADDON_TOKEN_RESPONSE = "TB/PENDING_ADDON_TOKEN_RESPONSE";
 var GET_TELEMETRY_STATE = "TB/GET_TELEMETRY_STATE";
 var TELEMETRY_STATE_RESPONSE = "TB/TELEMETRY_STATE_RESPONSE";
 var TELEMETRY_STATE_CHANGED = "TB/TELEMETRY_STATE_CHANGED";
+//#endregion
+//#region ../send/frontend/src/lib/bridgePassphrase.ts
+/**
+* Pull a passphrase shared from the web app via the token bridge into the
+* keychain.
+*
+* The web app (running in a browser tab) posts SEND_MESSAGE_TO_BRIDGE; the
+* add-on background stores its value in browser.storage.local under that key
+* (see background.ts). This moves that staged value into the keychain — i.e.
+* localStorage['lb/passphrase'], which every moz-extension page (background,
+* popup, management) shares — and clears the staged copy so it is consumed once.
+*
+* Runs only in an extension context where browser.storage.local exists; it is a
+* no-op in a plain web page (where `browser` is undefined). Safe to call from
+* any context that is about to restore keys, so the popup and background don't
+* depend on the management page having run the transfer first.
+*
+* @returns true if a bridged passphrase was found and stored, false otherwise.
+*/
+async function pullBridgedPassphrase(keychain) {
+	if (typeof browser === "undefined" || !browser?.storage?.local) return false;
+	try {
+		const passphrase = (await browser.storage.local.get(SEND_MESSAGE_TO_BRIDGE))?.[SEND_MESSAGE_TO_BRIDGE];
+		if (!passphrase) return false;
+		await keychain.storePassPhrase(passphrase);
+		await browser.storage.local.remove(SEND_MESSAGE_TO_BRIDGE);
+		console.log("✅ Pulled bridged passphrase into the keychain");
+		return true;
+	} catch (error) {
+		console.error("Error pulling bridged passphrase:", error);
+		return false;
+	}
+}
+/**
+* Stage a passphrase in extension storage for the bridge, exactly as the
+* background does when the web app posts SEND_MESSAGE_TO_BRIDGE.
+*
+* The management page runs the same frontend as the web app, but the
+* token-bridge content script is not injected into moz-extension pages, so a
+* window.postMessage from there never reaches the background. Writing the
+* staged value directly makes a passphrase set/re-wrap inside the extension
+* reach the other extension contexts on their next restore instead of leaving
+* them on the old passphrase.
+*
+* Runs only in an extension context; it is a no-op in a plain web page (where
+* `browser` is undefined) — there, the postMessage → content script → background
+* path does the staging instead.
+*
+* @returns true if the passphrase was staged, false otherwise.
+*/
+async function stageBridgedPassphrase(passphrase) {
+	if (typeof browser === "undefined" || !browser?.storage?.local) return false;
+	try {
+		await browser.storage.local.set({ [SEND_MESSAGE_TO_BRIDGE]: passphrase });
+		console.log("✅ Staged passphrase for the bridge in extension storage");
+		return true;
+	} catch (error) {
+		console.error("Error staging bridged passphrase:", error);
+		return false;
+	}
+}
+/**
+* Clear a staged bridged passphrase without consuming it into the keychain.
+*
+* Called when a stale passphrase is detected (keychain.locked after a failed
+* restore): the staged value is what fed the keychain, so leaving it in
+* extension storage would let pullBridgedPassphrase replay the old passphrase
+* back into the keychain on the next restore.
+*
+* Same guard semantics as pullBridgedPassphrase: no-op in a plain web page.
+*
+* @param stalePassphrase - when provided, only a staged value equal to it is
+* removed. A differing staged value was necessarily written after the stale
+* one was consumed (stageBridgedPassphrase on a passphrase set/re-wrap), so
+* it is likely the NEW passphrase and must survive for the next restore.
+* @returns true if a staged value was found and removed, false otherwise.
+*/
+async function clearBridgedPassphrase(stalePassphrase) {
+	if (typeof browser === "undefined" || !browser?.storage?.local) return false;
+	try {
+		const result = await browser.storage.local.get(SEND_MESSAGE_TO_BRIDGE);
+		if (!result?.["SEND_MESSAGE_TO_BRIDGE"]) return false;
+		if (stalePassphrase !== void 0 && result["SEND_MESSAGE_TO_BRIDGE"] !== stalePassphrase) return false;
+		await browser.storage.local.remove(SEND_MESSAGE_TO_BRIDGE);
+		console.log("🧹 Cleared stale bridged passphrase from extension storage");
+		return true;
+	} catch (error) {
+		console.error("Error clearing bridged passphrase:", error);
+		return false;
+	}
+}
 //#endregion
 //#region ../../node_modules/.pnpm/@vue+shared@3.5.33/node_modules/@vue/shared/dist/shared.esm-bundler.js
 /**
@@ -4968,7 +5059,8 @@ var INIT_ERRORS = {
 	NONE: 0,
 	NO_USER: 1,
 	NO_KEYCHAIN: 2,
-	COULD_NOT_CREATE_DEFAULT_FOLDER: 3
+	COULD_NOT_CREATE_DEFAULT_FOLDER: 3,
+	KEYCHAIN_LOCKED: 4
 };
 //#endregion
 //#region ../send/frontend/src/lib/storage/LocalStorage.ts
@@ -5030,6 +5122,17 @@ var Storage = class {
 	async loadKeypair() {
 		return this.adapter.get(this.RSA_KEYS_KEY);
 	}
+	/**
+	* Removes the stale key material — the wrapped (container) keys and the
+	* cached passphrase — while leaving the user/session intact. Used when the
+	* passphrase changed on another device: clearing both lets the normal
+	* validation/restore flow start fresh (prompt for the new passphrase and
+	* re-fetch keys from the server backup) instead of retrying the stale one.
+	*/
+	async clearKeys() {
+		this.adapter.remove(this.OTHER_KEYS_KEY);
+		this.adapter.remove(this.PASS_PHRASE);
+	}
 	async clear() {
 		return this.adapter.clear();
 	}
@@ -5041,39 +5144,6 @@ var Storage = class {
 		};
 	}
 };
-//#endregion
-//#region ../send/frontend/src/lib/bridgePassphrase.ts
-/**
-* Pull a passphrase shared from the web app via the token bridge into the
-* keychain.
-*
-* The web app (running in a browser tab) posts SEND_MESSAGE_TO_BRIDGE; the
-* add-on background stores its value in browser.storage.local under that key
-* (see background.ts). This moves that staged value into the keychain — i.e.
-* localStorage['lb/passphrase'], which every moz-extension page (background,
-* popup, management) shares — and clears the staged copy so it is consumed once.
-*
-* Runs only in an extension context where browser.storage.local exists; it is a
-* no-op in a plain web page (where `browser` is undefined). Safe to call from
-* any context that is about to restore keys, so the popup and background don't
-* depend on the management page having run the transfer first.
-*
-* @returns true if a bridged passphrase was found and stored, false otherwise.
-*/
-async function pullBridgedPassphrase(keychain) {
-	if (typeof browser === "undefined" || !browser?.storage?.local) return false;
-	try {
-		const passphrase = (await browser.storage.local.get(SEND_MESSAGE_TO_BRIDGE))?.[SEND_MESSAGE_TO_BRIDGE];
-		if (!passphrase) return false;
-		await keychain.storePassPhrase(passphrase);
-		await browser.storage.local.remove(SEND_MESSAGE_TO_BRIDGE);
-		console.log("✅ Pulled bridged passphrase into the keychain");
-		return true;
-	} catch (error) {
-		console.error("Error pulling bridged passphrase:", error);
-		return false;
-	}
-}
 //#endregion
 //#region ../send/frontend/src/lib/keychain.ts
 var import___vite_browser_external = /* @__PURE__ */ __toESM$2(require___vite_browser_external(), 1);
@@ -5567,6 +5637,24 @@ function buildApiUrl(serverUrl, path) {
 	if (!url.pathname.startsWith("/api/")) throw new Error("Invalid API path");
 	return url.toString();
 }
+function delay$1(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+/**
+* Parse an HTTP `Retry-After` header into milliseconds.
+*
+* Supports both forms the spec allows: a number of seconds (`"3"`) and an
+* HTTP-date (`"Wed, 21 Oct 2026 07:28:00 GMT"`). Returns null when the header is
+* absent or unparseable, and clamps negatives to 0 (a past date means "now").
+*/
+function parseRetryAfterMs(header) {
+	if (!header) return null;
+	const trimmed = header.trim();
+	if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1e3;
+	const dateMs = Date.parse(trimmed);
+	if (!Number.isNaN(dateMs)) return Math.max(0, dateMs - Date.now());
+	return null;
+}
 var ApiConnection = class {
 	constructor(serverUrl) {
 		if (!serverUrl) throw Error("No Server URL provided.");
@@ -5655,6 +5743,30 @@ var ApiConnection = class {
 				error
 			});
 			return null;
+		}
+		if (resp.status === 429) {
+			const waitMs = parseRetryAfterMs(resp.headers?.get?.("retry-after"));
+			if (waitMs !== null && waitMs <= 1e4) {
+				await delay$1(waitMs);
+				try {
+					resp = await fetch(url, opts);
+				} catch (error) {
+					options?.onFailure?.({
+						kind: "network",
+						status: null,
+						error
+					});
+					return null;
+				}
+			}
+			if (resp.status === 429) {
+				options?.onFailure?.({
+					kind: "rate_limited",
+					status: 429,
+					retryAfterMs: waitMs
+				});
+				return null;
+			}
 		}
 		if (!resp.ok) {
 			let body;
@@ -5775,6 +5887,10 @@ async function _init(userStore, keychain, folderStore) {
 	const defaultFolder = folderStore?.defaultFolder;
 	const defaultFolderKeyIsMissing = defaultFolder && !keychain.keys[defaultFolder.id];
 	if (!defaultFolder || defaultFolderKeyIsMissing) {
+		if (keychain.locked) {
+			console.warn("init(): keychain is locked (passphrase changed on another client); skipping default-folder delete/recreate to avoid destroying the server-side container. Routing to passphrase recovery.");
+			return INIT_ERRORS.KEYCHAIN_LOCKED;
+		}
 		const lockToken = await acquireDefaultFolderLock(userStore.user?.id);
 		if (lockToken === null) {
 			await folderStore.sync();
@@ -11400,7 +11516,10 @@ async function sendBlob(blob, aesKey, api, progressTracker, options = {}) {
 	const { signal, onUploadId } = options;
 	const stream = blobStream(blob);
 	try {
-		const { id, url } = await api.call("uploads/signed", { type: "application/octet-stream" }, "POST");
+		const { id, url } = await api.call("uploads/signed", {
+			type: "application/octet-stream",
+			size: blob.size
+		}, "POST");
 		onUploadId?.(id);
 		progressTracker.setProcessStage("encrypting");
 		progressTracker.setText("Encrypting file");
@@ -12905,7 +13024,13 @@ var CLIENT_MESSAGES = {
 	SHOULD_LOG_IN: `You need to log into your mozilla account. Make sure you're in the allow list for alpha access.`,
 	FILE_TOO_BIG: `Your file size is not supported, please try with files smaller than ${MAX_FILE_SIZE_HUMAN_READABLE}`,
 	UPLOAD_FAILED: `Upload failed. Please try again.`,
-	STORAGE_LIMIT_EXCEEDED: `Uploading this file would exceed your storage limit. Please delete some files and try again.`
+	STORAGE_LIMIT_EXCEEDED: `Uploading this file would exceed your storage limit. Please delete some files and try again.`,
+	COOKIES_BLOCKED_TITLE: `Thunderbird is blocking cookies for Send`,
+	COOKIES_BLOCKED_BANNER_BODY: "Send stores a cookie to keep you signed in, and your browser is currently refusing it. Open Settings → Privacy & Security → Web Content and turn on \"Accept cookies from sites\". If that is already on, also set \"Accept third-party cookies\" to \"From visited\". Then choose \"Retry\".",
+	STORAGE_BLOCKED_TITLE: `Thunderbird is blocking storage for Send`,
+	STORAGE_BLOCKED_BODY: "Send keeps your sign-in state and encryption keys in browser storage, and your browser is refusing access to it. This happens when all cookies are blocked. Open Settings → Privacy & Security → Web Content and turn on \"Accept cookies from sites\", then choose \"Retry\".",
+	APP_LOAD_FAILED_TITLE: `Send could not start`,
+	APP_LOAD_FAILED_BODY: "The application failed to load. Choose \"Retry\" to reload the page. If this keeps happening, please let us know."
 };
 //#endregion
 //#region ../send/frontend/src/lib/folderView.ts
@@ -19413,8 +19538,13 @@ var validator = async ({ api, keychain, userStore }) => {
 		validations.hasCorrectKeys = true;
 	} catch {
 		validations.hasCorrectKeys = false;
-		shouldClearSessionAndStorage = true;
-		console.error("Incorrect passphrase. Removing local storage data.");
+		if (keychain.locked) {
+			console.warn("Passphrase mismatch (likely changed on another client). Routing to recovery instead of clearing storage.");
+			await clearBridgedPassphrase(keychain.getPassphraseValue());
+		} else {
+			shouldClearSessionAndStorage = true;
+			console.error("Incorrect passphrase. Removing local storage data.");
+		}
 	}
 	if (userIDFromStore && userIDFromBackend && userIDFromBackend !== userIDFromStore) {
 		console.error("User ID mismatch. Removing local storage data.");
@@ -19575,6 +19705,35 @@ var useStatusStore = defineStore("status", () => {
 });
 //#endregion
 //#region ../send/frontend/src/apps/send/stores/folder-store.ts
+/**
+* Thrown by `fetchSubtree` when a container returns 403 while the keychain is
+* locked — i.e. the container still exists on the server but this client's keys
+* are stale because the passphrase was changed on another client. Callers should
+* treat this as "route to passphrase recovery", NOT as a generic load error and
+* NOT as an orphaned/phantom container to re-provision.
+*/
+var StaleContainerAccessError = class extends Error {
+	constructor(containerId) {
+		super(`Access to container ${containerId} is forbidden while the keychain is locked (passphrase changed on another client).`);
+		this.name = "StaleContainerAccessError";
+		this.containerId = containerId;
+	}
+};
+/**
+* Picks the folder to treat as the user's default (root) folder.
+*
+* Prefers the newest folder whose key is present in the keychain so we never
+* route the UI to an orphaned container (one whose key was lost, e.g. after a
+* failed provisioning — #1116) while init.ts reconciles it. Falls back to the
+* newest folder when none are openable, which lets the existing
+* delete-and-recreate branch in init.ts detect the missing key and repair it.
+*/
+function selectDefaultFolder(folders, keychainKeys) {
+	const total = folders.length;
+	if (total === 0) return null;
+	for (let i = total - 1; i >= 0; i--) if (keychainKeys[folders[i].id]) return folders[i];
+	return folders[total - 1];
+}
 var useFolderStore = defineStore("folderManager", () => {
 	const { api } = useApiStore();
 	const { user, populateFromBackend } = useUserStore();
@@ -19604,8 +19763,7 @@ var useFolderStore = defineStore("folderManager", () => {
 	}
 	const defaultFolder = computed(() => {
 		if (!folders?.value) return null;
-		const total = folders.value.length;
-		return total === 0 ? null : folders.value[total - 1];
+		return selectDefaultFolder(folders.value, keychain.keys);
 	});
 	const visibleFolders = computed(() => {
 		if (folders.value.length === 0) return [];
@@ -19626,8 +19784,26 @@ var useFolderStore = defineStore("folderManager", () => {
 		selectedFolderId.value = null;
 		selectedFileId.value = null;
 	}
-	async function fetchSubtree(rootFolderId) {
-		const tree = await api.call(`containers/${rootFolderId}/`);
+	async function fetchSubtree(folderId) {
+		let failure = null;
+		const tree = await api.call(`containers/${folderId}/`, {}, "GET", {}, { onFailure: (f) => {
+			failure = f;
+		} });
+		if (!tree || !tree.children) {
+			console.error(`Failed to fetch subtree for container ${folderId}`, failure);
+			folders.value = [];
+			rootFolder.value = null;
+			const status = failure && failure.kind === "http" ? failure.status : null;
+			if (status === 403 && keychain.locked) {
+				console.warn(`fetchSubtree: 403 on container ${folderId} with a locked keychain (passphrase changed on another client). Signalling stale access so the user can recover their passphrase.`);
+				throw new StaleContainerAccessError(folderId);
+			}
+			if ((status === 403 || status === 404) && rootFolderId.value === folderId) {
+				rootFolderId.value = null;
+				await fetchUserFolders();
+			}
+			return;
+		}
 		folders.value = tree.children;
 		rootFolder.value = tree;
 	}
@@ -19667,7 +19843,7 @@ var useFolderStore = defineStore("folderManager", () => {
 			const { container } = containerResponse;
 			try {
 				await keychain.newKeyForContainer(container.id);
-				await backupKeys(keychain, api, msg);
+				if (!keychain.locked) await backupKeys(keychain, api, msg);
 				await keychain.store();
 				folders.value = [...folders.value, container];
 				return container;
@@ -23694,6 +23870,7 @@ var useExtensionStore = defineStore("extension", () => {
 			type: SEND_MESSAGE_TO_BRIDGE,
 			value: message
 		}, window.location.origin);
+		stageBridgedPassphrase(message);
 	};
 	return {
 		configureExtension,
@@ -23901,17 +24078,66 @@ async function closeAllAddOnTabs() {
 		console.warn(`Could not close Send tab with id ${tab.id}`);
 	}
 }
+/**
+* Waits between retries of the stored-session read. Its length also sets the
+* number of retries.
+*
+* A single read is enough on a healthy profile, but it made startup a coin
+* flip on a slow or still-initializing storage backend: background's main()
+* reads once, and when that read lost the race the add-on used to spend the
+* whole session treating the user as signed out. (Today it would spend it in
+* the "storage unavailable" state instead -- better, but the cloud file
+* decision made at startup would still be wrong.) These retries are
+* deliberately short -- they cover a storage layer that is coming up, not one
+* that is broken.
+*/
+var AUTH_READ_RETRY_DELAYS_MS = [250, 1e3];
+var wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+* Reads the stored session, retrying briefly; rethrows the last error once the
+* retries are spent.
+*/
+async function readStoredAuth() {
+	for (let attempt = 0;; attempt++) try {
+		return (await browser.storage.local.get(STORAGE_KEY_AUTH))[STORAGE_KEY_AUTH];
+	} catch (error) {
+		if (attempt === AUTH_READ_RETRY_DELAYS_MS.length) throw error;
+		await wait(AUTH_READ_RETRY_DELAYS_MS[attempt]);
+	}
+}
+/**
+* How many probes in a row have failed to read storage. Only the first failure
+* of a streak is logged: the underlying fault lasts for the whole session, so
+* repeating it every probe buries everything else in the Error Console without
+* adding a single new fact.
+*/
+var storageFailureStreak = 0;
+function noteStorageFailure(error) {
+	storageFailureStreak++;
+	if (storageFailureStreak === 1) {
+		console.error("Error retrieving auth state from storage:", error);
+		console.error("Thunderbird storage is unavailable, so the add-on cannot tell whether anyone is signed in. Leaving the current setup untouched and retrying quietly; further failures will not be logged until storage recovers.");
+	}
+}
+function noteStorageRecovered() {
+	if (storageFailureStreak > 0) {
+		console.info(`Storage is readable again after ${storageFailureStreak} failed check(s).`);
+		storageFailureStreak = 0;
+	}
+}
 async function getLoginState() {
 	let auth;
 	try {
-		auth = (await browser.storage.local.get(STORAGE_KEY_AUTH))[STORAGE_KEY_AUTH];
+		auth = await readStoredAuth();
 	} catch (error) {
-		console.error("Error retrieving auth state from storage:", error);
+		noteStorageFailure(error);
 		return {
 			isLoggedIn: false,
-			username: null
+			username: null,
+			storageUnavailable: true
 		};
 	}
+	noteStorageRecovered();
 	if (!auth) return {
 		isLoggedIn: false,
 		username: null
@@ -23940,10 +24166,32 @@ async function closeLoginTab() {
 		console.warn(`Could not close login tab with id ${loginTabId}`);
 	}
 }
-function checkLoginStateOnInterval() {
-	setInterval(async () => {
-		await getLoginState();
-	}, 60 * 1e3);
+/**
+* Keeps the add-on's idea of the login state in sync with the web context's
+* token by re-probing on a timer.
+*
+* The delay backs off while storage is unavailable. With a broken QuotaManager
+* every probe fails, and a fixed 60s tick meant three lines in the Error Console
+* every single minute for as long as Thunderbird stayed open -- which is how
+* this Thunderbird-wide storage failure came to be reported as a Thundermail bug
+* (Bug 2064203 comment 4 / Bug 2067502). Backing off costs us nothing: there is
+* no session change to notice while storage cannot be read, and the very next
+* successful probe drops straight back to the normal interval.
+*
+* Exported only so tests can drive the schedule with fake timers; init() is
+* the real caller.
+*/
+function startLoginStateChecks() {
+	const BASE_CHECK_INTERVAL_MS = 60 * 1e3;
+	const MAX_CHECK_INTERVAL_MS = 900 * 1e3;
+	let intervalMs = BASE_CHECK_INTERVAL_MS;
+	const scheduleNextCheck = () => {
+		setTimeout(async () => {
+			intervalMs = (await getLoginState().catch(() => null))?.storageUnavailable ? Math.min(intervalMs * 2, MAX_CHECK_INTERVAL_MS) : BASE_CHECK_INTERVAL_MS;
+			scheduleNextCheck();
+		}, intervalMs);
+	};
+	scheduleNextCheck();
 }
 /**
 * Initializes the TBPro menu system and sets up click event handlers.
@@ -23978,14 +24226,11 @@ function init() {
 		tooltip: ""
 	});
 	getLoginState();
-	checkLoginStateOnInterval();
+	startLoginStateChecks();
 }
 //#endregion
 //#region src/cloudFileGate.ts
 /**
-* Whether to create/register the Thunderbird Send cloudfile account eagerly on
-* background startup.
-*
 * The Send cloudfile account must only exist once the user has actually signed
 * in. The built-in system add-on is enabled by default for every Thunderbird
 * user, so on a fresh, never-signed-in profile (including under automation) it
@@ -23995,18 +24240,33 @@ function init() {
 * addRemoveAccounts checks — which assert a clean account baseline (e.g.
 * "Should have no cloudfile accounts starting off. - 1 == 0"). See Bug 2036665.
 *
-* The account is still created on explicit sign-in via the SIGN_IN_COMPLETE
-* flow in background.ts, so signed-in users (standalone or system) keep the Send
-* cloudfile provider configured.
-*
 * The manifest `cloud_file` key also makes Thunderbird register the Send
-* provider itself on every startup, independently of the account. When this
-* returns false, background.ts additionally unregisters that provider (via the
+* provider itself on every startup, independently of the account. On
+* `unregister`, background.ts additionally unregisters that provider (via the
 * CloudFileAccounts experiment API) so a signed-out profile shows no Send entry
-* in the cloud file provider list at all; it is re-registered on sign-in.
+* in the cloud file provider list at all; it is re-registered on sign-in via the
+* SIGN_IN_COMPLETE flow.
+*
+* `leave-as-is` is the third answer, and the reason this function exists rather
+* than a boolean. A failed storage read used to arrive here as `isLoggedIn:
+* false`, indistinguishable from a fresh profile, so a Thunderbird-wide storage
+* failure (Bug 2067502) made the add-on unregister the provider for people who
+* were signed in — they simply lost the ability to send with Send until the
+* storage fault was repaired (Bug 2064203 comment 4). When we cannot tell, the
+* least harmful move is to touch nothing.
+*
+* `leave-as-is` accepts a known, narrow regression against Bug 2036665: the
+* manifest `cloud_file` key has already registered the provider by the time we
+* run, so skipping the unregister leaves a Send entry visible in the provider
+* list on a signed-out or fresh profile whose storage is broken. No cloudfile
+* *account* is created (that is the `register` branch only), so the
+* clean-account-baseline assertions quoted above still hold, and Thunderbird's
+* own test runs use healthy profiles. Losing the ability to send for a whole
+* session is the worse failure, so we take the visible-provider one.
 */
-function shouldInitCloudFileOnStartup(isLoggedIn) {
-	return isLoggedIn;
+function cloudFileStartupAction(state) {
+	if (state.storageUnavailable) return "leave-as-is";
+	return state.isLoggedIn ? "register" : "unregister";
 }
 //#endregion
 //#region src/selfUninstall.ts
@@ -24259,7 +24519,8 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
 				if (tab.id) browser.tabs.sendMessage(tab.id, {
 					type: LOGIN_STATE_RESPONSE,
 					isLoggedIn: loginState.isLoggedIn,
-					username: loginState.username
+					username: loginState.username,
+					storageUnavailable: loginState.storageUnavailable ?? false
 				}).catch(() => {});
 			});
 			break;
@@ -24467,6 +24728,10 @@ function initStorageWatcher() {
 	});
 }
 function initAccountHubListener() {
+	if (!browser.AccountHub?.onAccountAdded?.addListener) {
+		console.warn("[AccountHub] browser.AccountHub.onAccountAdded unavailable; Accounts Hub auto-login disabled.");
+		return;
+	}
 	browser.AccountHub.onAccountAdded.addListener(async ({ token, email }) => {
 		console.log(`[AccountHub] onAccountAdded fired for ${email}. Logging in add-on.`);
 		try {
@@ -24499,16 +24764,24 @@ function initTelemetryListener() {
 (async function main() {
 	await checkAndUninstallIfDeprecated();
 	init();
-	const { isLoggedIn } = await getLoginState();
-	if (shouldInitCloudFileOnStartup(isLoggedIn)) initCloudFile();
-	else try {
-		await browser.CloudFileAccounts.unregisterProvider();
-	} catch (error) {
-		console.warn("Error unregistering cloud file provider:", error);
-	}
 	initStorageWatcher();
 	initAccountHubListener();
 	initTelemetryListener();
+	switch (cloudFileStartupAction(await getLoginState())) {
+		case "register":
+			initCloudFile();
+			break;
+		case "unregister":
+			try {
+				await browser.CloudFileAccounts.unregisterProvider();
+			} catch (error) {
+				console.warn("Error unregistering cloud file provider:", error);
+			}
+			break;
+		case "leave-as-is":
+			console.warn("Login state unknown (storage unavailable) — leaving the Send cloud file provider registration untouched.");
+			break;
+	}
 })().catch((error) => {
 	console.error("Error initializing background.js", error);
 });

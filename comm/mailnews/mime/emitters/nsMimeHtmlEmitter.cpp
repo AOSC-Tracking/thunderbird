@@ -42,7 +42,6 @@ nsresult nsMimeHtmlDisplayEmitter::Init() { return NS_OK; }
 nsresult nsMimeHtmlDisplayEmitter::WriteHeaderFieldHTMLPrefix(
     const nsACString& name) {
   if ((mFormat == nsMimeOutput::nsMimeMessageSaveAs) ||
-      (mFormat == nsMimeOutput::nsMimeMessagePrintOutput) ||
       (mFormat == nsMimeOutput::nsMimeMessageBodyDisplay))
     return nsMimeBaseEmitter::WriteHeaderFieldHTMLPrefix(name);
   else
@@ -52,7 +51,6 @@ nsresult nsMimeHtmlDisplayEmitter::WriteHeaderFieldHTMLPrefix(
 nsresult nsMimeHtmlDisplayEmitter::WriteHeaderFieldHTML(const char* field,
                                                         const char* value) {
   if ((mFormat == nsMimeOutput::nsMimeMessageSaveAs) ||
-      (mFormat == nsMimeOutput::nsMimeMessagePrintOutput) ||
       (mFormat == nsMimeOutput::nsMimeMessageBodyDisplay))
     return nsMimeBaseEmitter::WriteHeaderFieldHTML(field, value);
   else
@@ -61,7 +59,6 @@ nsresult nsMimeHtmlDisplayEmitter::WriteHeaderFieldHTML(const char* field,
 
 nsresult nsMimeHtmlDisplayEmitter::WriteHeaderFieldHTMLPostfix() {
   if ((mFormat == nsMimeOutput::nsMimeMessageSaveAs) ||
-      (mFormat == nsMimeOutput::nsMimeMessagePrintOutput) ||
       (mFormat == nsMimeOutput::nsMimeMessageBodyDisplay))
     return nsMimeBaseEmitter::WriteHeaderFieldHTMLPostfix();
   else
@@ -207,7 +204,6 @@ nsresult nsMimeHtmlDisplayEmitter::BroadcastHeaders(int32_t aHeaderMode) {
 NS_IMETHODIMP nsMimeHtmlDisplayEmitter::WriteHTMLHeaders(
     const nsACString& name) {
   if ((mFormat == nsMimeOutput::nsMimeMessageSaveAs) ||
-      (mFormat == nsMimeOutput::nsMimeMessagePrintOutput) ||
       (mFormat == nsMimeOutput::nsMimeMessageBodyDisplay)) {
     nsMimeBaseEmitter::WriteHTMLHeaders(name);
   }
@@ -412,13 +408,13 @@ nsresult nsMimeHtmlDisplayEmitter::EndAllAttachments() {
   PROFILER_MARKER_TEXT("MIME HTML Emitter", MAILNEWS, {}, "Attachments end"_ns);
 
   // Notify the front end that we've finished reading the body.
-  nsresult rv;
-  nsCOMPtr<nsIMailChannel> mailChannel = do_QueryInterface(mChannel, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIMailProgressListener> listener;
-  mailChannel->GetListener(getter_AddRefs(listener));
-  if (listener) {
-    listener->OnAttachmentsComplete(mailChannel);
+  nsCOMPtr<nsIMailChannel> mailChannel = do_QueryInterface(mChannel);
+  if (mailChannel) {
+    nsCOMPtr<nsIMailProgressListener> listener;
+    mailChannel->GetListener(getter_AddRefs(listener));
+    if (listener) {
+      listener->OnAttachmentsComplete(mailChannel);
+    }
   }
 
   // EndAllAttachments is called even if there are no attachments, we can

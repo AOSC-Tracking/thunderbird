@@ -6,17 +6,22 @@ loader: taskgraph.loader.transform:loader
 
 transforms:
     - taskgraph.transforms.from_deps
+    - comm_taskgraph.transforms.enterprise:rewrite_shipping_phase
     - gecko_taskgraph.transforms.name_sanity
     - gecko_taskgraph.transforms.repackage
+    - comm_taskgraph.transforms.enterprise:maybe_repackage_routes
     - gecko_taskgraph.transforms.job
     - gecko_taskgraph.transforms.task
 
 kind-dependencies:
     - build-signing
     - toolchain
+    - enterprise-repack
 
 only-for-build-platforms:
     - linux64-shippable/opt
+    - linux64-enterprise-shippable/opt
+    - linux64-aarch64-enterprise-shippable/opt
 
 only-for-attributes:
     - nightly
@@ -40,7 +45,11 @@ tasks:
                 - comm/testing/mozharness/configs
             config:
                 by-build-platform:
-                    linux64\b.*:
+                    linux64-enterprise\b.*:
+                        - repackage/base.py
+                        - repackage/base_enterprise.py
+                        - repackage/linux64_signed.py
+                    linux64(?!-enterprise)\b.*:
                         - repackage/base.py
                         - repackage/linux64_signed.py
         treeherder:

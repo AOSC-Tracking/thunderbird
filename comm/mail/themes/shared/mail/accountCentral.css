@@ -377,6 +377,29 @@ aside.settings-btn-container {
   }
 }
 
+/* stylelint-disable-next-line media-query-no-invalid */
+@media not -moz-pref("mail.community_features.enabled") {
+  #donationParagraph,
+  #involvedLink,
+  #developerLink {
+    display: none;
+  }
+}
+
+/* stylelint-disable-next-line media-query-no-invalid */
+@media not -moz-pref("mail.chat.enabled") {
+  #setupChat {
+    display: none;
+  }
+}
+
+/* stylelint-disable-next-line media-query-no-invalid */
+@media not -moz-pref("mail.cloud_files.enabled") {
+  #setupFilelink {
+    display: none;
+  }
+}
+
 .btn-link {
   appearance: none;
   display: flex;

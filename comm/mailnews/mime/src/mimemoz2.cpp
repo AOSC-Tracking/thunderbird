@@ -4,7 +4,6 @@
 
 #include "mimemoz2.h"
 
-#include "mimeebod.h"
 #include "mimehdrs.h"
 #include "mimei.h"
 #include "mimeleaf.h"
@@ -107,6 +106,36 @@ nsresult MimeGetSize(MimeObject* child, int32_t* size) {
   return NS_OK;
 }
 
+// Creates the attachment URI from `spec`, adding a "filename" parameter for
+// named attachments. `spec` must not be null.
+static nsresult BuildAttachmentUrl(const char* spec,
+                                   const nsMsgAttachmentData* attachmentData,
+                                   nsIURI** result) {
+  NS_ENSURE_ARG_POINTER(spec);
+
+  nsCOMPtr<nsIURI> uri;
+  nsresult rv = NS_NewURI(getter_AddRefs(uri), spec);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAutoCString query;
+  rv = uri->GetQuery(query);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  URLParams params;
+  params.ParseInput(query);
+
+  if (!attachmentData->m_realName.IsEmpty()) {
+    AppendFilenameParameterToAttachmentDataUrl(attachmentData, params);
+  }
+
+  params.Serialize(query, true);
+  rv = NS_MutateURI(uri).SetQuery(query).Finalize(getter_AddRefs(uri));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  uri.forget(result);
+  return NS_OK;
+}
+
 nsresult ProcessBodyAsAttachment(MimeObject* obj, nsMsgAttachmentData** data) {
   nsMsgAttachmentData* tmp;
   char* disp = nullptr;
@@ -119,6 +148,8 @@ nsresult ProcessBodyAsAttachment(MimeObject* obj, nsMsgAttachmentData** data) {
   // to do this.
   MimeObject* child = obj;
 
+  // We're actually returning a list of attachments. The list is terminated by
+  // an entry with a null `m_url` member.
   *data = new nsMsgAttachmentData[2];
   if (!*data) return NS_ERROR_OUT_OF_MEMORY;
 
@@ -177,31 +208,12 @@ nsresult ProcessBodyAsAttachment(MimeObject* obj, nsMsgAttachmentData** data) {
     if (id_imap && id) {
       // if this is an IMAP part.
       tmpURL = mime_set_url_imap_part(url, id_imap, id);
-      rv = nsMimeNewURI(getter_AddRefs(tmp->m_url), tmpURL, nullptr);
+      rv = tmpURL ? nsMimeNewURI(getter_AddRefs(tmp->m_url), tmpURL, nullptr)
+                  : NS_ERROR_UNEXPECTED;
     } else {
       // This is just a normal MIME part as usual.
       tmpURL = mime_set_url_part(url, id, true);
-
-      nsCOMPtr<nsIURI> uri;
-      rv = NS_NewURI(getter_AddRefs(uri), tmpURL);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      nsAutoCString query;
-      rv = uri->GetQuery(query);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      URLParams params;
-      params.ParseInput(query);
-
-      if (!tmp->m_realName.IsEmpty()) {
-        AppendFilenameParameterToAttachmentDataUrl(tmp, params);
-      }
-
-      params.Serialize(query, true);
-      rv = NS_MutateURI(uri).SetQuery(query).Finalize(getter_AddRefs(uri));
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      tmp->m_url = uri;
+      rv = BuildAttachmentUrl(tmpURL, tmp, getter_AddRefs(tmp->m_url));
     }
 
     if (!tmp->m_url || NS_FAILED(rv)) {
@@ -209,7 +221,8 @@ nsresult ProcessBodyAsAttachment(MimeObject* obj, nsMsgAttachmentData** data) {
       *data = nullptr;
       PR_FREEIF(id);
       PR_FREEIF(id_imap);
-      return NS_ERROR_OUT_OF_MEMORY;
+      PR_FREEIF(tmpURL);
+      return NS_ERROR_FAILURE;
     }
   }
   PR_FREEIF(id);
@@ -326,8 +339,10 @@ nsresult GenerateAttachmentData(MimeObject* object, const char* aMessageURL,
           object->content_type = strdup("text/x-moz-deleted");
         }
       }
-      if (!isExternalAttachment)
+      if (!isExternalAttachment) {
+        PR_FREEIF(urlSpec);
         urlSpec = mime_set_url_part(aMessageURL, part.get(), true);
+      }
     }
   }
 
@@ -341,6 +356,7 @@ nsresult GenerateAttachmentData(MimeObject* object, const char* aMessageURL,
 
   nsCOMPtr<nsIURI> uri;
   nsresult rv = NS_NewURI(getter_AddRefs(uri), urlSpec);
+  PR_FREEIF(urlSpec);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString query;
@@ -513,9 +529,7 @@ nsresult BuildAttachmentList(MimeObject* anObject,
   int32_t i;
   MimeContainer* cobj = (MimeContainer*)anObject;
 
-  if ((!anObject) || (!cobj->children) || (!cobj->nchildren) ||
-      (mime_typep(anObject, (MimeObjectClass*)&mimeExternalBodyClass)))
-    return NS_OK;
+  if (!anObject || !cobj->children || !cobj->nchildren) return NS_OK;
 
   // Under multipart/alternative, body-typed siblings are alternatives, not
   // attachments.
@@ -705,8 +719,7 @@ extern "C" void NotifyEmittersOfAttachmentList(MimeDisplayOptions* opt,
 
     if ((opt->format_out == nsMimeOutput::nsMimeMessageQuoting) ||
         (opt->format_out == nsMimeOutput::nsMimeMessageBodyQuoting) ||
-        (opt->format_out == nsMimeOutput::nsMimeMessageSaveAs) ||
-        (opt->format_out == nsMimeOutput::nsMimeMessagePrintOutput)) {
+        (opt->format_out == nsMimeOutput::nsMimeMessageSaveAs)) {
       mimeEmitterAddAttachmentField(opt, HEADER_CONTENT_DESCRIPTION,
                                     tmp->m_description.get());
       mimeEmitterAddAttachmentField(opt, HEADER_CONTENT_TYPE,
@@ -1201,9 +1214,6 @@ MimeDisplayOptions::MimeDisplayOptions() {
   url = nullptr;
 
   memset((void*)&headers, 0, sizeof(headers));
-  fancy_headers_p = false;
-
-  output_vcard_buttons_p = false;
 
   variable_width_plaintext_p = false;
   wrap_long_lines_p = false;
@@ -1343,18 +1353,10 @@ extern "C" void* mime_bridge_create_display_stream(
   MIME_HeaderType = MimeHeadersAll;
   msd->options->write_html_p = true;
   switch (format_out) {
-    case nsMimeOutput::nsMimeMessageHeaderDisplay:  // the split header/body
-                                                    // display
-    case nsMimeOutput::nsMimeMessageBodyDisplay:    // the split header/body
-                                                    // display
-      msd->options->fancy_headers_p = true;
-      msd->options->output_vcard_buttons_p = true;
-      break;
-
-    case nsMimeOutput::nsMimeMessageSaveAs:   // Save As operations
+    case nsMimeOutput::nsMimeMessageBodyDisplay:  // the split header/body
+                                                  // display
+    case nsMimeOutput::nsMimeMessageSaveAs:       // Save As operations
     case nsMimeOutput::nsMimeMessageQuoting:  // all HTML quoted/printed output
-    case nsMimeOutput::nsMimeMessagePrintOutput:
-      msd->options->fancy_headers_p = true;
       break;
 
     case nsMimeOutput::nsMimeMessageBodyQuoting:  // only HTML body quoted
@@ -1692,10 +1694,8 @@ extern "C" nsresult mimeEmitterEndHeader(MimeDisplayOptions* opt,
     nsIMimeEmitter* emitter = (nsIMimeEmitter*)msd->output_emitter;
 
     nsCString name;
-    if (msd->format_out == nsMimeOutput::nsMimeMessageHeaderDisplay ||
-        msd->format_out == nsMimeOutput::nsMimeMessageBodyDisplay ||
-        msd->format_out == nsMimeOutput::nsMimeMessageSaveAs ||
-        msd->format_out == nsMimeOutput::nsMimeMessagePrintOutput) {
+    if (msd->format_out == nsMimeOutput::nsMimeMessageBodyDisplay ||
+        msd->format_out == nsMimeOutput::nsMimeMessageSaveAs) {
       if (obj->headers) {
         nsMsgAttachmentData attachments[1];
         attIndex = 0;

@@ -17,9 +17,12 @@ let aboutMessage, msgc, lightTheme, darkTheme;
 
 add_setup(async function () {
   // Disable dark message mode before setting up anything else.
-  Services.prefs.setBoolPref("mail.dark-reader.enabled", false);
   await SpecialPowers.pushPrefEnv({
-    set: [["ui.useAccessibilityTheme", 0]],
+    set: [
+      ["mail.dark-reader.enabled", false],
+      ["mail.dark-reader.show-toggle", true],
+      ["ui.useAccessibilityTheme", 0],
+    ],
   });
 
   const file = new FileUtils.File(getTestFilePath("data/dark_mode_test.eml"));
@@ -35,8 +38,6 @@ add_setup(async function () {
 
   registerCleanupFunction(async () => {
     await BrowserTestUtils.closeWindow(msgc);
-    Services.prefs.clearUserPref("mail.dark-reader.enabled");
-    Services.prefs.clearUserPref("mail.dark-reader.show-toggle");
     lightTheme.disable();
     darkTheme.disable();
   });
@@ -52,7 +53,9 @@ async function toggle_theme(theme, enable) {
 
 async function toggle_dark_reader(enable) {
   const msgLoaded = BrowserTestUtils.waitForEvent(aboutMessage, "MsgLoaded");
-  Services.prefs.setBoolPref("mail.dark-reader.enabled", enable);
+  await SpecialPowers.pushPrefEnv({
+    set: [["mail.dark-reader.enabled", enable]],
+  });
   await msgLoaded;
 }
 
@@ -110,14 +113,16 @@ add_task(async function test_message_header_toggle() {
   );
 
   info("Disable the toggle visibility");
-  Services.prefs.setBoolPref("mail.dark-reader.show-toggle", false);
+  await SpecialPowers.pushPrefEnv({
+    set: [["mail.dark-reader.show-toggle", false]],
+  });
   await TestUtils.waitForCondition(
     () => BrowserTestUtils.isHidden(toggle),
     "toggle button should be hidden"
   );
 
   info("Enable the toggle visibility");
-  Services.prefs.setBoolPref("mail.dark-reader.show-toggle", true);
+  await SpecialPowers.popPrefEnv();
 
   await TestUtils.waitForCondition(
     () => BrowserTestUtils.isVisible(toggle),
@@ -237,49 +242,50 @@ add_task(async function test_message_scroll_position() {
 });
 
 add_task(async function test_darkReaderToggleVisibility() {
+  // The toggle's visibility is driven purely by CSS media queries, so don't
+  // wait for MsgLoaded here. On Windows, enabling high contrast mode makes
+  // `(forced-colors)` match in chrome documents, which makes
+  // LightweightThemeConsumer substitute the default theme for the active one.
+  // The color scheme then doesn't change when switching themes, so the message
+  // is never reloaded and no MsgLoaded is fired.
+  const toggle = aboutMessage.document.querySelector("#darkReaderToggle");
+
   info("Wait for light mode");
-  let msgLoaded = BrowserTestUtils.waitForEvent(aboutMessage, "MsgLoaded");
   await SpecialPowers.pushPrefEnv({
     set: [["ui.useAccessibilityTheme", 0]],
   });
   await toggle_theme(lightTheme, true);
-  await msgLoaded;
-
-  const toggle = aboutMessage.document.querySelector("#darkReaderToggle");
-
-  Assert.ok(
-    BrowserTestUtils.isHidden(toggle),
-    "Dark reader toggle is hidden in light theme"
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isHidden(toggle),
+    "Dark reader toggle should be hidden in light theme"
   );
 
-  // Enable high contrast mode
   info("wait for high contrast mode");
   await SpecialPowers.pushPrefEnv({
     set: [["ui.useAccessibilityTheme", 1]],
   });
-  await new Promise(aboutMessage.requestAnimationFrame);
+  await TestUtils.waitForCondition(
+    () => aboutMessage.matchMedia("(prefers-contrast)").matches,
+    "High contrast mode should take effect"
+  );
 
   Assert.ok(
     BrowserTestUtils.isHidden(toggle),
-    "Dark reader toggle is hidden in light theme with high contrast enabled"
+    "Dark reader toggle should be hidden in light theme with high contrast enabled"
   );
 
   info("wait for dark mode");
-  msgLoaded = BrowserTestUtils.waitForEvent(aboutMessage, "MsgLoaded");
   await toggle_theme(darkTheme, true);
-  await msgLoaded;
 
   Assert.ok(
     BrowserTestUtils.isHidden(toggle),
-    "Dark reader toggle is hidden in dark theme with high contrast enabled"
+    "Dark reader toggle should be hidden in dark theme with high contrast enabled"
   );
 
   await SpecialPowers.popPrefEnv();
-  await new Promise(aboutMessage.requestAnimationFrame);
-
-  Assert.ok(
-    BrowserTestUtils.isVisible(toggle),
-    "Dark reader toggle is visible in dark theme with high contrast disabled"
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isVisible(toggle),
+    "Dark reader toggle should be visible in dark theme with high contrast disabled"
   );
 
   await SpecialPowers.popPrefEnv();
@@ -378,6 +384,46 @@ add_task(async function test_blend_mode_removed() {
   } finally {
     aboutMessage = previousAboutMessage;
     await BrowserTestUtils.closeWindow(blendMsgc);
+  }
+});
+
+add_task(async function test_css_variables_resolved() {
+  const file = new FileUtils.File(
+    getTestFilePath("data/dark_mode_css_variables.eml")
+  );
+  const variablesMsgc = await open_message_from_file(file);
+  const previousAboutMessage = aboutMessage;
+  aboutMessage = get_about_message(variablesMsgc);
+
+  try {
+    if (!darkTheme.isActive) {
+      await toggle_theme(darkTheme, true);
+    }
+    if (Services.prefs.getBoolPref("mail.dark-reader.enabled", false)) {
+      await toggle_dark_reader(false);
+    }
+    await toggle_dark_reader(true);
+
+    const msgDoc =
+      aboutMessage.document.getElementById("messagepane").contentDocument;
+    const bodyStyle = msgDoc.defaultView.getComputedStyle(msgDoc.body);
+    const textStyle = msgDoc.defaultView.getComputedStyle(
+      msgDoc.querySelector("#messageText")
+    );
+
+    Assert.equal(
+      bodyStyle.backgroundColor,
+      "rgba(0, 0, 0, 0)",
+      "The light variable background should be removed"
+    );
+    Assert.equal(
+      textStyle.color,
+      "rgb(238, 238, 240)",
+      "The message text should inherit the dark reader color"
+    );
+  } finally {
+    aboutMessage = previousAboutMessage;
+    await BrowserTestUtils.closeWindow(variablesMsgc);
   }
 });
 

@@ -177,6 +177,14 @@
       "type": "boolean"
     },
 
+    "DisableChat": {
+      "type": "boolean"
+    },
+
+    "DisableCommunity": {
+      "type": "boolean"
+    },
+
     "DisableDataCollectionSettings": {
       "type": "boolean"
     },
@@ -243,6 +251,10 @@
     },
 
     "DisableExperimentalFeatures": {
+      "type": "boolean"
+    },
+
+    "DisableFileLink": {
       "type": "boolean"
     },
 

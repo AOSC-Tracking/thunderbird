@@ -43,6 +43,10 @@ policy-DefaultDownloadDirectory = Set the default download directory.
 
 policy-DisableAppUpdate = Prevent { -brand-short-name } from updating.
 
+policy-DisableChat = Disable the Chat feature.
+
+policy-DisableCommunity = Don’t show community features in the UI (such as Donate, Get Involved, Share Ideas etc.)
+
 policy-DisableDataCollectionSettings = Prevent the user from changing data collection settings.
 
 policy-DisableDefaultClientAgent = Prevent the default client agent from taking any actions. Only applicable to Windows; other platforms don’t have the agent.
@@ -50,6 +54,8 @@ policy-DisableDefaultClientAgent = Prevent the default client agent from taking 
 policy-DisableDeveloperTools = Block access to the developer tools.
 
 policy-DisableFeedbackCommands = Disable commands to send feedback from the Help menu (Submit Feedback and Report Deceptive Site).
+
+policy-DisableFileLink = Disable the Filelink feature.
 
 policy-DisableForgetButton = Prevent access to the Forget button.
 

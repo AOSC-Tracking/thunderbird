@@ -6,6 +6,7 @@
 
 #include <ctype.h>
 
+#include "mozilla/CheckedInt.h"
 #include "mozilla/Components.h"
 #include "nsCOMPtr.h"
 #include "msgCore.h"
@@ -71,10 +72,7 @@ void MimeHeaders_free(MimeHeaders* hdrs) {
   if (!hdrs) return;
   PR_FREEIF(hdrs->all_headers);
   PR_FREEIF(hdrs->heads);
-  PR_FREEIF(hdrs->obuffer);
   PR_FREEIF(hdrs->munged_subject);
-  hdrs->obuffer_fp = 0;
-  hdrs->obuffer_size = 0;
 
   PR_Free(hdrs);
 }
@@ -82,7 +80,6 @@ void MimeHeaders_free(MimeHeaders* hdrs) {
 int MimeHeaders_parse_line(const char* buffer, int32_t size,
                            MimeHeaders* hdrs) {
   int status = 0;
-  int desired_size;
 
   NS_ASSERTION(hdrs, "1.22 <rhp@netscape.com> 22 Aug 1999 08:48");
   if (!hdrs) return -1;
@@ -98,12 +95,14 @@ int MimeHeaders_parse_line(const char* buffer, int32_t size,
     return MimeHeaders_build_heads_list(hdrs);
   }
 
-  /* Tack this data on to the end of our copy.
-   */
-  desired_size = hdrs->all_headers_fp + size + 1;
-  if (desired_size >= hdrs->all_headers_size) {
-    status = mime_GrowBuffer(desired_size, sizeof(char), 255,
-                             &hdrs->all_headers, &hdrs->all_headers_size);
+  /* Tack this data on to the end of our copy. The sum is checked because
+     overflowing it would skip the growth below while the memcpy still ran. */
+  mozilla::CheckedInt<int32_t> desired_size =
+      mozilla::CheckedInt<int32_t>(hdrs->all_headers_fp) + size + 1;
+  if (size < 0 || !desired_size.isValid()) return MIME_OUT_OF_MEMORY;
+  if (desired_size.value() >= hdrs->all_headers_size) {
+    status = mime_GrowBuffer(desired_size.value(), 255, &hdrs->all_headers,
+                             &hdrs->all_headers_size);
     if (status < 0) return status;
   }
   memcpy(hdrs->all_headers + hdrs->all_headers_fp, buffer, size);
@@ -439,12 +438,6 @@ char* MimeHeaders_get_parameter(const char* header_value, const char* parm_name,
 #define MimeHeaders_write(HDRS, OPT, DATA, LENGTH) \
   MimeOptions_write((HDRS), (OPT), (DATA), (LENGTH), true);
 
-#define MimeHeaders_grow_obuffer(hdrs, desired_size)                          \
-  ((((long)(desired_size)) >= ((long)(hdrs)->obuffer_size))                   \
-       ? mime_GrowBuffer((desired_size), sizeof(char), 255, &(hdrs)->obuffer, \
-                         &(hdrs)->obuffer_size)                               \
-       : 0)
-
 int MimeHeaders_write_all_headers(MimeHeaders* hdrs, MimeDisplayOptions* opt,
                                   bool attachment) {
   int status = 0;
@@ -693,10 +686,6 @@ void MimeHeaders_do_unix_display_hook_hack(MimeHeaders* hdrs) {
 static void MimeHeaders_compact(MimeHeaders* hdrs) {
   NS_ASSERTION(hdrs, "1.22 <rhp@netscape.com> 22 Aug 1999 08:48");
   if (!hdrs) return;
-
-  PR_FREEIF(hdrs->obuffer);
-  hdrs->obuffer_fp = 0;
-  hdrs->obuffer_size = 0;
 
   /* These really shouldn't have gotten out of whack again. */
   NS_ASSERTION(hdrs->all_headers_fp <= hdrs->all_headers_size &&

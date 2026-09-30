@@ -33,7 +33,9 @@ var gDrafts;
 add_setup(async function () {
   gDrafts = await get_special_folder(Ci.nsMsgFolderFlags.Drafts, true);
 
-  Services.prefs.setBoolPref("mail.identity.id1.compose_html", true);
+  await SpecialPowers.pushPrefEnv({
+    set: [["mail.identity.id1.compose_html", true]],
+  });
 
   SmimeUtils.ensureNSS();
   SmimeUtils.loadPEMCertificate(
@@ -49,8 +51,8 @@ add_setup(async function () {
     "nss"
   );
 
-  registerCleanupFunction(function () {
-    SmimeUtils.removeCertificates(["NSS Test CA (RSA)", "Bob", "Alice"]);
+  registerCleanupFunction(async function () {
+    await SmimeUtils.removeCertificates(["NSS Test CA (RSA)", "Bob", "Alice"]);
   });
 });
 
@@ -116,8 +118,6 @@ add_task(async function test_multipart_alternative() {
 });
 
 registerCleanupFunction(function () {
-  Services.prefs.clearUserPref("mail.identity.id1.compose_html");
-
   // Some tests that open new windows don't return focus to the main window
   // in a way that satisfies mochitest, and the test times out.
   Services.focus.focusedWindow = window;

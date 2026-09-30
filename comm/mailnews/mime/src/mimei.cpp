@@ -48,7 +48,6 @@
 /* SUPPORTED VIA PLUGIN     |     |     |--- MimeInlineTextVCard */
 #include "mimeiimg.h"  /*   |     |--- MimeInlineImage */
 #include "mimeeobj.h"  /*   |     |--- MimeExternalObject */
-#include "mimeebod.h"  /*   |--- MimeExternalBody */
                        /* If you add classes here,also add them to mimei.h */
 // clang-format on
 
@@ -322,8 +321,7 @@ bool mime_is_allowed_class(const MimeObjectClass* clazz,
       (avoid_strange_content &&
        (clazz == (MimeObjectClass*)&mimeInlineTextEnrichedClass ||
         clazz == (MimeObjectClass*)&mimeInlineTextRichtextClass ||
-        clazz == (MimeObjectClass*)&mimeSunAttachmentClass ||
-        clazz == (MimeObjectClass*)&mimeExternalBodyClass)));
+        clazz == (MimeObjectClass*)&mimeSunAttachmentClass)));
 }
 
 void getMsgHdrForCurrentURL(MimeDisplayOptions* opts, nsIMsgDBHdr** aMsgHdr) {
@@ -697,9 +695,8 @@ MimeObjectClass* mime_find_class(const char* content_type, MimeHeaders* hdrs,
       if (!PL_strcasecmp(content_type + 8, "rfc822") ||
           !PL_strcasecmp(content_type + 8, "news"))
         clazz = (MimeObjectClass*)&mimeMessageClass;
-      else if (!PL_strcasecmp(content_type + 8, "external-body"))
-        clazz = (MimeObjectClass*)&mimeExternalBodyClass;
-      else if (!PL_strcasecmp(content_type + 8, "partial"))
+      else if (!PL_strcasecmp(content_type + 8, "external-body") ||
+               !PL_strcasecmp(content_type + 8, "partial"))
         /* I guess these are most useful as externals, for now... */
         clazz = (MimeObjectClass*)&mimeExternalObjectClass;
       else if (!exact_match_p)
@@ -1272,9 +1269,11 @@ bool mime_crypto_object_p(MimeHeaders* hdrs, bool clearsigned_counts,
 
 #endif  // ENABLE_SMIME
 
-/* Puts a part-number into a URL.  If append_p is true, then the part number
-   is appended to any existing part-number already in that URL; otherwise,
-   it replaces it.
+/**
+ * Puts a part-number into a URL.  If append_p is true, then the part number
+ * is appended to any existing part-number already in that URL; otherwise,
+ * it replaces it.
+ * @returns the new url. Returns null if the URL failed to parse.
  */
 char* mime_set_url_part(const char* url, const char* part, bool append_p) {
   char* result;
@@ -1339,142 +1338,6 @@ char* mime_set_url_imap_part(const char* url, const char* imappart,
   PL_strcatn(result, resultLen, libmimepart);
 
   if (whereCurrent) *whereCurrent = '/';
-
-  return result;
-}
-
-/* Given a part ID, looks through the MimeObject tree for a sub-part whose ID
-   number matches, and returns the MimeObject (else NULL.)
-   (part is not a URL -- it's of the form "1.3.5".)
- */
-MimeObject* mime_address_to_part(const char* part, MimeObject* obj) {
-  /* Note: this is an N^2 operation, but the number of parts in a message
-   shouldn't ever be large enough that this really matters... */
-
-  bool match;
-
-  if (!part || !*part) {
-    match = !obj->parent;
-  } else {
-    char* part2 = mime_part_address(obj);
-    if (!part2) return 0; /* MIME_OUT_OF_MEMORY */
-    match = !strcmp(part, part2);
-    PR_Free(part2);
-  }
-
-  if (match) {
-    /* These are the droids we're looking for. */
-    return obj;
-  } else if (!mime_typep(obj, (MimeObjectClass*)&mimeContainerClass)) {
-    /* Not a container, pull up, pull up! */
-    return 0;
-  } else {
-    int32_t i;
-    MimeContainer* cont = (MimeContainer*)obj;
-    for (i = 0; i < cont->nchildren; i++) {
-      MimeObject* o2 = mime_address_to_part(part, cont->children[i]);
-      if (o2) return o2;
-    }
-    return 0;
-  }
-}
-
-/* Given a part ID, looks through the MimeObject tree for a sub-part whose ID
-   number matches; if one is found, returns the Content-Name of that part.
-   Else returns NULL.  (part is not a URL -- it's of the form "1.3.5".)
- */
-char* mime_find_content_type_of_part(const char* part, MimeObject* obj) {
-  char* result = 0;
-
-  obj = mime_address_to_part(part, obj);
-  if (!obj) return 0;
-
-  result = (obj->headers ? MimeHeaders_get(obj->headers, HEADER_CONTENT_TYPE,
-                                           true, false)
-                         : 0);
-
-  return result;
-}
-
-/* Given a part ID, looks through the MimeObject tree for a sub-part whose ID
-   number matches; if one is found, returns the Content-Name of that part.
-   Else returns NULL.  (part is not a URL -- it's of the form "1.3.5".)
- */
-char* mime_find_suggested_name_of_part(const char* part, MimeObject* obj) {
-  char* result = 0;
-
-  obj = mime_address_to_part(part, obj);
-  if (!obj) return 0;
-
-  result =
-      (obj->headers ? MimeHeaders_get_name(obj->headers, obj->options) : 0);
-
-  /* If this part doesn't have a name, but this part is one fork of an
-   AppleDouble, and the AppleDouble itself has a name, then use that. */
-  if (!result && obj->parent && obj->parent->headers &&
-      mime_typep(obj->parent, (MimeObjectClass*)&mimeMultipartAppleDoubleClass))
-    result = MimeHeaders_get_name(obj->parent->headers, obj->options);
-
-  /* Else, if this part is itself an AppleDouble, and one of its children
-   has a name, then use that (check data fork first, then resource.) */
-  if (!result &&
-      mime_typep(obj, (MimeObjectClass*)&mimeMultipartAppleDoubleClass)) {
-    MimeContainer* cont = (MimeContainer*)obj;
-    if (cont->nchildren > 1 && cont->children[1] && cont->children[1]->headers)
-      result = MimeHeaders_get_name(cont->children[1]->headers, obj->options);
-
-    if (!result && cont->nchildren > 0 && cont->children[0] &&
-        cont->children[0]->headers)
-      result = MimeHeaders_get_name(cont->children[0]->headers, obj->options);
-  }
-
-  /* Ok, now we have the suggested name, if any.
-   Now we remove any extensions that correspond to the
-   Content-Transfer-Encoding.  For example, if we see the headers
-
-    Content-Type: text/plain
-    Content-Disposition: inline; filename=foo.text.uue
-    Content-Transfer-Encoding: x-uuencode
-
-   then we would look up (in mime.types) the file extensions which are
-   associated with the x-uuencode encoding, find that "uue" is one of
-   them, and remove that from the end of the file name, thus returning
-   "foo.text" as the name.  This is because, by the time this file ends
-   up on disk, its content-transfer-encoding will have been removed;
-   therefore, we should suggest a file name that indicates that.
-   */
-  if (result && obj->encoding && *obj->encoding) {
-    int32_t L = strlen(result);
-    const char** exts = 0;
-
-    /*
-     I'd like to ask the mime.types file, "what extensions correspond
-     to obj->encoding (which happens to be "x-uuencode") but doing that
-     in a non-sphagetti way would require brain surgery.  So, since
-     currently uuencode is the only content-transfer-encoding which we
-     understand which traditionally has an extension, we just special-
-     case it here!  Icepicks in my forehead!
-
-     Note that it's special-cased in a similar way in libmsg/compose.c.
-     */
-    if (!PL_strcasecmp(obj->encoding, ENCODING_UUENCODE)) {
-      static const char* uue_exts[] = {"uu", "uue", 0};
-      exts = uue_exts;
-    }
-
-    while (exts && *exts) {
-      const char* ext = *exts;
-      int32_t L2 = strlen(ext);
-      if (L > L2 + 1 &&                           /* long enough */
-          result[L - L2 - 1] == '.' &&            /* '.' in right place*/
-          !PL_strcasecmp(ext, result + (L - L2))) /* ext matches */
-      {
-        result[L - L2 - 1] = 0; /* truncate at '.' and stop. */
-        break;
-      }
-      exts++;
-    }
-  }
 
   return result;
 }
@@ -1791,9 +1654,9 @@ int MimeObject_output_init(MimeObject* obj, const char* content_type) {
     if ((obj->options) &&
         (obj->options->format_out == nsMimeOutput::nsMimeMessageQuoting ||
          obj->options->format_out == nsMimeOutput::nsMimeMessageBodyQuoting ||
-         obj->options->format_out == nsMimeOutput::nsMimeMessageSaveAs ||
-         obj->options->format_out == nsMimeOutput::nsMimeMessagePrintOutput))
+         obj->options->format_out == nsMimeOutput::nsMimeMessageSaveAs)) {
       ResetChannelCharset(obj);
+    }
 
     status = obj->options->output_init_fn(content_type, charset, name,
                                           x_mac_type, x_mac_creator,

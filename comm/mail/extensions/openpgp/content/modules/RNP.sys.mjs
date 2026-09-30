@@ -656,6 +656,12 @@ export var RNP = {
 
     keyObj.fpr = this.getFingerprintFromHandle(handle);
 
+    const version = new lazy.ctypes.uint32_t();
+    if (RNPLib.rnp_key_get_version(handle, version.address())) {
+      throw new Error("rnp_key_get_version failed");
+    }
+    keyObj.version = version.value;
+
     if (RNPLib.rnp_key_get_alg(handle, algo.address())) {
       throw new Error("rnp_key_get_alg failed");
     }
@@ -2220,6 +2226,8 @@ export var RNP = {
               result.encToDetails.myRecipKey
             );
             result.statusFlags |= lazy.EnigmailConstants.DECRYPTION_OKAY;
+            result.extStatusFlags |=
+              lazy.EnigmailConstants.EXT_INTEGRITY_PROTECTED;
           }
         }
       }

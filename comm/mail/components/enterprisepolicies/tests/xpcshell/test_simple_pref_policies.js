@@ -43,6 +43,34 @@ const POLICIES_TESTS = [
     },
   },
 
+  // POLICY: DisableChat
+  {
+    policies: { DisableChat: false },
+    unlockedPrefs: { "mail.chat.enabled": true },
+  },
+  {
+    policies: { DisableChat: true },
+    lockedPrefs: { "mail.chat.enabled": false },
+  },
+
+  // POLICY: DisableCommunity
+  {
+    policies: { DisableCommunity: false },
+    unlockedPrefs: {
+      "mail.community_features.enabled": true,
+      "mailnews.start_page.enabled": true,
+      "mail.accounthub.thundermail.enabled": true,
+    },
+  },
+  {
+    policies: { DisableCommunity: true },
+    lockedPrefs: {
+      "mail.community_features.enabled": false,
+      "mailnews.start_page.enabled": false,
+      "mail.accounthub.thundermail.enabled": false,
+    },
+  },
+
   // POLICY: DisableDataCollectionSettings
   {
     policies: { DisableDataCollectionSettings: false },
@@ -61,6 +89,16 @@ const POLICIES_TESTS = [
   {
     policies: { DisableExperimentalFeatures: true },
     lockedPrefs: { "mail.experimental_features_settings.enabled": false },
+  },
+
+  // POLICY: DisableFileLink
+  {
+    policies: { DisableFileLink: false },
+    unlockedPrefs: { "mail.cloud_files.enabled": true },
+  },
+  {
+    policies: { DisableFileLink: true },
+    lockedPrefs: { "mail.cloud_files.enabled": false },
   },
 
   // POLICY: DisableMessageForwardingFilters

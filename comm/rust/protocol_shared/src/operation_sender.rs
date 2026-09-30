@@ -2,26 +2,35 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::{cell::RefCell, ops::ControlFlow, sync::Arc, time::Duration};
+use std::{cell::RefCell, ffi::CString, ops::ControlFlow, sync::Arc, time::Duration};
 
 use async_lock::Mutex;
 use http::Request;
 use mailnews_ui_glue::{
-    AuthErrorOutcome, handle_auth_failure, handle_transport_sec_failure,
+    AuthErrorOutcome, ErrorBehavior, handle_auth_failure, handle_transport_sec_failure,
     maybe_handle_connection_error, report_connection_success,
 };
 use moz_http::{Response, StatusCode};
 use operation_queue::line_token::{AcquireOutcome, Line, LineStatus};
 use url::Url;
 use uuid::Uuid;
-use xpcom::{RefCounted, RefPtr};
+use xpcom::{
+    RefCounted, RefPtr, components,
+    interfaces::{nsIObserver, nsIObserverService},
+};
 
 use crate::{
     ServerType,
-    authentication::credentials::REALM_SERVER_PROPERTY_NAME,
+    authentication::authentication_provider::PasswordLocationForCache,
     error::ProtocolError,
-    observers::UrlPrefObserver,
-    operation_sender::send_request::{OperationRequest, send_request},
+    observers::{
+        HttpAuthObserver, OBSERVER_TOPIC_CACHED_PASSWORD_CHANGED, OBSERVER_TOPIC_PASSWORDMGR,
+        UrlPrefObserver,
+    },
+    operation_sender::{
+        pref_based_server::ServerProperty,
+        send_request::{OperationRequest, send_request},
+    },
 };
 
 pub mod pref_based_server;
@@ -117,6 +126,29 @@ pub enum TransportSecFailureBehavior {
     Silent,
 }
 
+/// An observer that was registered when starting up the [`OperationSender`],
+/// recorded so it can be cleanly de-registered upon shutdown.
+///
+/// Note that multiple registrations can exist for a given observer, if e.g. it
+/// was registered in multiple ways or against multiple targets.
+struct RegisteredObserver {
+    /// The observer itself.
+    obs: RefPtr<nsIObserver>,
+
+    // The target of the observer's registration.
+    target: ObserverRegistrationTarget,
+}
+
+/// The target of an observer registration.
+enum ObserverRegistrationTarget {
+    /// The observer was registered to be notified when the pref for a given
+    /// server property is changed.
+    Pref(ServerProperty),
+
+    /// The observer was registered for all notifications on a given topic.
+    Topic(String),
+}
+
 /// The central data structure for performing operations against an Exchange
 /// server.
 pub struct OperationSender<ServerT: RefCounted + 'static> {
@@ -133,6 +165,10 @@ pub struct OperationSender<ServerT: RefCounted + 'static> {
     // should be continuing processing requests) can be done by checking whether
     // this field's inner value is `None`.
     server: Mutex<Option<RefPtr<ServerT>>>,
+
+    // The observers we've registered at startup, so we can de-register them at
+    // shutdown.
+    observers_registrations: Vec<RegisteredObserver>,
 }
 
 impl<ServerT: ServerType + 'static> OperationSender<ServerT> {
@@ -154,26 +190,136 @@ impl<ServerT: ServerType + 'static> OperationSender<ServerT> {
 
         // Subscribe to changes to the base URL property on the server (named
         // "ews_url" for historical reasons), so we get updated when it changes.
-        let observer = UrlPrefObserver::new_observer(base_url.clone())?;
-        server.observe_property("ews_url", observer.clone())?;
+        let url_observer = UrlPrefObserver::new_observer(base_url.clone())?;
+        server.observe_property(ServerProperty::EwsUrl, url_observer.clone())?;
+
+        // If the server's authentication should be handled by Necko, populate
+        // the authentication cache.
+        server.maybe_set_necko_auth_cache(PasswordLocationForCache::Memory)?;
+
+        // Also observe future changes to the server's authentication-related
+        // properties, as well as any login stored in the logins manager and
+        // cached password (the observer implementation is in charge of checking
+        // that a notification matches the current server).
+        //
+        // We include the username property here, because servers read usernames
+        // from their properties rather than from the logins manager.
+        let auth_observer = observe_auth_changes(server.clone())?;
+
+        // Record the observers we've just set up, so we can de-register them
+        // upon shutdown. This includes registrations made via
+        // `PrefBasedServer::observe_property`.
+        let observers_registrations = vec![
+            RegisteredObserver {
+                obs: url_observer,
+                target: ObserverRegistrationTarget::Pref(ServerProperty::EwsUrl),
+            },
+            RegisteredObserver {
+                obs: auth_observer.clone(),
+                target: ObserverRegistrationTarget::Pref(ServerProperty::AuthMethod),
+            },
+            RegisteredObserver {
+                obs: auth_observer.clone(),
+                target: ObserverRegistrationTarget::Pref(ServerProperty::EwsUrl),
+            },
+            RegisteredObserver {
+                obs: auth_observer.clone(),
+                target: ObserverRegistrationTarget::Pref(ServerProperty::Realm),
+            },
+            RegisteredObserver {
+                obs: auth_observer.clone(),
+                target: ObserverRegistrationTarget::Pref(ServerProperty::Username),
+            },
+            RegisteredObserver {
+                obs: auth_observer.clone(),
+                target: ObserverRegistrationTarget::Topic(OBSERVER_TOPIC_PASSWORDMGR.to_string()),
+            },
+            RegisteredObserver {
+                obs: auth_observer,
+                target: ObserverRegistrationTarget::Topic(
+                    OBSERVER_TOPIC_CACHED_PASSWORD_CHANGED.to_string(),
+                ),
+            },
+        ];
 
         Ok(OperationSender {
             base_url,
             server: Mutex::new(Some(server)),
             client: moz_http::Client::new(),
             error_handling_line: Line::new(),
+            observers_registrations,
         })
     }
 
     /// "Shut down" the operation sender, by dropping the reference it holds on
-    /// the server.
+    /// the server, and de-registering all observers related to the current
+    /// server.
     ///
     /// The server holds a reference on the client, and the client (through
-    /// `OperationSender`) also holds a reference on the server. Thus, this is
-    /// necessary so they don't prevent each other from being dropped (and leak
-    /// memory).
+    /// `OperationSender`) also holds a reference on the server. Thus, dropping
+    /// the reference on the server is necessary so they don't prevent each
+    /// other from being dropped (and leak memory).
     pub async fn shutdown(&self) {
-        self.server.lock().await.take();
+        let Some(server) = self.server.lock().await.take() else {
+            log::warn!(
+                "OperationSender::shutdown: called after the server reference is already gone (multiple shutdown attempts?)"
+            );
+            return;
+        };
+
+        // When relevant and possible, include the server's key when logging
+        // errors.
+        let server_display = match server.key().ok() {
+            Some(key) => format!("server \"{key}\""),
+            None => "server".to_string(),
+        };
+
+        // De-register the observers. We need to handle each "kind" of observer
+        // registration differently:
+        //  * Observers that were registered via `PrefBasedServer` methods
+        //    should be de-registered the same way, so that both operations
+        //    happen against the pref service.
+        //  * Observers that were registered directly against the observer
+        //    service should be de-registered against this same service.
+        let obs_svc = match components::Observer::service::<nsIObserverService>() {
+            Ok(svc) => svc,
+            Err(err) => {
+                log::error!("OperationSender::shutdown: failed to get observer service: {err}");
+                return;
+            }
+        };
+        for obs_reg in &self.observers_registrations {
+            match obs_reg.target {
+                ObserverRegistrationTarget::Pref(prop) => {
+                    if let Err(err) = server.stop_observing(prop, obs_reg.obs.clone()) {
+                        log::error!(
+                            "OperationSender::shutdown: failed to remove pref observer for {server_display} property {prop:?}: {err}",
+                        );
+                    }
+                }
+                ObserverRegistrationTarget::Topic(ref topic) => {
+                    // Unwrapping should be fine here, since every string used
+                    // here is derived from one of the consts in `observers.rs`.
+                    let target = CString::new(topic.as_str()).unwrap();
+
+                    let status =
+                        unsafe { obs_svc.RemoveObserver(obs_reg.obs.coerce(), target.as_ptr()) };
+                    if let Err(err) = status.to_result() {
+                        log::error!(
+                            "OperationSender::shutdown: failed to remove observer for topic {topic}: {err}"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Remove any entry the Necko HTTP auth cache might have for this
+        // server.
+        if let Err(err) = server.maybe_remove_necko_auth_cache_entry() {
+            log::error!(
+                "OperationSender::shutdown: failed to remove {server_display} from the Necko auth cache: {err}"
+            );
+        }
     }
 
     /// Returns the [`Url`] currently used as the protocol API's base URL.
@@ -308,8 +454,12 @@ impl<ServerT: ServerType + 'static> OperationSender<ServerT> {
                         );
                     }
 
-                    maybe_handle_connection_error((&err).into(), self.server().await?)
-                        .map_err(ProtocolError::from)?;
+                    maybe_handle_connection_error(
+                        (&err).into(),
+                        self.server().await?,
+                        ErrorBehavior::Notify,
+                    )
+                    .map_err(ProtocolError::from)?;
                     return Err(ProtocolError::from(err).into());
                 }
             };
@@ -364,25 +514,8 @@ impl<ServerT: ServerType + 'static> OperationSender<ServerT> {
         &self,
         op_request: &OperationRequest<'or>,
     ) -> Result<Response, ProtocolError> {
-        // Get a new `Credentials` for the request.
-        //
-        // We used to reuse the same instance for each operation, but this does
-        // not scale well now that we're reusing the same client/sender for
-        // every operation (because there are a bunch of places that manage
-        // credentials for an account, and they don't all use the same
-        // identifiers). Getting a new `Credentials` for each request is the
-        // easiest way to ensure we're always using up-to-date credentials, for
-        // (hopefully) a minimal overhead (currently, the only difference this
-        // currently makes is we now get a new one if an auth failure can be
-        // solved by refreshing the cookie).
-        //
-        // If this ever becomes an issue, we can always either add a
-        // `Credentials` instance to each of `QueuedOperation`'s variants, or
-        // add one to `OperationSender` with some carefully crafted and
-        // configured observers.
-        let credentials = self.server().await?.get_credentials()?;
-
-        let resp = send_request(&self.client, op_request, &credentials).await?;
+        let server = self.server().await?;
+        let resp = send_request(&self.client, op_request, server).await?;
 
         // Catch authentication errors quickly so we can react to them
         // appropriately.
@@ -443,7 +576,11 @@ impl<ServerT: ServerType + 'static> OperationSender<ServerT> {
             // user (depending on which specific error it is) before
             // propagating it.
             ProtocolError::Http(ref http_error) => {
-                maybe_handle_connection_error(http_error.into(), self.server().await?)?;
+                maybe_handle_connection_error(
+                    http_error.into(),
+                    self.server().await?,
+                    ErrorBehavior::Notify,
+                )?;
                 Err(err)
             }
 
@@ -522,7 +659,7 @@ impl<ServerT: ServerType + 'static> OperationSender<ServerT> {
             if realms.len() < 2 {
                 // Check if we already have a realm stored for this server.
                 let server = self.server().await?;
-                let existing_realm = server.get_string_property(REALM_SERVER_PROPERTY_NAME)?;
+                let existing_realm = server.get_string_property(ServerProperty::Realm)?;
 
                 // See if what we got from the response matches what we have
                 // stored locally. Let's do this by comparing strings, using an
@@ -533,7 +670,7 @@ impl<ServerT: ServerType + 'static> OperationSender<ServerT> {
                     log::debug!(
                         "got response with different realm than what was stored, retrying with new realm"
                     );
-                    server.set_string_property(REALM_SERVER_PROPERTY_NAME, realm)?;
+                    server.set_string_property(ServerProperty::Realm, realm)?;
                     return Ok(());
                 } else {
                     log::debug!("ignoring WWW-Authenticate response headers with known realm");
@@ -554,7 +691,7 @@ impl<ServerT: ServerType + 'static> OperationSender<ServerT> {
             return Err(err);
         }
 
-        let outcome = handle_auth_failure(self.server().await?)?;
+        let outcome = handle_auth_failure(self.server().await?, ErrorBehavior::Notify)?;
 
         match outcome {
             // The user has asked us to retry the request, let's do this by
@@ -573,4 +710,52 @@ impl<ServerT: ServerType + 'static> OperationSender<ServerT> {
             }
         }
     }
+}
+
+/// Creates an [`HttpAuthObserver`] and registers it against the given server.
+fn observe_auth_changes<ServerT: ServerType + 'static>(
+    server: RefPtr<ServerT>,
+) -> Result<RefPtr<nsIObserver>, ProtocolError> {
+    let auth_observer = HttpAuthObserver::new_observer(server.clone())?;
+    server.observe_property(ServerProperty::AuthMethod, auth_observer.clone())?;
+    server.observe_property(ServerProperty::EwsUrl, auth_observer.clone())?;
+    server.observe_property(ServerProperty::Realm, auth_observer.clone())?;
+    server.observe_property(ServerProperty::Username, auth_observer.clone())?;
+
+    let obs_svc = components::Observer::service::<nsIObserverService>()?;
+    // SAFETY: Both parameters are valid pointers that stay alive throughout the
+    // function call. It does not matter that the topic's `CString` doesn't live
+    // beyond this, because it is only used to compute a hash for the
+    // `nsIObserverService`'s internal hash table, which happens before
+    // `AddObserver` returns.
+    unsafe {
+        obs_svc.AddObserver(
+            auth_observer.coerce(),
+            // Unwrapping should be fine here, since this string is a
+            // constant we know.
+            CString::new(OBSERVER_TOPIC_PASSWORDMGR).unwrap().as_ptr(),
+            false,
+        )
+    }
+    .to_result()?;
+
+    // SAFETY: Both parameters are valid pointers that stay alive throughout the
+    // function call. It does not matter that the topic's `CString` doesn't live
+    // beyond this, because it is only used to compute a hash for the
+    // `nsIObserverService`'s internal hash table, which happens before
+    // `AddObserver` returns.
+    unsafe {
+        obs_svc.AddObserver(
+            auth_observer.coerce(),
+            // Unwrapping should be fine here, since this string is a
+            // constant we know.
+            CString::new(OBSERVER_TOPIC_CACHED_PASSWORD_CHANGED)
+                .unwrap()
+                .as_ptr(),
+            false,
+        )
+    }
+    .to_result()?;
+
+    Ok(auth_observer)
 }

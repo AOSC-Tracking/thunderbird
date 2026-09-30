@@ -187,7 +187,11 @@ add_task(async function test_attachment_reminder_appears_properly() {
   const buttonSend = cwc.document.getElementById("button-send");
   EventUtils.synthesizeMouseAtCenter(buttonSend, {}, buttonSend.documentGlobal);
   await dialogPromise;
-  await new Promise(resolve => setTimeout(resolve));
+  await TestUtils.waitForCondition(
+    () =>
+      !cwc.document.getElementById("cmd_remindLater").hasAttribute("checked"),
+    "The manual reminder should get disabled"
+  );
 
   // After confirming the reminder the menuitem should get disabled.
   assert_manual_reminder_state(cwc, false);
@@ -296,7 +300,9 @@ add_task(async function test_attachment_reminder_with_attachment() {
  */
 add_task(async function test_attachment_reminder_aggressive_pref() {
   const kPref = "mail.compose.attachment_reminder_aggressive";
-  Services.prefs.setBoolPref(kPref, false);
+  await SpecialPowers.pushPrefEnv({
+    set: [[kPref, false]],
+  });
 
   const cwc = await open_compose_new_mail();
 
@@ -316,9 +322,7 @@ add_task(async function test_attachment_reminder_aggressive_pref() {
   await close_compose_window(cwc);
 
   // Now reset the pref back to original value.
-  if (Services.prefs.prefHasUserValue(kPref)) {
-    Services.prefs.clearUserPref(kPref);
-  }
+  await SpecialPowers.popPrefEnv();
 });
 
 /**
@@ -662,7 +666,9 @@ add_task(async function test_attachment_reminder_in_subject_and_body() {
  * is turned off.
  */
 add_task(async function test_disabled_attachment_reminder() {
-  Services.prefs.setBoolPref(kReminderPref, false);
+  await SpecialPowers.pushPrefEnv({
+    set: [[kReminderPref, false]],
+  });
 
   // Open a sample message with no attachment keywords.
   const cwc = await open_compose_new_mail();
@@ -698,7 +704,7 @@ add_task(async function test_disabled_attachment_reminder() {
 
   await close_compose_window(cwc);
 
-  Services.prefs.setBoolPref(kReminderPref, true);
+  await SpecialPowers.popPrefEnv();
 });
 
 /**

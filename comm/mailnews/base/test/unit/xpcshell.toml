@@ -63,6 +63,8 @@ tags = ["compact"]
 
 ["test_emptyTrash.js"]
 
+["test_encryptedURIsService.js"]
+
 ["test_fix_deferred_accounts.js"]
 
 ["test_folderCompact.js"]
@@ -173,6 +175,8 @@ tags = ["oauth"]
 
 ["test_threadMsgCounts.js"]
 tags = ["virtualfolders"]
+
+["test_viewSenderNameCache.js"]
 
 ["test_viewSortByAddresses.js"]
 

@@ -194,7 +194,7 @@ export class SMTP_RFC2821_handler {
     this._nextAuthFunction = this.authLOGINUsername;
     this._multiline = true;
 
-    return "334 " + btoa("Username:");
+    return "334 " + (this.kLoginUserChallenge ?? btoa("Username:"));
   }
   authLOGINUsername(line) {
     var req = AuthLOGIN.decodeLine(line);
@@ -205,7 +205,7 @@ export class SMTP_RFC2821_handler {
       this._nextAuthFunction = this.authLOGINBadUsername;
     }
     this._multiline = true;
-    return "334 " + btoa("Password:");
+    return "334 " + (this.kLoginPassChallenge ?? btoa("Password:"));
   }
   authLOGINBadUsername() {
     if (this.dropOnAuthFailure) {
@@ -282,10 +282,29 @@ export class SMTP_OAUTH2_handler extends SMTP_RFC2821_handler {
 
   constructor(daemon, options) {
     super(daemon, options);
+    this.kAuthRequired = true;
+    this.resetTest();
     this._kAuthSchemeStartFunction.XOAUTH2 = this.authXOAUTH2Start;
   }
 
+  AUTH(line) {
+    //  The SMTP command limit excludes SASL responses per RFC 4954.
+    if (`AUTH ${line}\r\n`.length > 512) {
+      return "500 5.5.2 Line too long";
+    }
+    return super.AUTH(line);
+  }
+
   authXOAUTH2Start(line) {
+    if (line === undefined) {
+      this._nextAuthFunction = this.authXOAUTH2Cred;
+      this._multiline = true;
+      return "334 ";
+    }
+    return this.authXOAUTH2Cred(line);
+  }
+
+  authXOAUTH2Cred(line) {
     const [user, auth] = atob(line).split("\u0001");
     if (
       user == `user=${this.kUsername}` &&
@@ -294,6 +313,13 @@ export class SMTP_OAUTH2_handler extends SMTP_RFC2821_handler {
       this._state = kStateAuthenticated;
       return "235 2.7.0 Yeah, that's the right access token.";
     }
-    return "535 5.7.8 Yeah, nah, that's the wrong access token.";
+    // XOAUTH2 reports the error in a 334 challenge. The client must reply with
+    // an empty response before the server ends authentication with 535.
+    this._nextAuthFunction = response =>
+      response === ""
+        ? "535 5.7.8 Invalid access token"
+        : "501 5.5.2 Expected an empty response";
+    this._multiline = true;
+    return "334 " + btoa('{"status":"401","schemes":"bearer"}');
   }
 }

@@ -54,6 +54,9 @@ support-files = [
 # Tests in this folder are split across multiple manifests. When adding a test,
 # please put it in the manifest with its (alphabetical) neighbours.
 
+["browser_enterpriseForcedShutdown.js"]
+skip-if = ["!enterprise"]
+
 ["browser_redirect.js"]
 
 ["browser_remove_text_styling.js"]

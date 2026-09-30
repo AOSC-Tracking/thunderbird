@@ -18,6 +18,7 @@
 /* import-globals-from mailCore.js */
 /* import-globals-from msgSecurityPane.js */
 /* global openpgpSink */ // From enigmailMsgHdrViewOverlay.js
+/* global gEncryptedURIService */ // From mailCommon.js
 
 /* globals MozElements */
 
@@ -75,12 +76,6 @@ XPCOMUtils.defineLazyServiceGetter(
   "@mozilla.org/uriloader/handler-service;1",
   Ci.nsIHandlerService
 );
-XPCOMUtils.defineLazyServiceGetter(
-  this,
-  "gEncryptedSMIMEURIsService",
-  "@mozilla.org/messenger-smime/smime-encrypted-uris-service;1",
-  Ci.nsIEncryptedSMIMEURIsService
-);
 
 // Warning: It's critical that the code in here for displaying the message
 // headers for a selected message remain as fast as possible. In particular,
@@ -91,8 +86,6 @@ XPCOMUtils.defineLazyServiceGetter(
 // message view in the message header pane.
 
 var gViewAllHeaders = false;
-var gMinNumberOfHeaders = 0;
-var gDummyHeaderIdIndex = 0;
 var gBuildAttachmentsForCurrentMsg = false;
 var gBuiltExpandedView = false;
 
@@ -429,12 +422,6 @@ async function msgSecurityKeypressHandler(event) {
 }
 
 async function OnLoadMsgHeaderPane() {
-  // Load any preferences that at are global with regards to
-  // displaying a message...
-  gMinNumberOfHeaders = Services.prefs.getIntPref(
-    "mailnews.headers.minNumHeaders"
-  );
-
   Services.obs.addObserver(MsgHdrViewObserver, "remote-content-blocked");
 
   initializeHeaderViewTables();
@@ -510,11 +497,18 @@ var MsgHdrViewObserver = {
         browser.browsingContext.id == data ||
         browser.browsingContext == BrowsingContext.get(data)?.top
       ) {
-        gMessageNotificationBar.setRemoteContentMsg(
-          null,
-          subject,
-          !gEncryptedSMIMEURIsService.isEncrypted(browser.currentURI.spec)
+        // Offer the "load remote content" override for non-encrypted mail and,
+        // as of bug 1994709, for integrity-protected OpenPGP mail (MDC/AEAD).
+        // No override allowed for encrypted mail without integrity protection.
+        const canOverride = !gEncryptedURIService.isEncryptedWithoutIntegrity(
+          browser.currentURI.spec
         );
+        if (!canOverride) {
+          console.warn(
+            "Remote content unconditionally blocked due to missing integrity protection."
+          );
+        }
+        gMessageNotificationBar.setRemoteContentMsg(null, subject, canOverride);
       }
     }
   },
@@ -674,8 +668,10 @@ var messageProgressListener = {
    * message loading has finished.
    */
   onDOMContentLoaded(event) {
-    const { docShell } = event.target.documentGlobal;
-    if (!docShell.isTopLevelContentDocShell) {
+    // The listener for this event outlives the message load, so it can fire
+    // for a document which isn't the message, or one which has already gone.
+    const { docShell } = event.target.documentGlobal ?? {};
+    if (!docShell?.isTopLevelContentDocShell) {
       return;
     }
 
@@ -739,7 +735,6 @@ var messageProgressListener = {
             headerEntry.enclosingRow.remove();
           }
         }
-        gDummyHeaderIdIndex = 0;
 
         gExpandedHeaderView = {};
         initializeHeaderViewTables();
@@ -1014,6 +1009,13 @@ var messageProgressListener = {
    */
   async onEndMsgDownload(url) {
     const browser = getMessagePaneBrowser();
+    // Everything here is about the message which just loaded. The message pane
+    // can navigate away before or while we do it, and once it has, there's
+    // nothing left to do.
+    const isStillDisplayed = () => url.equals(browser.currentURI);
+    if (!isStillDisplayed()) {
+      return;
+    }
 
     // If we have no attachments, we hide the attachment icon in the message
     // tree.
@@ -1087,6 +1089,10 @@ var messageProgressListener = {
       gMessageNotificationBar.setPhishingMsg();
     }
 
+    if (!isStillDisplayed()) {
+      return;
+    }
+
     // Notify anyone (e.g., extensions) who's interested in when a message is loaded.
     Services.obs.notifyObservers(null, "MsgMsgDisplayed", gMessageURI);
 
@@ -1144,6 +1150,9 @@ var messageProgressListener = {
           once: true,
         });
       });
+      if (!isStillDisplayed()) {
+        return;
+      }
     }
 
     // Scale any overflowing images, exclude http content.
@@ -1277,58 +1286,10 @@ function showHeaderView(aHeaderTable) {
 }
 
 /**
- * Enumerate through the list of headers and find the number that are visible
- * add empty entries if we don't have the minimum number of rows.
- */
-function EnsureMinimumNumberOfHeaders(headerTable) {
-  // 0 means we don't have a minimum... do nothing special
-  if (!gMinNumberOfHeaders) {
-    return;
-  }
-
-  var numVisibleHeaders = 0;
-  for (const name in headerTable) {
-    const headerEntry = headerTable[name];
-    if (headerEntry.valid) {
-      numVisibleHeaders++;
-    }
-  }
-
-  if (numVisibleHeaders < gMinNumberOfHeaders) {
-    // How many empty headers do we need to add?
-    var numEmptyHeaders = gMinNumberOfHeaders - numVisibleHeaders;
-
-    // We may have already dynamically created our empty rows and we just need
-    // to make them visible.
-    for (const index in headerTable) {
-      const headerEntry = headerTable[index];
-      if (index.startsWith("Dummy-Header") && numEmptyHeaders) {
-        headerEntry.valid = true;
-        numEmptyHeaders--;
-      }
-    }
-
-    // Ok, now if we have any extra dummy headers we need to add, create a new
-    // header widget for them.
-    while (numEmptyHeaders) {
-      var dummyHeaderId = "Dummy-Header" + gDummyHeaderIdIndex;
-      gExpandedHeaderView[dummyHeaderId] = new HeaderView(dummyHeaderId, "");
-      gExpandedHeaderView[dummyHeaderId].valid = true;
-
-      gDummyHeaderIdIndex++;
-      numEmptyHeaders--;
-    }
-  }
-}
-
-/**
  * Make sure the appropriate fields in the expanded header view are collapsed
  * or visible...
  */
 function updateExpandedView() {
-  if (gMinNumberOfHeaders) {
-    EnsureMinimumNumberOfHeaders(gExpandedHeaderView);
-  }
   showHeaderView(gExpandedHeaderView);
 
   // Now that we have all the headers, ensure that the name columns of both
@@ -1731,7 +1692,7 @@ function onShowAttachmentItemContextMenu() {
   ) {
     selectedAttachments = [attachmentList.getItemAtIndex(0).attachment];
     if (contextMenu.triggerNode == attachmentName) {
-      attachmentName.setAttribute("selected", true);
+      attachmentName.toggleAttribute("selected", true);
     }
   } else {
     selectedAttachments = [...attachmentList.selectedItems].map(
@@ -2274,17 +2235,20 @@ function toggleAttachmentList(expanded, updateFocus) {
   }
 
   attachmentToggle.checked = expanded;
+  attachmentBar.setAttribute("aria-expanded", String(expanded));
   attachmentList.collapsed = !expanded;
   attachmentView.classList.toggle("list-expanded", expanded);
+
+  const attachmentToggleLabel = bundle.getString(
+    expanded ? "collapseAttachmentPaneTooltip" : "expandAttachmentPaneTooltip"
+  );
+  attachmentToggle.setAttribute("aria-label", attachmentToggleLabel);
+  attachmentBar.setAttribute("tooltiptext", attachmentToggleLabel);
 
   if (expanded) {
     if (!attachmentView.collapsed) {
       attachmentSplitter.collapsed = false;
     }
-    attachmentBar.setAttribute(
-      "tooltiptext",
-      bundle.getString("collapseAttachmentPaneTooltip")
-    );
 
     attachmentList.setOptimumWidth();
 
@@ -2301,10 +2265,6 @@ function toggleAttachmentList(expanded, updateFocus) {
     }
   } else {
     attachmentSplitter.collapsed = true;
-    attachmentBar.setAttribute(
-      "tooltiptext",
-      bundle.getString("expandAttachmentPaneTooltip")
-    );
 
     // This may have been set by the XUL splitter.
     attachmentView.style.height = null;
@@ -2313,6 +2273,43 @@ function toggleAttachmentList(expanded, updateFocus) {
       // TODO
     }
   }
+}
+
+/**
+ * Toggle the message attachment list from the keyboard when the attachment bar
+ * itself is focused.
+ *
+ * @param {KeyboardEvent} event - The key event from the attachment bar.
+ */
+function attachmentBarOnKeyDown(event) {
+  if (event.key != " " && event.key != "Enter") {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  toggleAttachmentList(undefined, true);
+}
+
+/**
+ * Open the attachment toolbar context menu for the HTML attachment bar.
+ *
+ * @param {MouseEvent} event - The context menu event from the attachment bar.
+ */
+function attachmentBarOnContextMenu(event) {
+  if (
+    event.target.closest("#attachmentInfo") ||
+    event.target.closest("#attachment-view-toolbar")
+  ) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  document
+    .getElementById("attachment-toolbar-context-menu")
+    .openPopup(event.currentTarget, {
+      triggerEvent: event,
+    });
 }
 
 /**
@@ -2329,6 +2326,21 @@ function OpenAttachmentFromBar(event) {
     }
     event.stopPropagation();
   }
+}
+
+/**
+ * Open an attachment from the attachment bar when the attachment name is
+ * focused.
+ *
+ * @param {KeyboardEvent} event - The key event from the attachment name.
+ */
+function attachmentNameOnKeyDown(event) {
+  if (event.key != " " && event.key != "Enter") {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  TryHandleAllAttachments("open");
 }
 
 /**

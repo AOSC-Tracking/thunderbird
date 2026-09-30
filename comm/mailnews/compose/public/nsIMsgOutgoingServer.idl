@@ -117,7 +117,8 @@ interface nsIMsgOutgoingServer : nsISupports {
   attribute nsMsgSocketTypeValue socketType;
 
   /**
-   * Returns the URI of the server.
+   * Returns the URI of the server, or null if the server is not configured
+   * enough to have one, e.g. because it has no hostname yet.
    */
   readonly attribute nsIURI serverURI;
 
@@ -189,6 +190,11 @@ interface nsIMsgOutgoingServer : nsISupports {
    * password manager and from the stored value.
    */
   void forgetPassword();
+
+  /**
+   * Forget the password in memory which is cached for the session.
+   */
+  void forgetSessionPassword();
 
   /**
    * Verify that we can log onto the server.

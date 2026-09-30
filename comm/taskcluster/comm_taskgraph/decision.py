@@ -15,7 +15,7 @@ from taskgraph.util.vcs import get_repository
 from gecko_taskgraph.decision import ARTIFACTS_DIR, write_artifact
 from gecko_taskgraph.parameters import get_app_version, get_version
 from gecko_taskgraph.util.backstop import is_backstop
-from gecko_taskgraph.util.hg import get_hg_commit_message, get_hg_revision_info
+from gecko_taskgraph.util.hg import get_hg_revision_info
 from gecko_taskgraph.util.partials import populate_release_history
 from gecko_taskgraph.util.taskgraph import (
     find_decision_task,
@@ -68,6 +68,16 @@ PER_PROJECT_PARAMETERS = {
         "target_tasks_method": "mozilla_esr153_tasks",
         "release_type": "esr153",
     },
+    # Enterprise, will be improved later.
+    "enterprise-thunderbird": {
+        "target_tasks_method": "enterprise_thunderbird_with_tests_tasks",
+        "release_product": "thunderbird-enterprise",
+    },
+    "enterprise-thunderbird-try": {
+        "enable_always_target": True,
+        "release_product": "thunderbird-enterprise",
+        "target_tasks_method": "try_cc_tasks",
+    },
 }
 
 CRON_OPTIONS = {
@@ -87,6 +97,7 @@ COMM_DEFAULTS = {
     "head_git_repository": FIREFOX_GIT_REPOSITORY,
     "version": get_version("comm/mail"),
     "comm_src_path": "comm/",
+    "shipping": True,
     "try_options": None,
 }
 
@@ -136,7 +147,6 @@ def restore_options():
 def get_decision_parameters(graph_config, parameters):
     logger.info("{}.get_decision_parameters called".format(__name__))
 
-    commit_message = get_hg_commit_message(COMM)
     options = restore_options()
 
     # Apply default values for all Thunderbird CI projects - override some Gecko defaults!
@@ -157,6 +167,9 @@ def get_decision_parameters(graph_config, parameters):
     if options.get("target_tasks_method"):
         parameters["target_tasks_method"] = options["target_tasks_method"]
 
+    repo = get_repository(COMM)
+    commit_message = repo.get_commit_message()
+
     # If the commit message contains "DONTBUILD" and this is an on-push
     # decision task, mark it so the morph phase can drop all tasks and so
     # that is_backstop knows not to count this push as a backstop.
@@ -171,6 +184,21 @@ def get_decision_parameters(graph_config, parameters):
         time_interval=BACKSTOP_TIME_INTERVAL,
         integration_projects=INTEGRATION_PROJECTS,
     )
+
+    if "enterprise" in project:
+        from gecko_taskgraph.parameters import get_release_type
+
+        from comm_taskgraph.util.partners import (
+            get_release_partner_config,
+            get_release_partners,
+        )
+
+        parameters["release_partner_config"] = get_release_partner_config(
+            parameters, graph_config
+        )
+        parameters["release_partners"] = get_release_partners(parameters)
+        parameters["release_type"] = get_release_type(parameters)
+
     for n in (
         "COMM_BASE_REPOSITORY",
         "COMM_BASE_REV",
@@ -181,8 +209,6 @@ def get_decision_parameters(graph_config, parameters):
     ):
         val = os.environ.get(n, "")
         parameters[n.lower()] = val
-
-    repo = get_repository(COMM)
 
     # If comm_base_ref is None, set to default branch
     if not parameters.get("comm_base_ref"):

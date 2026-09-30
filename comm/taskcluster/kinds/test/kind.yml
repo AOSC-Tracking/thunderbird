@@ -14,6 +14,7 @@ kind-dependencies:
     - toolchain
 
 transforms:
+    - comm_taskgraph.transforms.enterprise:remove_enterprise_tests
     - comm_taskgraph.transforms.tests:transforms
     - gecko_taskgraph.transforms.test:transforms
     - gecko_taskgraph.transforms.job:transforms
@@ -26,7 +27,7 @@ tasks-from:
 
 # These apply to all included test yml files listed in tasks-from
 task-defaults:
-    run-on-repo-type: [hg]
+    run-on-repo-type: ["hg", "git"]
     attributes:
         retrigger: true
     use-python: system

@@ -31,8 +31,8 @@ const { MailServices } = ChromeUtils.importESModule(
 );
 
 const gEncryptedURIService = Cc[
-  "@mozilla.org/messenger-smime/smime-encrypted-uris-service;1"
-].getService(Ci.nsIEncryptedSMIMEURIsService);
+  "@mozilla.org/messenger/encrypted-msg-uris-service;1"
+].getService(Ci.nsIEncryptedMsgURIsService);
 
 const MSG_BODY = "This is a test message from Alice to Bob.";
 
@@ -118,13 +118,13 @@ add_setup(async function () {
   survivingFolder = await create_folder("EncryptedUriCleanupSurviving");
   await addEnvelopedMessage(survivingFolder);
 
-  registerCleanupFunction(function () {
+  registerCleanupFunction(async function () {
     for (const account of removableAccounts) {
       if (MailServices.accounts.accounts.includes(account)) {
         MailServices.accounts.removeAccount(account, true);
       }
     }
-    SmimeUtils.removeCertificates(["NSS Test CA (RSA)", "Bob", "Alice"]);
+    await SmimeUtils.removeCertificates(["NSS Test CA (RSA)", "Bob", "Alice"]);
   });
 });
 

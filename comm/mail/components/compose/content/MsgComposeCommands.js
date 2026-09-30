@@ -215,8 +215,8 @@ var gIsRelatedToEncryptedOriginal = false;
 var gOpened = Date.now();
 
 var gEncryptedURIService = Cc[
-  "@mozilla.org/messenger-smime/smime-encrypted-uris-service;1"
-].getService(Ci.nsIEncryptedSMIMEURIsService);
+  "@mozilla.org/messenger/encrypted-msg-uris-service;1"
+].getService(Ci.nsIEncryptedMsgURIsService);
 
 try {
   var gDragService = Cc["@mozilla.org/widget/dragservice;1"].getService(
@@ -944,6 +944,27 @@ var progressListener = {
         "mail:composeSendProgressStop"
       );
     }
+  },
+
+  async waitForStop() {
+    // Progress can stop before the send promise resolves, so we avoid waiting if it is already done.
+    if (!gSendOperationInProgress) {
+      return;
+    }
+
+    await new Promise(resolve => {
+      function onProgressStop(subject) {
+        if (subject.wrappedJSObject.composeWindow != window) {
+          return;
+        }
+        Services.obs.removeObserver(
+          onProgressStop,
+          "mail:composeSendProgressStop"
+        );
+        resolve();
+      }
+      Services.obs.addObserver(onProgressStop, "mail:composeSendProgressStop");
+    });
   },
 
   onProgressChange(
@@ -6617,6 +6638,8 @@ async function CompleteGenericSendMessage(msgType) {
     msgType == Ci.nsIMsgCompDeliverMode.Later ||
     msgType == Ci.nsIMsgCompDeliverMode.Background
   ) {
+    // We keep the compose window open so the recovery dialog can be shown if copying fails.
+    await progressListener.waitForStop();
     window.close();
   }
 }
@@ -7952,6 +7975,13 @@ function SetComposeWindowTitle() {
  * @returns {boolean} true if the window can go ahead and close.
  */
 function ComposeCanClose() {
+  // The enterprise shutdown hook already attempted to preserve this compose
+  // state. Do not let a prompt block the administrator-requested forced quit.
+  if (document.documentElement.dataset.enterpriseForcedShutdown === "true") {
+    delete document.documentElement.dataset.enterpriseForcedShutdown;
+    return true;
+  }
+
   // No open compose window?
   if (!gMsgCompose) {
     return true;
@@ -11217,13 +11247,13 @@ function InitEditor() {
       }
       if (!/^file:/i.test(src)) {
         // Check if this is a protocol that can fetch parts.
-        const protocol = src.substr(0, src.indexOf(":")).toLowerCase();
-        if (
-          !(
-            Services.io.getProtocolHandler(protocol) instanceof
-            Ci.nsIMsgMessageFetchPartService
-          )
-        ) {
+        let messageService;
+        try {
+          messageService = MailServices.messageServiceFromURI(src);
+        } catch {
+          return;
+        }
+        if (!(messageService instanceof Ci.nsIMsgMessageFetchPartService)) {
           // Can't fetch parts, don't try to load.
           return;
         }

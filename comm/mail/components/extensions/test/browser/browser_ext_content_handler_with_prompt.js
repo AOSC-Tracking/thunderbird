@@ -40,7 +40,7 @@ const getCommonFiles = async () => {
                 if (changes.url) {
                   log.url = changes.url;
                 }
-                // The complete is only valid, if we have seen a url (which was
+                // The complete is only valid if we have seen a url (which was
                 // not "about:blank")
                 if (log.url && changes?.status == "complete") {
                   log.complete = true;
@@ -170,12 +170,8 @@ const subtest_clickInBrowser = async (extension, getBrowser) => {
 };
 
 add_setup(async () => {
-  Services.prefs.setBoolPref(
-    "mail.external_protocol_requires_permission",
-    true
-  );
-  registerCleanupFunction(async () => {
-    Services.prefs.clearUserPref("mail.external_protocol_requires_permission");
+  await SpecialPowers.pushPrefEnv({
+    set: [["mail.external_protocol_requires_permission", true]],
   });
 
   const account = createAccount();

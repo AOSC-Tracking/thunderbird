@@ -2,7 +2,7 @@
 (function() {
 	try {
 		var e = "undefined" != typeof window ? window : "undefined" != typeof global ? global : "undefined" != typeof globalThis ? globalThis : "undefined" != typeof self ? self : {};
-		e.SENTRY_RELEASE = { id: "7c32f9769816d000db14315d9a381168500e294f" };
+		e.SENTRY_RELEASE = { id: "fbc799e95a2f1ac419d28b82eb26a94c7c11a212" };
 		e._sentryModuleMetadata = e._sentryModuleMetadata || {}, e._sentryModuleMetadata[new e.Error().stack] = function(e) {
 			for (var n = 1; n < arguments.length; n++) {
 				var a = arguments[n];
@@ -10,11 +10,11 @@
 			}
 			return e;
 		}({}, e._sentryModuleMetadata[new e.Error().stack], {
-			"version": "2.0.11",
+			"version": "2.0.16",
 			"appHost": "management"
 		});
 		var n = new e.Error().stack;
-		n && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[n] = "e7517d88-5e69-45bf-8fad-b833cdf9dbf9", e._sentryDebugIdIdentifier = "sentry-dbid-e7517d88-5e69-45bf-8fad-b833cdf9dbf9");
+		n && (e._sentryDebugIds = e._sentryDebugIds || {}, e._sentryDebugIds[n] = "8cbd4e44-3d6b-42b7-9a8c-522c99453d66", e._sentryDebugIdIdentifier = "sentry-dbid-8cbd4e44-3d6b-42b7-9a8c-522c99453d66");
 	} catch (e) {}
 })();
 var __create$2 = Object.create;
@@ -9415,7 +9415,8 @@ var INIT_ERRORS = {
 	NONE: 0,
 	NO_USER: 1,
 	NO_KEYCHAIN: 2,
-	COULD_NOT_CREATE_DEFAULT_FOLDER: 3
+	COULD_NOT_CREATE_DEFAULT_FOLDER: 3,
+	KEYCHAIN_LOCKED: 4
 };
 //#endregion
 //#region ../send/frontend/src/lib/storage/LocalStorage.ts
@@ -9477,6 +9478,17 @@ var Storage$1 = class {
 	async loadKeypair() {
 		return this.adapter.get(this.RSA_KEYS_KEY);
 	}
+	/**
+	* Removes the stale key material — the wrapped (container) keys and the
+	* cached passphrase — while leaving the user/session intact. Used when the
+	* passphrase changed on another device: clearing both lets the normal
+	* validation/restore flow start fresh (prompt for the new passphrase and
+	* re-fetch keys from the server backup) instead of retrying the stale one.
+	*/
+	async clearKeys() {
+		this.adapter.remove(this.OTHER_KEYS_KEY);
+		this.adapter.remove(this.PASS_PHRASE);
+	}
 	async clear() {
 		return this.adapter.clear();
 	}
@@ -9518,6 +9530,64 @@ async function pullBridgedPassphrase(keychain) {
 		return true;
 	} catch (error) {
 		console.error("Error pulling bridged passphrase:", error);
+		return false;
+	}
+}
+/**
+* Stage a passphrase in extension storage for the bridge, exactly as the
+* background does when the web app posts SEND_MESSAGE_TO_BRIDGE.
+*
+* The management page runs the same frontend as the web app, but the
+* token-bridge content script is not injected into moz-extension pages, so a
+* window.postMessage from there never reaches the background. Writing the
+* staged value directly makes a passphrase set/re-wrap inside the extension
+* reach the other extension contexts on their next restore instead of leaving
+* them on the old passphrase.
+*
+* Runs only in an extension context; it is a no-op in a plain web page (where
+* `browser` is undefined) — there, the postMessage → content script → background
+* path does the staging instead.
+*
+* @returns true if the passphrase was staged, false otherwise.
+*/
+async function stageBridgedPassphrase(passphrase) {
+	if (typeof browser === "undefined" || !browser?.storage?.local) return false;
+	try {
+		await browser.storage.local.set({ [SEND_MESSAGE_TO_BRIDGE]: passphrase });
+		console.log("✅ Staged passphrase for the bridge in extension storage");
+		return true;
+	} catch (error) {
+		console.error("Error staging bridged passphrase:", error);
+		return false;
+	}
+}
+/**
+* Clear a staged bridged passphrase without consuming it into the keychain.
+*
+* Called when a stale passphrase is detected (keychain.locked after a failed
+* restore): the staged value is what fed the keychain, so leaving it in
+* extension storage would let pullBridgedPassphrase replay the old passphrase
+* back into the keychain on the next restore.
+*
+* Same guard semantics as pullBridgedPassphrase: no-op in a plain web page.
+*
+* @param stalePassphrase - when provided, only a staged value equal to it is
+* removed. A differing staged value was necessarily written after the stale
+* one was consumed (stageBridgedPassphrase on a passphrase set/re-wrap), so
+* it is likely the NEW passphrase and must survive for the next restore.
+* @returns true if a staged value was found and removed, false otherwise.
+*/
+async function clearBridgedPassphrase(stalePassphrase) {
+	if (typeof browser === "undefined" || !browser?.storage?.local) return false;
+	try {
+		const result = await browser.storage.local.get(SEND_MESSAGE_TO_BRIDGE);
+		if (!result?.["SEND_MESSAGE_TO_BRIDGE"]) return false;
+		if (stalePassphrase !== void 0 && result["SEND_MESSAGE_TO_BRIDGE"] !== stalePassphrase) return false;
+		await browser.storage.local.remove(SEND_MESSAGE_TO_BRIDGE);
+		console.log("🧹 Cleared stale bridged passphrase from extension storage");
+		return true;
+	} catch (error) {
+		console.error("Error clearing bridged passphrase:", error);
 		return false;
 	}
 }
@@ -10611,6 +10681,24 @@ function buildApiUrl(serverUrl, path) {
 	if (!url.pathname.startsWith("/api/")) throw new Error("Invalid API path");
 	return url.toString();
 }
+function delay$2(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+/**
+* Parse an HTTP `Retry-After` header into milliseconds.
+*
+* Supports both forms the spec allows: a number of seconds (`"3"`) and an
+* HTTP-date (`"Wed, 21 Oct 2026 07:28:00 GMT"`). Returns null when the header is
+* absent or unparseable, and clamps negatives to 0 (a past date means "now").
+*/
+function parseRetryAfterMs(header) {
+	if (!header) return null;
+	const trimmed = header.trim();
+	if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1e3;
+	const dateMs = Date.parse(trimmed);
+	if (!Number.isNaN(dateMs)) return Math.max(0, dateMs - Date.now());
+	return null;
+}
 var ApiConnection = class {
 	constructor(serverUrl) {
 		if (!serverUrl) throw Error("No Server URL provided.");
@@ -10708,6 +10796,30 @@ var ApiConnection = class {
 				error
 			});
 			return null;
+		}
+		if (resp.status === 429) {
+			const waitMs = parseRetryAfterMs(resp.headers?.get?.("retry-after"));
+			if (waitMs !== null && waitMs <= 1e4) {
+				await delay$2(waitMs);
+				try {
+					resp = await fetch(url, opts);
+				} catch (error) {
+					options?.onFailure?.({
+						kind: "network",
+						status: null,
+						error
+					});
+					return null;
+				}
+			}
+			if (resp.status === 429) {
+				options?.onFailure?.({
+					kind: "rate_limited",
+					status: 429,
+					retryAfterMs: waitMs
+				});
+				return null;
+			}
 		}
 		if (!resp.ok) {
 			let body;
@@ -10828,6 +10940,10 @@ async function _init(userStore, keychain, folderStore) {
 	const defaultFolder = folderStore?.defaultFolder;
 	const defaultFolderKeyIsMissing = defaultFolder && !keychain.keys[defaultFolder.id];
 	if (!defaultFolder || defaultFolderKeyIsMissing) {
+		if (keychain.locked) {
+			console.warn("init(): keychain is locked (passphrase changed on another client); skipping default-folder delete/recreate to avoid destroying the server-side container. Routing to passphrase recovery.");
+			return INIT_ERRORS.KEYCHAIN_LOCKED;
+		}
 		const lockToken = await acquireDefaultFolderLock(userStore.user?.id);
 		if (lockToken === null) {
 			await folderStore.sync();
@@ -16495,7 +16611,10 @@ async function sendBlob(blob, aesKey, api, progressTracker, options = {}) {
 	const { signal, onUploadId } = options;
 	const stream = blobStream(blob);
 	try {
-		const { id, url } = await api.call("uploads/signed", { type: "application/octet-stream" }, "POST");
+		const { id, url } = await api.call("uploads/signed", {
+			type: "application/octet-stream",
+			size: blob.size
+		}, "POST");
 		onUploadId?.(id);
 		progressTracker.setProcessStage("encrypting");
 		progressTracker.setText("Encrypting file");
@@ -26540,7 +26659,13 @@ var CLIENT_MESSAGES = {
 	SHOULD_LOG_IN: `You need to log into your mozilla account. Make sure you're in the allow list for alpha access.`,
 	FILE_TOO_BIG: `Your file size is not supported, please try with files smaller than ${MAX_FILE_SIZE_HUMAN_READABLE}`,
 	UPLOAD_FAILED: `Upload failed. Please try again.`,
-	STORAGE_LIMIT_EXCEEDED: `Uploading this file would exceed your storage limit. Please delete some files and try again.`
+	STORAGE_LIMIT_EXCEEDED: `Uploading this file would exceed your storage limit. Please delete some files and try again.`,
+	COOKIES_BLOCKED_TITLE: `Thunderbird is blocking cookies for Send`,
+	COOKIES_BLOCKED_BANNER_BODY: "Send stores a cookie to keep you signed in, and your browser is currently refusing it. Open Settings → Privacy & Security → Web Content and turn on \"Accept cookies from sites\". If that is already on, also set \"Accept third-party cookies\" to \"From visited\". Then choose \"Retry\".",
+	STORAGE_BLOCKED_TITLE: `Thunderbird is blocking storage for Send`,
+	STORAGE_BLOCKED_BODY: "Send keeps your sign-in state and encryption keys in browser storage, and your browser is refusing access to it. This happens when all cookies are blocked. Open Settings → Privacy & Security → Web Content and turn on \"Accept cookies from sites\", then choose \"Retry\".",
+	APP_LOAD_FAILED_TITLE: `Send could not start`,
+	APP_LOAD_FAILED_BODY: "The application failed to load. Choose \"Retry\" to reload the page. If this keeps happening, please let us know."
 };
 //#endregion
 //#region ../send/frontend/src/lib/folderView.ts
@@ -32971,6 +33096,7 @@ var Ra, Pa = (Ra = In[Un] = new qn(), function() {
 var initialized$1 = false;
 function initPosthog() {
 	if (initialized$1) return;
+	if (!config.posthogProjectKey) return;
 	Pa.init(config.posthogProjectKey, {
 		api_host: config.posthogHost,
 		persistence: "memory"
@@ -33078,8 +33204,13 @@ var validator = async ({ api, keychain, userStore }) => {
 		validations.hasCorrectKeys = true;
 	} catch {
 		validations.hasCorrectKeys = false;
-		shouldClearSessionAndStorage = true;
-		console.error("Incorrect passphrase. Removing local storage data.");
+		if (keychain.locked) {
+			console.warn("Passphrase mismatch (likely changed on another client). Routing to recovery instead of clearing storage.");
+			await clearBridgedPassphrase(keychain.getPassphraseValue());
+		} else {
+			shouldClearSessionAndStorage = true;
+			console.error("Incorrect passphrase. Removing local storage data.");
+		}
 	}
 	if (userIDFromStore && userIDFromBackend && userIDFromBackend !== userIDFromStore) {
 		console.error("User ID mismatch. Removing local storage data.");
@@ -33243,6 +33374,35 @@ var useStatusStore = defineStore("status", () => {
 });
 //#endregion
 //#region ../send/frontend/src/apps/send/stores/folder-store.ts
+/**
+* Thrown by `fetchSubtree` when a container returns 403 while the keychain is
+* locked — i.e. the container still exists on the server but this client's keys
+* are stale because the passphrase was changed on another client. Callers should
+* treat this as "route to passphrase recovery", NOT as a generic load error and
+* NOT as an orphaned/phantom container to re-provision.
+*/
+var StaleContainerAccessError = class extends Error {
+	constructor(containerId) {
+		super(`Access to container ${containerId} is forbidden while the keychain is locked (passphrase changed on another client).`);
+		this.name = "StaleContainerAccessError";
+		this.containerId = containerId;
+	}
+};
+/**
+* Picks the folder to treat as the user's default (root) folder.
+*
+* Prefers the newest folder whose key is present in the keychain so we never
+* route the UI to an orphaned container (one whose key was lost, e.g. after a
+* failed provisioning — #1116) while init.ts reconciles it. Falls back to the
+* newest folder when none are openable, which lets the existing
+* delete-and-recreate branch in init.ts detect the missing key and repair it.
+*/
+function selectDefaultFolder(folders, keychainKeys) {
+	const total = folders.length;
+	if (total === 0) return null;
+	for (let i = total - 1; i >= 0; i--) if (keychainKeys[folders[i].id]) return folders[i];
+	return folders[total - 1];
+}
 var useFolderStore = defineStore("folderManager", () => {
 	const { api } = useApiStore();
 	const { user, populateFromBackend } = useUserStore();
@@ -33272,8 +33432,7 @@ var useFolderStore = defineStore("folderManager", () => {
 	}
 	const defaultFolder = computed(() => {
 		if (!folders?.value) return null;
-		const total = folders.value.length;
-		return total === 0 ? null : folders.value[total - 1];
+		return selectDefaultFolder(folders.value, keychain.keys);
 	});
 	const visibleFolders = computed(() => {
 		if (folders.value.length === 0) return [];
@@ -33294,8 +33453,26 @@ var useFolderStore = defineStore("folderManager", () => {
 		selectedFolderId.value = null;
 		selectedFileId.value = null;
 	}
-	async function fetchSubtree(rootFolderId) {
-		const tree = await api.call(`containers/${rootFolderId}/`);
+	async function fetchSubtree(folderId) {
+		let failure = null;
+		const tree = await api.call(`containers/${folderId}/`, {}, "GET", {}, { onFailure: (f) => {
+			failure = f;
+		} });
+		if (!tree || !tree.children) {
+			console.error(`Failed to fetch subtree for container ${folderId}`, failure);
+			folders.value = [];
+			rootFolder.value = null;
+			const status = failure && failure.kind === "http" ? failure.status : null;
+			if (status === 403 && keychain.locked) {
+				console.warn(`fetchSubtree: 403 on container ${folderId} with a locked keychain (passphrase changed on another client). Signalling stale access so the user can recover their passphrase.`);
+				throw new StaleContainerAccessError(folderId);
+			}
+			if ((status === 403 || status === 404) && rootFolderId.value === folderId) {
+				rootFolderId.value = null;
+				await fetchUserFolders();
+			}
+			return;
+		}
 		folders.value = tree.children;
 		rootFolder.value = tree;
 	}
@@ -33335,7 +33512,7 @@ var useFolderStore = defineStore("folderManager", () => {
 			const { container } = containerResponse;
 			try {
 				await keychain.newKeyForContainer(container.id);
-				await backupKeys(keychain, api, msg);
+				if (!keychain.locked) await backupKeys(keychain, api, msg);
 				await keychain.store();
 				folders.value = [...folders.value, container];
 				return container;
@@ -33658,7 +33835,7 @@ var _hoisted_1$13 = {
 var VersionTag_vue_vue_type_script_setup_true_lang_default = /*@__PURE__*/ defineComponent({
 	__name: "VersionTag",
 	setup(__props) {
-		const version = "2.0.11";
+		const version = "2.0.16";
 		return (_ctx, _cache) => {
 			return openBlock(), createElementBlock("span", _hoisted_1$13, " v" + toDisplayString$1(unref(version)), 1);
 		};
@@ -33946,10 +34123,15 @@ function useUploadAndShare() {
 	const folderStore = useFolderStore();
 	const sharingStore = useSharingStore();
 	const { api } = useApiStore();
+	const { keychain } = useKeychainStore();
 	const isUploading = /* @__PURE__ */ ref(false);
 	const isError = /* @__PURE__ */ ref(false);
 	const uploadMap = /* @__PURE__ */ ref(/* @__PURE__ */ new Map());
 	async function uploadAndShare(files, password, expiration, onStatusUpdate) {
+		if (keychain.locked) {
+			isError.value = true;
+			throw new Error("Cannot upload: encryption keys are locked. Please re-enter your passphrase.");
+		}
 		isUploading.value = true;
 		isError.value = false;
 		const uploadedItems = [];
@@ -34192,6 +34374,7 @@ defineStore("extension", () => {
 			type: SEND_MESSAGE_TO_BRIDGE,
 			value: message
 		}, window.location.origin);
+		stageBridgedPassphrase(message);
 	};
 	return {
 		configureExtension,
@@ -40884,6 +41067,10 @@ var PopupView_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PU
 					message.value = `You're not logged in properly. Please go back to the compositon panel to log back in`;
 					return false;
 				}
+				if (keychain.locked === true) {
+					message.value = `Your passphrase changed on another device. Please complete passphrase recovery to continue.`;
+					return false;
+				}
 				await initialize();
 				return true;
 			},
@@ -40947,7 +41134,7 @@ var PopupView_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PU
 			}, 8, ["is-loading"]);
 		};
 	}
-}), [["__scopeId", "data-v-5d67beb0"]]);
+}), [["__scopeId", "data-v-e3138a03"]]);
 //#endregion
 //#region ../send/frontend/src/apps/send/ExtensionPage.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1 = {
@@ -41038,7 +41225,7 @@ var initSentry = (app) => {
 };
 //#endregion
 //#region ../send/frontend/src/lib/logger.ts
-var version = "2.0.11";
+var version = "2.0.16";
 var LOG_LEVELS = {
 	debug: 0,
 	info: 1,

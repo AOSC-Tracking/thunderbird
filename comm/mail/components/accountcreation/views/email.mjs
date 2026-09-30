@@ -1584,21 +1584,26 @@ class AccountHubEmail extends HTMLElement {
     }
 
     if (config && !config.isRedirect) {
-      try {
-        config = await this.#getExchangeAddons(config);
-      } catch (error) {
-        this.#discoveryStream = null;
-        if (
-          error instanceof UserCancelledException ||
-          error instanceof UserSkippedError
-        ) {
-          throw error;
+      const addonDiscoveryEnabled = Boolean(
+        Services.prefs.getStringPref("mailnews.auto_config.addons_url")
+      );
+      if (addonDiscoveryEnabled) {
+        try {
+          config = await this.#getExchangeAddons(config);
+        } catch (error) {
+          this.#discoveryStream = null;
+          if (
+            error instanceof UserCancelledException ||
+            error instanceof UserSkippedError
+          ) {
+            throw error;
+          }
         }
       }
 
       // Check if we have found an Exchange config we should tweak to make it work
       // with our native EWS support (and do so if that's the case).
-      lazy.FindConfig.ewsifyConfig(config);
+      lazy.FindConfig.ewsifyConfig(config, addonDiscoveryEnabled);
 
       config = this.#fillAccountConfig(config);
     }

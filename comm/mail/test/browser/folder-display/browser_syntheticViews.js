@@ -27,14 +27,12 @@ const { GlodaMsgIndexer } = ChromeUtils.importESModule(
 );
 
 add_setup(async function () {
-  Services.prefs.setBoolPref("mailnews.mark_message_read.auto", false);
-  Services.prefs.setBoolPref("mailnews.start_page.enabled", false);
-  Services.prefs.setIntPref("mailnews.default_view_flags", 0);
-
-  registerCleanupFunction(() => {
-    Services.prefs.clearUserPref("mailnews.mark_message_read.auto");
-    Services.prefs.clearUserPref("mailnews.start_page.enabled");
-    Services.prefs.clearUserPref("mailnews.default_view_flags");
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["mailnews.mark_message_read.auto", false],
+      ["mailnews.start_page.enabled", false],
+      ["mailnews.default_view_flags", 0],
+    ],
   });
 });
 
@@ -183,9 +181,7 @@ add_task(async function testListViewMarkRead() {
   await waitForThreadIndexed(thread);
   doGlobalSearch(term);
 
-  const tab = document.querySelector(
-    "tabmail>tabbox>tabpanels>vbox[selected=true]"
-  );
+  const tab = document.querySelector("tabmail>tabbox>tabpanels>vbox[selected]");
   await clickShowResultsAsList(tab);
   await clickMarkRead(0, 4);
 
@@ -225,9 +221,7 @@ add_task(async function testListViewMarkThreadAsRead() {
   await waitForThreadIndexed(thread);
   doGlobalSearch(term);
 
-  const tab = document.querySelector(
-    "tabmail>tabbox>tabpanels>vbox[selected=true]"
-  );
+  const tab = document.querySelector("tabmail>tabbox>tabpanels>vbox[selected]");
   await clickShowResultsAsList(tab);
   await clickMarkThreadAsRead(0, 4);
 

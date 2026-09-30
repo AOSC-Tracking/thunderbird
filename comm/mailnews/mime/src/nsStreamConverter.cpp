@@ -218,12 +218,12 @@ nsresult nsStreamConverter::DetermineOutputFormat(nsIURI* uri,
 
   // shorten the url that we test for the query strings by skipping directly
   // to the part where the query strings begin.
-  nsCString queryPart;
-  uri->GetQuery(queryPart);
+  nsCString query;
+  uri->GetQuery(query);
 
   // is this is a part that should just come out raw
   nsAutoCString part;
-  if (mozilla::URLParams::Extract(queryPart, "part"_ns, part) &&
+  if (mozilla::URLParams::Extract(query, "part"_ns, part) &&
       !mToType.EqualsLiteral("application/xhtml+xml")) {
     // default for parts
     mOutputFormat = "raw";
@@ -233,7 +233,7 @@ nsresult nsStreamConverter::DetermineOutputFormat(nsIURI* uri,
     // content type appended to it...if it does, we want to remember
     // that as mOutputFormat
     nsAutoCString type;
-    mozilla::URLParams::Extract(queryPart, "type"_ns, type);
+    mozilla::URLParams::Extract(query, "type"_ns, type);
     if (!type.IsEmpty()) {
       if (type.EqualsLiteral("message/rfc822")) {
         mRealContentType = "application/x-message-display";
@@ -252,14 +252,15 @@ nsresult nsStreamConverter::DetermineOutputFormat(nsIURI* uri,
   }
 
   nsAutoCString emitter;
-  mozilla::URLParams::Extract(queryPart, "emitter"_ns, emitter);
+  mozilla::URLParams::Extract(query, "emitter"_ns, emitter);
   if (emitter.EqualsLiteral("js")) {
+    // MsgHdrToMimeMessage via StreamMessage
     mOverrideFormat = "application/x-js-mime-message";
   }
 
   // if using the header query
   nsAutoCString header;
-  mozilla::URLParams::Extract(queryPart, "header"_ns, header);
+  mozilla::URLParams::Extract(query, "header"_ns, header);
   if (!header.IsEmpty()) {
     struct HeaderType {
       const char* headerType;
@@ -269,14 +270,16 @@ nsresult nsStreamConverter::DetermineOutputFormat(nsIURI* uri,
 
     // place most commonly used options at the top
     static const struct HeaderType rgTypes[] = {
+        // MsgHdrToMimeMessage via StreamMessage
+        // nsBayesianFilter::tokenizeMessage
         {"filter", "text/html", nsMimeOutput::nsMimeMessageFilterSniffer},
+        // nsMsgQuote::QuoteMessage
         {"quotebody", "text/html", nsMimeOutput::nsMimeMessageBodyQuoting},
-        {"print", "text/html", nsMimeOutput::nsMimeMessagePrintOutput},
-        {"only", "text/xml", nsMimeOutput::nsMimeMessageHeaderDisplay},
-        {"none", "text/html", nsMimeOutput::nsMimeMessageBodyDisplay},
+        // nsMsgQuote::QuoteMessage
         {"quote", "text/html", nsMimeOutput::nsMimeMessageQuoting},
+        // nsMessenger::SaveAs
         {"saveas", "text/html", nsMimeOutput::nsMimeMessageSaveAs},
-        {"src", "text/plain", nsMimeOutput::nsMimeMessageSource},
+        // AttachmentInfo.stripAttachments via StreamMessage
         {"attach", "raw", nsMimeOutput::nsMimeMessageAttach}};
 
     // find the requested header in table, ensure that we don't match on a
@@ -350,10 +353,6 @@ NS_IMETHODIMP nsStreamConverter::Init(nsIURI* aURI,
   }
 
   switch (newType) {
-    case nsMimeOutput::nsMimeMessageHeaderDisplay:  // the split header/body
-                                                    // display
-      mOutputFormat = "text/xml";
-      break;
     case nsMimeOutput::nsMimeMessageBodyDisplay:  // the split header/body
                                                   // display
       mOutputFormat = "text/html";
@@ -363,7 +362,6 @@ NS_IMETHODIMP nsStreamConverter::Init(nsIURI* aURI,
     case nsMimeOutput::nsMimeMessageSaveAs:       // Save as operation
     case nsMimeOutput::nsMimeMessageBodyQuoting:  // only HTML body quoted
                                                   // output
-    case nsMimeOutput::nsMimeMessagePrintOutput:  // all Printing output
       mOutputFormat = "text/html";
       break;
 
@@ -371,12 +369,6 @@ NS_IMETHODIMP nsStreamConverter::Init(nsIURI* aURI,
     case nsMimeOutput::nsMimeMessageDecrypt:
     case nsMimeOutput::nsMimeMessageRaw:  // the raw RFC822 data and attachments
       mOutputFormat = "raw";
-      break;
-
-    case nsMimeOutput::nsMimeMessageSource:  // the raw RFC822 data (view
-                                             // source) and attachments
-      mOutputFormat = "text/plain";
-      mOverrideFormat = "raw";
       break;
 
     case nsMimeOutput::nsMimeMessageDraftOrTemplate:  // Loading drafts &
@@ -406,11 +398,9 @@ NS_IMETHODIMP nsStreamConverter::Init(nsIURI* aURI,
   // Let's use the original channel and just set our content type on top of the
   // original channel...
 
-  aChannel->SetContentType(contentTypeToUse);
-
-  // rv = NS_NewInputStreamChannel(getter_AddRefs(mOutgoingChannel), aURI,
-  // nullptr, contentTypeToUse, -1); if (NS_FAILED(rv))
-  //    return rv;
+  if (aChannel) {
+    aChannel->SetContentType(contentTypeToUse);
+  }
 
   // Set system principal for this document, which will be dynamically generated
 
@@ -468,25 +458,25 @@ NS_IMETHODIMP nsStreamConverter::Init(nsIURI* aURI,
     whattodo = whattodo | mozITXTToHTMLConv::kStructPhrase;
   }
 
-  if (mOutputType == nsMimeOutput::nsMimeMessageSource)
-    return NS_OK;
-  else {
-    mBridgeStream =
-        bridge_create_stream(mEmitter, this, aURI, newType, whattodo, aChannel);
-    if (!mBridgeStream)
-      return NS_ERROR_OUT_OF_MEMORY;
-    else {
-      SetStreamURI(aURI);
-
-      // Do we need to setup an Mime Stream Converter Listener?
-      if (mMimeStreamConverterListener)
-        bridge_set_mime_stream_converter_listener((nsMIMESession*)mBridgeStream,
-                                                  mMimeStreamConverterListener,
-                                                  mOutputType);
-
-      return NS_OK;
-    }
+  mBridgeStream =
+      bridge_create_stream(mEmitter, this, aURI, newType, whattodo, aChannel);
+  if (!mBridgeStream) {
+    return NS_ERROR_OUT_OF_MEMORY;
   }
+
+  mURI = aURI;
+  if (mBridgeStream) {
+    bridge_new_new_uri((nsMIMESession*)mBridgeStream, aURI, mOutputType);
+  }
+
+  // Do we need to setup an Mime Stream Converter Listener?
+  if (mMimeStreamConverterListener) {
+    bridge_set_mime_stream_converter_listener((nsMIMESession*)mBridgeStream,
+                                              mMimeStreamConverterListener,
+                                              mOutputType);
+  }
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsStreamConverter::GetContentType(char** aOutputContentType) {
@@ -513,26 +503,6 @@ nsresult nsStreamConverter::SetMimeOutputType(nsMimeOutputType aType) {
   mAlreadyKnowOutputType = true;
   mOutputType = aType;
   if (mBridgeStream) bridge_set_output_type(mBridgeStream, aType);
-  return NS_OK;
-}
-
-//
-// This is needed by libmime for MHTML link processing...this is the URI
-// associated with this input stream
-//
-nsresult nsStreamConverter::SetStreamURI(nsIURI* aURI) {
-  mURI = aURI;
-  if (mBridgeStream)
-    return bridge_new_new_uri((nsMIMESession*)mBridgeStream, aURI, mOutputType);
-  else
-    return NS_OK;
-}
-
-nsresult nsStreamConverter::SetMimeHeadersListener(
-    nsIMimeStreamConverterListener* listener, nsMimeOutputType aType) {
-  mMimeStreamConverterListener = listener;
-  bridge_set_mime_stream_converter_listener((nsMIMESession*)mBridgeStream,
-                                            listener, aType);
   return NS_OK;
 }
 
@@ -640,7 +610,6 @@ nsresult nsStreamConverter::OnDataAvailable(nsIRequest* request,
                                             uint64_t sourceOffset,
                                             uint32_t aLength) {
   nsresult rc = NS_OK;  // should this be an error instead?
-  uint32_t written;
 
   nsCOMPtr<nsIInputStream> stream = aIStream;
   NS_ENSURE_TRUE(stream, NS_ERROR_NULL_POINTER);
@@ -670,12 +639,7 @@ nsresult nsStreamConverter::OnDataAvailable(nsIRequest* request,
     readLen = writePtr - buf;
   }
 
-  if (mOutputType == nsMimeOutput::nsMimeMessageSource) {
-    rc = NS_OK;
-    if (mEmitter) {
-      rc = mEmitter->Write(Substring(buf, buf + readLen), &written);
-    }
-  } else if (mBridgeStream) {
+  if (mBridgeStream) {
     nsMIMESession* tSession = (nsMIMESession*)mBridgeStream;
     // XXX Casting int to nsresult
     rc = static_cast<nsresult>(
@@ -829,29 +793,38 @@ NS_IMETHODIMP nsStreamConverter::AsyncConvertData(const char* aFromType,
                                                   nsIStreamListener* aListener,
                                                   nsISupports* aCtxt) {
   nsresult rv = NS_OK;
-  nsCOMPtr<nsIMsgQuote> aMsgQuote = do_QueryInterface(aCtxt, &rv);
-  nsCOMPtr<nsIChannel> aChannel;
+  nsCOMPtr<nsIMsgQuote> msgQuote = do_QueryInterface(aCtxt, &rv);
+  nsCOMPtr<nsIChannel> channel;
+  nsCOMPtr<nsIURI> uri;
 
-  if (aMsgQuote) {
+  if (msgQuote) {
     nsCOMPtr<nsIMimeStreamConverterListener> quoteListener;
-    rv = aMsgQuote->GetQuoteListener(getter_AddRefs(quoteListener));
-    if (quoteListener)
-      SetMimeHeadersListener(quoteListener, nsMimeOutput::nsMimeMessageQuoting);
-    rv = aMsgQuote->GetQuoteChannel(getter_AddRefs(aChannel));
+    rv = msgQuote->GetQuoteListener(getter_AddRefs(quoteListener));
+    if (quoteListener) {
+      mMimeStreamConverterListener = quoteListener;
+      bridge_set_mime_stream_converter_listener(
+          (nsMIMESession*)mBridgeStream, quoteListener,
+          nsMimeOutput::nsMimeMessageQuoting);
+    }
+    MOZ_TRY(msgQuote->GetQuoteChannel(getter_AddRefs(channel)));
+    MOZ_TRY(channel->GetURI(getter_AddRefs(uri)));
   } else {
-    aChannel = do_QueryInterface(aCtxt, &rv);
+    channel = do_QueryInterface(aCtxt, &rv);
+    if (NS_SUCCEEDED(rv) && channel) {
+      MOZ_TRY(channel->GetURI(getter_AddRefs(uri)));
+    } else {
+      uri = do_QueryInterface(aCtxt, &rv);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+    nsCOMPtr<nsIURI> repairedURI;
+    MOZ_TRY(RepairDodgyQueryURI(uri, getter_AddRefs(repairedURI)));
+    uri = repairedURI;
   }
 
   mFromType = aFromType;
   mToType = aToType;
 
-  NS_ASSERTION(aChannel && NS_SUCCEEDED(rv),
-               "mailnews mime converter has to have the channel passed in...");
-  if (NS_FAILED(rv)) return rv;
-
-  nsCOMPtr<nsIURI> aUri;
-  aChannel->GetURI(getter_AddRefs(aUri));
-  return Init(aUri, aListener, aChannel);
+  return Init(uri, aListener, channel);
 }
 
 NS_IMETHODIMP nsStreamConverter::FirePendingStartRequest() {

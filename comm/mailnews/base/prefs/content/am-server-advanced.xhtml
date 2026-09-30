@@ -321,7 +321,7 @@
               class="input-inline"
               aria-labelledby="oauth2RedirectionEndpointLabel"
               amsa_persist="true"
-              placeholder="http://localhost"
+              placeholder="http://127.0.0.1"
             />
             <html:input
               id="oauth2ClientSecret"
@@ -436,10 +436,12 @@
               />
               <html:input
                 id="exchangeEndpointHost"
-                type="url"
+                type="text"
+                pattern="[A-Za-z0-9.\-]+"
                 class="input-inline"
                 aria-labelledby="exchangeEndpointHostLabel"
                 amsa_persist="true"
+                placeholder="login.microsoftonline.com"
               />
               <html:input
                 id="exchangeOAuthScopes"
@@ -454,7 +456,7 @@
                 class="input-inline"
                 aria-labelledby="exchangeRedirectUriLabel"
                 amsa_persist="true"
-                placeholder="http://localhost"
+                placeholder="http://127.0.0.1"
               />
             </vbox>
           </hbox>

@@ -22,9 +22,9 @@ tags = ["openpgp"]
 
 ["browser_collectKeys.js"]
 
-["browser_encryptedUriCleanup.js"]
-
 ["browser_encryptedRemoteContentFromFile.js"]
+
+["browser_encryptedUriCleanup.js"]
 
 ["browser_inlineOpenPGP.js"]
 
@@ -33,6 +33,8 @@ run-if = [
   "!headless",
   "os != 'linux'",
 ] # See bug 1806870.
+
+["browser_keyserverSearch.js"]
 
 ["browser_openPGPDrafts.js"]
 
@@ -45,6 +47,8 @@ run-if = [
 ["browser_viewMessage.js"]
 
 ["browser_viewMessage2.js"]
+
+["browser_viewMessageRemoteContent.js"]
 
 ["browser_viewMessageSecurity.js"]
 
