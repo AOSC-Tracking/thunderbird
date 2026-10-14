@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 const { GraphProvider } = ChromeUtils.importESModule("resource:///modules/GraphProvider.sys.mjs");
 
 let graphServer;
@@ -23,6 +22,10 @@ add_task(async function test_detectCalendars() {
   Assert.equal(calendar.id, "AAMkAGI2TGuLAAA=", "Calendar ID should match.");
   Assert.equal(calendar.name, "New Calendar", "Calendar name should match.");
   Assert.ok(!calendar.readOnly, "Calendar should not be readonly.");
+
+  // Chaos mode gets angry if the register-triggered refresh isn't finished when
+  // tearing down, so just disable for this test.
+  calendar.setProperty("disabled", true);
 
   // Register the resulting calendar.
   cal.manager.registerCalendar(calendar);

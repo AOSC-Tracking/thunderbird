@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-open-preferences-sidebar-button2 = { -brand-short-name } Settings
+open-settings-sidebar-button = Settings
 
 open-addons-sidebar-button = Add-ons and Themes
 
@@ -42,7 +42,7 @@ outgoing-server-settings-title = Outgoing Server Settings
 outgoing-server-settings-description = When managing your identities you can use a server from this list by selecting it as the Outgoing Server, or you can use the default server from this list by selecting “Use Default Server”.
 outgoing-server-type = Server Type:
 
-panel-settings-spam = Spam Settings
+panel-manage-spam = Manage spam
 
 # Variables:
 # $account (String) - The account name.

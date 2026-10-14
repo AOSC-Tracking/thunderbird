@@ -58,11 +58,11 @@ unused_qualifications = "warn"
 #unused_crate_dependencies = "warn"
 
 [workspace.dependencies]
-uniffi = { version = "0.31" }
-uniffi_bindgen = { version = "0.31" }
-uniffi_pipeline = { version = "0.31" }
+uniffi = { version = "0.32" }
+uniffi_bindgen = { version = "0.32" }
+uniffi_pipeline = { version = "0.32" }
 rusqlite = { version = "0.37" }
-glean = { version = "=68.0.1" }
+glean = { version = "=70.2.0" }
 
 [target."cfg(windows)".dependencies.scopeguard]
 version = "1"
@@ -277,7 +277,8 @@ hashbrown_0_15 = { package = "hashbrown", path = "../../build/rust/hashbrown-0.1
 hashbrown_0_16 = { package = "hashbrown", path = "../../build/rust/hashbrown" }
 hashlink = { path = "../../build/rust/hashlink" }
 thiserror = { path = "../../build/rust/thiserror" }
-toml = { path = "../../build/rust/toml" }
+toml_0_5 = { package = "toml", path = "../../build/rust/toml-0.5" }
+toml_0_9 = { package = "toml", path = "../../build/rust/toml" }
 js-sys = { path = "../../build/rust/dummy-web/js-sys" }
 wasm-bindgen = { path = "../../build/rust/dummy-web/wasm-bindgen" }
 web-sys = { path = "../../build/rust/dummy-web/web-sys" }
@@ -321,6 +322,8 @@ logins = { path = "../../third_party/application-services/components/logins" }
 autofill = { path = "../../third_party/application-services/components/autofill" }
 init_rust_components = { path = "../../third_party/application-services/components/init_rust_components" }
 breach-alerts = { path = "../../third_party/application-services/components/breach-alerts" }
+db-crypto = { path = "../../third_party/application-services/components/support/db-crypto" }
+fxcontainers = { path = "../../third_party/application-services/components/fxcontainers" }
 ohttp = { git = "https://github.com/martinthomson/ohttp", rev = "600931b5a1e947776cbaad931ed78f1e89005352" }
 zip = { path = "../../third_party/rust/zip" }
 cssparser = { git = "https://github.com/servo/rust-cssparser", rev = "ddccc070a0261cb94195ed0f74095c67b86a8550" }
@@ -329,3 +332,4 @@ libdbus-sys = { path = "../../third_party/rust/libdbus-sys" }
 jxl_simd = { path = "../../third_party/rust/jxl_simd" }
 gleam = { git = "https://github.com/jamienicol/gleam", rev = "68ca4e5cc31135b843af07ff213a94b9ddce64cf" }
 gl_generator = { git = "https://github.com/jamienicol/gl-rs", rev = "71c792dbfe0ec5caeb242fc90937e19098386342" }
+mach2 = { path = "../../build/rust/mach2" }

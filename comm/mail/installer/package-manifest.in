@@ -264,6 +264,11 @@
 ; OpenPGP (librnp)
 #ifdef MZLA_LIBRNP
 @BINPATH@/@DLL_PREFIX@rnp@DLL_SUFFIX@
+#ifdef NIGHTLY_BUILD
+@BINPATH@/@DLL_PREFIX@rnp_experimental@DLL_SUFFIX@
+@BINPATH@/rnp-cli-experimental@BIN_SUFFIX@
+@BINPATH@/rnpkeys-experimental@BIN_SUFFIX@
+#endif
 #endif
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -499,3 +504,8 @@
 ; Shipped so that Glean tests are enabled on CI even if we have disabled
 ; them during regular usage.
 @RESPATH@/interesting_serverknobs.json
+
+#ifdef MOZ_ARTIFACT_BUILDS
+; Test workers unpack artifact build packages and need `jogfile.json`
+@RESPATH@/jogfile.json
+#endif

@@ -138,44 +138,47 @@ export var auth = {
    * be used by providers and other components that handle authentication using
    * nsIAuthPrompt2 and friends.
    *
-   * This implementation guarantees there are no request loops when an invalid
-   * password is stored in the login-manager.
+   * A saved login that the server rejects is dropped, so a wrong stored
+   * password cannot loop.
    *
    * There is one instance of that object per calendar provider.
    */
   Prompt: class {
     QueryInterface = ChromeUtils.generateQI(["nsIAuthPrompt2"]);
 
-    constructor() {
-      this.mWindow = lazy.cal.window.getCalendarWindow();
-      this.mReturnedLogins = {};
-      this.mProvider = null;
-    }
-
     /**
-     * @typedef {object} PasswordInfo
-     * @property {boolean} found        True, if the password was found
-     * @property {?string} username     The found username
-     * @property {?string} password     The found password
+     * @param {?calICalendar} provider - The calendar the credentials are for.
      */
+    constructor(provider = null) {
+      this.mWindow = lazy.cal.window.getCalendarWindow();
+      this.mSuppliedPasswords = new WeakMap();
+      this.mProvider = provider;
+      this.mEnteredUsernames = new WeakMap();
+    }
 
     /**
      * Retrieve password information from the login manager.
      *
      * @param {nsIChannel} channel - The channel that requires authentication.
-     * @param {nsIAuthInformation} authInfo - Authentication information object.
-     *   If a suitable login exists in the login manager, `authInfo` will be
-     *   filled with the username and password.
-     * @returns {boolean} - If a login was found in the login manager.
+     * @param {nsIAuthInformation} authInfo - Filled in with the username, and
+     *   with the password if a usable login was found.
+     * @returns {boolean} - If a usable login was found in the login manager.
      */
     async #getPasswordInfo(channel, authInfo) {
       const prePath = channel.URI.prePath;
       const realm = authInfo.realm;
-      let username = lazy.cal.auth.containerMap.getUsernameForUserContextId(
-        channel.loadInfo.originAttributes.userContextId
-      );
+      // The container was built from the calendar's name when the request went
+      // out, so it is a snapshot. Ask the calendar, and fall back to the
+      // container only for providers that keep no name of their own.
+      let username;
+      if (this.#supportsUsername()) {
+        username = this.mProvider.getProperty("username") || "";
+      } else {
+        username = lazy.cal.auth.containerMap.getUsernameForUserContextId(
+          channel.loadInfo.originAttributes.userContextId
+        );
+      }
 
-      // Prefill aRequestedUser, so it will be used in the prompter.
       let password;
       let found = false;
 
@@ -191,32 +194,37 @@ export var auth = {
           break;
         }
       }
-      if (found) {
-        const keyStr = prePath + ":" + realm + ":" + username;
-        const now = new Date();
-        // Remove the saved password if it was already returned less
-        // than 60 seconds ago. The reason for the timestamp check is that
-        // nsIHttpChannel can call the nsIAuthPrompt2 interface
-        // again in some situation. ie: When using Digest auth token
-        // expires.
-        if (
-          this.mReturnedLogins[keyStr] &&
-          now.getTime() - this.mReturnedLogins[keyStr].getTime() < 60000
-        ) {
-          lazy.log.debug(
+
+      authInfo.username = username;
+
+      if (!found) {
+        return false;
+      }
+
+      // Only drop what we handed out and the server then rejected. PREVIOUS_FAILED
+      // belongs to one request, so the record has to as well: a retry may run on a
+      // new channel, but it keeps the load info of the request it retries.
+      const request = channel.loadInfo;
+      const key = prePath + ":" + realm + ":" + username;
+      const supplied = this.mSuppliedPasswords.get(request);
+      if (
+        authInfo.flags & Ci.nsIAuthInformation.PREVIOUS_FAILED &&
+        supplied?.key === key &&
+        supplied.password === password
+      ) {
+        this.mSuppliedPasswords.delete(request);
+        if (username) {
+          lazy.log.warn(
             "Credentials removed for: user=" + username + ", host=" + prePath + ", realm=" + realm
           );
-
-          delete this.mReturnedLogins[keyStr];
           await auth.passwordManagerRemove(username, prePath, realm);
-          return { found: false, username };
         }
-        this.mReturnedLogins[keyStr] = now;
-
-        authInfo.username = username;
-        authInfo.password = password;
+        return false;
       }
-      return found;
+
+      this.mSuppliedPasswords.set(request, { key, password });
+      authInfo.password = password;
+      return true;
     }
 
     /**
@@ -247,12 +255,13 @@ export var auth = {
         );
       }
       const savePassword = {};
-      const returnValue = new lazy.MsgAuthPrompt().promptAuth(
+      const returnValue = this._showAuthDialog(
         aChannel,
         aLevel,
         aAuthInfo,
         savePasswordLabel,
-        savePassword
+        savePassword,
+        this.#dialogText(aChannel)
       );
       if (savePassword.value) {
         auth.passwordManagerSave(
@@ -262,7 +271,93 @@ export var auth = {
           aAuthInfo.realm
         );
       }
+      if (returnValue) {
+        this.#noteUsername(aChannel, aAuthInfo.username);
+      }
       return returnValue;
+    }
+
+    /**
+     * Whether the calendar keeps a username of its own. Only CalDAV does.
+     *
+     * @returns {boolean}
+     */
+    #supportsUsername() {
+      return this.mProvider?.getProperty("capabilities.username.supported") === true;
+    }
+
+    /**
+     * Remembers a username from the dialog if it differs from the one the
+     * calendar carries - an empty one included, which is a field waiting to be
+     * filled in. saveUsername() stores it once the request it was entered for
+     * has gone through. A calendar can have several requests out at once, so
+     * the record belongs to one of them.
+     *
+     * @param {nsIChannel} channel - The channel that asked.
+     * @param {string} username - The username that was entered.
+     */
+    #noteUsername(channel, username) {
+      if (
+        !username ||
+        !this.#supportsUsername() ||
+        this.mProvider.getProperty("username") == username
+      ) {
+        return;
+      }
+      this.mEnteredUsernames.set(channel.loadInfo, username);
+    }
+
+    /**
+     * Stores the username from the dialog on the calendar. The login is saved
+     * under that name, and the next lookup searches for whatever the calendar
+     * says, so the two have to agree.
+     *
+     * Call this once the server has accepted the credentials, so a name that
+     * does not work is not stored.
+     *
+     * @param {nsIChannel} channel - The channel the server answered.
+     */
+    saveUsername(channel) {
+      const username = this.mEnteredUsernames.get(channel.loadInfo);
+      if (username) {
+        this.mProvider.setProperty("username", username);
+        this.mEnteredUsernames.delete(channel.loadInfo);
+      }
+    }
+
+    /**
+     * The text the dialog asks with. Null when we don't know which calendar the
+     * request belongs to, in which case the dialog names the server only.
+     *
+     * @param {nsIChannel} channel - The channel that requires authentication.
+     * @returns {?string}
+     */
+    #dialogText(channel) {
+      const name = this.mProvider?.name;
+      if (!name) {
+        return null;
+      }
+      return lazy.l10n.formatValueSync("calendar-auth-enter-user-password-for-calendar", {
+        calendarName: name,
+        location: channel.URI.prePath,
+      });
+    }
+
+    /**
+     * Asks the user for credentials.
+     *
+     * @see MsgAuthPrompt.promptAuth for the arguments.
+     * @returns {boolean} Whether the user confirmed the dialog.
+     */
+    _showAuthDialog(aChannel, aLevel, aAuthInfo, aSavePasswordLabel, aSavePassword, aText) {
+      return new lazy.MsgAuthPrompt().promptAuth(
+        aChannel,
+        aLevel,
+        aAuthInfo,
+        aSavePasswordLabel,
+        aSavePassword,
+        aText
+      );
     }
 
     /**
@@ -308,6 +403,9 @@ export var auth = {
             aAuthInfo.username = authInfo.username;
             aAuthInfo.password = authInfo.password;
           }
+          // Calendars sharing an account share one dialog, and only one of them
+          // ran it. Whoever gets the answer remembers the name that came with it.
+          self.#noteUsername(aChannel, aAuthInfo.username);
           aCallback.onAuthAvailable(aContext, aAuthInfo);
         },
 
@@ -358,60 +456,6 @@ export var auth = {
 
       tryUntilReady();
     }
-  },
-
-  /**
-   * Tries to get the username/password combination of a specific calendar name from the password
-   * manager or asks the user.
-   *
-   * @param {string} aTitle - The dialog title.
-   * @param {string} aCalendarName - The calendar name or url to look up. Can be null.
-   * @param {{value: string}} aUsername        The username that belongs to the calendar.
-   * @param {{value: string}} aPassword        The password that belongs to the calendar.
-   * @param {{value: string}} aSavePassword    Should the password be saved?
-   * @param {boolean} aFixedUsername - Whether the user name is fixed or editable
-   * @returns {boolean} Could a password be retrieved?
-   */
-  getCredentials(aTitle, aCalendarName, aUsername, aPassword, aSavePassword, aFixedUsername) {
-    if (
-      typeof aUsername != "object" ||
-      typeof aPassword != "object" ||
-      typeof aSavePassword != "object"
-    ) {
-      throw new Components.Exception("", Cr.NS_ERROR_XPC_NEED_OUT_OBJECT);
-    }
-
-    // Only show the save password box if we are supposed to.
-    let savepassword = null;
-    if (Services.prefs.getBoolPref("signon.rememberSignons", true)) {
-      savepassword = lazy.MsgAuthPrompt.l10n.formatValueSync("remember-password-checkbox-label");
-    }
-
-    let aText;
-    if (aFixedUsername) {
-      aText = lazy.l10n.formatValueSync("calendar-auth-enter-password-for", {
-        username: aUsername.value,
-        location: aCalendarName,
-      });
-      return new lazy.MsgAuthPrompt().promptPassword(
-        aTitle,
-        aText,
-        aPassword,
-        savepassword,
-        aSavePassword
-      );
-    }
-    aText = lazy.l10n.formatValueSync("calendar-auth-enter-user-password-for", {
-      location: aCalendarName,
-    });
-    return new lazy.MsgAuthPrompt().promptUsernameAndPassword(
-      aTitle,
-      aText,
-      aUsername,
-      aPassword,
-      savepassword,
-      aSavePassword
-    );
   },
 
   /**

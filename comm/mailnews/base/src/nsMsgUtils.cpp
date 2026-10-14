@@ -4,7 +4,6 @@
 
 #include "nsIMsgHdr.h"
 #include "nsMsgUtils.h"
-#include "nsISeekableStream.h"
 #include "nsIStringStream.h"
 #include "nsMsgFolderFlags.h"
 #include "nsMsgMessageFlags.h"
@@ -24,7 +23,6 @@
 #include "mozilla/nsRelativeFilePref.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsISpamSettings.h"
-#include "nsICryptoHash.h"
 #include "nsDirectoryServiceUtils.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsIRssIncomingServer.h"
@@ -35,9 +33,6 @@
 #include "nsIFileURL.h"
 #include "nsLocalFile.h"
 #include "nsNetUtil.h"
-#include "nsProtocolProxyService.h"
-#include "nsIProtocolProxyCallback.h"
-#include "nsICancelable.h"
 #include "nsIMsgDatabase.h"
 #include "nsIMsgMailNewsUrl.h"
 #include "nsIStringBundle.h"
@@ -48,16 +43,19 @@
 #include "nsReadLine.h"
 #include "nsIParserUtils.h"
 #include "nsIDocumentEncoder.h"
+#include "nsURLHelper.h"
 #include "mozilla/Components.h"
 #include "locale.h"
 #include "nsIInputStreamPump.h"
 #include "nsIInputStream.h"
-#include "nsIChannel.h"
+#include "nsIStandardURL.h"
+#include "nsNetCID.h"
 #include "nsIURIMutator.h"
 #include "nsReadableUtils.h"
+#include "nsUnicharUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Encoding.h"
-#include "mozilla/EncodingDetector.h"
+#include "mozilla/TextUtils.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/Buffer.h"
@@ -262,6 +260,14 @@ static uint32_t StringHash(const char* ubuf, int32_t len = -1) {
 inline uint32_t StringHash(const nsString& str) {
   const char16_t* strbuf = str.get();
   return StringHash(reinterpret_cast<const char*>(strbuf), str.Length() * 2);
+}
+
+void NS_MsgStripDiacritics(const nsAString& aIn, nsString& aOut) {
+  aOut = aIn;
+  // ToNaked() leaves ASCII alone, so skip the walk for the common case.
+  if (!mozilla::IsAscii(aIn)) {
+    ToNaked(aOut);
+  }
 }
 
 const static uint32_t MAX_LEN = 55;
@@ -534,39 +540,6 @@ AGAIN:
   return true;
 }
 
-/*  Very similar to strdup except it free's too
- */
-char* NS_MsgSACopy(char** destination, const char* source) {
-  if (*destination) {
-    PR_Free(*destination);
-    *destination = 0;
-  }
-  if (!source)
-    *destination = nullptr;
-  else {
-    *destination = (char*)PR_Malloc(PL_strlen(source) + 1);
-    if (*destination == nullptr) return (nullptr);
-
-    PL_strcpy(*destination, source);
-  }
-  return *destination;
-}
-
-/*  Again like strdup but it concatenates and free's and uses Realloc.
- */
-char* NS_MsgSACat(char** destination, const char* source) {
-  if (source && *source) {
-    int destLength = *destination ? PL_strlen(*destination) : 0;
-    char* newDestination =
-        (char*)PR_Realloc(*destination, destLength + PL_strlen(source) + 1);
-    if (newDestination == nullptr) return nullptr;
-
-    *destination = newDestination;
-    PL_strcpy(*destination + destLength, source);
-  }
-  return *destination;
-}
-
 bool WeAreOffline() {
   bool offline = false;
 
@@ -714,21 +687,6 @@ nsresult FolderPathInServer(nsIMsgFolder* folder, nsACString& path) {
   uri->GetFilePath(fullfolderPath);
   return MsgUnescapeString(Substring(fullfolderPath, 1),  // Skip leading slash.
                            nsINetUtil::ESCAPE_URL_PATH, path);
-}
-
-nsresult IsRFC822HeaderFieldName(const char* aHdr, bool* aResult) {
-  NS_ENSURE_ARG_POINTER(aHdr);
-  NS_ENSURE_ARG_POINTER(aResult);
-  uint32_t length = strlen(aHdr);
-  for (uint32_t i = 0; i < length; i++) {
-    char c = aHdr[i];
-    if (c < '!' || c == ':' || c > '~') {
-      *aResult = false;
-      return NS_OK;
-    }
-  }
-  *aResult = true;
-  return NS_OK;
 }
 
 /* NOTE: ~copied from uriloader/base/nsDocLoader.cpp */
@@ -916,85 +874,6 @@ nsresult IsRSSArticle(nsIURI* aMsgURI, bool* aIsRSSArticle) {
 
     if (rssServer) *aIsRSSArticle = true;
   }
-
-  return rv;
-}
-
-// digest needs to be a pointer to a DIGEST_LENGTH (16) byte buffer
-nsresult MSGCramMD5(const char* text, int32_t text_len, const char* key,
-                    int32_t key_len, unsigned char* digest) {
-  nsresult rv;
-
-  nsAutoCString hash;
-  nsCOMPtr<nsICryptoHash> hasher =
-      do_CreateInstance("@mozilla.org/security/hash;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // this code adapted from
-  // http://www.cis.ohio-state.edu/cgi-bin/rfc/rfc2104.html
-
-  char innerPad[65]; /* inner padding - key XORd with innerPad */
-  char outerPad[65]; /* outer padding - key XORd with outerPad */
-  int i;
-  /* if key is longer than 64 bytes reset it to key=MD5(key) */
-  if (key_len > 64) {
-    rv = hasher->Init(nsICryptoHash::MD5);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = hasher->Update((const uint8_t*)key, key_len);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = hasher->Finish(false, hash);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    key = hash.get();
-    key_len = DIGEST_LENGTH;
-  }
-
-  /*
-   * the HMAC_MD5 transform looks like:
-   *
-   * MD5(K XOR outerPad, MD5(K XOR innerPad, text))
-   *
-   * where K is an n byte key
-   * innerPad is the byte 0x36 repeated 64 times
-   * outerPad is the byte 0x5c repeated 64 times
-   * and text is the data being protected
-   */
-
-  /* start out by storing key in pads */
-  memset(innerPad, 0, sizeof innerPad);
-  memset(outerPad, 0, sizeof outerPad);
-  memcpy(innerPad, key, key_len);
-  memcpy(outerPad, key, key_len);
-
-  /* XOR key with innerPad and outerPad values */
-  for (i = 0; i < 64; i++) {
-    innerPad[i] ^= 0x36;
-    outerPad[i] ^= 0x5c;
-  }
-  /*
-   * perform inner MD5
-   */
-  nsAutoCString result;
-  rv = hasher->Init(nsICryptoHash::MD5); /* init context for 1st pass */
-  rv = hasher->Update((const uint8_t*)innerPad, 64); /* start with inner pad */
-  rv = hasher->Update((const uint8_t*)text,
-                      text_len);      /* then text of datagram */
-  rv = hasher->Finish(false, result); /* finish up 1st pass */
-
-  /*
-   * perform outer MD5
-   */
-  hasher->Init(nsICryptoHash::MD5); /* init context for 2nd pass */
-  rv = hasher->Update((const uint8_t*)outerPad, 64); /* start with outer pad */
-  rv = hasher->Update((const uint8_t*)result.get(),
-                      16);            /* then results of 1st hash */
-  rv = hasher->Finish(false, result); /* finish up 2nd pass */
-
-  if (result.Length() != DIGEST_LENGTH) return NS_ERROR_UNEXPECTED;
-
-  memcpy(digest, result.get(), DIGEST_LENGTH);
 
   return rv;
 }
@@ -1375,21 +1254,6 @@ mozilla::Result<nsTArray<nsMsgKey>, nsresult> MsgGetKeysFromHdrs(
   return keys;
 }
 
-nsresult MsgExamineForProxyAsync(nsIChannel* channel,
-                                 nsIProtocolProxyCallback* listener,
-                                 nsICancelable** result) {
-#ifdef DEBUG
-  nsCOMPtr<nsIURI> uri;
-  nsresult rv = channel->GetURI(getter_AddRefs(uri));
-  NS_ASSERTION(NS_SUCCEEDED(rv) && uri,
-               "The URI needs to be set before calling the proxy service");
-#endif
-
-  nsCOMPtr<nsIProtocolProxyService> pps =
-      mozilla::components::ProtocolProxy::Service();
-  return pps->AsyncResolve(channel, 0, listener, nullptr, result);
-}
-
 PRTime MsgConvertAgeInDaysToCutoffDate(int32_t ageInDays) {
   PRTime now = PR_Now();
 
@@ -1500,60 +1364,6 @@ nsresult MsgStreamMsgHeaders(nsIInputStream* aInputStream,
   return pump->AsyncRead(aConsumer);
 }
 
-nsresult MsgDetectCharsetFromFile(nsIFile* aFile, nsACString& aCharset) {
-  // We do the detection in this order:
-  // Check BOM.
-  // If no BOM, run localized detection (Russian, Ukrainian or Japanese).
-  // We need to run this first, since ISO-2022-JP is 7bit ASCII and would be
-  // detected as UTF-8. If ISO-2022-JP not detected, check for UTF-8. If no
-  // UTF-8, but detector detected something, use that, otherwise return an
-  // error.
-  aCharset.Truncate();
-
-  nsresult rv;
-  nsCOMPtr<nsIInputStream> inputStream;
-  rv = NS_NewLocalFileInputStream(getter_AddRefs(inputStream), aFile);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Check the BOM.
-  char sniffBuf[3];
-  uint32_t numRead;
-  rv = inputStream->Read(sniffBuf, sizeof(sniffBuf), &numRead);
-
-  if (numRead >= 2 && sniffBuf[0] == (char)0xfe && sniffBuf[1] == (char)0xff) {
-    aCharset = "UTF-16BE";
-  } else if (numRead >= 2 && sniffBuf[0] == (char)0xff &&
-             sniffBuf[1] == (char)0xfe) {
-    aCharset = "UTF-16LE";
-  } else if (numRead >= 3 && sniffBuf[0] == (char)0xef &&
-             sniffBuf[1] == (char)0xbb && sniffBuf[2] == (char)0xbf) {
-    aCharset = "UTF-8";
-  }
-  if (!aCharset.IsEmpty()) return NS_OK;
-
-  // Position back to the beginning.
-  nsCOMPtr<nsISeekableStream> seekStream = do_QueryInterface(inputStream);
-  if (seekStream) seekStream->Seek(nsISeekableStream::NS_SEEK_SET, 0);
-
-  // Use detector.
-  mozilla::UniquePtr<mozilla::EncodingDetector> detector =
-      mozilla::EncodingDetector::Create(true);
-  char buffer[1024];
-  numRead = 0;
-  while (NS_SUCCEEDED(inputStream->Read(buffer, sizeof(buffer), &numRead))) {
-    mozilla::Span<const uint8_t> src =
-        mozilla::AsBytes(mozilla::Span(buffer, numRead));
-    (void)detector->Feed(src, false);
-    if (numRead == 0) {
-      break;
-    }
-  }
-  (void)detector->Feed(nullptr, true);
-  auto encoding = detector->Guess(nullptr, true);
-  encoding->Name(aCharset);
-  return NS_OK;
-}
-
 /*
  * Converts a buffer to plain text. Some conversions may
  * or may not work with certain end charsets which is why we
@@ -1624,6 +1434,27 @@ void MsgRemoveQueryPart(nsCString& aSpec) {
   if (ind != kNotFound) aSpec.SetLength(ind);
   ind = aSpec.Find("/;");
   if (ind != kNotFound) aSpec.SetLength(ind);
+}
+
+bool MsgPartUrlNeedsAttachmentDisposition(nsIURI* aUrl) {
+  nsAutoCString query;
+  if (NS_FAILED(aUrl->GetQuery(query))) {
+    return false;
+  }
+
+  mozilla::URLParams params;
+  params.ParseInput(query);
+  if (!params.Has("part"_ns)) {
+    return false;
+  }
+
+  // The parameters may be escaped, so compare the parsed values rather than
+  // searching the spec.
+  nsAutoCString type;
+  params.Get("type"_ns, type);
+  return !type.LowerCaseEqualsLiteral("message/rfc822") &&
+         !type.LowerCaseEqualsLiteral("application/x-message-display") &&
+         !type.LowerCaseEqualsLiteral("application/pdf");
 }
 
 // Perform C-style string escaping.
@@ -1700,26 +1531,6 @@ nsresult SyncCopyStream(nsIInputStream* src, nsIOutputStream* dest,
       pos += n;
       bytesCopied += n;
     }
-  }
-  return NS_OK;
-}
-
-nsresult SyncCopyStreamN(nsIInputStream* src, nsIOutputStream* dest,
-                         uint32_t count) {
-  mozilla::Buffer<char> buf(FILE_IO_BUFFER_SIZE);
-  nsresult rv;
-
-  while (count > 0) {
-    uint32_t numWanted = std::min(count, (uint32_t)buf.Length());
-    uint32_t numRead;
-    rv = src->Read(buf.Elements(), numWanted, &numRead);
-    NS_ENSURE_SUCCESS(rv, rv);
-    if (numRead == 0) {
-      return NS_ERROR_UNEXPECTED;  // We should _not_ be hitting EOF.
-    }
-    rv = SyncWriteAll(dest, buf.Elements(), numRead);
-    NS_ENSURE_SUCCESS(rv, rv);
-    count -= numRead;
   }
   return NS_OK;
 }
@@ -1936,6 +1747,20 @@ nsTArray<nsCString> StringFields(nsACString const& s) {
     }
   }
   return out;
+}
+
+nsresult MsgNewStandardURL(const nsACString& aSpec, nsIURL** aURL,
+                           int32_t aDefaultPort) {
+  NS_ENSURE_ARG_POINTER(aURL);
+
+  nsCOMPtr<nsIURL> url;
+  MOZ_TRY(NS_MutateURI(NS_STANDARDURLMUTATOR_CONTRACTID)
+              .Apply(&nsIStandardURLMutator::Init,
+                     nsIStandardURL::URLTYPE_STANDARD, aDefaultPort,
+                     PromiseFlatCString(aSpec), nullptr, nullptr, nullptr)
+              .Finalize(url));
+  url.forget(aURL);
+  return NS_OK;
 }
 
 nsresult ParseDodgyQueryURI(const char* uriString, nsIURI** outURI) {

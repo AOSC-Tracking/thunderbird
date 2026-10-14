@@ -112,7 +112,7 @@ nsMsgComposeService::OpenComposeWindowWithParams(const char* chrome,
     chromeURL =
         "chrome://messenger/content/messengercompose/messengercompose.xhtml"_ns;
   }
-  rv = wwatch->OpenWindow(0, chromeURL, u"_blank"_ns,
+  rv = wwatch->OpenWindow(nullptr, chromeURL, u"_blank"_ns,
                           "all,chrome,dialog=no,status,toolbar"_ns,
                           msgParamsWrapper, getter_AddRefs(newWindow));
 
@@ -160,7 +160,8 @@ nsresult nsMsgComposeService::GetTo3PaneWindow() {
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<mozIDOMWindowProxy> domWindow;
-  rv = windowMediator->GetMostRecentBrowserWindow(getter_AddRefs(domWindow));
+  rv = windowMediator->GetMostRecentWindow(u"mail:3pane",
+                                           getter_AddRefs(domWindow));
   NS_ENSURE_SUCCESS(rv, NS_ERROR_ABORT);
   nsCOMPtr<nsPIDOMWindowOuter> outerWin = nsPIDOMWindowOuter::From(domWindow);
   if (outerWin) {

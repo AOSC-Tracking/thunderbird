@@ -139,7 +139,8 @@ nsresult nsMessengerWinIntegration::HandleIconActivate(
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<mozIDOMWindowProxy> domWindow;
-    rv = windowMediator->GetMostRecentBrowserWindow(getter_AddRefs(domWindow));
+    rv = windowMediator->GetMostRecentWindow(u"mail:3pane",
+                                             getter_AddRefs(domWindow));
     NS_ENSURE_SUCCESS(rv, rv);
     if (domWindow) {
       activateWindow(domWindow);
@@ -217,8 +218,7 @@ nsresult nsMessengerWinIntegration::HandleIconContextMenu(int xPos, int yPos) {
       nsCOMPtr<nsIAppStartup> appStartup = components::AppStartup::Service();
       NS_ENSURE_TRUE(appStartup, NS_ERROR_FAILURE);
 
-      bool userAllowedQuit = true;
-      appStartup->Quit(nsIAppStartup::eAttemptQuit, 0, &userAllowedQuit);
+      appStartup->Quit(nsIAppStartup::eAttemptQuit, 0);
     }
   }
 

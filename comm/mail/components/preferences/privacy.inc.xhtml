@@ -14,11 +14,11 @@
     <!-- Mail Content -->
     <html:div data-category="panePrivacy">
     <html:fieldset id="mailContentGroup" data-category="panePrivacy">
-      <html:legend data-l10n-id="mail-content"></html:legend>
+      <html:legend data-l10n-id="email-content"></html:legend>
       <hbox id="remoteContentBox">
         <checkbox id="acceptRemoteContent"
                   preference="mailnews.message_display.disable_remote_image"
-                  data-l10n-id="remote-content-label"/>
+                  data-l10n-id="remote-content-images-label"/>
         <spacer flex="1"/>
         <hbox>
           <button is="highlightable-button" id="remoteContentExceptions"
@@ -47,7 +47,7 @@
       <hbox>
         <html:a id="acceptRemoteContentInfo"
                 href="https://support.mozilla.org/kb/remote-content-in-messages"
-                data-l10n-id="remote-content-privacy-info"/>
+                data-l10n-id="remote-content-privacy-link"/>
       </hbox>
     </html:fieldset>
     </html:div>
@@ -97,7 +97,7 @@
             <menulist id="acceptThirdPartyMenu" preference="network.cookie.cookieBehavior">
               <menupopup>
                 <menuitem data-l10n-id="third-party-always" value="always"/>
-                <menuitem data-l10n-id="third-party-visited" value="visited"/>
+                <menuitem data-l10n-id="third-party-visited-only" value="visited"/>
                 <menuitem data-l10n-id="third-party-never" value="never"/>
               </menupopup>
             </menulist>
@@ -112,7 +112,7 @@
                   search-l10n-ids="
                     cookies-dialog-title,
                     filter-search-label.value,
-                    cookies-on-system-label,
+                    cookies-stored-label,
                     treecol-site-header.label,
                     treecol-name-header.label,
                     props-name-label.value,
@@ -134,7 +134,7 @@
         <checkbox id="globalPrivacyControlCheckbox"
                   class="tail-with-learn-more"
                   preference="privacy.globalprivacycontrol.enabled"
-                  data-l10n-id="global-privacy-control-description"
+                  data-l10n-id="global-privacy-control-label"
                   search-l10n-ids="global-privacy-control-search" />
         <html:a id="globalPrivacyControlLearnMoreLink"
                 data-l10n-id="moz-support-link-text"
@@ -160,11 +160,11 @@
     <html:div data-category="panePrivacy">
     <html:fieldset data-category="panePrivacy">
       <hbox align="center">
-        <description data-l10n-id="passwords-description"/>
+        <description data-l10n-id="passwords-registered-description"/>
         <spacer flex="1"/>
         <hbox>
           <button is="highlightable-button" id="showPasswords"
-                  data-l10n-id="passwords-button"
+                  data-l10n-id="view-saved-passwords-button"
                   oncommand="gPrivacyPane.showPasswords();"
                   preference="pref.privacy.disable_button.view_passwords"
                   search-l10n-ids="
@@ -207,10 +207,10 @@
 
       <separator class="thin"/>
 
-      <description data-l10n-id="primary-password-description"/>
+      <description data-l10n-id="primary-password-session-description"/>
       <hbox>
         <checkbox id="useMasterPassword"
-                  data-l10n-id="primary-password-label"
+                  data-l10n-id="use-primary-password-label"
                   oncommand="gPrivacyPane.updateMasterPasswordButton();"/>
         <spacer flex="1"/>
         <button is="highlightable-button" id="changeMasterPassword"
@@ -236,7 +236,7 @@
 
     <html:div data-category="panePrivacy">
     <html:fieldset data-category="panePrivacy">
-      <description data-l10n-id="spam-description"/>
+      <description data-l10n-id="spam-accounts-description"/>
       <separator class="thin"/>
       <hbox>
         <checkbox id="manualMark"
@@ -252,13 +252,13 @@
         <hbox>
           <radio id="manualMarkMode0"
                  value="0"
-                 data-l10n-id="spam-move-label"/>
+                 data-l10n-id="spam-move-folder-label"/>
           <spacer flex="1"/>
         </hbox>
         <hbox>
           <radio id="manualMarkMode1"
                  value="1"
-                 data-l10n-id="spam-delete-label"/>
+                 data-l10n-id="spam-delete-immediately-label"/>
           <spacer flex="1"/>
         </hbox>
       </radiogroup>
@@ -266,14 +266,14 @@
       <description data-l10n-id="spam-read-description"></description>
       <checkbox class="indent"
                 id="manualMarkAsJunkMarksRead"
-                data-l10n-id="spam-read-manual-label"
+                data-l10n-id="spam-marked-manually-label"
                 preference="mailnews.ui.junk.manualMarkAsJunkMarksRead" />
       <checkbox class="indent"
                 id="markAsReadOnSpam"
-                data-l10n-id="spam-read-auto-label"
+                data-l10n-id="spam-detected-auto-label"
                 preference="mail.spam.markAsReadOnSpam" />
       <hbox align="start">
-        <checkbox id="enableJunkLogging" data-l10n-id="spam-log-label"
+        <checkbox id="enableJunkLogging" data-l10n-id="spam-log-keep-label"
                   oncommand="gPrivacyPane.updateJunkLogButton(this.checked);"
                   preference="mail.spam.logging.enabled"/>
         <spacer flex="1"/>
@@ -294,16 +294,16 @@
     <hbox id="privacyDataCollectionCategory"
           class="subcategory"
           data-category="panePrivacy">
-      <html:h1 data-l10n-id="collection-header"></html:h1>
+      <html:h1 data-l10n-id="collection-improve-header"></html:h1>
     </hbox>
 
     <html:div id="dataCollectionGroup" data-category="panePrivacy">
     <html:fieldset data-category="panePrivacy">
       <description>
-        <label class="tail-with-learn-more" data-l10n-id="collection-description"/>
+        <label class="tail-with-learn-more" data-l10n-id="collection-community-description"/>
         <label id="dataCollectionPrivacyNotice"
                class="learnMore" is="text-link"
-               data-l10n-id="collection-privacy-notice"/>
+               data-l10n-id="collection-privacy-policy"/>
       </description>
       <description>
         <html:div id="telemetry-container" hidden="hidden">
@@ -311,7 +311,7 @@
                     src="chrome://global/skin/icons/info.svg" />
           <html:span id="telemetryDisabledDescription"
                      class="tail-with-learn-more"
-                     data-l10n-id="collection-health-report-telemetry-disabled">
+                     data-l10n-id="collection-data-sharing-off">
           </html:span>
           <button id="telemetryDataDeletionLearnMore"
                   class="learnMore" is="text-link"
@@ -321,12 +321,14 @@
       <vbox data-subcategory="reports">
         <hbox align="center">
           <checkbox id="submitHealthReportBox"
-                    data-l10n-id="collection-health-report"
+                    data-l10n-id="collection-share-performance"
                     class="tail-with-learn-more"/>
           <label id="FHRLearnMore"
                  class="learnMore" is="text-link"
                  data-l10n-id="collection-health-report-link"/>
         </hbox>
+        <description class="indent tip-caption"
+                     data-l10n-id="collection-share-performance-description"/>
 #ifndef MOZ_TELEMETRY_REPORTING
         <description id="TelemetryDisabledDesc"
           class="indent tip-caption" control="telemetryGroup"
@@ -338,7 +340,7 @@
         <checkbox id="automaticallySubmitCrashesBox"
                   class="tail-with-learn-more"
                   preference="browser.crashReports.unsubmittedCheck.autoSubmit2"
-                  data-l10n-id="collection-backlogged-crash-reports"/>
+                  data-l10n-id="collection-share-crash-data"/>
         <label id="crashReporterLearnMore"
                class="learnMore" is="text-link" data-l10n-id="collection-backlogged-crash-reports-link"/>
       </hbox>
@@ -357,11 +359,11 @@
     <html:div data-category="panePrivacy">
     <html:fieldset data-category="panePrivacy">
       <html:legend data-l10n-id="privacy-scam-detection-title"></html:legend>
-      <description data-l10n-id="phishing-description"/>
+      <description data-l10n-id="scam-detection-description"/>
       <separator class="thin"/>
       <hbox>
         <checkbox id="enablePhishingDetector"
-                  data-l10n-id="phishing-label"
+                  data-l10n-id="scam-detection-label"
                   preference="mail.phishing.detection.enabled"/>
         <spacer flex="1"/>
       </hbox>
@@ -372,11 +374,11 @@
     <html:div data-category="panePrivacy">
     <html:fieldset data-category="panePrivacy">
       <html:legend data-l10n-id="privacy-anti-virus-title"></html:legend>
-      <description data-l10n-id="antivirus-description"/>
+      <description data-l10n-id="antivirus-check-description"/>
       <separator class="thin"/>
       <hbox>
         <checkbox id="enableAntiVirusQuarantine"
-                  data-l10n-id="antivirus-label"
+                  data-l10n-id="antivirus-isolate-label"
                   preference="mailnews.downloadToTempFile"/>
         <spacer flex="1"/>
       </hbox>
@@ -385,9 +387,9 @@
 
     <html:div data-category="panePrivacy">
     <html:fieldset data-category="panePrivacy">
-      <html:legend data-l10n-id="privacy-certificates-title"></html:legend>
+      <html:legend data-l10n-id="privacy-security-certificates-title"></html:legend>
       <description id="CertSelectionDesc" control="certSelection"
-                   data-l10n-id="certificate-description"/>
+                   data-l10n-id="certificate-verify-description"/>
 
       <!--
         The values on these radio buttons may look like l12y issues, but
@@ -399,10 +401,10 @@
                   preference="security.default_personal_cert"
                   aria-labelledby="CertGroupCaption CertSelectionDesc">
         <radio id="certSelectionAuto"
-               data-l10n-id="certificate-auto"
+               data-l10n-id="certificate-choose-auto"
                value="Select Automatically"/>
         <radio id="certSelectionAsk"
-               data-l10n-id="certificate-ask"
+               data-l10n-id="certificate-ask-every"
                value="Ask Every Time"/>
       </radiogroup>
 
@@ -410,7 +412,7 @@
 
       <hbox align="start">
         <checkbox id="enableOCSP"
-                  data-l10n-id="ocsp-label"
+                  data-l10n-id="ocsp-check-label"
                   preference="security.OCSP.enabled"
                   flex="1"/>
         <spacer flex="1"/>
@@ -577,7 +579,7 @@
 
     <html:div data-category="panePrivacy">
     <html:fieldset id="emailE2eeGroupPreparation" data-category="panePrivacy">
-      <html:p data-l10n-id="email-e2ee-enable-accounts-info">
+      <html:p data-l10n-id="email-e2ee-accounts-info">
         <html:a data-l10n-name="account-settings-url"
                 onclick="MsgAccountManager(null);">
         </html:a>
@@ -588,24 +590,24 @@
     <html:div data-category="panePrivacy">
     <html:fieldset id="emailE2eeGroupAutomatism" data-category="panePrivacy">
       <html:legend data-l10n-id="email-e2ee-automatism"></html:legend>
-      <description data-l10n-id="email-e2ee-automatism-pre"/>
+      <description data-l10n-id="email-e2ee-automatism-intro"/>
       <separator class="thin"/>
 
       <checkbox id="emailE2eeAutoEnable"
                 preference="mail.e2ee.auto_enable"
-                data-l10n-id="email-e2ee-auto-on"
+                data-l10n-id="email-e2ee-turn-on"
                 oncommand="gPrivacyPane.updateE2eeCheckboxes();"/>
       <checkbox id="emailE2eeAutoDisable"
                 preference="mail.e2ee.auto_disable"
-                data-l10n-id="email-e2ee-auto-off"
+                data-l10n-id="email-e2ee-turn-off"
                 oncommand="gPrivacyPane.updateE2eeCheckboxes();"/>
       <checkbox id="emailE2eeAutoDisableNotify"
                 preference="mail.e2ee.notify_on_auto_disable"
-                data-l10n-id="email-e2ee-auto-off-notify"
+                data-l10n-id="email-e2ee-turn-off-notify"
                 oncommand="gPrivacyPane.updateE2eeCheckboxes();"/>
 
       <separator class="thin"/>
-      <description data-l10n-id="email-e2ee-automatism-post"/>
+      <description data-l10n-id="email-e2ee-automatism-note"/>
     </html:fieldset>
     </html:div>
 
@@ -643,13 +645,13 @@
           class="subcategory"
           hidden="hidden"
           data-category="panePrivacy">
-      <html:h1 data-l10n-id="preferences-doh-header"/>
+      <html:h1 data-l10n-id="preferences-doh-secure-header"/>
     </hbox>
 
     <html:div id="dohBox" data-category="panePrivacy" data-subcategory="doh" class="highlighting-group">
-      <html:legend data-l10n-id="preferences-doh-header"></html:legend>
+      <html:legend data-l10n-id="preferences-doh-secure-header"></html:legend>
       <vbox flex="1">
-        <description class="tail-with-learn-more" data-l10n-id="preferences-doh-description"/>
+        <description class="tail-with-learn-more" data-l10n-id="preferences-doh-secure-description"/>
         <html:a id="dohLearnMore"
                 class="learnMore"
                 data-l10n-id="moz-support-link-text"
@@ -680,7 +682,7 @@
               <hbox>
                 <radio id="dohDefaultRadio"
                        value="0"
-                       data-l10n-id="preferences-doh-setting-default"
+                       data-l10n-id="preferences-doh-setting-automatic"
                        flex="1"/>
                 <button id="dohDefaultArrow"
                         is="highlightable-button"
@@ -689,7 +691,7 @@
                         aria-expanded="false"/>
               </hbox>
               <vbox class="indent">
-                <description data-l10n-id="preferences-doh-default-desc"/>
+                <description data-l10n-id="preferences-doh-automatic-desc"/>
                 <vbox class="privacy-extra-information">
                   <vbox class="indent">
                     <hbox class="extra-information-label">
@@ -734,7 +736,7 @@
                         aria-expanded="false"/>
               </hbox>
               <vbox class="indent">
-                <description data-l10n-id="preferences-doh-enabled-desc"/>
+                <description data-l10n-id="preferences-doh-increased-desc"/>
                 <vbox class="privacy-extra-information">
                   <vbox class="indent">
                     <hbox class="extra-information-label">
@@ -759,7 +761,7 @@
               <hbox>
                 <radio id="dohStrictRadio"
                        value="3"
-                       data-l10n-id="preferences-doh-setting-strict"
+                       data-l10n-id="preferences-doh-setting-maximum"
                        flex="1"/>
                 <button id="dohStrictArrow"
                         is="highlightable-button"
@@ -768,7 +770,7 @@
                         aria-expanded="false"/>
               </hbox>
               <vbox class="indent">
-                <description data-l10n-id="preferences-doh-strict-desc"/>
+                <description data-l10n-id="preferences-doh-maximum-desc"/>
                 <vbox class="privacy-extra-information">
                   <vbox class="indent">
                     <hbox class="extra-information-label">
@@ -800,7 +802,7 @@
                        flex="1"/>
               </hbox>
               <vbox class="indent">
-                <description data-l10n-id="preferences-doh-off-desc"/>
+                <description data-l10n-id="preferences-doh-off-standard-desc"/>
               </vbox>
             </vbox>
           </radiogroup>

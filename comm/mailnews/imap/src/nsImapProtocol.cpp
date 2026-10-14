@@ -5,6 +5,7 @@
 #include "nsImapProtocol.h"
 
 #include "msgCore.h"  // for pre-compiled headers
+#include "nsMsgDBFolder.h"
 #include "nsMsgUtils.h"
 #include "nsIFeedbackService.h"
 
@@ -58,6 +59,7 @@
 #include "nsImapUtils.h"
 #include "nsIStreamConverterService.h"
 #include "nsIProxyInfo.h"
+#include "nsProtocolProxyService.h"
 #include "nsITLSSocketControl.h"
 #include "nsITransportSecurityInfo.h"
 #include "nsProxyRelease.h"
@@ -950,8 +952,17 @@ nsresult nsImapProtocol::SetupWithUrl(nsIURI* aURL, nsISupports* aConsumer) {
     bool proxyCallback = false;
     if (m_runningUrl && !m_transport /* and we don't have a transport yet */) {
       if (m_mockChannel) {
-        rv = MsgExamineForProxyAsync(m_mockChannel, this,
-                                     getter_AddRefs(m_proxyRequest));
+#ifdef DEBUG
+        nsCOMPtr<nsIURI> uri;
+        nsresult uriRv = m_mockChannel->GetURI(getter_AddRefs(uri));
+        NS_ASSERTION(
+            NS_SUCCEEDED(uriRv) && uri,
+            "The URI needs to be set before calling the proxy service");
+#endif
+        nsCOMPtr<nsIProtocolProxyService> pps =
+            mozilla::components::ProtocolProxy::Service();
+        rv = pps->AsyncResolve(m_mockChannel, 0, this, nullptr,
+                               getter_AddRefs(m_proxyRequest));
         if (NS_FAILED(rv)) {
           rv = SetupWithUrlCallback(nullptr);
         } else {
@@ -2307,6 +2318,11 @@ class UrlListenerNotifierEvent : public mozilla::Runnable {
 };
 
 bool nsImapProtocol::TryToRunUrlLocally(nsIURI* aURL, nsISupports* aConsumer) {
+  // NOTE: This is called by LoadImapUrl(), as part of the setup on the main
+  // thread. But really, the protocol code shouldn't access the database or
+  // local message store at all! See
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=2070757
+  MOZ_ASSERT(NS_IsMainThread());
   nsresult rv;
   nsCOMPtr<nsIImapUrl> imapUrl(do_QueryInterface(aURL, &rv));
   NS_ENSURE_SUCCESS(rv, false);
@@ -2322,8 +2338,27 @@ bool nsImapProtocol::TryToRunUrlLocally(nsIURI* aURL, nsISupports* aConsumer) {
     mailnewsUrl->GetFolder(getter_AddRefs(folder));
     NS_ENSURE_TRUE(folder, false);
 
-    folder->HasMsgOffline(strtoul(messageIdString.get(), nullptr, 10),
-                          &useLocalCache);
+    // Need the message key.
+    ImapUid uid = strtoul(messageIdString.get(), nullptr, 10);
+    nsCOMPtr<nsIMsgDatabase> db;
+    rv = folder->GetMsgDatabase(getter_AddRefs(db));
+    NS_ENSURE_SUCCESS(rv, false);
+    auto lookup = MsgKeyFromUid(db, uid);
+    if (lookup.isErr()) {
+      MOZ_LOG_FMT(IMAP, LogLevel::Error,
+                  "TryToRunUrlLocally() - {}: Database error ({})",
+                  folder->URI(), lookup.unwrapErr());
+      return false;
+    }
+    nsMsgKey msgKey = lookup.unwrap();
+    if (msgKey == nsMsgKey_None) {
+      MOZ_LOG_FMT(IMAP, LogLevel::Error,
+                  "TryToRunUrlLocally() - {}: Couldn't find UID {}",
+                  folder->URI(), uid);
+      return false;
+    }
+
+    folder->HasMsgOffline(msgKey, &useLocalCache);
     mailnewsUrl->SetMsgIsInLocalCache(useLocalCache);
     // We're downloading a single message for offline use, and it's
     // already offline. So we shouldn't do anything, but we do
@@ -5912,10 +5947,10 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
       NS_ENSURE_SUCCESS(rv, rv);
       NS_ENSURE_TRUE(digest, NS_ERROR_NULL_POINTER);
       // The encoded digest is the hexadecimal representation of
-      // DIGEST_LENGTH characters, so it will be twice that length.
-      nsAutoCStringN<2 * DIGEST_LENGTH> encodedDigest;
+      // kCramMD5DigestLength characters, so it will be twice that length.
+      nsAutoCStringN<2 * kCramMD5DigestLength> encodedDigest;
 
-      for (uint32_t j = 0; j < DIGEST_LENGTH; j++) {
+      for (uint32_t j = 0; j < kCramMD5DigestLength; j++) {
         char hexVal[3];
         PR_snprintf(hexVal, 3, "%.2x", 0x0ff & (unsigned short)(digest[j]));
         encodedDigest.Append(hexVal);

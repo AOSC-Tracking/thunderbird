@@ -931,10 +931,7 @@ NS_IMETHODIMP nsImapService::StreamMessage(
   rv = AddImapFetchToUrl(mailnewsurl, folder, msgIds, additionalHeader);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIMsgIncomingServer> aMsgIncomingServer;
-
   mailnewsurl->SetMsgWindow(aMsgWindow);
-  rv = mailnewsurl->GetServer(getter_AddRefs(aMsgIncomingServer));
 
   // Try to check if the message is offline
   bool hasMsgOffline = false;
@@ -2221,14 +2218,26 @@ nsresult nsImapService::NewURI(const nsACString& aSpec,
 
       (void)SetImapUrlSink(folder, aImapUrl);
 
+      // Need messagekey to see if folder has an offline copy.
+      // If any part of this fails, we'll just assume there's no offline copy
+      // stashed locally.
+      bool useLocalCache = false;
       nsCString messageIdString;
       aImapUrl->GetListOfMessageIds(messageIdString);
       if (!messageIdString.IsEmpty()) {
-        bool useLocalCache = false;
-        folder->HasMsgOffline(strtoul(messageIdString.get(), nullptr, 10),
-                              &useLocalCache);
-        mailnewsUrl->SetMsgIsInLocalCache(useLocalCache);
+        ImapUid uid = (ImapUid)strtoul(messageIdString.get(), nullptr, 10);
+        if (uid != 0) {
+          nsCOMPtr<nsIMsgDatabase> db;
+          rv = folder->GetMsgDatabase(getter_AddRefs(db));
+          if (NS_SUCCEEDED(rv)) {
+            nsMsgKey msgKey = MsgKeyFromUid(db, uid).unwrapOr(nsMsgKey_None);
+            if (msgKey != nsMsgKey_None) {
+              folder->HasMsgOffline(msgKey, &useLocalCache);
+            }
+          }
+        }
       }
+      mailnewsUrl->SetMsgIsInLocalCache(useLocalCache);
     }
   }
 
@@ -2262,18 +2271,7 @@ NS_IMETHODIMP nsImapService::NewChannel(nsIURI* aURI, nsILoadInfo* aLoadInfo,
   rv = channel->SetLoadInfo(aLoadInfo);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsAutoCString spec;
-  rv = aURI->GetSpec(spec);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Add the attachment disposition. This forces docShell to open the attachment
-  // instead of displaying it. Content types we have special handlers for are
-  // white-listed. This white list also exists in nsMailboxService::NewChannel,
-  // EwsProtocolHandler::NewChannel and nsNntpService::NewChannel, so if you're
-  // changing this, update those too.
-  if (spec.Find("part=") >= 0 && spec.Find("type=message/rfc822") < 0 &&
-      spec.Find("type=application/x-message-display") < 0 &&
-      spec.Find("type=application/pdf") < 0) {
+  if (MsgPartUrlNeedsAttachmentDisposition(aURI)) {
     rv = channel->SetContentDisposition(nsIChannel::DISPOSITION_ATTACHMENT);
     NS_ENSURE_SUCCESS(rv, rv);
   }

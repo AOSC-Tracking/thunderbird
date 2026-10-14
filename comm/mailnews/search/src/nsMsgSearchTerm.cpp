@@ -35,10 +35,25 @@
 #include "mozilla/Components.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/StaticPrefs_mail.h"
+#include "mozilla/TextUtils.h"
 #include "mozilla/Utf8.h"
 
 using mozilla::Preferences;
 using namespace mozilla::mailnews;
+
+namespace {
+
+bool IsValidRFC822HeaderFieldName(const char* aHdr) {
+  if (!aHdr || !*aHdr) return false;
+
+  for (const auto* p = reinterpret_cast<const unsigned char*>(aHdr); *p; ++p) {
+    if (*p < '!' || *p == ':' || *p > '~') return false;
+  }
+  return true;
+}
+
+}  // namespace
 
 //---------------------------------------------------------------------------
 // nsMsgSearchTerm specifies one criterion, e.g. name contains phil
@@ -119,9 +134,8 @@ nsresult NS_MsgGetAttributeFromString(const char* string,
   }
 
   if (!found) {
-    bool goodHdr;
-    IsRFC822HeaderFieldName(string, &goodHdr);
-    if (!goodHdr) return NS_MSG_INVALID_CUSTOM_HEADER;
+    if (!IsValidRFC822HeaderFieldName(string))
+      return NS_MSG_INVALID_CUSTOM_HEADER;
     // 49 is for showing customize... in ui, headers start from 50 onwards up
     // until 99.
     *attrib = nsMsgSearchAttrib::OtherHeader + 1;
@@ -506,6 +520,7 @@ nsresult nsMsgSearchTerm::ParseValue(char* inStream) {
 
     m_value.utf8String.Assign(inStream, valueLen);
     CopyUTF8toUTF16(m_value.utf8String, m_value.utf16String);
+    NS_MsgStripDiacritics(m_value.utf16String, m_value.utf16StringNoDiacritics);
   } else {
     switch (m_attribute) {
       case nsMsgSearchAttrib::Date:
@@ -827,12 +842,20 @@ nsresult nsMsgSearchTerm::MatchBody(nsIMsgSearchScopeTerm* scope,
       if (needsQPReset) {
         bodyHandler.resetQP();
       }
-      compare.Append(buf);
+      // Take only as much as we're prepared to convert to UTF-16 in one go.
+      // A part which is one endless run of soft line breaks would otherwise
+      // arrive here in one piece, and so would a body written as a single
+      // very long line.
+      const uint32_t limit = mozilla::StaticPrefs::mail_search_max_body_bytes();
+      if (compare.Length() < limit) {
+        compare.Append(StringHead(buf, limit - compare.Length()));
+      }
       // If this line ends with a soft line break, loop around and get the
       // next line before looking for the search string. A malformed message
       // may end on a soft line break; we then match the leftover text at EOF
-      // below.
-      if (softLineBreak) continue;
+      // below. Once the cap is reached matching happens in chunks, just as it
+      // does line by line for text that isn't quoted-printable.
+      if (softLineBreak && compare.Length() < limit) continue;
     }
     if (!compare.IsEmpty()) {
       char startChar = (char)compare.CharAt(0);
@@ -931,6 +954,7 @@ nsresult nsMsgSearchTerm::MatchRfc2047String(const nsACString& rfc2047string,
 nsresult nsMsgSearchTerm::MatchString(const nsACString& stringToMatch,
                                       const char* charset, bool* pResult) {
   NS_ENSURE_ARG_POINTER(pResult);
+  *pResult = false;
 
   bool result = false;
 
@@ -947,14 +971,27 @@ nsresult nsMsgSearchTerm::MatchString(const nsACString& stringToMatch,
     if (charset) {
       rv = nsMsgI18NConvertToUnicode(nsDependentCString(charset), stringToMatch,
                                      utf16StrToMatch);
+      if (rv == NS_ERROR_OUT_OF_MEMORY) {
+        // No point trying another conversion, that wouldn't fit either.
+        return rv;
+      }
     }
     if (NS_FAILED(rv)) {
       // No charset or conversion failed, maybe due to a bad charset, try UTF-8.
+      // The conversions are fallible because the string being matched can be a
+      // whole message body: failing the term is bad, but not as bad as
+      // aborting the process because a UTF-16 copy of it doesn't fit.
+      bool converted;
       if (mozilla::IsUtf8(stringToMatch)) {
-        CopyUTF8toUTF16(stringToMatch, utf16StrToMatch);
+        converted =
+            CopyUTF8toUTF16(stringToMatch, utf16StrToMatch, mozilla::fallible);
       } else {
         // Bad luck, let's assume ASCII/windows-1252 then.
-        CopyASCIItoUTF16(stringToMatch, utf16StrToMatch);
+        converted =
+            CopyASCIItoUTF16(stringToMatch, utf16StrToMatch, mozilla::fallible);
+      }
+      if (!converted) {
+        return NS_ERROR_OUT_OF_MEMORY;
       }
     }
 
@@ -973,45 +1010,72 @@ nsresult nsMsgSearchTerm::MatchString(const nsAString& utf16StrToMatch,
   bool result = false;
 
   nsresult rv = NS_OK;
-  auto needle = m_value.utf16String;
+
+  // Only strip diacritics off the haystack when they aren't significant for
+  // this term, otherwise "för" would also find "for".
+  bool ignoreDiacritics;
+  switch (mozilla::StaticPrefs::mail_matchdiacritics()) {
+    case 1:  // Always match diacritics.
+      ignoreDiacritics = false;
+      break;
+    case 0:  // Never match diacritics.
+      ignoreDiacritics = true;
+      break;
+    default:  // Auto: significant only if the user typed some.
+      ignoreDiacritics =
+          m_value.utf16StringNoDiacritics.Equals(m_value.utf16String);
+      break;
+  }
+
+  const nsAString& needle =
+      ignoreDiacritics ? m_value.utf16StringNoDiacritics : m_value.utf16String;
+
+  nsAutoString strippedStrToMatch;
+  const nsAString* haystack = &utf16StrToMatch;
+  if (ignoreDiacritics && !mozilla::IsAscii(utf16StrToMatch)) {
+    strippedStrToMatch = utf16StrToMatch;
+    ToNaked(strippedStrToMatch);
+    haystack = &strippedStrToMatch;
+  }
 
   switch (m_operator) {
     case nsMsgSearchOp::Contains:
       // An empty needle means "no match".
       if (!needle.IsEmpty() &&
-          CaseInsensitiveFindInReadable(needle, utf16StrToMatch)) {
+          CaseInsensitiveFindInReadable(needle, *haystack)) {
         result = true;
       }
       break;
     case nsMsgSearchOp::DoesntContain:
       // An empty needle means "always match".
       if (needle.IsEmpty() ||
-          !CaseInsensitiveFindInReadable(needle, utf16StrToMatch)) {
+          !CaseInsensitiveFindInReadable(needle, *haystack)) {
         result = true;
       }
       break;
     case nsMsgSearchOp::Is:
-      if (needle.Equals(utf16StrToMatch, nsCaseInsensitiveStringComparator))
+      if (needle.Equals(*haystack, nsCaseInsensitiveStringComparator))
         result = true;
       break;
     case nsMsgSearchOp::Isnt:
-      if (!needle.Equals(utf16StrToMatch, nsCaseInsensitiveStringComparator))
+      if (!needle.Equals(*haystack, nsCaseInsensitiveStringComparator))
         result = true;
       break;
     case nsMsgSearchOp::IsEmpty:
+      // Emptiness is a property of the original string: a value consisting
+      // only of combining marks isn't empty, even though it strips to nothing.
       if (utf16StrToMatch.IsEmpty()) result = true;
       break;
     case nsMsgSearchOp::IsntEmpty:
       if (!utf16StrToMatch.IsEmpty()) result = true;
       break;
     case nsMsgSearchOp::BeginsWith:
-      if (StringBeginsWith(utf16StrToMatch, needle,
+      if (StringBeginsWith(*haystack, needle,
                            nsCaseInsensitiveStringComparator))
         result = true;
       break;
     case nsMsgSearchOp::EndsWith:
-      if (StringEndsWith(utf16StrToMatch, needle,
-                         nsCaseInsensitiveStringComparator))
+      if (StringEndsWith(*haystack, needle, nsCaseInsensitiveStringComparator))
         result = true;
       break;
     default:
@@ -1753,6 +1817,7 @@ nsresult nsMsgResultElement::AssignValues(nsIMsgSearchValue* src,
         rv = src->GetStr(unicodeString);
         CopyUTF16toUTF8(unicodeString, dst->utf8String);
         dst->utf16String = unicodeString;
+        NS_MsgStripDiacritics(unicodeString, dst->utf16StringNoDiacritics);
       } else
         rv = NS_ERROR_INVALID_ARG;
   }

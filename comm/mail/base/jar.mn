@@ -140,7 +140,7 @@ messenger.jar:
 
 
 # the following files are mail-specific overrides
-*   content/messenger/license.html                  (/toolkit/content/license.html)
+    content/messenger/license.html
 % override chrome://global/content/license.html chrome://messenger/content/license.html
     content/messenger/profileDowngrade.js           (content/profileDowngrade.js)
 *   content/messenger/profileDowngrade.xhtml        (content/profileDowngrade.xhtml)

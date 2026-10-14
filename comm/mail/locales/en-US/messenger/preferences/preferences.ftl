@@ -44,9 +44,10 @@ category-qr-export =
 
 general-language-and-fonts-header = Language & Fonts
 
-general-incoming-mail-header = Incoming Mails
+general-email-notifications-header = Email notifications
 
-general-files-and-attachment-header = Files & Attachments
+general-files-and-attachment-header = Files & attachments
+general-files-and-attachment-description = Select what files are saved and where they are saved on your computer.
 
 general-tags-header = Tags
 
@@ -54,19 +55,19 @@ general-reading-and-viewing-header = Reading & viewing
 
 general-updates-header = Updates
 
-general-network-and-diskspace-header = Network & Disk Space
+general-network-and-storage-header = Network and storage
 
-general-indexing-label = Indexing
+general-search-performance-label = Search & performance
 
-composition-category-header = Composition
+compose-writing-emails-header = Writing emails
 
 composition-attachments-header = Attachments
 
 composition-spelling-title = Spelling
 
-compose-html-style-title = HTML Style
+compose-message-formatting-title = Message formatting
 
-composition-addressing-header = Addressing
+compose-address-autocomplete-header = Address autocomplete
 
 privacy-main-header = Privacy
 
@@ -74,35 +75,36 @@ privacy-passwords-header = Passwords
 
 privacy-spam-header = Spam
 
-collection-header = { -brand-short-name } Data Collection and Use
+collection-improve-header = Data collected to improve { -brand-short-name }
 
-collection-description = We strive to provide you with choices and collect only what we need to provide and improve { -brand-short-name } for everyone. We always ask permission before receiving personal information.
-collection-privacy-notice = Privacy Notice
+collection-community-description = { -brand-short-name } is built by a global community. Sharing anonymous performance data helps us fix bugs faster and make the app faster for everyone.
+collection-privacy-policy = Read our privacy policy
 
-collection-health-report-telemetry-disabled = You’re no longer allowing { -vendor-short-name } to capture technical and interaction data. All past data will be deleted within 30 days.
+collection-data-sharing-off = <strong>Data sharing is turned off.</strong> Past usage data will be permanently deleted from { -vendor-short-name } servers within 30 days.
 collection-health-report-telemetry-disabled-link = Learn more
 
-collection-health-report =
-    .label = Allow { -brand-short-name } to send technical and interaction data to { -vendor-short-name }
+collection-share-performance =
+    .label = Share anonymous performance data with { -vendor-short-name }
     .accesskey = r
+collection-share-performance-description = (Includes basic technical info like your operating system, memory usage, and feature activity. { -brand-short-name } never collects email content, contacts, or personal messages.)
 collection-health-report-link = Learn more
 
 # This message is displayed above disabled data sharing options in developer builds
 # or builds with no Telemetry support available.
 collection-health-report-disabled = Data reporting is disabled for this build configuration
 
-collection-backlogged-crash-reports =
-    .label = Allow { -brand-short-name } to send backlogged crash reports on your behalf
+collection-share-crash-data =
+    .label = Send anonymous crash reports to { -vendor-short-name }
     .accesskey = c
 collection-backlogged-crash-reports-link = Learn more
 
 privacy-security-header = Security
 
-privacy-scam-detection-title = Scam Detection
+privacy-scam-detection-title = Scam detection
 
 privacy-anti-virus-title = Antivirus
 
-privacy-certificates-title = Certificates
+privacy-security-certificates-title = Security certificates
 
 chat-pane-header = Chat
 
@@ -112,9 +114,9 @@ chat-notifications-title = Notifications
 
 chat-pane-styling-header = Styling
 
-choose-messenger-language-description = Choose the languages used to display menus, messages, and notifications from { -brand-short-name }.
-manage-messenger-languages-button =
-  .label = Set Alternatives…
+choose-display-language-description = Choose the language used for menus, buttons, and notifications.
+manage-languages-button =
+  .label = Manage languages…
   .accesskey = l
 confirm-messenger-language-change-description = Restart { -brand-short-name } to apply these changes
 confirm-messenger-language-change-button = Apply and Restart
@@ -165,15 +167,15 @@ focus-search-shortcut-alt =
 
 general-legend = { -brand-short-name } Start Page
 
-start-page-label =
-    .label = When { -brand-short-name } launches, show the Start Page in the message area
+show-start-page-label =
+    .label = Show the Start Page when { -brand-short-name } opens
     .accesskey = W
 
 location-label =
     .value = Location:
     .accesskey = o
 restore-default-label =
-    .label = Restore Default
+    .label = Restore default
     .accesskey = R
 
 default-search-engine = Default Search Engine
@@ -199,7 +201,7 @@ start-in-tray-label =
     .label = Start { -brand-short-name } in the tray
     .accesskey = S
 
-new-message-arrival = When new messages arrive:
+new-message-arrival-legend = When a new message arrives:
 mail-play-sound-label =
     .label = { PLATFORM() ->
         [macos] Play the following sound file:
@@ -210,16 +212,16 @@ mail-play-button =
     .label = Play
     .accesskey = P
 
-change-dock-icon = Change preferences for the app icon
+change-dock-icon-description = App badges and notifications
 app-icon-options =
-    .label = App Icon Options…
+    .label = App icon options…
     .accesskey = n
 
-animated-alert-label =
-    .label = Show an alert
+new-email-alert-label =
+    .label = Show an alert for new emails
     .accesskey = S
-customize-alert-label =
-    .label = Customize…
+customize-alerts-label =
+    .label = Customize alerts…
     .accesskey = C
 
 biff-use-system-alert =
@@ -234,41 +236,41 @@ tray-icon-unread-description = Recommended when using small taskbar buttons
 mail-system-sound-label =
     .label = Default system sound for new mail
     .accesskey = D
-mail-custom-sound-label =
-    .label = Use the following sound file
+use-custom-sound-label =
+    .label = Use custom sound for alerts
     .accesskey = U
-mail-browse-sound-button =
-    .label = Browse…
-    .accesskey = B
+mail-select-audio-button =
+    .label = Select audio…
+    .accesskey = A
 
-enable-gloda-search-label =
-    .label = Enable Global Search and Indexer
-    .accesskey = G
+enable-global-search-label =
+    .label = Turn on search across all email accounts
+    .accesskey = e
 
-gloda-show-results-as-list-label =
-    .label = Show global search results as a list by default
+gloda-results-plain-list-label =
+    .label = Show search results as a plain list
     .accesskey = L
 
 datetime-formatting-legend = Date and Time Formatting
-language-selector-legend = Language
+display-language-legend = Display language
 
-allow-hw-accel =
-    .label = Use hardware acceleration when available
+allow-graphics-accel =
+    .label = Use graphics acceleration for smoother scrolling and performance
     .accesskey = h
 
-store-type-label =
-    .value = Message Store Type for new accounts:
+storage-format-label =
+    .value = Storage format for new accounts:
     .accesskey = T
 
-mbox-store-label =
-    .label = File per folder (mbox)
+mbox-store-single-label =
+    .label = Single file per folder (mbox)
 maildir-store-label =
     .label = File per message (maildir)
 
 scrolling-legend = Scrolling
-autoscroll-label =
-    .label = Use autoscrolling
-    .accesskey = U
+enable-autoscroll-label =
+    .label = Enable auto-scrolling
+    .accesskey = g
 smooth-scrolling-label =
     .label = Use smooth scrolling
     .accesskey = m
@@ -278,22 +280,23 @@ browsing-gtk-use-non-overlay-scrollbars =
 
 window-layout-legend = Window Layout
 
-draw-in-titlebar-label =
-    .label = Hide system window titlebar
+hide-titlebar-label =
+    .label = Hide title bar
     .accesskey = H
+hide-titlebar-description = Removes the top bar showing the window name to save screen space
 
-auto-hide-tabbar-label =
-    .label = Auto hide tab bar
-    .accesskey = A
-auto-hide-tabbar-description = Hide the tab bar when only a single tab is open
+hide-tabbar-single-tab-label =
+    .label = Hide the tab bar when only a single tab is open
+    .accesskey = T
+auto-hide-tabbar-second-tab-description = Automatically hides tabs until you open a second tab.
 
-system-integration-legend = System Integration
-always-check-default =
-    .label = Always check to see if { -brand-short-name } is the default mail client on startup
+system-settings-legend = System settings
+check-email-app-label =
+    .label = Always check to see if { -brand-short-name } is the default email app when opened
     .accesskey = A
-check-default-button =
-    .label = Check Now…
-    .accesskey = N
+edit-defaults-apps-button =
+    .label = Edit defaults…
+    .accesskey = u
 
 # Note: This is the search engine name for all the different platforms.
 # Platforms that don't support it should be left blank.
@@ -307,9 +310,9 @@ search-integration-label =
     .label = Allow { search-engine-name } to search messages
     .accesskey = S
 
-config-editor-button =
-    .label = Config Editor…
-    .accesskey = C
+advanced-settings-button =
+    .label = Advanced settings
+    .accesskey = v
 
 return-receipts-description = Determine how { -brand-short-name } handles return receipts
 return-receipts-button =
@@ -322,21 +325,22 @@ update-app-legend = { -brand-short-name } Updates
 #   $version (String): version of Thunderbird, e.g. 68.0.1
 update-app-version = Version { $version }
 
-allow-description = Allow { -brand-short-name } to
-automatic-updates-label =
-    .label = Automatically install updates (recommended: improved security)
+update-settings-title = Update settings
+install-updates-automatically-label =
+    .label = Automatically install updates (recommended)
     .accesskey = A
-check-updates-label =
-    .label = Check for updates, but let me choose whether to install them
+install-updates-automatically-description = Keeps { -brand-short-name } secure with the latest security fixes.
+check-updates-ask-label =
+    .label = Check for updates, but ask before installing
     .accesskey = C
 
 update-application-background-enabled =
     .label = When { -brand-short-name } is not running
     .accesskey = W
 
-update-history-button =
-    .label = Show Update History
-    .accesskey = p
+show-history-button =
+    .label = Show history
+    .accesskey = h
 
 use-service =
     .label = Use a background service to install updates
@@ -345,53 +349,53 @@ use-service =
 cross-user-udpate-warning = This setting will apply to all Windows accounts and { -brand-short-name } profiles using this installation of { -brand-short-name }.
 
 networking-legend = Connection
-proxy-config-description = Configure how { -brand-short-name } connects to the Internet
+connection-config-description = Control how { -brand-short-name } connects to the internet.
 
-network-settings-button =
-    .label = Settings…
+connection-options-button =
+    .label = Connection options…
     .accesskey = S
 
-offline-legend = Offline
-offline-settings = Configure offline settings
+offline-mode-legend = Offline mode
+offline-settings-label = Offline settings
 
 offline-settings-button =
     .label = Offline…
     .accesskey = O
 
-diskspace-legend = Disk Space
-offline-compact-folder =
-    .label = Compact all folders when it will save over
+temporary-storage-legend = Temporary storage
+offline-compact-remove-deleted =
+    .label = Remove data from folders when they have already been deleted to free up storage
     .accesskey = a
 
-offline-compact-folder-automatically =
-    .label = Ask every time before compacting
+offline-compact-ask-cleanup =
+    .label = Ask before cleaning up folders
     .accesskey = b
 
 compact-folder-size =
     .value = MB in total
 
-## Note: The entities use-cache-before and use-cache-after appear on a single
+## Note: The entities use-cache-before and use-temp-storage-after appear on a single
 ## line in preferences as follows:
-## use-cache-before [ textbox for cache size in MB ] use-cache-after
+## use-cache-before [ textbox for cache size in MB ] use-temp-storage-after
 
 use-cache-before =
     .value = Use up to
     .accesskey = U
 
-use-cache-after = MB of space for the cache
+use-temp-storage-after = MB of space for temporary files
 
 ##
 
-smart-cache-label =
-    .label = Override automatic cache management
-    .accesskey = v
+manual-storage-limit-label =
+    .label = Manually set storage limits for temporary files
+    .accesskey = M
 
-clear-cache-button =
-    .label = Clear Now
+clear-temp-files-button =
+    .label = Clear temporary files
     .accesskey = C
 
-clear-cache-shutdown-label =
-    .label = Clear cache on shutdown
+clear-temp-files-shutdown-label =
+    .label = Clear temporary files when { -brand-short-name } closes
     .accesskey = s
 
 underline-text-links-label =
@@ -408,9 +412,9 @@ default-size-label =
     .value = Size:
     .accesskey = S
 
-font-options-button =
-    .label = Advanced…
-    .accesskey = A
+customize-fonts-button =
+    .label = Customize fonts…
+    .accesskey = f
 
 display-width-legend = Plain text messages
 
@@ -449,10 +453,10 @@ quoted-text-color =
     .label = Color:
     .accesskey = o
 
-search-handler-table =
-    .placeholder = Filter content types and actions
+search-content-types =
+    .placeholder = Search types of content
 
-type-column-header = Content Type
+type-column-header = Content type
 
 action-column-header = Action
 
@@ -475,7 +479,7 @@ always-ask-label =
     .accesskey = A
 
 
-display-tags-text = Tags can be used to categorize and prioritize your messages.
+use-tags-text = Use tags to categorize and prioritize messages.
 
 new-tag-button =
     .label = New…
@@ -618,25 +622,25 @@ new-calendar-checkbox-description = Experimental new calendar dialog for viewing
 
 ## Compose Tab
 
-forward-label =
-    .value = Forward messages:
+forward-messages-label =
+    .value = Forward messages as:
     .accesskey = F
 
-inline-label =
-    .label = Inline
+forward-inline-label =
+    .label = Inside the message (inline)
 
 as-attachment-label =
     .label = As Attachment
 
-extension-label =
-    .label = add extension to file name
+add-file-type-label =
+    .label = Add file type to attached messages
     .accesskey = e
 
 ## Note: This will concatenate to "Auto Save every [___] minutes",
 ## using (auto-save-label) and a number (auto-save-end).
 
-auto-save-label =
-    .label = Auto Save every
+autosave-draft-label =
+    .label = Automatically save a draft every
     .accesskey = A
 
 auto-save-end = minutes
@@ -655,15 +659,15 @@ spellcheck-label =
     .label = Check spelling before sending
     .accesskey = C
 
-spellcheck-inline-label =
-    .label = Enable spellcheck as you type
+spellcheck-while-typing-label =
+    .label = Check spelling while typing
     .accesskey = E
 
 language-popup-label =
     .value = Language:
     .accesskey = L
 
-download-dictionaries-link = Download More Dictionaries
+download-dictionaries-link = Download more dictionaries
 
 font-label =
     .value = Font:
@@ -673,8 +677,8 @@ font-size-label =
     .value = Size:
     .accesskey = z
 
-default-colors-label =
-    .label = Use reader’s default colors
+ignore-sender-styles-label =
+    .label = Ignore sender fonts and colors
     .accesskey = d
 
 font-color-label =
@@ -689,63 +693,63 @@ restore-html-label =
     .label = Restore Defaults
     .accesskey = R
 
-default-format-label =
-    .label = Use Paragraph format instead of Body Text by default
+paragraph-spacing-label =
+    .label = Pressing Enter starts a new paragraph with extra spacing
     .accesskey = P
 
-compose-send-format-title = Sending Format
+compose-send-format-title = Sending format
 
-compose-send-automatic-option =
-    .label = Automatic
+compose-format-automatic-option =
+    .label = Automatic (recommended)
 
-compose-send-automatic-description = If no styling is used in the message, send Plain Text. Otherwise, send HTML with a Plain Text fallback.
+compose-format-automatic-description = Send formatted text if you add styles (like bold or links), or plain text if you don’t.
 
-compose-send-both-option =
-    .label = Both HTML and Plain Text
+compose-format-both-option =
+    .label = Both rich text (HTML) and plain text
 
-compose-send-both-description = The recipient’s email application will determine which version to show.
+compose-format-both-description = Always sends both versions so the recipient’s email app can choose which one to display.
 
-compose-send-html-option =
-    .label = Only HTML
+compose-format-html-option =
+    .label = Rich text (HTML) only
 
-compose-send-html-description = Some recipients may not be able to read the message without a Plain Text fallback.
+compose-format-html-description = Keeps custom fonts, colors, and images, but some older email apps may not display it properly.
 
-compose-send-plain-option =
-    .label = Only Plain Text
+compose-format-plain-option =
+    .label = Plain text only
 
-compose-send-plain-description = Some styling will be converted into a plain alternative, while other composition features will be disabled.
+compose-format-plain-description = Removes all formatting, colors, and images. Best for simple text emails that work everywhere.
 
-autocomplete-description = When addressing messages, look for matching entries in:
+autocomplete-matches-description = When typing a recipient’s name or email, look for matches in:
 
-ab-label =
-    .label = Local Address Books
-    .accesskey = L
+company-network-directory-label =
+    .label = Company or network directory
+    .accesskey = C
 
-directories-label =
-    .label = Directory Server:
+directory-server-label =
+    .label = Directory server
     .accesskey = D
 
 directories-none-label =
     .none = None
 
-edit-directories-label =
-    .label = Edit Directories…
+manage-directories-label =
+    .label = Manage directories…
     .accesskey = E
 
-email-picker-label =
-    .label = Automatically add outgoing email addresses to my:
+collect-outgoing-label =
+    .label = Automatically save outgoing email addresses to:
     .accesskey = A
 
-email-picker-description = The location of new contacts saved from sent messages.
+collect-outgoing-description = Where new contacts are saved when created manually or added from emails.
 
-default-add-address-book-label =
-    .value = Default address book for manually added contacts:
-    .accesskey = D
+save-added-contacts-label =
+    .value = Save manually added contacts to:
+    .accesskey = m
 
-default-add-address-book-description = The location of new contacts saved from received messages.
+save-added-contacts-description = Where new contacts are saved from emails.
 
-default-directory-label =
-    .value = Default startup directory in the address book window:
+show-directory-startup-label =
+    .value = Show directory in the address book window when opening { -brand-short-name }
     .accesskey = S
 
 default-last-label =
@@ -755,12 +759,12 @@ attachment-label =
     .label = Check for missing attachments
     .accesskey = m
 
-attachment-options-label =
-    .label = Keywords…
+edit-keywords-label =
+    .label = Edit keywords…
     .accesskey = K
 
-enable-cloud-share =
-    .label = Offer to share for files larger than
+offer-share-large-files-label =
+    .label = Offer to share files by link when they exceed:
 cloud-share-size =
     .value = MB
 
@@ -780,19 +784,19 @@ cloud-account-description = Add a new Filelink storage service
 
 ## Privacy Tab
 
-mail-content = Mail Content
+email-content = Email content
 
-remote-content-label =
-    .label = Allow remote content in messages
+remote-content-images-label =
+    .label = Allow remote content (images and styles)
     .accesskey = m
 
 exceptions-button =
     .label = Exceptions…
     .accesskey = E
 
-remote-content-privacy-info = Learn more about the privacy issues of remote content
+remote-content-privacy-link = How remote content affects privacy
 
-web-content = Web Content
+web-content = Web content
 
 history-label =
     .label = Remember websites and links I’ve visited
@@ -810,8 +814,8 @@ third-party-always =
     .label = Always
 third-party-never =
     .label = Never
-third-party-visited =
-    .label = From visited
+third-party-visited-only =
+    .label = From visited sites only
 
 cookies-button =
     .label = Show Cookies…
@@ -822,22 +826,22 @@ cookies-button =
 # included to facilitate power-user search of the about:preferences page.
 global-privacy-control-search = Global Privacy Control (GPC)
 
-global-privacy-control-description =
-    .label = Tell websites not to sell or share my data
+global-privacy-control-label =
+    .label = Ask websites not to sell or share personal data
     .accesskey = n
 
 do-not-track-removal = We no longer support the “Do Not Track” signal
 
-passwords-description = { -brand-short-name } can remember passwords for all of your accounts.
+passwords-registered-description = { -brand-short-name } can save passwords for registered accounts.
 
-passwords-button =
-    .label = Saved Passwords…
+view-saved-passwords-button =
+    .label = View Saved Passwords…
     .accesskey = S
 
-primary-password-description = A Primary Password protects all your passwords, but you must enter it once per session.
+primary-password-session-description = A Primary Password protects all passwords and is entered once per session.
 
-primary-password-label =
-    .label = Use a Primary Password
+use-primary-password-label =
+    .label = Use Primary Password
     .accesskey = U
 
 # This operation requires the user to authenticate with the operating system (device sign-in)
@@ -852,32 +856,32 @@ forms-primary-pw-fips-title = You are currently in FIPS mode. FIPS requires a no
 forms-master-pw-fips-desc = Password Change Failed
 
 
-spam-description = Set your default spam settings. Account-specific spam settings can be configured in Account Settings.
+spam-accounts-description = These settings apply to all accounts. Individual account options can be changed in Account Settings.
 
 spam-marked-label =
     .label = When messages are marked as spam:
     .accesskey = W
 
-spam-move-label =
-    .label = Move them to the account’s “Spam” folder
+spam-move-folder-label =
+    .label = Move to the Spam folder
     .accesskey = o
 
-spam-delete-label =
-    .label = Delete them
+spam-delete-immediately-label =
+    .label = Delete immediately
     .accesskey = D
 
 spam-read-description = Mark messages as read
 
-spam-read-manual-label =
-    .label = When manually marked as spam
+spam-marked-manually-label =
+    .label = When marked manually
     .accesskey = M
 
-spam-read-auto-label =
-    .label = When { -brand-short-name } determines that they are spam
+spam-detected-auto-label =
+    .label = When detected automatically by { -brand-short-name }
     .accesskey = T
 
-spam-log-label =
-    .label = Enable adaptive spam filter logging
+spam-log-keep-label =
+    .label = Keep a log of automatic spam detection
     .accesskey = E
 
 spam-log-button =
@@ -888,31 +892,31 @@ reset-spam-button =
     .label = Reset Training Data
     .accesskey = R
 
-phishing-description = { -brand-short-name } can analyze messages for suspected email scams by looking for common techniques used to deceive you.
+scam-detection-description = { -brand-short-name } checks messages for phishing links and common signs of email scams.
 
-phishing-label =
-    .label = Tell me if the message I’m reading is a suspected email scam
+scam-detection-label =
+    .label = Warn when reading an email that looks like a scam
     .accesskey = T
 
-antivirus-description = { -brand-short-name } can make it easy for antivirus software to analyze incoming mail messages for viruses before they are stored locally.
+antivirus-check-description = Allows antivirus software to check incoming messages individually before they are saved to your computer.
 
-antivirus-label =
-    .label = Allow antivirus clients to quarantine individual incoming messages
+antivirus-isolate-label =
+    .label = Allow antivirus software to isolate infected incoming emails
     .accesskey = A
 
-certificate-description = When a server requests my personal certificate:
+certificate-verify-description = When a server asks for a certificate to verify your identity:
 
-certificate-auto =
-    .label = Select one automatically
-    .accesskey = S
+certificate-choose-auto =
+    .label = Choose a certificate automatically
+    .accesskey = h
 
-certificate-ask =
-    .label = Ask me every time
+certificate-ask-every =
+    .label = Ask every time
     .accesskey = A
 
-ocsp-label =
-    .label = Query OCSP responder servers to confirm the current validity of certificates
-    .accesskey = Q
+ocsp-check-label =
+    .label = Check certificate validation servers (OCSP) to confirm certificates are still correct.
+    .accesskey = v
 
 certificate-button =
     .label = Manage Certificates…
@@ -922,32 +926,27 @@ security-devices-button =
     .label = Security Devices…
     .accesskey = D
 
-email-e2ee-header = Email End-To-End Encryption
+email-e2ee-header = Email end-to-end encryption
 
 account-settings = Account Settings
 
-email-e2ee-enable-accounts-info =
-    Set up email accounts and identities for End-To-End Encryption in the <a data-l10n-name="account-settings-url">Account Settings</a>.
+email-e2ee-accounts-info = Encrypted emails can only be read by you and your recipients. Set up email accounts and identities for end-to-end encryption in the <a data-l10n-name="account-settings-url">Account settings</a>.
 
-email-e2ee-automatism = Automatic Use of Encryption
-email-e2ee-automatism-pre =
-    { -brand-short-name } can assist by automatically enabling or disabling encryption while composing an email.
-    Auto enabling/disabling is based on the availability of valid and accepted correspondents’ keys or certificates.
-email-e2ee-auto-on =
-    .label = Automatically enable encryption when possible
-email-e2ee-auto-off =
-    .label = Automatically disable encryption when recipients change and encryption is no longer possible
-email-e2ee-auto-off-notify =
-    .label = Show a notification whenever encryption is disabled automatically
-email-e2ee-automatism-post =
-    Automatic decisions may be overridden by manually enabling or disabling encryption when composing a message.
-    Note: encryption is always automatically enabled when replying to an encrypted message.
+email-e2ee-automatism = Automatic use of encryption
+email-e2ee-automatism-intro = { -brand-short-name } can turn encryption on if valid accepted keys or certificates are available for all recipients of a message.
+email-e2ee-turn-on =
+    .label = Automatically turn on encryption when possible
+email-e2ee-turn-off =
+    .label = Automatically turn off encryption when recipients change and encryption is no longer possible
+email-e2ee-turn-off-notify =
+    .label = Show a notification whenever encryption is turned off automatically
+email-e2ee-automatism-note = Note: You can also manually turn encryption on or off while writing a message. Replying to an encrypted messages always turns on encryption.
 
 ## DoH Section
 
-preferences-doh-header = DNS over HTTPS
+preferences-doh-secure-header = Secure DNS (DNS over HTTPS)
 
-preferences-doh-description = Domain Name System (DNS) over HTTPS sends your request for a domain name through an encrypted connection, providing a secure DNS and making it harder for others to see which website you’re about to access.
+preferences-doh-secure-description = Secure DNS encrypts the lookup requests { -brand-short-name } sends to find websites, keeping your browsing activity private from any network monitoring.
 
 # Variables:
 #   $status (string) - The status of the DoH connection
@@ -971,10 +970,10 @@ preferences-doh-group-message = Enable DNS over HTTPS using:
 preferences-doh-expand-section =
   .tooltiptext = More information
 
-preferences-doh-setting-default =
-  .label = Default Protection
+preferences-doh-setting-automatic =
+  .label = Automatic protection (Recommended)
   .accesskey = D
-preferences-doh-default-desc = { -brand-short-name } decides when to use secure DNS to protect your privacy.
+preferences-doh-automatic-desc = { -brand-short-name } automatically encrypts address lookups when available. Switches back to standard network lookups if there’s a connection issue or if a VPN/managed network requires it.
 preferences-doh-default-detailed-desc-1 = Use secure DNS in regions where it’s available
 preferences-doh-default-detailed-desc-2 = Use your default DNS resolver if there is a problem with the secure DNS provider
 preferences-doh-default-detailed-desc-3 = Use a local provider, if possible
@@ -982,16 +981,16 @@ preferences-doh-default-detailed-desc-4 = Turn off when VPN, parental control, o
 preferences-doh-default-detailed-desc-5 = Turn off when a network tells { -brand-short-name } it shouldn’t use secure DNS
 
 preferences-doh-setting-enabled =
-  .label = Increased Protection
+  .label = Increased protection
   .accesskey = I
-preferences-doh-enabled-desc = You control when to use secure DNS and choose your provider.
+preferences-doh-increased-desc = Always uses chosen provider. Uses standard connection only if secure provider fails.
 preferences-doh-enabled-detailed-desc-1 = Use the provider you select
 preferences-doh-enabled-detailed-desc-2 = Only use your default DNS resolver if there is a problem with secure DNS
 
-preferences-doh-setting-strict =
-  .label = Max Protection
+preferences-doh-setting-maximum =
+  .label = Maximum protection
   .accesskey = M
-preferences-doh-strict-desc = { -brand-short-name } will always use secure DNS. You’ll see a security risk warning before we use your system DNS.
+preferences-doh-maximum-desc = Strictly requires encrypted DNS. Websites will not load if secure connection fails.
 preferences-doh-strict-detailed-desc-1 = Only use the provider you select
 preferences-doh-strict-detailed-desc-2 = Always warn if secure DNS isn’t available
 preferences-doh-strict-detailed-desc-3 = If secure DNS is not available sites will not load or function properly
@@ -999,7 +998,7 @@ preferences-doh-strict-detailed-desc-3 = If secure DNS is not available sites wi
 preferences-doh-setting-off =
   .label = Off
   .accesskey = O
-preferences-doh-off-desc = Use your default DNS resolver
+preferences-doh-off-standard-desc = Uses standard internet provider or network to look up web addresses
 
 preferences-doh-checkbox-warn =
     .label = Warn if a third party actively prevents secure DNS
@@ -1146,7 +1145,7 @@ search-preferences-input2 =
     .style = width: 15.4em
     .placeholder = Find in Settings
 
-managed-notice = { -brand-short-name } is being managed by your organization.
+managed-by-organization-notice = { -brand-short-name } is managed by an organization.
 
 ## Settings UI Search Results
 
@@ -1236,31 +1235,29 @@ sync-disconnected-turn-on-sync = Turn on Syncing…
 
 ## Mobile QR Export Pane
 
-qr-export-pane-header = Export accounts to { -brand-product-name } Mobile
+qr-export-pane-header-mobile = Export to { -brand-product-name } mobile
 
-qr-export-description = Quickly transfer your account settings from desktop to mobile by generating a QR code. Select which accounts to include, decide if you want to transfer your password, and scan the code with your mobile device. Fast, secure, and simple.
+qr-export-description-email-accounts = Transfer your email accounts from this computer to { -brand-product-name } on your phone using a QR code.
 
-qr-export-get-app = Don’t have { -brand-product-name } on mobile yet? <a data-l10n-name="app-link">Get it on Google Play</a>
+qr-export-get-app-google-play = <a data-l10n-name="app-link">Get { -brand-product-name } on Google Play</a>
 
-qr-export-create = Create a QR code to export your accounts
+qr-export-select-accounts-title = Select accounts to export:
 
-qr-export-select-accounts = Select which accounts to export:
-
-qr-export-no-accounts = Not seeing all your accounts? Some accounts may be disabled because they are not supported by { -brand-product-name } for Android. <a data-l10n-name="account-support-link">Support</a>
+qr-export-missing-accounts-support = Missing an account? Accounts that are not supported on { -brand-product-name } for Android cannot be selected. <a data-l10n-name="account-support-link">Learn which account types are supported</a>
 
 qr-export-accounts-legend = Email accounts
 
 qr-export-select-all-accounts = Select all
 
-qr-export-security-legend = Security
+qr-export-passwords-legend = Passwords
 
-qr-export-include-passwords = Include all accounts passwords
+qr-export-include-passwords-label = Include account passwords in the QR code
 
-qr-export-oauth-warning = Some of your accounts use an authentication method that may require re-authentication on your mobile device. You may need to enter your passwords again during this process.
+qr-export-web-sign-in-note = <strong>Note:</strong> Accounts that use web sign-in (like Gmail or Yahoo), require authentication again on your device.
 
-qr-export-security-hint = By scanning the following QR codes, your account settings—including your email and password—will be transferred securely. We do not collect, store, or share any of this data during the process. The transfer occurs directly between your devices.
+qr-export-private-transfer-note = <strong>Private transfer:</strong> Your settings and passwords move directly from this computer to your phone. Nothing is sent to or stored on Mozilla servers.
 
-qr-export-security-warning = For your security, please ensure you are in a private setting and only scan QR codes from trusted sources.
+qr-export-screen-privacy-tip = <strong>Tip:</strong> Keep your screen hidden from others while the QR code is displayed.
 
 qr-export-start-export = Export
 
@@ -1324,8 +1321,8 @@ appearance-category-header = Appearance
 
 accent-color-legend = Accent Color
 
-accent-color-label =
-    .value = Define the color used for primary buttons and highlighted elements:
+accent-color-selection-label =
+    .value = Select color for primary button and highlights
 
 accent-color-os =
     .label = Follow operating system
@@ -1352,21 +1349,21 @@ accent-color-disabled-description = Accent colors are not supported in High Cont
 
 default-message-list-legend = Message List
 
-appearance-view-style =
-    .value = View Style:
+appearance-view-style-select =
+    .value = Select view style:
 
 appearance-radio-table =
     .label = Table view
 
-appearance-radio-cards =
-    .label = Cards view
+appearance-radio-card-view =
+    .label = Card view
 
-cards-view-legend = Cards View Options
+card-view-options-legend = Card view options
 
 table-view-legend = Table View Options
 
 appearance-card-rows =
-    .value = Row Count:
+    .value = Row count:
 
 appearance-card-style-3 =
     .label = 3 rows
@@ -1374,9 +1371,9 @@ appearance-card-style-3 =
 appearance-card-style-2 =
     .label = 2 rows
 
-default-message-list-sorting-legend = Sorting and Threading
+default-message-list-sorting-legend = Sorting and threading
 
-default-message-list-description = Define the default sorting and threading options for newly created folders.
+default-message-list-new-folders-description = Select default sorting and threading options for new folders
 
 default-flag-label =
     .value = Default Threading:
@@ -1390,7 +1387,7 @@ default-flag-threaded =
 default-flag-grouped =
     .label = Grouped by Sort
 
-default-sort-label = Default Sort by:
+default-sort-by-label = Sort messages by:
 
 default-sort-date =
     .label = Date
@@ -1446,27 +1443,23 @@ default-sort-received =
 default-sort-correspondents =
     .label = Correspondents
 
-default-order-label = Default Sort Order:
+default-order-label = Default sort order
 
-default-sort-ascending =
-    .label = Ascending
+default-sort-newest-bottom =
+    .label = Newest messages at the bottom
 
-default-sort-ascending-description = New messages at the bottom
+default-sort-new-messages-top =
+    .label = Newest messages at the top
 
-default-sort-descending =
-    .label = Descending
+apply-view-settings-label = Apply these view settings to:
 
-default-sort-descending-description = New messages at the top
-
-apply-thread-sort-label = Propagate threading and sorting settings to:
-
-apply-sort-to-all-button =
-    .label = All existing folders
+apply-view-settings-to-all-folders-button =
+    .label = All folders and subfolders
     .accesskey = A
 
-choose-apply-sort-button =
-    .label = Choose…
-    .accesskey = C
+select-apply-sort-folders-button =
+    .label = Select folders
+    .accesskey = S
 
 apply-current-view-to-folder =
     .label = Folder…

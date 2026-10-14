@@ -1005,7 +1005,7 @@ MimeObject* mime_create(const char* content_type, MimeHeaders* hdrs,
        to make it appear inline. One example is a vcard which has a content
        disposition of an "attachment;" */
     if (force_inline_display(content_type))
-      NS_MsgSACopy(&content_disposition, "inline");
+      content_disposition = PL_strdup("inline");
     else
       content_disposition =
           hdrs ? MimeHeaders_get(hdrs, HEADER_CONTENT_DISPOSITION, true, false)

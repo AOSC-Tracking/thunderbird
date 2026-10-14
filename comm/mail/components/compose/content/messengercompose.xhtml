@@ -59,6 +59,7 @@
   <link rel="stylesheet" href="chrome://messenger/skin/inContentDialog.css" />
 
   <link rel="localization" href="branding/brand.ftl"/>
+  <link rel="localization" href="messenger/shortcuts.ftl" />
   <link rel="localization" href="messenger/messenger.ftl" />
   <link rel="localization" href="messenger/messengercompose/messengercompose.ftl" />
   <link rel="localization" href="messenger/menubar.ftl" />
@@ -104,7 +105,6 @@
 </head>
 <html:body xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
 
-  <stringbundle id="bundle_composeMsgs" src="chrome://messenger/locale/messengercompose/composeMsgs.properties"/>
   <stringbundle id="bundle_messenger" src="chrome://messenger/locale/messenger.properties"/>
   <stringbundle id="brandBundle" src="chrome://branding/locale/brand.properties"/>
 
@@ -387,7 +387,6 @@
   <key id="key_newMessage" key="&newMessageCmd2.key;" oncommand="goOpenNewMessage(null);" modifiers="accel"/>
   <key id="key_close" key="&closeCmd.key;" command="cmd_close"  modifiers="accel"/>
   <key id="key_save" key="&saveCmd.key;" command="cmd_saveDefault" modifiers="accel"/>
-  <key id="key_send" keycode="&sendCmd.keycode;" observes="cmd_sendWithCheck" modifiers="accel"/>
   <key id="key_sendLater" keycode="&sendLaterCmd.keycode;" observes="cmd_sendLater" modifiers="accel, shift"/>
   <key id="key_print" key="&printCmd.key;" command="cmd_print" modifiers="accel"/>
   <key id="printKb" key="&printCmd.key;" command="cmd_print" modifiers="accel"/>
@@ -625,7 +624,8 @@
 
 <menupopup id="msgComposeContext"
            onpopupshowing="msgComposeContextOnShowing(event);"
-           onpopuphiding="msgComposeContextOnHiding(event);">
+           onpopuphiding="msgComposeContextOnHiding(event);"
+           accesskey-conflicts-bug="2075212">
 
   <!-- Spellchecking menu items -->
   <menuitem id="spellCheckNoSuggestions"
@@ -665,7 +665,7 @@
             oncommand="openDictionaryList();"/>
   <menu id="spellCheckDictionaries"
         data-l10n-id="text-action-spell-dictionaries">
-    <menupopup id="spellCheckDictionariesMenu">
+    <menupopup id="spellCheckDictionariesMenu" accesskey-conflicts-bug="2075212">
       <menuseparator id="spellCheckLanguageSeparator"/>
       <menuitem id="spellCheckAddDictionaries"
                 label="&spellAddDictionaries.label;"
@@ -790,7 +790,8 @@
 
 <menupopup id="emailAddressPillPopup"
            class="emailAddressPopup"
-           onpopupshowing="onPillPopupShowing(event);">
+           onpopupshowing="onPillPopupShowing(event);"
+           accesskey-conflicts-bug="2075238">
   <menuitem id="editAddressPill"
             class="pill-action-edit"
             data-l10n-id="pill-action-edit"
@@ -874,7 +875,7 @@
         <menupopup id="menu_FilePopup">
           <menu id="menu_New"
                 label="&newMenu.label;" accesskey="&newMenu.accesskey;">
-            <menupopup id="menu_NewPopup">
+            <menupopup id="menu_NewPopup" accesskey-conflicts-bug="2075322">
               <menuitem id="menu_NewMessage"
                         label="&newMessage.label;" accesskey="&newMessage.accesskey;"
                         key="key_newMessage" oncommand="goOpenNewMessage(event);"/>
@@ -924,11 +925,14 @@
             </menupopup>
           </menu>
           <menuseparator/>
-          <menuitem label="&sendNowCmd.label;"
-                    accesskey="&sendNowCmd.accesskey;" key="key_send"
-                    command="cmd_sendNow" id="menu-item-send-now"/>
-          <menuitem label="&sendLaterCmd.label;"
-                    accesskey="&sendLaterCmd.accesskey;" key="key_sendLater"
+          <menuitem id="menu-item-send-now"
+                    data-l10n-id="compose-menu-item-send"
+                    command="cmd_sendNow"
+                    data-l10n-attrs="acceltext"/>
+          <menuitem id="menu-item-send-later"
+                    data-l10n-id="compose-menu-item-send-later"
+                    data-l10n-attrs="acceltext"
+                    key="key_sendLater"
                     command="cmd_sendLater"/>
           <menuseparator/>
           <menuitem id="printMenuItem"
@@ -1179,7 +1183,8 @@
                        oncommand="if (event.target.localName == 'menuitem') {
                                     doStatefulCommand('cmd_fontFace', event.target.getAttribute('value'));
                                   }"
-                       onpopupshowing="initFontFaceMenu(this);">
+                       onpopupshowing="initFontFaceMenu(this);"
+                       accesskey-conflicts-bug="2075297">
               <menuitem id="menu_fontFaceVarWidth"
                         label="&fontVarWidth.label;"
                         accesskey="&fontVarWidth.accesskey;"
@@ -1832,14 +1837,10 @@
 
   <toolbarpalette id="MsgComposeToolbarPalette">
 
-    <toolbarbutton class="toolbarbutton-1"
-               id="button-send" label="&sendButton.label;"
-               tooltiptext="&sendButton.tooltip;"
-               command="cmd_sendButton"
-               now_label="&sendButton.label;"
-               now_tooltiptext="&sendButton.tooltip;"
-               later_label="&sendLaterCmd.label;"
-               later_tooltiptext="&sendlaterButton.tooltip;">
+    <toolbarbutton id="button-send"
+                   class="toolbarbutton-1"
+                   data-l10n-id="compose-button-send"
+                   command="cmd_sendButton">
     </toolbarbutton>
 
     <toolbarbutton class="toolbarbutton-1"
@@ -1952,7 +1953,8 @@
                  oncommand="ChangeLanguage(event);"
                  onpopupshowing="OnShowDictionaryMenu(event.target);"
                  onpopupshown="languageMenuListOpened();"
-                 onpopuphidden="languageMenuListClosed();">
+                 onpopuphidden="languageMenuListClosed();"
+                 accesskey-conflicts-bug="2075212">
       </menupopup>
     </toolbarbutton>
 

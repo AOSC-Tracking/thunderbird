@@ -192,7 +192,91 @@ set_define("MOZ_PANORAMA", True, when=milestone.is_nightly)
 set_config("MOZ_REMOTE_READER", True, when=milestone.is_nightly)
 set_define("MOZ_REMOTE_READER", True, when=milestone.is_nightly)
 
+imply_option(
+    "MOZ_TEST_PACKAGE_ARCHIVES_SKIP",
+    (
+        "awsy",
+        "cppunittest",
+        "fuzztest",
+        "jittest",
+        "jsreftest",
+        "perftests",
+        "raptor",
+        "reftest",
+        "talos",
+        "updater-dep",
+        "web-platform",
+    ),
+    reason="Thunderbird does not use these test suites",
+)
+
 include("../../toolkit/moz.configure")
+
+@depends("--enable-maintenance-service", when=target_is_windows)
+def nsis_installer_files(maintenance_service):
+    _INSTALLER_BASE_FILES = (
+        "app.tag",
+        "nsis/installer.nsi",
+        "nsis/uninstaller.nsi",
+        "nsis/uninstaller_helpers.nsh",
+        "nsis/shared.nsh",
+    )
+    files = _INSTALLER_BASE_FILES
+    if bool(maintenance_service):
+        files = _INSTALLER_BASE_FILES + ("nsis/maintenanceservice_installer.nsi",)
+    return list(files)
+
+
+set_config("NSIS_INSTALLER_FILES", nsis_installer_files)
+
+
+@depends(when=target_is_windows)
+def nsis_branding_files():
+    NSIS_BRANDING_FILES = (
+        "branding.nsi",
+        "wizHeader.bmp",
+        "wizHeaderRTL.bmp",
+        "wizWatermark.bmp",
+    )
+    return list(NSIS_BRANDING_FILES)
+
+
+set_config("NSIS_BRANDING_FILES", nsis_branding_files)
+
+
+@depends(target, when=target_is_windows)
+def nsis_sfx_module(target):
+    return "comm/other-licenses/7zstub/thunderbird/7zSD.sfx"
+
+
+set_config("NSIS_SFX_MODULE", nsis_sfx_module)
+
+
+@depends(
+    milestone.app_version,
+    moz_app_name,
+    moz_app_displayname,
+    when=target_is_windows,
+)
+@imports("shlex")
+def nsis_installer_defines(
+    app_version,
+    app_name,
+    app_displayname,
+):
+    defines = [
+        f"-DAPP_VERSION={app_version}",
+        f"-DMOZ_APP_VERSION={app_version}",
+        f"-DMOZ_APP_NAME={app_name}",
+        f"-DMOZ_TOAST_APP_NAME={app_name.title()}",
+        f"-DMOZ_APP_DISPLAYNAME={app_displayname}",
+    ]
+    # Quote each define so values containing spaces remain one argument.
+    return " ".join(shlex.quote(d) for d in defines)
+
+
+set_config("NSIS_INSTALLER_DEFINES", nsis_installer_defines)
+
 
 # Bug 2062895: Remove when landing on m-c happens
 # Thunderbird Enterprise
@@ -216,7 +300,7 @@ set_define("MOZ_ENTERPRISE", enable_enterprise)
 
 
 default_enterprise_console = dependable(
-    "https://stormkeeper.sandbox.moz-enterprise.com"
+    "FIREFOX_ENTERPRISE_GENERIC"
 )
 
 option(
@@ -234,9 +318,15 @@ option(
 def enterprise_console_url(value, default_url):
     # --without-enterprise-console-url or an empty value falls back to the default.
     url = value[0] if value and value[0] else default_url
-    if not url.startswith("https://"):
+    if not any(
+        [
+            url.startswith("https://"),
+            url.startswith("http://"),
+            url == "FIREFOX_ENTERPRISE_GENERIC",
+        ]
+    ):
         die(
-            "--with-enterprise-console-url must be a https:// URL, got %s",
+	    "--with-enterprise-console-url must be a http(s):// URL, got %s",
             url,
         )
     # The value is interpolated into a JS string literal in thunderbird.cfg.

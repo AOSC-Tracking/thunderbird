@@ -30,7 +30,6 @@ mailnews_ui_glue = { version = "0.1.0", path = "../mailnews_ui_glue" }
 sys_tray = { version = "0.1.0", path = "../sys_tray" }
 aa-stroke = { git = "https://github.com/FirefoxGraphics/aa-stroke", rev = "5776bdfc8ad664a1503db668fab397d818a5f98a" }
 abridged_certs = { path = "../../../security/manager/ssl/abridged_certs" }
-adblock = { version = "0.12.1", features = ['full-regex-handling', 'single-thread'], default-features = false }
 app_collator_glue = { path = "../../../intl/app_collator_glue" }
 audio_thread_priority = { version = "0.37" }
 audioipc2-client = { git = "https://github.com/mozilla/audioipc", rev = "d3c9825", optional = true }
@@ -55,9 +54,11 @@ data-encoding-ffi = { path = "../../../dom/fs/parent/rust/data-encoding-ffi" }
 data_storage = { path = "../../../security/manager/ssl/data_storage" }
 dom = { path = "../../../dom/base/rust" }
 dom_fragmentdirectives = { path = "../../../dom/base/fragmentdirectives" }
+dom_push = { path = "../../../dom/push/rust" }
 dom_speculationrules = { path = "../../../dom/base/speculationrules" }
 encoding_glue = { path = "../../../intl/encoding_glue" }
 etagere = { version = "0.2.13", features = ['ffi'] }
+etp_engine = { path = "../../../toolkit/components/content-classifier/etp_engine", features = ['full-regex-handling', 'single-thread'] }
 fluent = { version = "0.17.0", features = ['fluent-pseudo'] }
 fluent-fallback = { version = "0.7.0" }
 fluent-ffi = { path = "../../../intl/l10n/rust/fluent-ffi" }
@@ -89,7 +90,7 @@ localization-ffi = { path = "../../../intl/l10n/rust/localization-ffi" }
 lockstore_ffi = { path = "../../../security/lockstore/lockstore_ffi" }
 log = { version = "0.4", features = ['release_max_level_info'] }
 mapped_hyph = { git = "https://github.com/jfkthame/mapped_hyph.git", rev = "eff105f6ad7ec9b79816cfc1985a28e5340ad14b" }
-mdns_service = { path = "../../../dom/media/webrtc/transport/mdns_service", optional = true }
+mdns_service = { path = "../../../dom/media/webrtc/transport/mdns_service", features = ['profiler'], optional = true }
 midir_impl = { path = "../../../dom/midi/midir_impl", optional = true }
 mime-guess-ffi = { path = "../../../dom/fs/parent/rust/mime-guess-ffi" }
 mls_gk = { path = "../../../security/mls/mls_gk" }
@@ -98,9 +99,10 @@ mozannotation_client = { path = "../../../toolkit/crashreporter/mozannotation_cl
 mozannotation_server = { path = "../../../toolkit/crashreporter/mozannotation_server", optional = true }
 mozglue-static = { path = "../../../mozglue/static/rust" }
 mozurl = { path = "../../../netwerk/base/mozurl" }
-mp4parse_capi = { git = "https://github.com/mozilla/mp4parse-rust", rev = "215e238e633fa0df42cc25bfcf43a0f902692691", features = ['missing-pixi-permitted'] }
+mp4parse_capi = { git = "https://github.com/mozilla/mp4parse-rust", rev = "f0c80783227a1fb46f34cb04e10607045eac4297", features = ['missing-pixi-permitted'] }
 neqo_glue = { path = "../../../netwerk/socket/neqo_glue" }
 netwerk_helper = { path = "../../../netwerk/base/rust-helper" }
+noise = { path = "../../../security/manager/ssl/noise" }
 nserror = { path = "../../../xpcom/rust/nserror" }
 nsstring = { path = "../../../xpcom/rust/nsstring" }
 oblivious_http = { path = "../../../netwerk/protocol/http/oblivious_http" }

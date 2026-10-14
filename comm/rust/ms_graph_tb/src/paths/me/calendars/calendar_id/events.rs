@@ -5,6 +5,7 @@
 // EDITS TO THIS FILE WILL BE OVERWRITTEN
 
 #![doc = "Provides operations to manage the events property of the microsoft.graph.calendar entity.\n\nAuto-generated from [Microsoft OpenAPI metadata](https://github.com/microsoftgraph/msgraph-metadata/blob/master/openapi/v1.0/openapi.yaml) via `ms_graph_tb_extract openapi.yaml ms_graph_tb/`."]
+pub mod delta;
 use crate::odata::{ExpansionList, FilterExpression, FilterQuery, Selection};
 use crate::pagination::Paginated;
 use crate::types::event::{Event, EventExpand, EventSelection};

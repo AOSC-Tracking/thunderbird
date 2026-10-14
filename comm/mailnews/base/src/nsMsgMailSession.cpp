@@ -375,8 +375,7 @@ void nsMsgShutdownService::AttemptShutdown() {
     nsCOMPtr<nsIAppStartup> appStartup =
         mozilla::components::AppStartup::Service();
     NS_ENSURE_TRUE_VOID(appStartup);
-    bool userAllowedQuit = true;
-    NS_ENSURE_SUCCESS_VOID(appStartup->Quit(mQuitMode, 0, &userAllowedQuit));
+    NS_ENSURE_SUCCESS_VOID(appStartup->Quit(mQuitMode, 0));
   }
 }
 
@@ -387,9 +386,8 @@ NS_IMETHODIMP nsMsgShutdownService::SetShutdownListener(
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgShutdownService::Observe(nsISupports* aSubject,
-                                            const char* aTopic,
-                                            const char16_t* aData) {
+MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP nsMsgShutdownService::Observe(
+    nsISupports* aSubject, const char* aTopic, const char16_t* aData) {
   // Due to bug 459376 we don't always get quit-application-requested and
   // quit-application-granted. quit-application-requested is preferred, but if
   // we don't then we have to hook onto quit-application, but we don't want
@@ -466,8 +464,9 @@ NS_IMETHODIMP nsMsgShutdownService::Observe(nsISupports* aSubject,
         mQuitMode |= nsIAppStartup::eRestart;
     }
 
-    mMsgProgress->SetMsgWindow(topMsgWindow);
-    mMsgProgress->OpenProgressDialog(
+    nsCOMPtr<nsIMsgProgress> msgProgress = mMsgProgress;
+    msgProgress->SetMsgWindow(topMsgWindow);
+    msgProgress->OpenProgressDialog(
         domWindow, "chrome://messenger/content/shutdownWindow.xhtml", nullptr);
 
     if (mQuitForced) {

@@ -12,7 +12,6 @@
 #include "nsIFile.h"
 #include "nsEscape.h"
 
-class nsIChannel;
 class nsIPrefBranch;
 class nsIMsgFolder;
 class nsIMsgMessageService;
@@ -21,9 +20,8 @@ class nsIOutputStream;
 class nsIInputStream;
 class nsIMsgDatabase;
 class nsIStreamListener;
-class nsICancelable;
-class nsIProtocolProxyCallback;
 class nsIMsgSearchTerm;
+class nsIURL;
 
 namespace mozilla::intl {
 class Localization;
@@ -89,10 +87,6 @@ nsresult NS_MsgCreatePathStringFromFolderURI(const char* aFolderURI,
  *         case the caller should look at subject for the result)
  */
 bool NS_MsgStripRE(const nsCString& subject, nsCString& modifiedSubject);
-
-char* NS_MsgSACopy(char** destination, const char* source);
-
-char* NS_MsgSACat(char** destination, const char* source);
 
 bool WeAreOffline();
 
@@ -160,8 +154,6 @@ nsresult NS_SetPersistentFile(const char* relPrefName, const char* absPrefName,
                               nsIFile* aFile,
                               nsIPrefBranch* prefBranch = nullptr);
 
-nsresult IsRFC822HeaderFieldName(const char* aHdr, bool* aResult);
-
 nsresult NS_GetLocalizedUnicharPreferenceWithDefault(const char* prefName,
                                                      const nsAString& defValue,
                                                      nsAString& prefValue);
@@ -182,12 +174,6 @@ nsresult GetOrCreateJunkFolder(const nsACString& aURI,
 
 // Returns true if the nsIURI is a message under an RSS account
 nsresult IsRSSArticle(nsIURI* aMsgURI, bool* aIsRSSArticle);
-
-// digest needs to be a pointer to a 16 byte buffer
-#define DIGEST_LENGTH 16
-
-nsresult MSGCramMD5(const char* text, int32_t text_len, const char* key,
-                    int32_t key_len, unsigned char* digest);
 
 // helper functions to convert a 64bits PRTime into a 32bits value (compatible
 // time_t) and vice versa.
@@ -248,6 +234,16 @@ nsresult MsgEscapeURL(const nsACString& aStr, uint32_t aFlags,
                       nsACString& aResult);
 
 /**
+ * Copy aIn to aOut with diacritics stripped, so that "Paris" and "París"
+ * compare equal. Precomposed characters are mapped to their base character,
+ * combining marks are dropped, and letters with a single-character ASCII
+ * fallback (ø, ł, đ, ...) are mapped to it. Letters whose fallback is more than
+ * one character (æ, ß, ...) are left alone, since folding them would change the
+ * length of the string. This is the same folding the Firefox find bar uses.
+ */
+void NS_MsgStripDiacritics(const nsAString& aIn, nsString& aOut);
+
+/**
  * Given a message db and a set of keys, fetch the corresponding message
  * headers.
  * If a key cannot be found in the database, it will be ignored. So the
@@ -266,10 +262,6 @@ nsresult MsgGetHeadersFromKeys(nsIMsgDatabase* aDB,
  */
 mozilla::Result<nsTArray<nsMsgKey>, nsresult> MsgGetKeysFromHdrs(
     nsTArray<RefPtr<nsIMsgDBHdr>> const& hdrs);
-
-nsresult MsgExamineForProxyAsync(nsIChannel* channel,
-                                 nsIProtocolProxyCallback* listener,
-                                 nsICancelable** result);
 
 /**
  * Calculate a PRTime value used to determine if a date is XX
@@ -297,14 +289,6 @@ nsresult MsgStreamMsgHeaders(nsIInputStream* aInputStream,
  * @returns   uint64_t value for success, 0 for parse failure
  */
 uint64_t ParseUint64Str(const char* str);
-
-/**
- * Detect charset of file
- *
- * @param      aFile    The target of nsIFile
- * @param[out] aCharset The charset string
- */
-nsresult MsgDetectCharsetFromFile(nsIFile* aFile, nsACString& aCharset);
 
 /*
  * Converts a buffer to plain text. Some conversions may
@@ -356,6 +340,15 @@ nsCString MsgExtractQueryPart(const nsACString& spec,
 void MsgRemoveQueryPart(nsCString& aSpec);
 
 /**
+ * Whether a channel for the given message part URL should get an attachment
+ * content disposition, which forces docShell to open the part instead of
+ * displaying it. Content types we have special handlers for are excluded.
+ * The same logic exists in Pop3ProtocolHandler and NntpProtocolHandler, so if
+ * you're changing this, update those too.
+ */
+bool MsgPartUrlNeedsAttachmentDisposition(nsIURI* aUrl);
+
+/**
  * Helper macro for defining getter/setters. Ported from nsISupportsObsolete.h
  */
 #define NS_IMPL_GETSET(clazz, attr, type, member) \
@@ -392,14 +385,6 @@ nsCString CEscapeString(nsACString const& s, size_t maxLen = SIZE_MAX);
 nsresult SyncCopyStream(nsIInputStream* src, nsIOutputStream* dest,
                         uint64_t& bytesCopied,
                         size_t bufSize = FILE_IO_BUFFER_SIZE);
-
-/**
- * Synchronously copy exactly `count` bytes of data from `src` stream to
- * `dest` stream. This function will fail if it can't copy the exact
- * number of bytes.
- */
-nsresult SyncCopyStreamN(nsIInputStream* src, nsIOutputStream* dest,
-                         uint32_t count);
 
 /**
  * Synchronously write data to the destination stream, returning only when
@@ -550,6 +535,18 @@ inline bool IsNewsScheme(const nsACString& scheme) {
          scheme.EqualsLiteral("nntp") || scheme.EqualsLiteral("nntps") ||
          scheme.EqualsLiteral("news-message");
 }
+
+/**
+ * Create a plain standard URL for the given spec, rather than the
+ * scheme-specific `nsIURI` implementation `NS_NewURI()` would hand out. This is
+ * how mailnews code picks apart server, folder and message URIs without
+ * involving the protocol handler for their scheme.
+ *
+ * @param aDefaultPort - The port to treat as the default for the URL's scheme,
+ *                       so that it is left out of the canonical spec.
+ */
+nsresult MsgNewStandardURL(const nsACString& aSpec, nsIURL** aURL,
+                           int32_t aDefaultPort = -1);
 
 /**
  * Our code loves to have the query and ref parts of the URL in the wrong order

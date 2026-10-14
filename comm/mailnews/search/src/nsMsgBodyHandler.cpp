@@ -12,6 +12,8 @@
 #include "nsICMSMessage.h"
 #include "nsICMSDecoder.h"
 #include "nsMsgI18N.h"
+#include "mozilla/Base64.h"
+#include "mozilla/StaticPrefs_mail.h"
 #include "mozilla/Utf8.h"
 #include "mime_closure.h"
 
@@ -96,7 +98,9 @@ int32_t nsMsgBodyHandler::GetNextLine(nsCString& buf, nsCString& charset,
 
   // For non-multipart messages, the entire message minus headers is encoded.
   if (!m_isMultipart && !m_partIsSMIME && m_base64part) {
-    Base64Decode(buf);
+    if (!Base64Decode(buf)) {
+      NS_WARNING("Message claims to be base64 but isn't, nothing to search");
+    }
     outLength = buf.Length();
     m_base64part = false;
   }
@@ -233,9 +237,11 @@ int32_t nsMsgBodyHandler::ApplyTransformations(const nsCString& line,
   }
   if (matchedBoundary) {
     if (m_base64part && m_partIsText) {
-      Base64Decode(buf);
-      // Work on the parsed string
-      if (!buf.Length()) {
+      if (!Base64Decode(buf)) {
+        NS_WARNING("Part claims to be base64 but isn't, nothing to search");
+        eatThisLine = true;
+      } else if (buf.IsEmpty()) {
+        // Work on the parsed string
         NS_WARNING("Trying to transform an empty buffer");
         eatThisLine = true;
       } else {
@@ -289,6 +295,15 @@ int32_t nsMsgBodyHandler::ApplyTransformations(const nsCString& line,
   // Accumulate base64 parts, HTML parts and encrypted parts for later decoding
   // or tag stripping.
   if (m_base64part || m_partIsHtml || m_partIsPGP || m_partIsSMIME) {
+    const uint32_t limit = mozilla::StaticPrefs::mail_search_max_body_bytes();
+    if (buf.Length() >= limit) {
+      // Such a part can only be decoded, stripped or decrypted as a whole, so
+      // it has to be held in memory in one piece. Stop accumulating rather
+      // than let a single message use up all the memory we have; the rest of
+      // the part goes unsearched.
+      eatThisLine = true;
+      return buf.Length();
+    }
     if (m_partIsHtml && !m_base64part) {
       size_t bufLength = buf.Length();
       if (!m_partIsQP || bufLength == 0 || !StringEndsWith(buf, "="_ns)) {
@@ -303,7 +318,9 @@ int32_t nsMsgBodyHandler::ApplyTransformations(const nsCString& line,
       // S/MIME because it is a full base64 block that doesn't have such lines.
       buf.Append('\n');
     }
-    buf.Append(line);
+    // A single line can hold a whole body's worth of text, so take only as
+    // much of it as there is room for.
+    buf.Append(StringHead(line, limit - buf.Length()));
     eatThisLine = true;
     return buf.Length();
   }
@@ -634,7 +651,7 @@ void nsMsgBodyHandler::DecryptPGP(const nsCString& aEncrypted,
   decryptor->Write(aEncrypted.get(), aEncrypted.Length());
   decryptor->Finish();
   decryptor->RemoveMimeCallback();
-  aDecrypted.Assign(mDecrypted.get());  // Make a copy.
+  aDecrypted.Assign(mDecrypted);  // Make a copy.
 }
 
 void nsMsgBodyHandler::DecryptSMIME(const nsCString& aEncrypted,
@@ -672,7 +689,7 @@ void nsMsgBodyHandler::DecryptSMIME(const nsCString& aEncrypted,
   nsCOMPtr<nsICMSMessage> cinfo;
   rv = decryptor->Finish(getter_AddRefs(cinfo));
   NS_ENSURE_SUCCESS_VOID(rv);
-  aDecrypted.Assign(mDecrypted.get());  // Make a copy.
+  aDecrypted.Assign(mDecrypted);  // Make a copy.
 }
 
 void nsMsgBodyHandler::GetRelevantTextParts(const nsCString& aInput,
@@ -850,20 +867,29 @@ void nsMsgBodyHandler::SniffPossibleMIMEHeader(const nsCString& line) {
 /**
  * Decodes the given base64 string.
  *
- * It returns its decoded string in its input.
+ * It returns its decoded string in its input. The buffer is emptied if the
+ * string isn't valid base64, so callers which ignore the return value still
+ * won't search undecoded text.
  *
  * @param pBufInOut   (inout) a buffer of the string
+ * @returns false if the string wasn't valid base64.
  */
-void nsMsgBodyHandler::Base64Decode(nsCString& pBufInOut) {
-  char* decodedBody =
-      PL_Base64Decode(pBufInOut.get(), pBufInOut.Length(), nullptr);
-  if (decodedBody) {
-    // Replace CR LF with spaces.
-    char* q = decodedBody;
-    while (*q) {
-      if (*q == '\n' || *q == '\r') *q = ' ';
-      q++;
-    }
-    pBufInOut.Adopt(decodedBody);
+bool nsMsgBodyHandler::Base64Decode(nsCString& pBufInOut) {
+  // Decoded text can contain NUL bytes itself, UTF-16 for instance, so
+  // everything here has to go by the length and not by NUL termination.
+  nsCString decoded;
+  if (NS_FAILED(mozilla::Base64Decode(pBufInOut, decoded))) {
+    // Not valid base64. Don't leave the encoded text to be searched: it isn't
+    // what the message says, so matching it would produce hits for text the
+    // reader can't see.
+    pBufInOut.Truncate();
+    return false;
   }
+  // Replace CR LF with spaces. Byte by byte, which is only sound for a charset
+  // where a CR or LF byte can't be part of another character. UTF-16 is the
+  // exception that matters, and there a character like U+250A ends up as a
+  // different one. Rare enough not to be worth converting the part for.
+  decoded.ReplaceChar("\r\n", ' ');
+  pBufInOut.Assign(std::move(decoded));
+  return true;
 }
