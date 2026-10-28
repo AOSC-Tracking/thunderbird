@@ -28,6 +28,8 @@ tags = ["compact"]
 
 ["test_fetchCustomAttribute.js"]
 
+["test_fetchCustomAttributeMalformed.js"]
+
 ["test_filterCustomHeaders.js"]
 
 ["test_filterNeedsBody.js"]
@@ -47,7 +49,11 @@ tags = ["foldernames"]
 
 ["test_ignoreSubscription.js"]
 
+["test_imapAlertRepeated.js"]
+
 ["test_imapAttachmentSaves.js"]
+
+["test_imapAuthStaleChallenge.js"]
 
 ["test_imapAutoSync.js"]
 
@@ -60,6 +66,8 @@ tags = ["foldernames"]
 ["test_imapContentLength.js"]
 
 ["test_imapCopyTimeout.js"]
+
+["test_imapCramMD5NoChallenge.js"]
 
 ["test_imapFilterActions.js"]
 
@@ -79,11 +87,15 @@ tags = ["foldernames"]
 
 ["test_imapHighWater.js"]
 
+["test_imapHugeFetchIndex.js"]
+
 ["test_imapID.js"]
 
 ["test_imapIDLiteralParenGroup.js"]
 
 ["test_imapIDNoParenGroup.js"]
+
+["test_imapMailboxNameRoundTrip.js"]
 
 ["test_imapMove.js"]
 
@@ -93,7 +105,19 @@ tags = ["foldernames"]
 
 ["test_imapMoveWhileOffline.js"]
 
+["test_imapMyRightsNoSelectedMailbox.js"]
+
+["test_imapMyRightsResponseCode.js"]
+
+["test_imapNamespaceComma.js"]
+
+["test_imapNamespaceRootMailbox.js"]
+
+["test_imapNtlmNoChallenge.js"]
+
 ["test_imapPasswordFailure.js"]
+
+["test_imapPreAuthUntaggedIgnored.js"]
 
 ["test_imapProtocols.js"]
 
@@ -103,6 +127,10 @@ tags = ["foldernames"]
 
 ["test_imapSearch.js"]
 
+["test_imapSelectFailedMyRights.js"]
+
+["test_imapStartTLS.js"]
+
 ["test_imapStatusCloseDBs.js"]
 
 ["test_imapStoreMsgOffline.js"]
@@ -110,6 +138,8 @@ tags = ["foldernames"]
 ["test_imapTruncatedOfflineBody.js"]
 
 ["test_imapUndo.js"]
+
+["test_imapUnsolicitedXDuringIdle.js"]
 
 ["test_imapUrls.js"]
 

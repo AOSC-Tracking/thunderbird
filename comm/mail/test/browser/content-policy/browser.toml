@@ -37,4 +37,9 @@ skip-if = [
 
 ["browser_jsContentPolicy.js"]
 
+["browser_mailboxLinkPolicy.js"]
+support-files = ["../../../components/compose/test/browser/data/attachment.pdf"]
+
+["browser_newsContentPolicy.js"]
+
 ["browser_pluginsPolicy.js"]

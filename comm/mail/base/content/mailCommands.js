@@ -13,6 +13,7 @@ var { MailServices } = ChromeUtils.importESModule(
 ChromeUtils.defineESModuleGetters(this, {
   FeedUtils: "resource:///modules/FeedUtils.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
+  MessageSaver: "moz-src:///comm/mail/modules/MessageSaver.sys.mjs",
   MsgHdrToMimeMessage: "resource:///modules/gloda/MimeMessage.sys.mjs",
   MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
 });
@@ -210,7 +211,9 @@ async function ComposeMessage(
         hdr =
           messageArray.length > 1
             ? null
-            : messenger.msgHdrFromURI(messageArray[0]);
+            : MailServices.messageServiceFromURI(
+                messageArray[0]
+              ).messageURIToMsgHdr(messageArray[0]);
         MailServices.compose.OpenComposeWindow(
           null,
           hdr,
@@ -235,7 +238,10 @@ async function ComposeMessage(
       }
 
       for (const messageUri of messageArray) {
-        hdr = messenger.msgHdrFromURI(messageUri);
+        hdr =
+          MailServices.messageServiceFromURI(messageUri).messageURIToMsgHdr(
+            messageUri
+          );
 
         if (
           [
@@ -465,7 +471,7 @@ function SaveAsFile(uris) {
       const fileName = decodeURIComponent(
         url.QueryInterface(Ci.nsIFileURL).fileName
       );
-      messenger.saveAs(uris[0], null, fileName);
+      MessageSaver.saveAs(window.browsingContext, uris[0], fileName);
       return;
     }
   }
@@ -488,9 +494,9 @@ function SaveAsFile(uris) {
   }
 
   if (uris.length == 1) {
-    messenger.saveAs(uris[0], null, filenames[0]);
+    MessageSaver.saveAs(window.browsingContext, uris[0], filenames[0]);
   } else {
-    messenger.saveMessages(filenames, uris);
+    MessageSaver.saveMessages(window.browsingContext, uris, filenames);
   }
 }
 
@@ -534,7 +540,7 @@ async function SaveAsTemplate(uri) {
     return;
   }
 
-  const hdr = messenger.msgHdrFromURI(uri);
+  const hdr = MailServices.messageServiceFromURI(uri).messageURIToMsgHdr(uri);
   const [identity] = MailUtils.getIdentityForHeader(
     hdr,
     Ci.nsIMsgCompType.Template

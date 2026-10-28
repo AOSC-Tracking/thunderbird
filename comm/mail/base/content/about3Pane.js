@@ -62,6 +62,7 @@ ChromeUtils.defineESModuleGetters(this, {
   Gloda: "resource:///modules/gloda/GlodaPublic.sys.mjs",
   MailE10SUtils: "resource:///modules/MailE10SUtils.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
+  MessageSaver: "moz-src:///comm/mail/modules/MessageSaver.sys.mjs",
   SmartMailboxUtils: "resource:///modules/SmartMailboxUtils.sys.mjs",
   TagUtils: "resource:///modules/TagUtils.sys.mjs",
   UIDensity: "resource:///modules/UIDensity.sys.mjs",
@@ -3221,9 +3222,9 @@ var folderPane = {
         return;
       }
       for (let i = 0; i < event.dataTransfer.mozItemCount; i++) {
-        const msgHdr = top.messenger.msgHdrFromURI(
-          event.dataTransfer.mozGetDataAt("text/x-moz-message", i)
-        );
+        const uri = event.dataTransfer.mozGetDataAt("text/x-moz-message", i);
+        const msgHdr =
+          MailServices.messageServiceFromURI(uri).messageURIToMsgHdr(uri);
         // Don't allow drop onto original folder.
         if (msgHdr.folder == targetFolder) {
           return;
@@ -3510,9 +3511,9 @@ var folderPane = {
       const array = [];
       let sourceFolder;
       for (let i = 0; i < event.dataTransfer.mozItemCount; i++) {
-        const msgHdr = top.messenger.msgHdrFromURI(
-          event.dataTransfer.mozGetDataAt("text/x-moz-message", i)
-        );
+        const uri = event.dataTransfer.mozGetDataAt("text/x-moz-message", i);
+        const msgHdr =
+          MailServices.messageServiceFromURI(uri).messageURIToMsgHdr(uri);
         if (!i) {
           sourceFolder = msgHdr.folder;
         }
@@ -5128,14 +5129,14 @@ var threadPane = {
       );
       destDir.value.QueryInterface(Ci.nsIFile);
 
-      const file = destDir.value.clone();
-      file.append(fileName.value.data);
-
       const messageURI = {};
       transferable.getTransferData("text/plain", messageURI);
       messageURI.value.QueryInterface(Ci.nsISupportsString);
 
-      top.messenger.saveAs(messageURI.value.data, null, file.path, true);
+      // Don't overwrite an existing file, use a numbered file name instead.
+      IOUtils.createUniqueFile(destDir.value.path, fileName.value.data)
+        .then(path => MessageSaver.saveToFile(messageURI.value.data, path))
+        .catch(console.error);
     },
   },
 
@@ -6605,12 +6606,18 @@ commandController.registerCallback(
 );
 commandController.registerCallback(
   "cmd_selectThread",
-  () => gDBView.doCommand(Ci.nsMsgViewCommandType.selectThread),
+  () => {
+    gDBView.doCommand(Ci.nsMsgViewCommandType.selectThread);
+    threadTree.dispatchEvent(new CustomEvent("select"));
+  },
   () => gDBView && !gViewWrapper.showGroupedBySort
 );
 commandController.registerCallback(
   "cmd_selectFlagged",
-  () => gDBView.doCommand(Ci.nsMsgViewCommandType.selectFlagged),
+  () => {
+    gDBView.doCommand(Ci.nsMsgViewCommandType.selectFlagged);
+    threadTree.dispatchEvent(new CustomEvent("select"));
+  },
   () => !!gDBView
 );
 commandController.registerCallback(
@@ -6957,11 +6964,16 @@ commandController.registerCallback(
     // Multiple messages. Get the printer settings, then load the messages into
     // a hidden browser and print them one at a time.
     const ps = PrintUtils.getPrintSettings();
-    Cc["@mozilla.org/widget/printdialog-service;1"]
-      .getService(Ci.nsIPrintDialogService)
-      .showPrintDialog(window, false, ps);
-    if (ps.isCancelled) {
-      return;
+    try {
+      await Cc["@mozilla.org/widget/printdialog-service;1"]
+        .getService(Ci.nsIPrintDialogService)
+        .showPrintDialog(window, false, ps);
+    } catch (ex) {
+      if (ex.result == Cr.NS_ERROR_ABORT) {
+        // User cancelled the dialog.
+        return;
+      }
+      throw ex;
     }
     ps.printSilent = true;
 

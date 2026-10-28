@@ -262,6 +262,19 @@ export class SmtpClient {
       this._envelope.from || "anonymous@" + this._getHelloArgument()
     )[0];
 
+    if (
+      [this._envelope.from, ...(this._envelope.to ?? [])].some(address =>
+        /[\r\n]/.test(address ?? "")
+      )
+    ) {
+      // Line breaks would let the rest of the address be sent as separate
+      // commands.
+      this.logger.error("Envelope address cannot contain line breaks");
+      this.onerror(Cr.NS_ERROR_ILLEGAL_VALUE);
+      this.close();
+      return;
+    }
+
     if (!this._capabilities.includes("SMTPUTF8")) {
       // If server doesn't support SMTPUTF8, check if addresses contain invalid
       // characters.
@@ -414,8 +427,15 @@ export class SmtpClient {
    * @param {string} chunk Chunk of data received from the server
    */
   _parse(chunk) {
+    chunk ||= "";
+    // _parseRemainder never contains a line break, so only the new chunk needs
+    // to be searched.
+    if (!chunk.includes("\n")) {
+      this._parseRemainder += chunk;
+      return;
+    }
     // Lines should always end with <CR><LF> but you never know, might be only <LF> as well
-    var lines = (this._parseRemainder + (chunk || "")).split(/\r?\n/);
+    var lines = (this._parseRemainder + chunk).split(/\r?\n/);
     this._parseRemainder = lines.pop(); // not sure if the line has completely arrived yet
 
     for (let i = 0, len = lines.length; i < len; i++) {
@@ -697,7 +717,7 @@ export class SmtpClient {
   }
 
   /**
-   * Send a string command to the server, also append CRLF if needed.
+   * Send a string command to the server, also append CRLF.
    *
    * @param {string} str - String to be sent to the server.
    * @param {boolean} [suppressLogging=false] - If true and not in dev mode,
@@ -713,6 +733,13 @@ export class SmtpClient {
       }
       return;
     }
+    if (/[\r\n]/.test(str)) {
+      // Line breaks would let the rest of str be sent as separate commands.
+      this.logger.error("Command cannot contain line breaks");
+      this.onerror(Cr.NS_ERROR_ILLEGAL_VALUE);
+      this.close();
+      return;
+    }
 
     // "C: " is used to denote that this is data from the Client.
     if (suppressLogging && AppConstants.MOZ_UPDATE_CHANNEL != "default") {
@@ -722,10 +749,7 @@ export class SmtpClient {
     } else {
       this.logger.debug(`C: ${str}`);
     }
-    this.waitDrain = this._send(
-      new TextEncoder().encode(str + (str.substr(-2) !== "\r\n" ? "\r\n" : ""))
-        .buffer
-    );
+    this.waitDrain = this._send(new TextEncoder().encode(str + "\r\n").buffer);
   }
 
   _send(buffer) {
@@ -815,7 +839,13 @@ export class SmtpClient {
       case "GSSAPI": {
         this.logger.debug("Authentication via AUTH GSSAPI");
         this._currentAction = command => this._actionAUTH_GSSAPI(command, true);
-        this._authenticator.initGssapiAuth("smtp");
+        try {
+          this._authenticator.initGssapiAuth("smtp");
+        } catch (e) {
+          this.logger.error("Init GSSAPI FAILED!", e);
+          this._actionAUTHComplete({ success: false, data: "AUTH GSSAPI" });
+          return;
+        }
         // Don't send first token until we get a 334 challenge response.
         // This avoids sending a line that is possibly rejected as too long.
         this._sendCommand("AUTH GSSAPI", true);
@@ -823,13 +853,17 @@ export class SmtpClient {
       }
       case "NTLM": {
         this.logger.debug("Authentication via AUTH NTLM");
+        const password = this._getPassword();
+        if (password == null) {
+          return;
+        }
         this._currentAction = this._actionAUTH_NTLM;
-        this._authenticator.initNtlmAuth("smtp");
         let token;
         try {
+          this._authenticator.initNtlmAuth(password);
           token = this._authenticator.getNextNtlmToken("");
         } catch (e) {
-          this.logger.error(e);
+          this.logger.error("Getting NTLM token FAILED!", e);
           this._actionAUTHComplete({ success: false, data: "AUTH NTLM" });
           return;
         }
@@ -1236,7 +1270,14 @@ export class SmtpClient {
       this._onNsError("smtp-auth-failure", command.data);
       return;
     }
-    const token = this._authenticator.getNextNtlmToken(command.data);
+    let token;
+    try {
+      token = this._authenticator.getNextNtlmToken(command.data);
+    } catch (e) {
+      this.logger.error(e);
+      this._actionAUTHComplete({ success: false, data: "AUTH NTLM" });
+      return;
+    }
     this._currentAction = this._actionAUTH_NTLM;
     this._sendCommand(token, true);
   }

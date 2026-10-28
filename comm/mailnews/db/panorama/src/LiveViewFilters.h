@@ -12,6 +12,7 @@
 #include "mozilla/storage/Variant.h"
 #include "mozIStorageStatement.h"
 #include "nsCOMPtr.h"
+#include "nsIMsgHdr.h"
 #include "nsIVariant.h"
 #include "nsMsgMessageFlags.h"
 #include "nsString.h"
@@ -28,7 +29,7 @@ class LiveViewFilter {
   LiveViewFilter() {}
   virtual ~LiveViewFilter() {}
 
-  virtual bool Matches(Message& aMessage) { return false; }
+  virtual bool Matches(nsIMsgDBHdr* aMessage) { return false; }
   virtual void Refresh() {}
 
  protected:
@@ -43,7 +44,13 @@ class SingleFolderFilter final : public LiveViewFilter {
     mSQLClause.AppendInt(mFolderId);
   }
 
-  bool Matches(Message& aMessage) { return aMessage.FolderId() == mFolderId; }
+  bool Matches(nsIMsgDBHdr* message) {
+    nsCOMPtr<nsIMsgFolder> folder;
+    message->GetFolder(getter_AddRefs(folder));
+    uint64_t folderId;
+    folder->GetId(&folderId);
+    return folderId == mFolderId;
+  }
 
  protected:
   uint64_t mFolderId;
@@ -64,8 +71,12 @@ class MultiFolderFilter final : public LiveViewFilter {
     mSQLClause.Append(")");
   }
 
-  bool Matches(Message& aMessage) {
-    return mFolderIds.Contains(aMessage.FolderId());
+  bool Matches(nsIMsgDBHdr* message) {
+    nsCOMPtr<nsIMsgFolder> folder;
+    message->GetFolder(getter_AddRefs(folder));
+    uint64_t folderId;
+    folder->GetId(&folderId);
+    return mFolderIds.Contains(folderId);
   }
 
  protected:
@@ -81,10 +92,14 @@ class VirtualFolderFilter final : public LiveViewFilter {
 
   void Refresh();
 
-  bool Matches(Message& message) {
+  bool Matches(nsIMsgDBHdr* message) {
+    nsCOMPtr<nsIMsgFolder> folder;
+    message->GetFolder(getter_AddRefs(folder));
+    uint64_t folderId;
+    folder->GetId(&folderId);
     // TODO: This is incomplete. We haven't matched the message against the
     // search terms.
-    return mSearchFolderIds.Contains(message.FolderId());
+    return mSearchFolderIds.Contains(folderId);
   }
 
  protected:
@@ -101,14 +116,47 @@ class ConversationFilter final : public LiveViewFilter {
     mSQLClause.AppendInt(conversationId);
   }
 
-  bool Matches(Message& message) {
+  bool Matches(nsIMsgDBHdr* message) {
     nsMsgKey threadId;
-    message.GetThreadId(&threadId);
+    message->GetThreadId(&threadId);
     return threadId == mConversationId;
   }
 
  protected:
   uint64_t mConversationId;
+};
+
+class MessageFlagsFilter : public LiveViewFilter {
+ public:
+  MessageFlagsFilter(uint64_t aFlag, uint64_t aWanted)
+      : mFlag(aFlag), mWanted(aWanted) {
+    mSQLClause.Assign("flags & ");
+    mSQLClause.AppendInt(aFlag);
+    mSQLClause.Append(" = ");
+    mSQLClause.AppendInt(aWanted);
+  }
+
+  bool Matches(nsIMsgDBHdr* message) {
+    uint32_t flags;
+    message->GetFlags(&flags);
+    return (flags & mFlag) == mWanted;
+  }
+
+ protected:
+  uint64_t mFlag;
+  uint64_t mWanted;
+};
+
+class UnreadMessagesFilter final : public MessageFlagsFilter {
+ public:
+  UnreadMessagesFilter() : MessageFlagsFilter(nsMsgMessageFlags::Read, 0) {}
+};
+
+class FlaggedMessagesFilter final : public MessageFlagsFilter {
+ public:
+  FlaggedMessagesFilter()
+      : MessageFlagsFilter(nsMsgMessageFlags::Marked,
+                           nsMsgMessageFlags::Marked) {}
 };
 
 class TaggedMessagesFilter final : public LiveViewFilter {
@@ -120,9 +168,31 @@ class TaggedMessagesFilter final : public LiveViewFilter {
     mSQLParams.AppendElement(new mozilla::storage::UTF8TextVariant(mTag));
   }
 
+  bool Matches(nsIMsgDBHdr* message);
+
  protected:
   nsAutoCString mTag;
   bool mWanted;
+};
+
+class DateRangeFilter final : public LiveViewFilter {
+ public:
+  explicit DateRangeFilter(PRTime aStartDate, PRTime aEndDate)
+      : mStartDate(aStartDate), mEndDate(aEndDate) {
+    mSQLClause.Assign("date BETWEEN ? AND ?");
+    mSQLParams.AppendElement(new mozilla::storage::IntegerVariant(mStartDate));
+    mSQLParams.AppendElement(new mozilla::storage::IntegerVariant(mEndDate));
+  }
+
+  bool Matches(nsIMsgDBHdr* message) {
+    PRTime date;
+    message->GetDate(&date);
+    return date >= mStartDate && date <= mEndDate;
+  }
+
+ protected:
+  PRTime mStartDate;
+  PRTime mEndDate;
 };
 
 }  // namespace mozilla::mailnews

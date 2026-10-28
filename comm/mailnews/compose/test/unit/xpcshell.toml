@@ -29,11 +29,15 @@ run-if = [
 
 ["test_fcc2.js"]
 
+["test_fccFailure.js"]
+
 ["test_fccReply.js"]
 
 ["test_forwardInlineAllHeaders.js"]
 
 ["test_forwardInlineMalformedAttachment.js"]
+
+["test_forwardInlineRelatedAttachment.js"]
 
 ["test_forwardMergeMixedCharsets.js"]
 
@@ -87,6 +91,8 @@ requesttimeoutfactor = 2
 ["test_smtpAuthGssapi.js"]
 
 ["test_smtpAuthMethods.js"]
+
+["test_smtpAuthNtlm.js"]
 
 ["test_smtpAuthenticator.js"]
 

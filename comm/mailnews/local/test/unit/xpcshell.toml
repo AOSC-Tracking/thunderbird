@@ -37,7 +37,11 @@ tags = ["compact"]
 
 ["test_mailboxContentLength.js"]
 
+["test_mailboxFileOpen.js"]
+
 ["test_mailboxProtocol.js"]
+
+["test_mailboxUNCPaths.js"]
 
 ["test_mailboxURL.js"]
 
@@ -71,7 +75,11 @@ tags = ["compact"]
 # This one needs a longer timeout for working with a 4GiB file. Especially for CCov/ASAN/TSAN.
 requesttimeoutfactor = 12
 
+["test_pop3ApopTimestamp.js"]
+
 ["test_pop3AuthMethods.js"]
+
+["test_pop3AuthNtlm.js"]
 
 ["test_pop3Client.js"]
 
@@ -103,6 +111,8 @@ requesttimeoutfactor = 12
 
 ["test_pop3Password3.js"]
 
+["test_pop3PasswordCancel.js"]
+
 ["test_pop3PasswordFailure_rfc1939.js"]
 
 ["test_pop3PasswordFailure_rfc2449.js"]
@@ -116,6 +126,8 @@ requesttimeoutfactor = 12
 ["test_pop3ServerDisconnect.js"]
 
 ["test_pop3StateDeadlock.js"]
+
+["test_pop3Url.js"]
 
 ["test_preview.js"]
 

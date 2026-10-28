@@ -383,8 +383,6 @@ NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, ForceSelect, "force_select_imap")
 NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, DualUseFolders,
                         "dual_use_folders")
 
-NS_IMPL_SERVERPREF_STR(nsImapIncomingServer, AdminUrl, "admin_url")
-
 NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, CleanupInboxOnExit,
                         "cleanup_inbox_on_exit")
 
@@ -1356,23 +1354,6 @@ NS_IMETHODIMP nsImapIncomingServer::FolderIsNoSelect(
   return NS_OK;
 }
 
-NS_IMETHODIMP nsImapIncomingServer::SetFolderAdminURL(
-    const nsACString& aFolderName, const nsACString& aFolderAdminUrl) {
-  nsCOMPtr<nsIMsgFolder> rootFolder;
-  nsresult rv = GetRootFolder(getter_AddRefs(rootFolder));
-  if (NS_SUCCEEDED(rv) && rootFolder) {
-    nsCOMPtr<nsIMsgImapMailFolder> imapRoot = do_QueryInterface(rootFolder);
-    if (imapRoot) {
-      nsCOMPtr<nsIMsgImapMailFolder> foundFolder;
-      rv = imapRoot->FindOnlineSubFolder(aFolderName,
-                                         getter_AddRefs(foundFolder));
-      if (NS_SUCCEEDED(rv) && foundFolder)
-        return foundFolder->SetAdminUrl(aFolderAdminUrl);
-    }
-  }
-  return rv;
-}
-
 NS_IMETHODIMP nsImapIncomingServer::FolderVerifiedOnline(
     const nsACString& folderName, bool* aResult) {
   NS_ENSURE_ARG_POINTER(aResult);
@@ -1837,7 +1818,14 @@ nsresult nsImapIncomingServer::AlertUser(const nsAString& aString,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  return mailSession->AlertUser(aString, aUrl, silent);
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  rv = aUrl->GetServer(getter_AddRefs(server));
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsAutoCString serverKey;
+  rv = server->GetKey(serverKey);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return mailSession->AlertUser(aString, serverKey, silent);
 }
 
 NS_IMETHODIMP
@@ -1950,7 +1938,7 @@ NS_IMETHODIMP nsImapIncomingServer::FEAlertCertError(
     nsITransportSecurityInfo* securityInfo, nsIMsgMailNewsUrl* url) {
   nsCOMPtr<nsIMsgMailSession> mailSession =
       mozilla::components::MailSession::Service();
-  mailSession->AlertCertError(securityInfo, url);
+  mailSession->AlertCertError(securityInfo, url, m_serverKey);
   return NS_OK;
 }
 

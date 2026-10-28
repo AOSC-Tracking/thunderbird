@@ -472,3 +472,98 @@ add_task(async function testAuthLoginFailure() {
   smtpServer.closeCachedConnections();
   authServer.stop();
 });
+
+/**
+ * Test that envelope addresses with line breaks can't be used to send
+ * arbitrary commands, also when the server supports SMTPUTF8.
+ */
+add_task(async function testLineBreakInEnvelopeAddress() {
+  const utf8Server = setupServerDaemon(d => {
+    const handler = new SMTP_RFC2821_handler(d);
+    handler.kCapabilities = ["8BITMIME", "SIZE", "SMTPUTF8"];
+    return handler;
+  });
+  utf8Server.start();
+  registerCleanupFunction(() => utf8Server.stop());
+
+  const kInjected = '"a\r\nRCPT TO:<attacker@evil.invalid>"@foo.invalid';
+  const send = (recipients, from) => {
+    const smtpServer = getBasicSmtpServer(utf8Server.port);
+    const identity = getSmtpIdentity(from, smtpServer);
+    const listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
+    smtpServer.sendMailMessage(
+      do_get_file("data/message1.eml"),
+      recipients,
+      [],
+      identity,
+      from,
+      null,
+      null,
+      false,
+      "<linebreak@foo.invalid>",
+      listener
+    );
+    return { smtpServer, promise: listener.promise };
+  };
+
+  // The header parser unfolds addresses, so construct the recipient directly
+  // to check SmtpClient refuses it.
+  utf8Server.resetTest();
+  let { smtpServer, promise } = send(
+    [MailServices.headerParser.makeMailboxObject("", kInjected)],
+    "from@foo.invalid"
+  );
+  await Assert.rejects(
+    promise,
+    err => err.message == Cr.NS_ERROR_ILLEGAL_VALUE,
+    "sending with a line break in the recipient should fail"
+  );
+  let commands = [utf8Server.playTransaction()].flat().flatMap(t => t.them);
+  Assert.ok(
+    !commands.some(c => c.startsWith("MAIL") || c.startsWith("RCPT")),
+    "no envelope should be sent for a line break in the recipient"
+  );
+  smtpServer.closeCachedConnections();
+
+  // The sender is always parsed, which unfolds it.
+  utf8Server.resetTest();
+  ({ smtpServer, promise } = send(
+    MailServices.headerParser.parseEncodedHeaderW("to@foo.invalid"),
+    kInjected
+  ));
+  await promise;
+  commands = [utf8Server.playTransaction()].flat().flatMap(t => t.them);
+  Assert.deepEqual(
+    commands.filter(c => c.startsWith("RCPT")),
+    ["RCPT TO:<to@foo.invalid>"],
+    "no recipient should be injected through the sender"
+  );
+  smtpServer.closeCachedConnections();
+});
+
+/**
+ * Test that a reply split over several chunks is only handled once complete,
+ * and is handled in full.
+ */
+add_task(async function testSplitReply() {
+  const { SmtpClient } = ChromeUtils.importESModule(
+    "resource:///modules/SmtpClient.sys.mjs"
+  );
+  const smtpServer = getBasicSmtpServer(server.port);
+  const client = new SmtpClient(smtpServer.wrappedJSObject);
+  const responses = [];
+  client._onCommand = res => responses.push(res);
+
+  for (const chunk of ["250-first", " line\r", "\n250 la", "st line\r", "\n"]) {
+    client._parse(chunk);
+  }
+
+  Assert.equal(responses.length, 1, "the reply should be handled once");
+  Assert.equal(responses[0].statusCode, 250, "the status code should be kept");
+  Assert.equal(
+    responses[0].data,
+    "first line\nlast line",
+    "the reply text should be complete"
+  );
+  Assert.equal(client._parseRemainder, "", "nothing should be left pending");
+});

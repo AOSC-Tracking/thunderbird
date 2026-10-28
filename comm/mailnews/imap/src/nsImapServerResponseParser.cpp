@@ -37,7 +37,6 @@ nsImapServerResponseParser::nsImapServerResponseParser(
       fServerConnection(imapProtocolConnection),
       fHostSessionList(nullptr) {
   fSearchResults = nsImapSearchResultSequence::CreateSearchResultSequence();
-  fFolderAdminUrl = nullptr;
   fNetscapeServerVersionString = nullptr;
   fXSenderInfo = nullptr;
   fSupportsUserDefinedFlags = 0;
@@ -79,7 +78,6 @@ nsImapServerResponseParser::nsImapServerResponseParser(
 nsImapServerResponseParser::~nsImapServerResponseParser() {
   PR_Free(fCurrentCommandTag);
   delete fSearchResults;
-  PR_Free(fFolderAdminUrl);
   PR_Free(fNetscapeServerVersionString);
   PR_Free(fXSenderInfo);
   PR_Free(fLastAlert);
@@ -366,6 +364,16 @@ const char* nsImapServerResponseParser::GetSelectedMailboxName() {
   return fSelectedMailboxName;
 }
 
+bool nsImapServerResponseParser::GetSelectedMailboxName(nsACString& aName) {
+  mozilla::MutexAutoLock mon(mLock);
+  if (!fSelectedMailboxName) {
+    aName.Truncate();
+    return false;
+  }
+  aName.Assign(fSelectedMailboxName);
+  return true;
+}
+
 nsImapSearchResultIterator*
 nsImapServerResponseParser::CreateSearchResultIterator() {
   return new nsImapSearchResultIterator(*fSearchResults);
@@ -430,9 +438,11 @@ void nsImapServerResponseParser::ProcessBadCommand(const char* commandToken) {
   else if (!PL_strcasecmp(commandToken, "LOGOUT"))
     fIMAPstate = kNonAuthenticated;  // ??
   else if (!PL_strcasecmp(commandToken, "SELECT") ||
-           !PL_strcasecmp(commandToken, "EXAMINE"))
+           !PL_strcasecmp(commandToken, "EXAMINE")) {
+    mozilla::MutexAutoLock mon(mLock);
     fIMAPstate = kAuthenticated;  // nothing selected
-  else if (!PL_strcasecmp(commandToken, "CLOSE"))
+    PR_FREEIF(fSelectedMailboxName);
+  } else if (!PL_strcasecmp(commandToken, "CLOSE"))
     fIMAPstate = kAuthenticated;  // nothing selected
 }
 
@@ -455,6 +465,16 @@ void nsImapServerResponseParser::response_data() {
   AdvanceToNextToken();
 
   if (ContinueParse()) {
+    // Only a few responses are valid before authentication (RFC 9051,
+    // Section 3.1), so ignore the rest.
+    if (fIMAPstate == kNonAuthenticated && PL_strcasecmp(fNextToken, "OK") &&
+        PL_strcasecmp(fNextToken, "NO") && PL_strcasecmp(fNextToken, "BAD") &&
+        PL_strcasecmp(fNextToken, "BYE") &&
+        PL_strcasecmp(fNextToken, "CAPABILITY")) {
+      skip_to_CRLF();
+      return;
+    }
+
     // Instead of comparing lots of strings and make function calls, try to
     // pre-flight the possibilities based on the first letter of the token.
     switch (NS_ToUpper(fNextToken[0])) {
@@ -613,14 +633,19 @@ void nsImapServerResponseParser::response_data() {
       case 'X':
         if (!PL_strcasecmp(fNextToken, "XSERVERINFO"))
           xserverinfo_data();
-        else if (!PL_strcasecmp(fNextToken, "XMAILBOXINFO"))
-          xmailboxinfo_data();
         else if (!PL_strcasecmp(fNextToken, "XLIST"))
           mailbox_data();
         else {
           // check if custom command
           nsAutoCString customCommand;
-          fServerConnection.GetCurrentUrl()->GetCommand(customCommand);
+          nsIImapUrl* currentUrl = fServerConnection.GetCurrentUrl();
+          if (!currentUrl) {
+            // There is no running url while idling, so this can't be the
+            // result of a custom command. Ignore it.
+            skip_to_CRLF();
+            break;
+          }
+          currentUrl->GetCommand(customCommand);
           if (customCommand.Equals(fNextToken)) {
             nsAutoCString customCommandResponse;
             while (Connected() && !fAtEndOfLine) {
@@ -628,8 +653,7 @@ void nsImapServerResponseParser::response_data() {
               customCommandResponse.Append(fNextToken);
               customCommandResponse.Append(' ');
             }
-            fServerConnection.GetCurrentUrl()->SetCustomCommandResult(
-                customCommandResponse);
+            currentUrl->SetCustomCommandResult(customCommandResponse);
           } else
             SetSyntaxError(true);
         }
@@ -1187,12 +1211,15 @@ void nsImapServerResponseParser::msg_fetch() {
           fetchResult = CreateAstring();
           AdvanceToNextToken();
         }
-        if (imapAction == nsIImapUrl::nsImapUserDefinedFetchAttribute)
+        if (!fetchResult) {
+          SetSyntaxError(true);
+        } else if (imapAction == nsIImapUrl::nsImapUserDefinedFetchAttribute) {
           fServerConnection.GetCurrentUrl()->SetCustomAttributeResult(
               nsDependentCString(fetchResult));
-        if (imapAction == nsIImapUrl::nsImapUserDefinedMsgCommand)
+        } else {
           fServerConnection.GetCurrentUrl()->SetCustomCommandResult(
               nsDependentCString(fetchResult));
+        }
         PR_Free(fetchResult);
       } else
         SetSyntaxError(true);
@@ -1576,18 +1603,25 @@ void nsImapServerResponseParser::resp_text_code() {
     AdvanceToNextToken();
 
   if (ContinueParse()) {
-    if (!PL_strcasecmp(fNextToken, "ALERT]") ||
-        !PL_strcasecmp(fNextToken, "UNAVAILABLE]")) {
+    if (fIMAPstate == kNonAuthenticated &&
+        PL_strcasecmp(fNextToken, "ALERT]") &&
+        PL_strcasecmp(fNextToken, "UNAVAILABLE]") &&
+        PL_strcasecmp(fNextToken, "CAPABILITY")) {
+      // Other response codes don't apply before authentication.
+      skip_to_CRLF();
+    } else if (!PL_strcasecmp(fNextToken, "ALERT]") ||
+               !PL_strcasecmp(fNextToken, "UNAVAILABLE]")) {
       // Treat ALERT and UNAVAILABLE response codes similarly. Show response
       // code string in pop-up. See RFC 5530 "IMAP Response Codes".
       char* alertMsg = fCurrentTokenPlaceHolder;  // advance past ALERT/UNAVAIL
-      if (alertMsg && *alertMsg &&
-          (!fLastAlert || PL_strcmp(fNextToken, fLastAlert))) {
-        fServerConnection.AlertUserEvent(alertMsg);
-        PR_Free(fLastAlert);
-        fLastAlert = PL_strdup(alertMsg);
+      if (alertMsg && *alertMsg) {
         // If UNAVAILABLE, flag this to prevent a possible password prompt
         fServerUnavailable = (NS_ToUpper(fNextToken[0]) == 'U');
+        if (!fLastAlert || PL_strcmp(alertMsg, fLastAlert)) {
+          fServerConnection.AlertUserEvent(alertMsg);
+          PR_Free(fLastAlert);
+          fLastAlert = PL_strdup(alertMsg);
+        }
       }
       AdvanceToNextToken();
     } else if (!PL_strcasecmp(fNextToken, "PARSE]")) {
@@ -1976,28 +2010,6 @@ void nsImapServerResponseParser::capability_data() {
   skip_to_CRLF();
 }
 
-void nsImapServerResponseParser::xmailboxinfo_data() {
-  AdvanceToNextToken();
-  if (!fNextToken) return;
-
-  char* mailboxName = CreateAstring();  // PL_strdup(fNextToken);
-  if (mailboxName) {
-    do {
-      AdvanceToNextToken();
-      if (fNextToken) {
-        if (!PL_strcmp("MANAGEURL", fNextToken)) {
-          AdvanceToNextToken();
-          fFolderAdminUrl = CreateAstring();
-        } else if (!PL_strcmp("POSTURL", fNextToken)) {
-          AdvanceToNextToken();
-          // ignore this for now...
-        }
-      }
-    } while (fNextToken && !fAtEndOfLine && ContinueParse());
-  }
-  PR_FREEIF(mailboxName);
-}
-
 void nsImapServerResponseParser::xserverinfo_data() {
   do {
     AdvanceToNextToken();
@@ -2039,6 +2051,7 @@ void nsImapServerResponseParser::language_data() {
 
 void nsImapServerResponseParser::authChallengeResponse_data() {
   AdvanceToNextToken();
+  PR_FREEIF(fAuthChallenge);
   fAuthChallenge = strdup(fNextToken);
   fWaitingForMoreClientInput = true;
 
@@ -2148,8 +2161,16 @@ void nsImapServerResponseParser::myrights_data(bool unsolicited) {
     // an unsolicited myrights response won't have the mailbox name in
     // the response, so we use the selected mailbox name.
     if (unsolicited) {
-      mozilla::MutexAutoLock mon(mLock);
-      mailboxName = strdup(fSelectedMailboxName);
+      {
+        mozilla::MutexAutoLock mon(mLock);
+        mailboxName =
+            fSelectedMailboxName ? strdup(fSelectedMailboxName) : nullptr;
+      }
+      // Without a selected mailbox there is nothing to apply the rights to.
+      if (!mailboxName) {
+        skip_to_CRLF();
+        return;
+      }
     } else {
       mailboxName = CreateAstring();
       if (mailboxName) AdvanceToNextToken();
@@ -2158,6 +2179,11 @@ void nsImapServerResponseParser::myrights_data(bool unsolicited) {
       if (ContinueParse()) {
         char* myrights = CreateAstring();
         if (myrights) {
+          if (unsolicited) {
+            // The rights end the response code, e.g. "[MYRIGHTS lrs]".
+            char* end = PL_strchr(myrights, ']');
+            if (end) *end = '\0';
+          }
           nsImapProtocol* navCon = &fServerConnection;
           NS_ASSERTION(
               navCon, "null connection parsing my rights");  // we should always
@@ -2289,7 +2315,19 @@ bool nsImapServerResponseParser::GetDownloadingHeaders() {
   return fDownloadingHeaders;
 }
 
-void nsImapServerResponseParser::ResetCapabilityFlag() {}
+void nsImapServerResponseParser::ResetStateAfterStartTLS() {
+  fCapabilityFlag = kCapabilityUndefined;
+  fUtf8AcceptEnabled = false;
+  fServerIsNetscape3xServer = false;
+  fServerUnavailable = false;
+  fServerIdResponse.Truncate();
+  fMailAccountUrl.Truncate();
+  fManageListsUrl.Truncate();
+  fManageFiltersUrl.Truncate();
+  PR_FREEIF(fNetscapeServerVersionString);
+  PR_FREEIF(fLastAlert);
+  PR_FREEIF(fAuthChallenge);
+}
 
 /*
    literal ::= "{" number "}" CRLF *CHAR8

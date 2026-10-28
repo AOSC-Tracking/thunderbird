@@ -155,7 +155,7 @@ add_task(async function test_exchange_requires_credentials_account_creation() {
   const emailTemplate = dialog.querySelector("email-auto-form");
   const footerForward = dialog.querySelector("#emailFooter #forward");
 
-  await fillUserInformation(emailTemplate);
+  await fillUserInformation(emailTemplate, emailUser);
   Assert.ok(!footerForward.disabled, "Continue button should be enabled");
 
   // Click continue and wait for config found template to be in view.
@@ -385,16 +385,22 @@ add_task(
 add_task(async function test_exchange_manual_configuration() {
   needsAuthentication = false;
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["mail.graph.enabled", true],
-      ["mail.accounthub.manualconfig.enabled", false],
-    ],
+    set: [["mail.graph.enabled", true]],
+  });
+  const ewsServer = await ServerTestUtils.createServer({
+    type: "ews",
+    options: {
+      username: USER,
+      password: PASSWORD,
+    },
+    hostname: "exchange.test",
+    port: 80,
   });
   const dialog = await subtest_open_account_hub_dialog();
   const emailTemplate = dialog.querySelector("email-auto-form");
   const footerForward = dialog.querySelector("#emailFooter #forward");
 
-  await fillUserInformation(emailTemplate);
+  await fillUserInformation(emailTemplate, emailUser);
 
   Assert.ok(!footerForward.disabled, "Continue button should be enabled");
 
@@ -417,60 +423,104 @@ add_task(async function test_exchange_manual_configuration() {
   );
 
   EventUtils.synthesizeMouseAtCenter(editConfigurationButton, {});
-  const ewsConfigStep = dialog.querySelector("#emailIncomingConfigSubview");
+  const ewsConfigStep = dialog.querySelector("#emailExchangeSettingsSubview");
   await BrowserTestUtils.waitForAttributeRemoval("hidden", ewsConfigStep);
 
-  // The protocol option select, connection securty, and port should be hidden,
-  // and we should be showing the EWS label, with only OAuth and
-  // Normal Password as authentication options, and the EWS url input.
+  const serviceURL = ewsConfigStep.querySelector("#serviceURL");
   Assert.ok(
-    BrowserTestUtils.isVisible(
-      ewsConfigStep.querySelector("#incomingProtocol")
-    ),
-    "Default protocol dropdown should be visible"
-  );
-  Assert.equal(
-    ewsConfigStep.querySelector("#incomingProtocol").value,
-    4,
-    "EWS should be the selected protocol"
-  );
-  Assert.ok(
-    BrowserTestUtils.isHidden(
-      ewsConfigStep.querySelector("#incomingConnectionSecurity")
-    ),
-    "Incoming connection security dropdown should be hidden"
-  );
-  Assert.ok(
-    BrowserTestUtils.isHidden(ewsConfigStep.querySelector("#incomingPort")),
-    "Incoming port input should be hidden"
-  );
-  Assert.ok(
-    BrowserTestUtils.isVisible(
-      ewsConfigStep.querySelector("#incomingExchangeUrl")
-    ),
-    "EWS URL input should be visible"
+    BrowserTestUtils.isVisible(serviceURL),
+    "The Exchange service URL field should be visible"
   );
 
-  // The available config fields should be filled in with the correct info.
-  // The test server isn't set up with HTTPS, so we have an insecure URL here.
   Assert.equal(
-    ewsConfigStep.querySelector("#incomingExchangeUrl").value,
-    "http://exchange.test/EWS/Exchange.asmx", // eslint-disable sdl/no-insecure-url
-    "The EWS URL input should have the correct exchange url"
+    serviceURL.value,
+    "http://exchange.test/EWS/Exchange.asmx", // eslint-disable-line sdl/no-insecure-url
+    "The discovered EWS service URL should be preserved"
   );
-  Assert.equal(
-    ewsConfigStep.querySelector("#incomingAuthMethod").value,
-    3,
-    "The auth method should be Normal Password"
+
+  EventUtils.synthesizeMouseAtCenter(footerForward, {});
+  const exchangeTypeStep = dialog.querySelector("#emailExchangeTypeSubview");
+  await BrowserTestUtils.waitForAttributeRemoval("hidden", exchangeTypeStep);
+
+  const ewsTypeCard = exchangeTypeStep.querySelector(
+    'account-hub-radio-card-large[value="ews"]'
   );
+  Assert.ok(
+    ewsTypeCard.checked,
+    "The discovered EWS account type should remain selected"
+  );
+
   Assert.equal(
-    ewsConfigStep.querySelector("#incomingUsername").value,
+    exchangeTypeStep.querySelector("#exchangeTypeUsername").value,
     "testExchange@exchange.test",
-    "The username input should have the exchange email from the config"
+    "The username should be filled from the discovered config"
+  );
+  Assert.equal(
+    exchangeTypeStep.querySelector("#exchangeTypeAuthentication").value,
+    String(Ci.nsMsgAuthMethod.passwordCleartext),
+    "The authentication method should be Normal Password from the config"
   );
 
+  EventUtils.synthesizeMouseAtCenter(footerForward, {});
+  const passwordStep = dialog.querySelector("#emailPasswordSubview");
+  await BrowserTestUtils.waitForAttributeRemoval("hidden", passwordStep);
+
+  const passwordInput = passwordStep.querySelector("#password");
+  await TestUtils.waitForCondition(
+    () => BrowserTestUtils.isVisible(passwordInput),
+    "The password form input should be visible."
+  );
+  EventUtils.synthesizeMouseAtCenter(passwordInput, {});
+  const passwordInputEvent = BrowserTestUtils.waitForEvent(
+    passwordInput,
+    "input",
+    true,
+    event => event.target.value === PASSWORD
+  );
+  EventUtils.sendString(PASSWORD);
+  await passwordInputEvent;
+
+  EventUtils.synthesizeMouseAtCenter(footerForward, {});
+
+  const ewsAccount = await new Promise(resolve => {
+    const listener = {
+      onServerLoaded() {
+        const matchingAccount = MailServices.accounts.accounts.find(
+          account => account.identities[0]?.email === emailUser.email
+        );
+        if (matchingAccount) {
+          MailServices.accounts.removeIncomingServerListener(listener);
+          resolve(matchingAccount);
+        }
+      },
+      onServerUnloaded() {},
+      onServerChanged() {},
+    };
+    MailServices.accounts.addIncomingServerListener(listener);
+    listener.onServerLoaded();
+  });
+
+  const successStep = dialog.querySelector("email-added-success");
+  await BrowserTestUtils.waitForAttributeRemoval("hidden", successStep);
+
+  Assert.equal(
+    ewsAccount.incomingServer.type,
+    "ews",
+    "The created account should be an EWS account"
+  );
+  Assert.equal(
+    ewsAccount.incomingServer.getStringValue("ews_url"),
+    "http://exchange.test/EWS/Exchange.asmx", // eslint-disable-line sdl/no-insecure-url
+    "The created EWS account should use the discovered service URL"
+  );
+
+  MailServices.accounts.removeAccount(ewsAccount);
+  MailServices.outgoingServer.deleteServer(
+    MailServices.outgoingServer.servers.find(s => s.key != "smtp1")
+  );
   await Services.logins.removeAllLoginsAsync();
-  await subtest_close_account_hub_dialog(dialog, ewsConfigStep);
+  ewsServer.stop();
+  await subtest_close_account_hub_dialog(dialog, successStep);
   needsAuthentication = true;
   await SpecialPowers.popPrefEnv();
 });
@@ -487,7 +537,7 @@ add_task(async function test_exchange_ews_advanced_configuration() {
   const emailTemplate = dialog.querySelector("email-auto-form");
   const footerForward = dialog.querySelector("#emailFooter #forward");
 
-  await fillUserInformation(emailTemplate);
+  await fillUserInformation(emailTemplate, emailUser);
 
   Assert.ok(!footerForward.disabled, "Continue button should be enabled");
 
@@ -538,7 +588,7 @@ add_task(async function test_exchange_graph_advanced_configuration() {
     "Manual configuration button should be invisible."
   );
 
-  await fillUserInformation(emailTemplate);
+  await fillUserInformation(emailTemplate, emailUser);
 
   Assert.ok(
     BrowserTestUtils.isVisible(manualConfigurationButton),
@@ -862,7 +912,7 @@ add_task(async function test_exchange_back_to_manual_configuration() {
   const emailTemplate = dialog.querySelector("email-auto-form");
   const footerForward = dialog.querySelector("#emailFooter #forward");
 
-  await fillUserInformation(emailTemplate);
+  await fillUserInformation(emailTemplate, emailUser);
 
   Assert.ok(!footerForward.disabled, "Continue button should be enabled");
 
@@ -976,43 +1026,6 @@ add_task(async function test_exchange_back_to_manual_configuration() {
   needsAuthentication = true;
   await SpecialPowers.popPrefEnv();
 });
-
-/**
- * Fills the name and email inputs in the first step of account hub
- * email setup.
- *
- * @param {HTMLElement} emailStep - The email step HTML element.
- * @param {object} [userDetails] - Details to enter for the user. Defaults to the
- * emailUser object.
- */
-async function fillUserInformation(emailStep, userDetails = emailUser) {
-  const nameInput = emailStep.querySelector("#realName");
-  const emailInput = emailStep.querySelector("#email");
-
-  // Ensure fields are empty.
-  nameInput.value = "";
-  emailInput.value = "";
-
-  EventUtils.synthesizeMouseAtCenter(nameInput, {});
-  let inputEvent = BrowserTestUtils.waitForEvent(
-    nameInput,
-    "input",
-    false,
-    event => event.target.value === userDetails.name
-  );
-  EventUtils.sendString(userDetails.name, window);
-  await inputEvent;
-
-  EventUtils.synthesizeMouseAtCenter(emailInput, {});
-  inputEvent = BrowserTestUtils.waitForEvent(
-    emailInput,
-    "input",
-    false,
-    event => event.target.value === userDetails.email
-  );
-  EventUtils.sendString(userDetails.email, window);
-  await inputEvent;
-}
 
 /**
  * Fills the password input in the password step of account hub email setup.

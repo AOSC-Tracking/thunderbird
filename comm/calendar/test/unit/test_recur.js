@@ -5,8 +5,10 @@
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
 ChromeUtils.defineESModuleGetters(this, {
+  CalDateTime: "resource:///modules/CalDateTime.sys.mjs",
   CalRecurrenceInfo: "resource:///modules/CalRecurrenceInfo.sys.mjs",
 });
+const { default: ICAL } = ChromeUtils.importESModule("resource:///modules/calendar/Ical.sys.mjs");
 
 function makeEvent(str) {
   return createEventFromIcalString("BEGIN:VEVENT\n" + str + "END:VEVENT");
@@ -23,6 +25,8 @@ function really_run_test() {
   test_rules();
   test_failures();
   test_limit();
+  test_expansion_limit();
+  test_long_running_series();
   test_startdate_change();
   test_idchange();
   test_rrule_icalstring();
@@ -782,6 +786,54 @@ function test_rules() {
   );
   check_recur(item, ["20020401T114500", "20020403T114500"], "20020403T094500");
 
+  // BYSETPOS numbers the instances of each period of the rule. The example
+  // is the one given for it in RFC 5545, section 3.8.5.3.
+  check_recur(
+    makeEvent(
+      "DESCRIPTION:The second-to-last weekday of the month\n" +
+        "RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-2;COUNT=4\n" +
+        "DTSTART:19970929T090000\n" +
+        "DTEND:19970929T100000\n"
+    ),
+    ["19970929T090000", "19971030T090000", "19971127T090000", "19971230T090000"],
+    "19971230T100000"
+  );
+
+  check_recur(
+    makeEvent(
+      "DESCRIPTION:The last of the hours of each day\n" +
+        "RRULE:FREQ=DAILY;BYHOUR=9,12,17;BYSETPOS=-1;COUNT=3\n" +
+        "DTSTART:20020401T170000\n" +
+        "DTEND:20020401T180000\n"
+    ),
+    ["20020401T170000", "20020402T170000", "20020403T170000"],
+    "20020403T180000"
+  );
+
+  // A yearly period is the whole year, not each of the months in it.
+  check_recur(
+    makeEvent(
+      "DESCRIPTION:The second and second-to-last Sunday of March and June\n" +
+        "RRULE:FREQ=YEARLY;BYMONTH=3,6;BYDAY=SU;BYSETPOS=2,-2;COUNT=4\n" +
+        "DTSTART:20160313T090000\n" +
+        "DTEND:20160313T100000\n"
+    ),
+    ["20160313T090000", "20160619T090000", "20170312T090000", "20170618T090000"],
+    "20170618T100000"
+  );
+
+  // A yearly rule expands the sub-day parts too.
+  check_recur(
+    makeEvent(
+      "DESCRIPTION:Twice on the 15th of June every year\n" +
+        "RRULE:FREQ=YEARLY;BYMONTH=6;BYMONTHDAY=15;BYHOUR=9,17;COUNT=4\n" +
+        "DTSTART:20160615T090000\n" +
+        "DTEND:20160615T100000\n"
+    ),
+    ["20160615T090000", "20160615T170000", "20170615T090000", "20170615T170000"],
+    "20170615T180000"
+  );
+
   // Unsupported SECONDLY FREQ value.
   item = makeEvent(
     "DESCRIPTION:bug 1770984\nRRULE:FREQ=SECONDLY;COUNT=60\nDTSTART:20220606T114500Z\n"
@@ -823,6 +875,233 @@ function test_limit() {
 
   equal(recdates.length, 3);
   equal(occurrences.length, 3);
+}
+
+function test_expansion_limit() {
+  function occurrenceCount(rrule, dtstart = "20260101T000000Z") {
+    const item = makeEvent(`RRULE:${rrule}\nDTSTART:${dtstart}\n`);
+    return item.recurrenceInfo.getOccurrenceDates(createDate(1990, 0, 1), createDate(2060, 0, 1), 0)
+      .length;
+  }
+
+  const allMonths = "1,2,3,4,5,6,7,8,9,10,11,12";
+  const allMonthDays = Array.from({ length: 31 }, (_, i) => i + 1).join(",");
+  const allHours = Array.from({ length: 24 }, (_, i) => i).join(",");
+  const allMinutes = Array.from({ length: 60 }, (_, i) => i).join(",");
+  const allSeconds = Array.from({ length: 60 }, (_, i) => i).join(",");
+
+  // Rules expanding to more instances per period than we support are not
+  // expanded at all, rather than tying up the application for minutes on end.
+  // Only the event's own start date is left. Bug 2058960.
+  equal(
+    occurrenceCount(
+      `FREQ=YEARLY;BYMONTH=${allMonths};BYMONTHDAY=${allMonthDays};BYHOUR=${allHours};` +
+        `BYMINUTE=${allMinutes};BYSECOND=${allSeconds};BYSETPOS=1,-1;UNTIL=20360101T000000Z`
+    ),
+    1,
+    "a yearly rule expanding to every second of the year should be refused"
+  );
+  equal(
+    occurrenceCount(
+      `FREQ=MONTHLY;BYMONTHDAY=${allMonthDays};BYHOUR=${allHours};BYMINUTE=${allMinutes};` +
+        `BYSECOND=${allSeconds};UNTIL=20360101T000000Z`
+    ),
+    1,
+    "a monthly rule expanding to every second of the month should be refused"
+  );
+  equal(
+    occurrenceCount(`FREQ=DAILY;BYHOUR=${allHours};BYMINUTE=${allMinutes};BYSECOND=${allSeconds}`),
+    1,
+    "a daily rule expanding to every second of the day should be refused"
+  );
+  equal(
+    occurrenceCount(`FREQ=DAILY;BYHOUR=${allHours};BYMINUTE=${allMinutes}`),
+    1,
+    "a daily rule expanding to every minute of the day should be refused"
+  );
+  equal(
+    occurrenceCount(
+      `FREQ=YEARLY;INTERVAL=1000;BYMONTH=${allMonths};BYMONTHDAY=${allMonthDays};` +
+        `BYHOUR=${allHours};BYMINUTE=${allMinutes}`
+    ),
+    1,
+    "a yearly rule expanding to every minute of the year should be refused despite its interval"
+  );
+
+  // Rules no denser than the hourly frequency still expand.
+  equal(
+    occurrenceCount("FREQ=DAILY;BYHOUR=0,12;COUNT=4"),
+    4,
+    "a daily rule with two hours should be expanded"
+  );
+  equal(
+    occurrenceCount("FREQ=DAILY;BYHOUR=0;BYMINUTE=0,30;COUNT=4"),
+    4,
+    "a daily rule with two minutes should be expanded"
+  );
+  equal(
+    occurrenceCount(
+      `FREQ=YEARLY;BYMONTH=${allMonths};BYMONTHDAY=${allMonthDays};BYHOUR=${allHours};COUNT=4`
+    ),
+    4,
+    "a yearly rule expanding to every hour of the year should be expanded"
+  );
+
+  // A rule that is dense enough to outlast the query is cut short instead of
+  // being iterated to its end.
+  equal(
+    occurrenceCount(`FREQ=DAILY;BYHOUR=${allHours}`),
+    10000,
+    "an hourly rule spanning decades should be cut short"
+  );
+
+  // A series iterated from its start, as one with a COUNT is, keeps the
+  // occurrences that come after more than the limit's worth of earlier ones.
+  const counted = makeEvent("RRULE:FREQ=HOURLY;COUNT=30000\nDTSTART:20250101T003000Z\n");
+  equal(
+    counted.recurrenceInfo.getOccurrenceDates(
+      cal.createDateTime("20261001T000000Z"),
+      cal.createDateTime("20261101T000000Z"),
+      0
+    ).length,
+    744,
+    "a counted series should have its occurrences far from its start"
+  );
+  equal(
+    counted.recurrenceInfo.getNextOccurrence(cal.createDateTime("20261001T000000Z")).recurrenceId
+      .icalString,
+    "20261001T003000Z",
+    "the next occurrence of a counted series far from its start should be found"
+  );
+
+  // A rule whose BY* parts can never all be satisfied gives up rather than
+  // searching for ever. Bug 2058960.
+  equal(
+    occurrenceCount("FREQ=DAILY;BYMONTH=2;BYMONTHDAY=30"),
+    1,
+    "a rule asking for a day that does not exist should give up"
+  );
+  equal(
+    occurrenceCount("FREQ=HOURLY;BYMONTH=2;BYMONTHDAY=30"),
+    1,
+    "an hourly rule asking for a day that does not exist should give up"
+  );
+
+  // Rules that only match many periods from now are still found.
+  equal(
+    occurrenceCount("FREQ=DAILY;BYMONTH=2;BYMONTHDAY=29;COUNT=2"),
+    2,
+    "a rule matching only on a leap day should be expanded"
+  );
+  equal(
+    occurrenceCount("FREQ=DAILY;BYMONTH=2;BYMONTHDAY=29;BYDAY=MO;COUNT=2"),
+    2,
+    "a rule matching only on a leap day falling on a Monday should be expanded"
+  );
+}
+
+function test_long_running_series() {
+  const rangeStart = cal.createDateTime("20260901T000000Z");
+  const rangeEnd = cal.createDateTime("20270201T000000Z");
+
+  // Long-running series are iterated from a later start date, which should
+  // give exactly the occurrences iterating from the real start date does.
+  const data = [
+    ["FREQ=HOURLY", "DTSTART:20200101T001500Z"],
+    ["FREQ=HOURLY;INTERVAL=5;BYMINUTE=0,30", "DTSTART:20200101T001500Z"],
+    ["FREQ=HOURLY;INTERVAL=7", "DTSTART;TZID=Europe/Berlin:20200101T013000"],
+    ["FREQ=DAILY;INTERVAL=3", "DTSTART:19800105T090000Z"],
+    ["FREQ=DAILY;BYDAY=MO,WE;BYHOUR=9,17", "DTSTART:19800105T090000Z"],
+    ["FREQ=DAILY;UNTIL=20261015T090000Z", "DTSTART:19800105T090000Z"],
+    ["FREQ=DAILY", "DTSTART;TZID=Europe/Berlin:19800105T023000"],
+    ["FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,FR", "DTSTART:19800105T090000Z"],
+    ["FREQ=WEEKLY;INTERVAL=3;WKST=SU;BYDAY=SU,SA", "DTSTART:19800105T090000Z"],
+    ["FREQ=WEEKLY;INTERVAL=2", "DTSTART;VALUE=DATE:19800101"],
+    ["FREQ=MONTHLY;INTERVAL=5", "DTSTART:19800115T090000Z"],
+    ["FREQ=MONTHLY;BYDAY=-1FR", "DTSTART:19800115T090000Z"],
+    ["FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1", "DTSTART:19800115T090000Z"],
+    ["FREQ=MONTHLY;INTERVAL=7;BYMONTHDAY=1,-1", "DTSTART:19800115T090000Z"],
+    ["FREQ=MONTHLY", "DTSTART:19800131T090000Z"],
+    ["FREQ=YEARLY;INTERVAL=2;BYMONTH=10;BYDAY=2SU", "DTSTART:19800115T090000Z"],
+    ["FREQ=YEARLY;BYWEEKNO=1,52,53;BYDAY=MO,SU", "DTSTART:19800115T090000Z"],
+    ["FREQ=YEARLY", "DTSTART:19801231T090000Z"],
+    ["FREQ=MONTHLY;INTERVAL=2", "DTSTART:19800131T090000Z"],
+    ["FREQ=MONTHLY;BYHOUR=0,12", "DTSTART:19800229T000000Z"],
+    ["FREQ=YEARLY;BYMONTH=2,12", "DTSTART:19800229T090000Z"],
+  ];
+
+  const describe = date => `${date.icalString} ${date.timezone.tzid}`;
+  for (const [rrule, dtstart] of data) {
+    const item = makeEvent(`RRULE:${rrule}\n${dtstart}\n`);
+    const startDate = item.startDate;
+
+    const expected = [];
+    let following;
+    const iter = ICAL.Recur.fromString(rrule).iterator(startDate.wrappedJSObject.innerObject);
+    for (let next = iter.next(); next; next = iter.next()) {
+      const date = new CalDateTime(next.clone());
+      if (date.compare(rangeEnd) >= 0) {
+        following = date;
+        break;
+      }
+      if (date.compare(rangeStart) >= 0) {
+        expected.push(date);
+      }
+    }
+    Assert.greater(expected.length, 0, `"${rrule}" should have occurrences in the range`);
+
+    const rule = item.recurrenceInfo.getRecurrenceItemAt(0);
+    const immutableRule = rule.clone();
+    immutableRule.makeImmutable();
+    for (const r of [rule, immutableRule]) {
+      deepEqual(
+        r.getOccurrences(startDate, rangeStart, rangeEnd, 0).map(describe),
+        expected.map(describe),
+        `"${rrule}" from ${dtstart} should have the same occurrences as iterating from the start`
+      );
+    }
+
+    const next = rule.getNextOccurrence(startDate, expected[0]);
+    equal(
+      next && describe(next),
+      describe(expected[1] ?? following),
+      `"${rrule}" from ${dtstart} should have the same next occurrence as iterating from the start`
+    );
+  }
+
+  // Rules with a COUNT have to be iterated from their start, so a COUNT above
+  // what the recurrence dialog allows is refused.
+  const yearly = makeEvent("RRULE:FREQ=YEARLY;COUNT=32767\nDTSTART:20260101T000000Z\n");
+  equal(
+    yearly.recurrenceInfo.getOccurrenceDates(
+      cal.createDateTime("20260101T000000Z"),
+      cal.createDateTime("20300101T000000Z"),
+      0
+    ).length,
+    4,
+    "a rule with the largest COUNT supported should be expanded"
+  );
+  const counted = makeEvent("RRULE:FREQ=HOURLY;COUNT=32768\nDTSTART:20260101T003000Z\n");
+  equal(
+    counted.recurrenceInfo.getOccurrenceDates(
+      cal.createDateTime("20260101T000000Z"),
+      cal.createDateTime("20260102T000000Z"),
+      0
+    ).length,
+    1,
+    "a rule with a COUNT above the largest supported should be refused"
+  );
+
+  const hourly = makeEvent("RRULE:FREQ=HOURLY\nDTSTART:19000101T003000Z\n");
+  equal(
+    hourly.recurrenceInfo.getOccurrenceDates(
+      cal.createDateTime("20261001T000000Z"),
+      cal.createDateTime("20261101T000000Z"),
+      0
+    ).length,
+    744,
+    "an hourly series started a century earlier should have all its occurrences"
+  );
 }
 
 function test_clone(event) {

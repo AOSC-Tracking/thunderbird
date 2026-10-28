@@ -6,6 +6,7 @@
 
 #include "DatabaseCore.h"
 #include "DatabaseUtils.h"
+#include "DetachedMsgHdr.h"
 #include "Message.h"
 #include "mozilla/Logging.h"
 #include "mozilla/ResultExtensions.h"
@@ -61,7 +62,7 @@ NS_IMETHODIMP MessageDatabase::AddMessage(
     nsTArray<nsCString> const& aReferences, PRTime aDate,
     const nsACString& aSender, const nsACString& aRecipients,
     const nsACString& aCcList, const nsACString& aBccList,
-    const nsACString& aSubject, uint64_t aFlags, const nsACString& aTags,
+    const nsACString& aSubject, uint32_t aFlags, const nsACString& aTags,
     nsMsgPriorityValue aPriority, nsMsgKey* aKey) {
   NS_ENSURE_ARG_POINTER(aKey);
 
@@ -93,8 +94,8 @@ NS_IMETHODIMP MessageDatabase::AddMessage(
     mozStorageStatementScoper scoper(stmt);
 
     stmt->BindInt64ByName("folderId"_ns, aFolderId);
-    stmt->BindInt64ByName("threadId"_ns, threadId);
-    stmt->BindInt64ByName("threadParent"_ns, parentId);
+    stmt->BindInt32ByName("threadId"_ns, threadId);
+    stmt->BindInt32ByName("threadParent"_ns, parentId);
     stmt->BindUTF8StringByName("messageId"_ns,
                                MOZ_TRY(DatabaseUtils::Normalize(aMessageId)));
     stmt->BindInt64ByName("date"_ns, aDate);
@@ -108,7 +109,7 @@ NS_IMETHODIMP MessageDatabase::AddMessage(
                                MOZ_TRY(DatabaseUtils::Normalize(aBccList)));
     stmt->BindUTF8StringByName("subject"_ns,
                                MOZ_TRY(DatabaseUtils::Normalize(aSubject)));
-    stmt->BindInt64ByName("flags"_ns, aFlags);
+    stmt->BindInt32ByName("flags"_ns, aFlags);
     stmt->BindUTF8StringByName("tags"_ns,
                                MOZ_TRY(DatabaseUtils::Normalize(aTags)));
     stmt->BindInt32ByName("priority"_ns, aPriority);
@@ -833,6 +834,12 @@ nsresult MessageDatabase::SetMessageFlags(nsMsgKey key, uint32_t newFlags) {
     return NS_OK;
   }
 
+  uint64_t folderId;
+  GetMessageFolderId(key, folderId);
+  RefPtr<DetachedMsgHdr> oldMessage = new DetachedMsgHdr(folderId);
+  // TODO: This'll need filling properly once we have more complex filters.
+  oldMessage->SetFlags(oldFlags);
+
   // Update in DB.
   {
     nsCOMPtr<mozIStorageStatement> stmt;
@@ -858,7 +865,7 @@ nsresult MessageDatabase::SetMessageFlags(nsMsgKey key, uint32_t newFlags) {
   // Notify.
   RefPtr<Message> message = new Message(key);
   for (MessageListener* listener : mMessageListeners.EndLimitedRange()) {
-    listener->OnMessageFlagsChanged(message, oldFlags, newFlags);
+    listener->OnMessageFlagsChanged(oldMessage, message, oldFlags, newFlags);
   }
   return NS_OK;
 }
@@ -1116,6 +1123,19 @@ nsresult MessageDatabase::SetMessageRecipients(nsMsgKey key,
 }
 
 nsresult MessageDatabase::SetMessageTags(nsMsgKey key, nsACString const& tags) {
+  nsAutoCString oldTags;
+  MOZ_TRY(GetMessageTags(key, oldTags));
+
+  if (NS_WARN_IF(oldTags.Equals(tags))) {
+    return NS_OK;
+  }
+
+  uint64_t folderId;
+  GetMessageFolderId(key, folderId);
+  RefPtr<DetachedMsgHdr> oldMessage = new DetachedMsgHdr(folderId);
+  // TODO: This'll need filling properly once we have more complex filters.
+  oldMessage->SetStringProperty("keywords", oldTags);
+
   // Update DB.
   {
     nsCOMPtr<mozIStorageStatement> stmt;
@@ -1138,7 +1158,11 @@ nsresult MessageDatabase::SetMessageTags(nsMsgKey key, nsACString const& tags) {
     p->value().tags = tags;
   }
 
-  // TODO: notifications.
+  // Notify.
+  RefPtr<Message> message = new Message(key);
+  for (MessageListener* listener : mMessageListeners.EndLimitedRange()) {
+    listener->OnMessageTagsChanged(oldMessage, message, oldTags, tags);
+  }
   return NS_OK;
 }
 

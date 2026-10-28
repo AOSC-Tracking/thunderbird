@@ -55,6 +55,7 @@
 #include "../../base/src/MailnewsLoadContextInfo.h"
 #include "nsDocShellLoadState.h"
 #include "nsContentUtils.h"
+#include "nsURLHelper.h"
 #include "mozilla/Components.h"
 #include "mozilla/LoadInfo.h"
 #include "mozilla/Preferences.h"
@@ -215,6 +216,10 @@ NS_IMETHODIMP nsImapService::LiteSelectFolder(nsIMsgFolder* aImapMailFolder,
 NS_IMETHODIMP nsImapService::GetUrlForUri(const nsACString& aMessageURI,
                                           nsIMsgWindow* aMsgWindow,
                                           nsIURI** aURL) {
+  nsAutoCString scheme;
+  net_ExtractURLScheme(aMessageURI, scheme);
+  MOZ_ASSERT(scheme.EqualsLiteral("imap-message"));
+  NS_ENSURE_TRUE(scheme.EqualsLiteral("imap-message"), NS_ERROR_UNEXPECTED);
   nsAutoCString messageURI(aMessageURI);
 
   if (messageURI.Find("&type=application/x-message-display"_ns) != kNotFound)
@@ -223,34 +228,40 @@ NS_IMETHODIMP nsImapService::GetUrlForUri(const nsACString& aMessageURI,
   nsCOMPtr<nsIMsgFolder> folder;
   nsMsgKey msgKey;
   nsresult rv = DecomposeImapURI(messageURI, getter_AddRefs(folder), &msgKey);
-  if (NS_SUCCEEDED(rv)) {
-    nsCOMPtr<nsIImapUrl> imapUrl;
-    nsAutoCString urlSpec;
-    char hierarchyDelimiter = GetHierarchyDelimiter(folder);
-    rv = CreateStartOfImapUrl(messageURI, getter_AddRefs(imapUrl), folder,
-                              nullptr, urlSpec, hierarchyDelimiter);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = SetImapUrlSink(folder, imapUrl);
-    NS_ENSURE_SUCCESS(rv, rv);
-    nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(imapUrl);
-    bool useLocalCache = false;
-    folder->HasMsgOffline(msgKey, &useLocalCache);
-    mailnewsUrl->SetMsgIsInLocalCache(useLocalCache);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIURI> url = do_QueryInterface(imapUrl);
-    rv = url->GetSpec(urlSpec);
-    NS_ENSURE_SUCCESS(rv, rv);
-    urlSpec.AppendLiteral("fetch>UID>");
-    urlSpec.Append(hierarchyDelimiter);
+  nsCOMPtr<nsIMsgDatabase> db;
+  rv = folder->GetMsgDatabase(getter_AddRefs(db));
+  NS_ENSURE_SUCCESS(rv, rv);
 
-    nsAutoCString folderName;
-    GetFolderName(folder, folderName);
-    urlSpec.Append(folderName);
-    urlSpec.Append('>');
-    urlSpec.AppendInt(msgKey);
-    rv = mailnewsUrl->SetSpecInternal(urlSpec);
-    imapUrl->QueryInterface(NS_GET_IID(nsIURI), (void**)aURL);
-  }
+  ImapUid uid = MOZ_TRY(UidFromMsgKey(db, msgKey));
+
+  nsCOMPtr<nsIImapUrl> imapUrl;
+  nsAutoCString urlSpec;
+  char hierarchyDelimiter = GetHierarchyDelimiter(folder);
+  rv = CreateStartOfImapUrl(messageURI, getter_AddRefs(imapUrl), folder,
+                            nullptr, urlSpec, hierarchyDelimiter);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = SetImapUrlSink(folder, imapUrl);
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(imapUrl);
+  bool useLocalCache = false;
+  folder->HasMsgOffline(msgKey, &useLocalCache);
+  mailnewsUrl->SetMsgIsInLocalCache(useLocalCache);
+
+  nsCOMPtr<nsIURI> url = do_QueryInterface(imapUrl);
+  rv = url->GetSpec(urlSpec);
+  NS_ENSURE_SUCCESS(rv, rv);
+  urlSpec.AppendLiteral("fetch>UID>");
+  urlSpec.Append(hierarchyDelimiter);
+
+  nsAutoCString folderName;
+  GetFolderName(folder, folderName);
+  urlSpec.Append(folderName);
+  urlSpec.Append('>');
+  urlSpec.AppendInt(uid);
+  rv = mailnewsUrl->SetSpecInternal(urlSpec);
+  imapUrl->QueryInterface(NS_GET_IID(nsIURI), (void**)aURL);
 
   return rv;
 }
@@ -2175,6 +2186,25 @@ nsresult nsImapService::NewURI(const nsACString& aSpec,
 
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // we got an imap url, so be sure to return it...
+  nsCOMPtr<nsIURI> imapUri = do_QueryInterface(aImapUrl);
+
+  imapUri.forget(aRetVal);
+
+  return NS_OK;
+}
+
+// NewURI() only parses the spec, because URIs must be creatable on any thread:
+// Gecko creates them off the main thread, e.g. when PBackground validates a
+// principal, and PBackground must not wait for the main thread. Running a URL
+// needs its server and folder, which are only available on the main thread, so
+// a URL created from a spec is associated with them when a channel is opened.
+nsresult nsImapService::AssociateUrlWithFolder(nsIImapUrl* aImapUrl) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  nsresult rv;
+  nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(aImapUrl);
+
   nsCString folderName;
   // if we can't get a folder name out of the url then I think this is an error
   aImapUrl->CreateCanonicalSourceFolderPathString(folderName);
@@ -2241,11 +2271,6 @@ nsresult nsImapService::NewURI(const nsACString& aSpec,
     }
   }
 
-  // we got an imap url, so be sure to return it...
-  nsCOMPtr<nsIURI> imapUri = do_QueryInterface(aImapUrl);
-
-  imapUri.forget(aRetVal);
-
   return rv;
 }
 
@@ -2259,6 +2284,15 @@ NS_IMETHODIMP nsImapService::NewChannel(nsIURI* aURI, nsILoadInfo* aLoadInfo,
   nsresult rv;
   nsCOMPtr<nsIImapUrl> imapUrl = do_QueryInterface(aURI, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  // URLs created by NewURI() have no folder yet.
+  nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(aURI);
+  nsCOMPtr<nsIMsgFolder> folder;
+  mailnewsUrl->GetFolder(getter_AddRefs(folder));
+  if (!folder) {
+    rv = AssociateUrlWithFolder(imapUrl);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   // imap can't open and return a channel right away...the url needs to go in
   // the imap url queue until we find a connection which can run the url..in
@@ -2452,16 +2486,6 @@ NS_IMETHODIMP nsImapService::UnsubscribeFolder(nsIMsgFolder* aFolder,
                                                nsIURI** aUrl) {
   return ChangeFolderSubscription(aFolder, aFolderName, "/unsubscribe>",
                                   aUrlListener, aUrl);
-}
-
-NS_IMETHODIMP nsImapService::GetFolderAdminUrl(nsIMsgFolder* aImapMailFolder,
-                                               nsIMsgWindow* aMsgWindow,
-                                               nsIUrlListener* aUrlListener,
-                                               nsIURI** aURL) {
-  NS_ENSURE_ARG_POINTER(aImapMailFolder);
-
-  return FolderCommand(aImapMailFolder, aUrlListener, "/refreshfolderurls>",
-                       nsIImapUrl::nsImapRefreshFolderUrls, aMsgWindow, aURL);
 }
 
 NS_IMETHODIMP nsImapService::IssueCommandOnMsgs(nsIMsgFolder* anImapFolder,

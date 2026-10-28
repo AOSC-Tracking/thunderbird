@@ -53,6 +53,17 @@ async function cleanUp(dialog, eventBox) {
   await calendar.deleteItem(eventBox.occurrence);
 }
 
+/**
+ * Get the week view column of the day after the given date, wrapping from
+ * Saturday to Sunday.
+ *
+ * @param {Date} date
+ * @returns {number}
+ */
+function nextDayColumn(date) {
+  return ((date.getDay() + 1) % 7) + 1;
+}
+
 add_task(async function test_calendarDialogOpenAndClose() {
   let dialog = document.querySelector('[is="calendar-dialog"]');
 
@@ -107,6 +118,147 @@ add_task(async function test_calendarDialogOpenAndClose() {
   );
 
   await cleanUp(dialog, eventBox);
+});
+
+add_task(async function test_respondToRecurringInvitation() {
+  const calendarUser = "mailto:receiver@example.com";
+  const organizerId = "mailto:sender@example.com";
+  calendar.setProperty("organizerId", calendarUser);
+
+  let invitation = await createEvent({
+    calendar,
+    repeats: true,
+    attendees: [
+      {
+        commonName: "Receiver",
+        id: calendarUser,
+        role: "REQ-PARTICIPANT",
+        participationStatus: "NEEDS-ACTION",
+      },
+      {
+        commonName: "Other",
+        id: "mailto:other@example.com",
+        role: "REQ-PARTICIPANT",
+        participationStatus: "ACCEPTED",
+      },
+    ],
+  });
+  const updatedInvitation = invitation.clone();
+  const organizer = new CalAttendee();
+  organizer.id = organizerId;
+  organizer.commonName = "Sender";
+  organizer.participationStatus = "ACCEPTED";
+  organizer.isOrganizer = true;
+  updatedInvitation.organizer = organizer;
+  invitation = await calendar.modifyItem(updatedInvitation, invitation);
+
+  const eventBox = await openAndShowEvent();
+  const occurrence = eventBox.occurrence;
+  Assert.ok(occurrence.recurrenceId, "opened a recurring event occurrence");
+
+  const dialog = document.querySelector('[is="calendar-dialog"]');
+  const acceptanceWidget = dialog.querySelector("calendar-dialog-acceptance");
+  Assert.equal(
+    acceptanceWidget.getAttribute("status"),
+    "NEEDS-ACTION",
+    "the RSVP control shows the initial status when the dialog opens"
+  );
+
+  const sentItems = [];
+  const getImipTransport = cal.itip.getImipTransport;
+  cal.itip.getImipTransport = () => ({
+    scheme: "mailto",
+    type: "email",
+    sendItems(recipients, itipItem, fromAttendee) {
+      sentItems.push({ recipients, itipItem, fromAttendee });
+      return true;
+    },
+  });
+
+  const responseEvent = BrowserTestUtils.waitForEvent(
+    acceptanceWidget,
+    "setEventResponse"
+  );
+  await new Promise(resolve => setTimeout(resolve));
+  EventUtils.synthesizeMouseAtCenter(
+    acceptanceWidget.shadowRoot.querySelector('label[for="maybe"]'),
+    {},
+    window
+  );
+  Assert.equal(
+    (await responseEvent).detail.status,
+    "TENTATIVE",
+    "the RSVP control sends the selected response"
+  );
+
+  let storedEvent;
+  await TestUtils.waitForCondition(async () => {
+    storedEvent = await calendar.getItem(invitation.id);
+    const exception = storedEvent.recurrenceInfo.getExceptionFor(
+      occurrence.recurrenceId
+    );
+    return (
+      exception?.getAttendeeById(calendarUser).participationStatus ==
+      "TENTATIVE"
+    );
+  }, "waiting for the RSVP response to be saved");
+  await TestUtils.waitForCondition(
+    () => sentItems.length == 1,
+    "waiting for the RSVP response to be sent"
+  );
+
+  const exception = storedEvent.recurrenceInfo.getExceptionFor(
+    occurrence.recurrenceId
+  );
+  Assert.equal(
+    exception.getAttendeeById(calendarUser).participationStatus,
+    "TENTATIVE",
+    "the selected occurrence has the new RSVP status"
+  );
+  Assert.equal(
+    storedEvent.getAttendeeById(calendarUser).participationStatus,
+    "NEEDS-ACTION",
+    "the recurring parent keeps its RSVP status"
+  );
+
+  Assert.equal(
+    sentItems[0].recipients.length,
+    1,
+    "the reply has one recipient"
+  );
+  Assert.equal(
+    sentItems[0].recipients[0].id,
+    organizerId,
+    "the reply is sent to the organizer"
+  );
+  Assert.equal(
+    sentItems[0].fromAttendee.participationStatus,
+    "TENTATIVE",
+    "the reply has the new RSVP status"
+  );
+
+  Assert.equal(
+    acceptanceWidget.getAttribute("status"),
+    "TENTATIVE",
+    "the RSVP control shows the new status"
+  );
+  const attendee = await TestUtils.waitForCondition(
+    () =>
+      Array.from(
+        dialog.querySelectorAll("calendar-dialog-attendees-row:not([type]) li")
+      ).find(element => element.attendee.id == calendarUser),
+    "waiting for the invited attendee to render after the RSVP response"
+  );
+  Assert.equal(
+    attendee.attendee.participationStatus,
+    "TENTATIVE",
+    "the attendee list shows the new RSVP status"
+  );
+
+  cal.itip.getImipTransport = getImipTransport;
+  await calendar.deleteItem(invitation.parentItem);
+  calendar.setProperty("organizerId", "mailto:organizer@example.com");
+  dialog.close();
 });
 
 add_task(async function test_calendarDialogColors() {
@@ -258,6 +410,140 @@ add_task(async function test_attachmentLinkClick() {
 
   await cleanUp(dialog, eventBox);
   MockExternalProtocolService.reset();
+});
+
+add_task(async function test_dialogDeleteMenuItem() {
+  await createEvent({ calendar });
+  const testDate = new Date();
+  const eventBox = await openAndShowEvent({ baseDate: testDate });
+
+  const dialog = document.getElementById("calendarDialog");
+  const menu = dialog.querySelector("menupopup");
+
+  const menuShownPromise = BrowserTestUtils.waitForPopupEvent(menu, "shown");
+  EventUtils.synthesizeMouseAtCenter(dialog.querySelector(".menu-button"), {});
+  await menuShownPromise;
+
+  Assert.ok(
+    BrowserTestUtils.isVisible(menu),
+    "The menupopup should visible after clicking menu button"
+  );
+
+  const deleteEventPromise = BrowserTestUtils.waitForEvent(
+    dialog,
+    "command",
+    true
+  );
+  const deletePromptPromise = BrowserTestUtils.promiseAlertDialogOpen(
+    "cancel",
+    "chrome://messenger/content/calendarPrompt.xhtml"
+  );
+
+  menu.activateItem(menu.querySelector("#deleteEvent"));
+
+  await deleteEventPromise;
+  await deletePromptPromise;
+
+  await cleanUp(dialog, eventBox);
+});
+
+add_task(async function test_dialogDeleteMenuSingleEvent() {
+  await createEvent({ calendar });
+  const testDate = new Date();
+  await openAndShowEvent({ baseDate: testDate });
+
+  const dialog = document.getElementById("calendarDialog");
+  const eventId = dialog.getAttribute("event-id");
+
+  const deletePromptPromise = BrowserTestUtils.promiseAlertDialogOpen(
+    "delete",
+    "chrome://messenger/content/calendarPrompt.xhtml"
+  );
+  await subtestDeleteEventPrompt(deletePromptPromise, testDate.getDay() + 1);
+
+  const event = await calendar.getItem(eventId);
+  Assert.ok(!event, "The event in the calendar should have been deleted");
+
+  EventUtils.synthesizeMouseAtCenter(
+    dialog.querySelector(".close-button"),
+    {},
+    window
+  );
+});
+
+add_task(async function test_dialogDeleteMenuRecurringEvents() {
+  // The following day's occurrence has to be in the displayed week.
+  const testDate = new Date(todayDate);
+  if (testDate.getDay() == 6) {
+    testDate.setDate(testDate.getDate() - 1);
+  }
+  await createEvent({ calendar, repeats: true, baseDate: testDate });
+  await openAndShowEvent({ baseDate: testDate });
+
+  const dialog = document.getElementById("calendarDialog");
+  const eventId = dialog.getAttribute("event-id");
+  Assert.ok(
+    weekView.getEventBoxAt(window, nextDayColumn(testDate), 1),
+    "The following day calendar event box should exist"
+  );
+
+  const deleteAllEventsPromise = BrowserTestUtils.promiseAlertDialogOpen(
+    null,
+    "chrome://messenger/content/calendarPrompt.xhtml",
+    {
+      async callback(win) {
+        const promptDialog = win.document.querySelector("dialog");
+        const allEventsRadioOption = promptDialog.querySelector(
+          "#allEventsRadioOption"
+        );
+        const deleteButton = promptDialog.querySelector("#delete");
+        EventUtils.synthesizeMouseAtCenter(allEventsRadioOption, {}, win);
+        EventUtils.synthesizeMouseAtCenter(deleteButton, {}, win);
+      },
+    }
+  );
+  await subtestDeleteEventPrompt(deleteAllEventsPromise, testDate.getDay() + 1);
+
+  Assert.ok(
+    !weekView.getEventBoxAt(window, nextDayColumn(testDate), 1),
+    "The following day calendar event box should be removed"
+  );
+
+  const event = await calendar.getItem(eventId);
+  Assert.ok(!event, "The event in the calendar should have been deleted");
+
+  EventUtils.synthesizeMouseAtCenter(
+    dialog.querySelector(".close-button"),
+    {},
+    window
+  );
+});
+
+add_task(async function test_dialogDeleteMenuSingleOccurence() {
+  await createEvent({ calendar, repeats: true });
+  const testDate = new Date();
+  await openAndShowEvent({ baseDate: testDate, offset: 1 });
+
+  const dialog = document.getElementById("calendarDialog");
+  const eventId = dialog.getAttribute("event-id");
+
+  const deletePromptPromise = BrowserTestUtils.promiseAlertDialogOpen(
+    "delete",
+    "chrome://messenger/content/calendarPrompt.xhtml"
+  );
+
+  await subtestDeleteEventPrompt(deletePromptPromise, nextDayColumn(testDate));
+
+  const event = await calendar.getItem(eventId);
+  Assert.ok(event, "The event in the calendar should still exist");
+
+  EventUtils.synthesizeMouseAtCenter(
+    dialog.querySelector(".close-button"),
+    {},
+    window
+  );
+
+  await calendar.deleteItem(event);
 });
 
 add_task(async function test_closeDialogOnTabSwitch() {
@@ -429,3 +715,43 @@ add_task(async function test_setFullDescription() {
   );
   window.launchBrowser = originalLaunchBrowser;
 });
+
+/**
+ * Open the menu in the dialog and select "Delete Event", and use the
+ * promptPromise to interact with the calendar modal to delete an event.
+ *
+ * @param {Promise} promptPromise - The promise for the prompt to delete an event.
+ * @param {number} eventBoxDay - The day number in the week that is used to
+ * find the event box.
+ */
+async function subtestDeleteEventPrompt(promptPromise, eventBoxDay) {
+  const dialog = document.getElementById("calendarDialog");
+  const menu = dialog.querySelector("menupopup");
+
+  const menuShownPromise = BrowserTestUtils.waitForPopupEvent(menu, "shown");
+  EventUtils.synthesizeMouseAtCenter(dialog.querySelector(".menu-button"), {});
+  await menuShownPromise;
+
+  Assert.ok(
+    BrowserTestUtils.isVisible(menu),
+    "The menupopup should visible after clicking menu button"
+  );
+
+  const deleteEventPromise = BrowserTestUtils.waitForEvent(
+    dialog,
+    "command",
+    true
+  );
+
+  const eventBoxRemovalPromise = BrowserTestUtils.waitForMutationCondition(
+    weekView.getColumnContainer(window, eventBoxDay),
+    { childList: true, subtree: true },
+    () => !weekView.getEventBoxAt(window, eventBoxDay, 1),
+    "Calendar event box should be removed"
+  );
+
+  menu.activateItem(menu.querySelector("#deleteEvent"));
+  await deleteEventPromise;
+  await promptPromise;
+  await eventBoxRemovalPromise;
+}

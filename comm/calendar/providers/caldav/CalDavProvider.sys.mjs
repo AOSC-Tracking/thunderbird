@@ -41,13 +41,30 @@ export var CalDavProvider = {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   },
 
+  /**
+   * Detect CalDAV calendars for the given location. Tries, in order, Google's
+   * CalDAV API if the domain uses Google, the location itself, DNS SRV
+   * records, the .well-known/caldav URL, and the root of the server.
+   *
+   * @param {string} username - The username for logging in.
+   * @param {string} password - The password for logging in. It is only sent
+   *   to the site of the location, or the server its SRV records point at.
+   * @param {?string} location - A URL, or a hostname to probe over https. If
+   *   empty, the domain of the username is used.
+   * @param {boolean} savePassword - Whether to save the password if it's used.
+   * @returns {Promise<calICalendar[]>} The calendars found, or an empty array.
+   */
   async detectCalendars(username, password, location = null, savePassword = false) {
-    const uri = cal.provider.detection.locationToUri(location);
+    const uri = cal.provider.detection.locationToUri(location, username);
     if (!uri) {
       throw new Error("Could not infer location from username");
     }
 
     const detector = new CalDavDetector(username, password, savePassword);
+    const site = cal.provider.detection.getPasswordSite(uri);
+    if (site) {
+      detector.session.passwordSites.add(site);
+    }
 
     for (const method of [
       "attemptGoogleOauth",
@@ -161,6 +178,13 @@ class CalDavDetector {
       return null;
     }
     dnsres.sort((a, b) => a.prio - b.prio || b.weight - a.weight);
+
+    // The DNS records of the entered domain decide where its password may go.
+    this.session.passwordSites.add(
+      cal.provider.detection.getPasswordSite(
+        Services.io.newURI(`http${secure}://${dnsres[0].host}`)
+      )
+    );
 
     // Determine path from TXT, if available.
     const txtRecords = await DNS.txt(host);

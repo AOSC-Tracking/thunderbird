@@ -68,6 +68,7 @@
 #include "nsMsgCompressOStream.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ScopeExit.h"
 #include "nsIPrincipal.h"
 #include "nsContentSecurityManager.h"
 
@@ -1681,7 +1682,11 @@ void nsImapProtocol::EstablishServerConnection() {
   if (!PL_strncasecmp(serverResponse, ESC_OK, ESC_OK_LEN)) {
     SetConnectionStatus(NS_OK);
 
-    if (!PL_strncasecmp(serverResponse, ESC_CAPABILITY_GREETING,
+    // With STARTTLS the greeting is sent before TLS is established, so its
+    // capabilities could have been injected. They are requested once TLS is
+    // established instead.
+    if (m_socketType != nsMsgSocketType::alwaysSTARTTLS &&
+        !PL_strncasecmp(serverResponse, ESC_CAPABILITY_GREETING,
                         ESC_CAPABILITY_GREETING_LEN)) {
       nsAutoCString tmpstr(serverResponse);
       int32_t endIndex = tmpstr.FindChar(']', ESC_CAPABILITY_GREETING_LEN);
@@ -1744,7 +1749,11 @@ void nsImapProtocol::EstablishServerConnection() {
       SetConnectionStatus(NS_ERROR_FAILURE);  // stop netlib
     }
   } else if (!PL_strncasecmp(serverResponse, ESC_BYE, ESC_BYE_LEN)) {
-    if (m_imapServerSink) {
+    // With STARTTLS the greeting is sent before TLS is established, so its
+    // text could have been injected and must not be shown as the server's.
+    if (m_socketType == nsMsgSocketType::alwaysSTARTTLS) {
+      AlertUserEventUsingName("imapServerDisconnected");
+    } else if (m_imapServerSink) {
       nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(m_runningUrl);
       m_imapServerSink->FEAlertFromServer(nsDependentCString(serverResponse),
                                           mailnewsUrl, true);
@@ -1935,8 +1944,15 @@ bool nsImapProtocol::ProcessCurrentURL() {
             // enable other auth features (e.g. remove LOGINDISABLED
             // and add AUTH=PLAIN). Sending imap data here first triggers
             // the TLS negotiation handshakes.
+            GetServerStateParser().ResetStateAfterStartTLS();
             Capability();
-
+            if (NS_SUCCEEDED(GetConnectionStatus()) &&
+                GetServerStateParser().GetCapabilityFlag() ==
+                    kCapabilityUndefined) {
+              rv = NS_ERROR_FAILURE;
+            }
+          }
+          if (NS_SUCCEEDED(rv) && NS_SUCCEEDED(GetConnectionStatus())) {
             // Courier imap doesn't return STARTTLS capability if we've done
             // a STARTTLS! But we need to remember this capability so we'll
             // try to use STARTTLS next time.
@@ -2540,11 +2556,11 @@ NS_IMETHODIMP nsImapProtocol::IsBusy(bool* aIsConnectionBusy,
       *aIsConnectionBusy = true;
     }
 
+    nsAutoCString selectedMailboxName;
     if (GetServerStateParser().GetIMAPstate() ==
             nsImapServerResponseParser::kFolderSelected &&
-        GetServerStateParser().GetSelectedMailboxName() &&
-        PL_strcasecmp(GetServerStateParser().GetSelectedMailboxName(),
-                      "Inbox") == 0)
+        GetServerStateParser().GetSelectedMailboxName(selectedMailboxName) &&
+        selectedMailboxName.LowerCaseEqualsLiteral("inbox"))
       *isInboxConnection = true;
   }
   return rv;
@@ -2585,7 +2601,7 @@ NS_IMETHODIMP nsImapProtocol::CanHandleUrl(nsIImapUrl* aImapUrl,
   nsAutoCString curSelectedUrlFolderName;
   nsAutoCString pendingUrlFolderName;
   if (inSelectedState)
-    curSelectedUrlFolderName = GetServerStateParser().GetSelectedMailboxName();
+    GetServerStateParser().GetSelectedMailboxName(curSelectedUrlFolderName);
 
   if (isBusy) {
     nsImapState curUrlImapState;
@@ -4197,9 +4213,9 @@ void nsImapProtocol::ProcessMailboxUpdate(bool handlePossibleUndo) {
   if (DeathSignalReceived()) return;
 
   // Update quota information
-  char* boxName;
+  char* boxName = nullptr;
   GetSelectedMailboxName(&boxName);
-  GetQuotaDataIfSupported(boxName);
+  if (boxName) GetQuotaDataIfSupported(boxName);
   PR_Free(boxName);
 
   // fetch the flags and uids of all existing messages or new ones
@@ -4690,20 +4706,22 @@ void nsImapProtocol::Log(const char* logSubName, const char* extraInfo,
       lastLineEnd = logDataLen;
     }
     switch (GetServerStateParser().GetIMAPstate()) {
-      case nsImapServerResponseParser::kFolderSelected:
+      case nsImapServerResponseParser::kFolderSelected: {
+        // This can be called on the main thread, so copy the name.
+        nsAutoCString selectedMailboxName;
+        GetServerStateParser().GetSelectedMailboxName(selectedMailboxName);
         if (extraInfo)
           MOZ_LOG(IMAP, LogLevel::Info,
                   ("%p:%s:%s-%s:%s:%s: %.400s", this, hostname.get(),
-                   selectedStateName,
-                   GetServerStateParser().GetSelectedMailboxName(), logSubName,
+                   selectedStateName, selectedMailboxName.get(), logSubName,
                    extraInfo, logDataToLog));
         else
           MOZ_LOG(IMAP, LogLevel::Info,
                   ("%p:%s:%s-%s:%s: %.400s", this, hostname.get(),
-                   selectedStateName,
-                   GetServerStateParser().GetSelectedMailboxName(), logSubName,
+                   selectedStateName, selectedMailboxName.get(), logSubName,
                    logDataToLog));
         break;
+      }
       case nsImapServerResponseParser::kNonAuthenticated:
       case nsImapServerResponseParser::kAuthenticated: {
         const char* stateName = (GetServerStateParser().GetIMAPstate() ==
@@ -4818,8 +4836,10 @@ NS_IMETHODIMP nsImapProtocol::ResetToAuthenticatedState() {
 
 NS_IMETHODIMP nsImapProtocol::GetSelectedMailboxName(char** folderName) {
   if (!folderName) return NS_ERROR_NULL_POINTER;
-  if (GetServerStateParser().GetSelectedMailboxName())
-    *folderName = PL_strdup((GetServerStateParser().GetSelectedMailboxName()));
+  *folderName = nullptr;
+  nsAutoCString name;
+  if (GetServerStateParser().GetSelectedMailboxName(name))
+    *folderName = ToNewCString(name);
   return NS_OK;
 }
 
@@ -5547,30 +5567,33 @@ void nsImapProtocol::StartTLS() {
   bool ok = false;
   if (NS_SUCCEEDED(rv)) {
     nsCString expectOkResponse = tag + " OK "_ns;
-    char* serverResponse = nullptr;
+    nsCString expectNoResponse = tag + " NO "_ns;
+    nsCString expectBadResponse = tag + " BAD "_ns;
+    bool gotLine;
     do {
-      // This reads and discards lines not starting with "<tag> OK " or
-      // "<tag> BAD " and exits when when either are found. Otherwise, this
-      // exits on timeout when all lines in the buffer are read causing
+      // This reads and discards lines not starting with "<tag> OK ",
+      // "<tag> NO " or "<tag> BAD " and exits when one is found. Otherwise,
+      // this exits on timeout when all lines in the buffer are read causing
       // serverResponse to be set null. Usually just "<tag> OK " is present.
-      serverResponse = CreateNewLineFromSocket();
+      char* serverResponse = CreateNewLineFromSocket();
+      gotLine = serverResponse;
       ok = serverResponse &&
            !PL_strncasecmp(serverResponse, expectOkResponse.get(),
                            expectOkResponse.Length());
-      if (!ok && serverResponse) {
-        // Check for possible BAD response, e.g., server not STARTTLS capable.
-        nsCString expectBadResponse = tag + " BAD "_ns;
-        if (!PL_strncasecmp(serverResponse, expectBadResponse.get(),
-                            expectBadResponse.Length())) {
-          PR_Free(serverResponse);
-          break;
-        }
+      if (!ok && serverResponse &&
+          (!PL_strncasecmp(serverResponse, expectNoResponse.get(),
+                           expectNoResponse.Length()) ||
+           !PL_strncasecmp(serverResponse, expectBadResponse.get(),
+                           expectBadResponse.Length()))) {
+        // The server refused, e.g. because it isn't STARTTLS capable.
+        PR_Free(serverResponse);
+        break;
       }
       PR_Free(serverResponse);
-    } while (serverResponse && !ok);
+    } while (gotLine && !ok);
   }
-  // ok == false implies a "<tag> BAD " response or time out on socket read.
-  // It could also be due to failure on SendData() above.
+  // ok == false implies a "<tag> NO " or "<tag> BAD " response or time out on
+  // socket read. It could also be due to failure on SendData() above.
   GetServerStateParser().SetCommandFailed(!ok);
 }
 
@@ -5907,6 +5930,11 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
 
   ProgressEventFunctionUsingName("imapStatusSendingAuthLogin");
   IncrementCommandTagNumber();
+  // Don't let a failed attempt's challenge be reused by the next method.
+  PR_FREEIF(GetServerStateParser().fAuthChallenge);
+  // The NTLM and GSSAPI auth modules are not thread-safe, so release them here
+  // on the IMAP thread rather than when this object is destroyed.
+  auto releaseAuthModule = MakeScopeExit([&] { m_authModule = nullptr; });
 
   char* currentCommand = nullptr;
   NS_ConvertUTF16toUTF8 password(aPassword);
@@ -5939,6 +5967,8 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
     if (GetServerStateParser().LastCommandSuccessful()) {
       char* digest = nullptr;
       char* cramDigest = GetServerStateParser().fAuthChallenge;
+      // The server may have answered OK without sending a challenge.
+      NS_ENSURE_TRUE(cramDigest, NS_ERROR_FAILURE);
       char* decodedChallenge =
           PL_Base64Decode(cramDigest, strlen(cramDigest), nullptr);
       rv = m_imapServerSink->CramMD5Hash(decodedChallenge, password.get(),
@@ -6015,6 +6045,10 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
     }
   } else if (flag & (kHasAuthNTLMCapability | kHasAuthMSNCapability)) {
     MOZ_LOG(IMAP, LogLevel::Debug, ("NTLM auth"));
+    nsAutoCString cmd;
+    rv = DoNtlmStep1(nsDependentCString(userName), aPassword, cmd);
+    NS_ENSURE_SUCCESS(rv, rv);
+
     nsAutoCString command(GetServerCommandTag());
     command.Append((flag & kHasAuthNTLMCapability) ? " authenticate NTLM" CRLF
                                                    : " authenticate MSN" CRLF);
@@ -6022,9 +6056,6 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
     ParseIMAPandCheckForNewMail(
         "AUTH NTLM");  // this just waits for ntlm step 1
     if (GetServerStateParser().LastCommandSuccessful()) {
-      nsAutoCString cmd;
-      rv = DoNtlmStep1(nsDependentCString(userName), aPassword, cmd);
-      NS_ENSURE_SUCCESS(rv, rv);
       cmd += CRLF;
       rv = SendData(cmd.get());
       NS_ENSURE_SUCCESS(rv, rv);
@@ -6773,19 +6804,6 @@ void nsImapProtocol::Netscape() {
   if (NS_SUCCEEDED(rv)) ParseIMAPandCheckForNewMail();
 }
 
-void nsImapProtocol::XMailboxInfo(const char* mailboxName) {
-  ProgressEventFunctionUsingName("imapGettingMailboxInfo");
-  IncrementCommandTagNumber();
-  nsCString command(GetServerCommandTag());
-
-  command.AppendLiteral(" XMAILBOXINFO \"");
-  command.Append(mailboxName);
-  command.AppendLiteral("\" MANAGEURL POSTURL" CRLF);
-
-  nsresult rv = SendData(command.get());
-  if (NS_SUCCEEDED(rv)) ParseIMAPandCheckForNewMail();
-}
-
 void nsImapProtocol::Namespace() {
   IncrementCommandTagNumber();
 
@@ -6936,29 +6954,6 @@ bool nsImapProtocol::MailboxIsNoSelectMailbox(const nsACString& mailboxName) {
   NS_ASSERTION(m_imapServerSink,
                "unexpected, no imap server sink, see bug #194335");
   if (m_imapServerSink) m_imapServerSink->FolderIsNoSelect(name, &rv);
-  return rv;
-}
-
-nsresult nsImapProtocol::SetFolderAdminUrl(const char* mailboxName) {
-  nsresult rv =
-      NS_ERROR_NULL_POINTER;  // if m_imapServerSink is null, rv will be this.
-
-  nsImapNamespace* nsForMailbox = nullptr;
-  m_hostSessionList->GetNamespaceForMailboxForHost(GetImapServerKey(),
-                                                   mailboxName, nsForMailbox);
-
-  nsCString name;
-
-  if (nsForMailbox)
-    m_runningUrl->AllocateCanonicalPath(nsDependentCString(mailboxName),
-                                        nsForMailbox->GetDelimiter(), name);
-  else
-    m_runningUrl->AllocateCanonicalPath(nsDependentCString(mailboxName),
-                                        kOnlineHierarchySeparatorUnknown, name);
-
-  if (m_imapServerSink)
-    rv = m_imapServerSink->SetFolderAdminURL(
-        name, nsDependentCString(GetServerStateParser().GetManageFolderUrl()));
   return rv;
 }
 
@@ -8111,12 +8106,6 @@ void nsImapProtocol::ProcessAuthenticatedStateURL() {
       sourceMailbox = OnCreateServerSourceFolderPathString();
       OnStatusForFolder(sourceMailbox.get());
       break;
-    case nsIImapUrl::nsImapRefreshFolderUrls:
-      sourceMailbox = OnCreateServerSourceFolderPathString();
-      XMailboxInfo(sourceMailbox.get());
-      if (GetServerStateParser().LastCommandSuccessful())
-        SetFolderAdminUrl(sourceMailbox.get());
-      break;
     case nsIImapUrl::nsImapDeleteFolder:
       sourceMailbox = OnCreateServerSourceFolderPathString();
       OnDeleteFolder(sourceMailbox.get());
@@ -8762,9 +8751,8 @@ bool nsImapProtocol::TryToLogon() {
 void nsImapProtocol::UpdateFolderQuotaData(nsImapQuotaAction aAction,
                                            nsCString& aQuotaRoot,
                                            uint64_t aUsed, uint64_t aMax) {
-  NS_ASSERTION(m_imapMailFolderSink, "m_imapMailFolderSink is null!");
-
-  m_imapMailFolderSink->SetFolderQuotaData(aAction, aQuotaRoot, aUsed, aMax);
+  if (m_imapMailFolderSink)
+    m_imapMailFolderSink->SetFolderQuotaData(aAction, aQuotaRoot, aUsed, aMax);
 }
 
 void nsImapProtocol::GetQuotaDataIfSupported(const char* aBoxName) {

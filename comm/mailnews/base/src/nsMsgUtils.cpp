@@ -7,6 +7,7 @@
 #include "nsIStringStream.h"
 #include "nsMsgFolderFlags.h"
 #include "nsMsgMessageFlags.h"
+#include "nsCharSeparatedTokenizer.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
 #include "nsIFolderLookupService.h"
@@ -419,12 +420,6 @@ nsresult NS_MsgCreatePathStringFromFolderURI(const char* aFolderURI,
         path.AppendLiteral(FOLDER_SUFFIX "/");
       }
 
-      if (aIsNewsFolder) {
-        nsAutoCString tmp;
-        CopyUTF16toMUTF7(pathPiece, tmp);
-        CopyASCIItoUTF16(tmp, pathPiece);
-      }
-
       // To handle safely creating database folders, some paths need to be
       // hashed. Hashing operates on an unescaped string, so we unescape each
       // string individually. We need to do this here because if we were to
@@ -433,7 +428,14 @@ nsresult NS_MsgCreatePathStringFromFolderURI(const char* aFolderURI,
       nsAutoCString unescapedPathPiece;
       MsgUnescapeString(NS_ConvertUTF16toUTF8(pathPiece), 0,
                         unescapedPathPiece);
-      path += NS_MsgHashIfNecessary(unescapedPathPiece);
+      CopyUTF8toUTF16(unescapedPathPiece, pathPiece);
+
+      if (aIsNewsFolder) {
+        nsAutoCString tmp;
+        CopyUTF16toMUTF7(pathPiece, tmp);
+        CopyASCIItoUTF16(tmp, pathPiece);
+      }
+      path += NS_MsgHashIfNecessary(pathPiece);
       haveFirst = true;
     }
     // look for the next slash
@@ -449,95 +451,6 @@ nsresult NS_MsgCreatePathStringFromFolderURI(const char* aFolderURI,
 
   aPathString = path;
   return NS_OK;
-}
-
-bool NS_MsgStripRE(const nsCString& subject, nsCString& modifiedSubject) {
-  bool result = false;
-
-  // Get localizedRe pref.
-  nsString utf16LocalizedRe;
-  NS_GetLocalizedUnicharPreferenceWithDefault("mailnews.localizedRe",
-                                              EmptyString(), utf16LocalizedRe);
-  NS_ConvertUTF16toUTF8 localizedRe(utf16LocalizedRe);
-
-  // Hardcoded "Re" so that no one can configure Mozilla standards incompatible.
-  nsAutoCString checkString("Re,RE,re,rE");
-  if (!localizedRe.IsEmpty()) {
-    checkString.Append(',');
-    checkString.Append(localizedRe);
-  }
-
-  // Decode the string.
-  nsCString decodedString;
-  nsCOMPtr<nsIMimeConverter> mimeConverter;
-  // We cannot strip "Re:" for RFC2047-encoded subject without modifying the
-  // original.
-  if (subject.Find("=?") != kNotFound) {
-    mimeConverter = mozilla::components::MimeConverter::Service();
-    NS_ENSURE_TRUE(mimeConverter, false);
-    mimeConverter->DecodeMimeHeaderToUTF8(subject, nullptr, false, true,
-                                          decodedString);
-  }
-
-  const char *s, *s_end;
-  if (decodedString.IsEmpty()) {
-    s = subject.BeginReading();
-    s_end = s + subject.Length();
-  } else {
-    s = decodedString.BeginReading();
-    s_end = s + decodedString.Length();
-  }
-
-AGAIN:
-  while (s < s_end && IS_SPACE(*s)) s++;
-
-  const char* tokPtr = checkString.get();
-  while (*tokPtr) {
-    // Tokenize the comma separated list.
-    size_t tokenLength = 0;
-    while (*tokPtr && *tokPtr != ',') {
-      tokenLength++;
-      tokPtr++;
-    }
-    // Check if the beginning of s is the actual token.
-    if (tokenLength && !strncmp(s, tokPtr - tokenLength, tokenLength)) {
-      if (s[tokenLength] == ':') {
-        s = s + tokenLength + 1; /* Skip over "Re:" */
-        result = true;           /* Yes, we stripped it. */
-        goto AGAIN;              /* Skip whitespace and try again. */
-      } else if (s[tokenLength] == '[' || s[tokenLength] == '(') {
-        const char* s2 = s + tokenLength + 1; /* Skip over "Re[" */
-
-        // Skip forward over digits after the "[".
-        while (s2 < (s_end - 2) && isdigit((unsigned char)*s2)) s2++;
-
-        // Now ensure that the following thing is "]:".
-        // Only if it is do we alter `s`.
-        if ((s2[0] == ']' || s2[0] == ')') && s2[1] == ':') {
-          s = s2 + 2;    /* Skip over "]:" */
-          result = true; /* Yes, we stripped it. */
-          goto AGAIN;    /* Skip whitespace and try again. */
-        }
-      }
-    }
-    if (*tokPtr) tokPtr++;
-  }
-
-  // If we didn't strip anything, we can return here.
-  if (!result) return false;
-
-  if (decodedString.IsEmpty()) {
-    // We didn't decode anything, so just return a new string.
-    modifiedSubject.Assign(s);
-    return true;
-  }
-
-  // We decoded the string, so we need to encode it again. We always encode in
-  // UTF-8.
-  mimeConverter->EncodeMimePartIIStr_UTF8(
-      nsDependentCString(s), false, sizeof("Subject:"),
-      nsIMimeConverter::MIME_ENCODED_WORD_SIZE, modifiedSubject);
-  return true;
 }
 
 bool WeAreOffline() {
@@ -1678,7 +1591,7 @@ nsCString DecodeFilename(nsAString const& filename) {
   return out;
 }
 
-nsTArray<nsCString> ParseIdentificationFields(nsACString const& m) {
+nsTArray<nsCString> ParseIdentificationFields(nsACString const& header) {
   nsTArray<nsCString> out;
   // TODO: implement a proper parser?
   // This adhoc mess should be fine for most cases, but we're not exactly
@@ -1686,10 +1599,12 @@ nsTArray<nsCString> ParseIdentificationFields(nsACString const& m) {
   // Noting that we also have to account for real-world messiness.
   // See also nsMsgHdr::GetNextReference().
 
-  for (auto part : m.Split(' ')) {
+  nsAutoCString h(header);
+  h.ReplaceChar("\r\n\t", ' ');
+  for (auto part : h.Split(' ')) {
     nsAutoCString s(part);
 
-    s.Trim(" \t");  // Trim WSP.
+    s.Trim(" ");  // Trim WSP.
 
     // Strip (optional) angle brackets.
     size_t len = s.Length();

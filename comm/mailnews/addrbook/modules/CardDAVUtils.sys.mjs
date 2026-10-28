@@ -116,14 +116,13 @@ export var CardDAVUtils = {
     }
     const {
       method = "GET",
-      headers = {},
       body = null,
       contentType = "text/xml",
       oAuth = null,
       callbacks = new NotificationCallbacks(),
       userContextId = Ci.nsIScriptSecurityManager.DEFAULT_USER_CONTEXT_ID,
     } = details;
-    headers["Content-Type"] = contentType;
+    const headers = { ...details.headers, "Content-Type": contentType };
     if (oAuth) {
       headers.Authorization = await new Promise((resolve, reject) => {
         oAuth.getAccessToken({
@@ -377,6 +376,12 @@ export var CardDAVUtils = {
       forcePrompt,
       storePassword
     );
+    // Only HTTP URLs have a site. Requests to anything else fail anyway.
+    if (url.protocol == "http:" || url.protocol == "https:") {
+      callbacks.passwordSite = Services.eTLD.getSite(
+        Services.io.newURI(url.href)
+      );
+    }
 
     const requestParams = {
       method: "PROPFIND",
@@ -397,16 +402,18 @@ export var CardDAVUtils = {
     };
 
     let oAuth = new lazy.OAuth2Module();
-    if (oAuth.initFromHostname(url.host, username, "carddav")) {
-      requestParams.oAuth = oAuth;
-    } else {
+    if (!oAuth.initFromHostname(url.host, username, "carddav")) {
       oAuth = null;
     }
+    const oAuthOrigin = url.origin;
 
     let response;
     async function tryURL(urlCandidate) {
       log.log(`Attempting to connect to ${urlCandidate}`);
       try {
+        // The token is only for the server it was obtained for.
+        requestParams.oAuth =
+          new URL(urlCandidate).origin == oAuthOrigin ? oAuth : null;
         response = await CardDAVUtils.makeRequest(urlCandidate, requestParams);
         if (response.status == 207 && response.dom) {
           log.log(`${urlCandidate} ... success`);
@@ -626,6 +633,17 @@ export class NotificationCallbacks {
     this.forcePrompt = forcePrompt;
     this.storePasswordOverride = storePasswordOverride;
   }
+
+  /**
+   * If set, the password given to the constructor is only used for servers
+   * with this site (as returned by nsIEffectiveTLDService.getSite). A site
+   * given as http also allows https on the same site, but not the other way
+   * around.
+   *
+   * @type {?string}
+   */
+  passwordSite = null;
+
   QueryInterface = ChromeUtils.generateQI([
     "nsIInterfaceRequestor",
     "nsIAuthPrompt2",
@@ -643,10 +661,19 @@ export class NotificationCallbacks {
     this.origin = channel.URI.prePath;
     this.authInfo = authInfo;
 
+    const site = Services.eTLD.getSite(channel.URI);
+    const password =
+      !this.passwordSite ||
+      site == this.passwordSite ||
+      (channel.URI.schemeIs("https") &&
+        site.replace(/^https:/, "http:") == this.passwordSite)
+        ? this.password
+        : null;
+
     if (!this.forcePrompt) {
-      if (this.username && this.password) {
+      if (this.username && password) {
         authInfo.username = this.username;
-        authInfo.password = this.password;
+        authInfo.password = password;
         this.shouldSaveAuth = this.storePasswordOverride ?? true;
         return true;
       }
@@ -671,7 +698,7 @@ export class NotificationCallbacks {
     }
 
     authInfo.username = this.username;
-    authInfo.password = this.password;
+    authInfo.password = password;
 
     let savePasswordLabel = null;
     const savePassword = {};

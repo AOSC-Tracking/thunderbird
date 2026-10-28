@@ -30,21 +30,25 @@ export class NntpChannel extends MailChannel {
 
   /**
    * @param {nsIURI} uri - The uri to construct the channel from.
-   * @param {nsILoadInfo} [loadInfo] - The loadInfo associated with the channel.
+   * @param {nsILoadInfo} loadInfo - The loadInfo associated with the channel.
    */
   constructor(uri, loadInfo) {
     super();
+    // If there's no server for this host, one is only created once the load
+    // has passed the security checks, see _readFromServer.
     this._server = lazy.NntpUtils.findServer(uri.asciiHost);
-    if (!this._server) {
-      this._server = MailServices.accounts
-        .createIncomingServer("", uri.asciiHost, "nntp")
-        .QueryInterface(Ci.nsINntpIncomingServer);
-      this._server.port = uri.port;
-    }
 
     if (uri.port < 1) {
       // Ensure the uri has a port so that memory cache works.
-      uri = uri.mutate().setPort(this._server.port).finalize();
+      uri = uri
+        .mutate()
+        .setPort(
+          this._server?.port ??
+            (uri.scheme == "snews"
+              ? Ci.nsINntpIncomingServer.DEFAULT_NNTPS_PORT
+              : Ci.nsINntpIncomingServer.DEFAULT_NNTP_PORT)
+        )
+        .finalize();
     }
 
     // Two forms of the uri:
@@ -53,7 +57,7 @@ export class NntpChannel extends MailChannel {
     const url = new URL(uri.spec);
     this._groupName = url.searchParams.get("group");
     if (this._groupName) {
-      this._newsFolder = this._server.rootFolder.getChildNamed(
+      this._newsFolder = this._server?.rootFolder.getChildNamed(
         decodeURIComponent(url.searchParams.get("group"))
       );
       this._articleNumber = url.searchParams.get("key");
@@ -68,12 +72,7 @@ export class NntpChannel extends MailChannel {
     // nsIChannel attributes.
     this.originalURI = uri;
     this.URI = uri.QueryInterface(Ci.nsIMsgMailNewsUrl);
-    this.loadInfo = loadInfo || {
-      QueryInterface: ChromeUtils.generateQI(["nsILoadInfo"]),
-      loadingPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
-      securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
-      internalContentPolicy: Ci.nsIContentPolicy.TYPE_OTHER,
-    };
+    this.loadInfo = loadInfo;
     this.contentLength = 0;
   }
 
@@ -99,6 +98,18 @@ export class NntpChannel extends MailChannel {
    */
   get status() {
     return this._status;
+  }
+
+  /**
+   * @see nsIRequest
+   * @param {nsresult} status
+   */
+  cancel(status) {
+    if (!Components.isSuccessCode(this._status)) {
+      return;
+    }
+    this._status = status;
+    this._pump?.cancel(status);
   }
 
   /**
@@ -153,15 +164,44 @@ export class NntpChannel extends MailChannel {
     return true;
   }
 
+  /**
+   * @see nsIChannel
+   * @returns {nsIInputStream} A stream that blocks until data is available.
+   */
   open() {
-    throw Components.Exception(
-      `${this.constructor.name}.open not implemented`,
-      Cr.NS_ERROR_NOT_IMPLEMENTED
-    );
+    const listener = Cc[
+      "@mozilla.org/network/sync-stream-listener;1"
+    ].createInstance(Ci.nsISyncStreamListener);
+    this.asyncOpen(listener);
+    return listener.inputStream;
   }
 
   asyncOpen(listener) {
     this._logger.debug("asyncOpen", this.URI.spec);
+    listener = Cc["@mozilla.org/contentsecuritymanager;1"]
+      .getService(Ci.nsIContentSecurityManager)
+      .performSecurityCheck(this, listener);
+    if (
+      [this._messageId, this._groupName, this._articleNumber].some(value =>
+        /[\r\n\0]/.test(value ?? "")
+      )
+    ) {
+      throw Components.Exception(
+        `Invalid news URI: ${this.URI.spec}`,
+        Cr.NS_ERROR_MALFORMED_URI
+      );
+    }
+    // Configured servers may use any port, but don't let a url make us
+    // connect to a port reserved for another service.
+    if (
+      !this._server &&
+      !Services.io.allowPort(this.URI.port, this.URI.scheme)
+    ) {
+      throw Components.Exception(
+        `Port ${this.URI.port} not allowed`,
+        Cr.NS_ERROR_PORT_ACCESS_NOT_ALLOWED
+      );
+    }
     const url = new URL(this.URI.spec);
     this._listener = listener;
 
@@ -243,6 +283,7 @@ export class NntpChannel extends MailChannel {
     this.contentLength = 0;
     this._contentType = "";
     pump.init(cacheStream, 0, 0, true);
+    this._pump = pump;
     pump.asyncRead({
       onStartRequest: () => {
         this._listener.onStartRequest(this);
@@ -250,6 +291,7 @@ export class NntpChannel extends MailChannel {
         this._pending = true;
       },
       onStopRequest: (request, status) => {
+        this._pump = null;
         this._listener.onStopRequest(this, status);
         this.URI.SetUrlState(false, status);
         try {
@@ -275,6 +317,15 @@ export class NntpChannel extends MailChannel {
    */
   _readFromServer() {
     this._logger.debug("Read from server");
+    if (!this._server) {
+      this._server = MailServices.accounts
+        .createIncomingServer("", this.URI.asciiHost, "nntp")
+        .QueryInterface(Ci.nsINntpIncomingServer);
+      if (this.URI.scheme == "snews") {
+        this._server.socketType = Ci.nsMsgSocketType.SSL;
+      }
+      this._server.port = this.URI.port;
+    }
     const pipe = Cc["@mozilla.org/pipe;1"].createInstance(Ci.nsIPipe);
     pipe.init(true, true, 0, 0);
     const inputStream = pipe.inputStream;
@@ -309,12 +360,22 @@ export class NntpChannel extends MailChannel {
       };
 
       client.onData = data => {
+        if (!Components.isSuccessCode(this._status)) {
+          return;
+        }
         this.contentLength += data.length;
         outputStream.write(data, data.length);
-        this._listener.onDataAvailable(this, inputStream, 0, data.length);
+        try {
+          this._listener.onDataAvailable(this, inputStream, 0, data.length);
+        } catch (e) {
+          this.cancel(e.result ?? Cr.NS_ERROR_FAILURE);
+        }
       };
 
       client.onDone = status => {
+        if (!Components.isSuccessCode(this._status)) {
+          status = this._status;
+        }
         try {
           this.loadGroup?.removeRequest(this, null, Cr.NS_OK);
         } catch (e) {}

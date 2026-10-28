@@ -11,6 +11,7 @@
 #include "mozilla/Logging.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
 #include "mozilla/storage/Variant.h"
+#include "nsCRTGlue.h"
 #include "mozIStorageStatement.h"
 #include "nsIAbCard.h"
 #include "nsILiveView.h"
@@ -64,6 +65,7 @@ NS_IMETHODIMP TagsMatchFunction::OnFunctionCall(
       return NS_ERROR_UNEXPECTED;
     }
 
+    // This logic is also in TaggedMessagesFilter::Matches.
     nsAutoCString haystack;
     aArguments->GetUTF8String(0, haystack);
     size_t haystackLength = haystack.Length();

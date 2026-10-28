@@ -44,7 +44,8 @@ void PerFolderDatabase::OnMessageRemoved(Message* message, uint32_t oldFlags) {
   }
 }
 
-void PerFolderDatabase::OnMessageFlagsChanged(Message* message,
+void PerFolderDatabase::OnMessageFlagsChanged(nsIMsgDBHdr* oldMessage,
+                                              Message* message,
                                               uint32_t oldFlags,
                                               uint32_t newFlags) {
   uint64_t msgFolderId;
@@ -52,6 +53,25 @@ void PerFolderDatabase::OnMessageFlagsChanged(Message* message,
   NS_ENSURE_SUCCESS_VOID(rv);
   if (msgFolderId == mFolderId) {
     NotifyHdrChangeAll(message, oldFlags, newFlags, nullptr);
+  }
+}
+
+void PerFolderDatabase::OnMessageTagsChanged(nsIMsgDBHdr* oldMessage,
+                                             Message* message,
+                                             const nsACString& oldTags,
+                                             const nsACString& newTags) {
+  uint64_t msgFolderId;
+  nsresult rv = MessageDB().GetMessageFolderId(message->Key(), msgFolderId);
+  NS_ENSURE_SUCCESS_VOID(rv);
+  if (msgFolderId != mFolderId) {
+    return;
+  }
+
+  // There's no equivalent function in nsIDBChangeAnnouncer.
+  for (RefPtr<nsIDBChangeListener> listener : mListeners.EndLimitedRange()) {
+    uint32_t status = 0;
+    listener->OnHdrPropertyChanged(message, "keywords"_ns, false, &status,
+                                   nullptr);
   }
 }
 

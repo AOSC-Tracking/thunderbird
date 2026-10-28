@@ -12,6 +12,9 @@
 var { MailUtils } = ChromeUtils.importESModule(
   "resource:///modules/MailUtils.sys.mjs"
 );
+var { ServerTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/ServerTestUtils.sys.mjs"
+);
 
 // The basic daemon and server for the NNTP fake server.
 var daemon = setupNNTPDaemon();
@@ -159,6 +162,44 @@ add_task(function test_snews_to_news_conversion() {
   );
 });
 
+add_task(function test_nntp_newsgroup_and_article_number() {
+  resetCaptures();
+  MailUtils.handleNewsUri(
+    `nntp://localhost:${server.port}/test.subscribe.simple/1`,
+    null
+  );
+  Assert.equal(gConfirmCallCount, 0, "should not prompt");
+  Assert.equal(gFolderUrisOpened.length, 1, "should open the newsgroup folder");
+  Assert.ok(
+    gFolderUrisOpened[0].includes("test.subscribe.simple"),
+    "folder URI should contain the newsgroup name"
+  );
+});
+
+add_task(function test_nntps_newsgroup() {
+  resetCaptures();
+  MailUtils.handleNewsUri(
+    `nntps://localhost:${server.port}/test.subscribe.simple`,
+    null
+  );
+  Assert.equal(gFolderUrisOpened.length, 1, "should open the newsgroup folder");
+  Assert.ok(
+    gFolderUrisOpened[0].includes("test.subscribe.simple"),
+    "folder URI should contain the newsgroup name"
+  );
+});
+
+add_task(function test_nntp_message_id() {
+  resetCaptures();
+  MailUtils.handleNewsUri(
+    `nntp://localhost:${server.port}/test-msgid@nntp.invalid`,
+    null
+  );
+  Assert.equal(gFolderUrisOpened.length, 0, "should not open a folder");
+  Assert.equal(gEmlFilesOpened.length, 0, "should not fetch a message");
+  Assert.equal(gConfirmCallCount, 0, "should not prompt");
+});
+
 add_task(function test_wildcard_newsgroup() {
   resetCaptures();
   MailUtils.handleNewsUri("news:comp.*", null);
@@ -298,8 +339,142 @@ add_task(async function test_messageId_with_specific_host() {
 
   await openedPromise;
 
+  Assert.equal(gConfirmCallCount, 0, "should not prompt for a known server");
   Assert.equal(gEmlFilesOpened.length, 1);
   Assert.greater(gEmlFilesOpened[0].tempFile.fileSize, 0);
+});
+
+add_task(async function test_messageId_unknown_server_reject() {
+  resetCaptures();
+  gConfirmResult = false;
+
+  const otherServer = makeServer(NNTP_RFC977_handler, daemon);
+  otherServer.start();
+
+  for (const uri of [
+    `news://127.0.0.1:${otherServer.port}/test-msgid@nntp.invalid`,
+    `news://localhost:${otherServer.port}/test-msgid@nntp.invalid`,
+    `snews://localhost:${otherServer.port}/test-msgid@nntp.invalid`,
+  ]) {
+    MailUtils.handleNewsUri(uri, null);
+  }
+
+  await new Promise(resolve => do_timeout(500, resolve));
+  otherServer.stop();
+
+  Assert.equal(gConfirmCallCount, 3, "should prompt for each unknown server");
+  Assert.ok(
+    gLastConfirmText.includes(`localhost:${otherServer.port}`),
+    "prompt text should mention the server host and port"
+  );
+  Assert.equal(
+    gEmlFilesOpened.length,
+    0,
+    "should not fetch a message when the user rejected the prompt"
+  );
+});
+
+add_task(function test_messageId_unknown_server_snews_port() {
+  resetCaptures();
+  gConfirmResult = false;
+
+  MailUtils.handleNewsUri(
+    "snews://unknown.invalid/test-msgid@nntp.invalid",
+    null
+  );
+  Assert.equal(gConfirmCallCount, 1, "should prompt for the unknown server");
+  Assert.ok(
+    gLastConfirmText.includes("unknown.invalid:563"),
+    "prompt text should mention the default NNTPS port"
+  );
+});
+
+add_task(function test_messageId_unknown_server_restricted_port() {
+  resetCaptures();
+  gConfirmResult = true;
+
+  for (const uri of [
+    "news://unknown.invalid:25/test-msgid@nntp.invalid",
+    "snews://unknown.invalid:6000/test-msgid@nntp.invalid",
+  ]) {
+    MailUtils.handleNewsUri(uri, null);
+  }
+  Assert.equal(
+    gConfirmCallCount,
+    0,
+    "should not prompt for an unknown server on a restricted port"
+  );
+  Assert.equal(gEmlFilesOpened.length, 0, "should not fetch a message");
+});
+
+add_task(async function test_messageId_unknown_server_accept() {
+  resetCaptures();
+  gConfirmResult = true;
+
+  const otherServer = makeServer(NNTP_RFC977_handler, daemon);
+  otherServer.start();
+
+  const openedPromise = new Promise(resolve => {
+    gOnEmlOpened = resolve;
+  });
+  MailUtils.handleNewsUri(
+    `news://127.0.0.1:${otherServer.port}/test-msgid@nntp.invalid`,
+    null
+  );
+  await openedPromise;
+  otherServer.stop();
+
+  Assert.equal(gConfirmCallCount, 1, "should prompt for the unknown server");
+  Assert.ok(
+    gLastConfirmText.includes(`127.0.0.1:${otherServer.port}`),
+    "prompt text should mention the server host and port"
+  );
+  Assert.greater(
+    gEmlFilesOpened[0].tempFile.fileSize,
+    0,
+    "should fetch the message when the user accepted the prompt"
+  );
+
+  const adHocServer = MailServices.accounts.findServer("", "127.0.0.1", "nntp");
+  if (adHocServer) {
+    MailServices.accounts.removeIncomingServer(adHocServer, false);
+  }
+});
+
+add_task(async function test_messageId_unknown_server_snews_accept() {
+  resetCaptures();
+  gConfirmResult = true;
+
+  const tlsServer = await ServerTestUtils.createServer(
+    ServerTestUtils.serverDefs.nntp.tls
+  );
+  tlsServer.daemon.addArticle(new NewsArticle(kArticleForMsgId));
+
+  const openedPromise = new Promise(resolve => {
+    gOnEmlOpened = resolve;
+  });
+  MailUtils.handleNewsUri("snews://test.test/test-msgid@nntp.invalid", null);
+  await openedPromise;
+
+  Assert.ok(
+    gLastConfirmText.includes("test.test:563"),
+    "prompt text should mention the default NNTPS port"
+  );
+  Assert.greater(
+    gEmlFilesOpened[0].tempFile.fileSize,
+    0,
+    "should fetch the message over TLS"
+  );
+
+  const adHocServer = MailServices.accounts.findServer("", "test.test", "nntp");
+  Assert.equal(
+    adHocServer.socketType,
+    Ci.nsMsgSocketType.SSL,
+    "server should use TLS"
+  );
+  adHocServer.closeCachedConnections();
+  MailServices.accounts.removeIncomingServer(adHocServer, false);
+  tlsServer.close();
 });
 
 add_task(async function test_messageId_not_found() {

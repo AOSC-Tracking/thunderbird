@@ -7,6 +7,7 @@
 #include "../public/nsIImapHostSessionList.h"
 #include "nsImapCore.h"
 #include "nsImapUrl.h"
+#include "nsCRTGlue.h"
 #include "nsServiceManagerUtils.h"
 #include "nsString.h"
 #include "plstr.h"
@@ -32,20 +33,29 @@ void nsImapNamespace::SetDelimiter(char delimiter, bool delimiterFilledIn) {
   m_delimiterFilledIn = delimiterFilledIn;
 }
 
-// returns -1 if this box is not part of this namespace,
-// or the length of the prefix if it is part of this namespace
 int nsImapNamespace::MailboxMatchesNamespace(const char* boxname) {
   if (!boxname) return -1;
 
-  // If the namespace is part of the boxname
+  // An empty prefix matches every boxname
   if (!m_prefix || !*m_prefix) return 0;
 
+  // If the boxname lies within the namespace
   if (PL_strstr(boxname, m_prefix) == boxname) return PL_strlen(m_prefix);
 
-  // If the boxname is part of the prefix
+  if (!*boxname) return -1;
+
+  // If the boxname is the root mailbox of the namespace
   // (Used for matching Personal mailbox with Personal/ namespace, etc.)
-  if (PL_strstr(m_prefix, boxname) == m_prefix) return PL_strlen(boxname);
+  if (IsRootMailbox(boxname)) return PL_strlen(boxname);
   return -1;
+}
+
+bool nsImapNamespace::IsRootMailbox(const char* boxname) {
+  if (!boxname || !m_prefix || !*m_prefix) return false;
+  size_t prefixLen = strlen(m_prefix);
+  if (m_prefix[prefixLen - 1] != m_delimiter) return !strcmp(boxname, m_prefix);
+  return strlen(boxname) == prefixLen - 1 &&
+         !strncmp(boxname, m_prefix, prefixLen - 1);
 }
 
 nsImapNamespaceList* nsImapNamespaceList::CreatensImapNamespaceList() {
@@ -206,30 +216,6 @@ nsImapNamespace* nsImapNamespaceList::GetNamespaceForMailbox(
 
 #define SERIALIZER_SEPARATORS ","
 
-/**
- * If len is one, copies the first element of prefixes into
- * serializedNamespaces. If len > 1, copies len strings from prefixes into
- * serializedNamespaces as a comma-separated list of quoted strings.
- */
-nsresult nsImapNamespaceList::SerializeNamespaces(
-    char** prefixes, int len, nsCString& serializedNamespaces) {
-  if (len <= 0) return NS_OK;
-
-  if (len == 1) {
-    serializedNamespaces.Assign(prefixes[0]);
-    return NS_OK;
-  }
-
-  for (int i = 0; i < len; i++) {
-    if (i > 0) serializedNamespaces.Append(',');
-
-    serializedNamespaces.Append('"');
-    serializedNamespaces.Append(prefixes[i]);
-    serializedNamespaces.Append('"');
-  }
-  return NS_OK;
-}
-
 /* str is the string which needs to be unserialized.
    If prefixes is NULL, simply returns the number of namespaces in str.  (len is
    ignored) If prefixes is not NULL, it should be an array of length len which
@@ -269,7 +255,8 @@ int nsImapNamespaceList::UnserializeNamespaces(const char* str, char** prefixes,
     while ((count < len) && (token != nullptr)) {
       char *current = PL_strdup(token), *where = current;
       if (where[0] == '"') where++;
-      if (where[PL_strlen(where) - 1] == '"') where[PL_strlen(where) - 1] = 0;
+      uint32_t whereLen = PL_strlen(where);
+      if (whereLen && where[whereLen - 1] == '"') where[whereLen - 1] = 0;
       prefixes[count] = PL_strdup(where);
       PR_FREEIF(current);
       token = NS_strtok(SERIALIZER_SEPARATORS, &ourstr);
@@ -353,28 +340,12 @@ bool nsImapNamespaceList::GetFolderIsNamespace(
     nsImapNamespace* namespaceForFolder) {
   NS_ASSERTION(namespaceForFolder, "null namespace");
 
-  bool rv = false;
-
-  const char* prefix = namespaceForFolder->GetPrefix();
-  NS_ASSERTION(prefix, "namespace has no prefix");
-  if (!prefix || !*prefix)  // empty namespace prefix
-    return false;
-
   nsCString folderName;
   folderName.Assign(canonicalFolderName);
   if (delimiter) {
     folderName.ReplaceChar('/', delimiter);
   }
-
-  bool lastCharIsDelimiter = (prefix[strlen(prefix) - 1] == delimiter);
-  if (lastCharIsDelimiter) {
-    rv = ((strncmp(folderName.get(), prefix, strlen(folderName.get())) == 0) &&
-          (strlen(folderName.get()) == strlen(prefix) - 1));
-  } else {
-    rv = (strcmp(folderName.get(), prefix) == 0);
-  }
-
-  return rv;
+  return namespaceForFolder->IsRootMailbox(folderName.get());
 }
 
 /*

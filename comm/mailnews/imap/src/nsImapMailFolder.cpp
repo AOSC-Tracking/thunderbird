@@ -2089,16 +2089,6 @@ nsImapMailFolder::GetDBFolderInfoAndDB(nsIDBFolderInfo** folderInfo,
   return rv;
 }
 
-nsresult nsImapMailFolder::MarkMessagesImapDeleted(nsTArray<nsMsgKey>* keyArray,
-                                                   bool deleted,
-                                                   nsIMsgDatabase* db) {
-  for (uint32_t kindex = 0; kindex < keyArray->Length(); kindex++) {
-    nsMsgKey key = keyArray->ElementAt(kindex);
-    db->MarkImapDeleted(key, deleted, nullptr);
-  }
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsImapMailFolder::DeleteMessages(
     nsTArray<RefPtr<nsIMsgDBHdr>> const& msgHeaders, nsIMsgWindow* msgWindow,
     bool deleteStorage, bool isMove, nsIMsgCopyServiceListener* listener,
@@ -2106,9 +2096,7 @@ NS_IMETHODIMP nsImapMailFolder::DeleteMessages(
   // *** jt - assuming delete is move to the trash folder for now
   nsAutoCString uri;
   bool deleteImmediatelyNoTrash = false;
-  bool deleteMsgs = true;  // used for toggling delete status - default is true
   nsMsgImapDeleteModel deleteModel = nsMsgImapDeleteModels::MoveToTrash;
-  imapMessageFlagsType messageFlags = kImapMsgDeletedFlag;
 
   nsCOMPtr<nsIImapIncomingServer> imapServer;
   nsresult rv = GetFlag(nsMsgFolderFlags::Trash, &deleteImmediatelyNoTrash);
@@ -2161,6 +2149,8 @@ NS_IMETHODIMP nsImapMailFolder::DeleteMessages(
       txns->GetTransactionManager(getter_AddRefs(txnMgr));
       if (txnMgr) txnMgr->DoTransaction(undoMsgTxn);
     }
+    bool deleteMsgs =
+        true;  // used for toggling delete status - default is true
     if (deleteModel == nsMsgImapDeleteModels::IMAPDelete && !deleteStorage) {
       deleteMsgs = false;
       for (nsIMsgDBHdr* msgHdr : msgHeaders) {
@@ -2178,15 +2168,18 @@ NS_IMETHODIMP nsImapMailFolder::DeleteMessages(
     // if copy service listener is also a url listener, pass that
     // url listener into StoreImapFlags.
     nsCOMPtr<nsIUrlListener> urlListener = do_QueryInterface(listener);
+    imapMessageFlagsType messageFlags = kImapMsgDeletedFlag;
     if (deleteMsgs) messageFlags |= kImapMsgSeenFlag;
     rv = StoreImapFlags(messageFlags, deleteMsgs, srcKeyArray, urlListener);
 
     if (NS_SUCCEEDED(rv)) {
       if (mDatabase) {
         nsCOMPtr<nsIMsgDatabase> database(mDatabase);
-        if (deleteModel == nsMsgImapDeleteModels::IMAPDelete)
-          MarkMessagesImapDeleted(&srcKeyArray, deleteMsgs, database);
-        else {
+        if (deleteModel == nsMsgImapDeleteModels::IMAPDelete) {
+          for (nsMsgKey key : srcKeyArray) {
+            database->MarkImapDeleted(key, deleteMsgs, nullptr);
+          }
+        } else {
           EnableNotifications(allMessageCountNotifications,
                               false);  //"remove it immediately" model
           // Notify if this is an actual delete.
@@ -4036,16 +4029,6 @@ NS_IMETHODIMP nsImapMailFolder::GetHasAdminUrl(bool* aBool) {
   return rv;
 }
 
-NS_IMETHODIMP nsImapMailFolder::GetAdminUrl(nsACString& aResult) {
-  aResult = m_adminUrl;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsImapMailFolder::SetAdminUrl(const nsACString& adminUrl) {
-  m_adminUrl = adminUrl;
-  return NS_OK;
-}
-
 // this is used to issue an arbitrary imap command on the passed in msgs.
 // It assumes the command needs to be run in the selected state.
 NS_IMETHODIMP nsImapMailFolder::IssueCommandOnMsgs(const nsACString& command,
@@ -4894,23 +4877,20 @@ nsImapMailFolder::NotifyMessageDeleted(const char* onlineFolderName,
                                        bool deleteAllMsgs,
                                        const char* msgIdString) {
   if (deleteAllMsgs) return NS_OK;
-
   if (!msgIdString) return NS_OK;
 
-  nsTArray<nsMsgKey> affectedMessages;
-  ParseUidString(msgIdString, affectedMessages);
-
-  if (!ShowDeletedMessages()) {
-    GetDatabase();
-    NS_ENSURE_TRUE(mDatabase, NS_OK);
-    if (!ShowDeletedMessages()) {
-      if (!affectedMessages.IsEmpty())  // perhaps Search deleted these messages
-      {
-        DeleteStoreMessages(affectedMessages);
-        mDatabase->DeleteMessages(affectedMessages, nullptr);
-      }
-    } else  // && !imapDeleteIsMoveToTrash // TODO: can this ever be executed?
-      SetIMAPDeletedFlag(mDatabase, affectedMessages, false);
+  if (ShowDeletedMessages()) {
+    return NS_OK;
+  }
+  GetDatabase();
+  NS_ENSURE_TRUE(mDatabase, NS_OK);
+  nsTArray<ImapUid> uids;
+  ParseUidString(msgIdString, uids);
+  nsTArray<nsMsgKey> affected = MOZ_TRY(MsgKeysFromUids(mDatabase, uids));
+  if (!affected.IsEmpty())  // perhaps Search deleted these messages
+  {
+    DeleteStoreMessages(affected);
+    mDatabase->DeleteMessages(affected, nullptr);
   }
   return NS_OK;
 }
@@ -4951,19 +4931,6 @@ nsresult nsImapMailFolder::GetTrashFolder(nsIMsgFolder** pTrashFolder) {
     if (!*pTrashFolder) rv = NS_ERROR_FAILURE;
   }
   return rv;
-}
-
-// store nsMsgMessageFlags::IMAPDeleted in the specified mailhdr records
-void nsImapMailFolder::SetIMAPDeletedFlag(nsIMsgDatabase* mailDB,
-                                          const nsTArray<nsMsgKey>& msgids,
-                                          bool markDeleted) {
-  nsresult markStatus = NS_OK;
-  uint32_t total = msgids.Length();
-
-  for (uint32_t msgIndex = 0; NS_SUCCEEDED(markStatus) && (msgIndex < total);
-       msgIndex++)
-    markStatus =
-        mailDB->MarkImapDeleted(msgids[msgIndex], markDeleted, nullptr);
 }
 
 // nsIImapMessageSink.getMessageSizeFromDB() implementation.
@@ -5161,7 +5128,9 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
                     DeleteStoreMessages(srcKeyArray, srcFolder);
                     srcDB->DeleteMessages(srcKeyArray, nullptr);
                   } else {
-                    MarkMessagesImapDeleted(&srcKeyArray, true, srcDB);
+                    for (nsMsgKey key : srcKeyArray) {
+                      srcDB->MarkImapDeleted(key, true, nullptr);
+                    }
                   }
                 }
                 srcFolder->EnableNotifications(allMessageCountNotifications,
@@ -5229,11 +5198,14 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
             nsCOMPtr<nsIMsgDatabase> db;
             rv = GetMsgDatabase(getter_AddRefs(db));
             if (NS_SUCCEEDED(rv) && db) {
-              nsTArray<nsMsgKey> keyArray;
-              nsCString keyString;
-              imapUrl->GetListOfMessageIds(keyString);
-              ParseUidString(keyString.get(), keyArray);
-              MarkMessagesImapDeleted(&keyArray, false, db);
+              nsCString uidSet;
+              imapUrl->GetListOfMessageIds(uidSet);
+              nsTArray<ImapUid> uids;
+              ParseUidString(uidSet.get(), uids);
+              nsTArray<nsMsgKey> keyArray = MOZ_TRY(MsgKeysFromUids(db, uids));
+              for (nsMsgKey key : keyArray) {
+                db->MarkImapDeleted(key, false, nullptr);
+              }
               db->Commit(nsMsgDBCommitType::kLargeCommit);
             }
           }
@@ -5248,18 +5220,20 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
               nsCOMPtr<nsIMsgDatabase> db;
               rv = GetMsgDatabase(getter_AddRefs(db));
               if (NS_SUCCEEDED(rv) && db) {
-                nsTArray<nsMsgKey> keyArray;
-                nsCString keyString;
-                imapUrl->GetListOfMessageIds(keyString);
-                ParseUidString(keyString.get(), keyArray);
-
+                nsCString uidSet;
+                imapUrl->GetListOfMessageIds(uidSet);
+                nsTArray<ImapUid> uids;
+                ParseUidString(uidSet.get(), uids);
+                nsTArray<nsMsgKey> keyArray =
+                    MOZ_TRY(MsgKeysFromUids(db, uids));
                 // For pluggable stores that do not support compaction, we need
                 // to delete the messages now.
                 bool supportsCompaction = false;
                 nsCOMPtr<nsIMsgPluggableStore> offlineStore;
                 (void)GetMsgStore(getter_AddRefs(offlineStore));
-                if (offlineStore)
+                if (offlineStore) {
                   offlineStore->GetSupportsCompaction(&supportsCompaction);
+                }
 
                 nsTArray<RefPtr<nsIMsgDBHdr>> msgHdrs;
                 if (notifier || !supportsCompaction) {
@@ -5275,8 +5249,9 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
                   notifier->NotifyMsgsDeleted(msgHdrs);
                 }
 
-                if (!supportsCompaction && !msgHdrs.IsEmpty())
+                if (!supportsCompaction && !msgHdrs.IsEmpty()) {
                   DeleteStoreMessages(msgHdrs);
+                }
 
                 db->DeleteMessages(keyArray, nullptr);
                 db->SetSummaryValid(true);
@@ -5383,9 +5358,6 @@ nsImapMailFolder::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
             // Like url listfolder, this also leaves the db open so close it.
             SetMsgDatabase(nullptr);
           }
-          break;
-        case nsIImapUrl::nsImapRefreshFolderUrls:
-          // we finished getting an admin url for the folder.
           break;
         case nsIImapUrl::nsImapCreateFolder:
           if (NS_FAILED(aExitCode))  // if success notification already done

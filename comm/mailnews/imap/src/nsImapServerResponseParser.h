@@ -44,7 +44,10 @@ class nsImapServerResponseParser : public nsImapGenericParser {
   virtual bool WaitingForMoreClientInput() {
     return fWaitingForMoreClientInput;
   }
-  const char* GetSelectedMailboxName();  // can be NULL
+  // Can be NULL. Only use this on the IMAP thread, which may free the name.
+  const char* GetSelectedMailboxName();
+  // Copies the selected mailbox name. Returns false if there is none.
+  bool GetSelectedMailboxName(nsACString& aName);
   bool IsStdJunkNotJunkUseOk() { return fStdJunkNotJunkUseOk; }
 
   // if we get a PREAUTH greeting from the server, initialize the parser to
@@ -98,14 +101,15 @@ class nsImapServerResponseParser : public nsImapGenericParser {
     return ((fCapabilityFlag & kXServerInfoCapability) != 0);
   }
   void SetFetchingFlags(bool aFetchFlags) { fFetchingAllFlags = aFetchFlags; }
-  void ResetCapabilityFlag();
+  // Forgets what the server told us before TLS was established, as it could
+  // have been injected (RFC 9051, Section 6.2.1).
+  void ResetStateAfterStartTLS();
 
   nsCString& GetMailAccountUrl() { return fMailAccountUrl; }
   const char* GetXSenderInfo() { return fXSenderInfo; }
   void FreeXSenderInfo() { PR_FREEIF(fXSenderInfo); }
   nsCString& GetManageListsUrl() { return fManageListsUrl; }
   nsCString& GetManageFiltersUrl() { return fManageFiltersUrl; }
-  const char* GetManageFolderUrl() { return fFolderAdminUrl; }
   nsCString& GetServerID() { return fServerIdResponse; }
 
   // Call this when adding a pipelined command to the session
@@ -161,7 +165,6 @@ class nsImapServerResponseParser : public nsImapGenericParser {
   virtual void numeric_mailbox_data();
   virtual void capability_data();
   virtual void xserverinfo_data();
-  virtual void xmailboxinfo_data();
   virtual void namespace_data();
   virtual void myrights_data(bool unsolicited);
   virtual void acl_data();
@@ -258,7 +261,6 @@ class nsImapServerResponseParser : public nsImapGenericParser {
                        removed while passing to hashTable ]*/
   nsCString fManageListsUrl;
   nsCString fManageFiltersUrl;
-  char* fFolderAdminUrl;
   nsCString fServerIdResponse;  // RFC
 
   int32_t fFetchResponseIndex;

@@ -157,12 +157,13 @@ nsMsgContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
       // setting on a subdocument, so we don't worry about TYPE_SUBDOCUMENT
       // here.
 
-      // Assert document mailnews urls are always loaded in the parent process.
-      nsCOMPtr<nsIMsgMessageUrl> msgURL(do_QueryInterface(aContentLocation));
+      // Assert document nsIMsgMailNewsUrls are always loaded in the parent
+      // process.
+      nsCOMPtr<nsIMsgMailNewsUrl> msgURL(do_QueryInterface(aContentLocation));
       if (msgURL) {
         MOZ_RELEASE_ASSERT(
             XRE_IsParentProcess(),
-            "nsIMsgMessageUrls needs to be loaded in the content process");
+            "nsIMsgMailNewsUrls need to be loaded in the parent process");
       }
 
       if (!XRE_IsParentProcess()) {
@@ -230,7 +231,8 @@ nsMsgContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
   // mail message content     | load if same  | don't load   | don't load
   // mailbox, imap, JsAccount | message (1)   | (2)          | (3)
   // -------------------------+---------------+--------------+------------------
-  // news message             | don't load (4)| load (5)     | load (6)
+  // news message             | don't load (4)| load if same | don't load
+  //                          |               | server (5)   | (6)
   // -------------------------+---------------+--------------+------------------
   // http(s)/data, etc.       | (default)     | (default)    | (default)
   // -------------------------+---------------+--------------+------------------
@@ -241,18 +243,29 @@ nsMsgContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
   if (NS_SUCCEEDED(aContentLocation->GetScheme(contentScheme)) &&
       IsNewsScheme(contentScheme)) {
     // News message content requested (4), (5), (6).
-    // Don't accept request coming from a mail message since it would
-    // access the news server (4).
-    nsCOMPtr<nsIMsgMessageUrl> requestURL(
-        do_QueryInterface(aRequestingLocation));
-    if (requestURL) {
-      nsAutoCString requestScheme;
-      bool requestIsNews =
-          NS_SUCCEEDED(aRequestingLocation->GetScheme(requestScheme)) &&
-          IsNewsScheme(requestScheme);
-      if (!requestIsNews) return NS_OK;  // (4)
+    nsAutoCString requestScheme;
+    if (NS_SUCCEEDED(aRequestingLocation->GetScheme(requestScheme)) &&
+        IsNewsScheme(requestScheme)) {
+      // Only accept content from the news server the requesting message came
+      // from (5). News articles are public, so this isn't about tracking, but
+      // we shouldn't contact (and implicitly create) servers the user hasn't
+      // set up.
+      nsAutoCString contentHost, requestHost;
+      if (NS_SUCCEEDED(aContentLocation->GetAsciiHost(contentHost)) &&
+          NS_SUCCEEDED(aRequestingLocation->GetAsciiHost(requestHost)) &&
+          contentHost.Equals(requestHost, nsCaseInsensitiveCStringComparator) &&
+          NS_GetRealPort(aContentLocation) ==
+              NS_GetRealPort(aRequestingLocation)) {
+        return acceptContent();
+      }
+      return NS_OK;
     }
-    return acceptContent();  // (5) and (6)
+    // Don't accept request coming from a mail message since it would
+    // access the news server (4). Such a load would bypass remote content
+    // blocking and could be used to track when the message is read.
+    // Other requesters, like the compose window, don't get to load news
+    // message content either (6), same as for mail message content (3).
+    return NS_OK;
   }
 
   nsCOMPtr<nsIMsgMessageUrl> contentURL(do_QueryInterface(aContentLocation));
@@ -409,6 +422,13 @@ nsMsgContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
   // allows remote content for this message.
   nsCOMPtr<nsIMsgDBHdr> msgHdr = GetPotentialMsgHdr(aRequestingLocation);
   if (!msgHdr) {
+    // A message whose header can't be found, like a news article loaded by
+    // message-id, has no remote content permissions to check.
+    nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl =
+        do_QueryInterface(aRequestingLocation);
+    if (mailnewsUrl) {
+      return rejectContentAndNotify();
+    }
     return acceptContent();
   }
   *aDecision = ShouldAcceptRemoteContentForMsgHdr(msgHdr, aRequestingLocation,
@@ -733,10 +753,10 @@ nsresult nsMsgContentPolicy::SetDisableItemsOnMailNewsUrlDocshells(
 
   nsresult rv;
   bool isAllowedContent = !ShouldBlockUnexposedProtocol(aContentLocation);
-  nsCOMPtr<nsIMsgMessageUrl> msgUrl = do_QueryInterface(aContentLocation);
-  if (!msgUrl && !isAllowedContent) {
-    // If it's not a mailnews url or allowed content url (http[s]|file) then
-    // bail; otherwise set whether JavaScript is allowed.
+  nsCOMPtr<nsIMsgMailNewsUrl> mailnewsUrl = do_QueryInterface(aContentLocation);
+  if (!mailnewsUrl && !isAllowedContent) {
+    // If it's not an nsIMsgMailNewsUrl or allowed content url (http[s]|file)
+    // then bail; otherwise set whether JavaScript is allowed.
     return NS_OK;
   }
 

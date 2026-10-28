@@ -401,15 +401,10 @@ class nsImapMailFolder : public nsMsgDBFolder,
    */
   nsresult CopyFileToOfflineStore(nsIFile* srcFile, nsMsgKey msgKey);
 
-  nsresult MarkMessagesImapDeleted(nsTArray<nsMsgKey>* keyArray, bool deleted,
-                                   nsIMsgDatabase* db);
-
   // Notifies imap autosync that it should update this folder when it
   // gets a chance.
   void NotifyHasPendingMsgs();
   void UpdatePendingCounts();
-  void SetIMAPDeletedFlag(nsIMsgDatabase* mailDB,
-                          const nsTArray<nsMsgKey>& msgids, bool markDeleted);
   virtual bool ShowDeletedMessages();
   virtual bool DeleteIsMoveToTrash();
   nsresult GetFolder(const nsACString& name, nsIMsgFolder** pFolder);
@@ -522,7 +517,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
   nsCString m_ownerUserName;  // username of the "other user," as in
   // "Other Users' Mailboxes"
 
-  nsCString m_adminUrl;  // url to run to set admin privileges for this folder
   nsImapNamespace* m_namespace;
   bool m_verifiedAsOnlineFolder;
   bool m_explicitlyVerify;  // whether or not we need to explicitly verify this

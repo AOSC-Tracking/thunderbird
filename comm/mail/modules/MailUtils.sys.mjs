@@ -888,11 +888,16 @@ export var MailUtils = {
       return;
     }
 
-    // Treat deprecated 'snews' URIs exactly as 'news' URIs.
+    // Deprecated 'snews' URIs are 'news' URIs using NNTP over TLS. Configured
+    // servers use their own security settings, so this only matters when
+    // connecting to an unknown server.
     // @see {@link https://datatracker.ietf.org/doc/html/rfc5538#section-8.1}
-    if (url.protocol == "snews:") {
-      url.protocol = "news:";
-    }
+    const secure = ["snews:", "nntps:"].includes(url.protocol);
+    // 'nntp' URIs identify an article by newsgroup and article number. Only
+    // the newsgroup is used. 'nntps' is the same using NNTP over TLS.
+    // @see {@link https://datatracker.ietf.org/doc/html/rfc5538#section-3}
+    const isNntp = ["nntp:", "nntps:"].includes(url.protocol);
+    url.protocol = "news:";
 
     const firstNntpServer = lazy.MailServices.accounts.accounts.find(
       account => account.incomingServer.type == "nntp"
@@ -900,7 +905,14 @@ export var MailUtils = {
 
     // 'news' URIs identifying a newsgroup.
 
-    const identifier = decodeURIComponent(url.pathname.slice(1));
+    let identifier = decodeURIComponent(url.pathname.slice(1));
+    if (isNntp) {
+      identifier = identifier.split("/")[0];
+      if (identifier.includes("@")) {
+        console.warn(`Unsupported nntp URI: ${uri}`);
+        return;
+      }
+    }
     if (!identifier.includes("@")) {
       if (identifier.includes("*")) {
         console.warn(`Unsupported news URI: ${url}`);
@@ -938,16 +950,47 @@ export var MailUtils = {
 
     // URIs that contain a message-ID.
 
-    if (!url.hostname) {
-      if (!firstNntpServer) {
-        console.warn("No news server set up.");
+    const server = url.hostname
+      ? lazy.MailServices.accounts.findServer(
+          "",
+          url.hostname,
+          "nntp",
+          Number(url.port) || 0
+        )
+      : firstNntpServer;
+    if (server) {
+      url.hostname = server.hostname;
+      url.port = server.port;
+    } else if (!url.hostname) {
+      console.warn("No news server set up.");
+      return;
+    } else {
+      // This URL is for a server that we don't know. Prompt the user for
+      // confirmation before sending any traffic to it, and set the port to the
+      // default (based on whether we were given a 'news:' or an 'snews:' URI)
+      // if it's missing.
+      if (secure) {
+        url.protocol = "snews:";
+      }
+      if (!url.port) {
+        url.port = secure
+          ? Ci.nsINntpIncomingServer.DEFAULT_NNTPS_PORT
+          : Ci.nsINntpIncomingServer.DEFAULT_NNTP_PORT;
+      }
+      if (!Services.io.allowPort(Number(url.port), url.protocol.slice(0, -1))) {
+        console.warn(`Port not allowed for news URI: ${url.host}`);
         return;
       }
-      url.hostname = firstNntpServer.hostname;
-      url.port = firstNntpServer.port;
-    }
-    if (!url.port) {
-      url.port = Ci.nsINntpIncomingServer.DEFAULT_NNTP_PORT;
+      const result = Services.prompt.confirm(
+        win,
+        null,
+        lazy.l10n.formatValueSync("unknown-news-server-text", {
+          server: url.host,
+        })
+      );
+      if (!result) {
+        return;
+      }
     }
 
     const tempFile = Services.dirsvc.get("TmpD", Ci.nsIFile);

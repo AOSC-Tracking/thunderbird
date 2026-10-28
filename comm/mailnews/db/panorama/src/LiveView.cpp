@@ -108,6 +108,36 @@ NS_IMETHODIMP LiveView::InitWithConversation(uint64_t aConversationId) {
   return NS_OK;
 }
 
+NS_IMETHODIMP LiveView::InitWithUnreadMessages() {
+  if (mFolderFilter) {
+    NS_WARNING("folder filter already set");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  mFolderFilter = new UnreadMessagesFilter();
+  return NS_OK;
+}
+
+NS_IMETHODIMP LiveView::InitWithFlaggedMessages() {
+  if (mFolderFilter) {
+    NS_WARNING("folder filter already set");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  mFolderFilter = new FlaggedMessagesFilter();
+  return NS_OK;
+}
+
+NS_IMETHODIMP LiveView::InitWithDateRange(PRTime aStartDate, PRTime aEndDate) {
+  if (mFolderFilter) {
+    NS_WARNING("folder filter already set");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  mFolderFilter = new DateRangeFilter(aStartDate, aEndDate);
+  return NS_OK;
+}
+
 NS_IMETHODIMP LiveView::GetSortColumn(nsILiveView::SortColumn* aSortColumn) {
   *aSortColumn = mSortColumn;
   return NS_OK;
@@ -208,7 +238,7 @@ void LiveView::PrepareStatement(mozIStorageStatement* statement) {
 /**
  * Test if `aMessage` matches the current filters.
  */
-bool LiveView::Matches(Message& aMessage) {
+bool LiveView::Matches(nsIMsgDBHdr* aMessage) {
   if (mFolderFilter && !(mFolderFilter->Matches(aMessage))) {
     return false;
   }
@@ -765,7 +795,7 @@ NS_IMETHODIMP LiveView::SelectMessagesInGroup(const nsACString& group,
 }
 
 void LiveView::OnMessageAdded(Message* aMessage) {
-  if (!mListener || !Matches(*aMessage)) {
+  if (!mListener || !Matches((nsIMsgDBHdr*)aMessage)) {
     return;
   }
 
@@ -783,7 +813,7 @@ void LiveView::OnMessageAdded(Message* aMessage) {
 }
 
 void LiveView::OnMessageRemoved(Message* aMessage, uint32_t oldFlags) {
-  if (!mListener || !Matches(*aMessage)) {
+  if (!mListener || !Matches((nsIMsgDBHdr*)aMessage)) {
     return;
   }
 
@@ -800,11 +830,47 @@ void LiveView::OnMessageRemoved(Message* aMessage, uint32_t oldFlags) {
   mListener->OnMessageRemoved(handle);
 }
 
-void LiveView::OnMessageFlagsChanged(Message* aMessage, uint32_t oldFlags,
+bool LiveView::CheckIfChangeMatches(nsIMsgDBHdr* oldMessage,
+                                    Message* newMessage) {
+  bool matchesOld = Matches(oldMessage);
+  bool matchesNew = Matches((nsIMsgDBHdr*)newMessage);
+
+  if (matchesNew && matchesOld) {
+    // This is a change we are interested in. Return true so the caller files
+    // a notification.
+    return true;
+  }
+
+  if (!matchesNew && !matchesOld) {
+    // This is a change we aren't interested in.
+    return false;
+  }
+
+  AutoJSAPI jsapi;
+  if (!jsapi.Init(PrivilegedJunkScope())) {
+    return false;
+  }
+  JSContext* cx = jsapi.cx();
+
+  Rooted<JSObject*> obj(cx);
+  CreateJSMessage(newMessage, cx, obj);
+  Rooted<Value> message(cx, ObjectValue(*obj));
+  MutableHandle<Value> handle(&message);
+
+  if (matchesNew) {
+    // We weren't interested in this message, but now we are.
+    mListener->OnMessageAdded(handle);
+  } else {
+    // We were interested in this message, but now we aren't.
+    mListener->OnMessageRemoved(handle);
+  }
+  return false;
+}
+
+void LiveView::OnMessageFlagsChanged(nsIMsgDBHdr* oldMessage,
+                                     Message* newMessage, uint32_t oldFlags,
                                      uint32_t newFlags) {
-  // TODO: If the message did match but doesn't now, or if it didn't match
-  // but does now. This isn't currently a problem for any existing filters.
-  if (!mListener || !Matches(*aMessage)) {
+  if (!mListener || !CheckIfChangeMatches(oldMessage, newMessage)) {
     return;
   }
 
@@ -815,10 +881,32 @@ void LiveView::OnMessageFlagsChanged(Message* aMessage, uint32_t oldFlags,
   JSContext* cx = jsapi.cx();
 
   Rooted<JSObject*> obj(cx);
-  CreateJSMessage(aMessage, cx, obj);
+  CreateJSMessage(newMessage, cx, obj);
   Rooted<Value> message(cx, ObjectValue(*obj));
   MutableHandle<Value> handle(&message);
   mListener->OnMessageFlagsChanged(handle, oldFlags);
+}
+
+void LiveView::OnMessageTagsChanged(nsIMsgDBHdr* oldMessage,
+                                    Message* newMessage,
+                                    const nsACString& oldTags,
+                                    const nsACString& newTags) {
+  if (!mListener || !CheckIfChangeMatches(oldMessage, newMessage)) {
+    return;
+  }
+
+  AutoJSAPI jsapi;
+  if (!jsapi.Init(PrivilegedJunkScope())) {
+    return;
+  }
+  JSContext* cx = jsapi.cx();
+
+  Rooted<JSObject*> obj(cx);
+  CreateJSMessage(newMessage, cx, obj);
+  Rooted<Value> message(cx, ObjectValue(*obj));
+  MutableHandle<Value> handle(&message);
+
+  mListener->OnMessageTagsChanged(handle, oldTags);
 }
 
 NS_IMETHODIMP LiveView::SetListener(nsILiveViewListener* aListener) {

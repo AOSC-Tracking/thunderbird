@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsImapGenericParser.h"
+#include "nsCRTGlue.h"
 #include "nsString.h"
 #include "plstr.h"
 #include "prmem.h"
@@ -43,7 +44,7 @@ void nsImapGenericParser::SetSyntaxError(bool error, const char* msg) {
     fParserState |= stateSyntaxErrorFlag;
   else
     fParserState &= ~stateSyntaxErrorFlag;
-  NS_ASSERTION(!error, "syntax error in generic parser");
+  NS_WARNING_ASSERTION(!error, "syntax error in generic parser");
 }
 
 void nsImapGenericParser::SetConnected(bool connected) {

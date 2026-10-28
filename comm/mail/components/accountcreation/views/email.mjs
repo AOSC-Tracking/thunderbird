@@ -819,7 +819,13 @@ class AccountHubEmail extends HTMLElement {
           newManualConfigPref &&
           this.#currentState == "emailConfigFoundSubview"
         ) {
-          this.#initManualConfig(this.#currentConfig.incoming.type, {
+          const incomingType = this.#currentConfig.incoming.type;
+          const manualConfigProtocol = ["exchange", "ews", "graph"].includes(
+            incomingType
+          )
+            ? "microsoft"
+            : incomingType;
+          this.#initManualConfig(manualConfigProtocol, {
             previousStep: "emailConfigFoundSubview",
           });
           break;
@@ -1890,8 +1896,9 @@ class AccountHubEmail extends HTMLElement {
       );
 
       // We'll look for address books and calendars at the domain of the email
-      // address and, if it's different but is at the same site according to
-      // the eTLD service, the domain of the incoming mail server.
+      // address, the incoming mail server's hostname, and, if it's different
+      // but is at the same site according to the eTLD service, the domain of
+      // the incoming mail server.
       const hostnames = [this.#email.split("@")[1]];
       const incomingHostname = this.#currentConfig.incoming.hostname;
       if (
@@ -1901,6 +1908,13 @@ class AccountHubEmail extends HTMLElement {
       ) {
         hostnames.push(incomingHostname);
       }
+
+      // If this is a graph email server, then we want to pass the incoming
+      // server's hostname in for calendar discovery as well.
+      if (this.#currentConfig.incoming.type === "graph") {
+        hostnames.push(incomingHostname);
+      }
+
       gAccountSetupLogger.debug(
         `Discovering address books and calendars at ${hostnames.join(", ")}.`
       );
@@ -2207,15 +2221,19 @@ class AccountHubEmail extends HTMLElement {
   /**
    * Get the calendars associated with the current account.
    *
-   * @param {string[]} hostnames - One or two hostnames to attempt calendar
-   *   discovery at.
+   * @param {string[]} hostnames - The hostnames to attempt calendar discovery
+   *   at, in order.
    * @param {string} password - The password for the current account.
    * @param {boolean} rememberPassword - The remember password choice.
-   *
-   * @returns {Array} - The calendars associated with the account.
+   * @returns {Promise<Array<calICalendar|{name: string, existing: true}>>} The
+   *   discovered calendars. Calendars that are already registered are returned
+   *   as placeholders with only a name and `existing: true`.
    */
   async #getCalendars(hostnames, password, rememberPassword) {
-    // Bail out if the CalDAV scope wasn't granted.
+    // Skip ICS detection, as an ICS calendar can only be found by its full URL.
+    const skippedTypes = ["ics"];
+
+    // Skip CalDAV if the CalDAV scope wasn't granted.
     if (this.#currentConfig.incoming.auth == Ci.nsMsgAuthMethod.OAuth2) {
       const oAuth2 = new lazy.OAuth2Module();
       if (
@@ -2226,7 +2244,7 @@ class AccountHubEmail extends HTMLElement {
         ) ||
         !(await oAuth2.getRefreshToken())
       ) {
-        return [];
+        skippedTypes.push("caldav");
       }
     }
 
@@ -2238,7 +2256,7 @@ class AccountHubEmail extends HTMLElement {
           password,
           `https://${hostname}`,
           rememberPassword,
-          [],
+          [() => skippedTypes],
           {}
         );
         if (calendarEntries.size) {

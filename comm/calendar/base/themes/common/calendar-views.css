@@ -380,16 +380,12 @@ calendar-header-container {
   display: grid;
 }
 
-.allday-events-list {
-  display: block;
+.allday-events-scroll {
   min-block-size: 30px;
   max-block-size: 120px;
   min-inline-size: 100px;
   overflow-y: auto;
   overflow-x: hidden;
-  margin: 0;
-  padding-block: 0;
-  padding-inline: 1px 6px;
   /* Prevent overscrolling from moving into the parent view.
    * NOTE: This only works if the list is overflowing. For cases where it does
    * not overflow, we must prevent scrolling the parent in javascript. */
@@ -400,12 +396,20 @@ calendar-header-container {
   min-inline-size: 150px;
 }
 
+.allday-events-list {
+  display: block;
+  margin: 0;
+  padding-block: 0;
+  padding-inline: 1px 6px;
+}
+
 .allday-event-listitem {
   display: block;
   margin: 2px;
 }
 
-.multiday-events-list {
+.multiday-events-list,
+.multiday-events-overflow {
   padding: 0;
   position: relative;
 }
@@ -419,14 +423,26 @@ calendar-header-container {
   box-sizing: border-box;
 }
 
+.multiday-events-overflow-item {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: var(--space-xxsmall) var(--space-xsmall);
+  border: 1px dashed var(--viewBorderColor);
+  border-radius: var(--border-radius-small);
+  background-color: var(--viewBackground);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Margin that allows event creation by click and drag when the time slot is
    full of events. On the right side in normal view ... */
-calendar-event-column .multiday-events-list {
+calendar-event-column :is(.multiday-events-list, .multiday-events-overflow) {
   margin-inline: 0 5px;
   margin-block: 0;
 }
 /* ... and on bottom in rotate view. */
-.multiday-grid-rotated calendar-event-column .multiday-events-list {
+.multiday-grid-rotated calendar-event-column :is(.multiday-events-list, .multiday-events-overflow) {
   margin-block: 0 5px;
   margin-inline: 0;
 }
@@ -810,18 +826,28 @@ calendar-month-day-box {
   margin-inline-start: auto;
 }
 
+.calendar-month-day-box-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1 1 0;
+}
+
 .calendar-month-day-box-list {
   display: block;
   margin: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
   padding: 0;
-  flex: 1 1 0;
 }
 
 .calendar-month-day-box-list-item {
   display: block;
   margin: 2px;
+}
+
+.calendar-item-list-more-button {
+  min-inline-size: 0;
+  min-block-size: auto;
+  margin: var(--space-xxsmall);
+  padding: 0 var(--space-xxsmall);
 }
 
 .calendar-month-day-box-current-month {
@@ -1268,6 +1294,7 @@ button.calview-toggle-item[role="tab"][aria-selected="false"]:hover:active {
 }
 
 .multiday-events-list,
+.multiday-events-overflow,
 .timeIndicator {
   pointer-events: none;
 }

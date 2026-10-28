@@ -367,7 +367,11 @@ export class NntpClient {
           nssErrorsService.getErrorClass(event.errorCode) ==
           Ci.nsINSSErrorsService.ERROR_CLASS_BAD_CERT
         ) {
-          MailServices.mailSession.alertCertError(secInfo, this.runningUri);
+          MailServices.mailSession.alertCertError(
+            secInfo,
+            this.runningUri,
+            this._server.key
+          );
         }
       } catch (e) {
         // Not an NSS error.
@@ -423,6 +427,13 @@ export class NntpClient {
           `Failed to send "${str}" because socket state is ${this._socket.readyState}`
         );
       }
+      return;
+    }
+    if (/[\r\n]/.test(str)) {
+      // Line breaks would let the rest of str be sent as separate commands.
+      this._logger.error("Command cannot contain line breaks");
+      this.close();
+      this._actionDone(Cr.NS_ERROR_ILLEGAL_VALUE);
       return;
     }
     if (suppressLogging && AppConstants.MOZ_UPDATE_CHANNEL != "default") {
@@ -930,17 +941,22 @@ export class NntpClient {
     const lineSeparator = AppConstants.platform == "win" ? "\r\n" : "\n";
 
     let article = "";
-    this._lineReader.read(
-      data,
-      line => {
-        article += line.slice(0, -2) + lineSeparator;
-        this.onData(line);
-      },
-      () => {
-        this._newsFolder?.notifyArticleDownloaded(this._articleNumber, article);
-        this._actionDone();
-      }
-    );
+    this._lineReader
+      .read(
+        data,
+        line => {
+          article += line.slice(0, -2) + lineSeparator;
+          this.onData(line);
+        },
+        () => {
+          this._newsFolder?.notifyArticleDownloaded(
+            this._articleNumber,
+            article
+          );
+          this._actionDone();
+        }
+      )
+      .catch(this._actionReadDataFailed);
   };
 
   /**
@@ -950,8 +966,21 @@ export class NntpClient {
    * @param {NntpResponse} res - Response received from the server.
    */
   _actionReadData({ data }) {
-    this._lineReader.read(data, this.onData, this._actionDone);
+    this._lineReader
+      .read(data, this.onData, this._actionDone)
+      .catch(this._actionReadDataFailed);
   }
+
+  /**
+   * Handle an exception thrown while processing a multi-line response, so that
+   * the connection doesn't stay busy forever.
+   *
+   * @param {Error} e
+   */
+  _actionReadDataFailed = e => {
+    this._logger.error("Failed to process multi-line response.", e);
+    this._actionDone(Cr.NS_ERROR_FAILURE);
+  };
 
   /**
    * Handle POST response.

@@ -2,7 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { PositionedDialog } from "./positioned-dialog.mjs";
+import {
+  DEFAULT_DIALOG_MARGIN,
+  PositionedDialog,
+} from "./positioned-dialog.mjs";
 import "./calendar-dialog-acceptance.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./calendar-dialog-subview-manager.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./calendar-dialog-date-row.mjs"; // eslint-disable-line import/no-unassigned-import
@@ -21,9 +24,10 @@ const { openLinkExternally } = ChromeUtils.importESModule(
 const { cal } = ChromeUtils.importESModule(
   "resource:///modules/calendar/calUtils.sys.mjs"
 );
-const { recurrenceStringFromItem } = ChromeUtils.importESModule(
-  "resource:///modules/calendar/calRecurrenceUtils.sys.mjs"
-);
+const { recurrenceStringFromItem, countOccurrences } =
+  ChromeUtils.importESModule(
+    "resource:///modules/calendar/calRecurrenceUtils.sys.mjs"
+  );
 
 const { extractJoinLink } = ChromeUtils.importESModule(
   "resource:///modules/calendar/JoinLinkParser.sys.mjs"
@@ -36,13 +40,13 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///comm/mail/components/calendar/modules/CalendarAttachmentUtils.sys.mjs",
 });
 
-export const DEFAULT_DIALOG_MARGIN = 12;
-
 /**
- * Dialog for calendar. Expects to find an element to anchor to at a selector of the pattern
+ * Read-only calendar event dialog. Expects to find an element to anchor to at
+ * a selector of the pattern
  * `#view-box > :not([hidden]) [data-event-id="${event-id}"][data-recurrence-id="${recurrence-id}"]`.
- * If there is no recurrence ID, that part of the selector is omitted. If no element is found we
- * attempt to fall back to the target of the opening event if possible.
+ * If there is no recurrence ID, that part of the selector is omitted. If no
+ * element is found we attempt to fall back to the target of the opening event
+ * if possible.
  * Template ID: #calendarDialogTemplate
  *
  * @tagname calendar-dialog
@@ -81,6 +85,21 @@ export class CalendarDialog extends PositionedDialog {
    * @type {string}
    */
   #meetingUrl = null;
+
+  /**
+   * The event currently displayed in the dialog. For recurring events this is
+   * the selected occurrence.
+   *
+   * @type {calIEvent?}
+   */
+  #event = null;
+
+  /**
+   * The callback used to save changes to the displayed event.
+   *
+   * @type {?Function}
+   */
+  #onEventResponse = null;
 
   /**
    * Event loading promise. Don't try loading again until previous attempt is complete.
@@ -155,6 +174,8 @@ export class CalendarDialog extends PositionedDialog {
         this
       );
 
+      this.addEventListener("command", this);
+
       this.querySelector(".back-button").hidden =
         this.#subviewManager.isDefaultSubviewVisible();
 
@@ -180,8 +201,7 @@ export class CalendarDialog extends PositionedDialog {
   }
 
   /**
-   * The handlers are matched based on the selector in the key
-   * applying to the target of the click event.
+   * Maps selectors for click events to their handler functions.
    *
    * @type {Record<string,Function>}
    */
@@ -201,6 +221,16 @@ export class CalendarDialog extends PositionedDialog {
       this.#subviewManager.showSubview("calendarAttachmentsSubview"),
     "#expandAttendees": () =>
       this.#subviewManager.showSubview("calendarAttendeesSubview"),
+    "#deleteEvent": () => this.#deleteEvent(),
+  };
+
+  /**
+   * Maps selectors for command events to their handler functions.
+   *
+   * @type {Record<string,Function>}
+   */
+  #commandHandlers = {
+    "#deleteEvent": () => this.#deleteEvent(),
   };
 
   handleEvent(event) {
@@ -210,6 +240,16 @@ export class CalendarDialog extends PositionedDialog {
         break;
       case "click":
         for (const [selector, handler] of Object.entries(this.#clickHandlers)) {
+          if (event.target.closest(selector)) {
+            handler(event);
+            break;
+          }
+        }
+        break;
+      case "command":
+        for (const [selector, handler] of Object.entries(
+          this.#commandHandlers
+        )) {
           if (event.target.closest(selector)) {
             handler(event);
             break;
@@ -227,11 +267,7 @@ export class CalendarDialog extends PositionedDialog {
         break;
       }
       case "setEventResponse":
-        this.querySelector("calendar-dialog-acceptance").setAttribute(
-          "status",
-          event.detail.status
-        );
-        // TODO: Update the event with the user response.
+        this.#setEventResponse(event.detail.status);
         break;
     }
   }
@@ -271,9 +307,10 @@ export class CalendarDialog extends PositionedDialog {
    * with a calIEvent the dialog will update to show the data of that event.
    *
    * @param {calIEvent} event
+   * @param {?Function} [onEventResponse] - Called to save an event response.
    * @throws {Error} When passed a calIItemBase that isn't an event.
    */
-  setCalendarEvent(event) {
+  setCalendarEvent(event, onEventResponse = null) {
     if (!event.isEvent()) {
       throw new Error("Can only display events");
     }
@@ -282,10 +319,14 @@ export class CalendarDialog extends PositionedDialog {
       this.close();
     }
 
+    this.#onEventResponse = onEventResponse;
     this.removeAttribute("calendar-id");
     if (event.recurrenceId) {
       this.setAttribute("recurrence-id", event.recurrenceId.nativeTime);
+    } else {
+      this.removeAttribute("recurrence-id");
     }
+
     this.setAttribute("event-id", event.id);
     this.setAttribute("calendar-id", event.calendar.id);
   }
@@ -423,6 +464,8 @@ export class CalendarDialog extends PositionedDialog {
         }
       }
     }
+    this.#event = event;
+
     const selector = `#view-box > :not([hidden]) [data-event-id="${event.id}"]${recurrenceSelector}`;
     this.trigger = document.querySelector(selector);
 
@@ -551,6 +594,8 @@ export class CalendarDialog extends PositionedDialog {
    * Clear the data displayed in the dialog.
    */
   #clearData() {
+    this.#event = null;
+    this.#onEventResponse = null;
     this.#subviewManager.showDefaultSubview();
     this.#title.textContent = "";
     this.querySelector(".calendar-name").textContent = "";
@@ -572,6 +617,88 @@ export class CalendarDialog extends PositionedDialog {
     this.querySelector("calendar-dialog-acceptance").reset();
     this.querySelector("#expandingDescription").setDescription("");
     this.querySelector("#expandedDescription").setDescription("");
+  }
+
+  /**
+   * Saves a new participation status and sends the corresponding iTIP reply.
+   *
+   * @param {string} participationStatus - The new participation status.
+   */
+  async #setEventResponse(participationStatus) {
+    const oldEvent = this.#event;
+    const oldAttendee =
+      oldEvent && cal.itip.getInvitedAttendee(oldEvent, oldEvent.calendar);
+    if (
+      !oldEvent ||
+      !oldAttendee ||
+      oldAttendee.participationStatus == participationStatus
+    ) {
+      return;
+    }
+
+    // `oldEvent` is the displayed occurrence, so this intentionally updates
+    // only that occurrence instead of the parent recurring event.
+    const newEvent = oldEvent.clone();
+    const invitedAttendee = cal.itip.getInvitedAttendee(
+      newEvent,
+      newEvent.calendar
+    );
+    if (!invitedAttendee) {
+      return;
+    }
+    const newAttendee = invitedAttendee.clone();
+    newEvent.removeAttendee(invitedAttendee);
+    newEvent.addAttendee(newAttendee);
+    // Ensure scheduling recognizes this as an attendee update, as the
+    // existing event read dialog does.
+    newEvent.wrappedJSObject.ensureNotDirty();
+    newAttendee.participationStatus = participationStatus;
+
+    try {
+      const response = { responseMode: Ci.calIItipItem.AUTO };
+      if (this.#onEventResponse) {
+        await this.#onEventResponse(
+          newEvent,
+          newEvent.calendar,
+          oldEvent,
+          null,
+          response
+        );
+      } else {
+        await window.doTransaction(
+          "modify",
+          newEvent,
+          newEvent.calendar,
+          oldEvent,
+          null,
+          response
+        );
+      }
+    } catch (error) {
+      console.error("Failed to send calendar event response", error);
+      this.querySelector("calendar-dialog-acceptance").setAttribute(
+        "status",
+        oldAttendee.participationStatus
+      );
+      return;
+    }
+
+    // The dialog may have been reused while the transaction was in progress.
+    if (this.#event !== oldEvent) {
+      return;
+    }
+
+    this.#event = newEvent;
+    const attendees = newEvent.getAttendees();
+    for (const attendeeView of this.querySelectorAll(
+      "calendar-dialog-attendees-row"
+    )) {
+      attendeeView.setAttendees(attendees);
+    }
+    this.querySelector("calendar-dialog-acceptance").setAttribute(
+      "status",
+      participationStatus
+    );
   }
 
   /**
@@ -631,6 +758,73 @@ export class CalendarDialog extends PositionedDialog {
       this.querySelector(".menu-button"),
       "after_end"
     );
+  }
+
+  /**
+   * Opens a modal prompt about deleting the event. The prompt can handle
+   * recurring events, being able to delete a single occurrence or all
+   * occurrences (the whole event), as well as delete a standalone event.
+   */
+  async #deleteEvent() {
+    const calendar = cal.manager.getCalendarById(
+      this.getAttribute("calendar-id")
+    );
+    const event = await calendar.getItem(this.getAttribute("event-id"));
+    const isRecurring =
+      this.hasAttribute("recurrence-id") && countOccurrences(event) > 1;
+    const extResponse = { responseMode: Ci.calIItipItem.USER };
+
+    const CANCEL = 0;
+    const DELETE_OCCURRENCE = 1;
+    const DELETE_FOLLOWING = 2;
+    const DELETE_ALL = 3;
+
+    let response = CANCEL;
+
+    const returnValue = { value: CANCEL, isRecurring };
+    window.openDialog(
+      "chrome://messenger/content/calendarPrompt.xhtml",
+      "_blank",
+      "centerscreen,chrome,titlebar,modal",
+      returnValue
+    );
+    response = returnValue.value;
+    this.close();
+
+    switch (response) {
+      case DELETE_ALL:
+        // eslint-disable-next-line no-undef
+        doTransaction("delete", event, calendar, null, null, extResponse);
+        break;
+      case DELETE_FOLLOWING:
+        // TODO: Add functionality to only delete all following events.
+        break;
+      case DELETE_OCCURRENCE:
+        if (isRecurring) {
+          const eventCopy = event.parentItem.clone();
+          const recurrenceId = cal.createDateTime();
+          recurrenceId.nativeTime = this.getAttribute("recurrence-id");
+
+          eventCopy.recurrenceInfo.removeOccurrenceAt(recurrenceId);
+
+          // eslint-disable-next-line no-undef
+          doTransaction(
+            "modify",
+            eventCopy,
+            eventCopy.calendar,
+            event.parentItem,
+            null,
+            extResponse
+          );
+          break;
+        }
+
+        // eslint-disable-next-line no-undef
+        doTransaction("delete", event, calendar, null, null, extResponse);
+        break;
+      case CANCEL:
+        break;
+    }
   }
 }
 

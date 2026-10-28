@@ -107,10 +107,10 @@ UNIFIED_SOURCES += [
 ]
 
 if CONFIG["OS_ARCH"] == "WINNT":
-    UNIFIED_SOURCES += [
-        "nsMessengerWinIntegration.cpp",
-    ]
+    # Not unified, as nsMessengerWinIntegration.cpp includes windowsx.h, whose
+    # macros break DOM headers included by other files.
     SOURCES += [
+        "nsMessengerWinIntegration.cpp",
         "nsUserInfoWin.cpp",
     ]
 elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
@@ -141,6 +141,7 @@ EXTRA_JS_MODULES += [
     "MailStringUtils.sys.mjs",
     "MboxRepair.sys.mjs",
     "MboxRepair.worker.mjs",
+    "MessengerLinuxTrayIntegration.sys.mjs",
     "MorkParser.sys.mjs",
     "MsgAsyncPrompter.sys.mjs",
     "MsgDBCacheManager.sys.mjs",
@@ -152,6 +153,7 @@ EXTRA_JS_MODULES += [
     "OAuth2CustomDetails.sys.mjs",
     "OAuth2Module.sys.mjs",
     "OAuth2Providers.sys.mjs",
+    "SystemTrayBadgeManager.sys.mjs",
     "TemplateUtils.sys.mjs",
     "VirtualFolderWrapper.sys.mjs",
     "WinUnreadBadge.sys.mjs",
@@ -181,3 +183,11 @@ XPCOM_MANIFESTS += [
 
 # Add libFuzzer configuration directives
 include("/tools/fuzzing/libfuzzer-config.mozbuild")
+
+LICENSED_UNDER += [
+    "mit",
+]
+
+LICENSED_UNDER["mit"].paths = [
+    "MorkParser.sys.mjs",
+]

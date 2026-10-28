@@ -161,12 +161,28 @@ add_task(async function testSyncChangesWithRealFolderGraph() {
   await testSyncChangesWithRealFolder(graphServer, incomingGraphServer);
 });
 
+add_task(async function testReplySubjectsEws() {
+  await testReplySubjects(ewsServer, incomingEwsServer);
+});
+
+add_task(async function testReplySubjectsGraph() {
+  await testReplySubjects(graphServer, incomingGraphServer);
+});
+
 add_task(async function testSyncRecipientsEws() {
   await testSyncRecipients(ewsServer, incomingEwsServer);
 });
 
 add_task(async function testSyncRecipientsGraph() {
   await testSyncRecipients(graphServer, incomingGraphServer);
+});
+
+add_task(async function testHeaderInjectionEws() {
+  await testHeaderInjection(ewsServer, incomingEwsServer);
+});
+
+add_task(async function testHeaderInjectionGraph() {
+  await testHeaderInjection(graphServer, incomingGraphServer);
 });
 
 /**
@@ -350,7 +366,11 @@ async function testSyncChangesWithClient(
   const messageIdToUpdate = messages[5].messageId;
   const itemIdToUpdate = messages[5].messageId;
   messages[5].subject = "Scary Monster Under Your Bed";
-  mockServer.itemChanges.push(["update", "inbox", itemIdToUpdate]);
+  mockServer.itemChanges.push({
+    kind: "update",
+    parentId: "inbox",
+    id: itemIdToUpdate,
+  });
   info(`Updating subject of message ${itemIdToUpdate}`);
 
   const itemIdToMove = messages[4].messageId;
@@ -364,13 +384,21 @@ async function testSyncChangesWithClient(
 
   const itemIdToMarkRead = messages[1].messageId;
   messages[1].metaState.read = true;
-  mockServer.itemChanges.push(["readflag", "inbox", itemIdToMarkRead]);
+  mockServer.itemChanges.push({
+    kind: "readflag",
+    parentId: "inbox",
+    id: itemIdToMarkRead,
+  });
   info(`Marking message ${itemIdToMarkRead} as read`);
 
   const messageIdToFlag = messages[0].messageId;
   const itemIdToFlag = messages[0].messageId;
   messages[0].metaState.flagged = true;
-  mockServer.itemChanges.push(["update", "inbox", itemIdToFlag]);
+  mockServer.itemChanges.push({
+    kind: "update",
+    parentId: "inbox",
+    id: itemIdToFlag,
+  });
   info(`Flagging message ${itemIdToFlag}`);
 
   // Sync again to pick up the changes.
@@ -609,7 +637,11 @@ async function testSyncChangesWithRealFolder(mockServer, incomingServer) {
   const itemIdToUpdate = messages[5].messageId;
   messages[5].subject = "Scary Monster Under Your Bed";
   messages[5].bodyPart.body = `Kia ora ${originalGreeting[1]}!`;
-  mockServer.itemChanges.push(["update", folderName, itemIdToUpdate]);
+  mockServer.itemChanges.push({
+    kind: "update",
+    parentId: folderName,
+    id: itemIdToUpdate,
+  });
 
   const itemIdToMove = messages[4].messageId;
   mockServer.moveItemToFolder(itemIdToMove, moveDestinationFolderName);
@@ -621,12 +653,20 @@ async function testSyncChangesWithRealFolder(mockServer, incomingServer) {
 
   const itemIdToMarkRead = messages[1].messageId;
   messages[1].metaState.read = true;
-  mockServer.itemChanges.push(["readflag", folderName, itemIdToMarkRead]);
+  mockServer.itemChanges.push({
+    kind: "readflag",
+    parentId: folderName,
+    id: itemIdToMarkRead,
+  });
 
   const messageIdToFlag = messages[0].messageId;
   const itemIdToFlag = messages[0].messageId;
   messages[0].metaState.flagged = true;
-  mockServer.itemChanges.push(["update", folderName, itemIdToFlag]);
+  mockServer.itemChanges.push({
+    kind: "update",
+    parentId: folderName,
+    id: itemIdToFlag,
+  });
 
   // Sync again to pick up the changes.
 
@@ -691,6 +731,56 @@ async function testSyncChangesWithRealFolder(mockServer, incomingServer) {
   );
 }
 
+async function testReplySubjects(mockServer, incomingServer) {
+  mockServer.clearItems();
+  const folderName = `${incomingServer.type}_reply_subject`;
+  mockServer.appendRemoteFolder(
+    new RemoteFolder(folderName, "root", folderName, folderName)
+  );
+
+  const rootFolder = incomingServer.rootFolder;
+  await syncFolder(incomingServer, rootFolder);
+  const folder = rootFolder.getChildNamed(folderName);
+  const message = generator.makeMessage({ subject: "Re: topic" });
+  mockServer.addMessages(folderName, [message]);
+  await syncFolder(incomingServer, folder);
+
+  const getMessageHeader = () =>
+    folder.msgDatabase.getMsgHdrForMessageID(message.messageId);
+  Assert.equal(getMessageHeader().subject, "topic");
+  Assert.ok(getMessageHeader().flags & Ci.nsMsgMessageFlags.HasRe);
+
+  message.subject = "replacement";
+  mockServer.itemChanges.push({
+    kind: "update",
+    parentId: folderName,
+    id: message.messageId,
+  });
+  await syncFolder(incomingServer, folder);
+  Assert.equal(getMessageHeader().subject, "replacement");
+  Assert.ok(!(getMessageHeader().flags & Ci.nsMsgMessageFlags.HasRe));
+
+  message.subject = "Re:";
+  mockServer.itemChanges.push({
+    kind: "update",
+    parentId: folderName,
+    id: message.messageId,
+  });
+  await syncFolder(incomingServer, folder);
+  Assert.equal(getMessageHeader().subject, "");
+  Assert.ok(getMessageHeader().flags & Ci.nsMsgMessageFlags.HasRe);
+
+  message.subject = "Re: =?UTF-8?Q?=3D=3FUTF-8=3FQ=3Fhello=3F=3D?=";
+  mockServer.itemChanges.push({
+    kind: "update",
+    parentId: folderName,
+    id: message.messageId,
+  });
+  await syncFolder(incomingServer, folder);
+  Assert.equal(getMessageHeader().mime2DecodedSubject, "=?UTF-8?Q?hello?=");
+  Assert.ok(getMessageHeader().flags & Ci.nsMsgMessageFlags.HasRe);
+}
+
 /**
  * Test that the recipients of a new message are correctly persisted.
  */
@@ -746,6 +836,57 @@ async function testSyncRecipients(mockServer, incomingServer) {
     message.ccList,
     '"Bob" <bob@foo.invalid>',
     "the ccList property on the message should match the ones in the message"
+  );
+}
+
+/**
+ * Test that line breaks in server-provided header values can't inject extra
+ * header fields, and that local-only header fields from the server are
+ * ignored.
+ *
+ * @param {MockServer} mockServer - The `MockServer` instance that implements
+ *   the protocol being tested.
+ * @param {nsIMsgIncomingServer} incomingServer - The incoming server to sync.
+ */
+async function testHeaderInjection(mockServer, incomingServer) {
+  const folderName = "headerInjection";
+  mockServer.appendRemoteFolder(
+    new RemoteFolder(folderName, "root", folderName, null)
+  );
+
+  const msg = generator.makeMessage({
+    from: ["Alice", "alice@foo.invalid"],
+    subject: "Totally legit\nFrom: spoof@evil.invalid\r\nX-Injected: yes",
+    clobberHeaders: { "X-Mozilla-Keys": "$label1" },
+  });
+  mockServer.addMessages(folderName, [msg]);
+
+  const rootFolder = incomingServer.rootFolder;
+  incomingServer.getNewMessages(rootFolder, null, null);
+
+  const folder = await TestUtils.waitForCondition(
+    () => rootFolder.getChildNamed(folderName),
+    "waiting for folder to exist"
+  );
+  await TestUtils.waitForCondition(
+    () => folder.getTotalMessages(false) == 1,
+    "waiting for the message to exist"
+  );
+
+  const message = [...folder.messages][0];
+  Assert.equal(
+    message.subject,
+    "Totally legit From: spoof@evil.invalid X-Injected: yes",
+    "line breaks in the subject should be replaced with spaces"
+  );
+  Assert.ok(
+    !message.author.includes("evil.invalid"),
+    "the author should not be overridden by an injected header"
+  );
+  Assert.equal(
+    message.getStringProperty("keywords"),
+    "",
+    "keywords should not be set from a server-provided X-Mozilla-Keys header"
   );
 }
 

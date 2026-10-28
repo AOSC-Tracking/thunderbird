@@ -714,23 +714,28 @@ var stateListener = {
     }
 
     // Control insertion of line breaks.
+    const editor = GetCurrentEditor();
+    editor.enableUndo(false);
+    editor.selection.collapse(mailBody, 0);
     if (insertParagraph) {
-      const editor = GetCurrentEditor();
-      editor.enableUndo(false);
-
-      editor.selection.collapse(mailBody, 0);
       const pElement = editor.createElementWithDefaults("p");
       pElement.appendChild(editor.createElementWithDefaults("br"));
       editor.insertElementAtSelection(pElement, false);
-
       document.getElementById("cmd_paragraphState").setAttribute("state", "p");
-
-      editor.beginningOfDocument();
-      editor.enableUndo(true);
-      editor.resetModificationCount();
     } else {
+      if (gMsgCompose.composeHTML && !mailBody.hasChildNodes()) {
+        // Insert the line break ourselves, otherwise the editor adds one
+        // later on, which marks the message as modified.
+        editor.insertElementAtSelection(
+          editor.createElementWithDefaults("br"),
+          false
+        );
+      }
       document.getElementById("cmd_paragraphState").setAttribute("state", "");
     }
+    editor.beginningOfDocument();
+    editor.enableUndo(true);
+    editor.resetModificationCount();
     onParagraphFormatChange();
   },
 
@@ -11255,7 +11260,8 @@ function InitEditor() {
         const msgSvc = MailServices.messageServiceFromURI(gOriginalMsgURI);
         const originalMsgNeckoURI = msgSvc.getUrlForUri(gOriginalMsgURI);
         if (
-          src.startsWith(
+          lazy.ComposeUtils.isURLOfMessage(
+            src,
             removeQueryPart(
               originalMsgNeckoURI.spec,
               "type=application/x-message-display"
@@ -11264,7 +11270,8 @@ function InitEditor() {
           // Special hack for saved messages.
           (src.includes("?number=0&") &&
             originalMsgNeckoURI.spec.startsWith("file://") &&
-            src.startsWith(
+            lazy.ComposeUtils.isURLOfMessage(
+              src,
               removeQueryPart(
                 originalMsgNeckoURI.spec,
                 "type=application/x-message-display"
@@ -11319,7 +11326,8 @@ function InitEditor() {
     const msgSvc = MailServices.messageServiceFromURI(gOriginalMsgURI);
     const originalMsgNeckoURI = msgSvc.getUrlForUri(gOriginalMsgURI);
     if (
-      background.startsWith(
+      lazy.ComposeUtils.isURLOfMessage(
+        background,
         removeQueryPart(
           originalMsgNeckoURI.spec,
           "type=application/x-message-display"

@@ -267,7 +267,14 @@ void nsMsgProtocol::ShowAlertMessage(nsIMsgMailNewsUrl* aMsgUrl,
     NS_ENSURE_SUCCESS_VOID(rv);
   }
 
-  mailSession->AlertUser(errorMsg, aMsgUrl, silent);
+  nsCOMPtr<nsIMsgIncomingServer> server;
+  rv = aMsgUrl->GetServer(getter_AddRefs(server));
+  NS_ENSURE_SUCCESS_VOID(rv);
+  nsAutoCString serverKey;
+  rv = server->GetKey(serverKey);
+  NS_ENSURE_SUCCESS_VOID(rv);
+
+  mailSession->AlertUser(errorMsg, serverKey, silent);
 }
 
 // stop binding is a "notification" informing us that the stream associated with
@@ -677,8 +684,8 @@ nsresult nsMsgProtocol::DoGSSAPIStep1(const nsACString& service,
                                       nsCString& response) {
   nsresult rv;
 
-  // if this fails, then it means that we cannot do GSSAPI SASL.
   m_authModule = nsIAuthModule::CreateInstance("sasl-gssapi");
+  NS_ENSURE_TRUE(m_authModule, NS_ERROR_FAILURE);
 
   m_authModule->Init(service, nsIAuthModule::REQ_DEFAULT, u""_ns,
                      NS_ConvertUTF8toUTF16(username), u""_ns);
@@ -695,6 +702,7 @@ nsresult nsMsgProtocol::DoGSSAPIStep1(const nsACString& service,
     free(outBuf);
   }
 
+  // If this fails, then it means that we cannot do GSSAPI SASL.
   return rv;
 }
 
@@ -714,7 +722,7 @@ nsresult nsMsgProtocol::DoGSSAPIStep2(nsCString& commandResponse,
 
     // strip off any padding (see bug 230351)
     const char* challenge = commandResponse.get();
-    while (challenge[len - 1] == '=') len--;
+    while (len > 0 && challenge[len - 1] == '=') len--;
 
     // We need to know the exact length of the decoded string to give to
     // the GSSAPI libraries. But NSPR's base64 routine doesn't seem capable
@@ -755,7 +763,9 @@ nsresult nsMsgProtocol::DoNtlmStep1(const nsACString& username,
                                     nsCString& response) {
   nsresult rv;
 
+  // This fails in FIPS mode, where NTLM is disabled.
   m_authModule = nsIAuthModule::CreateInstance("ntlm");
+  NS_ENSURE_TRUE(m_authModule, NS_ERROR_FAILURE);
 
   m_authModule->Init(""_ns, 0, u""_ns, NS_ConvertUTF8toUTF16(username),
                      PromiseFlatString(password));
@@ -782,14 +792,20 @@ nsresult nsMsgProtocol::DoNtlmStep2(nsCString& commandResponse,
   uint32_t inBufLen, outBufLen;
   uint32_t len = commandResponse.Length();
 
-  // decode into the input secbuffer
-  inBufLen = (len * 3) / 4;  // sufficient size (see plbase64.h)
-  inBuf = moz_xmalloc(inBufLen);
-  if (!inBuf) return NS_ERROR_OUT_OF_MEMORY;
-
   // strip off any padding (see bug 230351)
   const char* challenge = commandResponse.get();
-  while (challenge[len - 1] == '=') len--;
+  while (len > 0 && challenge[len - 1] == '=') len--;
+
+  // The server may have answered OK without sending a challenge.
+  if (!len) {
+    response = "*";
+    return NS_ERROR_FAILURE;
+  }
+
+  // decode into the input secbuffer
+  inBufLen = (len * 3) / 4;  // exact size once padding is stripped
+  inBuf = moz_xmalloc(inBufLen);
+  if (!inBuf) return NS_ERROR_OUT_OF_MEMORY;
 
   rv = (PL_Base64Decode(challenge, len, (char*)inBuf))
            ? m_authModule->GetNextToken(inBuf, inBufLen, &outBuf, &outBufLen)

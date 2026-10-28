@@ -22,9 +22,15 @@ class nsImapNamespace {
   bool GetIsDelimiterFilledIn() { return m_delimiterFilledIn; }
   bool GetIsNamespaceFromPrefs() { return m_fromPrefs; }
 
-  // returns -1 if this box is not part of this namespace,
-  // or the length of the prefix if it is part of this namespace
+  // returns how well the box matches this namespace, the longest match wins:
+  // the length of the prefix if the box lies within the namespace,
+  // the length of the box if it is the root mailbox,
+  // 0 if the prefix is empty, -1 otherwise
   int MailboxMatchesNamespace(const char* boxname);
+
+  // returns true if the box is the mailbox at the root of this namespace,
+  // named like the prefix without its trailing delimiter, if it has one
+  bool IsRootMailbox(const char* boxname);
 
  protected:
   EIMAPNamespaceType m_namespaceType;
@@ -42,8 +48,6 @@ class nsImapNamespaceList {
   static nsImapNamespaceList* CreatensImapNamespaceList();
 
   int UnserializeNamespaces(const char* str, char** prefixes, int len);
-  nsresult SerializeNamespaces(char** prefixes, int len,
-                               nsCString& serializedNamespace);
 
   void ClearNamespaces(bool deleteFromPrefsNamespaces,
                        bool deleteServerAdvertisedNamespaces,

@@ -171,8 +171,10 @@ class MailAuthenticator {
 
   /**
    * Init a nsIMailAuthModule instance for NTLM auth.
+   *
+   * @param {string} password - The server password.
    */
-  initNtlmAuth() {
+  initNtlmAuth(password) {
     this._authModule = Cc["@mozilla.org/mail/auth-module;1"].createInstance(
       Ci.nsIMailAuthModule
     );
@@ -182,7 +184,7 @@ class MailAuthenticator {
       0, // nsIAuthModule::REQ_DEFAULT
       null, // domain
       this.username,
-      this.getPassword()
+      password
     );
   }
 
@@ -392,27 +394,19 @@ class IncomingServerAuthenticator extends MailAuthenticator {
   }
 
   /**
-   * Get the ByteString form of the current password.
-   *
-   * @returns {string}
-   */
-  async getByteStringPassword() {
-    return MailStringUtils.stringToByteString(await this.getPassword());
-  }
-
-  /**
    * Get the PLAIN auth token for a connection.
    *
+   * @param {string} password - The server password.
    * @returns {string}
    */
-  async getPlainToken() {
+  getPlainToken(password) {
     // According to rfc4616#section-2, username and password should be UTF-8
     // BinaryString before base64 encoded.
     return btoa(
       "\0" +
         this.getByteStringUsername() +
         "\0" +
-        (await this.getByteStringPassword())
+        MailStringUtils.stringToByteString(password)
     );
   }
 

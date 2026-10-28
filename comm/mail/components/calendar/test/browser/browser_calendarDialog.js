@@ -8,6 +8,10 @@ const { MockExternalProtocolService } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/MockExternalProtocolService.sys.mjs"
 );
 
+const { sinon } = ChromeUtils.importESModule(
+  "resource://testing-common/Sinon.sys.mjs"
+);
+
 const { recurrenceStringFromItem } = ChromeUtils.importESModule(
   "resource:///modules/calendar/calRecurrenceUtils.sys.mjs"
 );
@@ -34,6 +38,7 @@ add_setup(async function () {
   browser = tab.browser;
   cal.view.colorTracker.registerWindow(browser.contentWindow);
   dialog = browser.contentWindow.document.querySelector("dialog");
+  browser.contentWindow.openDialog = sinon.spy();
 
   const beforeUnloadGuard = () => {
     info("Unloading!");
@@ -1505,7 +1510,7 @@ add_task(async function test_userAttendanceResponse() {
 
   const calEvent = await createEvent(calendarEventData);
   dialog.setCalendarEvent(calEvent);
-  dialog.show();
+  await dialog.show();
   await statusPromise;
 
   // Acceptance widget should have "going" checked.
@@ -1514,6 +1519,8 @@ add_task(async function test_userAttendanceResponse() {
     "ACCEPTED",
     "Going should be checked in the acceptance widget"
   );
+
+  browser.contentWindow.doTransaction = async () => {};
 
   // Clicking "maybe" should fire setEventResponse and update the status attribute of
   // the acceptance widget.
@@ -1524,7 +1531,7 @@ add_task(async function test_userAttendanceResponse() {
   statusPromise = BrowserTestUtils.waitForAttribute("status", acceptanceWidget);
   await new Promise(resolve => setTimeout(resolve));
   EventUtils.synthesizeMouseAtCenter(
-    acceptanceWidget.shadowRoot.querySelector("#maybe"),
+    acceptanceWidget.shadowRoot.querySelector('label[for="maybe"]'),
     {},
     browser.contentWindow
   );
@@ -1540,6 +1547,8 @@ add_task(async function test_userAttendanceResponse() {
     "TENTATIVE",
     "Maybe should be checked in the acceptance widget"
   );
+
+  delete browser.contentWindow.doTransaction;
 
   // Clean up.
   calendar.setProperty("organizerId", "");
@@ -1583,6 +1592,55 @@ add_task(async function test_calendarDialogMenu() {
 
   menu.hidePopup();
   await BrowserTestUtils.waitForPopupEvent(menu, "hidden");
+
+  // Clean up.
+  calendar.setProperty("organizerId", "");
+  resetDialog();
+});
+
+add_task(async function test_calendarDialogDeleteEvent() {
+  const title = dialog.querySelector(".calendar-dialog-title");
+  const menu = dialog.querySelector("menupopup");
+
+  dialog.setCalendarEvent(calendarEvent);
+  await dialog.show();
+
+  await BrowserTestUtils.waitForMutationCondition(
+    title,
+    {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    },
+    () => title.textContent == calendarEvent.title
+  );
+
+  Assert.ok(
+    BrowserTestUtils.isHidden(menu),
+    "The menupopup should initially be hidden"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(
+    dialog.querySelector(".menu-button"),
+    {},
+    browser.contentWindow
+  );
+
+  await BrowserTestUtils.waitForPopupEvent(menu, "shown");
+
+  Assert.ok(
+    BrowserTestUtils.isVisible(menu),
+    "The menupopup should be visible after clicking menu button"
+  );
+
+  const deleteEventPromise = BrowserTestUtils.waitForEvent(
+    dialog,
+    "command",
+    true
+  );
+
+  menu.activateItem(menu.querySelector("#deleteEvent"));
+  await deleteEventPromise;
 
   // Clean up.
   calendar.setProperty("organizerId", "");

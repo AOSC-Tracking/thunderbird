@@ -9,6 +9,7 @@ import { CommonUtils } from "resource://services-common/utils.sys.mjs";
 import { CryptoUtils } from "moz-src:///services/crypto/modules/utils.sys.mjs";
 import { LineReader } from "resource:///modules/LineReader.sys.mjs";
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
+import { MailStringUtils } from "resource:///modules/MailStringUtils.sys.mjs";
 import { Pop3Authenticator } from "resource:///modules/MailAuthenticator.sys.mjs";
 
 const lazy = {};
@@ -66,14 +67,9 @@ export class Pop3Client {
     this._authenticator = new Pop3Authenticator(server);
     this._noopRespPending = false;
 
-    // Somehow, Services.io.newURI("pop3://localhost") doesn't work, what we
-    // need is just a valid nsIMsgMailNewsUrl to propagate OnStopRunningUrl and
-    // secInfo.
+    // A nsIMsgMailNewsUrl to propagate OnStopRunningUrl and secInfo.
     this.runningUri = Services.io
-      .newURI(`smtp://${this._server.hostname}:${this._server.port}`)
-      .mutate()
-      .setScheme("pop3")
-      .finalize()
+      .newURI(`pop3://${this._server.hostname}:${this._server.port}`)
       .QueryInterface(Ci.nsIMsgMailNewsUrl);
 
     // A list of auth methods detected from the EHLO response.
@@ -94,6 +90,8 @@ export class Pop3Client {
       }[server.authMethod] || [];
     // The next auth method to try if the current failed.
     this._nextAuthMethod = null;
+    // The password for the current auth method.
+    this._password = null;
 
     this._sink = Cc["@mozilla.org/messenger/pop3-sink;1"].createInstance(
       Ci.nsIPop3Sink
@@ -291,8 +289,10 @@ export class Pop3Client {
     this._nextAction = res => {
       if (res.success) {
         // See if there is an APOP timestamp.
-        // eslint-disable-next-line no-control-regex
-        const matches = res.statusText.match(/<[\x00-\x7F]+@[\x00-\x7F]+>/);
+        const matches = res.statusText.match(
+          // eslint-disable-next-line no-control-regex
+          /<[^<>@\x00-\x20\x7F-\xFF]+@[^<>@\x00-\x20\x7F-\xFF]+>/
+        );
         if (matches?.[0]) {
           this._apopTimestamp = matches[0];
         }
@@ -345,14 +345,14 @@ export class Pop3Client {
     // Cancel the watchdog timer.
     this._clearCommandTimeout();
 
-    let stringPayload = CommonUtils.arrayBufferToByteString(
+    const chunk = CommonUtils.arrayBufferToByteString(
       new Uint8Array(event.data)
     );
-    this._logger.debug(`S: ${stringPayload}`);
-    if (this._pendingPayload) {
-      stringPayload = this._pendingPayload + stringPayload;
-    }
-    if (stringPayload.includes("\n")) {
+    this._logger.debug(`S: ${chunk}`);
+    const stringPayload = this._pendingPayload + chunk;
+    // _pendingPayload never contains a line break, so only the new chunk needs
+    // to be searched.
+    if (chunk.includes("\n")) {
       // Start parsing if the payload contains at least one line break.
       this._pendingPayload = "";
       if (this._noopRespPending) {
@@ -784,6 +784,25 @@ export class Pop3Client {
         this._possibleAuthMethods.indexOf(this._currentAuthMethod) + 1
       ];
     this._logger.debug(`Current auth method: ${this._currentAuthMethod}`);
+
+    if (
+      ["USERPASS", "PLAIN", "LOGIN", "CRAM-MD5", "APOP", "NTLM"].includes(
+        this._currentAuthMethod
+      )
+    ) {
+      // Ask for the password before starting, so that cancelling the prompt
+      // ends the session.
+      try {
+        this._password = await this._authenticator.getPassword();
+      } catch (e) {
+        if (e.result == Cr.NS_ERROR_ABORT) {
+          this._actionDone(Cr.NS_ERROR_ABORT);
+          return;
+        }
+        throw e;
+      }
+    }
+
     this._nextAction = this._actionAuthResponse;
 
     switch (this._currentAuthMethod) {
@@ -810,7 +829,7 @@ export class Pop3Client {
         hasher.init(hasher.MD5);
         const data =
           this._apopTimestamp +
-          (await this._authenticator.getByteStringPassword());
+          MailStringUtils.stringToByteString(this._password);
         const digest = CommonUtils.bytesAsHex(
           CryptoUtils.digestBytes(data, hasher)
         );
@@ -821,8 +840,8 @@ export class Pop3Client {
         break;
       }
       case "GSSAPI": {
-        this._authenticator.initGssapiAuth("pop");
         try {
+          this._authenticator.initGssapiAuth("pop");
           const token = this._authenticator.getNextGssapiToken("");
           this._nextAction = res => this._actionAuthGssapi(res, token);
         } catch (e) {
@@ -834,8 +853,8 @@ export class Pop3Client {
         break;
       }
       case "NTLM": {
-        this._authenticator.initNtlmAuth("pop");
         try {
+          this._authenticator.initNtlmAuth(this._password);
           const token = this._authenticator.getNextNtlmToken("");
           this._nextAction = res => this._actionAuthNtlm(res, token);
         } catch (e) {
@@ -953,7 +972,7 @@ export class Pop3Client {
     }
     this._nextAction = this._actionAuthResponse;
     await this._send(
-      `PASS ${await this._authenticator.getByteStringPassword()}`,
+      `PASS ${MailStringUtils.stringToByteString(this._password)}`,
       true
     );
   };
@@ -986,7 +1005,7 @@ export class Pop3Client {
     // AUTH PLAIN command succeeded. Obtain and send the plain auth token to the
     // server.
     this._nextAction = this._actionAuthResponse;
-    await this._send(await this._authenticator.getPlainToken(), true);
+    await this._send(this._authenticator.getPlainToken(this._password), true);
   };
 
   /**
@@ -1050,9 +1069,7 @@ export class Pop3Client {
     this._nextAction = this._actionAuthResponse;
     this._logger.debug("Sending password for AUTH LOGIN");
     await this._send(
-      this._authenticator.getLoginPasswordToken(
-        await this._authenticator.getPassword()
-      ),
+      this._authenticator.getLoginPasswordToken(this._password),
       true
     );
   };
@@ -1069,10 +1086,7 @@ export class Pop3Client {
     }
     this._nextAction = this._actionAuthResponse;
     await this._send(
-      this._authenticator.getCramMd5Token(
-        await this._authenticator.getPassword(),
-        res.statusText
-      ),
+      this._authenticator.getCramMd5Token(this._password, res.statusText),
       true
     );
   };

@@ -53,9 +53,8 @@ interface calICalendarProvider : nsISupports
    * @param savePassword      Whether to save the password or not.
    * @param extraProperties   Any additional properties needed.
    * @return                  Promise resolved with an array of found calendars.
-   *                            (Array<calICalendar>). If no calendars were
-   *                            found, resolved with an empty array. If an
-   *                            error occurs, rejected with the error.
+   *   (Array<calICalendar>). If no calendars were found, resolved with an empty
+   *   array. If an error occurs, rejected with the error.
    */
   Promise detectCalendars(in AUTF8String username, in AUTF8String password,
                           in AUTF8String location, in boolean savePassword,

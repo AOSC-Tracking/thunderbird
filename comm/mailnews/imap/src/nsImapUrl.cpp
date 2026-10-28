@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "msgCore.h"  // precompiled header...
-
 #include "nsImapUrl.h"
 #include "../public/nsIImapHostSessionList.h"
 #include "nsString.h"
@@ -11,6 +10,7 @@
 #include "plstr.h"
 #include "prprf.h"
 #include "nsCOMPtr.h"
+#include "nsFmtString.h"
 #include "nsProxyRelease.h"
 #include "nsImapUtils.h"
 #include "nsIImapMockChannel.h"
@@ -22,6 +22,7 @@
 #include "nsMsgUtils.h"
 #include "nsIMsgHdr.h"
 #include "nsServiceManagerUtils.h"
+#include "nsURLHelper.h"
 #include "mozilla/Logging.h"
 
 using namespace mozilla;
@@ -199,6 +200,19 @@ NS_IMETHODIMP nsImapUrl::SetImapServerSink(nsIImapServerSink* aImapServerSink) {
 ////////////////////////////////////////////////////////////////////////////////////
 
 nsresult nsImapUrl::SetSpecInternal(const nsACString& aSpec) {
+  // TODO: This scheme check _should_ be a hard assert, but until
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=2074711
+  // is sorted, the code relies on being able to jam 'imap-message' in here.
+  nsAutoCString scheme;
+  net_ExtractURLScheme(aSpec, scheme);
+  // MOZ_ASSERT(scheme.EqualsLiteral("imap"));  // And NOT "imap-message"!
+  if (!scheme.EqualsLiteral("imap")) {
+    NS_WARNING(nsFmtCString(
+                   "nsImapUrl::SetSpecInternal() called with bad scheme ('{}')",
+                   scheme)
+                   .get());
+  }
+
   nsresult rv = nsMsgMailNewsUrl::SetSpecInternal(aSpec);
   if (NS_SUCCEEDED(rv)) {
     m_validUrl = true;  // assume the best.
@@ -555,9 +569,6 @@ void nsImapUrl::ParseImapPart(char* imapPartOfUrl) {
     } else if (!PL_strcasecmp(m_urlidSubString, "refreshacl")) {
       m_imapAction = nsImapRefreshACL;
       ParseFolderPath(&m_sourceCanonicalFolderPathSubString);
-    } else if (!PL_strcasecmp(m_urlidSubString, "refreshfolderurls")) {
-      m_imapAction = nsImapRefreshFolderUrls;
-      ParseFolderPath(&m_sourceCanonicalFolderPathSubString);
     } else if (!PL_strcasecmp(m_urlidSubString, "refreshallacls")) {
       m_imapAction = nsImapRefreshAllACLs;
     } else if (!PL_strcasecmp(m_urlidSubString, "listfolder")) {
@@ -618,15 +629,26 @@ NS_IMETHODIMP nsImapUrl::AddOnlineDirectoryIfNecessary(
 
   nsAutoCString namespacePrefix;
   char namespaceDelimiter;
+  EIMAPNamespaceType namespaceType;
+  bool isNamespaceRoot;
   bool namespaceFound;
   rv = hostSessionList->GetNamespaceDetailsForMailboxForHost(
       m_serverKey.get(), onlineMailboxName, kPersonalNamespace, namespacePrefix,
-      namespaceDelimiter, namespaceFound);
+      namespaceDelimiter, namespaceType, isNamespaceRoot, namespaceFound);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // The root mailbox of a public or other users' namespace doesn't start with
+  // the prefix, but AllocateCanonicalPath() left it complete.
+  if (onlineDir.IsEmpty() && isNamespaceRoot &&
+      namespaceType != kPersonalNamespace) {
+    if (directory) *directory = nullptr;
+    return NS_OK;
+  }
+
+  // From here on, onlineDir is either the server directory, which
+  // AllocateCanonicalPath() strips, or the namespace prefix, which it keeps.
   if (onlineDir.IsEmpty() && namespaceFound) onlineDir = namespacePrefix;
 
-  // If this host has an online server directory configured
   if (onlineMailboxName && !onlineDir.IsEmpty()) {
     if (PL_strcasecmp(onlineMailboxName, "INBOX")) {
       NS_ASSERTION(namespaceFound, "couldn't find namespace for host");
@@ -684,6 +706,7 @@ NS_IMETHODIMP nsImapUrl::AddOnlineDirectoryIfNecessary(
 
 // Converts from canonical format (hierarchy is indicated by '/' and all real
 // slashes ('/') are escaped) to the real online name on the server.
+// Inverse of AllocateCanonicalPath(), keep both in sync.
 NS_IMETHODIMP nsImapUrl::AllocateServerPath(const nsACString& canonicalPath,
                                             char onlineDelimiter,
                                             nsACString& aAllocatedPath) {
@@ -789,6 +812,7 @@ static void unescapeSlashes(char* path, size_t* newLength) {
 // Converts the real online name on the server to canonical format:
 // result is hierarchy is indicated by '/' and all real slashes ('/') are
 // escaped. This method is only called from the IMAP thread.
+// Inverse of AllocateServerPath(), keep both in sync.
 NS_IMETHODIMP nsImapUrl::AllocateCanonicalPath(const nsACString& serverPath,
                                                char onlineDelimiter,
                                                nsACString& allocatedPath) {
@@ -965,16 +989,18 @@ NS_IMETHODIMP nsImapUrl::GetNormalizedSpec(nsACString& aPrincipalSpec) {
   return NS_OK;
 }
 
+// Implement nsIMsgMessageUrl.uri
 NS_IMETHODIMP nsImapUrl::SetUri(const nsACString& aURI) {
   mURI = aURI;
   return NS_OK;
 }
 
+// Implement nsIMsgMessageUrl.uri
 NS_IMETHODIMP nsImapUrl::GetUri(nsACString& aURI) {
   nsresult rv = NS_OK;
-  if (!mURI.IsEmpty())
+  if (!mURI.IsEmpty()) {
     aURI = mURI;
-  else {
+  } else {
     uint32_t key =
         m_listOfMessageIds ? strtoul(m_listOfMessageIds, nullptr, 10) : 0;
     nsCString canonicalPath;

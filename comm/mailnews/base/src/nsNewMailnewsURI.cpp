@@ -46,7 +46,7 @@ nsresult NS_NewMailnewsURI(nsIURI** aURI, const nsACString& aSpec,
     if (NS_FAILED(rv)) return rv;
   }
 
-  // Creating IMAP/mailbox URIs off the main thread can lead to crashes.
+  // Creating mailbox URIs off the main thread can lead to crashes.
   // Seems to happen when viewing PDFs.
   if (scheme.EqualsLiteral("mailbox") ||
       scheme.EqualsLiteral("mailbox-message")) {
@@ -66,17 +66,15 @@ nsresult NS_NewMailnewsURI(nsIURI** aURI, const nsACString& aSpec,
   // URL because it parses extra query parameters such as filename= into values
   // that are used when saving inline attachments via the m-c HTML5 rendering
   // code.
-  if (scheme.EqualsLiteral("imap") || scheme.EqualsLiteral("imap-message")) {
-    if (NS_IsMainThread()) {
-      return nsImapService::NewURI(aSpec, aCharset, aBaseURI, aURI);
-    }
-    auto NewURI = [&aSpec, &aCharset, &aBaseURI, aURI, &rv]() -> auto {
-      rv = nsImapService::NewURI(aSpec, aCharset, aBaseURI, aURI);
-    };
-    nsCOMPtr<nsIRunnable> task = NS_NewRunnableFunction("NewURI", NewURI);
-    mozilla::SyncRunnable::DispatchToThread(
-        mozilla::GetMainThreadSerialEventTarget(), task);
-    return rv;
+  if (scheme.EqualsLiteral("imap-message")) {
+    RefPtr<nsMsgMailNewsUrl> url = new nsMsgMailNewsUrl();
+    rv = url->SetSpecInternal(aSpec);
+    NS_ENSURE_SUCCESS(rv, rv);
+    url.forget(aURI);
+    return NS_OK;
+  }
+  if (scheme.EqualsLiteral("imap")) {
+    return nsImapService::NewURI(aSpec, aCharset, aBaseURI, aURI);
   }
   if (scheme.EqualsLiteral("smtp") || scheme.EqualsLiteral("smtps")) {
     RefPtr<nsMsgMailNewsUrl> url = new nsMsgMailNewsUrl();
@@ -90,10 +88,8 @@ nsresult NS_NewMailnewsURI(nsIURI** aURI, const nsACString& aSpec,
         .SetSpec(aSpec)
         .Finalize(aURI);
   }
-  if (scheme.EqualsLiteral("pop") || scheme.EqualsLiteral("pop3")) {
-    return nsMailboxService::CreatePop3URI(aSpec, aBaseURI, aURI);
-  }
-  if (IsNewsScheme(scheme)) {
+  if (IsNewsScheme(scheme) || scheme.EqualsLiteral("pop") ||
+      scheme.EqualsLiteral("pop3")) {
     nsCOMPtr<nsIMsgMailNewsUrl> uri =
         do_CreateInstance("@mozilla.org/messenger/msgmailnewsurl;1", &rv);
     NS_ENSURE_SUCCESS(rv, rv);

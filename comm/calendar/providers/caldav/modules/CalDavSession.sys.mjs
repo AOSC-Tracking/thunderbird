@@ -72,11 +72,13 @@ export class CalDavSession {
       const oAuth = new lazy.OAuth2Module();
       if (oAuth.initFromHostname(aChannel.URI.host, this.username, "caldav")) {
         this._oAuth = oAuth;
+        this._oAuthOrigin = aChannel.URI.prePath;
       } else {
         this._oAuth = null; // Prevents this block from running again.
       }
     }
-    if (this._oAuth) {
+    // The token is only for the server it was obtained for.
+    if (this._oAuth && aChannel.URI.prePath == this._oAuthOrigin) {
       const deferred = Promise.withResolvers();
       this._oAuth.getAccessToken({
         onSuccess: deferred.resolve,
@@ -103,6 +105,14 @@ export class CalDavDetectionSession extends CalDavSession {
   ]);
 
   isDetectionSession = true;
+
+  /**
+   * The sites the password may be used for, as returned by
+   * cal.provider.detection.getPasswordSite.
+   *
+   * @type {Set<string>}
+   */
+  passwordSites = new Set();
 
   /**
    * Create a new caldav detection session.
@@ -154,7 +164,10 @@ export class CalDavDetectionSession extends CalDavSession {
    * @see {nsIAuthPrompt2}
    */
   promptAuth(aChannel, aLevel, aAuthInfo) {
-    if (!this.password) {
+    if (
+      !this.password ||
+      !cal.provider.detection.isPasswordSite(this.passwordSites, aChannel.URI)
+    ) {
       return false;
     }
 

@@ -68,7 +68,7 @@ add_task(async function testInitWithFolder() {
   );
   Assert.equal(
     await liveView.countUnreadMessages(),
-    2,
+    3,
     "countUnreadMessages should return the number of unread messages"
   );
   Assert.deepEqual(
@@ -107,7 +107,7 @@ add_task(async function testInitWithFolders() {
   );
   Assert.equal(
     await liveView.countUnreadMessages(),
-    5,
+    6,
     "countUnreadMessages should return the number of unread messages"
   );
   Assert.deepEqual(
@@ -215,10 +215,84 @@ add_task(async function testInitWithTag() {
     "selectMessages with no arguments should return all the messages"
   );
 
-  Assert.equal(liveView.sqlClauseForTests, "TAGS_INCLUDE(tags, ?)");
-  Assert.deepEqual(liveView.sqlParamsForTests, "$label1");
-
   assertInitFails(liveView);
+});
+
+add_task(async function testInitWithUnreadMessages() {
+  const liveView = new LiveView();
+  liveView.initWithUnreadMessages();
+
+  Assert.equal(
+    await liveView.countMessages(),
+    6,
+    "countMessages should return the total number of messages"
+  );
+  Assert.equal(
+    await liveView.countUnreadMessages(),
+    6,
+    "countUnreadMessages should return the number of unread messages"
+  );
+  Assert.deepEqual(
+    Array.from(await liveView.selectMessages(), m => m.id),
+    [9, 8, 7, 4, 2, 1],
+    "selectMessages with no arguments should return all the messages"
+  );
+});
+
+add_task(async function testInitWithFlaggedMessages() {
+  const liveView = new LiveView();
+  liveView.initWithFlaggedMessages();
+
+  Assert.equal(
+    await liveView.countMessages(),
+    3,
+    "countMessages should return the total number of messages"
+  );
+  Assert.equal(
+    await liveView.countUnreadMessages(),
+    1,
+    "countUnreadMessages should return the number of unread messages"
+  );
+  Assert.deepEqual(
+    Array.from(await liveView.selectMessages(), m => m.id),
+    [10, 4, 3],
+    "selectMessages with no arguments should return all the messages"
+  );
+});
+
+add_task(async function testInitWithDateRange() {
+  let liveView = new LiveView();
+  liveView.initWithDateRange(0, Date.now() * 1000);
+
+  Assert.equal(
+    await liveView.countMessages(),
+    10,
+    "countMessages should return the total number of messages"
+  );
+  Assert.equal(
+    await liveView.countUnreadMessages(),
+    6,
+    "countUnreadMessages should return the number of unread messages"
+  );
+  Assert.deepEqual(
+    Array.from(await liveView.selectMessages(), m => m.id),
+    [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+    "selectMessages with no arguments should return all the messages"
+  );
+
+  liveView = new LiveView();
+  liveView.initWithDateRange(0, 1600000000000000);
+
+  Assert.equal(
+    await liveView.countMessages(),
+    4,
+    "countMessages should return the total number of messages"
+  );
+  Assert.deepEqual(
+    await Array.from(await liveView.selectMessages(), m => m.id),
+    [4, 3, 2, 1],
+    "selectMessages with no arguments should return all the messages"
+  );
 });
 
 add_task(async function testSort() {
@@ -339,7 +413,7 @@ add_task(async function testSort() {
       await liveView.selectMessages(),
       m => m.flags & Ci.nsMsgMessageFlags.Read
     ),
-    [1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
+    [1, 1, 1, 1, 0, 0, 0, 0, 0, 0],
     "messages should be sorted with unread messages last"
   );
 
@@ -349,7 +423,7 @@ add_task(async function testSort() {
       await liveView.selectMessages(),
       m => m.flags & Ci.nsMsgMessageFlags.Read
     ),
-    [0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+    [0, 0, 0, 0, 0, 0, 1, 1, 1, 1],
     "messages should be sorted with unread messages first"
   );
 
@@ -372,99 +446,6 @@ add_task(async function testSort() {
     [0, 0, 0, 0, 0, 0, 0, 4, 4, 4],
     "messages should be sorted with flagged messages last"
   );
-});
-
-add_task(function testListener() {
-  const earlierId = addMessage({
-    folderId: 2,
-    messageId: "earlier-message",
-    date: "2024-12-31T12:31:00Z",
-    flags: 1,
-  });
-
-  const listener = {
-    onMessageAdded(message) {
-      Assert.ok(
-        !this._addedMessage,
-        "there should be only one call to onMessageAdded"
-      );
-      this._addedMessage = message;
-    },
-    onMessageRemoved(message) {
-      Assert.ok(
-        !this._removedMessage,
-        "there should be only one call to onMessageRemoved"
-      );
-      this._removedMessage = message;
-    },
-    onMessageFlagsChanged(message, oldFlags) {
-      Assert.ok(
-        !this._change,
-        "there should be only one call to onMessageFlagsChanged"
-      );
-      this._change = { message, oldFlags };
-    },
-  };
-  const liveView = new LiveView();
-  liveView.setListener(listener);
-
-  const addedId = addMessage({
-    folderId: 4,
-    messageId: "added-message",
-    date: "2025-01-14T07:20:00Z",
-    tags: "$label4",
-  });
-  Assert.equal(listener._addedMessage.id, addedId);
-  Assert.equal(listener._addedMessage.folderId, 4);
-  Assert.equal(listener._addedMessage.messageId, "added-message");
-  Assert.equal(
-    listener._addedMessage.date.toISOString(),
-    "2025-01-14T07:20:00.000Z"
-  );
-  Assert.equal(listener._addedMessage.sender, "sender");
-  Assert.equal(listener._addedMessage.subject, "subject");
-  Assert.equal(listener._addedMessage.flags, 0);
-  Assert.equal(listener._addedMessage.tags, "$label4");
-
-  const message = messageDB.getMessage(addedId);
-  message.flags = 1;
-  Assert.equal(listener._change.message.id, addedId);
-  Assert.equal(listener._change.message.flags, 1);
-  Assert.equal(listener._change.oldFlags, 0);
-  delete listener._change;
-
-  message.orFlags(4);
-  Assert.equal(listener._change.message.id, addedId);
-  Assert.equal(listener._change.message.flags, 5);
-  Assert.equal(listener._change.oldFlags, 1);
-  delete listener._change;
-
-  message.flags = 5;
-  Assert.ok(!listener._change);
-
-  message.andFlags(4);
-  Assert.equal(listener._change.message.id, addedId);
-  Assert.equal(listener._change.message.flags, 4);
-  Assert.equal(listener._change.oldFlags, 5);
-
-  messageDB.removeMessage(earlierId);
-  Assert.equal(listener._removedMessage.id, earlierId);
-  Assert.equal(listener._removedMessage.folderId, 2);
-  Assert.equal(listener._removedMessage.messageId, "earlier-message");
-  Assert.equal(
-    listener._removedMessage.date.toISOString(),
-    "2024-12-31T12:31:00.000Z"
-  );
-  Assert.equal(listener._removedMessage.sender, "sender");
-  Assert.equal(listener._removedMessage.subject, "subject");
-  Assert.equal(listener._removedMessage.flags, 1);
-  Assert.equal(listener._removedMessage.tags, "");
-
-  liveView.clearListener(listener);
-  // If the listener was not cleared these calls would cause failures.
-  const laterId = addMessage({ folderId: 3, messageId: "later-message" });
-  messageDB.removeMessage(addedId);
-  messageDB.removeMessage(laterId);
 });
 
 add_task(async function testEmojiCharacters() {

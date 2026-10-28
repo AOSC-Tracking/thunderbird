@@ -561,20 +561,21 @@ export class MessengerContentHandler {
         )
       ) {
         getOrOpen3PaneWindow().then(() => {
-          const messenger = Cc["@mozilla.org/messenger;1"].createInstance(
-            Ci.nsIMessenger
+          lazy.MailUtils.displayMessage(
+            MailServices.messageServiceFromURI(uri).messageURIToMsgHdr(uri)
           );
-          lazy.MailUtils.displayMessage(messenger.msgHdrFromURI(uri));
         });
       } else if (url?.protocol == "imap:") {
         getOrOpen3PaneWindow().then(() => {
           openURI(cmdLine.resolveURI(uri));
         });
-      } else if (["news:", "snews:"].includes(url?.protocol)) {
+      } else if (
+        ["news:", "snews:", "nntp:", "nntps:"].includes(url?.protocol)
+      ) {
         getOrOpen3PaneWindow().then(win => {
           lazy.MailUtils.handleNewsUri(uri, win);
         });
-      } else if (uri?.startsWith("news:") || uri?.startsWith("snews:")) {
+      } else if (/^(s?news|nntps?):/.test(uri)) {
         // url is null, so the URI is malformed (e.g. bare "news:" with no
         // message-id or newsgroup).  Don't pass it to handleNewsUri.
         console.error(`Malformed news URI from command line: ${uri}`);

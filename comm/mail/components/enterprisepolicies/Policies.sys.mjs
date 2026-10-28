@@ -812,6 +812,10 @@ export var Policies = {
     onBeforeUIStartup(manager, param) {
       if (param) {
         manager.disallowFeature("passwordReveal");
+        lazy.PoliciesUtils.setAndLockPref(
+          "layout.forms.reveal-password-button.enabled",
+          false
+        );
       }
     },
   },
@@ -2121,6 +2125,7 @@ if (AppConstants.MOZ_ENTERPRISE) {
 
   Policies.ExtensionSettings = {
     onBeforeAddons(manager, param) {
+      lazy.discardAMOUpdateURLs(param, "ExtensionSettings");
       try {
         manager.setExtensionSettings(param);
       } catch (e) {
@@ -2198,7 +2203,20 @@ if (AppConstants.MOZ_ENTERPRISE) {
                 "ExtensionSettings"
               );
             } else if (!existingAddon) {
-              lazy.installAddonFromRepository(extensionID, "ExtensionSettings");
+              // An unusable update_url is an error, not a reason to install a
+              // different build of the add-on from AMO.
+              if (extensionSettings[extensionID].update_url) {
+                lazy.installAddonFromUpdateURL(
+                  extensionSettings[extensionID].update_url,
+                  extensionID,
+                  "ExtensionSettings"
+                );
+              } else {
+                lazy.installAddonFromRepository(
+                  extensionID,
+                  "ExtensionSettings"
+                );
+              }
             }
             manager.disallowFeature(`uninstall-extension:${extensionID}`);
             if (
