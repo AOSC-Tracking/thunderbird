@@ -93,7 +93,8 @@ class BaseMessageService {
     }
 
     const [folder, key] = this._decomposeNewsMessageURI(messageUri);
-    if (folder && folder.QueryInterface(Ci.nsIMsgNewsFolder)) {
+    // The header may not have been downloaded yet.
+    if (folder?.msgDatabase.containsKey(key)) {
       url.msgIsInLocalCache = folder.hasMsgOffline(key);
     }
 
@@ -191,7 +192,9 @@ class BaseMessageService {
   _decomposeNewsMessageURI(uri) {
     let host, groupName, key;
     if (uri.startsWith("news-message://")) {
-      const matches = /news-message:\/\/([^:]+)\/(.+)#(\d+)/.exec(uri);
+      // Query parameters may appear before or after the article key.
+      const matches =
+        /news-message:\/\/([^:/]+)\/([^?#]+)(?:\?[^#]*)?#(\d+)/.exec(uri);
       if (!matches) {
         throw Components.Exception(
           `Failed to parse message url: ${uri}`,
@@ -225,6 +228,8 @@ class BaseMessageService {
    *
    * @param {string} messageURI - The news-message:// url.
    * @returns {string} The news:// url.
+   * @throws {nsIException} NS_ERROR_NOT_AVAILABLE if the internal message URI
+   *   has no local message ID.
    */
   _createMessageIdUrl(messageURI) {
     if (messageURI.startsWith("news://") || messageURI.startsWith("snews://")) {
@@ -233,6 +238,12 @@ class BaseMessageService {
     const [folder, key] = this._decomposeNewsMessageURI(messageURI);
     const host = folder.rootFolder.URI;
     const messageId = folder.getMessageIdForKey(key);
+    if (!messageId) {
+      throw Components.Exception(
+        `No message ID for message URI: ${messageURI}`,
+        Cr.NS_ERROR_NOT_AVAILABLE
+      );
+    }
     const url = new URL(`${host}/${encodeURIComponent(messageId)}`);
     url.searchParams.set("group", folder.name);
     url.searchParams.set("key", key);

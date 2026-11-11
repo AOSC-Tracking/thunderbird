@@ -74,6 +74,11 @@ function installDB(sql) {
       virtualFolderId INTEGER REFERENCES folders(id),
       searchFolderId INTEGER REFERENCES folders(id)
     );
+    CREATE TABLE search_folder_hits (
+      folder_id INTEGER REFERENCES folders(id),
+      message_id INTEGER REFERENCES messages(id),
+      PRIMARY KEY(folder_id, message_id)
+    );
   `);
   if (sql) {
     dbConnection.executeSimpleSQL(sql);
@@ -186,7 +191,7 @@ function addMessage({
   ccList = "cc list",
   bccList = "bcc list",
   subject = "subject",
-  flags = 0,
+  flags = Ci.nsMsgMessageFlags.New,
   tags = "",
   priority = Ci.nsMsgPriority.notSet,
 }) {
@@ -232,7 +237,12 @@ class ListenerTree {
   invalidateRow(index) {
     info(`invalidateRow(${index})`);
     // `invalidateRow` immediately after `rowCountChanged` is allowed.
-    Assert.strictEqual(this._start, undefined);
+    if (this._start) {
+      // Two `invalidateRow` calls are allowed.
+      Assert.equal(this._start, this._end);
+    } else {
+      Assert.strictEqual(this._start, undefined);
+    }
     this._start = index;
     this._end = index;
     this._invalidateDeferred?.resolve();

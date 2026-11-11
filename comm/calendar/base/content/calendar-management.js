@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* globals sortCalendarArray, gDataMigrator, calendarUpdateNewItemsCommand, currentView */
+/* globals gDataMigrator, calendarUpdateNewItemsCommand, currentView */
 
 /* exported promptDeleteCalendar, loadCalendarManager, unloadCalendarManager,
  *   calendarListTooltipShowing, calendarListSetupContextMenu,
@@ -129,16 +129,14 @@ async function loadCalendarManager() {
     initHomeCalendar();
   }
 
-  for (const calendar of sortCalendarArray(cal.manager.getCalendars())) {
+  for (const calendar of cal.manager.getCalendars()) {
     addCalendarItem(calendar);
   }
 
   /**
    * @param {calICalendar} calendar - Calendar to add to the calendar-list.
-   * @param {boolean} [reregistered=false] - When true, restore the calendar's
-   *   remembered list position instead of appending.
    */
-  function addCalendarItem(calendar, reregistered = false) {
+  function addCalendarItem(calendar) {
     const item = document
       .getElementById("calendar-list-item")
       .content.firstElementChild.cloneNode(true);
@@ -193,25 +191,19 @@ async function loadCalendarManager() {
       }
     );
 
-    // On re-registration, restore the row to its remembered slot.
-    const sortPos = reregistered ? calendar.getProperty("initialSortOrderPos") : null;
-    if (sortPos == null) {
-      calendarList.appendChild(item);
-    } else {
-      calendarList.insertBefore(item, calendarList.children[Number(sortPos)] ?? null);
-    }
+    // Put the row where the calendar is in the calendar list order.
+    const order = cal.manager.getCalendars().map(({ id }) => id);
+    const position = order.indexOf(calendar.id);
+    const next = [...calendarList.children].find(
+      row => order.indexOf(row.getAttribute("calendar-id")) > position
+    );
+    calendarList.insertBefore(item, next ?? null);
     if (calendar.getProperty("calendar-main-default")) {
       // The list needs to handle the addition of the row before we can select it.
       setTimeout(() => {
         calendarList.selectedIndex = calendarList.rows.indexOf(item);
       });
     }
-  }
-
-  function saveSortOrder() {
-    const order = [...calendarList.children].map(i => i.getAttribute("calendar-id"));
-    Services.prefs.setStringPref("calendar.list.sortOrder", order.join(" "));
-    Services.prefs.savePrefFile(null);
   }
 
   calendarList.addEventListener("click", event => {
@@ -268,7 +260,9 @@ async function loadCalendarManager() {
     cal.window.openCalendarProperties(window, { calendar });
   });
   calendarList.addEventListener("ordered", event => {
-    saveSortOrder();
+    cal.manager.setCalendarOrder(
+      [...calendarList.children].map(i => i.getAttribute("calendar-id"))
+    );
     calendarList.selectedIndex = calendarList.rows.indexOf(event.detail);
   });
   calendarList.addEventListener("keypress", event => {
@@ -383,15 +377,25 @@ async function loadCalendarManager() {
     QueryInterface: ChromeUtils.generateQI(["calICalendarManagerObserver"]),
 
     onCalendarRegistered(calendar) {
-      addCalendarItem(calendar, true);
-      saveSortOrder();
+      addCalendarItem(calendar);
     },
     onCalendarUnregistering(calendar) {
       const item = calendarList.getElementsByAttribute("calendar-id", calendar.id)[0];
       item.remove();
-      saveSortOrder();
     },
     onCalendarDeleting() {},
+    onCalendarOrderChanged() {
+      const order = cal.manager.getCalendars().map(({ id }) => id);
+      const rows = [...calendarList.children];
+      const ordered = [...rows].sort(
+        (a, b) =>
+          order.indexOf(a.getAttribute("calendar-id")) -
+          order.indexOf(b.getAttribute("calendar-id"))
+      );
+      if (ordered.some((row, index) => row != rows[index])) {
+        calendarList.setRowOrder(ordered);
+      }
+    },
   };
   cal.manager.addObserver(calendarList._calendarManagerObserver);
 }
@@ -409,7 +413,6 @@ function initHomeCalendar() {
   homeCalendar.setProperty("disabled", true);
 
   cal.manager.registerCalendar(homeCalendar);
-  Services.prefs.setStringPref("calendar.list.sortOrder", homeCalendar.id);
   composite.addCalendar(homeCalendar);
 
   // Wrapping this in a try/catch block, as if any of the migration code

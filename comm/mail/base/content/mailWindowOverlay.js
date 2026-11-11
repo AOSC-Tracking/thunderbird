@@ -10,7 +10,6 @@
 /* import-globals-from mailCore.js */
 /* import-globals-from utilityOverlay.js */
 
-/* globals messenger */ // From messageWindow.js
 /* globals GetSelectedMsgFolders */ // From messenger.js or messageWindow.js
 /* globals MailOfflineMgr */ // From mail-offline.js
 
@@ -969,8 +968,13 @@ function getMsgToolbarMenu_init() {
 
 function InitMessageMark() {
   const tab = document.getElementById("tabmail")?.currentTabInfo;
-  const flaggedItem = document.getElementById("markFlaggedMenuItem");
-  flaggedItem.toggleAttribute("checked", Boolean(tab?.message?.isFlagged));
+  const isFlagged = Boolean(tab?.message?.isFlagged);
+  document
+    .getElementById("markFlaggedMenuItem")
+    .toggleAttribute("checked", isFlagged);
+  document
+    .getElementById("markFlaggedToolbarItem")
+    ?.toggleAttribute("checked", isFlagged);
 
   document.commandDispatcher.updateCommands("create-menu-mark");
 }
@@ -1154,12 +1158,12 @@ function MsgOpenNewTabForFolders(folders, tabParams = {}) {
   }
 }
 
-function MsgOpenFromFile() {
-  var fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
-
-  var bundle = document.getElementById("bundle_messenger");
-  var filterLabel = bundle.getString("EMLFiles");
-  var windowTitle = bundle.getString("OpenEMLFiles");
+async function MsgOpenFromFile() {
+  const [filterLabel, windowTitle] = await document.l10n.formatValues([
+    { id: "messenger-eml-files-filter" },
+    { id: "messenger-open-eml-file-title" },
+  ]);
+  const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
 
   fp.init(window.browsingContext, windowTitle, Ci.nsIFilePicker.modeOpen);
   fp.appendFilter(filterLabel, "*.eml");
@@ -1571,50 +1575,35 @@ function CommandUpdate_UndoRedo() {
 }
 
 /**
- * @param {string} command - A command, usually "cmd_<something>".
+ * Updates the Undo or Redo label and checks whether the command is available.
+ *
+ * @param {"cmd_undo"|"cmd_redo"} command - The command to update.
+ * @returns {boolean} Whether the command is available.
  */
 function SetupUndoRedoCommand(command) {
-  let mainWindow;
-  const tabmail = document.getElementById("tabmail");
-  if (tabmail) {
-    mainWindow = window;
-  } else {
-    mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
-    // There may not be a "main" window if an .eml file was double-clicked.
-    if (!mainWindow) {
-      return false;
-    }
-  }
-
-  let canUndoOrRedo = false;
-  let txnType;
-  try {
-    if (command == "cmd_undo") {
-      canUndoOrRedo = mainWindow.messenger.canUndo();
-      txnType = mainWindow.messenger.getUndoTransactionType();
-    } else {
-      canUndoOrRedo = mainWindow.messenger.canRedo();
-      txnType = mainWindow.messenger.getRedoTransactionType();
-    }
-  } catch (ex) {
-    // If this fails, assume we can't undo or redo.
-    console.error(ex);
-  }
-
-  if (canUndoOrRedo) {
-    const commands = {
-      [Ci.nsIMessenger.eUnknown]: "valueDefault",
-      [Ci.nsIMessenger.eDeleteMsg]: "valueDeleteMsg",
-      [Ci.nsIMessenger.eMoveMsg]: "valueMoveMsg",
-      [Ci.nsIMessenger.eCopyMsg]: "valueCopyMsg",
-      [Ci.nsIMessenger.eMarkAllMsg]: "valueUnmarkAllMsgs",
-    };
-    goSetMenuValue(command, commands[txnType]);
-  } else {
+  const txnMgr = MailServices.txns.transactionManager;
+  const isUndo = command == "cmd_undo";
+  // Peeking a batch returns null, so use the item count to check availability.
+  const count = isUndo ? txnMgr.numberOfUndoItems : txnMgr.numberOfRedoItems;
+  if (!count) {
     goSetMenuValue(command, "valueDefault");
+    return false;
   }
 
-  return canUndoOrRedo;
+  const txn = isUndo ? txnMgr.peekUndoStack() : txnMgr.peekRedoStack();
+  const txnType =
+    txn instanceof Ci.nsIMsgTxn
+      ? txn.txnType
+      : Ci.nsIMsgTransactionService.eUnknown;
+  const commands = {
+    [Ci.nsIMsgTransactionService.eUnknown]: "valueDefault",
+    [Ci.nsIMsgTransactionService.eDeleteMsg]: "valueDeleteMsg",
+    [Ci.nsIMsgTransactionService.eMoveMsg]: "valueMoveMsg",
+    [Ci.nsIMsgTransactionService.eCopyMsg]: "valueCopyMsg",
+    [Ci.nsIMsgTransactionService.eMarkAllMsg]: "valueUnmarkAllMsgs",
+  };
+  goSetMenuValue(command, commands[txnType]);
+  return true;
 }
 
 /**
@@ -1739,6 +1728,10 @@ function initAppMenuPopup() {
 
 function openNewCardDialog() {
   toAddressBook(["cmd_newCard"]);
+}
+
+function openNewListDialog() {
+  toAddressBook(["cmd_createList"]);
 }
 
 /**
@@ -2047,7 +2040,7 @@ function searchAllMessages(folder) {
  */
 function openSearchDialog(folder) {
   top.openDialog(
-    "chrome://messenger/content/SearchDialog.xhtml",
+    "chrome://messenger/content/searchDialog.xhtml",
     "_blank",
     "chrome,resizable,status,centerscreen,dialog=no",
     { folder }

@@ -379,7 +379,6 @@ IDBViewWrapperListener.prototype = {
   _FNH: FolderNotificationHelper,
 
   /* ===== Exposure of UI Globals ===== */
-  messenger: null,
   msgWindow: null,
   threadPaneCommandUpdater: null,
 
@@ -732,11 +731,7 @@ DBViewWrapper.prototype = {
     // -- clone the view
     if (this.dbView) {
       doppel.dbView = this.dbView
-        .cloneDBView(
-          aListener.messenger,
-          aListener.msgWindow,
-          aListener.threadPaneCommandUpdater
-        )
+        .cloneDBView(aListener.msgWindow, aListener.threadPaneCommandUpdater)
         .QueryInterface(Ci.nsITreeView);
     }
     // -- clone the search
@@ -1228,7 +1223,6 @@ DBViewWrapper.prototype = {
 
     const dbView = Cc[dbviewContractId].createInstance(Ci.nsIMsgDBView);
     dbView.init(
-      this.listener.messenger,
       this.listener.msgWindow,
       this.listener.threadPaneCommandUpdater
     );
@@ -2246,39 +2240,5 @@ DBViewWrapper.prototype = {
 
     // No db view, so we can't do anything
     return nsMsgViewIndex_None;
-  },
-
-  /**
-   * Convenience function to retrieve the first nsIMsgDBHdr in any of the
-   *  folders backing this view with the given message-id header.  This
-   *  is for the benefit of FolderDisplayWidget's selection logic.
-   * When thinking about using this, please keep in mind that, currently, this
-   *  is O(n) for the total number of messages across all the backing folders.
-   *  Since the folder database should already be in memory, this should
-   *  ideally not involve any disk I/O.
-   * Additionally, duplicate message-ids can and will happen, but since we
-   *  are using the message database's getMsgHdrForMessageID method to be fast,
-   *  our semantics are limited to telling you about only the first one we find.
-   *
-   * @param {string} aMessageId - The message-id of the message you want.
-   * @returns {?nsIMsgDBHdr} the first nsIMsgDBHdr found in any of the
-   *   underlying folders with the given message header, null if none are found.
-   *   The fact that we return something does not guarantee that it is actually
-   *   visible in the view.  (The search may be filtering it out.)
-   */
-  getMsgHdrForMessageID(aMessageId) {
-    if (this._syntheticView) {
-      return this._syntheticView.getMsgHdrForMessageID(aMessageId);
-    }
-    if (!this._underlyingFolders) {
-      return null;
-    }
-    for (const folder of this._underlyingFolders) {
-      const msgHdr = folder.msgDatabase.getMsgHdrForMessageID(aMessageId);
-      if (msgHdr) {
-        return msgHdr;
-      }
-    }
-    return null;
   },
 };

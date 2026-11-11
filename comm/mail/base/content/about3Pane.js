@@ -1344,12 +1344,17 @@ var folderPane = {
         }
 
         // Nothing special about this folder. Add it to the end of the list.
+        // `_addFolderAndAncestors` returns null if the folder is temporarily
+        // detached from its parent (e.g. mid-move); the row will be added
+        // when the move completes and the folder is announced again.
         const folderRow = folderPane._addFolderAndAncestors(
           this.containerList,
           childFolder,
           this.name
         );
-        folderPane._addSubFolders(childFolder, folderRow, this.name);
+        if (folderRow) {
+          folderPane._addSubFolders(childFolder, folderRow, this.name);
+        }
       },
 
       removeFolder(parentFolder, childFolder) {
@@ -2440,10 +2445,13 @@ var folderPane = {
    * Adds a row representing a folder and any missing rows for ancestors of
    * the folder.
    *
+   * Returns null if the folder has no parent (e.g. it is detached mid-move),
+   * in which case there is nowhere to attach the new row.
+   *
    * @param {HTMLUListElement} containerList - The list to add folders to.
    * @param {nsIMsgFolder} folder
    * @param {string} modeName - The name of the mode this row belongs to.
-   * @returns {FolderTreeRow}
+   * @returns {?FolderTreeRow}
    */
   _addFolderAndAncestors(containerList, folder, modeName) {
     let folderRow = folderPane.getRowForFolder(folder, modeName);
@@ -2457,11 +2465,21 @@ var folderPane = {
       return serverRow;
     }
 
+    const parentFolder = folderPane._getNonGmailParent(folder);
+    if (!parentFolder) {
+      // The folder is detached from the tree, e.g. mid-move while its
+      // storage is being relocated. The move completion announces the folder
+      // again with a parent, so the row will be added then.
+      return null;
+    }
     const parentRow = this._addFolderAndAncestors(
       containerList,
-      folderPane._getNonGmailParent(folder),
+      parentFolder,
       modeName
     );
+    if (!parentRow) {
+      return null;
+    }
     folderRow = folderPane._createFolderRow(modeName, folder);
     parentRow.insertChildInOrder(folderRow);
     return folderRow;
@@ -2636,13 +2654,15 @@ var folderPane = {
 
   /**
    * Returns the parent folder of a given folder, or if that is the [Gmail]
-   * folder returns the grandparent of the given folder.
+   * folder returns the grandparent of the given folder. Returns null if the
+   * folder is null or has no parent (e.g. it is mid-move), so callers can
+   * bail out instead of crashing.
    *
-   * @param {nsIMsgFolder} folder
-   * @returns {nsIMsgFolder}
+   * @param {?nsIMsgFolder} folder
+   * @returns {?nsIMsgFolder}
    */
   _getNonGmailParent(folder) {
-    return this._getNonGmailFolder(folder.parent);
+    return folder ? this._getNonGmailFolder(folder.parent) : null;
   },
 
   /**
@@ -3016,11 +3036,8 @@ var folderPane = {
       let usage;
       let limit;
       if (/STORAGE/i.test(highest.name)) {
-        const messenger = Cc["@mozilla.org/messenger;1"].createInstance(
-          Ci.nsIMessenger
-        );
-        usage = messenger.formatFileSize(highest.usage * 1024);
-        limit = messenger.formatFileSize(highest.limit * 1024);
+        usage = MailUtils.formatFileSize(highest.usage * 1024);
+        limit = MailUtils.formatFileSize(highest.limit * 1024);
       } else {
         usage = highest.usage;
         limit = highest.limit;
@@ -3158,9 +3175,9 @@ var folderPane = {
       return;
     }
 
-    // If the currently dragged row is not part of the selection map, use it
+    // If the currently dragged row is not part of the selection, use it
     // instead of the current selection entries.
-    const rows = folderTree.selection.has(folderTree.rows.indexOf(draggedRow))
+    const rows = folderTree.selection.has(draggedRow)
       ? [...folderTree.selection.values()]
       : [draggedRow];
 
@@ -3624,7 +3641,7 @@ var folderPane = {
         } else if (isReordering) {
           // Reorder within current siblings.
           this.insertFolder(sourceFolder, targetFolder, insertAfter);
-          if (folderTree.selection.has(folderTree.rows.indexOf(row))) {
+          if (folderTree.selection.has(row)) {
             rows.push(this.getRowForFolder(sourceFolder.URI, row.modeName));
           }
         }
@@ -4975,7 +4992,7 @@ var threadPane = {
       );
       event.dataTransfer.mozSetDataAt(
         "application/x-moz-file-promise-dest-filename",
-        msgFileName.replace(/(.{74}).*(.{10})$/u, "$1...$2"),
+        msgFileName.replace(/^(.{60}).{4,}(.{22})$/su, "$1...$2"),
         index
       );
     }
@@ -6342,7 +6359,7 @@ var folderListener = {
   onFolderRemoved(parentFolder, childFolder) {
     // Check if the folder is in the selection range before we remove it.
     const row = folderPane.getRowForFolder(childFolder.URI);
-    const notInRange = !folderTree.selection.has(folderTree.rows.indexOf(row));
+    const notInRange = !folderTree.selection.has(row);
 
     folderPane.removeFolder(parentFolder, childFolder);
     if (childFolder == gFolder) {

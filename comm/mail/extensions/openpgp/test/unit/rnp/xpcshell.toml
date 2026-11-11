@@ -8,6 +8,8 @@ tags = ["openpgp"]
 
 ["test_alias.js"]
 
+["test_armor.js"]
+
 ["test_badKeys.js"]
 
 ["test_encryptAndOrSign.js"]
@@ -18,6 +20,8 @@ skip-if = ["os != 'linux'"]
 ["test_externalSigningKey.js"]
 
 ["test_integrityProtection.js"]
+
+["test_mimeTree.js"]
 
 # ML-KEM requires the experimental RNP library, which is only
 # distributed in nightly builds.

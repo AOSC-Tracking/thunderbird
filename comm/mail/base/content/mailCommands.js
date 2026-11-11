@@ -4,7 +4,7 @@
 
 /* import-globals-from utilityOverlay.js */
 
-/* globals msgWindow, messenger */ // From mailWindow.js
+/* globals msgWindow */ // From mailWindow.js
 /* globals openComposeWindowForRSSArticle */ // From newsblogOverlay.js
 
 var { MailServices } = ChromeUtils.importESModule(
@@ -271,7 +271,7 @@ async function ComposeMessage(
             // List-Post value is of the format <mailto:list@example.com>
             const listPost = currentHeaderData["list-post"]?.headerValue;
             if (listPost) {
-              email = listPost.replace(/.*<mailto:(.+)>.*/, "$1");
+              email = listPost.match(/<mailto:([^<>]+)>/)?.[1] ?? listPost;
             }
           }
 

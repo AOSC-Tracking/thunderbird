@@ -55,6 +55,8 @@ tags = ["maildir"]
 
 ["test_msgCopy.js"]
 
+["test_msgFileHdr.js"]
+
 ["test_msgIDParsing.js"]
 
 ["test_noTop.js"]
@@ -124,6 +126,8 @@ requesttimeoutfactor = 12
 ["test_pop3Pump.js"]
 
 ["test_pop3ServerDisconnect.js"]
+
+["test_pop3StalePartial.js"]
 
 ["test_pop3StateDeadlock.js"]
 

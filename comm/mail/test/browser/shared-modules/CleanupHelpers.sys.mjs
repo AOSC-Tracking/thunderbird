@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { Assert } from "resource://testing-common/Assert.sys.mjs";
 import { BrowserTestUtils } from "resource://testing-common/BrowserTestUtils.sys.mjs";
@@ -24,11 +25,14 @@ export async function clearStatusBar(window) {
         !status._startTimeoutID &&
         !status._meteorsSpinning &&
         !status._stopTimeoutID,
-      "waiting for meteors to stop spinning"
+      "waiting for meteors to stop spinning",
+      100,
+      AppConstants.MOZ_CODE_COVERAGE ? 150 : 50
     );
   } catch (ex) {
-    // If the meteors don't stop spinning within 5 seconds, something has got
-    // confused somewhere and they'll probably keep spinning forever.
+    // If the meteors don't stop spinning within 5 seconds (15 for CCov),
+    // something has got confused somewhere and they'll probably keep spinning
+    // forever.
     // Reset and hope we can continue without more problems.
     Assert.ok(!status._startTimeoutID, "meteors should not have a start timer");
     Assert.ok(!status._meteorsSpinning, "meteors should not be spinning");
@@ -69,6 +73,17 @@ export async function clearStatusBar(window) {
     0,
     "status bar should not have any active processes"
   );
+  for (const process of status._activeProcesses) {
+    dump(
+      `Leftover status bar process: id=${process.id}, ` +
+        `displayText="${process.displayText}", state=${process.state}, ` +
+        `percentComplete=${process.percentComplete}, ` +
+        `lastStatusText="${process.lastStatusText}", ` +
+        `contextType="${process.contextType}", ` +
+        `contextDisplayText="${process.contextDisplayText}", ` +
+        `startTime=${process.startTime}\n`
+    );
+  }
   status._startRequests = 0;
   status._activeProcesses.length = 0;
 

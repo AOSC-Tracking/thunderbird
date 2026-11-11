@@ -1183,171 +1183,6 @@ nsMsgDBView::GetColumnProperties(nsTreeColumn* col, nsAString& properties) {
 NS_IMETHODIMP
 nsMsgDBView::GetCellProperties(int32_t aRow, nsTreeColumn* col,
                                nsAString& properties) {
-  if (!IsValidIndex(aRow)) return NS_MSG_INVALID_DBVIEW_INDEX;
-
-  // This is where we tell the tree to apply styles to a particular row
-  // i.e. if the row is an unread message...
-
-  nsCOMPtr<nsIMsgDBHdr> msgHdr;
-  nsresult rv = NS_OK;
-
-  rv = GetMsgHdrForViewIndex(aRow, getter_AddRefs(msgHdr));
-
-  if (NS_FAILED(rv) || !msgHdr) {
-    ClearHdrCache();
-    return NS_MSG_INVALID_DBVIEW_INDEX;
-  }
-
-  const nsAString& colID = col->GetId();
-  if (colID.First() == 'c' && colID.EqualsLiteral("correspondentCol")) {
-    if (IsOutgoingMsg(msgHdr))
-      properties.AssignLiteral("outgoing");
-    else
-      properties.AssignLiteral("incoming");
-  }
-
-  if (!properties.IsEmpty()) properties.Append(' ');
-
-  properties.Append(mMessageType);
-
-  uint32_t flags;
-  msgHdr->GetFlags(&flags);
-
-  bool isRead = flags & nsMsgMessageFlags::Read;
-  if (!isRead)
-    properties.AppendLiteral(" unread");
-  else
-    properties.AppendLiteral(" read");
-
-  if (flags & nsMsgMessageFlags::Replied) properties.AppendLiteral(" replied");
-
-  if (flags & nsMsgMessageFlags::Forwarded)
-    properties.AppendLiteral(" forwarded");
-
-  if (flags & nsMsgMessageFlags::Redirected)
-    properties.AppendLiteral(" redirected");
-
-  if (flags & nsMsgMessageFlags::New) properties.AppendLiteral(" new");
-
-  if (m_flags[aRow] & nsMsgMessageFlags::Marked)
-    properties.AppendLiteral(" flagged");
-
-  // For threaded display add the ignoreSubthread property to the
-  // subthread top row (this row). For non-threaded add it to all rows.
-  if (!(m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay) &&
-      (flags & nsMsgMessageFlags::Ignored)) {
-    properties.AppendLiteral(" ignoreSubthread");
-  } else {
-    bool ignored;
-    msgHdr->GetIsKilled(&ignored);
-    if (ignored) properties.AppendLiteral(" ignoreSubthread");
-  }
-
-  nsCOMPtr<nsIMsgLocalMailFolder> localFolder = do_QueryInterface(m_folder);
-
-  if ((flags & nsMsgMessageFlags::Offline) ||
-      (localFolder && !(flags & nsMsgMessageFlags::Partial)))
-    properties.AppendLiteral(" offline");
-
-  if (flags & nsMsgMessageFlags::Attachment)
-    properties.AppendLiteral(" attach");
-
-  if ((flags & nsMsgMessageFlags::IMAPDeleted))
-    properties.AppendLiteral(" imapdeleted");
-
-  nsCString imageSize;
-  msgHdr->GetStringProperty("imageSize", imageSize);
-  if (!imageSize.IsEmpty()) properties.AppendLiteral(" hasimage");
-
-  nsCString junkScoreStr;
-  msgHdr->GetStringProperty("junkscore", junkScoreStr);
-  if (!junkScoreStr.IsEmpty()) {
-    if (junkScoreStr.ToInteger(&rv) == nsIJunkMailPlugin::IS_SPAM_SCORE)
-      properties.AppendLiteral(" junk");
-    else
-      properties.AppendLiteral(" notjunk");
-
-    NS_ASSERTION(NS_SUCCEEDED(rv), "Converting junkScore to integer failed.");
-  }
-
-  nsCString keywords;
-  FetchRowKeywords(aRow, msgHdr, keywords);
-  bool tagAdded = false;
-  if (!keywords.IsEmpty()) {
-    AppendKeywordProperties(keywords, properties, &tagAdded);
-  }
-  if (tagAdded) {
-    properties.AppendLiteral(" tagged");
-  } else {
-    properties.AppendLiteral(" untagged");
-  }
-
-  // This is a double fetch of the keywords property since we also fetch
-  // it for the tags - do we want to do this?
-  // I'm not sure anyone uses the kw- property, though it could be nice
-  // for people wanting to extend the thread pane.
-  nsCString keywordProperty;
-  msgHdr->GetStringProperty("keywords", keywordProperty);
-  if (!keywordProperty.IsEmpty()) {
-    NS_ConvertUTF8toUTF16 keywords(keywordProperty);
-    int32_t spaceIndex = 0;
-    do {
-      spaceIndex = keywords.FindChar(' ');
-      int32_t endOfKeyword =
-          (spaceIndex == -1) ? keywords.Length() : spaceIndex;
-      properties.AppendLiteral(" kw-");
-      properties.Append(StringHead(keywords, endOfKeyword));
-      if (spaceIndex > 0) keywords.Cut(0, endOfKeyword + 1);
-    } while (spaceIndex > 0);
-  }
-
-#ifdef SUPPORT_PRIORITY_COLORS
-  // Add special styles for priority.
-  nsMsgPriorityValue priority;
-  msgHdr->GetPriority(&priority);
-  switch (priority) {
-    case nsMsgPriority::highest:
-      properties.append(" priority-highest");
-      break;
-    case nsMsgPriority::high:
-      properties.append(" priority-high");
-      break;
-    case nsMsgPriority::low:
-      properties.append(" priority-low");
-      break;
-    case nsMsgPriority::lowest:
-      properties.append(" priority-lowest");
-      break;
-    default:
-      break;
-  }
-#endif
-
-  nsCOMPtr<nsIMsgThread> thread;
-  rv = GetThreadContainingIndex(aRow, getter_AddRefs(thread));
-  if (NS_SUCCEEDED(rv) && thread) {
-    uint32_t numUnreadChildren;
-    thread->GetNumUnreadChildren(&numUnreadChildren);
-    // If only one message is unread and is the parent message, don't mark the
-    // child thread with hasUnread.
-    if (numUnreadChildren == 1 && !isRead) {
-      numUnreadChildren--;
-    }
-    if (numUnreadChildren > 0) properties.AppendLiteral(" hasUnread");
-
-    // For threaded display add the ignore/watch properties to the
-    // thread top row. For non-threaded add it to all rows.
-    if (!(m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay) ||
-        ((m_viewFlags & nsMsgViewFlagsType::kThreadedDisplay) &&
-         (m_flags[aRow] & MSG_VIEW_FLAG_ISTHREAD))) {
-      thread->GetFlags(&flags);
-      if (flags & nsMsgMessageFlags::Watched)
-        properties.AppendLiteral(" watch");
-      if (flags & nsMsgMessageFlags::Ignored)
-        properties.AppendLiteral(" ignore");
-    }
-  }
-
   return NS_OK;
 }
 
@@ -1764,12 +1599,7 @@ bool nsMsgDBView::CustomColumnsInSortAndNotRegistered() {
 
 NS_IMETHODIMP
 nsMsgDBView::GetCellText(int32_t aRow, nsTreeColumn* aCol, nsAString& aValue) {
-  const nsAString& colID = aCol->GetId();
-
-  if (!IsValidIndex(aRow)) return NS_MSG_INVALID_DBVIEW_INDEX;
-
-  aValue.Truncate();
-  return CellTextForColumn(aRow, colID, aValue);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1995,79 +1825,7 @@ NS_IMETHODIMP
 nsMsgDBView::CycleHeader(nsTreeColumn* aCol) { return NS_OK; }
 
 NS_IMETHODIMP
-nsMsgDBView::CycleCell(int32_t row, nsTreeColumn* col) {
-  if (!IsValidIndex(row)) {
-    return NS_MSG_INVALID_DBVIEW_INDEX;
-  }
-
-  const nsAString& colID = col->GetId();
-
-  // The cyclers below don't work for the grouped header dummy row, currently.
-  // A future implementation should consider both collapsed and expanded state.
-  if (m_viewFlags & nsMsgViewFlagsType::kGroupBySort &&
-      m_flags[row] & MSG_VIEW_FLAG_DUMMY)
-    return NS_OK;
-
-  if (colID.IsEmpty()) return NS_OK;
-
-  switch (colID.First()) {
-    case 'u':
-      if (colID.EqualsLiteral("unreadButtonColHeader")) {
-        ApplyCommandToIndices(nsMsgViewCommandType::toggleMessageRead,
-                              {(nsMsgViewIndex)row});
-      }
-      break;
-    case 't':
-      if (colID.EqualsLiteral("threadCol")) {
-        ExpandAndSelectThreadByIndex(row, false);
-      } else if (colID.EqualsLiteral("tagsCol")) {
-        // XXX Do we want to keep this behaviour but switch it to tags?
-        // We could enumerate over the tags and go to the next one - it looks
-        // to me like this wasn't working before tags landed, so maybe not
-        // worth bothering with.
-      }
-      break;
-    case 'f':
-      if (colID.EqualsLiteral("flaggedCol")) {
-        // toggle the flagged status of the element at row.
-        if (m_flags[row] & nsMsgMessageFlags::Marked) {
-          ApplyCommandToIndices(nsMsgViewCommandType::unflagMessages,
-                                {(nsMsgViewIndex)row});
-        } else {
-          ApplyCommandToIndices(nsMsgViewCommandType::flagMessages,
-                                {(nsMsgViewIndex)row});
-        }
-      }
-      break;
-    case 'j': {
-      if (!colID.EqualsLiteral("junkStatusCol") || !JunkControlsEnabled(row)) {
-        return NS_OK;
-      }
-
-      nsCOMPtr<nsIMsgDBHdr> msgHdr;
-      nsresult rv = GetMsgHdrForViewIndex(row, getter_AddRefs(msgHdr));
-      if (NS_SUCCEEDED(rv) && msgHdr) {
-        nsCString junkScoreStr;
-        rv = msgHdr->GetStringProperty("junkscore", junkScoreStr);
-        if (junkScoreStr.IsEmpty() ||
-            (junkScoreStr.ToInteger(&rv) == nsIJunkMailPlugin::IS_HAM_SCORE)) {
-          ApplyCommandToIndices(nsMsgViewCommandType::junk,
-                                {(nsMsgViewIndex)row});
-        } else {
-          ApplyCommandToIndices(nsMsgViewCommandType::unjunk,
-                                {(nsMsgViewIndex)row});
-        }
-        NS_ASSERTION(NS_SUCCEEDED(rv),
-                     "Converting junkScore to integer failed.");
-      }
-      break;
-    }
-    default:
-      break;
-  }
-
-  return NS_OK;
-}
+nsMsgDBView::CycleCell(int32_t row, nsTreeColumn* col) { return NS_OK; }
 
 ///////////////////////////////////////////////////////////////////////////
 // end nsITreeView Implementation Methods
@@ -2230,9 +1988,8 @@ nsMsgDBView::OpenWithHdrs(nsIMsgEnumerator* aHeaders,
 }
 
 NS_IMETHODIMP
-nsMsgDBView::Init(nsIMessenger* aMessengerInstance, nsIMsgWindow* aMsgWindow,
+nsMsgDBView::Init(nsIMsgWindow* aMsgWindow,
                   nsIMsgDBViewCommandUpdater* aCmdUpdater) {
-  mMessengerWeak = do_GetWeakReference(aMessengerInstance);
   mMsgWindowWeak = do_GetWeakReference(aMsgWindow);
   mCommandUpdater = do_GetWeakReference(aCmdUpdater);
   return NS_OK;
@@ -6361,14 +6118,12 @@ nsMsgDBView::IsSorted(bool* _retval) {
 }
 
 NS_IMETHODIMP
-nsMsgDBView::CloneDBView(nsIMessenger* aMessengerInstance,
-                         nsIMsgWindow* aMsgWindow,
+nsMsgDBView::CloneDBView(nsIMsgWindow* aMsgWindow,
                          nsIMsgDBViewCommandUpdater* aCmdUpdater,
                          nsIMsgDBView** _retval) {
   nsMsgDBView* newMsgDBView = new nsMsgDBView();
 
-  nsresult rv =
-      CopyDBView(newMsgDBView, aMessengerInstance, aMsgWindow, aCmdUpdater);
+  nsresult rv = CopyDBView(newMsgDBView, aMsgWindow, aCmdUpdater);
   NS_ENSURE_SUCCESS(rv, rv);
 
   NS_IF_ADDREF(*_retval = newMsgDBView);
@@ -6376,7 +6131,6 @@ nsMsgDBView::CloneDBView(nsIMessenger* aMessengerInstance,
 }
 
 nsresult nsMsgDBView::CopyDBView(nsMsgDBView* aNewMsgDBView,
-                                 nsIMessenger* aMessengerInstance,
                                  nsIMsgWindow* aMsgWindow,
                                  nsIMsgDBViewCommandUpdater* aCmdUpdater) {
   NS_ENSURE_ARG_POINTER(aNewMsgDBView);
@@ -6384,7 +6138,6 @@ nsresult nsMsgDBView::CopyDBView(nsMsgDBView* aNewMsgDBView,
     aNewMsgDBView->mMsgWindowWeak = do_GetWeakReference(aMsgWindow);
   }
 
-  aNewMsgDBView->mMessengerWeak = do_GetWeakReference(aMessengerInstance);
   aNewMsgDBView->mCommandUpdater = do_GetWeakReference(aCmdUpdater);
   aNewMsgDBView->m_folder = m_folder;
   aNewMsgDBView->m_viewFlags = m_viewFlags;
@@ -6519,7 +6272,7 @@ nsMsgDBView::nsMsgViewHdrEnumerator::nsMsgViewHdrEnumerator(nsMsgDBView* view) {
   // current view immediately. It also makes it easier to expand all
   // if we're working on a copy.
   nsCOMPtr<nsIMsgDBView> clonedView;
-  view->CloneDBView(nullptr, nullptr, nullptr, getter_AddRefs(clonedView));
+  view->CloneDBView(nullptr, nullptr, getter_AddRefs(clonedView));
   m_view = static_cast<nsMsgDBView*>(clonedView.get());
   // Make sure we enumerate over collapsed threads by expanding all.
   m_view->ExpandAll();

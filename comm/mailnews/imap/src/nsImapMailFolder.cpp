@@ -45,7 +45,6 @@
 #include "nsIDocShell.h"
 #include "nsIImapFlagAndUidState.h"
 #include "nsIImapHeaderXferInfo.h"
-#include "nsIMessenger.h"
 #include "nsIMsgSearchAdapter.h"
 #include "nsIImapMockChannel.h"
 #include "nsIProgressEventSink.h"
@@ -1911,19 +1910,6 @@ nsImapMailFolder::MarkAllMessagesRead(nsIMsgWindow* aMsgWindow) {
   return rv;
 }
 
-NS_IMETHODIMP nsImapMailFolder::MarkThreadRead(nsIMsgThread* thread) {
-  nsresult rv = GetDatabase();
-  if (NS_SUCCEEDED(rv)) {
-    nsTArray<nsMsgKey> keys;
-    rv = mDatabase->MarkThreadRead(thread, nullptr, keys);
-    if (NS_SUCCEEDED(rv) && keys.Length() > 0) {
-      rv = StoreImapFlags(kImapMsgSeenFlag, true, keys, nullptr);
-      mDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
-    }
-  }
-  return rv;
-}
-
 NS_IMETHODIMP nsImapMailFolder::ReadFromFolderCacheElem(
     nsIMsgFolderCacheElement* element) {
   MOZ_ASSERT(!mail_panorama_enabled_AtStartup());
@@ -2141,7 +2127,7 @@ NS_IMETHODIMP nsImapMailFolder::DeleteMessages(
                                      nullptr, true, isMove)))
         return NS_ERROR_OUT_OF_MEMORY;
 
-      undoMsgTxn->SetTransactionType(nsIMessenger::eDeleteMsg);
+      undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eDeleteMsg);
       nsCOMPtr<nsIMsgTransactionService> txns =
           mozilla::components::Txns::Service();
       NS_ENSURE_STATE(txns);
@@ -2837,6 +2823,7 @@ NS_IMETHODIMP nsImapMailFolder::ParseMsgHdrs(
   nsCOMPtr<nsIImapUrl> aImapUrl;
   nsImapAction imapAction = nsIImapUrl::nsImapTest;  // unused value.
   if (!mDatabase) GetDatabase();
+  NS_ENSURE_STATE(mDatabase);
 
   nsresult rv = aHdrXferInfo->GetNumHeaders(&numHdrs);
   if (aProtocol) {
@@ -2848,13 +2835,19 @@ NS_IMETHODIMP nsImapMailFolder::ParseMsgHdrs(
     NS_ENSURE_SUCCESS(rv, rv);
     if (!headerInfo) break;
     int32_t msgSize;
-    nsMsgKey msgKey;
-    bool containsKey;
     nsCString msgHdrs;
     headerInfo->GetMsgSize(&msgSize);
-    headerInfo->GetMsgUid(&msgKey);
-    if (msgKey == nsMsgKey_None)  // not a valid uid.
+
+    ImapUid uid;
+    headerInfo->GetMsgUid(&uid);
+    if (uid == 0) {
       continue;
+    }
+    auto keyLookup = MsgKeyFromUid(mDatabase, uid);
+    if (keyLookup.isErr()) {
+      continue;
+    }
+    nsMsgKey msgKey = keyLookup.unwrap();
     if (imapAction == nsIImapUrl::nsImapMsgPreview) {
       nsCOMPtr<nsIMsgDBHdr> msgHdr;
       headerInfo->GetMsgHdrs(msgHdrs);
@@ -2869,6 +2862,7 @@ NS_IMETHODIMP nsImapMailFolder::ParseMsgHdrs(
       }
       continue;
     }
+    bool containsKey;
     if (mDatabase &&
         NS_SUCCEEDED(mDatabase->ContainsKey(msgKey, &containsKey)) &&
         containsKey) {
@@ -2878,7 +2872,7 @@ NS_IMETHODIMP nsImapMailFolder::ParseMsgHdrs(
     nsresult rv = SetupHeaderParseStream(msgSize, EmptyCString(), nullptr);
     NS_ENSURE_SUCCESS(rv, rv);
     headerInfo->GetMsgHdrs(msgHdrs);  // The raw header block.
-    rv = ParseAdoptedHeaderLine(msgHdrs.get(), msgKey);
+    rv = ParseAdoptedHeaderLine(msgHdrs.get(), uid);
     NS_ENSURE_SUCCESS(rv, rv);
     rv = NormalEndHeaderParseStream(aProtocol, aImapUrl);
   }
@@ -4937,17 +4931,17 @@ nsresult nsImapMailFolder::GetTrashFolder(nsIMsgFolder** pTrashFolder) {
 // Protocol uses this to get the message size as stored in the database,
 // which it uses when sending a request to fetch the message.
 NS_IMETHODIMP
-nsImapMailFolder::GetMessageSizeFromDB(const char* id, uint32_t* size) {
+nsImapMailFolder::GetMessageSizeFromDB(ImapUid uid, uint32_t* size) {
   NS_ENSURE_ARG_POINTER(size);
 
   *size = 0;
   nsresult rv = GetDatabase();
   NS_ENSURE_SUCCESS(rv, rv);
-  if (id) {
-    nsMsgKey key = msgKeyFromInt(ParseUint64Str(id));
-    nsCOMPtr<nsIMsgDBHdr> mailHdr;
-    rv = mDatabase->GetMsgHdrForKey(key, getter_AddRefs(mailHdr));
-    if (NS_SUCCEEDED(rv) && mailHdr) rv = mailHdr->GetMessageSize(size);
+  nsMsgKey key = MOZ_TRY(MsgKeyFromUid(mDatabase, uid));
+  nsCOMPtr<nsIMsgDBHdr> mailHdr;
+  rv = mDatabase->GetMsgHdrForKey(key, getter_AddRefs(mailHdr));
+  if (NS_SUCCEEDED(rv) && mailHdr) {
+    rv = mailHdr->GetMessageSize(size);
   }
   return rv;
 }
@@ -5546,10 +5540,11 @@ nsImapMailFolder::NotifySearchHit(nsIMsgMailNewsUrl* aUrl,
     while (hitUidToken) {
       long naturalLong;  // %l is 64 bits on OSF1
       sscanf(hitUidToken, "%ld", &naturalLong);
-      nsMsgKey hitUid = (nsMsgKey)naturalLong;
+      ImapUid hitUid = (ImapUid)naturalLong;
+      nsMsgKey hitKey = MOZ_TRY(MsgKeyFromUid(mDatabase, hitUid));
 
       nsCOMPtr<nsIMsgDBHdr> hitHeader;
-      rv = mDatabase->GetMsgHdrForKey(hitUid, getter_AddRefs(hitHeader));
+      rv = mDatabase->GetMsgHdrForKey(hitKey, getter_AddRefs(hitHeader));
       if (NS_SUCCEEDED(rv) && hitHeader) {
         nsCOMPtr<nsIMsgSearchSession> searchSession;
         nsCOMPtr<nsIMsgSearchAdapter> searchAdapter;
@@ -6574,11 +6569,11 @@ nsresult nsImapMailFolder::CopyMessagesWithStream(
 
     if (isMove) {
       if (mFlags & nsMsgFolderFlags::Trash)
-        undoMsgTxn->SetTransactionType(nsIMessenger::eDeleteMsg);
+        undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eDeleteMsg);
       else
-        undoMsgTxn->SetTransactionType(nsIMessenger::eMoveMsg);
+        undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eMoveMsg);
     } else
-      undoMsgTxn->SetTransactionType(nsIMessenger::eCopyMsg);
+      undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eCopyMsg);
     m_copyState->m_undoMsgTxn = undoMsgTxn;
   }
   if (NS_SUCCEEDED(rv)) CopyStreamMessage(messages[0], this, msgWindow, isMove);
@@ -6911,7 +6906,7 @@ nsresult nsImapMailFolder::CopyMessagesOffline(
                                isMove, moveCopyOpType, srcMsgs);
       if (undoMsgTxn) {
         if (isMove) {
-          undoMsgTxn->SetTransactionType(nsIMessenger::eMoveMsg);
+          undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eMoveMsg);
           nsCOMPtr<nsIMsgImapMailFolder> srcIsImap(
               do_QueryInterface(srcFolder));
           // remember this undo transaction so we can hook up the result
@@ -6922,7 +6917,7 @@ nsresult nsImapMailFolder::CopyMessagesOffline(
             srcImapFolder->m_pendingOfflineMoves.AppendElement(undoMsgTxn);
           }
         } else {
-          undoMsgTxn->SetTransactionType(nsIMessenger::eCopyMsg);
+          undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eCopyMsg);
         }
         // we're adding this undo action before the delete is successful. This
         // is evil, but 4.5 did it as well.
@@ -6934,12 +6929,13 @@ nsresult nsImapMailFolder::CopyMessagesOffline(
       if (undoMsgTxn) {
         if (isMove) {
           if (mFlags & nsMsgFolderFlags::Trash) {
-            undoMsgTxn->SetTransactionType(nsIMessenger::eDeleteMsg);
+            undoMsgTxn->SetTransactionType(
+                nsIMsgTransactionService::eDeleteMsg);
           } else {
-            undoMsgTxn->SetTransactionType(nsIMessenger::eMoveMsg);
+            undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eMoveMsg);
           }
         } else {
-          undoMsgTxn->SetTransactionType(nsIMessenger::eCopyMsg);
+          undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eCopyMsg);
         }
         if (txnMgr) txnMgr->DoTransaction(undoMsgTxn);
       }
@@ -7230,11 +7226,11 @@ nsImapMailFolder::CopyMessages(
 
       if (isMove) {
         if (mFlags & nsMsgFolderFlags::Trash)
-          undoMsgTxn->SetTransactionType(nsIMessenger::eDeleteMsg);
+          undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eDeleteMsg);
         else
-          undoMsgTxn->SetTransactionType(nsIMessenger::eMoveMsg);
+          undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eMoveMsg);
       } else
-        undoMsgTxn->SetTransactionType(nsIMessenger::eCopyMsg);
+        undoMsgTxn->SetTransactionType(nsIMsgTransactionService::eCopyMsg);
       m_copyState->m_undoMsgTxn = undoMsgTxn;
     }
 
@@ -7895,13 +7891,7 @@ nsresult nsImapMailFolder::CreateACLRightsStringForFolder(
 
 NS_IMETHODIMP nsImapMailFolder::GetFolderNeedsACLListed(bool* bVal) {
   NS_ENSURE_ARG_POINTER(bVal);
-  bool dontNeedACLListed = !m_folderNeedsACLListed;
-  // if we haven't acl listed, and it's not a no select folder or the inbox,
-  //  then we'll list the acl if it's not a namespace.
-  if (m_folderNeedsACLListed &&
-      !(mFlags & (nsMsgFolderFlags::ImapNoselect | nsMsgFolderFlags::Inbox)))
-    GetIsNamespace(&dontNeedACLListed);
-  *bVal = !dontNeedACLListed;
+  *bVal = m_folderNeedsACLListed;
   return NS_OK;
 }
 
@@ -8177,7 +8167,10 @@ NS_IMETHODIMP nsImapMailFolder::RenameClient(nsIMsgWindow* msgWindow,
     unusedDB->SetSummaryValid(true);
     unusedDB->Commit(nsMsgDBCommitType::kLargeCommit);
     unusedDB->Close(true);
-    child->RenameSubFolders(msgWindow, msgFolder);
+    // We _know_ it's an IMAP folder, since our own AddSubfolderWithPath()
+    // created it.
+    static_cast<nsImapMailFolder*>(child.get())
+        ->RenameSubFolders(msgWindow, msgFolder);
     nsCOMPtr<nsIMsgFolder> msgParent;
     msgFolder->GetParent(getter_AddRefs(msgParent));
     msgFolder->SetParent(nullptr);
@@ -8197,8 +8190,8 @@ NS_IMETHODIMP nsImapMailFolder::RenameClient(nsIMsgWindow* msgWindow,
   return rv;
 }
 
-NS_IMETHODIMP nsImapMailFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
-                                                 nsIMsgFolder* oldFolder) {
+nsresult nsImapMailFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
+                                            nsIMsgFolder* oldFolder) {
   m_initialized = true;
   nsTArray<RefPtr<nsIMsgFolder>> subFolders;
   nsresult rv = oldFolder->GetSubFolders(subFolders);
@@ -8271,7 +8264,8 @@ NS_IMETHODIMP nsImapMailFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
       msgFolder->MatchOrChangeFilterDestination(
           child, false /*caseInsensitive*/, &changed);
       if (changed) msgFolder->AlertFilterChanged(msgWindow);
-      child->RenameSubFolders(msgWindow, msgFolder);
+      static_cast<nsImapMailFolder*>(child.get())
+          ->RenameSubFolders(msgWindow, msgFolder);
     }
   }
   return rv;
@@ -8395,7 +8389,7 @@ bool nsImapMailFolder::ShowPreviewText() {
 
 void nsImapMailFolder::FilterCopyStarted(nsIMsgDBHdr* aHeader) {
   if (!m_filterCopyState) {
-    m_filterCopyState = mozilla::MakeUnique<FilterCopyState>();
+    m_filterCopyState = std::make_unique<FilterCopyState>();
   }
   nsMsgKey key;
   aHeader->GetMessageKey(&key);
@@ -8776,12 +8770,9 @@ NS_IMETHODIMP nsImapMailFolder::FetchMsgPreviewText(
     }
   }
   if (!keysToFetchFromServer.IsEmpty()) {
-    uint32_t msgCount = keysToFetchFromServer.Length();
-    nsAutoCString messageIds;
-    // TODO: map msgKeys->UIDs
-    // See https://bugzilla.mozilla.org/show_bug.cgi?id=2031552
-    AllocateImapUidString(keysToFetchFromServer.Elements(), msgCount, nullptr,
-                          messageIds);
+    nsTArray<ImapUid> uids =
+        MOZ_TRY(UidsFromMsgKeys(mDatabase, keysToFetchFromServer));
+    nsAutoCString messageIds(UidSetFromUids(uids));
     nsCOMPtr<nsIImapService> imapService = mozilla::components::Imap::Service();
     nsCOMPtr<nsIURI> outUri;
     rv = imapService->GetBodyStart(this, aUrlListener, messageIds, 2048,

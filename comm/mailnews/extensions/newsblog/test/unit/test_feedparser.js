@@ -135,6 +135,100 @@ add_task(async function test_atom03_dates() {
   ]);
 });
 
+// Test that an Atom 1.0 document without a <feed> root is rejected.
+add_task(async function test_atom_entry_root() {
+  const account = FeedUtils.createRssAccount("test_atom_entry_root");
+  const rootFolder = account.incomingServer.rootMsgFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
+  const folder = rootFolder.createLocalSubfolder("atomentryroot");
+
+  const doc = await do_parse_document(
+    "resources/atom_entry_root.xml",
+    "text/xml"
+  );
+  const feed = new Feed("https://example.com/atom_entry_root.xml", folder);
+  feed.parseItems = true;
+  let parseErrors = 0;
+  feed.onParseError = function () {
+    parseErrors++;
+  };
+  const parser = new FeedParser();
+  const items = parser.parseFeed(feed, doc);
+
+  Assert.equal(feed.mFeedType, "ATOM_IETF", "feed type should be Atom 1.0");
+  Assert.equal(items.length, 0, "there should be no items");
+  Assert.equal(parseErrors, 1, "onParseError should be called once");
+});
+
+// Test that an exception thrown while parsing a downloaded feed is reported
+// as an invalid feed and doesn't leave the feed busy.
+add_task(async function test_download_parse_exception() {
+  const account = FeedUtils.createRssAccount("test_parse_exception");
+  const rootFolder = account.incomingServer.rootMsgFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
+  const folder = rootFolder.createLocalSubfolder("parseexception");
+  const url = "http://localhost:" + SERVER_PORT + "/rss2_example.xml";
+
+  const download = () =>
+    new Promise(resolve => {
+      new Feed(url, folder).download(true, {
+        downloaded(feed, error) {
+          resolve(error);
+        },
+        onProgress() {},
+      });
+    });
+
+  const originalParseFeed = FeedParser.prototype.parseFeed;
+  FeedParser.prototype.parseFeed = function () {
+    throw new Error("Simulated parser failure");
+  };
+  let error;
+  try {
+    error = await download();
+  } finally {
+    FeedParser.prototype.parseFeed = originalParseFeed;
+  }
+  Assert.equal(
+    error,
+    FeedUtils.kNewsBlogInvalidFeed,
+    "a parser exception should be reported as an invalid feed"
+  );
+
+  Assert.equal(
+    await download(),
+    FeedUtils.kNewsBlogSuccess,
+    "the feed should be downloadable again after a parser exception"
+  );
+});
+
+add_task(async function test_rss2_duplicate_media_content() {
+  const account = FeedUtils.createRssAccount(
+    "test_rss2_duplicate_media_content"
+  );
+  const rootFolder = account.incomingServer.rootMsgFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
+  const folder = rootFolder.createLocalSubfolder("duplicate-media-content");
+
+  const doc = await do_parse_document(
+    "resources/rss2_media_duplicate.xml",
+    "application/xml"
+  );
+  const feed = new Feed("https://example.com/feed.xml", folder);
+  feed.parseItems = true;
+  feed.onParseError = function () {
+    throw new Error("PARSE ERROR");
+  };
+
+  const items = new FeedParser().parseAsRSS2(feed, doc);
+  Assert.equal(items.length, 1);
+  Assert.equal(items[0].enclosures.length, 1);
+  Assert.equal(items[0].enclosures[0].mURL, "https://example.com/audio.mp3");
+});
+
 // Test feed downloading.
 // Mainly checking that it doesn't crash and that the right feed parser is used.
 add_task(async function test_download() {
@@ -204,6 +298,26 @@ add_task(async function test_download() {
     // Wait for this feed to complete downloading.
     await dl;
   }
+});
+
+add_task(function test_stripTags() {
+  const parser = new FeedParser();
+  Assert.equal(
+    parser.stripTags("<p>Some <b>bold</b> text</p>"),
+    "Some bold text",
+    "tags should be removed"
+  );
+  Assert.equal(
+    parser.stripTags("1 < 2 <i>and</i> 3 > 2"),
+    "1 < 2 and 3 > 2",
+    "a < that doesn't start a tag should be kept"
+  );
+  const unclosed = "<".repeat(100000);
+  Assert.equal(
+    parser.stripTags(unclosed),
+    unclosed,
+    "many unclosed < should be kept"
+  );
 });
 
 // Test that an <itunes:new-feed-url> redirect is only followed to a remote url.

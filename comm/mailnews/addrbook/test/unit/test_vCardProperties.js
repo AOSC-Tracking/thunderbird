@@ -254,6 +254,58 @@ add_task(function testFromToVCardBad() {
 });
 
 /**
+ * Tests that a vCard with many properties is parsed in linear time.
+ */
+add_task(function testFromVCardManyProperties() {
+  const count = 200000;
+  const lines = ["BEGIN:VCARD", "VERSION:4.0", "FN:x"];
+  for (let i = 0; i < count; i++) {
+    lines.push(`X-P${i}:v${i}`);
+  }
+  lines.push("END:VCARD");
+  const properties = VCardProperties.fromVCard(lines.join("\r\n"));
+
+  Assert.equal(
+    properties.entries.length,
+    count + 2,
+    "all properties should be parsed"
+  );
+  Assert.equal(
+    properties.entries[0].name,
+    "version",
+    "the version should be first"
+  );
+  Assert.equal(
+    properties.getFirstValue(`x-p${count - 1}`),
+    `v${count - 1}`,
+    "the last property should be kept"
+  );
+
+  // Many VERSION properties after the others.
+  const withVersions = VCardProperties.fromVCard(
+    lines
+      .slice(0, -1)
+      .concat(new Array(count).fill("VERSION:3.0"), "END:VCARD")
+      .join("\r\n")
+  );
+  Assert.equal(
+    withVersions.entries.length,
+    count + 2,
+    "repeated versions should replace each other"
+  );
+  Assert.equal(
+    withVersions.getFirstValue("version"),
+    "3.0",
+    "the last version should be used"
+  );
+  Assert.equal(
+    withVersions.getAllEntries("version").length,
+    1,
+    "there should be one version"
+  );
+});
+
+/**
  * Tests creating a VCardProperties from a Map of old-style address book
  * properties, then recreating the Map.
  */
@@ -863,6 +915,9 @@ add_task(function testGoogleEscaping() {
     TITLE:title\\:title\\;title\\,title\\\\title\\\\\\:title\\\\\\;title\\\\\\,title\\\\\\\\
     TEL:tel\\:0123\\\\4567
     EMAIL:test\\\\test@invalid
+    ADR:;;123 Main St,Apt 4\\:5;Any\\:town;;;
+    GEO:37.386;-122.08
+    X-COUNT;VALUE=INTEGER:42
     NOTE:notes\\:\\nnotes\\;\\nnotes\\,\\nnotes\\\\
     URL:http\\://host/url\\:url\\;url\\,url\\\\url
     END:VCARD`;
@@ -875,6 +930,9 @@ add_task(function testGoogleEscaping() {
     TITLE:title:title;title\\,title\\\\title\\\\:title\\\\;title\\\\\\,title\\\\\\\\
     TEL:tel:01234567
     EMAIL:test\\\\test@invalid
+    ADR:;;123 Main St,Apt 4:5;Any:town;;;
+    GEO:37.386;-122.08
+    X-COUNT;VALUE=INTEGER:42
     NOTE:notes:\\nnotes;\\nnotes\\,\\nnotes\\\\
     URL:http://host/url:url;url,url\\url
     END:VCARD`;
@@ -915,6 +973,24 @@ add_task(function testGoogleEscaping() {
       params: {},
       type: "text",
       value: "test\\test@invalid",
+    },
+    {
+      name: "adr",
+      params: {},
+      type: "text",
+      value: ["", "", ["123 Main St", "Apt 4:5"], "Any:town", "", "", ""],
+    },
+    {
+      name: "geo",
+      params: {},
+      type: "float",
+      value: [37.386, -122.08],
+    },
+    {
+      name: "x-count",
+      params: {},
+      type: "integer",
+      value: 42,
     },
     {
       name: "note",

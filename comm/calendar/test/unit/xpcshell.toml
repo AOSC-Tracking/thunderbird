@@ -91,6 +91,8 @@ tags = ["caldav"]
 
 ["test_detection.js"]
 
+["test_detection_proxy.js"]
+
 ["test_duration.js"]
 
 ["test_email_utils.js"]
@@ -108,6 +110,8 @@ tags = ["caldav"]
 ["test_freebusy_service.js"]
 
 ["test_ics.js"]
+
+["test_icsCalendar_invalidFile.js"]
 
 ["test_ics_offline_playback.js"]
 

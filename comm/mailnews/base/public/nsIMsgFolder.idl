@@ -372,7 +372,6 @@ interface nsIMsgFolder : nsISupports {
    * @param name the new name of the folder
    */
   void rename(in AUTF8String name, in nsIMsgWindow msgWindow);
-  void renameSubFolders(in nsIMsgWindow msgWindow, in nsIMsgFolder oldFolder);
 
   AUTF8String generateUniqueSubfolderName(in AUTF8String prefix,
                                           in nsIMsgFolder otherFolder);
@@ -440,8 +439,10 @@ interface nsIMsgFolder : nsISupports {
   readonly attribute ACString relativePathName;
 
   /**
-   * size of this folder on disk (not including .msf file)
-   * for imap, it's the sum of the size of the messages
+   * Size of this folder on disk (not including .msf file).
+   * For imap, it's the sum of the size of the messages.
+   *
+   * -1 when the size isn't known, for example when the store can't be read.
    */
   attribute long long sizeOnDisk;
 
@@ -655,7 +656,6 @@ interface nsIMsgFolder : nsISupports {
   void markMessagesRead(in Array<nsIMsgDBHdr> messages, in boolean markRead);
   void markAllMessagesRead(in nsIMsgWindow aMsgWindow);
   void markMessagesFlagged(in Array<nsIMsgDBHdr> messages, in boolean markFlagged);
-  void markThreadRead(in nsIMsgThread thread);
 
   /**
    * Gets the message database for the folder.

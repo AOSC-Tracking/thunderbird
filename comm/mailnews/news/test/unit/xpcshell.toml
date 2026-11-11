@@ -4,6 +4,8 @@ support-files = ["postings/*"]
 
 ["test_NntpChannel.js"]
 
+["test_NntpMessageService.js"]
+
 ["test_biff.js"]
 
 ["test_bug37465.js"]
@@ -43,9 +45,17 @@ run-sequentially = true  # Restarts server twice--may work but dangerous
 
 ["test_nntpPostAuthRequired.js"]
 
+["test_nntpProcessingError.js"]
+
 ["test_nntpProtocols.js"]
 
 ["test_nntpProxy.js"]
+
+["test_nntpRequestLifetime.js"]
+
+["test_nntpResponseErrors.js"]
+
+["test_nntpService.js"]
 
 ["test_nntpUrl.js"]
 

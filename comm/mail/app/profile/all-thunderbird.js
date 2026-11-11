@@ -478,6 +478,8 @@ pref("offline.autoDetect", true);
 // sent through content policies.
 pref("network.http.speculative-parallel-limit", 0);
 
+pref("network.proxy.share_proxy_settings", false); // use the same proxy settings for all protocols
+
 // Expose only select protocol handlers. All others should go
 // through the external protocol handler route.
 // If you are changing this list, you may need to also consider changing the
@@ -1554,6 +1556,10 @@ pref("mail.inappnotifications.bypass-filtering", false);
 // Used to notify about upcoming changes via in-app notification.
 pref("mail.inappnotifications.isFlatpak", false);
 pref("mail.inappnotifications.isSnap", false);
+
+// Whether a Thundermail OAuth account has been detected.
+// Used for in-app notification targeting.
+pref("mail.inappnotifications.hasThundermailAccount", false);
 
 // Enable forwarding messages with message filters.
 pref("mail.filters.forward.enabled", true);

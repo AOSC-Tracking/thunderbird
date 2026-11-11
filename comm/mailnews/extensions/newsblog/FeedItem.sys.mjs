@@ -78,12 +78,12 @@ FeedItem.prototype = {
   },
 
   normalizeMessageID(messageID) {
-    // Escape occurrences of message ID meta characters <, >, and @.
+    // Escape occurrences of message ID meta characters <, >, and @, as well
+    // as whitespace and the escape character % itself.
     messageID = messageID
-      .replace(/</g, "%3C")
-      .replace(/>/g, "%3E")
-      .replace(/@/g, "%40");
-    messageID = "<" + messageID.trim() + "@localhost.localdomain>";
+      .trim()
+      .replace(/[%<>@\s]/g, c => encodeURIComponent(c));
+    messageID = "<" + messageID + "@localhost.localdomain>";
 
     lazy.FeedUtils.log.trace(
       "FeedItem.normalizeMessageID: messageID - " + messageID
@@ -135,7 +135,7 @@ FeedItem.prototype = {
       let content = this.MESSAGE_TEMPLATE;
       content = content.replace(/%TITLE%/, this.title);
       content = content.replace(/%BASE%/, this.htmlEscape(this.contentBase));
-      content = content.replace(/%CONTENT%/, this.content);
+      content = content.replace(/%CONTENT%/, () => this.content);
       this.content = content;
       this.writeToFolder();
       this.markStored(resource);
@@ -275,7 +275,10 @@ FeedItem.prototype = {
       "\n";
 
     if (this.enclosures.length) {
-      const boundaryID = source.length;
+      let boundaryID;
+      do {
+        boundaryID = crypto.randomUUID().replaceAll("-", "");
+      } while (this.content.includes(boundaryID));
       source +=
         'Content-Type: multipart/mixed; boundary="' +
         this.ENCLOSURE_HEADER_BOUNDARY_PREFIX +

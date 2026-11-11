@@ -129,8 +129,6 @@ ChromeUtils.defineLazyGetter(lazy, "taskbarProgress", () => {
  */
 var msgWindow;
 
-var gMessenger;
-
 /**
  * Global variables, need to be re-initialized every time mostly because
  * we need to release them when the window closes.
@@ -419,8 +417,6 @@ var SHOW_CC_KEY = "C";
 var SHOW_BCC_KEY = "B";
 
 function InitializeGlobalVariables() {
-  gMessenger = Cc["@mozilla.org/messenger;1"].createInstance(Ci.nsIMessenger);
-
   gMsgCompose = null;
   gOriginalMsgURI = null;
   gWindowLocked = false;
@@ -460,7 +456,6 @@ function ReleaseGlobalVariables() {
   gCurrentIdentity = null;
   gMsgCompose = null;
   gOriginalMsgURI = null;
-  gMessenger = null;
   gRecipientObserver = null;
   gDisableAttachmentReminder = false;
   MailServices.mailSession.RemoveMsgWindow(msgWindow);
@@ -1270,6 +1265,15 @@ var defaultController = {
       },
     },
 
+    cmd_resizeHeaderArea: {
+      isEnabled() {
+        return !gWindowLocked;
+      },
+      doCommand() {
+        document.getElementById("headersSplitter").focus();
+      },
+    },
+
     cmd_quoteMessage: {
       isEnabled() {
         const selectedURIs = GetSelectedMessages();
@@ -1836,15 +1840,19 @@ function updateAllItems(disable) {
 }
 
 function InitFileSaveAsMenu() {
-  document
-    .getElementById("cmd_saveAsFile")
-    .toggleAttribute("checked", defaultSaveOperation == "file");
-  document
-    .getElementById("cmd_saveAsDraft")
-    .toggleAttribute("checked", defaultSaveOperation == "draft");
-  document
-    .getElementById("cmd_saveAsTemplate")
-    .toggleAttribute("checked", defaultSaveOperation == "template");
+  const saveAsCommands = {
+    file: "cmd_saveAsFile",
+    draft: "cmd_saveAsDraft",
+    template: "cmd_saveAsTemplate",
+  };
+  for (const [operation, commandId] of Object.entries(saveAsCommands)) {
+    const isChecked = defaultSaveOperation == operation;
+    for (const item of document.querySelectorAll(
+      `menuitem[command="${commandId}"]`
+    )) {
+      item.toggleAttribute("checked", isChecked);
+    }
+  }
 }
 
 function isSmimeSigningConfigured() {
@@ -2192,6 +2200,7 @@ function updateEditItems() {
 
 function updateViewItems() {
   goUpdateCommand("cmd_toggleAttachmentPane");
+  goUpdateCommand("cmd_resizeHeaderArea");
 }
 
 function updateOptionItems() {
@@ -2213,6 +2222,21 @@ function updateAttachmentItems() {
   goUpdateCommand("cmd_openAttachment");
   goUpdateCommand("cmd_attachVCard");
   goUpdateCommand("cmd_attachPublicKey");
+
+  for (const commandId of [
+    "cmd_attachVCard",
+    "cmd_attachPublicKey",
+    "cmd_remindLater",
+  ]) {
+    const isChecked = document
+      .getElementById(commandId)
+      .hasAttribute("checked");
+    for (const item of document.querySelectorAll(
+      `menuitem[command="${commandId}"]`
+    )) {
+      item.toggleAttribute("checked", isChecked);
+    }
+  }
 }
 
 function updateReorderAttachmentsItems() {
@@ -7283,10 +7307,13 @@ function updateOptionsMenu() {
   menuItem.toggleAttribute("checked", gSpellCheckingEnabled);
 }
 
+/**
+ * Update the checked Priority menu item from the compose fields.
+ */
 function updatePriorityMenu() {
   if (gMsgCompose) {
     var msgCompFields = gMsgCompose.compFields;
-    if (msgCompFields && msgCompFields.priority) {
+    if (msgCompFields) {
       var priorityMenu = document.getElementById("priorityMenu");
       priorityMenu.querySelector("[checked]").removeAttribute("checked");
       priorityMenu
@@ -8655,7 +8682,7 @@ function updateAttachmentPane(aShowPane) {
   }
 
   document.getElementById("attachmentBucketSize").textContent =
-    gMessenger.formatFileSize(attachmentsSize);
+    MailUtils.formatFileSize(attachmentsSize);
 
   document
     .getElementById("composeContentBox")

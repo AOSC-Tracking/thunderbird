@@ -53,12 +53,19 @@ async function runTestInSandbox(test, filenameFragment, sandboxArgs = []) {
  * Checks that interactions with the widget do as expected.
  */
 add_task(async function testKeyboardAndMouse() {
+  // Row selection clicks target rendered row content. The treegrid body owns
+  // keyboard focus and represents the selected row with aria-activedescendant,
+  // so that content is not a separate accessible control. Keep the remaining
+  // click checks enabled for actual interactive targets.
   AccessibilityUtils.setEnv({ mustHaveAccessibleRule: false });
-  for (const variant of TEST_VARIANTS) {
-    info(`Running keyboard and mouse test for ${variant}`);
-    await runTestInSandbox(subtestKeyboardAndMouse, variant, [variant]);
+  try {
+    for (const variant of TEST_VARIANTS) {
+      info(`Running keyboard and mouse test for ${variant}`);
+      await runTestInSandbox(subtestKeyboardAndMouse, variant, [variant]);
+    }
+  } finally {
+    AccessibilityUtils.resetEnv();
   }
-  AccessibilityUtils.resetEnv();
 });
 
 async function subtestKeyboardAndMouse(variant) {
@@ -105,6 +112,17 @@ async function subtestKeyboardAndMouse(variant) {
   // Count is calculated from the height of `list` divided by
   // TestCardRow.ROW_HEIGHT, plus list._toleranceSize.
   Assert.equal(rows.length, 13 + 26, "the list has the right number of rows");
+  Assert.equal(
+    list.table.body.getAttribute("role"),
+    "treegrid",
+    "the row container should expose treegrid semantics"
+  );
+  Assert.equal(rows[0].getAttribute("role"), "row", "row has row semantics");
+  Assert.equal(
+    rows[0].querySelector("td").getAttribute("role"),
+    "gridcell",
+    "row content has gridcell semantics"
+  );
 
   Assert.equal(doc.activeElement, doc.body);
 
@@ -1332,6 +1350,14 @@ async function subtestExpandCollapse() {
     }
   }
 
+  function checkActiveDescendant(expectedId) {
+    Assert.equal(
+      list.table.body.ariaActiveDescendantElement,
+      doc.getElementById(expectedId),
+      "active descendant is correct"
+    );
+  }
+
   function checkMultiSelect(...expectedIds) {
     const selected = [...list.querySelectorAll(".selected")].map(row => row.id);
     Assert.deepEqual(selected, expectedIds, "selection should be correct");
@@ -1413,6 +1439,17 @@ async function subtestExpandCollapse() {
       );
     });
   }
+
+  // A primary press before it becomes a selection must not move the active
+  // descendant.
+  checkActiveDescendant("row-1");
+  EventUtils.synthesizeMouseAtCenter(
+    doc.getElementById("row-2").querySelector(".twisty"),
+    { type: "mousedown", button: 0, buttons: 1 },
+    content
+  );
+  checkSelectedAndCurrent(0, "row-1");
+  checkActiveDescendant("row-1");
 
   for (const id of idsWithoutChildren) {
     await clickTwisty(id, null);
@@ -2074,6 +2111,295 @@ async function subtestScrollWhenExpandCollapse() {
   list.removeEventListener("expanded", listener);
   list.removeEventListener("select", selectHandler);
   doc.documentElement.dir = null;
+}
+
+/**
+ * Checks that expanding and collapsing all top-level rows works.
+ */
+add_task(async function testExpandCollapseAll() {
+  await runTestInSandbox(subtestExpandCollapseAll, "levels");
+});
+
+async function subtestExpandCollapseAll() {
+  const doc = content.document;
+  const list = doc.getElementById("testTree");
+  const table = list.table;
+  const view = list.view;
+  const rows = table.body.getElementsByTagName("tr");
+
+  const allIds = [
+    "row-1",
+    "row-2",
+    "row-2-1",
+    "row-2-2",
+    "row-3",
+    "row-3-1",
+    "row-3-1-1",
+    "row-3-1-2",
+  ];
+  const topLevelIds = ["row-1", "row-2", "row-3"];
+
+  let selectEventCount = 0;
+  list.addEventListener("select", () => selectEventCount++);
+
+  // Sanity check.
+
+  Assert.equal(
+    view.rowCount,
+    8,
+    "view rowCount should equal the total number of rows"
+  );
+  Assert.deepEqual(
+    Array.from(rows, r => r.id),
+    allIds,
+    "table should start with the right rows"
+  );
+
+  // Check collapseAll with all rows expanded.
+
+  list.selectedIndices = [0, 4];
+  Assert.equal(list.currentIndex, 4, "row-3 should be current");
+  Assert.equal(
+    table.body.ariaActiveDescendantElement.id,
+    "row-3",
+    "row-3 should be the active descendant"
+  );
+
+  selectEventCount = 0;
+  table.classList.remove("all-selected", "some-selected", "multi-selected");
+
+  list.collapseAll();
+  Assert.equal(
+    selectEventCount,
+    1,
+    'exactly 1 "select" event should have fired'
+  );
+
+  Assert.equal(
+    view.rowCount,
+    3,
+    "view rowCount should equal the number of top-level rows"
+  );
+  await new Promise(resolve => content.requestAnimationFrame(resolve));
+  Assert.deepEqual(
+    Array.from(rows, r => r.id),
+    topLevelIds,
+    "child table rows should be gone"
+  );
+
+  Assert.equal(list.currentIndex, 2, "currentIndex should be updated");
+  Assert.equal(
+    table.body.ariaActiveDescendantElement.id,
+    "row-3",
+    "row-3 should still be the active descendant"
+  );
+  Assert.deepEqual(
+    list.selectedIndices,
+    [0, 2],
+    "selectedIndices should be updated"
+  );
+  Assert.ok(
+    !table.classList.contains("all-selected"),
+    "class all-selected should not be set"
+  );
+  Assert.ok(
+    table.classList.contains("some-selected"),
+    "class some-selected should be set"
+  );
+  Assert.ok(
+    table.classList.contains("multi-selected"),
+    "class multi-selected should be set"
+  );
+
+  // Check expandAll with all rows collapsed.
+
+  content.ensureChildrenLog.length = 0;
+  selectEventCount = 0;
+  table.classList.remove("all-selected", "some-selected", "multi-selected");
+
+  list.expandAll();
+  Assert.equal(
+    selectEventCount,
+    1,
+    'exactly 1 "select" event should have fired'
+  );
+
+  Assert.equal(
+    view.rowCount,
+    8,
+    "view rowCount should equal the total number of rows"
+  );
+  await new Promise(resolve => content.requestAnimationFrame(resolve));
+  Assert.deepEqual(
+    Array.from(rows, r => r.id),
+    allIds,
+    "child table rows should be back"
+  );
+  Assert.deepEqual(
+    content.ensureChildrenLog,
+    [1, 4],
+    "ensureChildren should have been called on the expanded rows"
+  );
+
+  Assert.equal(list.currentIndex, 4, "currentIndex should be updated");
+  Assert.equal(
+    table.body.ariaActiveDescendantElement.id,
+    "row-3",
+    "row-3 should still be the active descendant"
+  );
+  Assert.deepEqual(
+    list.selectedIndices,
+    [0, 4],
+    "selectedIndices should be updated"
+  );
+  Assert.ok(
+    !table.classList.contains("all-selected"),
+    "class all-selected should not be set"
+  );
+  Assert.ok(
+    table.classList.contains("some-selected"),
+    "class some-selected should be set"
+  );
+  Assert.ok(
+    table.classList.contains("multi-selected"),
+    "class multi-selected should be set"
+  );
+
+  // Check collapseAll again, with some rows collapsed and others expanded.
+
+  view.toggleOpenState(1); // Collapse row-2.
+  view.toggleOpenState(3); // Collapse row-3-1.
+  await new Promise(resolve => content.requestAnimationFrame(resolve));
+  Assert.deepEqual(
+    Array.from(rows, r => r.id),
+    ["row-1", "row-2", "row-3", "row-3-1"],
+    "table rows should be in the expected states"
+  );
+
+  list.selectedIndices = [3, 1];
+  Assert.equal(list.currentIndex, 1, "row-2 should be current");
+  Assert.equal(
+    table.body.ariaActiveDescendantElement.id,
+    "row-2",
+    "row-2 should be the active descendant"
+  );
+
+  selectEventCount = 0;
+  table.classList.remove("all-selected", "some-selected", "multi-selected");
+
+  list.collapseAll();
+  Assert.equal(
+    selectEventCount,
+    1,
+    'exactly 1 "select" event should have fired'
+  );
+
+  Assert.equal(
+    view.rowCount,
+    3,
+    "view rowCount should equal the number of top-level rows"
+  );
+  await new Promise(resolve => content.requestAnimationFrame(resolve));
+  Assert.deepEqual(
+    Array.from(rows, r => r.id),
+    topLevelIds,
+    "child table rows should be gone"
+  );
+
+  Assert.equal(
+    list.currentIndex,
+    1,
+    "currentIndex should be on the same row as it was before"
+  );
+  Assert.equal(
+    table.body.ariaActiveDescendantElement.id,
+    "row-2",
+    "row-2 should still be the active descendant"
+  );
+  Assert.deepEqual(
+    list.selectedIndices,
+    [1, 2],
+    "selectedIndices should be updated"
+  );
+  Assert.ok(
+    !table.classList.contains("all-selected"),
+    "class all-selected should not be set"
+  );
+  Assert.ok(
+    table.classList.contains("some-selected"),
+    "class some-selected should be set"
+  );
+  Assert.ok(
+    table.classList.contains("multi-selected"),
+    "class multi-selected should be set"
+  );
+
+  // Check expandAll again, with some rows collapsed and others expanded.
+
+  view.toggleOpenState(2); // Expand row-3.
+  await new Promise(resolve => content.requestAnimationFrame(resolve));
+  Assert.deepEqual(
+    Array.from(rows, r => r.id),
+    ["row-1", "row-2", "row-3", "row-3-1"],
+    "table rows should be in the expected states"
+  );
+
+  list.selectedIndices = [1, 3];
+  Assert.equal(list.currentIndex, 3, "row-3-1 should be current");
+  Assert.equal(
+    table.body.ariaActiveDescendantElement.id,
+    "row-3-1",
+    "row-3-1 should be the active descendant"
+  );
+
+  content.ensureChildrenLog.length = 0;
+  selectEventCount = 0;
+  table.classList.remove("all-selected", "some-selected", "multi-selected");
+
+  list.expandAll();
+  Assert.equal(
+    selectEventCount,
+    1,
+    'exactly 1 "select" event should have fired'
+  );
+
+  Assert.equal(view.rowCount, 6);
+  await new Promise(resolve => content.requestAnimationFrame(resolve));
+  Assert.deepEqual(
+    Array.from(rows, r => r.id),
+    ["row-1", "row-2", "row-2-1", "row-2-2", "row-3", "row-3-1"],
+    "child table rows that were visible before should be back"
+  );
+  Assert.deepEqual(
+    content.ensureChildrenLog,
+    [1],
+    "ensureChildren should have been called on the expanded row"
+  );
+
+  Assert.equal(list.currentIndex, 5, "currentIndex should be updated");
+  Assert.equal(
+    table.body.ariaActiveDescendantElement.id,
+    "row-3-1",
+    "row-3-1 should still be the active descendant"
+  );
+  Assert.deepEqual(
+    list.selectedIndices,
+    [1, 5],
+    "selectedIndices should be updated"
+  );
+
+  Assert.ok(
+    !table.classList.contains("all-selected"),
+    "class all-selected should not be set"
+  );
+  Assert.ok(
+    table.classList.contains("some-selected"),
+    "class some-selected should be set"
+  );
+  Assert.ok(
+    table.classList.contains("multi-selected"),
+    "class multi-selected should be set"
+  );
 }
 
 /**

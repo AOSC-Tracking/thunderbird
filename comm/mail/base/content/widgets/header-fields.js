@@ -617,6 +617,11 @@
       this.tabIndex = 0;
 
       this.value = document.createElement("span");
+      this.value.classList.add("header-row-value");
+      if (this.dataset.headerName != "subject") {
+        this.value.setAttribute("role", "group");
+        this.value.setAttribute("aria-labelledby", this.heading.id);
+      }
       this.appendChild(this.value);
     }
 
@@ -731,14 +736,24 @@
       this.value.classList.add("text-link");
       this.addEventListener("click", event => {
         if (event.button != 2) {
-          openUILink(encodeURI(this.value.textContent), event);
+          openUILink(this.url, event);
         }
       });
       this.addEventListener("keydown", event => {
         if (event.key == "Enter") {
-          openUILink(encodeURI(this.value.textContent), event);
+          openUILink(this.url, event);
         }
       });
+    }
+
+    /**
+     * Set the URL for this row, displayed unescaped where safe.
+     *
+     * @param {string} val - The URL, as found in the header.
+     */
+    set headerValue(val) {
+      this.url = val;
+      super.headerValue = Services.textToSubURI.unEscapeURIForUI(val);
     }
   }
   customElements.define("url-header-row", UrlHeaderRow, {
@@ -1032,12 +1047,35 @@
   });
 
   class MultiMessageIdsRow extends HTMLDivElement {
+    static MAX_COLLAPSED_IDS = 20;
+    static SHOW_MORE_BATCH = 200;
+
     /**
      * The array of all the IDs that need to be shown in this row.
      *
      * @type {string[]}
      */
     #ids = [];
+
+    /**
+     * Whether the IDs are shown in full instead of numbered.
+     *
+     * @type {boolean}
+     */
+    #expanded = false;
+
+    /**
+     * The IDs before this index and from #tailStart are shown, the ones in
+     * between are hidden behind the toggle button.
+     *
+     * @type {integer}
+     */
+    #headEnd = 0;
+
+    /**
+     * @type {integer}
+     */
+    #tailStart = 0;
 
     connectedCallback() {
       if (this.hasConnected) {
@@ -1069,46 +1107,114 @@
       this.idsList.classList.add("ids-list");
       this.appendChild(this.idsList);
 
-      this.toggleButton = document.createElement("button");
-      this.toggleButton.setAttribute("type", "button");
-      this.toggleButton.classList.add("show-more-ids", "plain");
-      this.toggleButton.addEventListener(
+      this.toggleButton = this.#createButton("show-more-ids");
+      document.l10n.setAttributes(
+        this.toggleButton,
+        "message-ids-field-show-more"
+      );
+
+      this.ellipsisButton = this.#createButton("show-hidden-ids");
+      this.ellipsisButton.textContent = "…";
+    }
+
+    /**
+     * @param {string} className - The class of the button.
+     * @returns {HTMLButtonElement}
+     */
+    #createButton(className) {
+      const button = document.createElement("button");
+      button.setAttribute("type", "button");
+      button.classList.add(className, "plain");
+      button.addEventListener(
         "mousedown",
         // Prevent focus being transferred to the button before it is removed.
         event => event.preventDefault()
       );
-      this.toggleButton.addEventListener("click", () => this.buildView(true));
-
-      document.l10n.setAttributes(
-        this.toggleButton,
-        "message-ids-field-show-all"
-      );
+      button.addEventListener("click", () => this.#showMore());
+      return button;
     }
 
     addId(id) {
       this.#ids.push(id);
     }
 
-    buildView(showAll = false) {
-      this.idsList.replaceChildren();
-      for (const [count, id] of this.#ids.entries()) {
-        const li = document.createElement("li", { is: "header-message-id" });
-        li.id = id;
-        this.idsList.appendChild(li);
-        if (!showAll && count < this.#ids.length - 1 && this.#ids.length > 1) {
-          li.messageId.textContent = count + 1;
-          li.messageId.title = id;
-        } else {
-          li.messageId.textContent = id;
-        }
-      }
+    /**
+     * Build the list of IDs, with only the first and last ones shown, numbered.
+     */
+    buildView() {
+      const half = MultiMessageIdsRow.MAX_COLLAPSED_IDS / 2;
+      this.#expanded = false;
+      this.#headEnd = Math.min(this.#ids.length, half);
+      this.#tailStart = Math.max(this.#headEnd, this.#ids.length - half);
+      this.#render();
+    }
 
-      if (!showAll && this.#ids.length > 1) {
-        this.idsList.lastElementChild.classList.add("last-before-button");
-        const liButton = document.createElement("li");
-        liButton.appendChild(this.toggleButton);
-        this.idsList.appendChild(liButton);
+    /**
+     * Show the IDs in full, and the next batch of hidden IDs.
+     */
+    #showMore() {
+      const hadFocus = [this.toggleButton, this.ellipsisButton].includes(
+        document.activeElement
+      );
+      const firstNew = this.#headEnd;
+      this.#expanded = true;
+      this.#headEnd = Math.min(
+        this.#tailStart,
+        this.#headEnd + MultiMessageIdsRow.SHOW_MORE_BATCH
+      );
+      this.#render();
+      if (hadFocus) {
+        const items = this.idsList.querySelectorAll(".header-message-id");
+        items[Math.min(firstNew, items.length - 1)].messageId.focus();
       }
+    }
+
+    #render() {
+      this.idsList.replaceChildren();
+      for (let index = 0; index < this.#headEnd; index++) {
+        this.#appendId(index);
+      }
+      const hiddenCount = this.#tailStart - this.#headEnd;
+      if (hiddenCount) {
+        document.l10n.setAttributes(
+          this.ellipsisButton,
+          "message-header-field-show-count-more",
+          { count: Math.min(hiddenCount, MultiMessageIdsRow.SHOW_MORE_BATCH) }
+        );
+        this.#appendButton(this.ellipsisButton);
+      }
+      for (let index = this.#tailStart; index < this.#ids.length; index++) {
+        this.#appendId(index);
+      }
+      if (!hiddenCount && !this.#expanded && this.#ids.length > 1) {
+        this.#appendButton(this.toggleButton);
+      }
+    }
+
+    /**
+     * @param {integer} index - The index of the ID in #ids.
+     */
+    #appendId(index) {
+      const id = this.#ids[index];
+      const li = document.createElement("li", { is: "header-message-id" });
+      li.id = id;
+      this.idsList.appendChild(li);
+      if (!this.#expanded && index < this.#ids.length - 1) {
+        li.messageId.textContent = index + 1;
+        li.messageId.title = id;
+      } else {
+        li.messageId.textContent = id;
+      }
+    }
+
+    /**
+     * @param {HTMLButtonElement} button - The button to add to the list.
+     */
+    #appendButton(button) {
+      this.idsList.lastElementChild.classList.add("last-before-button");
+      const liButton = document.createElement("li");
+      liButton.appendChild(button);
+      this.idsList.appendChild(liButton);
     }
 
     clear() {

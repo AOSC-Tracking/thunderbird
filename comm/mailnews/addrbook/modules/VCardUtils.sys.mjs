@@ -173,6 +173,34 @@ export var VCardUtils = {
 
     return abCard;
   },
+  /**
+   * Create a PHOTO entry for an image given as a data: URL. vCard 4.0 stores
+   * the data: URL as is (RFC 6350, section 6.2.4). Other versions store the
+   * base64 data inline, with the image format as the TYPE parameter
+   * (RFC 2426, section 3.1.4), which some clients (e.g. iOS) need to show it.
+   *
+   * @param {string} dataURL
+   * @param {?string} version - The version of the vCard the entry is for.
+   * @returns {?VCardPropertyEntry} The entry, or null if it isn't for
+   *   vCard 4.0 and dataURL isn't base64 encoded.
+   */
+  photoEntryFromDataURL(dataURL, version) {
+    if (version == "4.0") {
+      return new VCardPropertyEntry("photo", {}, "uri", dataURL);
+    }
+    const match = /^data:([^,;]*)(?:;[^,;]*)*;base64,(.*)$/is.exec(dataURL);
+    if (!match) {
+      return null;
+    }
+    const [, mimeType, data] = match;
+    const params = { encoding: "B" };
+    if (/^image\/./i.test(mimeType)) {
+      const type = mimeType.substring("image/".length).toUpperCase();
+      // "image/jpg" isn't registered, but some software uses it.
+      params.type = type == "JPG" ? "JPEG" : type;
+    }
+    return new VCardPropertyEntry("photo", params, "binary", data);
+  },
   abCardToVCard(abCard, version) {
     if (abCard.supportsVCard && abCard.getProperty("_vCard")) {
       return abCard.vCardProperties.toVCard();
@@ -689,10 +717,20 @@ export class VCardProperties {
         // violation of RFC6350. Removing the escaping at this point means no
         // other code requires a special case for it.
         if (Array.isArray(value)) {
-          value = value.map(v =>
-            v.replaceAll(/\\r/g, "\r").replaceAll(/\\:/g, ":")
-          );
-        } else {
+          // Structured values (e.g. ADR, N) can contain nested arrays when a
+          // component has multiple comma-separated values, and non-text
+          // values (e.g. GEO in vCard 3) are numbers.
+          const unescapeValue = v => {
+            if (Array.isArray(v)) {
+              return v.map(unescapeValue);
+            }
+            if (typeof v != "string") {
+              return v;
+            }
+            return v.replaceAll(/\\r/g, "\r").replaceAll(/\\:/g, ":");
+          };
+          value = value.map(unescapeValue);
+        } else if (typeof value == "string") {
           value = value.replaceAll(/\\r/g, "\r").replaceAll(/\\:/g, ":");
           if (["phone-number", "uri"].includes(type)) {
             value = value.replaceAll(/\\([,;\\])/g, "$1");
@@ -701,7 +739,8 @@ export class VCardProperties {
           }
         }
       }
-      rv.addEntry(new VCardPropertyEntry(name, params, type, value));
+      // The entry is new, so it can't be a duplicate.
+      rv.#addEntry(new VCardPropertyEntry(name, params, type, value));
     }
     return rv;
   }
@@ -753,6 +792,16 @@ export class VCardProperties {
       return false;
     }
 
+    this.#addEntry(entry);
+    return true;
+  }
+
+  /**
+   * Add an entry to this object, without checking if it's a duplicate.
+   *
+   * @param {VCardPropertyEntry} entry - The entry to add.
+   */
+  #addEntry(entry) {
     if (entry.name == "version") {
       if (entry.value == "3.0") {
         this.designSet = ICAL.design.vcard3;
@@ -761,15 +810,18 @@ export class VCardProperties {
       } else {
         throw new Error(`Unsupported vCard version: ${entry.value}`);
       }
-      // Version must be the first entry, so clear out any existing values
-      // and add it to the start of the collection.
-      this.clearValues("version");
-      this.entries.unshift(entry);
-      return true;
+      // Version must be the first entry, so replace it there, or clear out any
+      // existing values and add it to the start of the collection.
+      if (this.entries[0]?.name == "version") {
+        this.entries[0] = entry;
+      } else {
+        this.clearValues("version");
+        this.entries.unshift(entry);
+      }
+      return;
     }
 
     this.entries.push(entry);
-    return true;
   }
 
   /**

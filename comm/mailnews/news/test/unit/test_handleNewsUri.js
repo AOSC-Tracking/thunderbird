@@ -12,6 +12,9 @@
 var { MailUtils } = ChromeUtils.importESModule(
   "resource:///modules/MailUtils.sys.mjs"
 );
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
+);
 var { ServerTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/ServerTestUtils.sys.mjs"
 );
@@ -34,6 +37,7 @@ var kArticleForMsgId =
 // --- Stub state ---
 
 var gFolderUrisOpened = [];
+var gMessagesDisplayed = [];
 var gEmlFilesOpened = [];
 var gConfirmResult = true;
 var gConfirmCallCount = 0;
@@ -43,15 +47,28 @@ var gOnEmlOpened = null;
 
 // Keep originals for cleanup.
 var originalDisplayFolderIn3Pane = MailUtils.displayFolderIn3Pane;
+var originalDisplayMessage = MailUtils.displayMessage;
 var originalOpenEMLFile = MailUtils.openEMLFile;
 var originalPrompt = Services.prompt;
 
 add_setup(function () {
   // Set up the fake NNTP server.
   daemon = setupNNTPDaemon();
+  daemon.addGroup("comp.lang.c++");
   var article = new NewsArticle(kArticleForMsgId);
   daemon.addArticleToGroup(article, "misc.test", 128);
   daemon.addArticle(article);
+  for (const [index, messageId] of [
+    "test%test@nntp.invalid",
+    "test%25test@nntp.invalid",
+    "test#?/test@nntp.invalid",
+  ].entries()) {
+    const specialArticle = new NewsArticle(
+      kArticleForMsgId.replace("test-msgid@nntp.invalid", messageId)
+    );
+    daemon.addArticleToGroup(specialArticle, "misc.test", 129 + index);
+    daemon.addArticle(specialArticle);
+  }
 
   server = makeServer(NNTP_RFC977_handler, daemon);
   server.start();
@@ -60,6 +77,9 @@ add_setup(function () {
   // Stub UI-dependent MailUtils methods (no real windows in xpcshell).
   MailUtils.displayFolderIn3Pane = function (folderURI) {
     gFolderUrisOpened.push(folderURI);
+  };
+  MailUtils.displayMessage = function (msgHdr) {
+    gMessagesDisplayed.push(msgHdr);
   };
   MailUtils.openEMLFile = function (win, tempFile, fileUri) {
     gEmlFilesOpened.push({ tempFile, fileUri });
@@ -119,6 +139,7 @@ add_setup(function () {
   registerCleanupFunction(function () {
     Services.prompt = originalPrompt;
     MailUtils.displayFolderIn3Pane = originalDisplayFolderIn3Pane;
+    MailUtils.displayMessage = originalDisplayMessage;
     MailUtils.openEMLFile = originalOpenEMLFile;
     server.stop();
   });
@@ -126,6 +147,7 @@ add_setup(function () {
 
 function resetCaptures() {
   gFolderUrisOpened = [];
+  gMessagesDisplayed = [];
   gEmlFilesOpened = [];
   gConfirmResult = true;
   gConfirmCallCount = 0;
@@ -162,10 +184,10 @@ add_task(function test_snews_to_news_conversion() {
   );
 });
 
-add_task(function test_nntp_newsgroup_and_article_number() {
+add_task(function test_nntp_newsgroup() {
   resetCaptures();
   MailUtils.handleNewsUri(
-    `nntp://localhost:${server.port}/test.subscribe.simple/1`,
+    `nntp://localhost:${server.port}/test.subscribe.simple`,
     null
   );
   Assert.equal(gConfirmCallCount, 0, "should not prompt");
@@ -174,6 +196,125 @@ add_task(function test_nntp_newsgroup_and_article_number() {
     gFolderUrisOpened[0].includes("test.subscribe.simple"),
     "folder URI should contain the newsgroup name"
   );
+});
+
+add_task(async function test_nntp_article_fetch() {
+  resetCaptures();
+  const openedPromise = new Promise(resolve => {
+    gOnEmlOpened = resolve;
+  });
+  MailUtils.handleNewsUri(
+    `nntp://localhost:${server.port}/test.filter/1`,
+    null
+  );
+  await openedPromise;
+
+  Assert.equal(gConfirmCallCount, 0, "should not prompt");
+  Assert.equal(gFolderUrisOpened.length, 0, "should not open a folder");
+  Assert.greater(
+    gEmlFilesOpened[0].tempFile.fileSize,
+    0,
+    "should fetch the article when its header isn't in the folder"
+  );
+});
+
+add_task(async function test_nntp_articles_fetched_separately() {
+  const messageIds = [];
+  for (const articleNumber of [1, 2]) {
+    resetCaptures();
+    const openedPromise = new Promise(resolve => {
+      gOnEmlOpened = resolve;
+    });
+    MailUtils.handleNewsUri(
+      `nntp://localhost:${server.port}/test.filter/${articleNumber}`,
+      null
+    );
+    const tempFile = await openedPromise;
+    const data = await IOUtils.readUTF8(tempFile.path);
+    messageIds.push(data.match(/^Message-ID: (.*)$/m)?.[1]);
+  }
+  Assert.ok(messageIds[0], "first article should be fetched");
+  Assert.notEqual(
+    messageIds[0],
+    messageIds[1],
+    "different articles should be displayed"
+  );
+});
+
+add_task(async function test_nntp_article_in_folder() {
+  const folder = incomingServer.rootFolder.getChildNamed("test.filter");
+  const urlListener = new PromiseTestUtils.PromiseUrlListener();
+  incomingServer.getNewMessages(folder, null, urlListener);
+  await urlListener.promise;
+
+  resetCaptures();
+  MailUtils.handleNewsUri(
+    `nntp://localhost:${server.port}/test.filter/1`,
+    null
+  );
+  Assert.equal(gMessagesDisplayed.length, 1, "should display the message");
+  Assert.equal(
+    gMessagesDisplayed[0].messageKey,
+    1,
+    "should display the message with the article number as key"
+  );
+  Assert.equal(gEmlFilesOpened.length, 0, "should not fetch the article");
+});
+
+add_task(function test_nntp_article_unsubscribed_reject() {
+  resetCaptures();
+  gConfirmResult = false;
+  MailUtils.handleNewsUri(
+    `nntp://localhost:${server.port}/misc.test/128`,
+    null
+  );
+  Assert.equal(gConfirmCallCount, 1, "should prompt to subscribe");
+  Assert.equal(gMessagesDisplayed.length, 0, "should not display a message");
+  Assert.equal(gEmlFilesOpened.length, 0, "should not fetch the article");
+  Assert.ok(
+    !incomingServer
+      .QueryInterface(Ci.nsINntpIncomingServer)
+      .containsNewsgroup("misc.test"),
+    "misc.test should not be subscribed after the user rejected"
+  );
+});
+
+add_task(function test_nntp_invalid_article_number() {
+  const originalOpenNewsArticle = MailUtils._openNewsArticle;
+  let articlesOpened = 0;
+  MailUtils._openNewsArticle = () => articlesOpened++;
+  try {
+    for (const articleNumber of [
+      "abc",
+      "0",
+      "2147483648",
+      "23434534534534534545454",
+    ]) {
+      resetCaptures();
+      MailUtils.handleNewsUri(
+        `nntp://localhost:${server.port}/test.filter/${articleNumber}`,
+        null
+      );
+      Assert.equal(gConfirmCallCount, 0, `${articleNumber} should not prompt`);
+      Assert.equal(
+        gFolderUrisOpened.length,
+        0,
+        `${articleNumber} should not open a folder`
+      );
+      Assert.equal(
+        gMessagesDisplayed.length,
+        0,
+        `${articleNumber} should not display a message`
+      );
+      Assert.equal(
+        articlesOpened,
+        0,
+        `${articleNumber} should not fetch an article`
+      );
+    }
+  } finally {
+    MailUtils._openNewsArticle = originalOpenNewsArticle;
+  }
 });
 
 add_task(function test_nntps_newsgroup() {
@@ -279,6 +420,66 @@ add_task(function test_newsgroup_with_specific_host() {
   Assert.equal(gConfirmCallCount, 0);
   Assert.equal(gFolderUrisOpened.length, 1);
   Assert.ok(gFolderUrisOpened[0].includes("test.subscribe.simple"));
+});
+
+add_task(function test_constructNewsUriSpecWithNewsgroupNoServer() {
+  resetCaptures();
+  const newsgroup = "comp.lang.c++";
+  const uri = MailUtils.constructNewsUriSpec(newsgroup);
+  Assert.equal(
+    uri,
+    "news:comp.lang.c%2B%2B",
+    "The news URI should escape plus signs in the newsgroup name"
+  );
+  Assert.ok(
+    !incomingServer.containsNewsgroup(newsgroup),
+    "The newsgroup should not be subscribed initially"
+  );
+
+  MailUtils.handleNewsUri(uri, null);
+
+  Assert.equal(
+    gConfirmCallCount,
+    1,
+    "The newsgroup should prompt to subscribe"
+  );
+  Assert.ok(
+    gLastConfirmText.includes(newsgroup),
+    "The subscription prompt should contain the unencoded newsgroup name"
+  );
+  Assert.ok(
+    incomingServer.containsNewsgroup(newsgroup),
+    "The unencoded newsgroup should be subscribed after accepting"
+  );
+  Assert.deepEqual(
+    gFolderUrisOpened,
+    [incomingServer.rootFolder.getChildNamed(newsgroup).URI],
+    "The news URI should open the folder for the unencoded newsgroup name"
+  );
+});
+
+add_task(function test_constructNewsUriSpecWithNewsgroupAndServer() {
+  resetCaptures();
+  const newsgroup = "comp.lang.c++";
+  const uri = MailUtils.constructNewsUriSpec(newsgroup, incomingServer);
+  Assert.equal(
+    uri,
+    `news://localhost:${server.port}/comp.lang.c%2B%2B`,
+    "The news URI should include the server and escape the newsgroup name"
+  );
+
+  MailUtils.handleNewsUri(uri, null);
+
+  Assert.equal(
+    gConfirmCallCount,
+    0,
+    "The subscribed newsgroup should open without prompting"
+  );
+  Assert.deepEqual(
+    gFolderUrisOpened,
+    [incomingServer.rootFolder.getChildNamed(newsgroup).URI],
+    "The news URI should open the folder for the unencoded newsgroup name"
+  );
 });
 
 add_task(function test_newsgroup_unknown_host() {
@@ -475,6 +676,32 @@ add_task(async function test_messageId_unknown_server_snews_accept() {
   adHocServer.closeCachedConnections();
   MailServices.accounts.removeIncomingServer(adHocServer, false);
   tlsServer.close();
+});
+
+add_task(async function test_encodedMessageIds() {
+  for (const messageId of [
+    "test%test@nntp.invalid",
+    "test%25test@nntp.invalid",
+    "test#?/test@nntp.invalid",
+  ]) {
+    const uri = MailUtils.constructNewsUriSpec(messageId, incomingServer);
+    Assert.ok(
+      uri.includes(encodeURIComponent(messageId).replaceAll("%40", "@")),
+      "The news URI should escape the Message-ID"
+    );
+
+    resetCaptures();
+    const openedPromise = new Promise(resolve => {
+      gOnEmlOpened = resolve;
+    });
+    MailUtils.handleNewsUri(uri, null);
+    const tempFile = await openedPromise;
+    const content = await IOUtils.readUTF8(tempFile.path);
+    Assert.ok(
+      content.includes(`Message-ID: <${messageId}>`),
+      "The news URI should retrieve the original Message-ID after decoding once"
+    );
+  }
 });
 
 add_task(async function test_messageId_not_found() {

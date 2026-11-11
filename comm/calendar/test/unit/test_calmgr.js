@@ -28,12 +28,14 @@ class CalendarManagerObserver {
     this.registered = [];
     this.unregistering = [];
     this.deleting = [];
+    this.orderChanged = 0;
   }
 
-  check({ unregistering, registered, deleting }) {
+  check({ unregistering, registered, deleting, orderChanged = 0 }) {
     equal(this.unregistering[0], unregistering);
     equal(this.registered[0], registered);
     equal(this.deleting[0], deleting);
+    equal(this.orderChanged, orderChanged);
 
     this.reset();
   }
@@ -49,9 +51,13 @@ class CalendarManagerObserver {
   onCalendarDeleting(calendar) {
     this.deleting.push(calendar.id);
   }
+
+  onCalendarOrderChanged() {
+    this.orderChanged++;
+  }
 }
 
-add_test(function test_builtin_registration() {
+add_task(function test_builtin_registration() {
   function checkCalendarCount(net, rdonly, all) {
     equal(cal.manager.networkCalendarCount, net);
     equal(cal.manager.readOnlyCalendarCount, rdonly);
@@ -123,9 +129,6 @@ add_test(function test_builtin_registration() {
   calmgrObserver.check({});
   equal(readOnly, true);
   checkCalendarCount(0, 0, 0);
-
-  // We are done now, start the next test.
-  run_next_test();
 });
 
 add_task(async function test_dynamic_registration() {
@@ -213,7 +216,7 @@ add_task(async function test_dynamic_registration() {
   calmgrObserver.check({ unregistering: originalId });
 });
 
-add_test(function test_calobserver() {
+add_task(function test_calobserver() {
   function checkCounters(add, modify, del, alladd, allmodify, alldel) {
     equal(calcounter.addItem, add);
     equal(calcounter.modifyItem, modify);
@@ -296,11 +299,11 @@ add_test(function test_calobserver() {
   memory.deleteItem(newItem);
   checkCounters(0, 0, 0);
 
-  // We are done now, start the next test
-  run_next_test();
+  cal.manager.unregisterCalendar(memory);
+  cal.manager.unregisterCalendar(memory2);
 });
 
-add_test(function test_removeModes() {
+add_task(function test_removeModes() {
   function checkCounts(modes, shouldDelete, expectCount, extraFlags = 0) {
     if (cal.manager.calendarCount == baseCalendarCount) {
       cal.manager.registerCalendar(memory);
@@ -350,11 +353,9 @@ add_test(function test_removeModes() {
     Ci.calICalendarManager.REMOVE_NO_DELETE
   );
   checkCounts(["delete"], SHOULD_DELETE, 0);
-
-  run_next_test();
 });
 
-add_test(function test_calprefs() {
+add_task(function test_calprefs() {
   let prop;
   let memory = cal.manager.createCalendar("memory", Services.io.newURI("moz-memory-calendar://"));
   cal.manager.registerCalendar(memory);
@@ -411,6 +412,123 @@ add_test(function test_calprefs() {
   prop = memory.getProperty("intpref");
   Assert.strictEqual(prop, null);
 
-  // We are done now, start the next test
-  run_next_test();
+  cal.manager.unregisterCalendar(cal.manager.getCalendarById(memid));
+});
+
+add_task(async function test_getCalendars_listOrder() {
+  function create() {
+    const calendar = cal.manager.createCalendar(
+      "memory",
+      Services.io.newURI("moz-memory-calendar://")
+    );
+    calendar.id = cal.getUUID();
+    cal.manager.registerCalendar(calendar);
+    return cal.manager.getCalendarById(calendar.id);
+  }
+  function listOrder() {
+    return cal.manager.getCalendars().map(calendar => calendar.id);
+  }
+  function rememberedOrder() {
+    return Services.prefs.getStringPref("calendar.list.sortOrder", "").split(" ");
+  }
+
+  const a = create();
+  const b = create();
+  const c = create();
+  Assert.deepEqual(listOrder(), [a.id, b.id, c.id], "new calendars should be added at the end");
+  Assert.deepEqual(rememberedOrder(), [a.id, b.id, c.id], "the order should be remembered");
+
+  const observer = new CalendarManagerObserver();
+  cal.manager.addObserver(observer);
+
+  cal.manager.setCalendarOrder([c.id, a.id, b.id]);
+  Assert.deepEqual(
+    listOrder(),
+    [c.id, a.id, b.id],
+    "reordering the calendar list should reorder the calendars"
+  );
+  Assert.deepEqual(rememberedOrder(), [c.id, a.id, b.id], "the new order should be remembered");
+  observer.check({ orderChanged: 1 });
+
+  cal.manager.setCalendarOrder([b.id]);
+  Assert.deepEqual(
+    listOrder(),
+    [b.id, c.id, a.id],
+    "calendars the new order doesn't mention should keep their order at the end"
+  );
+  observer.check({ orderChanged: 1 });
+
+  // A calendar is registered again when its provider is enabled or disabled.
+  cal.manager.wrappedJSObject.updateCalendarRegistration([cal.manager.getCalendarById(c.id)]);
+  Assert.deepEqual(
+    listOrder(),
+    [b.id, c.id, a.id],
+    "a calendar registered again should keep its place"
+  );
+  observer.check({ unregistering: c.id, registered: c.id });
+
+  cal.manager.unregisterCalendar(cal.manager.getCalendarById(c.id));
+  Assert.deepEqual(listOrder(), [b.id, a.id], "an unregistered calendar should be gone");
+  Assert.deepEqual(rememberedOrder(), [b.id, a.id], "it should be forgotten from the order too");
+  observer.check({ unregistering: c.id });
+
+  cal.manager.removeObserver(observer);
+  for (const calendar of cal.manager.getCalendars()) {
+    cal.manager.unregisterCalendar(calendar);
+  }
+  Services.prefs.clearUserPref("calendar.list.sortOrder");
+});
+
+add_task(function test_realmRewrite() {
+  /**
+   * Run a WWW-Authenticate header through the realm rewriting of the
+   * http-on-examine-response observer.
+   *
+   * @param {string} header - The WWW-Authenticate header.
+   * @param {string} [name] - The name of the calendar.
+   * @returns {string} the rewritten header.
+   */
+  function rewrite(header, name = "Cal") {
+    let result = header;
+    const channel = {
+      QueryInterface: ChromeUtils.generateQI(["nsIHttpChannel"]),
+      notificationCallbacks: {
+        getInterface: () => ({ name, getProperty: () => null }),
+      },
+      getResponseHeader: () => header,
+      setResponseHeader(headerName, value) {
+        result = value;
+      },
+    };
+    cal.manager.observe(channel, "http-on-examine-response");
+    return result;
+  }
+
+  equal(
+    rewrite('Basic realm="Server"'),
+    'Basic realm="Server (Cal)"',
+    "the name should be appended"
+  );
+  equal(
+    rewrite('Digest realm="A \\"B\\" \\\\", nonce="x"'),
+    'Digest realm="A \\"B\\" \\\\ (Cal)", nonce="x"',
+    "escaped characters in the realm should be skipped"
+  );
+  equal(
+    rewrite('Basic realm="Server"', 'My "Cal"'),
+    'Basic realm="Server (My \\"Cal\\")"',
+    "quotes in the name should be escaped"
+  );
+  equal(
+    rewrite('Basic realm="Server"', "Cal $&"),
+    'Basic realm="Server (Cal $&)"',
+    "the name should be inserted literally"
+  );
+  equal(
+    rewrite('Basic realm="x\\"y'),
+    'Basic realm="x\\"y',
+    "an unterminated realm should be kept"
+  );
+  const unterminated = 'Basic realm="' + "\\".repeat(100000);
+  equal(rewrite(unterminated), unterminated, "many backslashes should be handled quickly");
 });

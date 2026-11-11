@@ -5,6 +5,7 @@
 var { MockFilePicker } = ChromeUtils.importESModule(
   "resource://testing-common/MockFilePicker.sys.mjs"
 );
+
 var { MockSound } = ChromeUtils.importESModule(
   "resource://testing-common/MockSound.sys.mjs"
 );
@@ -12,9 +13,24 @@ var { MockSound } = ChromeUtils.importESModule(
 var { MailServices } = ChromeUtils.importESModule(
   "resource:///modules/MailServices.sys.mjs"
 );
+
 const { SearchIntegration } = ChromeUtils.importESModule(
   "resource:///modules/SearchIntegration.sys.mjs"
 );
+
+const { AddonRepository } = ChromeUtils.importESModule(
+  "resource://gre/modules/addons/AddonRepository.sys.mjs"
+);
+
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
+);
+
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
+
+AddonTestUtils.initMochitest(this);
 
 add_task(async () => {
   requestLongerTimeout(2);
@@ -390,6 +406,22 @@ add_task(async () => {
       },
     ],
   });
+
+  const { prefsDocument } = await openNewPrefsTab(
+    "paneGeneral",
+    "formatLocale"
+  );
+  const appLocale = prefsDocument.getElementById("appLocale");
+  const regionalLocale = prefsDocument.getElementById("rsLocale");
+  Assert.equal(
+    prefsDocument.l10n.getAttributes(appLocale).id,
+    "date-time-app-locale"
+  );
+  Assert.equal(
+    prefsDocument.l10n.getAttributes(regionalLocale).id,
+    "date-time-regional-locale"
+  );
+  await closePrefsTab();
 });
 
 add_task(async () => {
@@ -407,6 +439,234 @@ add_task(async () => {
       },
     ],
   });
+});
+
+add_task(async function testApplicationHandlerStrings() {
+  const protocol = "web+fluent-handler-test";
+  const appName = "Fluent Test Handler";
+  const uriTemplate = "https://example.com/?url=%s";
+  const externalProtocolService = Cc[
+    "@mozilla.org/uriloader/external-protocol-service;1"
+  ].getService(Ci.nsIExternalProtocolService);
+  const handlerService = Cc[
+    "@mozilla.org/uriloader/handler-service;1"
+  ].getService(Ci.nsIHandlerService);
+  const handlerInfo = externalProtocolService.getProtocolHandlerInfo(protocol);
+  const handlerApp = Cc[
+    "@mozilla.org/uriloader/web-handler-app;1"
+  ].createInstance(Ci.nsIWebHandlerApp);
+  handlerApp.name = appName;
+  handlerApp.uriTemplate = uriTemplate;
+  handlerInfo.alwaysAskBeforeHandling = false;
+  handlerInfo.preferredAction = Ci.nsIHandlerInfo.useHelperApp;
+  handlerInfo.preferredApplicationHandler = handlerApp;
+  handlerInfo.possibleApplicationHandlers.appendElement(handlerApp);
+  handlerService.store(handlerInfo);
+
+  let handlerStored = true;
+  registerCleanupFunction(() => {
+    if (handlerStored) {
+      handlerService.remove(handlerInfo);
+    }
+  });
+
+  await SpecialPowers.pushPrefEnv({ set: [["pdfjs.disabled", false]] });
+  const paneLoaded = TestUtils.topicObserved("app-handler-pane-loaded");
+  const { prefsDocument, prefsWindow } = await openNewPrefsTab(
+    "paneGeneral",
+    "filesAttachmentCategory"
+  );
+  await paneLoaded;
+
+  const handlerRows = [...prefsWindow.gGeneralPane._handlerRows];
+  const findHandlerRow = type =>
+    handlerRows.find(([handler]) => handler.type == type)?.[1];
+  const assertMenuItemL10n = (row, id, args = null) => {
+    const item = row.menu.menupopup.querySelector(`[data-l10n-id="${id}"]`);
+    Assert.ok(item, `the menu should contain an item using ${id}`);
+    Assert.deepEqual(
+      prefsDocument.l10n.getAttributes(item),
+      { id, args },
+      `the ${row.handlerInfoWrapper.type} menu item should use ${id} with the expected arguments`
+    );
+  };
+
+  const pdfRow = findHandlerRow("application/pdf");
+  Assert.ok(pdfRow, "the built-in PDF handler should be listed");
+  Assert.equal(
+    pdfRow.node.querySelector(".typeDescription").value,
+    await prefsDocument.l10n.formatValue("applications-type-pdf"),
+    "the PDF handler should display the localized type description"
+  );
+  for (const id of [
+    "applications-preview-in-app",
+    "applications-always-ask",
+    "applications-save-file",
+    "applications-use-other-app",
+    "applications-delete-action",
+  ]) {
+    assertMenuItemL10n(pdfRow, id);
+  }
+
+  // Types that share a description are annotated with their MIME type; check
+  // that both arguments are substituted into applications-type-details-with-ext.
+  const pdfHandlerInfo = pdfRow.handlerInfoWrapper;
+  pdfHandlerInfo.disambiguateDescription = true;
+  const disambiguatedDescription = pdfHandlerInfo.typeDescription;
+  pdfHandlerInfo.disambiguateDescription = false;
+  const pdfTypeDescription = await prefsDocument.l10n.formatValue(
+    "applications-type-pdf"
+  );
+  Assert.stringContains(
+    disambiguatedDescription,
+    pdfTypeDescription,
+    "the disambiguated PDF description should contain the localized type description"
+  );
+  Assert.stringContains(
+    disambiguatedDescription,
+    "application/pdf",
+    "the disambiguated PDF description should contain the MIME type"
+  );
+
+  // The "Use <app> (default)" item must provide a tooltip as well: Fluent
+  // removes localizable attributes that a message does not define, so a
+  // message without a tooltiptext would leave the menu item without one.
+  const defaultItem = prefsDocument.createXULElement("menuitem");
+  pdfRow.menu.menupopup.appendChild(defaultItem);
+  prefsDocument.l10n.setAttributes(defaultItem, "applications-use-default", {
+    appName: "Test Default App",
+  });
+  await prefsDocument.l10n.translateFragment(defaultItem);
+  Assert.equal(
+    defaultItem.getAttribute("tooltiptext"),
+    "Test Default App",
+    "the use-default menu item should have a tooltip with the app name"
+  );
+  defaultItem.remove();
+
+  const protocolRow = findHandlerRow(protocol);
+  Assert.ok(protocolRow, "the temporary protocol handler should be listed");
+  assertMenuItemL10n(protocolRow, "applications-use-app", {
+    appName,
+  });
+  for (const id of [
+    "applications-always-ask",
+    "applications-use-other-app",
+    "applications-manage-app",
+    "applications-delete-action",
+  ]) {
+    assertMenuItemL10n(protocolRow, id);
+  }
+
+  const dialogPromise = BrowserTestUtils.promiseAlertDialogOpen(
+    undefined,
+    "chrome://messenger/content/preferences/applicationManager.xhtml",
+    { isSubDialog: true }
+  );
+  protocolRow.manageApp({ stopPropagation() {} });
+  const dialogWindow = await dialogPromise;
+  const dialogDocument = dialogWindow.document;
+  const description = protocolRow.handlerInfoWrapper.typeDescription;
+  await BrowserTestUtils.waitForMutationCondition(
+    dialogDocument.getElementById("appList"),
+    { childList: true, subtree: true },
+    () => dialogDocument.querySelector("#appList .typeIcon")
+  );
+  await TestUtils.waitForCondition(
+    () => dialogDocument.getElementById("appLocation").value == uriTemplate,
+    "the application details dialog should display the web handler URI template"
+  );
+  Assert.equal(
+    dialogDocument.l10n.getAttributes(dialogDocument.querySelector("title")).id,
+    "app-manager-dialog-title",
+    "the application details dialog should use the localized title"
+  );
+  Assert.deepEqual(
+    dialogDocument.l10n.getAttributes(
+      dialogDocument.getElementById("appDescription")
+    ),
+    {
+      id: "app-manager-description-protocol",
+      args: { description },
+    },
+    "the application details description should identify the protocol"
+  );
+  Assert.equal(
+    dialogDocument.l10n.getAttributes(dialogDocument.getElementById("appType"))
+      .id,
+    "app-manager-web-app",
+    "the application details dialog should identify a web application"
+  );
+  Assert.equal(
+    dialogDocument.getElementById("appLocation").value,
+    uriTemplate,
+    "the application details dialog should display the web handler URI template"
+  );
+  Assert.equal(
+    dialogDocument.querySelector("#appList .typeIcon").getAttribute("src"),
+    "https://example.com/favicon.ico",
+    "the dialog should show the web app favicon"
+  );
+
+  const closePromise = BrowserTestUtils.waitForEvent(
+    dialogWindow.browsingContext.topChromeWindow,
+    "dialogclose",
+    true
+  );
+  dialogDocument.querySelector("dialog").cancelDialog();
+  await closePromise;
+
+  await closePrefsTab();
+  handlerService.remove(handlerInfo);
+  handlerStored = false;
+});
+
+/**
+ * Tests the folder name displayed in the "Save files to" field of the
+ * attachments section.
+ */
+add_task(async function testDownloadFolderLabel() {
+  const { prefsDocument } = await openNewPrefsTab(
+    "paneGeneral",
+    "filesAttachmentCategory"
+  );
+  const downloadFolder = prefsDocument.getElementById("downloadFolder");
+  const desktopLabel = await prefsDocument.l10n.formatValue(
+    "download-folder-desktop"
+  );
+  const systemLabel = await prefsDocument.l10n.formatValue(
+    "download-folder-system"
+  );
+  const desktopDir = Services.dirsvc.get("Desk", Ci.nsIFile);
+  const downloadsDir = new FileUtils.File(
+    await Downloads.getSystemDownloadsDirectory()
+  );
+  const customDir = PathUtils.join(PathUtils.tempDir, "tb-download-folder");
+  await IOUtils.makeDirectory(customDir, { ignoreExisting: true });
+  registerCleanupFunction(() =>
+    IOUtils.remove(customDir, { recursive: true, ignoreAbsent: true })
+  );
+
+  const setDownloadDir = async (path, expected) => {
+    await SpecialPowers.pushPrefEnv({ set: [["browser.download.dir", path]] });
+    await TestUtils.waitForCondition(
+      () => downloadFolder.value == expected,
+      `the folder field should display "${expected}" (for ${path}), ` +
+        `but displays "${downloadFolder.value}"`
+    );
+  };
+
+  await setDownloadDir(desktopDir.path, desktopLabel);
+  if (desktopDir.equals(downloadsDir)) {
+    info("Desktop and Downloads resolve to the same directory");
+  } else {
+    await setDownloadDir(downloadsDir.path, systemLabel);
+  }
+  await setDownloadDir(customDir, customDir);
+  // Switching back to a predefined folder must replace the custom path.
+  await setDownloadDir(desktopDir.path, desktopLabel);
+
+  await closePrefsTab();
 });
 
 /**
@@ -767,4 +1027,200 @@ add_task(async function test_recent_destinations_options() {
   );
 
   await closePrefsTab();
+});
+
+/**
+ * Check that downloaded languages match the repository's ID, type, and version.
+ */
+add_task(async function testLanguagePackInstallValidation() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["intl.multilingual.downloadEnabled", true],
+      ["xpinstall.signatures.required", false],
+      ["extensions.langpacks.signatures.required", false],
+    ],
+  });
+
+  const locale = ["fr", "de", "es-ES"].find(
+    code => !Services.locale.availableLocales.includes(code)
+  );
+  Assert.ok(locale, "A test locale must be available for installation");
+
+  const server = new HttpServer();
+  server.start(-1);
+
+  const originalGetAvailableLangpacks = AddonRepository.getAvailableLangpacks;
+  const cases = [
+    {
+      name: "wrong-type",
+      error: AddonManager.ERROR_UNEXPECTED_ADDON_TYPE,
+    },
+    {
+      name: "wrong-id",
+      error: AddonManager.ERROR_INCORRECT_ID,
+    },
+    {
+      name: "wrong-version",
+      error: AddonManager.ERROR_UNEXPECTED_ADDON_VERSION,
+    },
+    { name: "matching-langpack" },
+  ];
+
+  try {
+    const { prefsDocument } = await openNewPrefsTab(
+      "paneGeneral",
+      "languageAndFontsCategory"
+    );
+
+    for (const testCase of cases) {
+      info(`Testing ${testCase.name}`);
+
+      const id = `${testCase.name}@language-dialog.test`;
+      const expectedId =
+        testCase.name == "wrong-id" ? "expected@language-dialog.test" : id;
+      const version = testCase.name == "wrong-version" ? "2.0" : "1.0";
+
+      const manifest = {
+        name: testCase.name,
+        version: "1.0",
+        browser_specific_settings: {
+          gecko: {
+            id,
+            strict_min_version: Services.appinfo.version,
+            strict_max_version: Services.appinfo.version,
+          },
+        },
+      };
+      const files = {};
+
+      // Without these properties, the XPI is an extension rather than a
+      // language pack, allowing us to test rejection of the wrong type.
+      if (testCase.name != "wrong-type") {
+        manifest.langpack_id = locale;
+        manifest.languages = {
+          [locale]: {
+            version: "1.0",
+            chrome_resources: {
+              global: `locale/${locale}/global/`,
+            },
+          },
+        };
+        files[`locale/${locale}/global/test.properties`] = "test=value";
+      }
+
+      const xpi = AddonTestUtils.createTempWebExtensionFile({
+        manifest,
+        files,
+      });
+      const path = `/${testCase.name}.xpi`;
+      const url = `http://localhost:${server.identity.primaryPort}${path}`;
+      server.registerFile(path, xpi);
+
+      AddonRepository.getAvailableLangpacks = async () => [
+        { target_locale: locale, url, id: expectedId, version },
+      ];
+
+      let downloadError;
+      const listener = {
+        onDownloadFailed(install) {
+          if (install.sourceURI.spec == url) {
+            downloadError = install.error;
+          }
+        },
+      };
+
+      AddonManager.addInstallListener(listener);
+      try {
+        await promiseSubDialog(
+          prefsDocument.getElementById("manageMessengerLanguagesButton"),
+          "chrome://messenger/content/preferences/messengerLanguages.xhtml",
+          async dialogWindow => {
+            const dialog = dialogWindow.gMessengerLanguagesDialog;
+            await TestUtils.waitForCondition(
+              () => dialog.initialized,
+              "Waiting for the language dialog to initialize"
+            );
+
+            // Exercise the metadata-loading path as well as installation.
+            await dialog.loadLocalesFromAMO();
+            const details = dialog.availableLangpacks.get(locale);
+            Assert.equal(details.id, expectedId, "Retained the repository ID");
+            Assert.equal(
+              details.version,
+              version,
+              "Retained the repository version"
+            );
+
+            const item = dialog._availableLocalesUI.items.find(
+              entry => entry.value == locale
+            );
+            Assert.ok(item, "The remote language must be listed");
+
+            dialog.hideError();
+            await dialog.requestRemoteLanguage(item);
+
+            const warning =
+              dialogWindow.document.getElementById("warning-message");
+            const addon = await AddonManager.getAddonByID(id);
+
+            if (testCase.error) {
+              Assert.equal(
+                downloadError,
+                testCase.error,
+                `${testCase.name}: rejected with the specific download error`
+              );
+              Assert.equal(
+                addon,
+                null,
+                "The unexpected add-on must not be installed"
+              );
+              Assert.ok(!warning.hidden, "The dialog must show an error");
+              Assert.ok(
+                !item.installed,
+                "The language must not be marked installed"
+              );
+              Assert.ok(
+                !dialog._selectedLocalesUI.items.some(
+                  entry => entry.value == locale
+                ),
+                "The rejected language must not enter the selected list"
+              );
+            } else {
+              Assert.ok(addon, "The matching language pack must install");
+              Assert.equal(addon.type, "locale", "Installed a language pack");
+              Assert.equal(
+                addon.version,
+                version,
+                "Installed the expected version"
+              );
+              Assert.ok(warning.hidden, "The dialog must not show an error");
+              Assert.ok(
+                item.installed,
+                "The language must be marked installed"
+              );
+              Assert.ok(
+                dialog._selectedLocalesUI.items.some(
+                  entry => entry.value == locale
+                ),
+                "The installed language must enter the selected list"
+              );
+            }
+          },
+          "cancel"
+        );
+      } finally {
+        AddonManager.removeInstallListener(listener);
+
+        const addon = await AddonManager.getAddonByID(id);
+        if (addon) {
+          await addon.uninstall();
+        }
+      }
+    }
+  } finally {
+    AddonRepository.getAvailableLangpacks = originalGetAvailableLangpacks;
+    await closePrefsTab();
+    await new Promise(resolve => server.stop(resolve));
+    await SpecialPowers.popPrefEnv();
+  }
 });

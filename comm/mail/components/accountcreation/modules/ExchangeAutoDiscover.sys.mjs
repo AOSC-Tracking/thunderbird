@@ -136,7 +136,7 @@ async function startFetchWithAuth(url, username, password, callArgs) {
 /**
  * Attempts to fetch a configuration from a URL that came from an
  * unauthenticated and potentially unsafe source (e.g. a redirect from a plain
- * HTTP request, or an SRV DNS lookup).
+ * HTTP request, a redirect to another site, or an SRV DNS lookup).
  *
  * If the URL's "base" domain (i.e. its first and second level domains) is not
  * the same as the one from the user's email address, and is not a domain owned
@@ -152,7 +152,7 @@ async function startFetchWithAuth(url, username, password, callArgs) {
  * @param {object} httpArgs - The arguments to pass to fetchHTTP.
  * @param {function(string):Promise} confirmCallback - A function that prompts
  *   the user to confirm (or cancel) if the domain on which the new request
- *   would be sent is deemed potentially unsafe.
+ *   would be sent is deemed potentially unsafe. Will only be called once.
  * @returns {any} The response body from the target, probably an object.
  */
 async function fetchFromPotentiallyUnsafeAddress(
@@ -207,6 +207,8 @@ async function fetchFromPotentiallyUnsafeAddress(
  *   Function(domain) that will be called to confirm redirection to another
  *   domain. It is expected to return a promise that resolves if the request
  *   should continue, and rejects if the redirect shouldn't be followed.
+ * @param {number} [redirectCount=0] - Internal parameter counting the
+ *   redirects to other email addresses so far.
  * @returns {AccountConfig}
  */
 export async function fetchConfigFromExchange(
@@ -215,7 +217,8 @@ export async function fetchConfigFromExchange(
   abortSignal,
   username,
   password,
-  confirmCallback
+  confirmCallback,
+  redirectCount = 0
 ) {
   if (
     !Services.prefs.getBoolPref(
@@ -259,10 +262,39 @@ export async function fetchConfigFromExchange(
     signal: AbortSignal.any([abortSignal, priorityAbortController.signal]),
   };
   const authUsername = username || emailAddress;
+  // The user can only be asked about one host, so share that answer between
+  // requests for the same host and refuse any other host.
+  let confirmation;
+  const confirmOnce = (host, scheme, signal) => {
+    if (!confirmation) {
+      confirmation = { host, promise: confirmCallback(host, scheme, signal) };
+    } else if (confirmation.host != host) {
+      return Promise.reject(
+        new Error(`Already asking about ${confirmation.host}, not ${host}`)
+      );
+    }
+    return confirmation.promise;
+  };
+  // If an authenticated request gets redirected to another site, only send
+  // the credentials there after the same checks as for the HTTP redirect.
+  const fetchWithAuthAndRedirect = url =>
+    startFetchWithAuth(url, authUsername, password, callArgs).catch(error => {
+      if (!error.redirectURL) {
+        throw error;
+      }
+      return fetchFromPotentiallyUnsafeAddress(
+        error.redirectURL,
+        domain,
+        authUsername,
+        password,
+        callArgs,
+        confirmOnce
+      );
+    });
   const { value: xml, index } = await promiseFirstSuccessful(
     [
-      startFetchWithAuth(url1, authUsername, password, callArgs),
-      startFetchWithAuth(url2, authUsername, password, callArgs),
+      fetchWithAuthAndRedirect(url1),
+      fetchWithAuthAndRedirect(url2),
       // url3 is HTTP (not HTTPS), so don't authenticate. Even MS spec demands so.
       lazy.fetchHTTP(url3, callArgs).catch(error => {
         gAccountSetupLogger.debug(
@@ -286,7 +318,7 @@ export async function fetchConfigFromExchange(
           authUsername,
           password,
           callArgs,
-          confirmCallback
+          confirmOnce
         );
       }),
       // On top of the HTTP(S) calls we perform, we also want to see if there's at
@@ -318,71 +350,51 @@ export async function fetchConfigFromExchange(
           authUsername,
           password,
           callArgs,
-          confirmCallback
+          confirmOnce
         );
       }),
     ],
     priorityAbortController
   );
-  const config = await readAutoDiscoverResponse(
-    xml,
-    emailAddress,
-    username,
-    password,
-    confirmCallback,
-    abortSignal
-  );
+
+  // Redirect to another email address, see the example response at
+  // <https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxdscli/49083e77-8dc2-4010-85c6-f40e090f3b17>
+  const redirectAddr = xml?.Autodiscover?.Response?.Account?.RedirectAddr;
+  if (redirectAddr) {
+    const redirectEmailAddress = lazy.InputSanitizer.emailAddress(redirectAddr);
+    const redirectDomain = redirectEmailAddress.split("@").pop();
+    if (redirectCount >= 2) {
+      throw new Error(
+        "Too many redirects in XML response; domain=" + redirectDomain
+      );
+    }
+    return fetchConfigFromExchange(
+      redirectDomain,
+      redirectEmailAddress,
+      abortSignal,
+      // Per spec, need to authenticate with the original email address,
+      // not the redirected address (if not already overridden).
+      username || emailAddress,
+      password,
+      // Share the one confirmation the user can be asked for.
+      confirmOnce,
+      redirectCount + 1
+    );
+  }
+
+  const config = readAutoDiscoverResponse(xml, username);
   const names = ["url1", "url2", "url3", "srv"];
   config.subSource = `exchange-from-${names[index]}`;
   return detectStandardProtocols(config, domain, abortSignal);
 }
 
-var gLoopCounter = 0;
-
 /**
  * @param {object} autoDiscoverXML - The Exchange server AutoDiscover response, as JXON.
- * @param {string} emailAddress - Email address.
- * @param {string} username - Username.
- * @param {string} password - Password.
- * @param {function(string):Promise} confirmCallback - A callback
- *   Function(domain) that will be called to confirm redirection to another
- *   domain. It is expected to return a promise that resolves if the request
- *   should continue, and rejects if the redirect shouldn't be followed.
- * @param {AbortSignal} abortSignal - The abort signal that can cancel this
- *   operation.
+ * @param {?string} [username] - (Optional) The user's login name.
  * @returns {AccountConfig}
  * @throws {Error} Throws if no complete config can be found.
  */
-async function readAutoDiscoverResponse(
-  autoDiscoverXML,
-  emailAddress,
-  username,
-  password,
-  confirmCallback,
-  abortSignal
-) {
-  // redirect to other email address
-  if (autoDiscoverXML?.Autodiscover?.Response?.Account?.RedirectAddr) {
-    // <https://docs.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxdscli/49083e77-8dc2-4010-85c6-f40e090f3b17>
-    const redirectEmailAddress = lazy.InputSanitizer.emailAddress(
-      autoDiscoverXML.Autodiscover.Response.Account.RedirectAddr
-    );
-    const domain = redirectEmailAddress.split("@").pop();
-    if (++gLoopCounter > 2) {
-      throw new Error("Too many redirects in XML response; domain=" + domain);
-    }
-    return fetchConfigFromExchange(
-      domain,
-      redirectEmailAddress,
-      // Per spec, need to authenticate with the original email address,
-      // not the redirected address (if not already overridden).
-      username || emailAddress,
-      password,
-      confirmCallback,
-      abortSignal
-    );
-  }
-
+function readAutoDiscoverResponse(autoDiscoverXML, username) {
   try {
     const config = readAutoDiscoverXML(autoDiscoverXML, username);
     if (config.isComplete()) {
@@ -398,7 +410,7 @@ async function readAutoDiscoverResponse(
 /**
  * @param {object} autoDiscoverXML - The Exchange server AutoDiscover response,
  *  as JXON.
- * @param {?string} username - (Optional) The user's login name
+ * @param {?string} [username] - (Optional) The user's login name
  *   If null, email address placeholder will be used.
  * @returns {AccountConfig} - @see accountConfig.js
  * @see <https://www.msxfaq.de/exchange/autodiscover/autodiscover_xml.htm>
@@ -457,7 +469,7 @@ function readAutoDiscoverXML(autoDiscoverXML, username) {
               urlsX.Protocol.ASUrl
             );
           }
-          config.incoming.type = "exchange";
+          config.incoming.type = "ews";
           const parsedURL = new URL(config.incoming.owaURL);
           config.incoming.hostname = lazy.InputSanitizer.hostname(
             parsedURL.hostname
@@ -473,7 +485,7 @@ function readAutoDiscoverXML(autoDiscoverXML, username) {
             protocolX.ASUrl
           );
         }
-        config.incoming.type = "exchange";
+        config.incoming.type = "ews";
         const parsedURL = new URL(config.incoming.exchangeURL);
         config.incoming.hostname = lazy.InputSanitizer.hostname(
           parsedURL.hostname

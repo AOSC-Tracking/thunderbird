@@ -39,7 +39,6 @@
 #include "nsIMimeHeaders.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsIMsgTraitService.h"
-#include "nsIMessenger.h"
 #include "nsThreadUtils.h"
 #include "nsITransactionManager.h"
 #include "nsIMsgTransactionService.h"
@@ -1287,7 +1286,7 @@ nsresult nsMsgDBFolder::AddMarkAllReadUndoAction(nsIMsgWindow* msgWindow,
   nsresult rv = readStateTxn->Init(this, numMarked, thoseMarked);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = readStateTxn->SetTransactionType(nsIMessenger::eMarkAllMsg);
+  rv = readStateTxn->SetTransactionType(nsIMsgTransactionService::eMarkAllMsg);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = txnMgr->DoTransaction(readStateTxn);
@@ -1315,13 +1314,6 @@ nsMsgDBFolder::MarkAllMessagesRead(nsIMsgWindow* aMsgWindow) {
 
   SetHasNewMessages(false);
   return rv;
-}
-
-NS_IMETHODIMP nsMsgDBFolder::MarkThreadRead(nsIMsgThread* thread) {
-  nsresult rv = GetDatabase();
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsTArray<nsMsgKey> keys;
-  return mDatabase->MarkThreadRead(thread, nullptr, keys);
 }
 
 NS_IMETHODIMP
@@ -1881,18 +1873,18 @@ nsMsgDBFolder::GetStringProperty(const char* propertyName,
         }
       }
     }
-  }
 
-  if (strcmp(propertyName, MRU_TIME_PROPERTY) == 0 ||
-      strcmp(propertyName, MRM_TIME_PROPERTY) == 0 ||
-      strcmp(propertyName, "LastPurgeTime") == 0) {
-    // Don't open DB for missing time properties.
-    // Missing time properties can happen if the folder was never
-    // accessed, for example after an import. They happen if
-    // folderCache.json is removed or becomes invalid after moving
-    // a profile (see bug 1726660).
-    propertyValue.Truncate();
-    return NS_OK;
+    if (strcmp(propertyName, MRU_TIME_PROPERTY) == 0 ||
+        strcmp(propertyName, MRM_TIME_PROPERTY) == 0 ||
+        strcmp(propertyName, "LastPurgeTime") == 0) {
+      // Don't open DB for missing time properties.
+      // Missing time properties can happen if the folder was never
+      // accessed, for example after an import. They happen if
+      // folderCache.json is removed or becomes invalid after moving
+      // a profile (see bug 1726660).
+      propertyValue.Truncate();
+      return NS_OK;
+    }
   }
 
   nsCOMPtr<nsIDBFolderInfo> folderInfo;
@@ -3357,7 +3349,7 @@ NS_IMETHODIMP nsMsgDBFolder::RecursiveDelete(bool deleteStorage) {
   // and frees memory for the subfolders but NOT for _this_
   // and does not remove _this_ from the parent's list of children.
 
-  nsresult rv;
+  nsresult rv = NS_OK;
   if (!StaticPrefs::mail_panorama_enabled_AtStartup()) {
     nsCOMPtr<nsIFile> dbPath;
     // first remove the deleted folder from the folder cache;
@@ -3375,8 +3367,7 @@ NS_IMETHODIMP nsMsgDBFolder::RecursiveDelete(bool deleteStorage) {
     }
   }
 
-  int32_t count = mSubFolders.Count();
-  while (count > 0) {
+  while (!mSubFolders.IsEmpty()) {
     nsCOMPtr<nsIMsgFolder> child(mSubFolders[0]);
     child->SetParent(nullptr);
     rv = child->RecursiveDelete(deleteStorage);
@@ -3389,8 +3380,6 @@ NS_IMETHODIMP nsMsgDBFolder::RecursiveDelete(bool deleteStorage) {
       child->SetParent(this);
       break;
     }
-
-    count--;
   }
 
   // now delete the disk storage for _this_
@@ -3835,7 +3824,11 @@ NS_IMETHODIMP nsMsgDBFolder::Rename(const nsACString& aNewName,
                                      &changed);
       if (changed) AlertFilterChanged(msgWindow);
 
-      if (count > 0) newFolder->RenameSubFolders(msgWindow, this);
+      if (count > 0) {
+        // Our parent's AddSubfolder() creates a folder of our own type.
+        static_cast<nsMsgDBFolder*>(newFolder.get())
+            ->RenameSubFolders(msgWindow, this);
+      }
 
       if (parentFolder) {
         SetParent(nullptr);
@@ -3848,8 +3841,8 @@ NS_IMETHODIMP nsMsgDBFolder::Rename(const nsACString& aNewName,
   return rv;
 }
 
-NS_IMETHODIMP nsMsgDBFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
-                                              nsIMsgFolder* oldFolder) {
+nsresult nsMsgDBFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
+                                         nsIMsgFolder* oldFolder) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

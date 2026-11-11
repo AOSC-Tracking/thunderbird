@@ -64,6 +64,14 @@ export class CalICSCalendar extends cal.provider.BaseClass {
   #locked = false;
   #unmappedComponents = [];
   #unmappedProperties = [];
+  /**
+   * Whether the last download could not be parsed, or was not valid UTF-8.
+   * Until a download is read correctly again, the calendar reports itself as
+   * read-only so the data is never overwritten. This is not persisted.
+   *
+   * @type {boolean}
+   */
+  #parseFailed = false;
 
   // Public to allow access by calCachedCalendar
   _queue = [];
@@ -124,6 +132,34 @@ export class CalICSCalendar extends cal.provider.BaseClass {
     }
 
     return super.getProperty(aName);
+  }
+
+  get readOnly() {
+    return this.#parseFailed || super.readOnly;
+  }
+
+  set readOnly(value) {
+    super.readOnly = value;
+  }
+
+  /**
+   * Record whether the last download could be parsed, and notify observers if
+   * that changes whether the calendar is read-only.
+   *
+   * @param {boolean} failed
+   */
+  #setParseFailed(failed) {
+    const wasReadOnly = !!this.readOnly;
+    this.#parseFailed = failed;
+    const isReadOnly = !!this.readOnly;
+    if (isReadOnly != wasReadOnly) {
+      this.observers.notify("onPropertyChanged", [
+        this.superCalendar,
+        "readOnly",
+        isReadOnly,
+        wasReadOnly,
+      ]);
+    }
   }
 
   get supportsScheduling() {
@@ -355,9 +391,18 @@ export class CalICSCalendar extends cal.provider.BaseClass {
   }
 
   // nsIStreamLoaderObserver impl
-  // Listener for download. Parse the downloaded file
 
-  onStreamComplete(loader, ctxt, status, resultLength, result) {
+  /**
+   * Called when the download of the calendar data has finished. Parses the
+   * data into the memory calendar.
+   *
+   * @param {nsIStreamLoader} loader - The loader that did the download.
+   * @param {?nsISupports} _ctxt - The context parameter of the underlying channel.
+   * @param {nsresult} status - The status of the download.
+   * @param {integer} resultLength - The length of the downloaded data, in bytes.
+   * @param {integer[]} result - The downloaded data.
+   */
+  onStreamComplete(loader, _ctxt, status, resultLength, result) {
     let cont = false;
 
     const currentStatus = this.getProperty("currentStatus");
@@ -392,28 +437,29 @@ export class CalICSCalendar extends cal.provider.BaseClass {
       return;
     }
 
-    // Clear any existing events if there was no result
-    if (!resultLength) {
+    // This conversion is needed, because the stream only knows about
+    // byte arrays, not about strings or encodings. The array of bytes
+    // need to be interpreted as utf8 and put into a JavaScript string.
+    let str;
+    try {
+      str = new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(result));
+    } catch (e) {
+      lazy.log.debug(`ICS data for ${this.uri.spec} is not valid UTF-8`, e);
+      this.#setParseFailed(true);
       this.#createMemoryCalendar();
       this.#memoryCalendar.addObserver(this.#observer);
+      this.notifyError(Ci.calIErrors.CAL_UTF8_DECODING_FAILED, "");
       this.#observer.onLoad(this);
       this.#unlock();
       return;
     }
 
-    // This conversion is needed, because the stream only knows about
-    // byte arrays, not about strings or encodings. The array of bytes
-    // need to be interpreted as utf8 and put into a javascript string.
-    let str;
-    try {
-      str = new TextDecoder().decode(Uint8Array.from(result));
-    } catch (e) {
-      this.#observer.onError(
-        this.superCalendar,
-        Ci.calIErrors.CAL_UTF8_DECODING_FAILED,
-        e.toString()
-      );
-      this.#observer.onError(this.superCalendar, Ci.calIErrors.READ_FAILED, "");
+    // Clear any existing events if there was no result, or only whitespace.
+    if (!str.trim()) {
+      this.#setParseFailed(false);
+      this.#createMemoryCalendar();
+      this.#memoryCalendar.addObserver(this.#observer);
+      this.#observer.onLoad(this);
       this.#unlock();
       return;
     }
@@ -430,18 +476,25 @@ export class CalICSCalendar extends cal.provider.BaseClass {
     const self = this;
     const listener = {
       // calIIcsParsingListener
-      onParsingComplete(rc, parser_) {
-        try {
-          for (const item of parser_.getItems()) {
-            self.#memoryCalendar.adoptItem(item);
+      async onParsingComplete(rc, parser_) {
+        if (Components.isSuccessCode(rc)) {
+          try {
+            for (const item of parser_.getItems()) {
+              await self.#memoryCalendar.adoptItem(item);
+            }
+            self.#unmappedComponents = parser_.getComponents();
+            self.#unmappedProperties = parser_.getProperties();
+            self.#setParseFailed(false);
+            lazy.log.debug(`Parsing ICS succeeded for ${self.uri.spec}`);
+          } catch (e) {
+            lazy.log.debug(`Parsing ICS failed for ${self.uri.spec}`, e);
+            self.#setParseFailed(true);
+            self.notifyError(e.result ?? Ci.calIErrors.ICS_MALFORMEDDATA, e.toString());
           }
-          self.#unmappedComponents = parser_.getComponents();
-          self.#unmappedProperties = parser_.getProperties();
-          lazy.log.debug("[calICSCalendar] Parsing ICS succeeded for " + self.uri.spec);
-        } catch (exc) {
-          lazy.log.debug("[calICSCalendar] Parsing ICS failed for \nException: " + exc);
-          self.#observer.onError(self.superCalendar, exc.result, exc.toString());
-          self.#observer.onError(self.superCalendar, Ci.calIErrors.READ_FAILED, "");
+        } else {
+          lazy.log.debug(`Parsing ICS failed for ${self.uri.spec}`);
+          self.#setParseFailed(true);
+          self.notifyError(Ci.calIErrors.ICS_MALFORMEDDATA, "");
         }
         self.#observer.onEndBatch(self);
         self.#observer.onLoad(self);

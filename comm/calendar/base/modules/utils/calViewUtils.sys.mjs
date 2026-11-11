@@ -125,6 +125,7 @@ export var view = {
           }
         },
         onCalendarDeleting() {},
+        onCalendarOrderChanged() {},
       };
       lazy.cal.manager.addObserver(calManagerObserver);
       aWindow.addEventListener("unload", () => lazy.cal.manager.removeObserver(calManagerObserver));
@@ -372,16 +373,29 @@ export var view = {
     if (item.descriptionText) {
       // Convert HTML entities which scanHTML won't handle into their standard
       // text representation.
-      let description = item.descriptionText.replace(/&#?\w+;?/g, potentialEntity => {
-        // Attempt to parse the pattern match as an HTML entity.
-        const body = new DOMParser().parseFromString(potentialEntity, "text/html").body;
-
-        // Don't replace text that didn't parse as an entity or that parsed as
-        // an entity which could break HTML parsing below.
-        return body.innerText.length == 1 && !'"&<>'.includes(body.innerText)
-          ? body.innerText
-          : potentialEntity;
-      });
+      // All potential entities are parsed in a single document to avoid
+      // creating one document per match.
+      const entityRegExp = /&#?\w+;?/g;
+      const potentialEntities = [...new Set(item.descriptionText.match(entityRegExp))];
+      const decoded = new Map();
+      if (potentialEntities.length) {
+        const body = new DOMParser().parseFromString(
+          potentialEntities.map(e => `<p>${e}</p>`).join(""),
+          "text/html"
+        ).body;
+        for (const [i, potentialEntity] of potentialEntities.entries()) {
+          const text = body.children[i].textContent;
+          // Don't replace text that didn't parse as an entity or that parsed
+          // as an entity which could break HTML parsing below.
+          if (text.length == 1 && !'"&<>'.includes(text)) {
+            decoded.set(potentialEntity, text);
+          }
+        }
+      }
+      let description = item.descriptionText.replace(
+        entityRegExp,
+        potentialEntity => decoded.get(potentialEntity) ?? potentialEntity
+      );
 
       // Replace bare URLs with links and convert remaining entities.
       description = lazy.gTextToHtmlConverter.scanHTML(description, Ci.mozITXTToHTMLConv.kURLs);
@@ -490,6 +504,7 @@ view.colorTracker = {
     }
   },
   onCalendarDeleting() {},
+  onCalendarOrderChanged() {},
 
   // calIObserver methods
   onStartBatch() {},

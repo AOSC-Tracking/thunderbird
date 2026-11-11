@@ -276,7 +276,7 @@ const JsMIMEstructuredHeaders = function () {
    *   id could be found, the value is returned as-is.
    */
   function preprocessMessageIDs(values) {
-    return values[0].match(/<[^>]*>/g)?.join(" ") ?? values[0].trim();
+    return values[0].match(/<[^<>]*>/g)?.join(" ") ?? values[0].trim();
   }
   structuredDecoders.set("References", preprocessMessageIDs);
   structuredDecoders.set("In-Reply-To", preprocessMessageIDs);
@@ -531,8 +531,9 @@ const JsMIMEheaderparser = function () {
       ) {
         // RFC 2047 tokens separated only by whitespace are conceptually part of
         // the same output token, so we need to decode them all at once.
-        const encodedWordsRE = /([ \t\r\n]*=\?[^?]*\?[BbQq]\?[^?]*\?=)+/;
-        const result = encodedWordsRE.exec(value.slice(i));
+        const encodedWordsRE = /([ \t\r\n]*=\?[^?]*\?[BbQq]\?[^?]*\?=)+/y;
+        encodedWordsRE.lastIndex = i;
+        const result = encodedWordsRE.exec(value);
         if (result !== null) {
           // If we were in the middle of a prior token (i.e., something like
           // foobar=?UTF-8?Q?blah?=), yield the previous segment as a token.
@@ -2119,6 +2120,8 @@ const JsMIMEmimeparser = function () {
   function MimeParser(emitter, options) {
     // The actual emitter
     this._emitter = emitter;
+    // How many parsers enclose this one
+    this._depth = 0;
     // Options for the parser (those listed here are defaults)
     this._options = {
       decodeSubMessages: true,
@@ -2196,8 +2199,14 @@ const JsMIMEmimeparser = function () {
     // a line ending in modern times, this is acceptable lossage.]
     // 3. Eliminate empty packets.
 
-    // Add in previously saved data
+    // Add in previously saved data. That has no line break, except possibly
+    // a final \r, so if the new data has none either, there's nothing to
+    // deliver yet. Don't search the saved data again then.
     if (this._holdData) {
+      if (!this._holdData.endsWith("\r") && !/[\r\n]/.test(buffer)) {
+        this._holdData += buffer;
+        return;
+      }
       buffer = this._holdData + buffer;
       this._holdData = "";
     }
@@ -2361,6 +2370,9 @@ const JsMIMEmimeparser = function () {
   var SEND_TO_EMITTER = 3;
   var SEND_TO_SUBPARSER = 4;
 
+  // Parts nested deeper than this are not parsed into their subparts.
+  var MAX_NESTING_DEPTH = 64;
+
   /**
    * Main dispatch for incoming packet data.
    *
@@ -2379,12 +2391,14 @@ const JsMIMEmimeparser = function () {
   MimeParser.prototype._dispatchData = function (partNum, buffer, checkSplit) {
     // Are we parsing headers?
     if (this._state == PARSING_HEADERS) {
+      // The previous data had no end of headers, so only search from where one
+      // could start: at most 3 characters before the new data.
+      const endOfHeadersRe = /(?:^(?:\r\n|[\r\n]))|(\r\n|[\r\n])\1/g;
+      endOfHeadersRe.lastIndex = Math.max(0, this._headerData.length - 3);
       this._headerData += buffer;
       // Find the end of the headers--either it's a CRLF at the beginning (in
       // which case we have no headers), or it's a pair of CRLFs.
-      const result = /(?:^(?:\r\n|[\r\n]))|(\r\n|[\r\n])\1/.exec(
-        this._headerData
-      );
+      const result = endOfHeadersRe.exec(this._headerData);
       if (result != null) {
         // If we found the end of headers, split the data at this point and send
         // the stuff after the double-CRLF into the later body parsing.
@@ -2401,26 +2415,26 @@ const JsMIMEmimeparser = function () {
 
     // We're in the middle of the body. Start by testing the split regex, to see
     // if there are many things that need to be done.
-    if (checkSplit && this._splitRegex) {
+    while (checkSplit && this._splitRegex) {
       const splitResult = this._splitRegex.exec(buffer);
-      if (splitResult) {
-        // Pass the text before the split through the current state.
-        const start = splitResult.index,
-          len = splitResult[0].length;
-        if (start > 0) {
-          this._dispatchData(partNum, buffer.substr(0, start), false);
-        }
+      if (!splitResult) {
+        break;
+      }
+      // Pass the text before the split through the current state.
+      const start = splitResult.index,
+        len = splitResult[0].length;
+      if (start > 0) {
+        this._dispatchData(partNum, buffer.substr(0, start), false);
+      }
 
-        // Tell the handler that we've seen the split. Note that this can change
-        // any method on `this'.
-        this._handleSplit(partNum, splitResult);
+      // Tell the handler that we've seen the split. Note that this can change
+      // any method on `this'.
+      this._handleSplit(partNum, splitResult);
 
-        // Send the rest of the data to where it needs to go. There could be more
-        // splits in the data, so watch out!
-        buffer = buffer.substring(start + len);
-        if (buffer.length > 0) {
-          this._dispatchData(partNum, buffer, true);
-        }
+      // Send the rest of the data to where it needs to go. There could be more
+      // splits in the data, so watch out!
+      buffer = buffer.substring(start + len);
+      if (buffer.length == 0) {
         return;
       }
     }
@@ -2618,10 +2632,13 @@ const JsMIMEmimeparser = function () {
         this._options.pruneat.startsWith(partNum);
     }
 
+    const canNest = this._depth < MAX_NESTING_DEPTH;
+
     if (contentType.mediatype == "multipart") {
       // If there's no boundary type, everything will be part of the prologue of
-      // the multipart message, so just feed everything into a black hole.
-      if (!contentType.has("boundary")) {
+      // the multipart message, so just feed everything into a black hole. The
+      // same goes for multiparts that are nested too deeply.
+      if (!contentType.has("boundary") || !canNest) {
         this._state = SEND_TO_BLACK_HOLE;
         return;
       }
@@ -2638,6 +2655,7 @@ const JsMIMEmimeparser = function () {
       );
       this._handleSplit = this._whenMultipart;
       this._subparser = new MimeParser(this._emitter, this._options);
+      this._subparser._depth = this._depth + 1;
       // multipart/digest defaults to message/rfc822 instead of text/plain
       if (contentType.subtype == "digest") {
         this._subparser._defaultContentType = "message/rfc822";
@@ -2670,6 +2688,7 @@ const JsMIMEmimeparser = function () {
         return [preLF, rest + buffer.substring(splitPoint)];
       };
     } else if (
+      canNest &&
       (decodeSubMessages || this._willIgnorePart(partNum)) &&
       (contentType.type == "message/rfc822" ||
         contentType.type == "message/global" ||
@@ -2680,6 +2699,7 @@ const JsMIMEmimeparser = function () {
       this._state = SEND_TO_SUBPARSER;
       this._subPartNum = partNum + "$";
       this._subparser = new MimeParser(this._emitter, this._options);
+      this._subparser._depth = this._depth + 1;
 
       // So, RFC 6532 happily allows message/global types to have CTE applied.
       // This means that subparts would need to be decoded to determine their

@@ -424,6 +424,19 @@ export var FeedUtils = {
   },
 
   /**
+   * Get the url wrapped in a feed: url, which is either of the form
+   * feed://example.org/feed.xml or feed:https://example.org/feed.xml.
+   * feed:// is replaced with http:// per the spec. Other urls are returned
+   * unchanged.
+   *
+   * @param {string} aUrl - The url.
+   * @returns {string} The unwrapped url.
+   */
+  unwrapFeedUrl(aUrl) {
+    return aUrl.replace(/^feed:\x2f\x2f/i, "http://").replace(/^feed:/i, "");
+  },
+
+  /**
    * Subscribe a new feed url.
    *
    * @param {string} aUrl - Feed url.
@@ -453,12 +466,7 @@ export var FeedUtils = {
       aFolder = FeedUtils.createRssAccount().incomingServer.rootFolder;
     }
 
-    // If aUrl is a feed url, then it is either of the form
-    // feed://example.org/feed.xml or feed:https://example.org/feed.xml.
-    // Replace feed:// with http:// per the spec, then strip off feed:
-    // for the second case.
-    aUrl = aUrl.replace(/^feed:\x2f\x2f/i, "http://");
-    aUrl = aUrl.replace(/^feed:/i, "");
+    aUrl = FeedUtils.unwrapFeedUrl(aUrl);
 
     // Make sure we aren't already subscribed to this feed before we attempt
     // to subscribe to it.
@@ -949,6 +957,9 @@ export var FeedUtils = {
      * @returns {Blob} - Existing favicon.
      */
     const fetchFavicon = async faviconUrl => {
+      if (!["http:", "https:"].includes(URL.parse(faviconUrl)?.protocol)) {
+        throw new Error(`Not fetching favicon from url ${faviconUrl}`);
+      }
       const response = await fetch(faviconUrl);
       if (!response.ok) {
         throw new Error(`No favicon for url ${faviconUrl}`);
@@ -966,6 +977,9 @@ export var FeedUtils = {
      * @returns {Blob} - Found favicon.
      */
     const discoverFaviconURL = async page => {
+      if (!["http:", "https:"].includes(URL.parse(page)?.protocol)) {
+        throw new Error(`Not fetching favicon from url ${page}`);
+      }
       const response = await fetch(page);
       if (!response.ok) {
         throw new Error(`No favicon for page ${page}`);
@@ -983,13 +997,7 @@ export var FeedUtils = {
       if (!iconLink) {
         throw new Error(`No iconLink discovered for page=${page}`);
       }
-      if (/^https?:/.test(iconLink.href)) {
-        return iconLink.href;
-      }
-      if (iconLink.href.at(0) != "/") {
-        iconLink.href = "/" + iconLink.href;
-      }
-      return new URL(page).origin + iconLink.href;
+      return new URL(iconLink.getAttribute("href"), page).href;
     };
 
     const uri = Services.io.newURI(url);
@@ -1372,11 +1380,16 @@ export var FeedUtils = {
   Mixins: {
     meld(source, keep, replace) {
       function meldin(meldSource, target, meldKeep, meldReplace) {
-        for (const attribute in meldSource) {
+        for (const attribute of Object.keys(meldSource ?? {})) {
+          if (["__proto__", "constructor", "prototype"].includes(attribute)) {
+            continue;
+          }
           // Recurse for objects.
           if (
             typeof meldSource[attribute] == "object" &&
-            typeof target[attribute] == "object"
+            Object.hasOwn(target, attribute) &&
+            typeof target[attribute] == "object" &&
+            target[attribute] !== null
           ) {
             meldin(
               meldSource[attribute],
@@ -1387,12 +1400,12 @@ export var FeedUtils = {
           } else {
             // Use attribute values from source for the target, unless
             // replace is false.
-            if (attribute in target && !meldReplace) {
+            if (Object.hasOwn(target, attribute) && !meldReplace) {
               continue;
             }
             // Don't copy attribute from source to target if it is not in the
             // target, unless keep is true.
-            if (!(attribute in target) && !meldKeep) {
+            if (!Object.hasOwn(target, attribute) && !meldKeep) {
               continue;
             }
 
@@ -1500,20 +1513,18 @@ export var FeedUtils = {
 
     const rssServer = aServer.QueryInterface(Ci.nsIRssIncomingServer);
     const itemsFile = rssServer.feedItemsPath; // Path to feeditems.json
-    const exists = itemsFile.exists();
     const ds = new lazy.JSONFile({
       path: itemsFile.path,
       backupTo: itemsFile.path + ".backup",
+      // Item ids come from the feed, so keys like __proto__ must stay own
+      // properties.
+      dataPostProcessor: data => Object.assign(Object.create(null), data),
     });
     ds.ensureDataReady();
     if (!this[aServer.serverURI]) {
       this[aServer.serverURI] = {};
     }
     this[aServer.serverURI].FeedItemsDS = ds;
-    if (!exists) {
-      // No feeditems.json, need to initialise our data.
-      ds.data = {};
-    }
     return ds;
   },
 
@@ -1727,7 +1738,20 @@ export var FeedUtils = {
       }
     }
 
-    return this._validSchemes.includes(aUri.scheme);
+    if (!this._validSchemes.includes(aUri.scheme)) {
+      return false;
+    }
+
+    // Only allow file: urls for local files.
+    if (aUri instanceof Ci.nsIFileURL) {
+      try {
+        return !aUri.file.path.startsWith("\\\\");
+      } catch (ex) {
+        return false;
+      }
+    }
+
+    return true;
   },
 
   /**

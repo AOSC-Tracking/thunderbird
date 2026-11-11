@@ -371,6 +371,8 @@ li[is="calendar-dialog-attachment"] {
     flex-wrap: wrap;
     justify-content: space-between;
     gap: calc(var(--space-step) * 3);
+    padding-block: calc(var(--space-step) * 4) calc(var(--space-step) * 3);
+    padding-inline: calc(var(--space-step) * 4);
 
     & .calendar-name {
       display: flex;
@@ -387,5 +389,10 @@ li[is="calendar-dialog-attachment"] {
     flex: 1 1 auto;
     min-block-size: 0;
     overflow-block: auto;
+
+    :is(calendar-dialog-row, calendar-dialog-toggleable-row) {
+      border-block-start: 1px solid var(--color-surface-border);
+      padding-block: var(--calendar-dialog-gap);
+    }
   }
 }

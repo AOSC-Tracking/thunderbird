@@ -9,6 +9,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   MailServices: "resource:///modules/MailServices.sys.mjs",
   MimeParser: "resource:///modules/mimeParser.sys.mjs",
   NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+  NntpUtils: "resource:///modules/NntpUtils.sys.mjs",
   OAuth2Providers: "resource:///modules/OAuth2Providers.sys.mjs",
   openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
@@ -19,6 +20,41 @@ ChromeUtils.defineLazyGetter(lazy, "l10n", () => {
     true
   );
 });
+
+const FILE_SIZE_UNITS = [
+  "byte",
+  "kilobyte",
+  "megabyte",
+  "gigabyte",
+  "terabyte",
+  "petabyte",
+];
+
+const fileSizeFormatters = new Map();
+
+/**
+ * @param {string} unit - One of FILE_SIZE_UNITS.
+ * @param {integer} fractionDigits - The number of fraction digits to show.
+ * @returns {Intl.NumberFormat}
+ */
+function getFileSizeFormatter(unit, fractionDigits) {
+  // Pass the locale explicitly, and key the cache on it, so that a locale
+  // change isn't ignored by already cached formatters.
+  const locale = Services.locale.regionalPrefsLocales[0];
+  const key = `${locale}:${unit}:${fractionDigits}`;
+  let formatter = fileSizeFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(locale, {
+      style: "unit",
+      unit,
+      unitDisplay: "short",
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    });
+    fileSizeFormatters.set(key, formatter);
+  }
+  return formatter;
+}
 
 /**
  * This module has several utility functions for use by both core and
@@ -871,10 +907,12 @@ export var MailUtils = {
    * in a new tab or message window.
    * For URIs that identify a newsgroup, ask to subscribe, if necessary, and
    * open the group in the folder pane.
+   * For 'nntp' URIs that identify an article by newsgroup and article number,
+   * ask to subscribe to the newsgroup, if necessary, and display the article.
    * If no host is specified in the URI, the server of the first NNTP account
    * is used.
    *
-   * @param {string} uri - The 'news' URI to open.
+   * @param {string} uri - The 'news' or 'nntp' URI to open.
    * @param {DOMWindow} win - The window which the URI is being opened within.
    */
   handleNewsUri(uri, win) {
@@ -893,8 +931,8 @@ export var MailUtils = {
     // connecting to an unknown server.
     // @see {@link https://datatracker.ietf.org/doc/html/rfc5538#section-8.1}
     const secure = ["snews:", "nntps:"].includes(url.protocol);
-    // 'nntp' URIs identify an article by newsgroup and article number. Only
-    // the newsgroup is used. 'nntps' is the same using NNTP over TLS.
+    // 'nntp' URIs identify a newsgroup, or an article by newsgroup and
+    // article number. 'nntps' is the same using NNTP over TLS.
     // @see {@link https://datatracker.ietf.org/doc/html/rfc5538#section-3}
     const isNntp = ["nntp:", "nntps:"].includes(url.protocol);
     url.protocol = "news:";
@@ -906,9 +944,14 @@ export var MailUtils = {
     // 'news' URIs identifying a newsgroup.
 
     let identifier = decodeURIComponent(url.pathname.slice(1));
+    let articleNumber;
     if (isNntp) {
-      identifier = identifier.split("/")[0];
-      if (identifier.includes("@")) {
+      [identifier, articleNumber] = identifier.split("/");
+      if (
+        !identifier ||
+        identifier.includes("@") ||
+        (articleNumber && !lazy.NntpUtils.isValidArticleNumber(articleNumber))
+      ) {
         console.warn(`Unsupported nntp URI: ${uri}`);
         return;
       }
@@ -944,7 +987,28 @@ export var MailUtils = {
         }
         server.subscribeToNewsgroup(identifier);
       }
-      this.displayFolderIn3Pane(server.findGroup(identifier).URI);
+      const folder = server.findGroup(identifier);
+      if (!articleNumber) {
+        this.displayFolderIn3Pane(folder.URI);
+        return;
+      }
+
+      let msgHdr = null;
+      try {
+        msgHdr = folder.GetMessageHeader(articleNumber);
+      } catch (e) {}
+      if (msgHdr) {
+        this.displayMessage(msgHdr);
+        return;
+      }
+      url.hostname = server.hostname;
+      url.port = server.port;
+      url.pathname = "/";
+      url.search = new URLSearchParams({
+        group: identifier,
+        key: articleNumber,
+      });
+      this._openNewsArticle(url.href, win);
       return;
     }
 
@@ -993,6 +1057,17 @@ export var MailUtils = {
       }
     }
 
+    this._openNewsArticle(url.href, win);
+  },
+
+  /**
+   * Retrieve a news article from the server, save it in a temporary EML file,
+   * and display it in a new tab or message window.
+   *
+   * @param {string} uri - The 'news' URI of the article.
+   * @param {DOMWindow} win - The window which the URI is being opened within.
+   */
+  _openNewsArticle(uri, win) {
     const tempFile = Services.dirsvc.get("TmpD", Ci.nsIFile);
     tempFile.append("newsuri.eml");
     tempFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
@@ -1013,20 +1088,14 @@ export var MailUtils = {
         MailUtils.openEMLFile(win, tempFile, Services.io.newFileURI(tempFile));
       },
     };
-    messageService.saveMessageToDisk(
-      url.href,
-      tempFile,
-      urlListener,
-      true,
-      null
-    );
+    messageService.saveMessageToDisk(uri, tempFile, urlListener, true, null);
   },
 
   /**
    * Construct a 'news:' URI spec for a specific message or newsgroup.
    *
-   * @param {string} identifier - The Message-ID or newsgroup identified by
-   *   this URI spec.
+   * @param {string} identifier - The unencoded Message-ID (without angle
+   *   brackets) or unencoded newsgroup name identified by this URI spec.
    * @param {nsIMsgIncomingServer} [server] - If provided, the hostname and
    *   port (if non-standard) of this server will be included in the URI spec.
    * @returns {string} - The 'news:' URI spec.
@@ -1043,10 +1112,9 @@ export var MailUtils = {
       }
       spec += "/";
     }
-    spec += identifier;
     try {
-      const uri = Services.io.newURI(spec);
-      return decodeURI(uri.spec);
+      spec += encodeURIComponent(identifier).replaceAll("%40", "@");
+      return Services.io.newURI(spec).spec;
     } catch (e) {
       console.error("Invalid URI: " + spec);
     }
@@ -1453,5 +1521,35 @@ export var MailUtils = {
     }
 
     return { logins, outgoingServers, addressBooks, calendars };
+  },
+
+  /**
+   * Format a size in bytes for display, e.g. "1.5 MB".
+   *
+   * @param {number} bytes - The size in bytes.
+   * @param {boolean} [useKB=false] - If true, never use a unit smaller than
+   *   kilobytes.
+   * @returns {string} The localized size.
+   */
+  formatFileSize(bytes, useKB = false) {
+    let size = Math.max(bytes, 0);
+    let unitIndex = 0;
+    if (useKB) {
+      size /= 1024;
+      if (size != 0 && size < 0.1) {
+        size = 0.1;
+      }
+      unitIndex++;
+    }
+    // Move to the next unit if this one would need 4 digits after rounding.
+    while (size >= 999.5 && unitIndex < FILE_SIZE_UNITS.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    const fractionDigits = unitIndex != 0 && size != 0 && size < 99.95 ? 1 : 0;
+    return getFileSizeFormatter(
+      FILE_SIZE_UNITS[unitIndex],
+      fractionDigits
+    ).format(size);
   },
 };

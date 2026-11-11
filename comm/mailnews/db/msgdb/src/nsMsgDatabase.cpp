@@ -2199,37 +2199,6 @@ NS_IMETHODIMP nsMsgDatabase::MarkHasAttachments(
 }
 
 NS_IMETHODIMP
-nsMsgDatabase::MarkThreadRead(nsIMsgThread* thread,
-                              nsIDBChangeListener* instigator,
-                              nsTArray<nsMsgKey>& aThoseMarkedRead) {
-  NS_ENSURE_ARG_POINTER(thread);
-  aThoseMarkedRead.ClearAndRetainStorage();
-  nsresult rv = NS_OK;
-
-  uint32_t numChildren;
-  thread->GetNumChildren(&numChildren);
-  aThoseMarkedRead.SetCapacity(numChildren);
-  for (uint32_t curChildIndex = 0; curChildIndex < numChildren;
-       curChildIndex++) {
-    nsCOMPtr<nsIMsgDBHdr> child;
-
-    rv = thread->GetChildHdrAt(curChildIndex, getter_AddRefs(child));
-    if (NS_SUCCEEDED(rv) && child) {
-      bool isRead = true;
-      IsHeaderRead(child, &isRead);
-      if (!isRead) {
-        nsMsgKey key;
-        if (NS_SUCCEEDED(child->GetMessageKey(&key))) {
-          aThoseMarkedRead.AppendElement(key);
-        }
-        MarkHdrRead(child, true, instigator);
-      }
-    }
-  }
-  return rv;
-}
-
-NS_IMETHODIMP
 nsMsgDatabase::MarkThreadIgnored(nsIMsgThread* thread, nsMsgKey threadKey,
                                  bool bIgnored,
                                  nsIDBChangeListener* instigator) {
@@ -2423,7 +2392,7 @@ nsMsgDatabase::SetUint32PropertyByHdr(nsIMsgDBHdr* aMsgHdr,
   if (notify) {
     nsTObserverArray<nsCOMPtr<nsIDBChangeListener>>::ForwardIterator listeners(
         m_ChangeListeners);
-    for (uint32_t i = 0; listeners.HasMore(); i++) {
+    for (uint32_t i = 0; listeners.HasMore() && i < statusArray.Length(); i++) {
       listener = listeners.GetNext();
       uint32_t status = statusArray[i];
       (void)listener->OnHdrPropertyChanged(
@@ -4660,17 +4629,21 @@ nsresult nsMsgDatabase::FindExcessMessages(
   nsresult rv = NS_OK;
   hdrsToDelete.Clear();
 
-  nsCOMPtr<nsIMsgEnumerator> hdrs;
-  rv = EnumerateMessages(getter_AddRefs(hdrs));
-  NS_ENSURE_SUCCESS(rv, rv);
-
   mdb_count numHdrs = 0;
   if (m_mdbAllMsgHeadersTable) {
     m_mdbAllMsgHeadersTable->GetCount(GetEnv(), &numHdrs);
   } else {
     return NS_ERROR_NULL_POINTER;
   }
+  if (numHdrs <= numHeadersToKeep) {
+    return NS_OK;
+  }
 
+  nsCOMPtr<nsIMsgEnumerator> hdrs;
+  rv = EnumerateMessages(getter_AddRefs(hdrs));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsTArray<std::pair<PRTime, nsMsgKey>> candidates;
   bool hasMore = false;
   while (NS_SUCCEEDED(rv = hdrs->HasMoreElements(&hasMore)) && hasMore) {
     nsCOMPtr<nsIMsgDBHdr> msg;
@@ -4686,12 +4659,22 @@ nsresult nsMsgDatabase::FindExcessMessages(
       }
     }
 
-    // this isn't quite right - we want to prefer unread messages (keep all of
-    // those we can)
-    if (numHdrs > numHeadersToKeep) {
-      numHdrs--;
-      hdrsToDelete.AppendElement(msg);
-    }
+    PRTime date;
+    msg->GetDate(&date);
+    nsMsgKey key;
+    msg->GetMessageKey(&key);
+    candidates.EmplaceBack(date, key);
+  }
+  NS_ENSURE_SUCCESS(rv, rv);
+  candidates.Sort();
+
+  size_t numToDelete =
+      std::min<size_t>(numHdrs - numHeadersToKeep, candidates.Length());
+  for (const auto& candidate : Span(candidates).First(numToDelete)) {
+    nsCOMPtr<nsIMsgDBHdr> msg;
+    rv = GetMsgHdrForKey(candidate.second, getter_AddRefs(msg));
+    NS_ENSURE_SUCCESS(rv, rv);
+    hdrsToDelete.AppendElement(msg);
   }
 
   return NS_OK;

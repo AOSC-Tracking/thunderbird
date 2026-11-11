@@ -22,6 +22,7 @@
 #include "prmon.h"
 #include "nsIMsgImapMailFolder.h"
 #include "nsIMsgFilterPlugin.h"
+#include "nsIMsgWindow.h"
 #include "nsTHashMap.h"
 #include "nsITimer.h"
 #include "nsAutoSyncState.h"
@@ -241,8 +242,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
   NS_IMETHOD DeleteStorage() override;
   NS_IMETHOD Rename(const nsACString& newName,
                     nsIMsgWindow* msgWindow) override;
-  NS_IMETHOD RenameSubFolders(nsIMsgWindow* msgWindow,
-                              nsIMsgFolder* oldFolder) override;
   NS_IMETHOD GetNoSelect(bool* aResult) override;
 
   NS_IMETHOD UpdateSummaryTotals(bool force) override;
@@ -263,7 +262,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
   NS_IMETHOD MarkAllMessagesRead(nsIMsgWindow* aMsgWindow) override;
   NS_IMETHOD MarkMessagesFlagged(const nsTArray<RefPtr<nsIMsgDBHdr>>& messages,
                                  bool markFlagged) override;
-  NS_IMETHOD MarkThreadRead(nsIMsgThread* thread) override;
   NS_IMETHOD SetJunkScoreForMessages(
       const nsTArray<RefPtr<nsIMsgDBHdr>>& messages, nsMsgJunkScore junkScore,
       const nsACString& junkScoreOrigin, int32_t junkPercent) override;
@@ -364,6 +362,8 @@ class nsImapMailFolder : public nsMsgDBFolder,
  protected:
   virtual ~nsImapMailFolder();
   // Helper methods
+  nsresult RenameSubFolders(nsIMsgWindow* msgWindow,
+                            nsIMsgFolder* oldFolder) override;
   nsresult CreateFileForDB(const nsAString& userLeafName, nsIFile* baseDir,
                            nsIFile** dbFile);
   nsresult ExpungeAndCompact(nsIUrlListener* aListener,

@@ -9,6 +9,8 @@
 
 /* eslint-disable sdl/no-insecure-url */
 
+requestLongerTimeout(AppConstants.MOZ_CODE_COVERAGE ? 2 : 1);
+
 const { MessageGenerator } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
@@ -99,7 +101,7 @@ add_setup(async function () {
   );
   ewsAccount.incomingServer.setStringValue(
     "ews_url",
-    "http://test.test/EWS/Exchange.asmx"
+    "https://test.test/EWS/Exchange.asmx"
   );
   ewsAccount.incomingServer.prettyName = "EWS Account";
   ewsAccount.incomingServer.authMethod = Ci.nsMsgAuthMethod.OAuth2;
@@ -118,7 +120,7 @@ add_setup(async function () {
   );
   graphAccount.incomingServer.setStringValue(
     "ews_url",
-    "http://test.test:8080/"
+    "https://test.test:8443/"
   );
   graphAccount.incomingServer.prettyName = "Graph Account";
   graphAccount.incomingServer.authMethod = Ci.nsMsgAuthMethod.OAuth2;

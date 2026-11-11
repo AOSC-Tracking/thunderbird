@@ -13,6 +13,8 @@ support-files = [
 
 ["include:xpcshell-shared.toml"]
 
+["test_MailNotificationManager.js"]
+
 ["test_MorkParser.js"]
 
 ["test_MsgIncomingServer.js"]
@@ -104,6 +106,8 @@ tags = ["spam"]
 ["test_junkingWhenDisabled.js"]
 tags = ["spam"]
 
+["test_lineReader.js"]
+
 ["test_loadVirtualFolders.js"]
 tags = ["virtualfolders"]
 
@@ -120,6 +124,8 @@ tags = ["virtualfolders"]
 ["test_msgHdrProperties.js"]
 
 ["test_newMailNotification.js"]
+
+["test_notificationCountMultiAccount.js"]
 
 ["test_nsIFolderListener.js"]
 
@@ -160,11 +166,16 @@ tags = ["oauth"]
 
 ["test_postPluginFilters.js"]
 
+["test_recursiveDeleteVirtualFolder.js"]
+tags = ["virtualfolders"]
+
 ["test_relatedItems.js"]
 
 ["test_retention.js"]
 
 ["test_saveAs.js"]
+
+["test_subscribableServer.js"]
 
 ["test_testsuite_base64.js"]
 

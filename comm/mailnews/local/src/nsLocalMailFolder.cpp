@@ -39,7 +39,6 @@
 #include "nsString.h"
 #include "nsIMsgFolderCacheElement.h"
 #include "nsIMsgCopyService.h"
-#include "nsIMessenger.h"
 #include "nsIDocShell.h"
 #include "nsIPrompt.h"
 #include "nsIMsgMailSession.h"
@@ -898,7 +897,12 @@ NS_IMETHODIMP nsMsgLocalMailFolder::Rename(const nsACString& aNewName,
                                    &changed);
     if (changed) AlertFilterChanged(msgWindow);
 
-    if (count > 0) newFolder->RenameSubFolders(msgWindow, this);
+    if (count > 0) {
+      // The store creates the new folder with our parent's AddSubfolder(),
+      // so it's always a local folder.
+      static_cast<nsMsgLocalMailFolder*>(newFolder.get())
+          ->RenameSubFolders(msgWindow, this);
+    }
 
     // Discover the subfolders inside this folder (this is recursive)
     nsTArray<RefPtr<nsIMsgFolder>> dummy;
@@ -922,8 +926,8 @@ NS_IMETHODIMP nsMsgLocalMailFolder::Rename(const nsACString& aNewName,
   return rv;
 }
 
-NS_IMETHODIMP nsMsgLocalMailFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
-                                                     nsIMsgFolder* oldFolder) {
+nsresult nsMsgLocalMailFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
+                                                nsIMsgFolder* oldFolder) {
   nsresult rv = NS_OK;
   mInitialized = true;
 
@@ -946,7 +950,8 @@ NS_IMETHODIMP nsMsgLocalMailFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
       msgFolder->MatchOrChangeFilterDestination(
           newFolder, true /*case-insensitive*/, &changed);
       if (changed) msgFolder->AlertFilterChanged(msgWindow);
-      newFolder->RenameSubFolders(msgWindow, msgFolder);
+      static_cast<nsMsgLocalMailFolder*>(newFolder.get())
+          ->RenameSubFolders(msgWindow, msgFolder);
     }
   }
   return NS_OK;
@@ -1071,14 +1076,14 @@ NS_IMETHODIMP nsMsgLocalMailFolder::GetSizeOnDisk(int64_t* aSize) {
   if (mFolderSize == kSizeUnknown) {
     nsCOMPtr<nsIMsgPluggableStore> msgStore;
     rv = GetMsgStore(getter_AddRefs(msgStore));
-    NS_ENSURE_SUCCESS(rv, rv);
     // Use a temporary variable so that we keep mFolderSize on kSizeUnknown
-    // if EstimateFolderSize() fails.
+    // if EstimateFolderSize() fails. Callers expect kSizeUnknown rather than
+    // a failure, so an unreadable store is reported that way too.
     int64_t folderSize;
-    rv = msgStore->EstimateFolderSize(this, &folderSize);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    mFolderSize = folderSize;
+    if (NS_SUCCEEDED(rv) &&
+        NS_SUCCEEDED(msgStore->EstimateFolderSize(this, &folderSize))) {
+      mFolderSize = folderSize;
+    }
   }
   *aSize = mFolderSize;
   return NS_OK;
@@ -1281,29 +1286,6 @@ nsMsgLocalMailFolder::MarkAllMessagesRead(nsIMsgWindow* aMsgWindow) {
   if (aMsgWindow)
     rv = AddMarkAllReadUndoAction(aMsgWindow, thoseMarked.Elements(),
                                   thoseMarked.Length());
-
-  return rv;
-}
-
-NS_IMETHODIMP nsMsgLocalMailFolder::MarkThreadRead(nsIMsgThread* thread) {
-  nsresult rv = GetDatabase();
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsTArray<nsMsgKey> thoseMarked;
-  rv = mDatabase->MarkThreadRead(thread, nullptr, thoseMarked);
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (thoseMarked.IsEmpty()) {
-    return NS_OK;
-  }
-
-  nsTArray<RefPtr<nsIMsgDBHdr>> messages;
-  rv = MsgGetHeadersFromKeys(mDatabase, thoseMarked, messages);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = UpdateMsgFlagsInStore(messages);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  mDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
 
   return rv;
 }
@@ -1566,14 +1548,13 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
   {
     RefPtr<nsLocalMoveCopyMsgTxn> msgTxn = new nsLocalMoveCopyMsgTxn;
     if (msgTxn && NS_SUCCEEDED(msgTxn->Init(srcFolder, this, isMove))) {
-      msgTxn->SetMsgWindow(msgWindow);
       if (isMove) {
         if (mFlags & nsMsgFolderFlags::Trash)
-          msgTxn->SetTransactionType(nsIMessenger::eDeleteMsg);
+          msgTxn->SetTransactionType(nsIMsgTransactionService::eDeleteMsg);
         else
-          msgTxn->SetTransactionType(nsIMessenger::eMoveMsg);
+          msgTxn->SetTransactionType(nsIMsgTransactionService::eMoveMsg);
       } else
-        msgTxn->SetTransactionType(nsIMessenger::eCopyMsg);
+        msgTxn->SetTransactionType(nsIMsgTransactionService::eCopyMsg);
       msgTxn.swap(mCopyState->m_undoMsgTxn);
     }
   }
@@ -2611,11 +2592,9 @@ NS_IMETHODIMP nsMsgLocalMailFolder::EndMessage(nsMsgKey key) {
   NS_ENSURE_ARG_POINTER(mCopyState);
 
   RefPtr<nsLocalMoveCopyMsgTxn> localUndoTxn = mCopyState->m_undoMsgTxn;
-  nsCOMPtr<nsIMsgWindow> msgWindow;
   nsresult rv;
 
   if (localUndoTxn) {
-    localUndoTxn->GetMsgWindow(getter_AddRefs(msgWindow));
     localUndoTxn->AddSrcKey(key);
     localUndoTxn->AddDstKey(mCopyState->m_curDstKey);
   }
@@ -3272,16 +3251,16 @@ nsMsgLocalMailFolder::GetUidlFromFolder(nsLocalFolderScanState* aState,
       len -= size;
       // account key header will always be before X_UIDL header
       if (!accountKey) {
-        accountKey =
-            strstr(aState->m_header.get(), HEADER_X_MOZILLA_ACCOUNT_KEY);
-        if (accountKey) {
-          accountKey += strlen(HEADER_X_MOZILLA_ACCOUNT_KEY) + 2;
+        constexpr auto accountKeyPrefix =
+            nsLiteralCString(HEADER_X_MOZILLA_ACCOUNT_KEY ": ");
+        if (StringBeginsWith(aState->m_header, accountKeyPrefix)) {
+          accountKey = aState->m_header.get() + accountKeyPrefix.Length();
           aState->m_accountKey = accountKey;
         }
       } else {
-        aState->m_uidl = strstr(aState->m_header.get(), X_UIDL);
-        if (aState->m_uidl) {
-          aState->m_uidl += X_UIDL_LEN + 2;  // skip UIDL: header
+        constexpr auto uidlPrefix = nsLiteralCString(X_UIDL ": ");
+        if (StringBeginsWith(aState->m_header, uidlPrefix)) {
+          aState->m_uidl = aState->m_header.get() + uidlPrefix.Length();
           break;
         }
       }

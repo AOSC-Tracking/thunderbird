@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 // This test frequently takes longer than the allowed time.
 requestLongerTimeout(2);
 
@@ -203,6 +205,82 @@ add_task(async function testAccessibilityState() {
     selfResizeSplitter.tabIndex,
     -1,
     "embedded resize handles should not enter the normal tab order"
+  );
+});
+
+add_task(async function test_explicitTabIndex() {
+  const splitter = doc.getElementById("splitter1");
+  Assert.equal(
+    splitter.tabIndex,
+    0,
+    "An ordinary splitter should be in the tab order"
+  );
+  splitter.tabIndex = -1;
+  const width = splitter.width;
+  splitter.width = 250;
+  Assert.equal(
+    splitter.tabIndex,
+    -1,
+    "Resizing should preserve an explicit negative tabindex"
+  );
+  splitter.focus();
+  Assert.equal(
+    doc.activeElement,
+    splitter,
+    "A splitter with negative tabindex should still accept programmatic focus"
+  );
+  for (const tabIndex of [-1, 0]) {
+    splitter.tabIndex = tabIndex;
+    splitter.isDisabled = true;
+    Assert.equal(
+      splitter.tabIndex,
+      -1,
+      "Disabling should remove the splitter from the tab order"
+    );
+    splitter.isDisabled = false;
+    Assert.equal(
+      splitter.tabIndex,
+      tabIndex,
+      "Re-enabling should restore the consumer's tabindex"
+    );
+  }
+  splitter.width = width;
+
+  const initiallyDisabled = doc.createElement("hr", { is: "pane-splitter" });
+  initiallyDisabled.id = "initiallyDisabledSplitter";
+  initiallyDisabled.setAttribute("resize-id", "splitter1-before");
+  initiallyDisabled.tabIndex = -1;
+  initiallyDisabled.isDisabled = true;
+  splitter.parentNode.append(initiallyDisabled);
+  initiallyDisabled.isDisabled = false;
+  Assert.equal(
+    initiallyDisabled.tabIndex,
+    -1,
+    "Enabling an initially disabled splitter should preserve its explicit tabindex"
+  );
+  initiallyDisabled.remove();
+});
+
+add_task(async function test_accessibilityAfterSettingWidth() {
+  const splitter = doc.getElementById("splitter1");
+  const resized = doc.getElementById("splitter1-before");
+  const originalWidth = splitter.width;
+  splitter.width = 250;
+  Assert.equal(
+    resized.getBoundingClientRect().width,
+    250,
+    "Setting the preferred width should resize the pane"
+  );
+  Assert.equal(
+    Number(splitter.getAttribute("aria-valuenow")),
+    resized.getBoundingClientRect().width,
+    "The accessible value should describe the new width after layout"
+  );
+  splitter.width = originalWidth;
+  Assert.equal(
+    Number(splitter.getAttribute("aria-valuenow")),
+    resized.getBoundingClientRect().width,
+    "Restoring the preferred width should restore the accessible value"
   );
 });
 
@@ -410,7 +488,7 @@ add_task(async function testResizeWithWindowHorizontal() {
   );
   assertCloseTo(
     fill.getBoundingClientRect().width,
-    500,
+    498,
     "flexible element should keep its default width before enabling resize-with-window"
   );
   assertCloseTo(
@@ -443,7 +521,7 @@ add_task(async function testResizeWithWindowHorizontal() {
   );
   assertCloseTo(
     fillWidth,
-    500,
+    498,
     "flexible element should keep its default width when resize-with-window is enabled"
   );
   assertCloseTo(
@@ -979,9 +1057,10 @@ async function subtestDragAutoCollapse() {
   );
   Assert.ok(splitter.isCollapsed, "Should be collapsed after releasing mouse");
 
-  // Drag it from the collapsed state.
-  await testRunner.synthMouse(0, "mousedown");
-  for (const position of [0, 8, 16, 19]) {
+  // Drag it from the collapsed state. Offset by 1px so we can grab the
+  // collapsed splitter.
+  await testRunner.synthMouse(1, "mousedown");
+  for (const position of [1, 9, 17, 20]) {
     await testRunner.synthMouse(position);
     testRunner.assertElementSizes(
       0,
@@ -995,12 +1074,12 @@ async function subtestDragAutoCollapse() {
     "splitter-expanded"
   );
   // Then the pane expands. For the first 20 pixels, nothing happens.
-  await testRunner.synthMouse(20);
+  await testRunner.synthMouse(21); // 1px offset from mousedown.
   await expandedEventPromise;
   Assert.equal(expandedEvents, 1, "expanded event fired");
   for (const position of [40, 60, 78]) {
     const mutationObserver = testRunner.waitForSizeTo(78);
-    await testRunner.synthMouse(position);
+    await testRunner.synthMouse(position + 1); // 1px offset from mousedown.
     await mutationObserver;
     testRunner.assertElementSizes(
       78,
@@ -1014,7 +1093,7 @@ async function subtestDragAutoCollapse() {
 
   for (const position of [79, 100, 120, 200, 250, 300, 400, 450]) {
     const mutationObserver = testRunner.waitForSizeTo(position);
-    await testRunner.synthMouse(position);
+    await testRunner.synthMouse(position + 1); // 1px offset from mousedown.
     await mutationObserver;
     testRunner.assertElementSizes(
       position,
@@ -1054,8 +1133,9 @@ async function subtestDragAutoCollapse() {
   await testRunner.synthMouse(position, "mouseup");
 
   // Test that expansion from collapsed reverts to normal behaviour after
-  // dragging out to the minimum size.
-  await testRunner.synthMouse(0, "mousedown");
+  // dragging out to the minimum size. Offset by 1px so we can grab the
+  // collapsed splitter.
+  await testRunner.synthMouse(1, "mousedown");
   for ([position, expectedSize] of [
     [0, 0],
     [10, 0],
@@ -1069,7 +1149,7 @@ async function subtestDragAutoCollapse() {
     [100, 100],
   ]) {
     const mutationObserver = testRunner.waitForSizeTo(expectedSize);
-    await testRunner.synthMouse(position);
+    await testRunner.synthMouse(position + 1); // 1px offset from mousedown.
     await mutationObserver;
     testRunner.assertElementSizes(
       expectedSize,
@@ -1131,9 +1211,10 @@ async function subtestCollapseExpand() {
 
   testRunner.setCollapseSize(78);
 
-  await testRunner.synthMouse(0, "mousedown");
-  await testRunner.synthMouse(200);
-  await testRunner.synthMouse(200, "mouseup");
+  // Offset by 1px so we can grab the collapsed splitter.
+  await testRunner.synthMouse(1, "mousedown");
+  await testRunner.synthMouse(201);
+  await testRunner.synthMouse(201, "mouseup");
   testRunner.assertElementSizes(200);
   Assert.ok(!splitter.isCollapsed, "splitter is not collapsed");
   Assert.equal(expandedEvents, 1, "an expanded event fired");

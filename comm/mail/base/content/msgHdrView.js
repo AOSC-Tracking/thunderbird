@@ -907,16 +907,6 @@ var messageProgressListener = {
       }
     }
 
-    // For content-base urls stored uri encoded, we want to decode for
-    // display (and encode for external link open).
-    // Use decodeURIComponent so that url encoded parameters do not get double
-    // encoded later when we encodeURI for opening.
-    if ("content-base" in currentHeaderData) {
-      currentHeaderData["content-base"].headerValue = decodeURIComponent(
-        currentHeaderData["content-base"].headerValue
-      );
-    }
-
     const expandedfromLabel = document.getElementById("expandedfromLabel");
     if (FeedUtils.isFeedMessage(gMessage)) {
       expandedfromLabel.value = expandedfromLabel.getAttribute("valueAuthor");
@@ -1564,7 +1554,7 @@ function outputTags(headerEntry, headerValue) {
  */
 function outputMessageIds(headerEntry, headerValue) {
   headerEntry.enclosingBox.clear();
-  for (const id of headerValue.match(/<[^>]*>/g)) {
+  for (const id of headerValue.match(/<[^<>]*>/g) ?? []) {
     headerEntry.enclosingBox.addId(id);
   }
   headerEntry.enclosingBox.buildView();
@@ -2125,7 +2115,7 @@ function updateAttachmentsDisplay(attachmentInfo, isFetching) {
     if (attachmentInfo.size < 1) {
       sizeStr = bundle.getString("attachmentSizeUnknown");
     } else {
-      sizeStr = top.messenger.formatFileSize(attachmentInfo.size);
+      sizeStr = MailUtils.formatFileSize(attachmentInfo.size);
     }
 
     // The attachment listitem.
@@ -2200,7 +2190,7 @@ function getAttachmentsTotalSizeStr() {
     }
   }
 
-  let sizeStr = top.messenger.formatFileSize(totalSize);
+  let sizeStr = MailUtils.formatFileSize(totalSize);
   if (unknownSize) {
     if (totalSize == 0) {
       sizeStr = bundle.getString("attachmentSizeUnknown");
@@ -3167,12 +3157,10 @@ const gMessageHeader = {
    * @param {number} screenY - Where to show it, y.
    */
   openListIdPopup(element, screenX, screenY) {
+    const listId = element.value.textContent;
     document
       .getElementById("listIdPlaceHolder")
-      .setAttribute(
-        "label",
-        element.value.textContent.replace(/.*<([^>]+)>.*/, "$1")
-      );
+      .setAttribute("label", listId.match(/<([^<>]+)>/)?.[1] ?? listId);
 
     const popup = document.getElementById("listIdPopup");
     popup.headerField = element;
@@ -3184,7 +3172,7 @@ const gMessageHeader = {
       if (!menu.hidden) {
         let value = currentHeaderData[menu.dataset.headerName].headerValue;
         // Prefer mailto: if that's available.
-        value = value.replace(/.*(<mailto:[^>]+>).*/, "$1");
+        value = value.match(/<mailto:[^<>]+>/)?.[0] ?? value;
         if (menu.dataset.headerName == "list-post") {
           // See https://datatracker.ietf.org/doc/html/rfc2369#section-3.4
           // The list many not allow posting, e.g. an announcements list.
@@ -3486,7 +3474,7 @@ const gMessageHeader = {
   copyWebsiteUrl(event) {
     const element = event.currentTarget.parentNode.headerField;
     navigator.clipboard.writeText(
-      element.matches("a") ? element.href : element.value.textContent
+      element.matches("a") ? element.href : element.url
     );
   },
 
@@ -3592,7 +3580,7 @@ function IsReplyListEnabled() {
   // Until then, we need to keep the following regex in sync with the
   // listPost parsing in nsMsgCompose.cpp's
   // QuotingOutputStreamListener::OnStopRequest.
-  return /<mailto:.+>/.test(listPost.headerValue);
+  return /<mailto:[^<>]+>/.test(listPost.headerValue);
 }
 
 /**

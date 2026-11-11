@@ -15,7 +15,7 @@
 /* import-globals-from messenger-customization.js */
 /* import-globals-from toolbarIconColor.js */
 
-/* globals messenger, CreateMailWindowGlobals, InitMsgWindow, OnMailWindowUnload */ // From mailWindow.js
+/* globals CreateMailWindowGlobals, InitMsgWindow, OnMailWindowUnload */ // From mailWindow.js
 
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
@@ -468,19 +468,15 @@ var MessageWindowController = {
       return;
     }
 
-    // There may not be a "main" window if an .eml file was double-clicked.
-    let mainWindow;
     switch (command) {
       case "cmd_getNewMessages":
         MsgGetMessage();
         break;
       case "cmd_undo":
-        mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
-        mainWindow?.messenger.undo(msgWindow);
+        MailServices.txns.transactionManager.undoTransaction();
         break;
       case "cmd_redo":
-        mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
-        mainWindow?.messenger.redo(msgWindow);
+        MailServices.txns.transactionManager.redoTransaction();
         break;
       case "cmd_getMsgsForAuthAccounts":
         MsgGetMessagesForAllAuthenticatedAccounts();

@@ -54,9 +54,18 @@ export class NntpChannel extends MailChannel {
     // Two forms of the uri:
     // - news://news.mozilla.org:119/mailman.30.1608649442.1056.accessibility%40lists.mozilla.org?group=mozilla.accessibility&key=378
     // - news://news.mozilla.org:119/id@mozilla.org
+    // And for nntp:, see RFC 5538 section 3:
+    // - nntp://news.mozilla.org:119/mozilla.accessibility/378
     const url = new URL(uri.spec);
     this._groupName = url.searchParams.get("group");
-    if (this._groupName) {
+    if (uri.scheme == "nntp") {
+      const [groupName, articleNumber] = url.pathname.slice(1).split("/");
+      this._groupName = decodeURIComponent(groupName);
+      this._newsFolder = this._server?.rootFolder.getChildNamed(
+        this._groupName
+      );
+      this._articleNumber = articleNumber;
+    } else if (this._groupName) {
       this._newsFolder = this._server?.rootFolder.getChildNamed(
         decodeURIComponent(url.searchParams.get("group"))
       );
@@ -191,6 +200,29 @@ export class NntpChannel extends MailChannel {
         Cr.NS_ERROR_MALFORMED_URI
       );
     }
+    if (this.URI.scheme == "nntp") {
+      // Unlike news: URIs, nntp: URIs only load articles from configured
+      // servers, so that loading one never contacts an unknown server.
+      if (!this._server) {
+        throw Components.Exception(
+          `Unknown news server: ${this.URI.asciiHost}`,
+          Cr.NS_ERROR_UNKNOWN_HOST
+        );
+      }
+      if (!lazy.NntpUtils.isValidArticleNumber(this._articleNumber)) {
+        throw Components.Exception(
+          `No valid article number in nntp URI: ${this.URI.spec}`,
+          Cr.NS_ERROR_MALFORMED_URI
+        );
+      }
+      // Articles are fetched by number through the newsgroup's folder.
+      if (!this._newsFolder) {
+        throw Components.Exception(
+          `Not subscribed to newsgroup: ${this._groupName}`,
+          Cr.NS_ERROR_NOT_AVAILABLE
+        );
+      }
+    }
     // Configured servers may use any port, but don't let a url make us
     // connect to a port reserved for another service.
     if (
@@ -230,8 +262,17 @@ export class NntpChannel extends MailChannel {
       if (url.search) {
         // A full news url may look like
         // news://<host>:119/<Msg-ID>?group=<name>&key=<key>&header=quotebody.
-        // Remove any query strings to keep the cache key stable.
-        uri = uri.mutate().setQuery("").finalize();
+        // Strip presentation parameters from the cache key. Keep group and key
+        // for news URLs without a message-id; nntp URLs identify the article
+        // in their path.
+        const query =
+          this._messageId || this.URI.scheme == "nntp"
+            ? ""
+            : new URLSearchParams({
+                group: url.searchParams.get("group") ?? "",
+                key: url.searchParams.get("key") ?? "",
+              }).toString();
+        uri = uri.mutate().setQuery(query).finalize();
       }
 
       // Check if a memory cache is available for the current URI.
@@ -254,15 +295,26 @@ export class NntpChannel extends MailChannel {
   }
 
   /**
+   * The article's header may not have been downloaded, for example for an
+   * nntp: URI with an article number outside the downloaded range.
+   *
+   * @returns {boolean} Whether the newsgroup's database has the article's
+   *   header.
+   */
+  _hasLocalHeader() {
+    return !!this._newsFolder?.msgDatabase.containsKey(this._articleNumber);
+  }
+
+  /**
    * Try to read the article from the offline storage.
    *
    * @returns {boolean} True if successfully read from the offline storage.
    */
   _readFromOfflineStorage() {
-    if (!this._newsFolder) {
-      return false;
-    }
-    if (!this._newsFolder.hasMsgOffline(this._articleNumber)) {
+    if (
+      !this._hasLocalHeader() ||
+      !this._newsFolder.hasMsgOffline(this._articleNumber)
+    ) {
       return false;
     }
     const hdr = this._newsFolder.GetMessageHeader(this._articleNumber);
@@ -332,6 +384,7 @@ export class NntpChannel extends MailChannel {
     const outputStream = pipe.outputStream;
     if (this._newsFolder) {
       this._newsFolder.QueryInterface(Ci.nsIMsgNewsFolder).saveArticleOffline =
+        this._hasLocalHeader() &&
         this._newsFolder.shouldStoreMsgOffline(this._articleNumber);
     }
 

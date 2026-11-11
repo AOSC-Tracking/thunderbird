@@ -8,7 +8,7 @@
  *          checkRadioControlAppmenu,
  *          updateUnitLabelPlural, updateMenuLabelsPlural,
  *          getOptimalMinimumWidth, getOptimalMinimumHeight,
- *          setupAttendanceMenu
+ *          setupAttendanceMenu, syncCheckedFromCommands
  */
 
 /* import-globals-from ../../../mail/base/content/globalOverlay.js */
@@ -76,42 +76,6 @@ function enableElementWithLock(elementId, lockId) {
 }
 
 /**
- * Sorts a sorted array of calendars by pref |calendar.list.sortOrder|.
- * Repairs that pref if dangling entries exist.
- *
- * @param {calICalendar[]} calendars - An array of calendars to sort.
- */
-function sortCalendarArray(calendars) {
-  const ret = calendars.concat([]);
-  const sortOrder = {};
-  const sortOrderPref = Services.prefs.getStringPref("calendar.list.sortOrder", "").split(" ");
-  for (let i = 0; i < sortOrderPref.length; ++i) {
-    sortOrder[sortOrderPref[i]] = i;
-  }
-  function sortFunc(cal1, cal2) {
-    const orderIdx1 = sortOrder[cal1.id] ?? Infinity;
-    const orderIdx2 = sortOrder[cal2.id] ?? Infinity;
-    if (orderIdx1 < orderIdx2) {
-      return -1;
-    }
-    if (orderIdx1 > orderIdx2) {
-      return 1;
-    }
-    return 0;
-  }
-  ret.sort(sortFunc);
-
-  // check and repair pref when an array of all calendars has been passed:
-  const sortOrderString = Services.prefs.getStringPref("calendar.list.sortOrder", "");
-  const wantedOrderString = ret.map(calendar => calendar.id).join(" ");
-  if (wantedOrderString != sortOrderString && cal.manager.getCalendars().length == ret.length) {
-    Services.prefs.setStringPref("calendar.list.sortOrder", wantedOrderString);
-  }
-
-  return ret;
-}
-
-/**
  * Fills up a menu - either a menupopup or a menulist - with menuitems that refer
  * to calendars.
  *
@@ -126,7 +90,7 @@ function sortCalendarArray(calendars) {
  */
 function appendCalendarItems(aItem, aCalendarMenuParent, aCalendarToUse, aOnCommand) {
   const calendarToUse = aCalendarToUse || aItem.calendar;
-  const calendars = sortCalendarArray(cal.manager.getCalendars());
+  const calendars = cal.manager.getCalendars();
   let indexToSelect = 0;
   let index = -1;
   for (let i = 0; i < calendars.length; ++i) {
@@ -182,6 +146,19 @@ function addMenuItem(aParent, aLabel, aValue, aCommand) {
     item = aParent.appendItem(aLabel, aValue);
   }
   return item;
+}
+
+/**
+ * Copy the checked state of each command to the menu items that use it, in
+ * the popup that is opening.
+ *
+ * @param {Event} event - The popupshowing event.
+ */
+function syncCheckedFromCommands(event) {
+  for (const item of event.target.querySelectorAll(":scope > menuitem[command]")) {
+    const command = document.getElementById(item.getAttribute("command"));
+    item.toggleAttribute("checked", command.hasAttribute("checked"));
+  }
 }
 
 /**
@@ -438,6 +415,7 @@ function setupAttendanceMenu(aMenu, aItems) {
             toRemove.push(item);
           } else {
             item.removeAttribute("checked");
+            item.removeAttribute("hidden");
           }
         } else if (item.nodeName == "menu") {
           item.removeAttribute("hidden");

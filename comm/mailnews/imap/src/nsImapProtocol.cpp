@@ -132,6 +132,19 @@ nsIMsgWindow** getter_AddRefs(AutoProxyReleaseMsgWindow& aSmartPtr) {
   return aSmartPtr.StartAssignment();
 }
 
+class MOZ_RAII AutoNoErrorReporting {
+ public:
+  explicit AutoNoErrorReporting(nsImapServerResponseParser& aParser)
+      : mParser(aParser), mWasReporting(aParser.GetReportingErrors()) {
+    mParser.SetReportingErrors(false);
+  }
+  ~AutoNoErrorReporting() { mParser.SetReportingErrors(mWasReporting); }
+
+ private:
+  nsImapServerResponseParser& mParser;
+  bool mWasReporting;
+};
+
 class ImapInputStreamCallback final : public nsIInputStreamCallback {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -4762,9 +4775,11 @@ void nsImapProtocol::Log(const char* logSubName, const char* extraInfo,
 // this value, but we may not always know when we'll need it.
 uint32_t nsImapProtocol::GetMessageSize(const nsACString& messageId) {
   uint32_t size = 0;
-  if (m_imapMessageSink)
-    m_imapMessageSink->GetMessageSizeFromDB(PromiseFlatCString(messageId).get(),
-                                            &size);
+  nsresult rv;
+  ImapUid uid = messageId.ToUnsignedInteger(&rv);
+  if (NS_SUCCEEDED(rv) && m_imapMessageSink) {
+    m_imapMessageSink->GetMessageSizeFromDB(uid, &size);
+  }
   if (DeathSignalReceived()) size = 0;
   return size;
 }
@@ -5674,7 +5689,12 @@ nsresult nsImapProtocol::BeginCompressing() {
   RefPtr<nsMsgCompressIStream> new_in = new nsMsgCompressIStream();
   if (!new_in) return NS_ERROR_OUT_OF_MEMORY;
 
-  nsresult rv = new_in->InitInputStream(m_inputStream);
+  // The line buffer may already hold the start of the compressed stream,
+  // e.g. the empty block that Dovecot flushes right after its OK. Inflate it
+  // first, or it ends up in front of the next response as plain text.
+  nsAutoCString pendingData;
+  m_inputStreamBuffer->TakeUnreadData(pendingData);
+  nsresult rv = new_in->InitInputStream(m_inputStream, pendingData);
   NS_ENSURE_SUCCESS(rv, rv);
 
   m_inputStream = new_in;
@@ -6617,10 +6637,8 @@ void nsImapProtocol::OnUnsubscribe(const char* sourceMailbox) {
   // When we try to auto-unsubscribe from \Noselect folders,
   // some servers report errors if we were already unsubscribed
   // from them.
-  bool lastReportingErrors = GetServerStateParser().GetReportingErrors();
-  GetServerStateParser().SetReportingErrors(false);
+  AutoNoErrorReporting noErrors(GetServerStateParser());
   Unsubscribe(sourceMailbox);
-  GetServerStateParser().SetReportingErrors(lastReportingErrors);
 }
 
 void nsImapProtocol::RefreshACLForFolderIfNecessary(const char* mailboxName) {
@@ -6716,7 +6734,7 @@ void nsImapProtocol::OnRefreshAllACLs() {
   List("*", true);
 
   int32_t total = m_listedMailboxList.Length(), count = 0;
-  GetServerStateParser().SetReportingErrors(false);
+  AutoNoErrorReporting noErrors(GetServerStateParser());
   for (int32_t i = 0; i < total; i++) {
     mb = m_listedMailboxList.ElementAt(i);
     if (mb)  // paranoia
@@ -6735,7 +6753,6 @@ void nsImapProtocol::OnRefreshAllACLs() {
   m_listedMailboxList.Clear();
 
   PercentProgressUpdateEvent(""_ns, 100, 100);
-  GetServerStateParser().SetReportingErrors(true);
   m_hierarchyNameState = kNoOperationInProgress;
 }
 
@@ -6975,10 +6992,8 @@ bool nsImapProtocol::DeleteMailboxRespectingSubscriptions(
   // We can unsubscribe even if the mailbox doesn't exist.
   if (rv && m_autoUnsubscribe)  // auto-unsubscribe is on
   {
-    bool reportingErrors = GetServerStateParser().GetReportingErrors();
-    GetServerStateParser().SetReportingErrors(false);
+    AutoNoErrorReporting noErrors(GetServerStateParser());
     Unsubscribe(mailboxName);
-    GetServerStateParser().SetReportingErrors(reportingErrors);
   }
   return (rv);
 }
@@ -7001,17 +7016,13 @@ bool nsImapProtocol::RenameMailboxRespectingSubscriptions(
   if (rv) {
     if (m_autoSubscribe)  // if auto-subscribe is on
     {
-      bool reportingErrors = GetServerStateParser().GetReportingErrors();
-      GetServerStateParser().SetReportingErrors(false);
+      AutoNoErrorReporting noErrors(GetServerStateParser());
       Subscribe(newName);
-      GetServerStateParser().SetReportingErrors(reportingErrors);
     }
     if (m_autoUnsubscribe)  // if auto-unsubscribe is on
     {
-      bool reportingErrors = GetServerStateParser().GetReportingErrors();
-      GetServerStateParser().SetReportingErrors(false);
+      AutoNoErrorReporting noErrors(GetServerStateParser());
       Unsubscribe(existingName);
-      GetServerStateParser().SetReportingErrors(reportingErrors);
     }
   }
   return (rv);
@@ -7273,10 +7284,8 @@ void nsImapProtocol::DeleteFolderAndMsgs(const char* sourceMailbox) {
   RemoveMsgsAndExpunge();
   if (GetServerStateParser().LastCommandSuccessful()) {
     // All msgs are deleted successfully - let's remove the folder itself.
-    bool reportingErrors = GetServerStateParser().GetReportingErrors();
-    GetServerStateParser().SetReportingErrors(false);
+    AutoNoErrorReporting noErrors(GetServerStateParser());
     OnDeleteFolder(sourceMailbox);
-    GetServerStateParser().SetReportingErrors(reportingErrors);
   }
 }
 
@@ -7342,6 +7351,35 @@ void nsImapProtocol::FindMailboxesIfNecessary() {
   }
 }
 
+// The root mailbox of a namespace doesn't match "prefix*", so it has to be
+// listed by its own name, unless the pattern of a namespace listed before
+// already matches it. The root of other users' namespaces usually isn't a
+// mailbox. Not with a server directory, which would get prepended to it.
+bool nsImapProtocol::GetNamespaceRootToList(nsImapNamespace* ns,
+                                            nsACString& root) {
+  if (ns->GetType() == kOtherUsersNamespace) return false;
+  nsAutoString onlineDir;
+  m_hostSessionList->GetOnlineDirForHost(GetImapServerKey(), onlineDir);
+  root.Assign(ns->GetPrefix());
+  if (!onlineDir.IsEmpty() || root.Length() < 2) return false;
+  root.SetLength(root.Length() - 1);
+  if (root.LowerCaseEqualsLiteral("inbox") ||
+      !ns->IsRootMailbox(PromiseFlatCString(root).get()))
+    return false;
+  uint32_t count = 0;
+  m_hostSessionList->GetNumberOfNamespacesForHost(GetImapServerKey(), count);
+  for (uint32_t i = 0; i < count; i++) {
+    nsImapNamespace* other = nullptr;
+    m_hostSessionList->GetNamespaceNumberForHost(GetImapServerKey(), i, other);
+    if (other == ns) break;
+    if (other && other->GetType() != kOtherUsersNamespace &&
+        other->GetPrefix() &&
+        StringBeginsWith(root, nsDependentCString(other->GetPrefix())))
+      return false;
+  }
+  return true;
+}
+
 void nsImapProtocol::DiscoverAllAndSubscribedBoxes() {
   // used for subscribe pane
   // iterate through all namespaces
@@ -7401,13 +7439,23 @@ void nsImapProtocol::DiscoverAllAndSubscribedBoxes() {
 
         nsAutoCString allPattern(prefix);
         allPattern += '*';
+        nsAutoCString root;
+        bool listRoot = GetNamespaceRootToList(ns, root);
 
         if (!m_imapServerSink) return;
 
         m_imapServerSink->SetServerDoingLsub(true);
+        if (listRoot) {
+          AutoNoErrorReporting noErrors(GetServerStateParser());
+          Lsub(root.get(), true);
+        }
         Lsub(allPattern.get(), true);  // LSUB all the subscribed
 
         m_imapServerSink->SetServerDoingLsub(false);
+        if (listRoot) {
+          AutoNoErrorReporting noErrors(GetServerStateParser());
+          List(root.get(), true);
+        }
         List(allPattern.get(), true);  // LIST all folders
       }
     }
@@ -7514,29 +7562,34 @@ void nsImapProtocol::DiscoverMailboxList() {
         // true), otherwise we end up with performance issues or even crashes
         // when connecting to servers that expose the users entire home
         // directory (like UW-IMAP).
-        nsCString pattern;
-        pattern.Append(prefix);
-        pattern += '*';
-        if (usingSubscription) {
-          if (GetServerStateParser().GetCapabilityFlag() &
-              kHasListExtendedCapability)
-            Lsub(pattern.get(), true);  // do LIST (SUBSCRIBED)
-          else {
-            // store mailbox flags from LIST
-            EMailboxHierarchyNameState currentState = m_hierarchyNameState;
-            m_hierarchyNameState = kListingForFolderFlags;
-            List(pattern.get(), true);
-            m_hierarchyNameState = currentState;
-            // then do LSUB using stored flags
-            Lsub(pattern.get(), true);
-            m_standardListMailboxes.Clear();
+        auto listPattern = [&](const nsCString& pattern) {
+          if (usingSubscription) {
+            if (GetServerStateParser().GetCapabilityFlag() &
+                kHasListExtendedCapability)
+              Lsub(pattern.get(), true);  // do LIST (SUBSCRIBED)
+            else {
+              // store mailbox flags from LIST
+              EMailboxHierarchyNameState currentState = m_hierarchyNameState;
+              m_hierarchyNameState = kListingForFolderFlags;
+              List(pattern.get(), true);
+              m_hierarchyNameState = currentState;
+              // then do LSUB using stored flags
+              Lsub(pattern.get(), true);
+              m_standardListMailboxes.Clear();
+            }
+          } else {
+            // Not using subscription. Just LIST all the folders for this
+            // namespace. Will close the DBs this leaves open in
+            // nsImapIncomingServer::DiscoveryDone().
+            List(pattern.get(), true, hasXLIST);
           }
-        } else {
-          // Not using subscription. Just LIST all the folders for this
-          // namespace. Will close the DBs this leaves open in
-          // nsImapIncomingServer::DiscoveryDone().
-          List(pattern.get(), true, hasXLIST);
+        };
+        nsAutoCString root;
+        if (GetNamespaceRootToList(ns, root)) {
+          AutoNoErrorReporting noErrors(GetServerStateParser());
+          listPattern(root);
         }
+        listPattern(nsDependentCString(prefix) + "*"_ns);
       }
     }
   }
@@ -7624,10 +7677,11 @@ void nsImapProtocol::MailboxDiscoveryFinished() {
       m_runningUrl->AllocateServerPath(m_trashFolderPath, ns->GetDelimiter(),
                                        onlineTrashName);
 
-      GetServerStateParser().SetReportingErrors(false);
-      bool created =
-          CreateMailboxRespectingSubscriptions(onlineTrashName.get());
-      GetServerStateParser().SetReportingErrors(true);
+      bool created;
+      {
+        AutoNoErrorReporting noErrors(GetServerStateParser());
+        created = CreateMailboxRespectingSubscriptions(onlineTrashName.get());
+      }
 
       // force discovery of new trash folder.
       if (created) {
@@ -7665,12 +7719,10 @@ bool nsImapProtocol::CreateMailboxRespectingSubscriptions(
   if (rv && m_autoSubscribe)  // auto-subscribe is on
   {
     // create succeeded - let's subscribe to it
-    bool reportingErrors = GetServerStateParser().GetReportingErrors();
-    GetServerStateParser().SetReportingErrors(false);
+    AutoNoErrorReporting noErrors(GetServerStateParser());
     nsCString mailboxWODelim(mailboxName);
     RemoveHierarchyDelimiter(mailboxWODelim);
     OnSubscribe(mailboxWODelim.get());
-    GetServerStateParser().SetReportingErrors(reportingErrors);
   }
   return rv;
 }
@@ -8627,14 +8679,11 @@ bool nsImapProtocol::TryToLogon() {
       MOZ_LOG(IMAP, LogLevel::Debug, ("got new password"));
     }
 
-    bool lastReportingErrors = GetServerStateParser().GetReportingErrors();
-    GetServerStateParser().SetReportingErrors(
-        false);  // turn off errors - we'll put up our own.
-
-    rv = AuthLogin(userName.get(), password, m_currentAuthMethod);
-
-    GetServerStateParser().SetReportingErrors(
-        lastReportingErrors);  // restore error reports
+    {
+      // We'll put up our own errors.
+      AutoNoErrorReporting noErrors(GetServerStateParser());
+      rv = AuthLogin(userName.get(), password, m_currentAuthMethod);
+    }
     loginSucceeded = NS_SUCCEEDED(rv);
 
     if (!loginSucceeded) {

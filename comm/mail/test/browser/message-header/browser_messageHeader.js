@@ -38,6 +38,9 @@ var { add_message_to_folder, create_message, msgGen } =
     "resource://testing-common/mail/MessageInjectionHelpers.sys.mjs"
   );
 
+const { MockExternalProtocolService } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MockExternalProtocolService.sys.mjs"
+);
 const { PromiseTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
@@ -691,6 +694,349 @@ add_task(async function test_msg_id_context_menu() {
 });
 
 /**
+ * Test that a References header without any message ids doesn't break the
+ * display of the other headers.
+ */
+add_task(async function test_references_without_message_ids() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["mailnews.headers.showReferences", true]],
+  });
+
+  const msg = create_message({
+    clobberHeaders: { References: "no message ids here" },
+  });
+  await add_message_to_folder([folder], msg);
+  await be_in_folder(folder);
+  const msgHdr = folder.msgDatabase.getMsgHdrForMessageID(msg.messageId);
+  await select_click_row(
+    about3Pane.gDBView.findIndexOfMsgHdr(msgHdr, true),
+    AccessibilityUtils
+  );
+
+  Assert.equal(
+    aboutMessage.document.querySelectorAll(
+      "#expandedreferencesBox .header-message-id"
+    ).length,
+    0,
+    "no message ids should be shown"
+  );
+  Assert.equal(
+    aboutMessage.document.getElementById("dateLabel").getAttribute("datetime"),
+    new Date(Math.floor(msg.date / 1000) * 1000).toISOString(),
+    "the date of the message should be shown"
+  );
+
+  await SpecialPowers.popPrefEnv();
+});
+
+/**
+ * Test that References and List-Post headers with many unclosed "<" are
+ * handled.
+ */
+add_task(async function test_unclosed_angle_brackets() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["mailnews.headers.showReferences", true]],
+  });
+
+  for (const [listPost, replyListShown] of [
+    ["<mailto:list@example.com>", true],
+    ["<mailto:".repeat(20000), false],
+  ]) {
+    const msg = create_message({
+      clobberHeaders: {
+        References: "<a@example.com> " + "<".repeat(50000) + " <b@example.com>",
+        "List-Post": listPost,
+      },
+    });
+    await add_message_to_folder([folder], msg);
+    await be_in_folder(folder);
+    const msgHdr = folder.msgDatabase.getMsgHdrForMessageID(msg.messageId);
+    await select_click_row(
+      about3Pane.gDBView.findIndexOfMsgHdr(msgHdr, true),
+      AccessibilityUtils
+    );
+
+    Assert.deepEqual(
+      Array.from(
+        aboutMessage.document.querySelectorAll(
+          "#expandedreferencesBox .header-message-id"
+        ),
+        li => li.id
+      ),
+      ["<a@example.com>", "<b@example.com>"],
+      "only the complete message ids should be shown"
+    );
+    Assert.equal(
+      BrowserTestUtils.isVisible(
+        aboutMessage.document.getElementById("hdrReplyListButton")
+      ),
+      replyListShown,
+      `reply list should be ${replyListShown ? "shown" : "hidden"}`
+    );
+  }
+
+  await SpecialPowers.popPrefEnv();
+});
+
+/**
+ * Test that the Content-Base header is displayed unescaped where possible, and
+ * that a malformed one doesn't prevent the header pane from being updated.
+ */
+add_task(async function test_contentBaseUnescaping() {
+  const contentBaseBox = aboutMessage.document.getElementById(
+    "expandedcontent-baseBox"
+  );
+  const subjectBox = aboutMessage.document.getElementById("expandedsubjectBox");
+  const copyUrlPopup = aboutMessage.document.getElementById("copyUrlPopup");
+
+  MockExternalProtocolService.init();
+  let copiedText = "";
+  const originalWriteText = aboutMessage.navigator.clipboard.writeText;
+  aboutMessage.navigator.clipboard.writeText = async text => {
+    copiedText = text;
+  };
+
+  for (const [contentBase, displayed] of [
+    ["https://example.com/caf%C3%A9", "https://example.com/café"],
+    ["https://example.com/?q=a%26b%25c", "https://example.com/?q=a&b%c"],
+    ["https://example.com/%ZZ", "https://example.com/%ZZ"],
+    ["https://example.com/%C3%28", "https://example.com/%C3%28"],
+  ]) {
+    const msg = create_message({
+      clobberHeaders: { "Content-Base": contentBase },
+    });
+    await add_message_to_folder([folder], msg);
+    await be_in_folder(folder);
+    const msgHdr = folder.msgDatabase.getMsgHdrForMessageID(msg.messageId);
+    await select_click_row(
+      about3Pane.gDBView.findIndexOfMsgHdr(msgHdr, true),
+      AccessibilityUtils
+    );
+
+    Assert.equal(
+      subjectBox.value.textContent,
+      msg.subject,
+      "the subject of the selected message should be shown"
+    );
+    Assert.equal(
+      contentBaseBox.value.textContent,
+      displayed,
+      "the content base should be displayed unescaped where safe"
+    );
+
+    let loadPromise = MockExternalProtocolService.promiseLoad();
+    EventUtils.synthesizeMouseAtCenter(contentBaseBox.value, {}, aboutMessage);
+    Assert.equal(
+      await loadPromise,
+      contentBase,
+      "clicking should open the header value"
+    );
+
+    loadPromise = MockExternalProtocolService.promiseLoad();
+    contentBaseBox.focus();
+    EventUtils.synthesizeKey("KEY_Enter", {}, aboutMessage);
+    Assert.equal(
+      await loadPromise,
+      contentBase,
+      "pressing Enter should open the header value"
+    );
+
+    EventUtils.synthesizeMouseAtCenter(
+      contentBaseBox,
+      { type: "contextmenu" },
+      aboutMessage
+    );
+    await BrowserTestUtils.waitForPopupEvent(copyUrlPopup, "shown");
+    await BrowserTestUtils.activateMenuItem(
+      copyUrlPopup.querySelector("menuitem")
+    );
+    Assert.equal(
+      copiedText,
+      contentBase,
+      "the copied content base url should be the header value"
+    );
+  }
+
+  aboutMessage.navigator.clipboard.writeText = originalWriteText;
+  MockExternalProtocolService.cleanup();
+});
+
+/**
+ * Display a message with the given message ids in its References header.
+ *
+ * @param {string[]} ids - The message ids.
+ * @returns {HTMLOListElement} The list of ids in the References row.
+ */
+async function displayReferences(ids) {
+  const msg = create_message({
+    clobberHeaders: { References: ids.join(" ") },
+  });
+  await add_message_to_folder([folder], msg);
+  await be_in_folder(folder);
+  const msgHdr = folder.msgDatabase.getMsgHdrForMessageID(msg.messageId);
+  await select_click_row(
+    about3Pane.gDBView.findIndexOfMsgHdr(msgHdr, true),
+    AccessibilityUtils
+  );
+  return aboutMessage.document.querySelector(
+    "#expandedreferencesBox .ids-list"
+  );
+}
+
+/**
+ * Test that only a bounded number of ids are shown for a huge References
+ * header, and that the hidden ids are shown in batches.
+ */
+add_task(async function test_many_references() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["mailnews.headers.showReferences", true]],
+  });
+
+  const ids = Array.from({ length: 5000 }, (v, i) => `<${i}@example.com>`);
+  const idsList = await displayReferences(ids);
+  const items = () => [...idsList.querySelectorAll(".header-message-id")];
+  const shownIds = () => items().map(li => li.id);
+  const ellipsisButton = () => idsList.querySelector(".show-hidden-ids");
+
+  Assert.deepEqual(
+    shownIds(),
+    [...ids.slice(0, 10), ...ids.slice(-10)],
+    "the first and last ids should be shown"
+  );
+  Assert.deepEqual(
+    items()
+      .slice(9, 11)
+      .map(li => li.textContent.trim()),
+    ["10", "4991"],
+    "ids should be numbered by their position in the header"
+  );
+  Assert.equal(
+    idsList.children[10],
+    ellipsisButton().parentNode,
+    "the ellipsis button should be in place of the hidden ids"
+  );
+  Assert.equal(
+    ellipsisButton().textContent,
+    "…",
+    "the ellipsis button should show an ellipsis"
+  );
+  Assert.deepEqual(
+    aboutMessage.document.l10n.getAttributes(ellipsisButton()),
+    { id: "message-header-field-show-count-more", args: { count: 200 } },
+    "the ellipsis button should tell how many ids it will show"
+  );
+  Assert.ok(
+    !idsList.querySelector(".show-more-ids"),
+    "the show more button should not be shown when ids are hidden"
+  );
+
+  EventUtils.synthesizeMouseAtCenter(ellipsisButton(), {}, aboutMessage);
+  Assert.deepEqual(
+    shownIds(),
+    [...ids.slice(0, 210), ...ids.slice(-10)],
+    "a batch of hidden ids should be shown"
+  );
+  Assert.equal(
+    items()[0].textContent.trim(),
+    ids[0],
+    "ids should be shown in full"
+  );
+
+  ellipsisButton().focus();
+  EventUtils.synthesizeKey("KEY_Enter", {}, aboutMessage);
+  Assert.equal(
+    shownIds().length,
+    420,
+    "another batch of hidden ids should be shown"
+  );
+  Assert.equal(
+    aboutMessage.document.activeElement,
+    items()[210].messageId,
+    "the first newly shown id should be focused"
+  );
+
+  Assert.greater(
+    idsList.scrollHeight,
+    idsList.clientHeight,
+    "the ids list should be scrollable"
+  );
+  const lastId = idsList.lastElementChild;
+  lastId.scrollIntoView({ block: "end" });
+  const listRect = idsList.getBoundingClientRect();
+  const lastRect = lastId.getBoundingClientRect();
+  Assert.ok(
+    lastRect.top >= listRect.top && lastRect.bottom <= listRect.bottom + 1,
+    "the last id should be reachable by scrolling the ids list"
+  );
+
+  let count;
+  while (ellipsisButton()) {
+    count =
+      aboutMessage.document.l10n.getAttributes(ellipsisButton()).args.count;
+    ellipsisButton().click();
+  }
+  Assert.equal(count, 180, "the last batch should only show what is left");
+  Assert.deepEqual(shownIds(), ids, "all ids should eventually be shown");
+
+  await SpecialPowers.popPrefEnv();
+});
+
+/**
+ * Test the References row with few enough ids to not hide any, and with a
+ * single hidden id.
+ */
+add_task(async function test_few_references() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["mailnews.headers.showReferences", true]],
+  });
+
+  let ids = Array.from({ length: 20 }, (v, i) => `<${i}@example.com>`);
+  let idsList = await displayReferences(ids);
+  const toggleButton = idsList.querySelector(".show-more-ids");
+  Assert.equal(
+    idsList.querySelectorAll(".header-message-id").length,
+    20,
+    "all ids should be shown"
+  );
+  Assert.equal(
+    idsList.lastElementChild,
+    toggleButton.parentNode,
+    "the show more button should be last"
+  );
+  Assert.ok(
+    !idsList.querySelector(".show-hidden-ids"),
+    "the ellipsis button should not be shown when no ids are hidden"
+  );
+  EventUtils.synthesizeMouseAtCenter(toggleButton, {}, aboutMessage);
+  Assert.equal(
+    idsList.querySelector(".header-message-id").textContent.trim(),
+    ids[0],
+    "ids should be shown in full"
+  );
+  Assert.ok(
+    !idsList.querySelector(".show-more-ids"),
+    "the show more button should be gone"
+  );
+
+  ids = Array.from({ length: 21 }, (v, i) => `<${i}@example.com>`);
+  idsList = await displayReferences(ids);
+  const ellipsisButton = idsList.querySelector(".show-hidden-ids");
+  Assert.deepEqual(
+    aboutMessage.document.l10n.getAttributes(ellipsisButton),
+    { id: "message-header-field-show-count-more", args: { count: 1 } },
+    "one id should be hidden"
+  );
+  EventUtils.synthesizeMouseAtCenter(ellipsisButton, {}, aboutMessage);
+  Assert.deepEqual(
+    Array.from(idsList.querySelectorAll(".header-message-id"), li => li.id),
+    ids,
+    "all ids should be shown"
+  );
+
+  await SpecialPowers.popPrefEnv();
+});
+
+/**
  * Test that if a contact belongs to a mailing list within their address book,
  * then the inline contact editor will not allow the user to change what address
  * book the contact belongs to. The editor should also show a message to explain
@@ -908,6 +1254,102 @@ add_task(async function test_add_contact_from_context_menu() {
 
   await SpecialPowers.popPrefEnv();
   MailServices.ab.deleteAddressBook(defaultAddBook.URI);
+});
+
+/**
+ * Test that the list-id context menu handles List-* headers with many unclosed
+ * "<", and that a long list-id or subject doesn't take over the header.
+ */
+add_task(async function test_context_menu_list_id_unclosed() {
+  const msg = create_message({
+    clobberHeaders: {
+      "List-ID": "Cats " + "<".repeat(10000) + " <gocats.example.test>",
+      "List-Owner": "<mailto:".repeat(4000),
+      Subject: "Long subject ".repeat(500),
+    },
+  });
+  await add_message_to_folder([folder], msg);
+  await be_in_folder(folder);
+  const msgHdr = folder.msgDatabase.getMsgHdrForMessageID(msg.messageId);
+  await select_click_row(
+    about3Pane.gDBView.findIndexOfMsgHdr(msgHdr, true),
+    AccessibilityUtils
+  );
+
+  const listIdRow = aboutMessage.document.getElementById("expandedlist-idBox");
+  const { height } = listIdRow.value.getBoundingClientRect();
+  const lineHeight = parseFloat(
+    aboutMessage.getComputedStyle(listIdRow.value).lineHeight
+  );
+  Assert.lessOrEqual(
+    Math.round(height),
+    Math.round(3 * lineHeight),
+    "a long list-id should be limited to three lines"
+  );
+
+  Assert.greater(
+    listIdRow.value.scrollHeight,
+    listIdRow.value.clientHeight,
+    "the rest of a long list-id should be reachable by scrolling"
+  );
+
+  // The overflowing value can be focused to scroll it, so it needs a name.
+  listIdRow.focus();
+  EventUtils.synthesizeKey("KEY_Tab", {}, aboutMessage);
+  Assert.equal(
+    aboutMessage.document.activeElement,
+    listIdRow.value,
+    "Tab should focus the overflowing value"
+  );
+  let valueAccessible;
+  await TestUtils.waitForCondition(
+    () => (valueAccessible = gAccService.getAccessibleFor(listIdRow.value)),
+    "the value should have an accessible"
+  );
+  Assert.equal(
+    valueAccessible.role,
+    Ci.nsIAccessibleRole.ROLE_GROUPING,
+    "the value should be a group"
+  );
+  // The name joins the heading's text and its separator with a space.
+  Assert.equal(
+    valueAccessible.name.replace(/\s/g, ""),
+    listIdRow.heading.textContent.replace(/\s/g, ""),
+    "the value should be named by the heading"
+  );
+
+  const subjectBox = aboutMessage.document.getElementById("expandedsubjectBox");
+  Assert.greater(
+    subjectBox.scrollHeight,
+    subjectBox.clientHeight,
+    "the rest of a long subject should be reachable by scrolling"
+  );
+  Assert.greater(
+    subjectBox.value.getBoundingClientRect().height,
+    3 * lineHeight,
+    "the subject value itself should not be clamped"
+  );
+
+  const listIdPopup = aboutMessage.document.getElementById("listIdPopup");
+  EventUtils.synthesizeMouseAtCenter(
+    listIdRow,
+    { type: "contextmenu" },
+    aboutMessage
+  );
+  await BrowserTestUtils.waitForPopupEvent(listIdPopup, "shown");
+
+  Assert.equal(
+    aboutMessage.document.getElementById("listIdPlaceHolder").label,
+    "gocats.example.test",
+    "list-id ctx label should be correct"
+  );
+  Assert.equal(
+    aboutMessage.document.getElementById("listIdListOwner").value,
+    "mailto:".repeat(4000),
+    "list-owner ctx value should be correct"
+  );
+
+  await close_popup(window, listIdPopup);
 });
 
 /**

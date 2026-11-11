@@ -332,6 +332,7 @@ FeedParser.prototype = {
               tag.getAttribute("fileSize")
             );
             item.enclosures.push(new lazy.FeedEnclosure(url, type, fileSize));
+            encUrls.push(url);
           }
         }
       }
@@ -751,7 +752,7 @@ FeedParser.prototype = {
       aDOM,
       lazy.FeedUtils.ATOM_IETF_NS,
       "feed"
-    )[0];
+    )?.[0];
     if (!channel) {
       aFeed.onParseError(aFeed);
       return [];
@@ -1073,7 +1074,9 @@ FeedParser.prototype = {
       );
       if (tags) {
         for (const tag of tags) {
-          const ref = this.removeUnprintableASCII(tag.getAttribute("ref"));
+          const ref = this.removeUnprintableASCII(
+            tag.getAttribute("ref")
+          ).trim();
           if (ref) {
             item.inReplyTo += item.normalizeMessageID(ref) + " ";
           }
@@ -1487,7 +1490,7 @@ FeedParser.prototype = {
   },
 
   stripTags(someHTML) {
-    return someHTML ? someHTML.replace(/<[^>]+>/g, "") : someHTML;
+    return someHTML ? someHTML.replace(/<[^<>]+>/g, "") : someHTML;
   },
 
   xmlUnescape(s) {

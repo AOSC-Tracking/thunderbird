@@ -8,6 +8,9 @@ const { AppConstants } = ChromeUtils.importESModule(
 const { XULStoreUtils } = ChromeUtils.importESModule(
   "resource:///modules/XULStoreUtils.sys.mjs"
 );
+
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://messenger/content/pane-splitter.mjs";
 import { TreeSelection } from "chrome://messenger/content/TreeSelection.mjs";
 
 // Account for the mac OS accelerator key variation.
@@ -60,6 +63,16 @@ const otherKeyName = AppConstants.platform == "macosx" ? "ctrlKey" : "metaKey";
  */
 export class BaseTreeView extends HTMLElement {
   static observedAttributes = ["rows"];
+
+  /**
+   * If true, calls to the invalidate* and rowCountChanged functions return
+   * early with no effect. This should be set and cleared within the same
+   * synchronous operation (i.e. no `await` calls) and a try/finally block
+   * should be used to ensure it is cleared in all cases.
+   *
+   * @type {boolean}
+   */
+  #ignoreChanges = false;
 
   /**
    * The number of rows on either side to keep of the visible area to keep in
@@ -569,6 +582,9 @@ export class BaseTreeView extends HTMLElement {
    * @param {integer} endIndex
    */
   invalidateRange(startIndex, endIndex) {
+    if (this.#ignoreChanges) {
+      return;
+    }
     const rowCount = this._view?.rowCount ?? 0;
     for (
       let index = Math.max(startIndex, this.#firstBufferRowIndex),
@@ -590,6 +606,9 @@ export class BaseTreeView extends HTMLElement {
    * @param {integer} index
    */
   invalidateRow(index) {
+    if (this.#ignoreChanges) {
+      return;
+    }
     this.#doInvalidateRow(index);
     this.#dispatchRowBufferReadyEvent();
   }
@@ -1052,6 +1071,9 @@ export class BaseTreeView extends HTMLElement {
    *   were added and negative if rows were removed.
    */
   rowCountChanged(index, _delta) {
+    if (this.#ignoreChanges) {
+      return;
+    }
     this.invalidateRange(index, this.view.rowCount - 1);
     this.dispatchEvent(new CustomEvent("rowcountchange"));
   }
@@ -1319,6 +1341,97 @@ export class BaseTreeView extends HTMLElement {
         top: Math.min(topOfFirstRow, bottomOfLastRow - visibleHeight),
         behavior: "auto",
       });
+    }
+  }
+
+  /**
+   * Collapse all top-level rows. Other rows are not changed. This function
+   * requires the view to be a TreeDataAdapter, not just nsITreeView.
+   */
+  collapseAll() {
+    this.#ignoreChanges = true;
+    try {
+      // Shift the selection up to the top level of any selected row.
+      const getRootIndex = index => {
+        if (index == -1) {
+          return index;
+        }
+        let parentIndex = this.view.getParentIndex(index);
+        while (parentIndex > -1) {
+          index = parentIndex;
+          parentIndex = this.view.getParentIndex(index);
+        }
+        return index;
+      };
+
+      if (this._selection) {
+        const selectedIndices = new Set();
+        for (const index of this.selectedIndices) {
+          selectedIndices.add(getRootIndex(index));
+        }
+        const currentIndex = getRootIndex(this.currentIndex);
+
+        this.setSelectedIndices(selectedIndices, true);
+        this.currentIndex = currentIndex;
+      }
+
+      // Collect the indices of the rows to close.
+      const openIndices = [];
+      for (let i = 0; i < this._view.rowCount; i++) {
+        const row = this._view.rowAt(i);
+        if (row && row.level == 0 && row.children.length > 0 && row.open) {
+          openIndices.push(i);
+        }
+      }
+
+      // Close the rows from the bottom upwards.
+      for (let i = openIndices.length - 1; i >= 0; i--) {
+        this._view.toggleOpenState(openIndices[i]);
+      }
+    } finally {
+      this.#ignoreChanges = false;
+      this.invalidate();
+      if (this._selection) {
+        if (this.currentIndex != -1) {
+          this.scrollToIndex(this.currentIndex);
+        }
+        this.onSelectionChanged();
+      }
+    }
+  }
+
+  /**
+   * Expand all top-level rows. Other rows are not changed. This function
+   * requires the view to be a TreeDataAdapter, not just nsITreeView.
+   */
+  expandAll() {
+    // Collect the indices of the rows to open, adjusting for all the opened
+    // rows above them.
+    const closedIndices = [];
+    let addedRowCount = 0;
+    for (let i = 0; i < this._view.rowCount; i++) {
+      const row = this._view.rowAt(i);
+      if (row && row.level == 0 && row.children.length > 0 && !row.open) {
+        closedIndices.push(i + addedRowCount);
+        addedRowCount += row.rowCount;
+      }
+    }
+
+    this.#ignoreChanges = true;
+    try {
+      // Open the rows from the top downwards.
+      for (let i = 0; i < closedIndices.length; i++) {
+        this._view.toggleOpenState(closedIndices[i]);
+      }
+    } finally {
+      this.#ignoreChanges = false;
+      this.invalidate();
+      if (this._selection) {
+        if (this.currentIndex != -1) {
+          this.scrollToIndex(this.currentIndex);
+        }
+        this.onSelectionChanged();
+      }
     }
   }
 
@@ -1919,6 +2032,7 @@ export class TreeView extends BaseTreeView {
     for (const index of indices) {
       this._selection.toggleSelect(index);
     }
+    this._updateCurrentIndexClasses();
     this.onSelectionChanged(false, suppressEvent);
   }
 
@@ -2205,15 +2319,14 @@ class TreeViewTable extends HTMLTableElement {
       const headerCell = document.getElementById(column.id);
       headerCell.hidden = column.hidden;
       headerCell.classList.toggle("last-column", column == lastColumn);
-
-      // No need to update the splitter visibility if the column is
-      // specifically not resizable.
-      if (column.resizable === false) {
-        continue;
-      }
-
+      headerCell.classList.toggle(
+        "last-resizable-column",
+        column == lastResizableColumn
+      );
       headerCell.resizable =
-        this.isHorizontalScroll || column != lastResizableColumn;
+        column.resizable !== false &&
+        (this.isHorizontalScroll || column != lastResizableColumn);
+
       if (column.width) {
         headerCell.style.setProperty(
           `--${column.id}Splitter-width`,
@@ -2281,6 +2394,7 @@ class TreeViewTableHeader extends HTMLTableSectionElement {
     this.addEventListener("dragover", this);
     this.addEventListener("dragend", this);
     this.addEventListener("drop", this);
+    this.addEventListener("splitter-resizing", this);
 
     // Watch and remember the height of the header so we don't have to fetch
     // it every time TreeView's visible height calculation runs.
@@ -2292,6 +2406,8 @@ class TreeViewTableHeader extends HTMLTableSectionElement {
       if (this.parentNode.clientHeight !== 0) {
         this._height = this.clientHeight;
       }
+
+      this.#rememberColumnWidths(true);
     });
     this.#resizeObserver.observe(this);
 
@@ -2412,6 +2528,9 @@ class TreeViewTableHeader extends HTMLTableSectionElement {
         break;
       case "drop":
         this.#onDrop(event);
+        break;
+      case "splitter-resizing":
+        this.#rememberColumnWidths(false);
         break;
     }
   }
@@ -2599,6 +2718,57 @@ class TreeViewTableHeader extends HTMLTableSectionElement {
       })
     );
     event.preventDefault();
+  }
+
+  /**
+   * Ensure every column header cell (except the one for the last resizable
+   * column) has a width set. This avoids the layout engine redistributing
+   * free space when columns are being resized. Instead, it will all be added
+   * to the last resizable column.
+   *
+   * The values set here are temporarily set on the header cells, not saved to
+   * `column.width` or persisted in the XUL store.
+   *
+   * @param {boolean} relativeWidths - If true, widths will be stored as
+   *   percentage values instead of pixel values. This should be used where
+   *   all columns are being resized at once (i.e. the widget is resizing).
+   */
+  #rememberColumnWidths(relativeWidths) {
+    if (!this.parentNode.columns || this.clientWidth == 0) {
+      return;
+    }
+    if (relativeWidths && this.parentNode.isHorizontalScroll) {
+      return;
+    }
+
+    const totalWidth = this.clientWidth;
+    for (const column of this.parentNode.columns) {
+      if (column.hidden || column.resizable === false) {
+        continue;
+      }
+
+      const headerCell = this.parentNode.querySelector(`#${column.id}`);
+      const splitterVar = `--${column.id}Splitter-width`;
+      if (
+        !relativeWidths ||
+        // Don't overwrite a percentage value with another percentage value.
+        !headerCell.style.getPropertyValue(splitterVar).endsWith("%")
+      ) {
+        headerCell.style.setProperty(
+          splitterVar,
+          relativeWidths
+            ? `${(headerCell.clientWidth / totalWidth) * 100}%`
+            : `${headerCell.clientWidth}px`
+        );
+      }
+
+      if (
+        !this.parentNode.isHorizontalScroll &&
+        headerCell.classList.contains("last-resizable-column")
+      ) {
+        headerCell.style.width = null;
+      }
+    }
   }
 
   /**
@@ -2794,6 +2964,10 @@ class TreeViewTableHeaderCell extends HTMLTableCellElement {
     // Make the button clickable if the column can trigger a sorting of rows.
     if (this.#sortable) {
       this.#button.addEventListener("click", () => {
+        if (this.closest("thead")._dragInfo) {
+          // We're dragging. Do not sort.
+          return;
+        }
         this.dispatchEvent(
           new CustomEvent("sort-changed", {
             bubbles: true,
@@ -2866,7 +3040,12 @@ class TreeViewTableHeaderCell extends HTMLTableCellElement {
       });
     }
 
-    this.style.setProperty("width", val ? `var(--${splitter.id}-width)` : null);
+    // Use CSS variables to set the width, except for icon columns, which
+    // have their own width already set by CSS.
+    this.style.setProperty(
+      "width",
+      this.dataset.type == "icon" ? null : `var(--${splitter.id}-width)`
+    );
     // Disable the splitter if this is not a resizable column.
     splitter.isDisabled = !val;
   }

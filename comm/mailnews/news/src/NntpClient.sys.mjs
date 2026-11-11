@@ -15,8 +15,13 @@ const AUTH_ACCEPTED = 281;
 const AUTH_PASSWORD_REQUIRED = 381;
 const AUTH_REQUIRED = 480;
 const AUTH_FAILED = 481;
+const SYNTAX_ERROR = 501;
 const SERVICE_UNAVAILABLE = 502;
+const GROUP_SELECTED = 211;
+const GROUP_LIST_FOLLOWS = 215;
+const ARTICLE_FOLLOWS = 220;
 const HEADER_FOLLOWS = 221;
+const NEW_GROUPS_FOLLOW = 231;
 const NO_SUCH_NEWSGROUP = 411;
 const NO_ARTICLE_WITH_THAT_NUMBER = 423;
 
@@ -54,13 +59,14 @@ XPCOMUtils.defineLazyServiceGetter(
  * A class to interact with NNTP server.
  */
 export class NntpClient {
+  /** Identifies the request owning asynchronous response callbacks. */
+  #requestGeneration = 0;
+
   /**
    * @param {nsINntpIncomingServer} server - The associated server instance.
    */
   constructor(server) {
     this._server = server;
-    this._lineReader = new LineReader();
-
     this._reset();
     this._logger = console.createInstance({
       prefix: "mailnews.nntp",
@@ -91,10 +97,12 @@ export class NntpClient {
     this.onData = () => {};
     this.onDone = () => {};
 
+    this._lineReader = new LineReader();
     this.runningUri = null;
     this.urlListener = null;
     this._msgWindow = null;
     this._newsFolder = null;
+    this._newsGroup = null;
     this._nextAction = null;
     this._currentAction = null;
     this._messageId = null;
@@ -105,6 +113,7 @@ export class NntpClient {
    * Initiate a connection to the server
    */
   connect() {
+    this.#requestGeneration++;
     this._done = false;
     if (this._socket?.readyState == "open") {
       // Reuse the connection.
@@ -203,14 +212,17 @@ export class NntpClient {
         this._currentGroupName = null;
         this._actionAuthUser();
         return;
+      case SYNTAX_ERROR:
       case SERVICE_UNAVAILABLE:
         this._actionError(res.status, res.statusText);
         return;
       case NO_SUCH_NEWSGROUP:
-        this._updateStatus("no-such-newsgroup", {
-          newsgroup: this._newsFolder.localizedName,
-        });
-        // Close the connection without any further error message.
+        if (this._newsFolder) {
+          this._updateStatus("no-such-newsgroup", {
+            newsgroup: this._newsFolder.localizedName,
+          });
+        }
+        // Finish the request without any further error message.
         this._actionDone(Cr.NS_ERROR_FAILURE);
         return;
       case NO_ARTICLE_WITH_THAT_NUMBER:
@@ -715,7 +727,6 @@ export class NntpClient {
     } else {
       this._sendCommand(`GROUP ${this._nextGroupName}`);
       this._currentAction = this._actionGroup;
-      this._currentGroupName = this._nextGroupName;
       this._nextAction = this._actionGroupResponse;
     }
   };
@@ -726,6 +737,11 @@ export class NntpClient {
    * @param {NntpResponse} res - GROUP response received from the server.
    */
   _actionGroupResponse = res => {
+    if (res.status != GROUP_SELECTED) {
+      this._actionError(res.status, res.statusText);
+      return;
+    }
+    this._currentGroupName = this._nextGroupName;
     this._firstGroupCommand(res);
   };
 
@@ -735,6 +751,10 @@ export class NntpClient {
    * @param {NntpResponse} res - LISTGROUP response received from the server.
    */
   _actionListgroupResponse = res => {
+    if (res.status != GROUP_SELECTED) {
+      this._actionError(res.status, res.statusText);
+      return;
+    }
     this._nextAction = this._actionListgroupDataResponse;
     if (res.data) {
       this._actionListgroupDataResponse(res);
@@ -747,7 +767,7 @@ export class NntpClient {
    * @param {NntpResponse} res - The server response.
    */
   _actionListgroupDataResponse = ({ data }) => {
-    this._lineReader.read(
+    this._readResponse(
       data,
       line => {
         this.onData(line);
@@ -812,7 +832,7 @@ export class NntpClient {
    * @param {NntpResponse} res - XOVER response received from the server.
    */
   _actionReadXOver({ data }) {
-    this._lineReader.read(
+    this._readResponse(
       data,
       line => {
         this._newsGroup.processXOverLine(line);
@@ -864,7 +884,7 @@ export class NntpClient {
    * @param {NntpResponse} res - XOVER response received from the server.
    */
   _actionReadXHdr({ data }) {
-    this._lineReader.read(
+    this._readResponse(
       data,
       line => {
         this._newsGroup.processXHdrLine(this._curXHdrHeader, line);
@@ -897,10 +917,12 @@ export class NntpClient {
       this._startArticle++;
       this._nextAction = this._actionReadHead;
       this._actionReadHead(res);
-    } else {
+    } else if (res.status == NO_ARTICLE_WITH_THAT_NUMBER) {
       // The article is no longer available on the server, just skip it.
       this._startArticle++;
-      this._actionHead(res);
+      this._actionHead();
+    } else {
+      this._actionError(res.status, res.statusText);
     }
   }
 
@@ -910,7 +932,7 @@ export class NntpClient {
    * @param {NntpResponse} res - XOVER response received from the server.
    */
   _actionReadHead({ data }) {
-    this._lineReader.read(
+    this._readResponse(
       data,
       line => {
         this._newsGroup.processHeadLine(line);
@@ -933,42 +955,77 @@ export class NntpClient {
   };
 
   /**
-   * Handle `ARTICLE` response.
+   * Handle `ARTICLE` status lines and data blocks.
    *
    * @param {NntpResponse} res - ARTICLE response received from the server.
    */
-  _actionArticleResponse = ({ data }) => {
+  _actionArticleResponse = ({ status, statusText, data }) => {
+    if (status && status != ARTICLE_FOLLOWS) {
+      this._actionError(status, statusText);
+      return;
+    }
     const lineSeparator = AppConstants.platform == "win" ? "\r\n" : "\n";
 
     let article = "";
-    this._lineReader
-      .read(
-        data,
-        line => {
-          article += line.slice(0, -2) + lineSeparator;
-          this.onData(line);
-        },
-        () => {
-          this._newsFolder?.notifyArticleDownloaded(
-            this._articleNumber,
-            article
-          );
-          this._actionDone();
-        }
-      )
-      .catch(this._actionReadDataFailed);
+    this._readResponse(
+      data,
+      line => {
+        article += line.slice(0, -2) + lineSeparator;
+        this.onData(line);
+      },
+      () => {
+        this._newsFolder?.notifyArticleDownloaded(this._articleNumber, article);
+        this._actionDone();
+      }
+    );
   };
 
   /**
-   * Handle multi-line data blocks response, e.g. ARTICLE/LIST response. Emit
-   * each line through onData.
+   * Handle LIST or NEWGROUPS status lines and data blocks. Emit each line
+   * through onData.
    *
    * @param {NntpResponse} res - Response received from the server.
    */
-  _actionReadData({ data }) {
-    this._lineReader
-      .read(data, this.onData, this._actionDone)
-      .catch(this._actionReadDataFailed);
+  _actionReadData({ status, statusText, data }) {
+    if (status && ![GROUP_LIST_FOLLOWS, NEW_GROUPS_FOLLOW].includes(status)) {
+      this._actionError(status, statusText);
+      return;
+    }
+    this._readResponse(data, this.onData, this._actionDone);
+  }
+
+  /**
+   * Read a multiline response while its request is active. Ignore callbacks
+   * and rejections after completion, including when the client is reused.
+   *
+   * @param {string} data - A full or partial response.
+   * @param {function(string): void} onLine - Process a response line.
+   * @param {function(): void} onComplete - Continue after the response ends.
+   * @returns {Promise<void>} Resolves after processing the response segment.
+   */
+  _readResponse(data, onLine, onComplete) {
+    const generation = this.#requestGeneration;
+    const isCurrent = () =>
+      generation == this.#requestGeneration && !this._done;
+    return this._lineReader
+      .read(
+        data,
+        line => {
+          if (isCurrent()) {
+            onLine(line);
+          }
+        },
+        () => {
+          if (isCurrent()) {
+            onComplete();
+          }
+        }
+      )
+      .catch(error => {
+        if (isCurrent()) {
+          this._actionReadDataFailed(error);
+        }
+      });
   }
 
   /**
@@ -1105,7 +1162,7 @@ export class NntpClient {
    *
    * @param {NntpResponse} res - Auth response received from the server.
    */
-  async _actionAuthResult({ status }) {
+  async _actionAuthResult({ status, statusText }) {
     switch (status) {
       case AUTH_ACCEPTED:
         this._authenticated = true;
@@ -1140,7 +1197,10 @@ export class NntpClient {
         }
         // Retry.
         this._actionAuthUser();
+        return;
       }
+      default:
+        this._actionError(status, statusText);
     }
   }
 
@@ -1167,7 +1227,7 @@ export class NntpClient {
       this._actionError(status, statusText);
       return;
     }
-    this._lineReader.read(data, this.onData, this._actionXPat);
+    this._readResponse(data, this.onData, this._actionXPat);
   }
 
   /**
@@ -1257,6 +1317,7 @@ export class NntpClient {
       return;
     }
     this._done = true;
+    this.#requestGeneration++;
     this._logger.debug(`Done with status=${status}`);
     this.onDone(status);
     this._newsGroup?.cleanUp();

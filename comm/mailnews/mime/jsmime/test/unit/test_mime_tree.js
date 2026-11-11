@@ -94,12 +94,12 @@ define(function (require) {
     );
     var eol = extract_field(opts, "_eol");
     var msgtext = read_file(file).then(function (msgcontents) {
+      if (eol !== undefined) {
+        msgcontents = msgcontents.replace(/\r\n/g, eol);
+      }
       var packetize = extract_field(opts, "_split");
       if (packetize !== undefined) {
         msgcontents = msgcontents.split(packetize);
-      }
-      if (eol !== undefined) {
-        msgcontents = msgcontents.replace(/\r\n/g, eol);
       }
       return msgcontents;
     });
@@ -498,11 +498,57 @@ define(function (require) {
           { _eol: "\r" },
           mpart_complex1
         ),
+        make_body_test(
+          "LF-based pathological splitting",
+          "multipart-complex1",
+          { _eol: "\n", _split: "" },
+          mpart_complex1
+        ),
+        make_body_test(
+          "CR-based pathological splitting",
+          "multipart-complex1",
+          { _eol: "\r", _split: "" },
+          mpart_complex1
+        ),
       ];
       parser_tests.forEach(function (data) {
         arrayTest(data, function () {
           return testParser(data[1], data[2], data[3]);
         });
+      });
+
+      /**
+       * Parse a message delivered in 4 KiB packets.
+       *
+       * @param {string} message - The message to parse.
+       * @returns {string} the body of the message.
+       */
+      function parseInPackets(message) {
+        let body = "";
+        const parser = new jsmime.MimeParser(
+          {
+            deliverPartData(partNum, data) {
+              body += data;
+            },
+          },
+          { bodyformat: "decode", strformat: "binarystring" }
+        );
+        for (let i = 0; i < message.length; i += 4096) {
+          parser.deliverData(message.substring(i, i + 4096));
+        }
+        parser.deliverEOF();
+        return body;
+      }
+      test("Long body line in many packets", function () {
+        const line = "a".repeat(16 << 20);
+        assert.equal(
+          parseInPackets("Content-Type: text/plain\r\n\r\n" + line),
+          line
+        );
+      });
+      test("Many header lines in many packets", function () {
+        const headers = "X-A: b\r\n".repeat(64 * 1024);
+        assert.equal(parseInPackets(headers + "\r\nbody\r\n"), "body\r\n");
       });
     });
 
@@ -832,6 +878,84 @@ define(function (require) {
           }
           assert.ok(!tree.has("" + (numParts + 1)));
         });
+      });
+    });
+
+    suite("Stack usage", function () {
+      function nestedMultipart(depth) {
+        let message = "";
+        for (let i = 0; i < depth; i++) {
+          message += `Content-Type: multipart/mixed; boundary="b${i}"\r\n\r\n--b${i}\r\n`;
+        }
+        message += "Content-Type: text/plain\r\n\r\nleaf\r\n";
+        for (let i = depth - 1; i >= 0; i--) {
+          message += `--b${i}--\r\n`;
+        }
+        return message;
+      }
+
+      function nestedMessage(depth) {
+        return (
+          "Content-Type: message/rfc822\r\n\r\n".repeat(depth) + "\r\nleaf"
+        );
+      }
+
+      function parse(message) {
+        const result = { parts: 0, data: "" };
+        const parser = new jsmime.MimeParser(
+          {
+            startPart() {
+              result.parts++;
+            },
+            deliverPartData(partNum, data) {
+              result.data += data;
+            },
+          },
+          {
+            onerror(e) {
+              throw e;
+            },
+          }
+        );
+        parser.deliverData(message);
+        parser.deliverEOF();
+        return result;
+      }
+
+      test("Multiparts at the limit are parsed", function () {
+        const result = parse(nestedMultipart(64));
+        assert.equal(result.parts, 65);
+        assert.equal(result.data, "leaf");
+      });
+      test("Multiparts past the limit are not parsed", function () {
+        const result = parse(nestedMultipart(65));
+        assert.equal(result.parts, 65);
+        assert.equal(result.data, "");
+      });
+      test("Deeply nested multiparts don't exhaust the stack", function () {
+        const result = parse(nestedMultipart(20000));
+        assert.equal(result.parts, 65);
+        assert.equal(result.data, "");
+      });
+      test("Messages past the limit are delivered as data", function () {
+        assert.deepEqual(parse(nestedMessage(64)), {
+          parts: 65,
+          data: "leaf",
+        });
+        assert.deepEqual(parse(nestedMessage(65)), {
+          parts: 65,
+          data: "\r\nleaf",
+        });
+        assert.equal(parse(nestedMessage(20000)).parts, 65);
+      });
+      test("Many sibling parts don't exhaust the stack", function () {
+        const message =
+          'Content-Type: multipart/mixed; boundary="b"\r\n\r\n' +
+          "--b\r\n\r\nx\r\n".repeat(50000) +
+          "--b--\r\n";
+        const result = parse(message);
+        assert.equal(result.parts, 50001);
+        assert.equal(result.data, "x".repeat(50000));
       });
     });
   });

@@ -30,7 +30,6 @@ XPCOMUtils.defineLazyScriptGetter(
 );
 
 // This file stores variables common to mail windows
-var messenger;
 var msgWindow;
 
 UIDensity.registerWindow(window);
@@ -179,10 +178,6 @@ function CreateMailWindowGlobals() {
   msgWindow = Cc["@mozilla.org/messenger/msgwindow;1"].createInstance(
     Ci.nsIMsgWindow
   );
-  // get the messenger instance
-
-  messenger = Cc["@mozilla.org/messenger;1"].createInstance(Ci.nsIMessenger);
-  messenger.setWindow(window, msgWindow);
 
   window.addEventListener("blur", appIdleManager.onBlur);
   window.addEventListener("focus", appIdleManager.onFocus);
@@ -778,8 +773,8 @@ function getBrowser() {
 
 /** Update state of zoom type (text vs. full) menu item. */
 function UpdateFullZoomMenu() {
-  const cmdItem = document.getElementById("cmd_fullZoomToggle");
-  cmdItem.toggleAttribute("checked", !ZoomManager.useFullZoom);
+  const menuItem = document.getElementById("menu_fullZoomToggle");
+  menuItem.toggleAttribute("checked", !ZoomManager.useFullZoom);
 }
 
 window.addEventListener("DoZoomEnlarge", event =>
@@ -829,6 +824,7 @@ nsBrowserAccess.prototype = {
     const newTab = tabmail.openTab("contentTab", {
       background: loadInBackground,
       csp: aCsp,
+      duplicate: !!aOpenWindowInfo,
       linkHandler: aMessageManagerGroup,
       openWindowInfo: aOpenWindowInfo,
       referrerInfo: aReferrerInfo,

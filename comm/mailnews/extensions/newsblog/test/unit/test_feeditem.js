@@ -2,8 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { FeedItem } = ChromeUtils.importESModule(
+const { FeedEnclosure, FeedItem } = ChromeUtils.importESModule(
   "resource:///modules/FeedItem.sys.mjs"
+);
+const { MimeParser } = ChromeUtils.importESModule(
+  "resource:///modules/mimeParser.sys.mjs"
 );
 
 const TAG_KEY = "rss-camera";
@@ -139,6 +142,43 @@ add_task(function test_feed_category_tag_survives_incoming_filter_move() {
   assertMovedAndTagged(source, destination);
 });
 
+add_task(function test_store_preserves_dollar_ampersand_in_content() {
+  const account = FeedUtils.createRssAccount("replacement pattern account");
+  const rootFolder = account.incomingServer.rootMsgFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
+  const folder = rootFolder.createLocalSubfolder("replacement pattern folder");
+  const item = new FeedItem();
+  item.feed = {
+    folder,
+    server: account.incomingServer,
+    url: "https://example.invalid/feed",
+    name: folder.name,
+    options: {
+      category: {
+        enabled: false,
+        prefixEnabled: false,
+        prefix: "",
+      },
+    },
+  };
+  item.id = "replacement-pattern";
+  item.title = "Replacement pattern";
+  item.author = ["author@example.invalid"];
+  item.content = "<p>Expected literal token: $&.</p>";
+  item.url = "https://example.invalid/replacement-pattern";
+
+  Assert.ok(item.store(), "feed item should be stored");
+
+  const messages = [...folder.messages];
+  Assert.equal(messages.length, 1, "folder should contain the feed item");
+  const storedMessage = mailTestUtils.loadMessageToString(folder, messages[0]);
+  Assert.ok(
+    storedMessage.includes("<p>Expected literal token: $&.</p>"),
+    "feed content should preserve a literal $&"
+  );
+});
+
 add_task(function test_normalizeMessageID_escapes_meta_characters() {
   const item = new FeedItem();
   Assert.equal(
@@ -150,6 +190,16 @@ add_task(function test_normalizeMessageID_escapes_meta_characters() {
     item.normalizeMessageID("<a@b><c@d>"),
     "<%3Ca%40b%3E%3Cc%40d%3E@localhost.localdomain>",
     "all occurrences of message ID meta characters should be escaped"
+  );
+  Assert.equal(
+    item.normalizeMessageID("foo bar\u00A0baz"),
+    "<foo%20bar%C2%A0baz@localhost.localdomain>",
+    "inner whitespace should be escaped"
+  );
+  Assert.notEqual(
+    item.normalizeMessageID("a%40b"),
+    item.normalizeMessageID("a@b"),
+    "an already escaped id should not collide with the unescaped one"
   );
 });
 
@@ -175,5 +225,122 @@ add_task(function test_message_id_header_escapes_item_id() {
       "Message-Id: <victim-real-id%40example.com%3E@localhost.localdomain>\n"
     ),
     "Message-Id header should contain the escaped item id"
+  );
+});
+
+add_task(function test_content_cannot_inject_mime_parts() {
+  const account = FeedUtils.createRssAccount("boundary account");
+  const rootFolder = account.incomingServer.rootMsgFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
+  const folder = rootFolder.createLocalSubfolder("boundary folder");
+
+  let injected = "";
+  for (let i = 0; i < 2000; i++) {
+    injected +=
+      `\n--------------${i}\n` +
+      'Content-Type: text/plain; name="injected.txt"\n' +
+      'Content-Disposition: attachment; filename="injected.txt"\n\n' +
+      "INJECTED\n";
+  }
+
+  const item = new FeedItem();
+  item.feed = {
+    folder,
+    name: folder.name,
+    options: { category: { enabled: false } },
+  };
+  item.id = "boundary";
+  item.title = "Boundary";
+  item.content = `\n<p>Before</p>${injected}<p>After</p>`;
+  item.url = "https://example.invalid/boundary";
+  item.enclosures = [
+    new FeedEnclosure(
+      "https://example.invalid/real-attachment.txt",
+      "text/plain",
+      8
+    ),
+  ];
+  item.writeToFolder();
+
+  const messages = [...folder.messages];
+  Assert.equal(messages.length, 1, "folder should contain the feed item");
+  const storedMessage = mailTestUtils.loadMessageToString(folder, messages[0]);
+
+  const parts = [];
+  MimeParser.parseSync(
+    storedMessage,
+    {
+      startPart(partNum, headers) {
+        parts.push({ partNum, contentType: headers.contentType.type });
+      },
+    },
+    { bodyformat: "none" }
+  );
+  Assert.deepEqual(
+    parts,
+    [
+      { partNum: "", contentType: "multipart/mixed" },
+      { partNum: "1", contentType: "text/html" },
+      { partNum: "2", contentType: "text/plain" },
+    ],
+    "message should only contain the content and the declared enclosure"
+  );
+});
+
+add_task(async function test_proto_item_id_is_stored_as_own_key() {
+  const account = FeedUtils.createRssAccount("proto id account");
+  const server = account.incomingServer;
+  const rootFolder = server.rootMsgFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
+  const folder = rootFolder.createLocalSubfolder("proto id folder");
+  const feedURL = "https://example.invalid/proto.xml";
+
+  const item = new FeedItem();
+  item.feed = {
+    folder,
+    server,
+    url: feedURL,
+    name: folder.name,
+    options: { category: { enabled: false } },
+  };
+  item.id = "__proto__";
+  item.title = "Proto";
+  item.content = "\n<p>Proto</p>";
+  item.url = "https://example.invalid/proto";
+  Assert.ok(item.store(), "item should be stored");
+
+  let ds = FeedUtils.getItemsDS(server);
+  Assert.ok(
+    Object.hasOwn(ds.data, "__proto__"),
+    "__proto__ item id should be an own key of the item cache"
+  );
+  Assert.deepEqual(
+    Object.keys(ds.data),
+    ["__proto__"],
+    "item cache should only contain the stored item"
+  );
+
+  const feed = new Feed(feedURL, folder);
+  feed.invalidateItems();
+  feed.removeInvalidItems(false);
+  Assert.equal(
+    ds.data.__proto__.valid,
+    false,
+    "__proto__ item should have been invalidated"
+  );
+
+  await ds._save();
+  delete FeedUtils[server.serverURI].FeedItemsDS;
+  ds = FeedUtils.getItemsDS(server);
+  Assert.ok(
+    Object.hasOwn(ds.data, "__proto__"),
+    "__proto__ item id should be an own key after reloading the item cache"
+  );
+  Assert.deepEqual(
+    ds.data.__proto__.feedURLs,
+    [feedURL],
+    "reloaded __proto__ item should keep its feed URL"
   );
 });

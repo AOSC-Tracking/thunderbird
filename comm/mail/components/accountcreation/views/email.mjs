@@ -1151,7 +1151,7 @@ class AccountHubEmail extends HTMLElement {
 
           // Check if we have found an Exchange config we should tweak to make it work
           // with our native EWS support (and do so if that's the case).
-          lazy.FindConfig.ewsifyConfig(config);
+          lazy.FindConfig.maybeAppendExchangeAddonConfig(config);
 
           this.#currentConfig = this.#fillAccountConfig(
             config,
@@ -1594,6 +1594,9 @@ class AccountHubEmail extends HTMLElement {
         Services.prefs.getStringPref("mailnews.auto_config.addons_url")
       );
       if (addonDiscoveryEnabled) {
+        // Offer the Exchange add-on alongside native EWS. This must happen
+        // before looking up the add-ons for the config.
+        lazy.FindConfig.maybeAppendExchangeAddonConfig(config);
         try {
           config = await this.#getExchangeAddons(config);
         } catch (error) {
@@ -1606,10 +1609,6 @@ class AccountHubEmail extends HTMLElement {
           }
         }
       }
-
-      // Check if we have found an Exchange config we should tweak to make it work
-      // with our native EWS support (and do so if that's the case).
-      lazy.FindConfig.ewsifyConfig(config, addonDiscoveryEnabled);
 
       config = this.#fillAccountConfig(config);
     }
@@ -2342,7 +2341,10 @@ class AccountHubEmail extends HTMLElement {
   async #installAddon() {
     const addon = this.#currentConfig.addons[0];
     this.abortable = new AbortController();
-    const installer = new AddonInstaller(addon, this.abortable.signal);
+    const installer = new AddonInstaller(
+      { ...addon, type: "extension" },
+      this.abortable.signal
+    );
     await installer.install();
     this.abortable = null;
   }

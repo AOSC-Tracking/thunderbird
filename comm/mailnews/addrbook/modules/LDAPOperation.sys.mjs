@@ -8,6 +8,42 @@ ChromeUtils.defineESModuleGetters(lazy, {
   LDAPClient: "resource:///modules/LDAPClient.sys.mjs",
 });
 
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "mailnews.ldap",
+    maxLogLevel: "Warn",
+    maxLogLevelPref: "mailnews.ldap.loglevel",
+  });
+});
+
+// Maximum number of search references to follow for a single search. Only
+// references returned by the configured directory are followed.
+const MAX_REFERRALS = 5;
+
+// Secure ports to use instead of insecure ports in references, when the
+// directory uses a secure connection. -1 is the default port. 389/636 are
+// LDAP/LDAPS, 3268/3269 are the same for the Global Catalog of Active
+// Directory, which holds a partial copy of all objects of the forest.
+// @see https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/service-overview-and-network-port-requirements
+const SECURE_PORTS = new Map([
+  [-1, 636],
+  [389, 636],
+  [3268, 3269],
+]);
+
+/**
+ * @param {string} host - A host name or IP address.
+ * @returns {string} The base domain of the host, e.g. example.com for
+ *   ldap.example.com, or the host itself if it has none.
+ */
+function getBaseDomain(host) {
+  try {
+    return Services.eTLD.getBaseDomainFromHost(host);
+  } catch (e) {
+    return host.toLowerCase();
+  }
+}
+
 /**
  * A module to manage LDAP operation.
  *
@@ -16,15 +52,23 @@ ChromeUtils.defineESModuleGetters(lazy, {
 export class LDAPOperation {
   QueryInterface = ChromeUtils.generateQI(["nsILDAPOperation"]);
 
+  /**
+   * @param {nsILDAPConnection} connection - The connection to use.
+   * @param {nsILDAPMessageListener} listener - The listener to notify of
+   *   messages and errors.
+   */
   init(connection, listener) {
     this._listener = listener;
     this._connection = connection;
     this._client = connection.wrappedJSObject.client;
 
     this._referenceUrls = [];
+    this._referralCount = 0;
+    this._searchResultCode = null;
+    this._abandoned = false;
 
     // Cache request arguments to use when searching references.
-    this._simpleBindPassword = null;
+    this._password = null;
     this._saslBindArgs = null;
     this._searchArgs = null;
   }
@@ -35,13 +79,20 @@ export class LDAPOperation {
       this._messageId = this._client.bind(
         this._connection.bindName,
         password,
-        res => this._onBindSuccess(res.result.resultCode)
+        res => this._onBindResponse(res.result.resultCode)
       );
     } catch (e) {
       this._listener.onLDAPError(e.result, null, "");
     }
   }
 
+  /**
+   * @param {string} service - The service host name to bind.
+   * @param {string} mechanism - The SASL mechanism to use, e.g. GSSAPI.
+   * @param {string} authModuleType - The auth module type, @see nsIMailAuthModule.
+   * @param {ArrayBuffer} [serverCredentials] - The challenge token returned
+   *   from the server, or undefined for the first request.
+   */
   saslBind(service, mechanism, authModuleType, serverCredentials) {
     this._saslBindArgs = [service, mechanism, authModuleType];
     try {
@@ -58,8 +109,11 @@ export class LDAPOperation {
               authModuleType,
               res.result.serverSaslCreds
             );
-          } else if (res.result.resultCode == Ci.nsILDAPErrors.SUCCESS) {
-            this._onBindSuccess(res.result.resultCode);
+          } else if (
+            res.result.resultCode == Ci.nsILDAPErrors.SUCCESS ||
+            this._searchingReference
+          ) {
+            this._onBindResponse(res.result.resultCode);
           }
         }
       );
@@ -68,8 +122,30 @@ export class LDAPOperation {
     }
   }
 
+  /**
+   * @param {string} baseDN - The name to search.
+   * @param {number} scope - The scope to search.
+   * @param {string} filter - The filter string.
+   * @param {string} attributes - Attributes to include in the search result.
+   * @param {number} timeout - The seconds to wait.
+   * @param {number} limit - Maximum number of entries to return.
+   */
   searchExt(baseDN, scope, filter, attributes, timeout, limit) {
     this._searchArgs = [baseDN, scope, filter, attributes, timeout, limit];
+    this._search(...this._searchArgs);
+  }
+
+  /**
+   * Send a search request with the current client.
+   *
+   * @param {string} baseDN - The name to search.
+   * @param {number} scope - The scope to search.
+   * @param {string} filter - The filter string.
+   * @param {string} attributes - Attributes to include in the search result.
+   * @param {number} timeout - The seconds to wait.
+   * @param {number} limit - Maximum number of entries to return.
+   */
+  _search(baseDN, scope, filter, attributes, timeout, limit) {
     try {
       this._messageId = this._client.search(
         baseDN,
@@ -107,21 +183,19 @@ export class LDAPOperation {
               },
             });
           } else if (res.constructor.name == "SearchResultReference") {
-            this._referenceUrls.push(...res.result);
+            if (!this._searchingReference) {
+              this._referenceUrls.push(...res.result);
+            }
           } else if (res.constructor.name == "SearchResultDone") {
             // NOTE: we create a new connection for every search, can be changed
             // to reuse connections.
             this._client.onError = () => {};
             this._client.unbind();
             this._messageId = null;
-            if (this._referenceUrls.length) {
-              this._searchReference(this._referenceUrls.shift());
-            } else {
-              this._listener.onLDAPMessage({
-                errorCode: res.result.resultCode,
-                type: Ci.nsILDAPMessage.RES_SEARCH_RESULT,
-              });
+            if (!this._searchingReference) {
+              this._searchResultCode = res.result.resultCode;
             }
+            this._searchNextReference();
           }
         }
       );
@@ -131,20 +205,30 @@ export class LDAPOperation {
   }
 
   abandonExt() {
+    this._abandoned = true;
+    this._referenceUrls = [];
     if (this._messageId) {
       this._client.abandon(this._messageId);
     }
   }
 
   /**
-   * Decide what to do on bind success. When searching a reference url, trigger
-   * a new search. Otherwise, emit a message to this._listener.
+   * Decide what to do on a bind response. When searching a reference url,
+   * trigger a new search, or skip to the next reference if the bind failed or
+   * the operation was abandoned. Otherwise, emit a message to this._listener.
    *
    * @param {number} errorCode - The result code of BindResponse.
    */
-  _onBindSuccess(errorCode) {
+  _onBindResponse(errorCode) {
     if (this._searchingReference) {
-      this.searchExt(...this._searchArgs);
+      if (this._abandoned || errorCode != Ci.nsILDAPErrors.SUCCESS) {
+        this._client.onError = () => {};
+        this._client.unbind();
+        this._searchNextReference();
+        return;
+      }
+      const [baseDN, ...args] = this._searchArgs;
+      this._search(this._referenceDN || baseDN, ...args);
     } else {
       this._listener.onLDAPMessage({
         errorCode,
@@ -154,12 +238,41 @@ export class LDAPOperation {
   }
 
   /**
-   * Connect to a reference url and continue the search.
+   * Follow the next usable reference url, or emit the final search result to
+   * this._listener if there is none left.
+   */
+  _searchNextReference() {
+    if (this._abandoned) {
+      return;
+    }
+    while (this._referenceUrls.length) {
+      if (this._searchReference(this._referenceUrls.shift())) {
+        return;
+      }
+    }
+    this._listener.onLDAPMessage({
+      errorCode: this._searchResultCode,
+      type: Ci.nsILDAPMessage.RES_SEARCH_RESULT,
+    });
+  }
+
+  /**
+   * Connect to a reference url and continue the search. The credentials of
+   * the directory are only sent to hosts in the same base domain as the
+   * directory, other hosts are bound to anonymously, so that a reference to a
+   * third party doesn't leak them. References to insecure ports are upgraded
+   * to the matching secure port if the directory uses a secure connection, or
+   * ignored if there is none. References to the DNS partitions of Active
+   * Directory are ignored, as they don't contain any people.
    *
    * @param {string} urlStr - A url string we get from SearchResultReference.
+   * @returns {boolean} Whether the reference is being followed.
    */
   _searchReference(urlStr) {
-    this._searchingReference = true;
+    if (this._referralCount >= MAX_REFERRALS) {
+      lazy.log.warn(`Too many LDAP referrals, ignoring ${urlStr}`);
+      return false;
+    }
     const urlParser = Cc[
       "@mozilla.org/network/ldap-url-parser;1"
     ].createInstance(Ci.nsILDAPURLParser);
@@ -167,25 +280,57 @@ export class LDAPOperation {
     try {
       url = urlParser.parse(urlStr);
     } catch (e) {
-      console.error(e);
-      return;
+      lazy.log.error(e);
+      return false;
     }
-    this._client = new lazy.LDAPClient(
-      url.host,
-      url.port,
-      url.options & Ci.nsILDAPURL.OPT_SECURE
-    );
+    if (/^dc=(forest|domain)dnszones,/i.test(url.dn)) {
+      lazy.log.debug(`Ignoring LDAP referral to DNS partition ${urlStr}`);
+      return false;
+    }
+    let useSecureTransport = !!(url.options & Ci.nsILDAPURL.OPT_SECURE);
+    let port = url.port;
+    if (
+      this._connection.wrappedJSObject.url.scheme == "ldaps" &&
+      !useSecureTransport
+    ) {
+      port = SECURE_PORTS.get(port);
+      if (!port) {
+        lazy.log.warn(`Ignoring insecure LDAP referral ${urlStr}`);
+        return false;
+      }
+      useSecureTransport = true;
+    } else if (port == -1) {
+      port = useSecureTransport ? 636 : 389;
+    }
+
+    const sameBaseDomain =
+      getBaseDomain(url.host) ==
+      getBaseDomain(this._connection.wrappedJSObject.url.host);
+
+    this._referralCount++;
+    this._searchingReference = true;
+    this._referenceDN = url.dn;
+    this._client = new lazy.LDAPClient(url.host, port, useSecureTransport);
     this._client.onOpen = () => {
-      if (this._password) {
-        this.simpleBind(this._password);
+      if (this._abandoned) {
+        this._client.onError = () => {};
+        this._client.unbind();
+      } else if (!sameBaseDomain) {
+        this._client.bind("", "", res =>
+          this._onBindResponse(res.result.resultCode)
+        );
+      } else if (this._saslBindArgs) {
+        const [, mechanism, authModuleType] = this._saslBindArgs;
+        this.saslBind(`ldap@${url.host}`, mechanism, authModuleType);
       } else {
-        this.saslBind(...this._saslBindData);
+        this.simpleBind(this._password);
       }
     };
-    this._client.onError = (status, secInfo) => {
-      this._listener.onLDAPError(status, secInfo, `${url.host}:${url.port}`);
+    this._client.onError = () => {
+      this._searchNextReference();
     };
     this._client.connect();
+    return true;
   }
 }
 

@@ -28,7 +28,6 @@ class nsMsgGroupView : public nsMsgDBView {
                           nsMsgViewFlagsTypeValue aViewFlags) override;
   NS_IMETHOD GetViewType(nsMsgViewTypeValue* aViewType) override;
   NS_IMETHOD CopyDBView(nsMsgDBView* aNewMsgDBView,
-                        nsIMessenger* aMessengerInstance,
                         nsIMsgWindow* aMsgWindow,
                         nsIMsgDBViewCommandUpdater* aCmdUpdater);
   NS_IMETHOD Close() override;
@@ -39,8 +38,6 @@ class nsMsgGroupView : public nsMsgDBView {
                                uint32_t aNewFlags,
                                nsIDBChangeListener* aInstigator) override;
 
-  NS_IMETHOD GetCellProperties(int32_t aRow, nsTreeColumn* aCol,
-                               nsAString& aProperties) override;
   NS_IMETHOD GetRowProperties(int32_t aRow, nsAString& aProperties) override;
   NS_IMETHOD CellTextForColumn(int32_t aRow, const nsAString& aColumnName,
                                nsAString& aValue) override;

@@ -21,3 +21,7 @@ subsuite = "thunderbird"
 ["browser_UIFontSize.js"]
 
 ["browser_builtInThemes.js"]
+
+["browser_downloadHeaders.js"]
+
+["browser_openMessageFromFile.js"]

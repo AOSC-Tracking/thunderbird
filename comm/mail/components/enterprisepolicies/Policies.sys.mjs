@@ -40,6 +40,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   installAddonFromUpdateURL: "resource://gre/modules/PoliciesHelpers.sys.mjs",
   pemToBase64: "resource://gre/modules/PoliciesHelpers.sys.mjs",
   processMIMEInfo: "resource://gre/modules/PoliciesHelpers.sys.mjs",
+  removePolicyPermission: "resource://gre/modules/PoliciesHelpers.sys.mjs",
   replacePathVariables: "resource://gre/modules/PoliciesHelpers.sys.mjs",
   runOncePerModification: "resource://gre/modules/PoliciesHelpers.sys.mjs",
   unblockAboutPage: "resource://gre/modules/PoliciesHelpers.sys.mjs",
@@ -96,21 +97,41 @@ export var Policies = {
         lazy.log.debug("_cleanup from onBeforeAddons");
         lazy.clearBlockedAboutPages();
       }
+      Services.obs.notifyObservers(
+        null,
+        "EnterprisePolicies:Cleanup",
+        "onBeforeAddons"
+      );
     },
     onProfileAfterChange() {
       if (Cu.isInAutomation || isXpcshell) {
         lazy.log.debug("_cleanup from onProfileAfterChange");
       }
+      Services.obs.notifyObservers(
+        null,
+        "EnterprisePolicies:Cleanup",
+        "onProfileAfterChange"
+      );
     },
     onBeforeUIStartup() {
       if (Cu.isInAutomation || isXpcshell) {
         lazy.log.debug("_cleanup from onBeforeUIStartup");
       }
+      Services.obs.notifyObservers(
+        null,
+        "EnterprisePolicies:Cleanup",
+        "onBeforeUIStartup"
+      );
     },
     onAllWindowsRestored() {
       if (Cu.isInAutomation || isXpcshell) {
         lazy.log.debug("_cleanup from onAllWindowsRestored");
       }
+      Services.obs.notifyObservers(
+        null,
+        "EnterprisePolicies:Cleanup",
+        "onAllWindowsRestored"
+      );
     },
   },
 
@@ -529,22 +550,31 @@ export var Policies = {
         }
       }
 
-      if (param.Block) {
-        const hosts = param.Block.map(url => url.hostname)
-          .sort()
-          .join("\n");
-        lazy.runOncePerModification(
-          "clearCookiesForBlockedHosts",
-          hosts,
-          () => {
-            for (const blocked of param.Block) {
-              Services.cookies.removeCookiesWithOriginAttributes(
-                "{}",
-                blocked.hostname
+      lazy.clearRunOnceModification("clearCookiesForBlockedHosts");
+      for (const { hostname } of param.Block ?? []) {
+        try {
+          for (const cookie of Services.cookies.getCookiesWithOriginAttributes(
+            "{}",
+            hostname
+          )) {
+            if (
+              cookie.rawHost == hostname ||
+              cookie.rawHost.endsWith(`.${hostname}`)
+            ) {
+              Services.cookies.remove(
+                cookie.host,
+                cookie.name,
+                cookie.path,
+                cookie.originAttributes
               );
             }
           }
-        );
+        } catch (ex) {
+          lazy.reportFailure(
+            "Cookies",
+            `Unable to clear cookies for blocked host - ${hostname}`
+          );
+        }
       }
 
       if (param.ExpireAtSessionEnd != undefined) {
@@ -789,6 +819,8 @@ export var Policies = {
     },
   },
 
+  DisableMacOSUserPolicies: {},
+
   DisableMasterPasswordCreation: {
     onBeforeUIStartup(manager, param) {
       if (param) {
@@ -984,7 +1016,7 @@ export var Policies = {
                     continue;
                   }
                 }
-                lazy.installAddonFromURL(uri.spec, null, null, "Extensions");
+                lazy.installAddonFromURL(uri.spec, {}, "Extensions");
               }
             }
           );
@@ -1077,8 +1109,10 @@ export var Policies = {
             if (extensionSettings[extensionID].install_url) {
               lazy.installAddonFromURL(
                 extensionSettings[extensionID].install_url,
-                extensionID,
-                existingAddon,
+                {
+                  id: extensionID,
+                  existingAddon,
+                },
                 "ExtensionSettings"
               );
             } else if (!existingAddon) {
@@ -1902,22 +1936,31 @@ if (AppConstants.MOZ_ENTERPRISE) {
         }
       }
 
-      if (param.Block) {
-        const hosts = param.Block.map(url => url.hostname)
-          .sort()
-          .join("\n");
-        lazy.runOncePerModification(
-          "clearCookiesForBlockedHosts",
-          hosts,
-          () => {
-            for (const blocked of param.Block) {
-              Services.cookies.removeCookiesWithOriginAttributes(
-                "{}",
-                blocked.hostname
+      lazy.clearRunOnceModification("clearCookiesForBlockedHosts");
+      for (const { hostname } of param.Block ?? []) {
+        try {
+          for (const cookie of Services.cookies.getCookiesWithOriginAttributes(
+            "{}",
+            hostname
+          )) {
+            if (
+              cookie.rawHost == hostname ||
+              cookie.rawHost.endsWith(`.${hostname}`)
+            ) {
+              Services.cookies.remove(
+                cookie.host,
+                cookie.name,
+                cookie.path,
+                cookie.originAttributes
               );
             }
           }
-        );
+        } catch (ex) {
+          lazy.reportFailure(
+            "Cookies",
+            `Unable to clear cookies for blocked host - ${hostname}`
+          );
+        }
       }
 
       if (param.ExpireAtSessionEnd != undefined) {
@@ -1996,12 +2039,7 @@ if (AppConstants.MOZ_ENTERPRISE) {
         ...(param.AllowSession ?? []),
       ]) {
         try {
-          Services.perms.removeFromPrincipal(
-            Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-              origin
-            ),
-            "cookie"
-          );
+          lazy.removePolicyPermission(origin, "cookie");
         } catch (ex) {
           lazy.log.error(
             `Unable to remove cookie permission - ${origin.href || origin}`
@@ -2012,7 +2050,6 @@ if (AppConstants.MOZ_ENTERPRISE) {
       // (see onBeforeUIStartup) are left in place as the shim is being removed
       // in one of the next releases, and SanitizeOnShutdown.Exceptions
       // owns these entries going forward.
-      lazy.clearRunOnceModification("clearCookiesForBlockedHosts");
       lazy.PoliciesUtils.unsetDefaultPref("network.cookie.cookieBehavior");
       lazy.PoliciesUtils.unsetDefaultPref(
         "network.cookie.cookieBehavior.pbmode"
@@ -2116,6 +2153,7 @@ if (AppConstants.MOZ_ENTERPRISE) {
     onRemove(manager, _) {
       lazy.PoliciesUtils.unsetAndUnlockPref("devtools.policy.disabled");
       lazy.PoliciesUtils.unsetAndUnlockPref("devtools.chrome.enabled");
+      lazy.PoliciesUtils.unsetAndUnlockPref("remote.policy.disabled");
 
       manager.allowFeature("devtools");
       lazy.unblockAboutPage(manager, "about:debugging");
@@ -2198,8 +2236,10 @@ if (AppConstants.MOZ_ENTERPRISE) {
             if (extensionSettings[extensionID].install_url) {
               lazy.installAddonFromURL(
                 extensionSettings[extensionID].install_url,
-                extensionID,
-                existingAddon,
+                {
+                  id: extensionID,
+                  existingAddon,
+                },
                 "ExtensionSettings"
               );
             } else if (!existingAddon) {

@@ -538,9 +538,15 @@ export class MessengerContentHandler {
           }
         });
       } else if (["http:", "https:", "feed:"].includes(url?.protocol)) {
-        getOrOpen3PaneWindow().then(() => {
-          lazy.FeedUtils.subscribeToFeed(uri, null);
-        });
+        // Only subscribe to remote feeds from external links.
+        const feedUrl = lazy.FeedUtils.unwrapFeedUrl(uri);
+        if (["http:", "https:"].includes(URL.parse(feedUrl)?.protocol)) {
+          getOrOpen3PaneWindow().then(() => {
+            lazy.FeedUtils.subscribeToFeed(feedUrl, null);
+          });
+        } else {
+          console.warn(`Not subscribing to feed with invalid url: ${uri}`);
+        }
       } else if (["webcal:", "webcals:"].includes(url?.protocol)) {
         getOrOpen3PaneWindow().then(win =>
           Services.ww.openWindow(
@@ -865,6 +871,10 @@ export class MessengerContentHandler {
     "    as string \"option='value,...',option=value,...\" and\n" +
     "    include: from, to, cc, bcc, newsgroups, subject, body,\n" +
     "    message (file), attachment (file), format (html | text).\n" +
+    "    Values in single quotes are used as-is. Other values are\n" +
+    "    percent-decoded if valid (e.g. %20 becomes a space), otherwise\n" +
+    "    kept unchanged. For longer text, use message=<file> instead\n" +
+    "    of body.\n" +
     "    Example: \"to=john@example.com,subject='Dinner tonight?'\"\n" +
     "  -file              Open the specified email file or ICS calendar file.\n" +
     "  -setDefaultMail    Set this app as the default mail client.\n" +
