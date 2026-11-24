@@ -7127,8 +7127,7 @@ bool BaseCompiler::emitMemCopy() {
     int32_t signedLength;
     if (peekConst(&signedLength) && signedLength != 0 &&
         uint32_t(signedLength) <= MaxInlineMemoryCopyLength) {
-      memCopyInlineM32();
-      return true;
+      return memCopyInlineM32();
     }
   }
 
