@@ -82,7 +82,8 @@ interface prplISession: nsISupports {
    /**
     * Verify the identity of this session.
     *
-    * @returns {Promise<imISessionVerification>}
+    * @returns {Promise<imISessionVerification|undefined>} Resolves to undefined
+    *   if the session is already trusted.
     */
    Promise verify();
 };
@@ -217,8 +218,10 @@ interface prplIAccount: nsISupports {
    * Get a list of active encryption sessions for the account.
    * The protocol sends a "account-sessions-changed" notification when
    * the trust state of a session changes, or entries are added or removed.
+   &
+   * @returns {Array<prplISession>}
    */
-  Array<prplISession> getSessions();
+  Promise getSessions();
 
   /**
    * Information as to the state of encryption capabilities of this account. For

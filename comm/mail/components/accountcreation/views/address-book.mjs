@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import "chrome://messenger/content/accountcreation/content/widgets/account-hub-step.mjs"; // eslint-disable-line import/no-unassigned-import
-import "chrome://messenger/content/accountcreation/content/widgets/account-hub-footer.mjs"; // eslint-disable-line import/no-unassigned-import
+import "chrome://messenger/content/accountcreation/content/widgets/account-hub-step.mjs"; // eslint-disable-line import-x/no-unassigned-import
+import "chrome://messenger/content/accountcreation/content/widgets/account-hub-footer.mjs"; // eslint-disable-line import-x/no-unassigned-import
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -303,6 +303,7 @@ class AccountHubAddressBook extends HTMLElement {
     this.#hideSubviews();
     this.#currentState = subview;
     await this.#loadTemplateScript(this.#states[subview].templateId);
+    await this.#currentSubview.ready;
     // Always dispatch the maximized event to ensure that the account hub is
     // fully visible when we change subview.
     this.dispatchEvent(

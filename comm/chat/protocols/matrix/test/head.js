@@ -23,18 +23,21 @@ function loadMatrix() {
  * @param {boolean} isMUC
  * @param {string} [name="#test:example.com"]
  * @param {(any, string) => any?|object} [clientHandler]
+ * @param {MatrixAccount} account
+ * @param {boolean} isEncrypted
  * @returns {MatrixRoom}
  */
 function getRoom(
   isMUC,
   name = "#test:example.com",
   clientHandler = () => undefined,
-  account
+  account,
+  isEncrypted = false
 ) {
   if (!account) {
     account = getAccount(clientHandler);
   }
-  const room = getClientRoom(name, clientHandler, account._client);
+  const room = getClientRoom(name, clientHandler, account._client, isEncrypted);
   const conversation = new MatrixRoom(account, isMUC, name);
   conversation.initRoom(room);
   return conversation;
@@ -45,9 +48,10 @@ function getRoom(
  * @param {string} roomId
  * @param {(any, string) => any?|object} clientHandler
  * @param {MatrixClient} client
+ * @param {boolean} isEncrypted
  * @returns {Room}
  */
-function getClientRoom(roomId, clientHandler, client) {
+function getClientRoom(roomId, clientHandler, client, isEncrypted) {
   const room = new Proxy(
     {
       roomId,
@@ -72,6 +76,9 @@ function getClientRoom(roomId, clientHandler, client) {
       },
       isSpaceRoom() {
         return false;
+      },
+      hasEncryptionStateEvent() {
+        return isEncrypted;
       },
       getLastActiveTimestamp() {
         return Date.now();
@@ -165,17 +172,11 @@ function getAccount(clientHandler) {
       getVisibleRooms() {
         return Array.from(this._rooms.values());
       },
-      isCryptoEnabled() {
-        return false;
-      },
       getPushActionsForEvent() {
         return {};
       },
       leave(roomId) {
         this._rooms.delete(roomId);
-      },
-      downloadKeys() {
-        return Promise.resolve({});
       },
       getUser(userId) {
         return {
@@ -183,11 +184,12 @@ function getAccount(clientHandler) {
           userId,
         };
       },
-      getStoredDevicesForUser() {
-        return [];
-      },
-      isRoomEncrypted() {
-        return false;
+      getCrypto() {
+        return {
+          getUserDeviceInfo() {
+            return Promise.resolve(new Map());
+          },
+        };
       },
     },
     makeProxyHandler(clientHandler)

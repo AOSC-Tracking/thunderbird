@@ -135,34 +135,48 @@ window.addEventListener("load", () => {
     .addEventListener("click", () => importBook());
 
   document.getElementById("bookContext").addEventListener("command", event => {
+    const row = booksList.contextRow;
     switch (event.target.id) {
+      case "bookContextNewContact":
+        createContact(row);
+        break;
+      case "bookContextNewList":
+        createList(undefined, row);
+        break;
       case "bookContextProperties":
-        booksList.showPropertiesOfSelected();
+        booksList.showPropertiesOfSelected(row);
         break;
       case "bookContextSynchronize":
-        booksList.synchronizeSelected();
+        booksList.synchronizeSelected(row);
         break;
       case "bookContextPrint":
-        booksList.printSelected();
+        booksList.printSelected(row);
         break;
       case "bookContextExport":
-        booksList.exportSelected();
+        booksList.exportSelected(row);
         break;
       case "bookContextDelete":
-        booksList.deleteSelected();
+        booksList.deleteSelected(row);
         break;
       case "bookContextRemove":
-        booksList.deleteSelected();
+        booksList.deleteSelected(row);
         break;
       case "bookContextStartupDefault":
         if (event.target.hasAttribute("checked")) {
-          booksList.setSelectedAsStartupDefault();
+          booksList.setSelectedAsStartupDefault(row);
         } else {
           booksList.clearStartupDefault();
         }
         break;
     }
   });
+  document
+    .getElementById("bookContext")
+    .addEventListener("popuphidden", event => {
+      if (event.target == event.currentTarget) {
+        booksList.clearContextRow();
+      }
+    });
 
   booksList = document.getElementById("books");
   cardsPane.init();
@@ -328,13 +342,15 @@ async function displayAddressBook(UID) {
 
 /**
  * Show UI to create a new contact in the current address book.
+ *
+ * @param {HTMLLIElement} [row] - The address book row to create the contact in.
  */
-function createContact() {
-  const row = booksList.getRowAtIndex(booksList.selectedIndex);
+function createContact(row = booksList.getRowAtIndex(booksList.selectedIndex)) {
   const bookUID = row.dataset.book ?? row.dataset.uid;
+  let book;
 
   if (bookUID) {
-    const book = MailServices.ab.getDirectoryFromUID(bookUID);
+    book = MailServices.ab.getDirectoryFromUID(bookUID);
     if (book.readOnly) {
       throw new Components.Exception(
         "Address book is read-only",
@@ -344,6 +360,9 @@ function createContact() {
   }
 
   detailsPane.editNewContact();
+  if (book) {
+    detailsPane.addContactBookList.value = book.URI;
+  }
 }
 
 /**
@@ -351,9 +370,12 @@ function createContact() {
  * For now this loads the old list UI, the intention is to replace it.
  *
  * @param {nsIAbCard[]} cards - The contacts, if any, to add to the list.
+ * @param {HTMLLIElement} [row] - The address book row to create the list in.
  */
-function createList(cards) {
-  const row = booksList.getRowAtIndex(booksList.selectedIndex);
+function createList(
+  cards,
+  row = booksList.getRowAtIndex(booksList.selectedIndex)
+) {
   const bookUID = row.dataset.book ?? row.dataset.uid;
 
   const params = { cards };
@@ -648,16 +670,16 @@ customElements.whenDefined("tree-listbox").then(() => {
 
     /**
      * Show UI to modify the selected address book or list.
+     *
+     * @param {HTMLLIElement} [row] - The address book or list row to modify.
      */
-    showPropertiesOfSelected() {
-      if (this.selectedIndex === 0) {
+    showPropertiesOfSelected(row = this.getRowAtIndex(this.selectedIndex)) {
+      if (row === this.firstElementChild) {
         throw new Components.Exception(
           "Cannot modify the All Address Books item",
           Cr.NS_ERROR_UNEXPECTED
         );
       }
-
-      const row = this.getRowAtIndex(this.selectedIndex);
 
       if (row.classList.contains("listRow")) {
         const book = MailServices.ab.getDirectoryFromUID(row.dataset.book);
@@ -682,9 +704,10 @@ customElements.whenDefined("tree-listbox").then(() => {
 
     /**
      * Synchronize the selected address book. (CardDAV only.)
+     *
+     * @param {HTMLLIElement} [row] - The address book row to synchronize.
      */
-    synchronizeSelected() {
-      const row = this.getRowAtIndex(this.selectedIndex);
+    synchronizeSelected(row = this.getRowAtIndex(this.selectedIndex)) {
       if (!row.classList.contains("carddav")) {
         throw new Components.Exception(
           "Attempting to synchronize a non-CardDAV book.",
@@ -701,14 +724,14 @@ customElements.whenDefined("tree-listbox").then(() => {
 
     /**
      * Print the selected address book.
+     *
+     * @param {HTMLLIElement} [row] - The address book or list row to print.
      */
-    printSelected() {
-      if (this.selectedIndex === 0) {
+    printSelected(row = this.getRowAtIndex(this.selectedIndex)) {
+      if (row === this.firstElementChild) {
         printHandler.printDirectory();
         return;
       }
-
-      const row = this.getRowAtIndex(this.selectedIndex);
       if (row.classList.contains("listRow")) {
         const book = MailServices.ab.getDirectoryFromUID(row.dataset.book);
         const list = book.childNodes.find(l => l.UID == row.dataset.uid);
@@ -721,29 +744,30 @@ customElements.whenDefined("tree-listbox").then(() => {
 
     /**
      * Export the selected address book to a file.
+     *
+     * @param {HTMLLIElement} [row] - The address book or list row to export.
      */
-    async exportSelected() {
-      if (this.selectedIndex == 0) {
+    async exportSelected(row = this.getRowAtIndex(this.selectedIndex)) {
+      if (row === this.firstElementChild) {
         return;
       }
-
-      const row = this.getRowAtIndex(this.selectedIndex);
       const directory = row._book || row._list;
       await AddrBookUtils.exportCards(directory.childCards, directory.dirName);
     }
 
     /**
      * Prompt the user and delete the selected address book.
+     *
+     * @param {HTMLLIElement} [row] - The address book or list row to delete.
      */
-    async deleteSelected() {
-      if (this.selectedIndex === 0) {
+    async deleteSelected(row = this.getRowAtIndex(this.selectedIndex)) {
+      if (row === this.firstElementChild) {
         throw new Components.Exception(
           "Cannot delete the All Address Books item",
           Cr.NS_ERROR_UNEXPECTED
         );
       }
 
-      const row = this.getRowAtIndex(this.selectedIndex);
       if (row.classList.contains("noDelete")) {
         throw new Components.Exception(
           "Refusing to delete a built-in address book",
@@ -799,20 +823,20 @@ customElements.whenDefined("tree-listbox").then(() => {
 
     /**
      * Set the selected directory to be the one opened when the page opens.
+     *
+     * @param {HTMLLIElement} [row] - The address book or list row to use.
      */
-    setSelectedAsStartupDefault() {
+    setSelectedAsStartupDefault(row = this.getRowAtIndex(this.selectedIndex)) {
       // Once the old Address Book has gone away, this should be changed to use
       // UIDs instead of URIs. It's just easier to keep as-is for now.
       Services.prefs.setBoolPref(
         "mail.addr_book.view.startupURIisDefault",
         true
       );
-      if (this.selectedIndex === 0) {
+      if (row === this.firstElementChild) {
         Services.prefs.clearUserPref("mail.addr_book.view.startupURI");
         return;
       }
-
-      const row = this.getRowAtIndex(this.selectedIndex);
       const directory = row._book || row._list;
       Services.prefs.setStringPref(
         "mail.addr_book.view.startupURI",
@@ -1024,6 +1048,15 @@ customElements.whenDefined("tree-listbox").then(() => {
       event.preventDefault();
     }
 
+    get contextRow() {
+      return this._contextRow;
+    }
+
+    clearContextRow() {
+      this._contextRow?.classList.remove("context-menu-target");
+      this._contextRow = null;
+    }
+
     _showContextMenu(event) {
       const row =
         event.target == this
@@ -1034,6 +1067,8 @@ customElements.whenDefined("tree-listbox").then(() => {
       }
 
       const popup = document.getElementById("bookContext");
+      const newContactItem = document.getElementById("bookContextNewContact");
+      const newListItem = document.getElementById("bookContextNewList");
       const synchronizeItem = document.getElementById("bookContextSynchronize");
       const exportItem = document.getElementById("bookContextExport");
       const deleteItem = document.getElementById("bookContextDelete");
@@ -1046,9 +1081,12 @@ customElements.whenDefined("tree-listbox").then(() => {
         "mail.addr_book.view.startupURIisDefault"
       );
 
-      this.selectedIndex = this.rows.indexOf(row);
+      this._contextRow = row;
+      if (!row.classList.contains("selected")) {
+        row.classList.add("context-menu-target");
+      }
       this.focus();
-      if (this.selectedIndex === 0) {
+      if (row === this.firstElementChild) {
         // All Address Books - only the startup default item is relevant.
         for (const item of popup.children) {
           item.hidden = item != startupDefaultItem;
@@ -1068,6 +1106,12 @@ customElements.whenDefined("tree-listbox").then(() => {
             ? "about-addressbook-books-context-edit-list"
             : "about-addressbook-books-context-properties"
         );
+
+        const book = row.classList.contains("listRow")
+          ? MailServices.ab.getDirectoryFromUID(row.dataset.book)
+          : row._book;
+        newContactItem.disabled = book.readOnly;
+        newListItem.disabled = book.readOnly || !book.supportsMailingLists;
 
         synchronizeItem.hidden = !row.classList.contains("carddav");
         exportItem.hidden = row.classList.contains("remote");
@@ -1227,6 +1271,7 @@ customElements.whenDefined("tree-view-table-row").then(() => {
       this.classList.add("card-layout");
 
       this.cell = document.createElement("td");
+      this.cell.setAttribute("role", "gridcell");
 
       const container = this.cell.appendChild(document.createElement("div"));
       container.classList.add("card-container");
@@ -2634,15 +2679,6 @@ var detailsPane = {
       this.isDirty = this.dirtyFields.size > 0;
     });
     this.form.addEventListener("keydown", event => {
-      // Prevent scrolling of the html tag when space is used on a button or
-      // checkbox.
-      if (
-        event.key == " " &&
-        ["button", "checkbox"].includes(document.activeElement.type)
-      ) {
-        event.preventDefault();
-      }
-
       if (event.key != "Escape") {
         return;
       }
@@ -2954,7 +2990,7 @@ var detailsPane = {
 
     this.clearDisplay();
 
-    if (cards.length == 0) {
+    if (!cards.length) {
       this.node.hidden = true;
       this.splitter.isCollapsed =
         document.body.classList.contains("layout-table");
@@ -2998,7 +3034,7 @@ var detailsPane = {
         .filter(cal.acl.isCalendarWritable)
         .filter(cal.acl.userCanAddItemsToCalendar).length;
     this.searchButton.hidden = true;
-    this.newListButton.hidden = contactsWithAddresses.length == 0;
+    this.newListButton.hidden = !contactsWithAddresses.length;
     this.editButton.hidden = true;
 
     this.actions.hidden = this.writeButton.hidden;
@@ -3260,9 +3296,10 @@ var detailsPane = {
     list = section.querySelector("ul.entry-list");
     list.replaceChildren();
 
-    const formatDate = function (date) {
+    const formatDate = function (entry) {
+      let date;
       try {
-        date = ICAL.VCardTime.fromDateAndOrTimeString(date);
+        date = VCardUtils.parseDate(entry.value, entry.params);
       } catch (ex) {
         console.error(ex);
         return "";
@@ -3300,8 +3337,8 @@ var detailsPane = {
       return "";
     };
 
-    const bday = vCardProperties.getFirstValue("bday");
-    if (bday) {
+    const bday = vCardProperties.getFirstEntry("bday");
+    if (bday?.value) {
       const value = formatDate(bday);
       if (value) {
         const li = list.appendChild(createEntryItem("birthday"));
@@ -3309,8 +3346,8 @@ var detailsPane = {
       }
     }
 
-    const anniversary = vCardProperties.getFirstValue("anniversary");
-    if (anniversary) {
+    const anniversary = vCardProperties.getFirstEntry("anniversary");
+    if (anniversary?.value) {
       const value = formatDate(anniversary);
       if (value) {
         const li = list.appendChild(createEntryItem("anniversary"));
@@ -3599,10 +3636,12 @@ var detailsPane = {
       // TODO: convert this to UID.
       book = MailServices.ab.getDirectory(this.addContactBookList.value);
       if (book.getBoolValue("carddav.vcard3", false)) {
-        // This is a CardDAV book, and the server discards photos unless the
-        // vCard 3 format is used. Since we know this is a new card, setting
-        // the version here won't cause a problem.
-        this.vCardEdit.vCardProperties.addValue("version", "3.0");
+        // This is a CardDAV book whose server only accepts vCard 3.0. Since we
+        // know this is a new card, setting the version here won't cause a
+        // problem.
+        this.vCardEdit.vCardProperties.addEntry(
+          new VCardPropertyEntry("version", {}, "text", "3.0")
+        );
       }
     }
     if (!book || book.readOnly) {

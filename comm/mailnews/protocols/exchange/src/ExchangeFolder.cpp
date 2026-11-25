@@ -527,11 +527,9 @@ NS_IMETHODIMP ExchangeFolder::MarkAllMessagesRead(nsIMsgWindow* aMsgWindow) {
             rv = self->mDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
             NS_ENSURE_SUCCESS(rv, rv);
 
-            if (window) {
-              rv = self->AddMarkAllReadUndoAction(
-                  window, thoseMarked.Elements(), thoseMarked.Length());
-              NS_ENSURE_SUCCESS(rv, rv);
-            }
+            rv = self->AddMarkAllReadUndoAction(thoseMarked.Elements(),
+                                                thoseMarked.Length());
+            NS_ENSURE_SUCCESS(rv, rv);
           }
         } else {
           // server doesn't support marking folders, find unread messages and do
@@ -578,6 +576,17 @@ NS_IMETHODIMP ExchangeFolder::UpdateFolder(nsIMsgWindow* aWindow) {
   return SyncMessages(aWindow, nullptr);
 }
 
+// FIXME: This completes asynchronously, but there is no RenameWithListener()
+// override to go with it, so nsMsgDBFolder's notifies the caller as soon as
+// the request has been dispatched. Anything waiting on the result - such as
+// nsIMsgFolder.renameAsync() - therefore sees success even when the rename
+// later fails, for instance when the new name is already taken and
+// LocalRenameOrReparentFolder() returns NS_MSG_FOLDER_EXISTS. Fixing this
+// needs UpdateFolder() to report failures, which means moving it from
+// IExchangeSimpleOperationListener (success only, by design) to
+// IExchangeFallibleOperationListener, after which the override can settle the
+// listener in both directions. The same gap existed before renameAsync() was
+// added: the front end simply discarded the error.
 NS_IMETHODIMP ExchangeFolder::Rename(const nsACString& aNewName,
                                      nsIMsgWindow* msgWindow) {
   // Virtual folders are just a local operation.
@@ -1332,7 +1341,8 @@ NS_IMETHODIMP ExchangeFolder::EmptyTrash(nsIUrlListener* aListener) {
 }
 
 NS_IMETHODIMP ExchangeFolder::CompactAll(nsIUrlListener* aListener,
-                                         nsIMsgWindow* aMsgWindow) {
+                                         nsIMsgWindow* aMsgWindow,
+                                         bool expunge) {
   nsresult rv = NS_OK;
   nsCOMPtr<nsIMsgFolder> rootFolder;
   rv = GetRootFolder(getter_AddRefs(rootFolder));
@@ -1372,12 +1382,12 @@ NS_IMETHODIMP ExchangeFolder::CompactAll(nsIUrlListener* aListener,
     }
   }
 
-  return AsyncCompactFolders(folderArray, aListener, aMsgWindow);
+  return AsyncCompactFolders(folderArray, aListener);
 }
 
 NS_IMETHODIMP ExchangeFolder::Compact(nsIUrlListener* aListener,
                                       nsIMsgWindow* aMsgWindow) {
-  return AsyncCompactFolders({this}, aListener, aMsgWindow);
+  return AsyncCompactFolders({this}, aListener);
 }
 
 nsresult ExchangeFolder::GetExchangeId(nsACString& exchangeId) {
@@ -1575,7 +1585,7 @@ nsresult ExchangeFolder::PerformFiltering() {
   for (auto it = mFilterQueue.modIter(); !it.done(); it.next()) {
     nsMsgKey msgKey = it.get().key();
     nsCOMPtr<nsIMsgDBHdr> msg;
-    GetMessageHeader(msgKey, getter_AddRefs(msg));
+    GetMsgHdr(msgKey, getter_AddRefs(msg));
     if (!msg) {
       // The message could have have been manually deleted or something.
       it.remove();
@@ -1806,7 +1816,7 @@ NS_IMETHODIMP ExchangeFolder::OnMessageClassified(
         GetProcessingFlags(msgKey, &processingFlags);
         if (folder && !(processingFlags & nsMsgProcessingFlags::FilterToMove)) {
           nsCOMPtr<nsIMsgDBHdr> mailHdr;
-          rv = GetMessageHeader(msgKey, getter_AddRefs(mailHdr));
+          rv = GetMsgHdr(msgKey, getter_AddRefs(mailHdr));
           if (NS_SUCCEEDED(rv) && mailHdr) messages.AppendElement(mailHdr);
         } else {
           // We don't need the processing flag any more.
@@ -1853,8 +1863,9 @@ NS_IMETHODIMP ExchangeFolder::HandleViewCommand(
     headers.SetCapacity(messageKeys.Length());
     for (auto&& messageKey : messageKeys) {
       nsCOMPtr<nsIMsgDBHdr> header;
-      rv = GetMessageHeader(messageKey, getter_AddRefs(header));
+      rv = GetMsgHdr(messageKey, getter_AddRefs(header));
       NS_ENSURE_SUCCESS(rv, rv);
+      NS_ENSURE_TRUE(header, NS_MSG_MESSAGE_NOT_FOUND);
       headers.AppendElement(header);
     }
 
@@ -1975,8 +1986,9 @@ NS_IMETHODIMP ExchangeFolder::FetchMsgPreviewText(
   nsresult rv = NS_OK;
   for (auto&& key : aKeysToFetch) {
     nsCOMPtr<nsIMsgDBHdr> header;
-    rv = GetMessageHeader(key, getter_AddRefs(header));
+    rv = GetMsgHdr(key, getter_AddRefs(header));
     NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_TRUE(header, NS_MSG_MESSAGE_NOT_FOUND);
 
     // Check to see if there's already a preview.
     nsCString previewText;

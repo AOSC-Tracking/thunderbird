@@ -36,6 +36,8 @@
 #include <time.h>
 #include "nsIMsgDBView.h"
 #include "nsIMsgFolderNotificationService.h"
+#include "nsIObserverService.h"
+#include "mozilla/Services.h"
 #include "nsIMimeHeaders.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsIMsgTraitService.h"
@@ -94,7 +96,6 @@ static bool gAutoCompactInProgress;
 #define PREF_MAIL_PROMPT_PURGE_THRESHOLD "mail.prompt_purge_threshold"
 #define PREF_MAIL_PURGE_THRESHOLD_MB "mail.purge_threshold_mb"
 #define PREF_MAIL_PURGE_ASK "mail.purge.ask"
-#define PREF_MAIL_WARN_FILTER_CHANGED "mail.warn_filter_changed"
 
 const char* kUseServerRetentionProp = "useServerRetention";
 
@@ -1268,11 +1269,8 @@ nsMsgDBFolder::AddMessageDispositionState(
   return NS_OK;
 }
 
-nsresult nsMsgDBFolder::AddMarkAllReadUndoAction(nsIMsgWindow* msgWindow,
-                                                 nsMsgKey* thoseMarked,
+nsresult nsMsgDBFolder::AddMarkAllReadUndoAction(nsMsgKey* thoseMarked,
                                                  uint32_t numMarked) {
-  NS_ENSURE_ARG_POINTER(msgWindow);
-
   nsCOMPtr<nsITransactionManager> txnMgr;
   nsCOMPtr<nsIMsgTransactionService> txns =
       mozilla::components::Txns::Service();
@@ -1307,8 +1305,8 @@ nsMsgDBFolder::MarkAllMessagesRead(nsIMsgWindow* aMsgWindow) {
     NS_ENSURE_SUCCESS(rv, rv);
 
     // Setup a undo-state
-    if (aMsgWindow && thoseMarked.Length() > 0)
-      rv = AddMarkAllReadUndoAction(aMsgWindow, thoseMarked.Elements(),
+    if (thoseMarked.Length() > 0)
+      rv = AddMarkAllReadUndoAction(thoseMarked.Elements(),
                                     thoseMarked.Length());
   }
 
@@ -1546,25 +1544,21 @@ nsresult nsMsgDBFolder::EndNewOfflineMessage(nsresult status) {
 
 class AutoCompactEvent : public mozilla::Runnable {
  public:
-  AutoCompactEvent(nsIMsgWindow* aMsgWindow, nsMsgDBFolder* aFolder)
-      : mozilla::Runnable("AutoCompactEvent"),
-        mMsgWindow(aMsgWindow),
-        mFolder(aFolder) {}
+  explicit AutoCompactEvent(nsMsgDBFolder* aFolder)
+      : mozilla::Runnable("AutoCompactEvent"), mFolder(aFolder) {}
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD Run() override {
     if (RefPtr<nsMsgDBFolder> folder = mFolder) {
-      nsCOMPtr<nsIMsgWindow> msgWindow = mMsgWindow;
-      folder->HandleAutoCompactEvent(msgWindow);
+      folder->HandleAutoCompactEvent();
     }
     return NS_OK;
   }
 
  private:
-  nsCOMPtr<nsIMsgWindow> mMsgWindow;
   RefPtr<nsMsgDBFolder> mFolder;
 };
 
-nsresult nsMsgDBFolder::HandleAutoCompactEvent(nsIMsgWindow* aWindow) {
+nsresult nsMsgDBFolder::HandleAutoCompactEvent() {
   MOZ_LOG(gCompactLog, LogLevel::Debug, ("Performing AutoCompactEvent check"));
 
   // Prevent re-entrant auto-compaction. The compact dialog is modal and
@@ -1647,55 +1641,28 @@ nsresult nsMsgDBFolder::HandleAutoCompactEvent(nsIMsgWindow* aWindow) {
 
     if (totalExpungedBytes > ((int64_t)purgeThreshold * 1024)) {
       bool okToCompact = false;
-      bool askBeforePurge = Preferences::GetBool(PREF_MAIL_PURGE_ASK);
-      if (askBeforePurge && aWindow) {
-        nsCOMPtr<nsIStringBundle> bundle;
-        rv = GetBaseStringBundle(getter_AddRefs(bundle));
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        nsAutoString compactSize;
-        FormatFileSize(totalExpungedBytes, true, compactSize);
-
-        bool neverAsk = false;  // "Do not ask..." - unchecked by default.
-        int32_t buttonPressed = 0;
-
-        nsCOMPtr<nsIWindowWatcher> ww =
-            mozilla::components::WindowWatcher::Service();
-        nsCOMPtr<nsIWritablePropertyBag2> props(
-            do_CreateInstance("@mozilla.org/hash-property-bag;1"));
-        props->SetPropertyAsAString(u"compactSize"_ns, compactSize);
-        nsCOMPtr<mozIDOMWindowProxy> migrateWizard;
-        rv = ww->OpenWindow(
-            nullptr, "chrome://messenger/content/compactFoldersDialog.xhtml"_ns,
-            u"_blank"_ns, "chrome,dialog,modal,centerscreen"_ns, props,
-            getter_AddRefs(migrateWizard));
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        rv = props->GetPropertyAsBool(u"checked"_ns, &neverAsk);
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        rv = props->GetPropertyAsInt32(u"buttonNumClicked"_ns, &buttonPressed);
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        if (buttonPressed == 0) {
-          okToCompact = true;
-          if (neverAsk)  // [X] Remove deletions automatically and do not ask
-            Preferences::SetBool(PREF_MAIL_PURGE_ASK, false);
+      if (Preferences::GetBool(PREF_MAIL_PURGE_ASK)) {
+        // Let the front end ask; it runs the compaction itself if the user
+        // agrees. Nothing happens if no window is around to ask.
+        nsCOMPtr<nsIObserverService> obs =
+            mozilla::services::GetObserverService();
+        if (obs) {
+          obs->NotifyObservers(
+              nullptr, "mail:auto-compact-threshold-reached",
+              NS_ConvertUTF8toUTF16(
+                  nsPrintfCString("%" PRId64, totalExpungedBytes))
+                  .get());
         }
       } else {
-        okToCompact = aWindow || !askBeforePurge;
+        okToCompact = true;
       }
-
-      MOZ_LOG(gCompactLog, LogLevel::Info,
-              ("AutoCompactEvent check: okToCompact=%s",
-               okToCompact ? "true" : " false"));
 
       if (okToCompact) {
         if (localExpungedBytes > 0 || offlineExpungedBytes > 0) {
           for (nsIMsgFolder* f : offlineFolderArray) {
             folderArray.AppendElement(f);
           }
-          rv = AsyncCompactFolders(folderArray, nullptr, aWindow);
+          rv = AsyncCompactFolders(folderArray, nullptr);
         }
       }
     } else {
@@ -1708,9 +1675,7 @@ nsresult nsMsgDBFolder::HandleAutoCompactEvent(nsIMsgWindow* aWindow) {
   return rv;
 }
 
-nsresult nsMsgDBFolder::AutoCompact(nsIMsgWindow* aWindow) {
-  // we don't check for null aWindow, because this routine can get called
-  // in unit tests where we have no window. Just assume not OK if no window.
+nsresult nsMsgDBFolder::AutoCompact() {
   bool prompt;
   nsresult rv = GetPromptPurgeThreshold(&prompt);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1744,7 +1709,7 @@ nsresult nsMsgDBFolder::AutoCompact(nsIMsgWindow* aWindow) {
 
   if (timeAfterOneHourOfLastPurgeCheck < timeNow && prompt) {
     gtimeOfLastPurgeCheck = timeNow;
-    nsCOMPtr<nsIRunnable> event = new AutoCompactEvent(aWindow, this);
+    nsCOMPtr<nsIRunnable> event = new AutoCompactEvent(this);
     // Post this as an event because it can put up an alert, which
     // might cause issues depending on the stack when we are called.
     if (event) NS_DispatchToCurrentThread(event);
@@ -2309,7 +2274,7 @@ nsMsgDBFolder::CallFilterPlugins(nsIMsgWindow* aMsgWindow, bool* aFiltersRun) {
     // clang-format on
     nsCOMPtr<nsIMsgDBHdr> msgHdr;
     rv = database->GetMsgHdrForKey(msgKey, getter_AddRefs(msgHdr));
-    if (!NS_SUCCEEDED(rv)) continue;
+    if (NS_FAILED(rv) || !msgHdr) continue;
     // per-message junk tests.
     bool filterMessageForJunk = false;
     while (filterForJunk)  // we'll break from this at the end
@@ -3273,6 +3238,14 @@ NS_IMETHODIMP nsMsgDBFolder::GetChildWithURI(const nsACString& uri, bool deep,
 }
 
 NS_IMETHODIMP nsMsgDBFolder::DeleteStorage() {
+  if (StaticPrefs::mail_panorama_enabled_AtStartup()) {
+    // Ensure we have an instance of PerFolderDatabase, then use it to remove
+    // all traces of the current folder.
+    GetDatabase();
+    mDatabase->DeleteFolder();
+    return NS_OK;
+  }
+
   ForceDBClosed();
 
   // Delete the .msf file.
@@ -3565,7 +3538,8 @@ NS_IMETHODIMP nsMsgDBFolder::Compact(nsIUrlListener* aListener,
 }
 
 NS_IMETHODIMP nsMsgDBFolder::CompactAll(nsIUrlListener* aListener,
-                                        nsIMsgWindow* aMsgWindow) {
+                                        nsIMsgWindow* aMsgWindow,
+                                        bool expunge) {
   NS_ASSERTION(false, "should be overridden by child class");
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -3588,7 +3562,6 @@ nsresult nsMsgDBFolder::CheckIfFolderExists(const nsACString& newFolderName,
     msgFolder->GetName(folderName);
     if (folderName.Equals(newFolderName,
                           nsCaseInsensitiveUTF8StringComparator)) {
-      ThrowAlertMsg("folderExists", msgWindow);
       return NS_MSG_FOLDER_EXISTS;
     }
   }
@@ -3776,7 +3749,6 @@ NS_IMETHODIMP nsMsgDBFolder::Rename(const nsACString& aNewName,
   nsString newDiskName = NS_MsgHashIfNecessary(aNewName);
 
   if (mName.Equals(aNewName, nsCaseInsensitiveUTF8StringComparator)) {
-    rv = ThrowAlertMsg("folderExists", msgWindow);
     return NS_MSG_FOLDER_EXISTS;
   } else {
     nsCOMPtr<nsIFile> parentPathFile;
@@ -3801,7 +3773,6 @@ NS_IMETHODIMP nsMsgDBFolder::Rename(const nsACString& aNewName,
     newDiskName.AppendLiteral(SUMMARY_SUFFIX);
     oldSummaryFile->MoveTo(nullptr, newDiskName);
   } else {
-    ThrowAlertMsg("folderRenameFailed", msgWindow);
     return rv;
   }
 
@@ -3822,7 +3793,7 @@ NS_IMETHODIMP nsMsgDBFolder::Rename(const nsACString& aNewName,
       bool changed = false;
       MatchOrChangeFilterDestination(newFolder, true /*case-insensitive*/,
                                      &changed);
-      if (changed) AlertFilterChanged(msgWindow);
+      if (changed) AlertFilterChanged(this);
 
       if (count > 0) {
         // Our parent's AddSubfolder() creates a folder of our own type.
@@ -3844,6 +3815,56 @@ NS_IMETHODIMP nsMsgDBFolder::Rename(const nsACString& aNewName,
 nsresult nsMsgDBFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
                                          nsIMsgFolder* oldFolder) {
   return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP nsMsgDBFolder::RenameWithListener(const nsACString& aNewName,
+                                                nsIUrlListener* aListener) {
+  // The base implementation is synchronous, so the listener can be notified
+  // as soon as Rename() returns. nsImapMailFolder overrides this to notify
+  // once the server has answered. ExchangeFolder does not, so a listener
+  // waiting on an EWS rename is told it finished as soon as the request has
+  // been sent - see the FIXME in ExchangeFolder::Rename().
+  nsresult rv = Rename(aNewName, nullptr);
+  if (aListener) {
+    // Defer, so that a caller sees the same ordering whether the rename ran
+    // locally or against a server.
+    NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "Notify folder rename", [listener = RefPtr(aListener), rv] {
+          listener->OnStopRunningUrl(nullptr, rv);
+        }));
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgDBFolder::RenameAsync(const nsACString& aNewName,
+                                         JSContext* cx,
+                                         mozilla::dom::Promise** aPromise) {
+  ErrorResult result;
+  RefPtr<Promise> promise =
+      Promise::Create(xpc::CurrentNativeGlobal(cx), result);
+  if (result.Failed()) {
+    return result.StealNSResult();
+  }
+
+  nsMainThreadPtrHandle<Promise> promiseHolder(
+      new nsMainThreadPtrHolder<Promise>("RenameAsync promise", promise));
+
+  RefPtr<UrlListener> listener = new UrlListener();
+  listener->mStopFn = [promiseHolder = std::move(promiseHolder)](
+                          nsIURI* url, nsresult rv) -> nsresult {
+    if (NS_FAILED(rv)) {
+      promiseHolder.get()->MaybeReject(rv);
+    } else {
+      promiseHolder.get()->MaybeResolveWithUndefined();
+    }
+    return NS_OK;
+  };
+
+  // RenameWithListener() reports everything through the listener, so there is
+  // no second error channel to handle here.
+  RenameWithListener(aNewName, listener);
+  promise.forget(aPromise);
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgDBFolder::ContainsChildNamed(const nsACString& name,
@@ -4972,14 +4993,13 @@ NS_IMETHODIMP nsMsgDBFolder::EnableNotifications(int32_t notificationType,
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsMsgDBFolder::GetMessageHeader(nsMsgKey msgKey,
-                                              nsIMsgDBHdr** aMsgHdr) {
+NS_IMETHODIMP nsMsgDBFolder::GetMsgHdr(nsMsgKey msgKey, nsIMsgDBHdr** aMsgHdr) {
   NS_ENSURE_ARG_POINTER(aMsgHdr);
   nsCOMPtr<nsIMsgDatabase> database;
   nsresult rv = GetMsgDatabase(getter_AddRefs(database));
   NS_ENSURE_SUCCESS(rv, rv);
-  return (database) ? database->GetMsgHdrForKey(msgKey, aMsgHdr)
-                    : NS_ERROR_FAILURE;
+  NS_ENSURE_TRUE(database, NS_ERROR_FAILURE);
+  return database->GetMsgHdrForKey(msgKey, aMsgHdr);
 }
 
 NS_IMETHODIMP nsMsgDBFolder::GetDescendants(
@@ -5085,109 +5105,6 @@ nsMsgDBFolder::GetStringWithFolderNameFromBundle(const char* msgName,
     if (NS_SUCCEEDED(rv)) aResult.Assign(resultStr);
   }
   return rv;
-}
-
-NS_IMETHODIMP nsMsgDBFolder::ConfirmFolderDeletionForFilter(
-    nsIMsgWindow* msgWindow, bool* confirmed) {
-  nsString confirmString;
-  nsresult rv = GetStringWithFolderNameFromBundle(
-      "confirmFolderDeletionForFilter", confirmString);
-  NS_ENSURE_SUCCESS(rv, rv);
-  return ThrowConfirmationPrompt(msgWindow, confirmString, confirmed);
-}
-
-NS_IMETHODIMP nsMsgDBFolder::ThrowAlertMsg(const char* msgName,
-                                           nsIMsgWindow* msgWindow) {
-  if (!msgWindow) {
-    return NS_OK;
-  }
-
-  nsCOMPtr<nsIStringBundle> bundle;
-  nsresult rv = GetBaseStringBundle(getter_AddRefs(bundle));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Assemble a pretty folder identifier including its path, e.g.
-  // "Inbox/Subfolder on bob@example.com".
-  nsAutoString ident;
-  nsAutoCString folderPath;
-  GetPrettyPath(folderPath);
-  nsAutoCString serverName;
-  nsCOMPtr<nsIMsgIncomingServer> server;
-  if (NS_SUCCEEDED(GetServer(getter_AddRefs(server)))) {
-    server->GetPrettyName(serverName);
-    bundle->FormatStringFromName(
-        "verboseFolderFormat",
-        {NS_ConvertUTF8toUTF16(folderPath), NS_ConvertUTF8toUTF16(serverName)},
-        ident);
-  }
-  if (ident.IsEmpty()) {
-    CopyUTF8toUTF16(folderPath, ident);  // Fallback, just in case.
-  }
-
-  // Format the actual error message (NOTE: not all error messages use the
-  // params - extra values are just ignored).
-  nsAutoString alertString;
-  rv = bundle->FormatStringFromName(msgName, {ident, kLocalizedBrandShortName},
-                                    alertString);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Include the folder identifier in the alert title for good measure,
-  // because not all the error messages include the folder.
-  nsAutoString title;
-  bundle->FormatStringFromName("folderErrorAlertTitle", {ident}, title);
-
-  nsCOMPtr<mozIDOMWindowProxy> domWindow;
-  nsCOMPtr<nsIWindowMediator> winMed =
-      do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  winMed->GetMostRecentWindow(nullptr, getter_AddRefs(domWindow));
-
-  nsCOMPtr<nsIPromptService> dlgService(
-      do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return dlgService->Alert(domWindow, title.IsEmpty() ? nullptr : title.get(),
-                           alertString.get());
-}
-
-NS_IMETHODIMP nsMsgDBFolder::AlertFilterChanged(nsIMsgWindow* msgWindow) {
-  NS_ENSURE_ARG(msgWindow);
-  nsresult rv = NS_OK;
-  bool checkBox = false;
-  GetWarnFilterChanged(&checkBox);
-  if (checkBox) {
-    return NS_OK;
-  }
-
-  nsString alertString;
-  rv = GetStringFromBundle("alertFilterChanged", alertString);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsString alertCheckbox;
-  rv = GetStringFromBundle("alertFilterCheckbox", alertCheckbox);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<mozIDOMWindowProxy> domWindow;
-  nsCOMPtr<nsIWindowMediator> winMed =
-      do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  winMed->GetMostRecentWindow(nullptr, getter_AddRefs(domWindow));
-
-  nsCOMPtr<nsIPromptService> dlgService(
-      do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-  dlgService->AlertCheck(domWindow, nullptr, alertString.get(),
-                         alertCheckbox.get(), &checkBox);
-  SetWarnFilterChanged(checkBox);
-  return rv;
-}
-
-nsresult nsMsgDBFolder::GetWarnFilterChanged(bool* aVal) {
-  NS_ENSURE_ARG(aVal);
-  return Preferences::GetBool(PREF_MAIL_WARN_FILTER_CHANGED, aVal);
-}
-
-nsresult nsMsgDBFolder::SetWarnFilterChanged(bool aVal) {
-  return Preferences::SetBool(PREF_MAIL_WARN_FILTER_CHANGED, aVal);
 }
 
 NS_IMETHODIMP nsMsgDBFolder::NotifyAboutToCompact() {

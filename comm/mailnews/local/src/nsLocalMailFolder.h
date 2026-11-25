@@ -29,6 +29,7 @@
 #define COPY_BUFFER_SIZE 16384
 
 class nsParseMailMessageState;
+class nsIMsgUserFeedbackListener;
 
 struct nsLocalMailCopyState {
   nsLocalMailCopyState();
@@ -110,8 +111,8 @@ class nsMsgLocalMailFolder : public nsMsgDBFolder,
 
   NS_IMETHOD Compact(nsIUrlListener* aListener,
                      nsIMsgWindow* aMsgWindow) override;
-  NS_IMETHOD CompactAll(nsIUrlListener* aListener,
-                        nsIMsgWindow* aMsgWindow) override;
+  NS_IMETHOD CompactAll(nsIUrlListener* aListener, nsIMsgWindow* aMsgWindow,
+                        bool expunge) override;
   NS_IMETHOD EmptyTrash(nsIUrlListener* aListener) override;
   NS_IMETHOD DeleteSelf(nsIMsgWindow* msgWindow) override;
   NS_IMETHOD CreateStorageIfMissing(nsIUrlListener* urlListener) override;
@@ -175,6 +176,11 @@ class nsMsgLocalMailFolder : public nsMsgDBFolder,
 
  protected:
   virtual ~nsMsgLocalMailFolder();
+
+  // Update the destination summary metadata and close the database when
+  // possible. Use after a successful copy or a rollback that leaves headers
+  // consistent.
+  void FinalizeCopyDatabase();
   nsresult RenameSubFolders(nsIMsgWindow* msgWindow,
                             nsIMsgFolder* oldFolder) override;
 #ifdef MOZ_PANORAMA
@@ -198,8 +204,6 @@ class nsMsgLocalMailFolder : public nsMsgDBFolder,
 
   nsresult IsChildOfTrash(bool* result);
   nsresult RecursiveSetDeleteIsMoveTrash(bool bVal);
-  nsresult ConfirmFolderDeletion(nsIMsgWindow* aMsgWindow,
-                                 nsIMsgFolder* aFolder, bool* aResult);
 
   nsresult GetDatabase() override;
   // this will set mDatabase, if successful. It will also create a .msf file
@@ -217,9 +221,9 @@ class nsMsgLocalMailFolder : public nsMsgDBFolder,
    * Checks if there's room in the target folder to copy message(s) into.
    * If not, handles alerting the user, and sending the copy notifications.
    */
-  bool CheckIfSpaceForCopy(nsIMsgWindow* msgWindow, nsIMsgFolder* srcFolder,
-                           nsISupports* srcSupports, bool isMove,
-                           int64_t totalMsgSize);
+  bool CheckIfSpaceForCopy(nsIMsgUserFeedbackListener* listener,
+                           nsIMsgFolder* srcFolder, nsISupports* srcSupports,
+                           bool isMove, int64_t totalMsgSize);
 
   // copy multiple messages at a time from this folder
   nsresult CopyMessagesTo(nsTArray<nsMsgKey>& keyArray,

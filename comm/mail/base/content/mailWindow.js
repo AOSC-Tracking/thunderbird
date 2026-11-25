@@ -298,7 +298,7 @@ function InitMsgWindow() {
               }
             }
             event.preventDefault();
-            goDoCommand("cmd_space");
+            goDoCommand("cmd_space", event);
             break;
           }
           case "KeyS": {
@@ -352,15 +352,14 @@ function nsMsgStatusFeedback() {
   window.addEventListener("message", event => {
     if (event.data.statusMessage) {
       this.showStatusString(event.data.statusMessage);
-    } else {
-      if (event.data.progress) {
-        this.showProgress(event.data.progress);
-      }
-      if (event.data.meteors == "start-meteors") {
-        this.startMeteors();
-      } else if (event.data.meteors == "stop-meteors") {
-        this.stopMeteors();
-      }
+    }
+    if (event.data.progress) {
+      this.showProgress(event.data.progress);
+    }
+    if (event.data.meteors == "start-meteors") {
+      this.startMeteors();
+    } else if (event.data.meteors == "stop-meteors") {
+      this.stopMeteors();
     }
   });
 }

@@ -15,7 +15,13 @@ dupe-manifest = true
 
 ["test_bug457168.js"]
 
+["test_copyCompletion.js"]
+
+["test_copyFileMessageFeedFlag.js"]
+
 ["test_copyFileMessageIntegrity.js"]
+
+["test_dateParsing.js"]
 
 ["test_duplicateKey.js"]
 tags = ["compact"]
@@ -27,6 +33,8 @@ tags = ["compact"]
 ["test_folderLoaded.js"]
 
 ["test_folderParse.js"]
+
+["test_getMsgHdr.js"]
 
 ["test_localFolder.js"]
 
@@ -79,6 +87,8 @@ requesttimeoutfactor = 12
 
 ["test_pop3ApopTimestamp.js"]
 
+["test_pop3AuthCramMd5.js"]
+
 ["test_pop3AuthMethods.js"]
 
 ["test_pop3AuthNtlm.js"]
@@ -92,6 +102,8 @@ requesttimeoutfactor = 12
 ["test_pop3Duplicates.js"]
 
 ["test_pop3FilterActions.js"]
+
+["test_pop3FilterFailures.js"]
 
 ["test_pop3Filters.js"]
 
@@ -129,13 +141,19 @@ requesttimeoutfactor = 12
 
 ["test_pop3StalePartial.js"]
 
+["test_pop3StartTLS.js"]
+
 ["test_pop3StateDeadlock.js"]
 
 ["test_pop3Url.js"]
 
+["test_preemptedWrite.js"]
+
 ["test_preview.js"]
 
 ["test_saveMessage.js"]
+
+["test_storeSpaceChecks.js"]
 
 ["test_streamHeaders.js"]
 

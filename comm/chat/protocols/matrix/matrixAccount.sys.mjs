@@ -36,8 +36,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
   OlmLib: "resource:///modules/matrix-sdk.sys.mjs",
   ReceiptType: "resource:///modules/matrix-sdk.sys.mjs",
   VerificationMethod: "resource:///modules/matrix-sdk.sys.mjs",
-  CryptoEvent: "resource:///modules/matrix-sdk.sys.mjs",
-  VerifierEvent: "resource:///modules/matrix-sdk.sys.mjs",
   Logger: "resource:///modules/matrixAccountLogger.sys.mjs",
 });
 
@@ -141,19 +139,6 @@ MatrixMessage.prototype = {
 
   getActions() {
     const actions = [];
-    if (this.event?.isDecryptionFailure()) {
-      actions.push({
-        label: lazy.l10n.formatValueSync("message-action-request-key"),
-        run: () => {
-          if (this.event) {
-            //TODO deprecated for rust crypto
-            this.conversation?._account?._client
-              ?.cancelAndResendEventRoomKeyRequest(this.event)
-              .catch(error => this.conversation._account.ERROR(error));
-          }
-        },
-      });
-    }
     if (
       this.event &&
       this.conversation?.roomState.maySendRedactionForEvent(
@@ -220,11 +205,13 @@ MatrixMessage.prototype = {
  * @param {MatrixClient} client - Matrix SDK client instance to use.
  * @returns {boolean}
  */
-function checkUserHasUnverifiedDevices(userId, client) {
-  //TODO use getUserDeviceInfo (async)
-  const devices = client.getStoredDevicesForUser(userId);
+export async function checkUserHasUnverifiedDevices(userId, client) {
+  const userToDevicesMap = await client
+    .getCrypto()
+    .getUserDeviceInfo([userId], true);
+  const devices = userToDevicesMap.get(userId)?.values() ?? [];
   return devices.some(
-    ({ deviceId }) => !client.checkDeviceTrust(userId, deviceId).isVerified()
+    device => device.verified !== lazy.MatrixSDK.DeviceVerification.Verified
   );
 }
 
@@ -236,27 +223,80 @@ function checkUserHasUnverifiedDevices(userId, client) {
  * @param {MatrixClient} client - Matrix SDK client instance.
  * @returns {boolean}
  */
-function canVerifyUserIdentity(userId, client) {
-  //TODO use getUserDeviceInfo (async)
-  client.downloadKeys([userId]);
-  return Boolean(client.getStoredDevicesForUser(userId)?.length);
+export async function canVerifyUserIdentity(userId, client) {
+  const userToDevicesMap = await client
+    .getCrypto()
+    .getUserDeviceInfo([userId], true);
+  return Boolean(userToDevicesMap.get(userId)?.size);
 }
 
 /**
- * Checks if we consider the identity of a user as verified.
+ * Checks if we consider a user as verified, i.e. their cross-signing identity
+ * is trusted. Individual devices of the user are not taken into account, per
+ * Element Web parity.
  *
  * @param {string} userId - Matrix ID of the user to check.
  * @param {MatrixClient} client - Matrix SDK client instance to use.
  * @returns {boolean}
  */
-function userIdentityVerified(userId, client) {
-  //TODO The sync checkUserTrust was deprecated in favor for the async
-  // getCrypto().getUserVerificationStatus(userId), which is the only supported
-  // implementation with the rust crypto backend.
-  return (
-    client.checkUserTrust(userId).isCrossSigningVerified() &&
-    !checkUserHasUnverifiedDevices(userId, client)
-  );
+export async function userIdentityVerified(userId, client) {
+  const matrixCrypto = client.getCrypto();
+  const status = await matrixCrypto.getUserVerificationStatus(userId);
+  return status.isCrossSigningVerified();
+}
+
+/**
+ * Checks if a room contains users or devices that we do not trust, following
+ * the same rules as Element Web:
+ * - Users whose cross-signing identity was previously verified, but is not
+ *   verified anymore, make the room untrusted.
+ * - Users without a verified identity make the room untrusted.
+ * - Devices are only checked for users with a verified identity. Our own
+ *   devices are skipped for direct message rooms, since a verified identity is
+ *   sufficient there, but they are checked otherwise (including when we are
+ *   the only member of the room).
+ *
+ * @param {string[]} memberIds - Matrix IDs of the encryption target members of
+ *   the room.
+ * @param {string} selfId - Our own Matrix ID.
+ * @param {MatrixClient} client - Matrix SDK client instance to use.
+ * @param {boolean} isDirect - True if the room is a direct message room.
+ * @returns {boolean} True if any member or device is untrusted.
+ */
+export async function checkRoomHasUnverifiedDevices(
+  memberIds,
+  selfId,
+  client,
+  isDirect
+) {
+  // Per Element Web parity, two-member rooms are treated like direct message
+  // rooms even when they aren't marked as such.
+  const isDm = isDirect || memberIds.length === 2;
+
+  const verifiedUsers = [];
+  for (const userId of memberIds) {
+    if (userId === selfId) {
+      continue;
+    }
+    const status = await client.getCrypto().getUserVerificationStatus(userId);
+    if (!status.isCrossSigningVerified()) {
+      // An identity that was verified before and isn't anymore, as well as a
+      // never-verified identity, both make the room untrusted.
+      return true;
+    }
+    verifiedUsers.push(userId);
+  }
+
+  // Only check devices for users with a verified identity.
+  if ((verifiedUsers.length && !isDm) || memberIds.length === 1) {
+    verifiedUsers.push(selfId);
+  }
+  for (const userId of verifiedUsers) {
+    if (await checkUserHasUnverifiedDevices(userId, client)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function MatrixParticipant(roomMember, account) {
@@ -297,7 +337,7 @@ MatrixParticipant.prototype = {
         lazy.MatrixPowerLevels.getUserDefaultLevel(powerLevels);
       const messageLevel = lazy.MatrixPowerLevels.getEventLevel(
         powerLevels,
-        this._account._client.isRoomEncrypted(room.roomId)
+        room.hasEncryptionStateEvent()
           ? lazy.MatrixSDK.EventType.RoomMessageEncrypted
           : lazy.MatrixSDK.EventType.RoomMessage
       );
@@ -315,11 +355,11 @@ MatrixParticipant.prototype = {
     return this._roomMember.powerLevelNorm >= lazy.MatrixPowerLevels.admin;
   },
 
-  get canVerifyIdentity() {
+  canVerifyIdentity() {
     return canVerifyUserIdentity(this.name, this._account._client);
   },
 
-  get _identityVerified() {
+  _identityVerified() {
     return userIdentityVerified(this.name, this._account._client);
   },
 
@@ -435,11 +475,11 @@ MatrixBuddy.prototype = {
     return this._account.getDirectConversation(this.userName);
   },
 
-  get canVerifyIdentity() {
+  canVerifyIdentity() {
     return canVerifyUserIdentity(this.userName, this._account._client);
   },
 
-  get _identityVerified() {
+  _identityVerified() {
     return userIdentityVerified(this.userName, this._account._client);
   },
 
@@ -1340,7 +1380,7 @@ MatrixRoom.prototype = {
       const otherDMRooms = Array.from(this._account.roomList.values()).filter(
         conv => conv.buddy && conv.buddy === this.buddy && conv !== this
       );
-      if (otherDMRooms.length == 0) {
+      if (!otherDMRooms.length) {
         IMServices.contacts.accountBuddyRemoved(this.buddy);
         this._account.buddies.delete(dmUserId);
         delete this.buddy;
@@ -1353,36 +1393,37 @@ MatrixRoom.prototype = {
 
   _hasUnverifiedDevices: true,
   /**
-   * Update the cached value for device trust and fire an
-   * update-conv-encryption if the value changed. We cache the unverified
-   * devices state, since the encryption state getter is sync. Does nothing if
-   * the room is not encrypted.
+   * Update the cached trust state of the room members and fire an
+   * update-conv-encryption if the value changed. We cache the state, since the
+   * encryption state getter is sync. Does nothing if the room is not
+   * encrypted.
    */
   async updateUnverifiedDevices() {
     const account = this._account;
-    if (
-      !account._client.isCryptoEnabled() ||
-      !account._client.isRoomEncrypted(this._roomId)
-    ) {
+    if (!account._client.getCrypto() || !this.room?.hasEncryptionStateEvent()) {
       return;
     }
     const members = await this.room.getEncryptionTargetMembers();
-    // Check for participants that we haven't verified via cross signing, or
-    // of which we don't trust a device, and if everyone seems fine, check our
-    // own device verification state.
-    const newValue =
-      members.some(({ userId }) => {
-        return !userIdentityVerified(userId, account._client);
-      }) || checkUserHasUnverifiedDevices(account.userId, account._client);
+    // Check whether anyone in the room is untrusted, following the same rules
+    // as Element Web. The result is cached, since the encryption state getter
+    // is sync.
+    const newValue = await checkRoomHasUnverifiedDevices(
+      members.map(({ userId }) => userId),
+      account.userId,
+      account._client,
+      account.isDirectRoom(this._roomId)
+    );
     if (this._hasUnverifiedDevices !== newValue) {
       this._hasUnverifiedDevices = newValue;
       this.notifyObservers(this, "update-conv-encryption");
     }
   },
   get encryptionState() {
+    const isEncrypted = this.room?.hasEncryptionStateEvent();
+
     if (
-      !this._account._client.isCryptoEnabled() ||
-      (!this._account._client.isRoomEncrypted(this._roomId) &&
+      !this._account._client.getCrypto() ||
+      (!isEncrypted &&
         !this.room?.currentState.mayClientSendStateEvent(
           lazy.MatrixSDK.EventType.RoomEncryption,
           this._account._client
@@ -1390,7 +1431,7 @@ MatrixRoom.prototype = {
     ) {
       return Ci.prplIConversation.ENCRYPTION_NOT_SUPPORTED;
     }
-    if (!this._account._client.isRoomEncrypted(this._roomId)) {
+    if (!isEncrypted) {
       return Ci.prplIConversation.ENCRYPTION_AVAILABLE;
     }
     if (this._hasUnverifiedDevices) {
@@ -1399,7 +1440,7 @@ MatrixRoom.prototype = {
     return Ci.prplIConversation.ENCRYPTION_TRUSTED;
   },
   initializeEncryption() {
-    if (this._account._client.isRoomEncrypted(this._roomId)) {
+    if (this.room?.hasEncryptionStateEvent()) {
       return;
     }
     this._account._client.sendStateEvent(
@@ -1413,6 +1454,40 @@ MatrixRoom.prototype = {
 };
 
 /**
+ * Check if the verification request has been cancelled.
+ *
+ * @param {VerificationRequest} request - Matrix SDK verification request.
+ * @returns {boolean} True if the request was cancelled.
+ */
+function isRequestCancelled(request) {
+  return request.phase === lazy.MatrixSDK.Crypto.VerificationPhase.Cancelled;
+}
+
+/**
+ * Resolve when a condition becomes true for a verification request, without
+ * leaving a listener behind.
+ *
+ * @param {VerificationRequest} request - Matrix SDK verification request.
+ * @param {string} event - Event name to listen for.
+ * @param {() => boolean} condition - Checked immediately and on each event.
+ * @returns {Promise<void>}
+ */
+function waitForRequestEvent(request, event, condition) {
+  if (condition()) {
+    return Promise.resolve();
+  }
+  return new Promise(resolve => {
+    const listener = () => {
+      if (condition()) {
+        request.off(event, listener);
+        resolve();
+      }
+    };
+    request.on(event, listener);
+  });
+}
+
+/**
  * Initialize the verification, choosing the challenge method and calculating
  * the challenge string and description.
  *
@@ -1420,28 +1495,45 @@ MatrixRoom.prototype = {
  * @returns {Promise<object>} an object like
  *  { challenge: string, challengeDescription: string?, handleResult: (boolean) => {}, cancel: () => {}, cancelPromise: Promise}
  */
-async function startVerification(request) {
+export async function startVerification(request) {
   if (!request.verifier) {
     if (!request.initiatedByMe) {
       await request.accept();
-      if (request.cancelled) {
+      if (isRequestCancelled(request)) {
         throw new Error("verification aborted");
       }
-      // Auto chose method as the only one we both support.
-      await request.startVerification(request.methods[0]);
+      if (!request.otherPartySupportsMethod(lazy.VerificationMethod.Sas)) {
+        throw new Error("Unable to negotiate a verification method");
+      }
+      // Choose the only method supported by us.
+      await request.startVerification(lazy.VerificationMethod.Sas);
     } else {
-      await request.waitFor(() => request.started || request.cancelled);
+      // Wait for the other device to start, or cancel, the verification.
+      await waitForRequestEvent(
+        request,
+        lazy.MatrixSDK.Crypto.VerificationRequestEvent.Change,
+        () =>
+          request.phase === lazy.MatrixSDK.Crypto.VerificationPhase.Started ||
+          isRequestCancelled(request)
+      );
     }
-    if (request.cancelled) {
+    if (isRequestCancelled(request)) {
       throw new Error("verification aborted");
     }
   }
+
   const sasEventPromise = new Promise(resolve =>
-    request.verifier.once(lazy.VerifierEvent.ShowSas, resolve)
+    request.verifier.once(lazy.MatrixSDK.Crypto.VerifierEvent.ShowSas, resolve)
   );
+  const cancelPromise = waitForRequestEvent(
+    request,
+    lazy.MatrixSDK.Crypto.VerificationRequestEvent.Change,
+    () => isRequestCancelled(request)
+  );
+
   request.verifier.verify();
   const sasEvent = await sasEventPromise;
-  if (request.cancelled) {
+  if (isRequestCancelled(request)) {
     throw new Error("verification aborted");
   }
   let challenge = "";
@@ -1466,50 +1558,46 @@ async function startVerification(request) {
       }
     },
     cancel() {
-      if (!request.cancelled) {
+      if (!isRequestCancelled(request)) {
         sasEvent.cancel();
       }
     },
-    cancelPromise: request.waitFor(() => request.cancelled),
+    cancelPromise,
   };
 }
 
 /**
  * @param {prplIAccount} account - Matrix account this session is associated with.
  * @param {string} ownerId - Matrix ID that this session is from.
- * @param {DeviceInfo} deviceInfo - Session device info.
+ * @param {Device} device - Session device info.
  */
-function MatrixSession(account, ownerId, deviceInfo) {
-  this._deviceInfo = deviceInfo;
+function MatrixSession(account, ownerId, device) {
+  this._device = device;
   this._ownerId = ownerId;
-  let id = deviceInfo.deviceId;
-  if (deviceInfo.getDisplayName()) {
+  let id = device.deviceId;
+  if (device.displayName) {
     id = lazy.l10n.formatValueSync("options-encryption-session", {
       sessionId: id,
-      sessionDisplayName: deviceInfo.getDisplayName(),
+      sessionDisplayName: device.displayName,
     });
   }
-  const deviceTrust = account._client.checkDeviceTrust(
-    ownerId,
-    deviceInfo.deviceId
-  );
-  const isCurrentDevice = deviceInfo.deviceId === account._client.getDeviceId();
+  const isCurrentDevice = device.deviceId === account._client.getDeviceId();
 
   this._init(
     account,
     id,
-    deviceTrust.isCrossSigningVerified(),
+    device.verified !== lazy.MatrixSDK.DeviceVerification.Unverified,
     isCurrentDevice
   );
 }
 MatrixSession.prototype = {
   __proto__: GenericSessionPrototype,
-  _deviceInfo: null,
+  _device: null,
   async _startVerification() {
     let request;
     const requestKey = this.currentSession
       ? this._ownerId
-      : this._deviceInfo.deviceId;
+      : this._device.deviceId;
     if (this._account._pendingOutgoingVerificationRequests.has(requestKey)) {
       throw new Error(
         "Already have a pending verification request for " + requestKey
@@ -1522,7 +1610,7 @@ MatrixSession.prototype = {
     } else {
       request = await this._account._client
         .getCrypto()
-        .requestDeviceVerification(this._ownerId, this._deviceInfo.deviceId);
+        .requestDeviceVerification(this._ownerId, this._device.deviceId);
     }
     this._account.trackOutgoingVerificationRequest(request, requestKey);
     return startVerification(request);
@@ -1643,7 +1731,9 @@ MatrixAccount.prototype = {
         );
       }
       pendingClientOperations.finally(() => {
-        this._client.clearStores();
+        this._client.clearStores({
+          cryptoDatabasePrefix: this.indexedDbPrefix,
+        });
       });
     } else {
       // Without client we can still clear the stores at least.
@@ -1829,6 +1919,10 @@ MatrixAccount.prototype = {
    */
   _encryptionError: "",
 
+  get indexedDbPrefix() {
+    return "chat:matrix:" + this.imAccount.id;
+  },
+
   /**
    * Builds the options for the |createClient| call to the SDK including all
    * stores.
@@ -1836,18 +1930,16 @@ MatrixAccount.prototype = {
    * @returns {object}
    */
   getClientOptions() {
-    const dbName = "chat:matrix:" + this.imAccount.id;
-
-    const opts = {
+    return {
       useAuthorizationHeader: true,
       baseUrl: this._baseURL,
       store: new lazy.MatrixSDK.IndexedDBStore({
         indexedDB,
-        dbName,
+        dbName: this.indexedDbPrefix,
       }),
       cryptoStore: new lazy.MatrixSDK.IndexedDBCryptoStore(
         indexedDB,
-        dbName + ":crypto"
+        this.indexedDbPrefix + ":crypto"
       ),
       deviceId: this.prefs.getStringPref("deviceId", "") || undefined,
       accessToken: this.prefs.getStringPref("accessToken", "") || undefined,
@@ -1864,18 +1956,24 @@ MatrixAccount.prototype = {
             await this.updateEncryptionStatus();
             return null;
           }
-          let keyId = await this._client.getDefaultSecretStorageKeyId();
-          if (keyId && !keys[keyId]) {
-            keyId = undefined;
+          let keyId = await this._client.secretStorage.getDefaultKeyId();
+          let keyInfo;
+          if (keyId) {
+            keyInfo = keys[keyId];
+            if (!keyInfo) {
+              keyId = undefined;
+            }
           }
           if (!keyId) {
-            keyId = keys[0][0];
+            [keyId, keyInfo] = keys[0];
           }
-          const backupInfo = await this._client.getKeyBackupVersion();
-          const key = await this._client.keyBackupKeyFromPassword(
-            backupPassphrase,
-            backupInfo
-          );
+          const key = await this._client
+            .getCrypto()
+            .deriveRecoveryKeyFromPassphrase(
+              backupPassphrase,
+              keyInfo.passphrase.salt,
+              keyInfo.passphrase.iterations
+            );
           return [keyId, key];
         },
       },
@@ -1883,7 +1981,6 @@ MatrixAccount.prototype = {
       roomNameGenerator: getRoomName,
       logger: new lazy.Logger(this, "matrix-js-sdk"),
     };
-    return opts;
   },
 
   /**
@@ -2042,6 +2139,9 @@ MatrixAccount.prototype = {
               this.setPresence(this.imAccount.statusInfo);
             }
             this.reportConnected();
+            // Account data (including secret storage keys) is available once
+            // the initial sync completed.
+            this.bootstrapSSSS().catch(this.WARN);
             break;
           case lazy.MatrixSDK.SyncState.Stopped:
             this.reportDisconnected();
@@ -2056,13 +2156,6 @@ MatrixAccount.prototype = {
             this.reportConnecting();
             break;
           case lazy.MatrixSDK.SyncState.Error:
-            if (
-              data.error.reason ==
-              lazy.MatrixSDK.InvalidStoreError.TOGGLED_LAZY_LOADING
-            ) {
-              this._client.store.deleteAllData().then(() => this.connect());
-              break;
-            }
             this.reportDisconnecting(
               Ci.prplIAccount.ERROR_OTHER_ERROR,
               data.error.message
@@ -2359,15 +2452,18 @@ MatrixAccount.prototype = {
       this.updateBuddy.bind(this)
     );
 
-    this._client.on(lazy.CryptoEvent.UserTrustStatusChanged, userId => {
-      this.updateConvDeviceTrust(
-        conv =>
-          (conv.isChat && conv.getParticipant(userId)) ||
-          (!conv.isChat && conv.buddy?.userName == userId)
-      );
-    });
+    this._client.on(
+      lazy.MatrixSDK.Crypto.CryptoEvent.UserTrustStatusChanged,
+      userId => {
+        this.updateConvDeviceTrust(
+          conv =>
+            (conv.isChat && conv.getParticipant(userId)) ||
+            (!conv.isChat && conv.buddy?.userName == userId)
+        );
+      }
+    );
 
-    this._client.on(lazy.CryptoEvent.DevicesUpdated, users => {
+    this._client.on(lazy.MatrixSDK.Crypto.CryptoEvent.DevicesUpdated, users => {
       if (users.includes(this.userId)) {
         this.reportSessionsChanged();
         this.updateEncryptionStatus();
@@ -2385,28 +2481,32 @@ MatrixAccount.prototype = {
 
     // From the SDK documentation: Fires when the user's cross-signing keys
     // have changed or cross-signing has been enabled/disabled
-    this._client.on(lazy.CryptoEvent.KeysChanged, () => {
+    this._client.on(lazy.MatrixSDK.Crypto.CryptoEvent.KeysChanged, () => {
       this.reportSessionsChanged();
       this.updateEncryptionStatus();
       this.updateConvDeviceTrust();
     });
-    this._client.on(lazy.CryptoEvent.KeyBackupStatus, () => {
+    this._client.on(lazy.MatrixSDK.Crypto.CryptoEvent.KeyBackupStatus, () => {
       this.bootstrapSSSS();
       this.updateEncryptionStatus();
     });
 
-    this._client.on(lazy.CryptoEvent.VerificationRequestReceived, request => {
-      this.handleIncomingVerificationRequest(request);
-    });
+    this._client.on(
+      lazy.MatrixSDK.Crypto.CryptoEvent.VerificationRequestReceived,
+      request => {
+        this.handleIncomingVerificationRequest(request);
+      }
+    );
 
     // TODO Other events to handle:
     //  Room.localEchoUpdated
     //  Room.tags
     //  crypto.suggestKeyRestore
 
-    //TODO initRustCrypto instead.
     this._client
-      .initCrypto()
+      .initRustCrypto({
+        cryptoDatabasePrefix: this.indexedDbPrefix,
+      })
       .then(() =>
         Promise.all([
           this._client.startClient({
@@ -2414,14 +2514,9 @@ MatrixAccount.prototype = {
             lazyLoadMembers: true,
           }),
           this.updateEncryptionStatus(),
-          this.bootstrapSSSS(),
           this.reportSessionsChanged(),
         ])
       )
-      .finally(() => {
-        // We can disable the unknown devices error thanks to cross signing.
-        this._client.setGlobalErrorOnUnknownDevices(false);
-      })
       .catch(error => this.ERROR(error));
   },
 
@@ -2515,12 +2610,17 @@ MatrixAccount.prototype = {
    * Update the encryption status message based on the current state.
    */
   async updateEncryptionStatus() {
-    const secretStorageReady = await this._client.isSecretStorageReady();
-    const crossSigningReady = await this._client.isCrossSigningReady();
-    const keyBackupReady = this._client.getKeyBackupEnabled();
+    const secretStorageReady = await this._client
+      .getCrypto()
+      .isSecretStorageReady();
+    const crossSigningReady = await this._client
+      .getCrypto()
+      .isCrossSigningReady();
+    const keyBackupReady =
+      (await this._client.getCrypto().getActiveSessionBackupVersion()) !== null;
     const statuses = [
       lazy.l10n.formatValueSync("options-encryption-enabled", {
-        status: getStatusString(this._client.isCryptoEnabled()),
+        status: getStatusString(this._client.getCrypto()),
       }),
       lazy.l10n.formatValueSync("options-encryption-secret-storage", {
         status: getStatusString(secretStorageReady),
@@ -2549,58 +2649,80 @@ MatrixAccount.prototype = {
   },
 
   /**
-   * Ensures secret storage and cross signing are ready for use. Does not
-   * support initial setup of secret storage. If the backup passphrase is not
-   * set, this is a no-op, else it is cleared once the operation is complete.
+   * Ensures our cross-signing private keys are available locally by recovering
+   * them from secret storage. Initial setup of secret storage is NOT
+   * supported, thus new cross-signing keys are never created here (creating
+   * them would invalidate the identity other devices and users know about).
+   * If the backup passphrase is not set, this is a no-op, else it is cleared
+   * once the operation is complete.
    *
    * @returns {Promise<void>}
    */
   async bootstrapSSSS() {
-    if (!this._client) {
+    const client = this._client;
+    if (!client || !client.getCrypto()) {
       // client startup will do bootstrapping
       return;
     }
-    const password = this.getString("backupPassphrase");
-    if (!password) {
-      // We do not support setting up secret storage, so we need a passphrase
-      // to bootstrap.
+    const backupPassphrase = this.getString("backupPassphrase");
+    if (!backupPassphrase) {
+      // We do not support setting up secret storage, so we need a security
+      // phrase or key to bootstrap.
       return;
     }
-    const backupInfo = await this._client.getKeyBackupVersion();
-    await this._client.bootstrapSecretStorage({
-      setupNewKeyBackup: false,
-      async getKeyBackupPassphrase() {
-        const key = await this._client.keyBackupKeyFromPassword(
-          password,
-          backupInfo
+    try {
+      // Only recover keys that already exist in secret storage.
+      const storedKeys = await client.secretStorage.isStored(
+        "m.cross_signing.master"
+      );
+      if (!storedKeys) {
+        this.WARN("No cross-signing keys found in secret storage.");
+        this._encryptionError = lazy.l10n.formatValueSync(
+          "options-encryption-need-backup-passphrase"
         );
-        return key;
-      },
-    });
-    await this._client.bootstrapCrossSigning({
-      authUploadDeviceSigningKeys(makeRequest) {
-        makeRequest();
-        return Promise.resolve();
-      },
-    });
-    await this._client.checkOwnCrossSigningTrust();
-    if (backupInfo) {
-      await this._client.restoreKeyBackupWithSecretStorage(backupInfo);
+        await this.updateEncryptionStatus();
+        return;
+      }
+      await client.getCrypto().bootstrapCrossSigning({
+        authUploadDeviceSigningKeys: async makeRequest => {
+          // Uploading signing keys may require interactive authentication,
+          // propagate failures instead of ignoring them.
+          await makeRequest();
+        },
+      });
+      const backupInfo = await client.getKeyBackupVersion();
+      if (backupInfo) {
+        await client.restoreKeyBackupWithCache();
+      }
+      // Clear passphrase once bootstrap was successful
+      this.imAccount.setString("backupPassphrase", "");
+      this.imAccount.save();
+      this._encryptionError = "";
+      await this.updateEncryptionStatus();
+    } catch (error) {
+      this.WARN(
+        `Failed to recover encryption state from secret storage: ${error}`
+      );
+      this._encryptionError = lazy.l10n.formatValueSync(
+        "options-encryption-need-backup-passphrase"
+      );
+      await this.updateEncryptionStatus();
     }
-    // Clear passphrase once bootstrap was successful
-    this.imAccount.setString("backupPassphrase", "");
-    this.imAccount.save();
-    this._encryptionError = "";
-    await this.updateEncryptionStatus();
   },
 
   setString(name, value) {
-    if (!this._client) {
-      return;
-    }
     if (name === "backupPassphrase" && value) {
+      if (!this._client) {
+        this.WARN(
+          "Account is not connected yet, encryption bootstrap will run on connect."
+        );
+        return;
+      }
       this.bootstrapSSSS().catch(this.WARN);
     } else if (name === "deviceDisplayName") {
+      if (!this._client) {
+        return;
+      }
       this._client
         .setDeviceDetails(this._client.getDeviceId(), {
           display_name: value,
@@ -2636,24 +2758,25 @@ MatrixAccount.prototype = {
    * @param {VerificationRequest} request - Verification request from another
    *   user that is still pending and not handled by another session.
    */
-  handleIncomingVerificationRequest(request) {
+  async handleIncomingVerificationRequest(request) {
     const abort = new AbortController();
-    request
-      .waitFor(
-        () => request.cancelled || (!request.requested && request.observeOnly)
-      )
-      .then(() => abort.abort());
+    request.on(lazy.MatrixSDK.Crypto.VerificationRequestEvent.Change, () => {
+      if (isRequestCancelled(request)) {
+        abort.abort();
+      }
+    });
     let displayName = request.otherUserId;
     if (request.isSelfVerification) {
-      //TODO use getUserDeviceInfo (async)
-      const deviceInfo = this._client.getStoredDevice(
-        this.userId,
-        request.targetDevice.deviceId
-      );
-      if (deviceInfo?.getDisplayName()) {
+      const userToDeviceMap = await this._client
+        .getCrypto()
+        .getUserDeviceInfo([this.userId], true);
+      const deviceInfo = userToDeviceMap
+        .get(this.userId)
+        ?.get(request.targetDevice.deviceId);
+      if (deviceInfo?.displayName) {
         displayName = lazy.l10n.formatValueSync("options-encryption-session", {
           sessionId: request.targetDevice.deviceId,
-          sessionDisplayName: deviceInfo.getDisplayName(),
+          sessionDisplayName: deviceInfo.displayName,
         });
       } else {
         displayName = request.targetDevice.deviceId;
@@ -2661,37 +2784,35 @@ MatrixAccount.prototype = {
     }
     let _handleResult;
     let _cancel;
-    const uiRequest = this.addVerificationRequest(
-      displayName,
-      async () => {
-        const { challenge, challengeDescription, handleResult, cancel } =
-          await startVerification(request);
-        _handleResult = handleResult;
-        _cancel = cancel;
-        return { challenge, challengeDescription };
-      },
-      abort.signal
-    );
-    uiRequest.then(
-      result => {
-        if (!_handleResult) {
-          this.ERROR(
-            "Can not handle the result for verification request with " +
-              request.otherUserId +
-              " because the verification was never started."
-          );
-          request.cancel();
-        }
-        _handleResult(result);
-      },
-      () => {
-        if (_cancel) {
-          _cancel();
-        } else {
-          request.cancel();
-        }
+    try {
+      const result = await this.addVerificationRequest(
+        displayName,
+        async () => {
+          const { challenge, challengeDescription, handleResult, cancel } =
+            await startVerification(request);
+          _handleResult = handleResult;
+          _cancel = cancel;
+          return { challenge, challengeDescription };
+        },
+        abort.signal
+      );
+
+      if (!_handleResult) {
+        this.ERROR(
+          "Can not handle the result for verification request with " +
+            request.otherUserId +
+            " because the verification was never started."
+        );
+        request.cancel();
       }
-    );
+      _handleResult(result);
+    } catch {
+      if (_cancel) {
+        _cancel();
+      } else {
+        request.cancel();
+      }
+    }
   },
 
   /**
@@ -2762,15 +2883,21 @@ MatrixAccount.prototype = {
    * @param {string} requestKey - Key to identify this request.
    */
   async trackOutgoingVerificationRequest(request, requestKey) {
-    if (request.cancelled || request.done) {
+    const isFinished =
+      request.phase === lazy.MatrixSDK.Crypto.VerificationPhase.Done ||
+      isRequestCancelled(request);
+    if (isFinished) {
       return;
     }
     this._pendingOutgoingVerificationRequests.set(requestKey, request);
-    request
-      .waitFor(() => request.done || request.cancelled)
-      .then(() => {
+    request.on(lazy.MatrixSDK.Crypto.VerificationRequestEvent.Change, () => {
+      if (
+        request.phase === lazy.MatrixSDK.Crypto.VerificationPhase.Done ||
+        isRequestCancelled(request)
+      ) {
         this._pendingOutgoingVerificationRequests.delete(requestKey);
-      });
+      }
+    });
   },
 
   /**
@@ -3325,7 +3452,9 @@ MatrixAccount.prototype = {
     pendingMap.set(key, conversation);
     if (roomInit.is_direct && roomInit.invite) {
       try {
-        const userDeviceMap = await this._client.downloadKeys(roomInit.invite);
+        const userDeviceMap = await this._client
+          .getCrypto()
+          .getUserDeviceInfo([roomInit.invite], true);
         // Encrypt if there are devices and each user has at least 1 device
         // capable of encryption.
         const shouldEncrypt =
@@ -3488,14 +3617,21 @@ MatrixAccount.prototype = {
     );
   },
 
-  getSessions() {
-    if (!this._client || !this._client.isCryptoEnabled()) {
+  async getSessions() {
+    if (!this._client || !this._client.getCrypto()) {
       return [];
     }
-    //TODO use getUserDeviceInfo (async)
-    return this._client
-      .getStoredDevicesForUser(this.userId)
-      .map(deviceInfo => new MatrixSession(this, this.userId, deviceInfo));
+    const userDevices = await this._client
+      .getCrypto()
+      .getUserDeviceInfo([this.userId]);
+    const devices = userDevices.get(this.userId);
+    if (!devices) {
+      return [];
+    }
+    return Array.from(
+      devices.values(),
+      device => new MatrixSession(this, this.userId, device)
+    );
   },
 
   get userId() {

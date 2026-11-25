@@ -4,7 +4,7 @@
 
 /* globals launchBrowser */
 
-import "./calendar-dialog-row.mjs"; // eslint-disable-line import/no-unassigned-import
+import "./calendar-dialog-row.mjs"; // eslint-disable-line import-x/no-unassigned-import
 
 const lazy = {};
 
@@ -136,7 +136,7 @@ class CalendarDialogDescriptionRow extends HTMLElement {
     }
 
     if (!description && !descriptionHTML) {
-      this.#browser?.contentDocument.body.replaceChildren();
+      this.#browser?.contentDocument?.body.replaceChildren();
       return;
     }
 

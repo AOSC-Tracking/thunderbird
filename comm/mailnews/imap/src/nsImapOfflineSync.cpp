@@ -28,8 +28,7 @@
  * Call this while that database is still open. Special case: if the database
  * cannot be asked, the flag is cleared.
  */
-static void UpdateOfflineEventsFlag(nsIMsgFolder* folder,
-                                    nsIMsgOfflineOpsDatabase* db) {
+static void UpdateOfflineEventsFlag(nsIMsgFolder* folder, nsIMsgDatabase* db) {
   MOZ_ASSERT(folder);
   nsTArray<nsMsgKey> pending;
   if (db && NS_SUCCEEDED(db->ListAllOfflineOpIds(pending)) &&
@@ -500,7 +499,7 @@ void nsImapOfflineSync::ProcessMoveOperation(nsIMsgOfflineImapOperation* op) {
     nsTArray<RefPtr<nsIMsgDBHdr>> messages;
     for (nsMsgKey srcKey : srcKeys) {
       nsCOMPtr<nsIMsgDBHdr> mailHdr = nullptr;
-      rv = m_currentFolder->GetMessageHeader(srcKey, getter_AddRefs(mailHdr));
+      rv = m_currentFolder->GetMsgHdr(srcKey, getter_AddRefs(mailHdr));
       if (NS_SUCCEEDED(rv) && mailHdr) {
         uint32_t msgSize;
         // in case of a move, the header has already been deleted,
@@ -600,8 +599,8 @@ void nsImapOfflineSync::ProcessCopyOperation(
     for (uint32_t keyIndex = 0; keyIndex < matchingFlagKeys.Length();
          keyIndex++) {
       nsCOMPtr<nsIMsgDBHdr> mailHdr = nullptr;
-      rv = m_currentFolder->GetMessageHeader(
-          matchingFlagKeys.ElementAt(keyIndex), getter_AddRefs(mailHdr));
+      rv = m_currentFolder->GetMsgHdr(matchingFlagKeys.ElementAt(keyIndex),
+                                      getter_AddRefs(mailHdr));
       if (NS_SUCCEEDED(rv) && mailHdr) messages.AppendElement(mailHdr);
     }
     nsCOMPtr<nsIMsgCopyService> copyService =
@@ -663,7 +662,7 @@ nsresult nsImapOfflineSync::ProcessNextOperation() {
       m_currentFolder->GetDBFolderInfoAndDB(getter_AddRefs(folderInfo),
                                             getter_AddRefs(db));
       if (db) {
-        m_currentDB = do_QueryInterface(db, &rv);
+        m_currentDB = db;
         m_currentDB->AddListener(this);
       }
     }

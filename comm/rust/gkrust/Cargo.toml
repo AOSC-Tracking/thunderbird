@@ -27,6 +27,7 @@ ews_xpcom = { version = "0.1.0", path = "../ews_xpcom" }
 graph_xpcom = { version = "0.1.0", path = "../graph_xpcom" }
 mailnews_string_glue = { version = "0.1.0", path = "../mailnews_string_glue" }
 mailnews_ui_glue = { version = "0.1.0", path = "../mailnews_ui_glue" }
+protocol_client_service = { version = "0.1.0", path = "../protocol_client_service" }
 sys_tray = { version = "0.1.0", path = "../sys_tray" }
 aa-stroke = { git = "https://github.com/FirefoxGraphics/aa-stroke", rev = "5776bdfc8ad664a1503db668fab397d818a5f98a" }
 abridged_certs = { path = "../../../security/manager/ssl/abridged_certs" }
@@ -46,8 +47,8 @@ content_classifier_engine = { path = "../../../toolkit/components/content-classi
 cose-c = { version = "0.1.5" }
 crash_helper_client = { path = "../../../toolkit/crashreporter/crash_helper_client", optional = true }
 crypto_hash = { path = "../../../security/manager/ssl/crypto_hash" }
-cubeb-coreaudio = { git = "https://github.com/mozilla/cubeb-coreaudio-rs", rev = "840f69c1b3f95accd582555e10abcef8ee67514b", optional = true }
-cubeb-pulse = { git = "https://github.com/mozilla/cubeb-pulse-rs", rev = "e764cd9e14bcc8ebe57f7e182a9ea140cef39399", optional = true, features = ['pulse-dlopen'] }
+cubeb-coreaudio = { git = "https://github.com/mozilla/cubeb-coreaudio-rs", rev = "076ecf68dbf20087d2fa8e9210a1965e341f66d0", optional = true }
+cubeb-pulse = { git = "https://github.com/mozilla/cubeb-pulse-rs", rev = "43e6ffe0dcaace8e02093abc738fb80cc93db8db", optional = true, features = ['pulse-dlopen'] }
 cubeb-sys = { version = "0.34", optional = true, features = ['gecko-in-tree'] }
 dap_ffi = { path = "../../../toolkit/components/dap/ffi" }
 data-encoding-ffi = { path = "../../../dom/fs/parent/rust/data-encoding-ffi" }
@@ -76,7 +77,6 @@ happy_eyeballs_glue = { path = "../../../netwerk/protocol/http/happy_eyeballs_gl
 harfbuzz_glue = { path = "../../../gfx/harfbuzz_glue" }
 http_sfv = { path = "../../../netwerk/base/http-sfv" }
 idna_glue = { path = "../../../netwerk/base/idna_glue", features = ['mailnews'] }
-ipcclientcerts = { path = "../../../security/manager/ssl/ipcclientcerts" }
 ipdl_utils = { path = "../../../ipc/rust/ipdl_utils" }
 jog = { path = "../../../toolkit/components/glean/bindings/jog" }
 jsrust_shared = { path = "../../../js/src/rust/shared" }

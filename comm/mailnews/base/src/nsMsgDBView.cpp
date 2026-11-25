@@ -1309,10 +1309,10 @@ nsresult nsMsgDBView::GetMsgHdrForViewIndex(nsMsgViewIndex index,
     NS_IF_ADDREF(*msgHdr = m_cachedHdr);
   } else {
     rv = m_db->GetMsgHdrForKey(key, msgHdr);
-    if (NS_SUCCEEDED(rv)) {
-      m_cachedHdr = *msgHdr;
-      m_cachedMsgKey = key;
-    }
+    NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_TRUE(*msgHdr, NS_MSG_MESSAGE_NOT_FOUND);
+    m_cachedHdr = *msgHdr;
+    m_cachedMsgKey = key;
   }
 
   return rv;
@@ -3458,10 +3458,13 @@ int32_t nsMsgDBView::SecondaryCompare(nsMsgKey key1, nsIMsgFolder* folder1,
   }
 
   nsCOMPtr<nsIMsgDBHdr> hdr1, hdr2;
-  nsresult rv = folder1->GetMessageHeader(key1, getter_AddRefs(hdr1));
+  nsresult rv = folder1->GetMsgHdr(key1, getter_AddRefs(hdr1));
   NS_ENSURE_SUCCESS(rv, 0);
-  rv = folder2->GetMessageHeader(key2, getter_AddRefs(hdr2));
+  rv = folder2->GetMsgHdr(key2, getter_AddRefs(hdr2));
   NS_ENSURE_SUCCESS(rv, 0);
+  if (!hdr1 || !hdr2) {
+    return 0;
+  }
   IdKey EntryInfo1, EntryInfo2;
 
   uint16_t maxLen;
@@ -3718,6 +3721,7 @@ nsMsgViewIndex nsMsgDBView::ThreadIndexOfMsg(
   nsCOMPtr<nsIMsgDBHdr> msgHdr;
   nsresult rv = m_db->GetMsgHdrForKey(msgKey, getter_AddRefs(msgHdr));
   NS_ENSURE_SUCCESS(rv, nsMsgViewIndex_None);
+  NS_ENSURE_TRUE(msgHdr, nsMsgViewIndex_None);
   return ThreadIndexOfMsgHdr(msgHdr, msgIndex, pThreadCount, pFlags);
 }
 
@@ -3778,7 +3782,7 @@ nsMsgKey nsMsgDBView::GetKeyOfFirstMsgInThread(nsMsgKey key) {
   nsCOMPtr<nsIMsgThread> pThread;
   nsCOMPtr<nsIMsgDBHdr> msgHdr;
   nsresult rv = m_db->GetMsgHdrForKey(key, getter_AddRefs(msgHdr));
-  if (NS_FAILED(rv)) return nsMsgKey_None;
+  if (NS_FAILED(rv) || !msgHdr) return nsMsgKey_None;
 
   rv = GetThreadContainingMsgHdr(msgHdr, getter_AddRefs(pThread));
   if (NS_FAILED(rv)) return nsMsgKey_None;
@@ -4346,7 +4350,7 @@ nsMsgViewIndex nsMsgDBView::GetInsertIndexHelper(
     EntryInfo2.folder = folders ? folders->ObjectAt(tryIndex) : m_folder.get();
 
     nsCOMPtr<nsIMsgDBHdr> tryHdr;
-    EntryInfo2.folder->GetMessageHeader(EntryInfo2.id, getter_AddRefs(tryHdr));
+    EntryInfo2.folder->GetMsgHdr(EntryInfo2.id, getter_AddRefs(tryHdr));
     if (!tryHdr) break;
 
     if (fieldType == kCollationKey) {
@@ -4472,7 +4476,8 @@ nsMsgViewIndex nsMsgDBView::FindParentInThread(
         m_keys.IndexOf(parentKey, startOfThreadViewIndex);
     if (parentIndex != nsMsgViewIndex_None) return parentIndex;
 
-    if (NS_FAILED(m_db->GetMsgHdrForKey(parentKey, getter_AddRefs(msgHdr))))
+    if (NS_FAILED(m_db->GetMsgHdrForKey(parentKey, getter_AddRefs(msgHdr))) ||
+        !msgHdr)
       break;
 
     msgHdr->GetThreadParent(&parentKey);
@@ -4665,8 +4670,10 @@ int32_t nsMsgDBView::FindLevelInThread(nsIMsgDBHdr* msgHdr,
 
     // If msgHdr's key is its parentKey, we'll loop forever, so protect
     // against that corruption.
-    if (msgKey == parentKey || NS_FAILED(m_db->GetMsgHdrForKey(
-                                   parentKey, getter_AddRefs(curMsgHdr)))) {
+    if (msgKey == parentKey ||
+        NS_FAILED(
+            m_db->GetMsgHdrForKey(parentKey, getter_AddRefs(curMsgHdr))) ||
+        !curMsgHdr) {
       NS_ERROR(
           "msgKey == parentKey, or GetMsgHdrForKey failed, this used to be an "
           "infinite loop condition");

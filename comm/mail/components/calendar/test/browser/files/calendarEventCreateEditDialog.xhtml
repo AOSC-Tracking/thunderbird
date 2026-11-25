@@ -15,6 +15,13 @@
       type="module"
       src="moz-src:///comm/mail/components/calendar/content/calendar-event-create-edit-dialog.mjs"
     ></script>
+    <script type="module">
+      import { store } from "moz-src:///comm/mail/base/content/state/store.mjs";
+      import * as draftState from "moz-src:///comm/mail/components/calendar/content/state/calendarEventDraftSlice.mjs";
+      import * as sessionState from "moz-src:///comm/mail/components/calendar/content/state/calendarEventCreateEditSessionSlice.mjs";
+
+      window.calendarTestState = { store, draftState, sessionState };
+    </script>
     <style>
       body {
         margin: 0;
@@ -98,7 +105,21 @@
             type="button"
           ></button>
         </div>
-        <div class="event-title"></div>
+        <div class="event-title">
+          <input
+            class="event-title-input"
+            type="text"
+            maxlength="180"
+            aria-required="true"
+            data-l10n-id="calendar-event-title-input-new"
+          />
+          <span
+            id="calendarEventCreateEditDialogTitleRequired"
+            class="event-title-required"
+            role="alert"
+            hidden="hidden"
+          ></span>
+        </div>
       </header>
       <main class="calendar-event-create-edit-dialog-body">
         <div class="calendar-event-create-edit-dialog-subview-container">
@@ -111,7 +132,17 @@
           </section>
         </div>
       </main>
-      <footer class="calendar-event-create-edit-dialog-footer"></footer>
+      <footer class="calendar-event-create-edit-dialog-footer">
+        <div class="status-select"></div>
+        <div class="privacy-select"></div>
+        <button
+          id="save"
+          data-l10n-id="calendar-event-create-edit-save-button"
+          class="button button-primary"
+          disabled="disabled"
+        >
+        </button>
+      </footer>
     </template>
     <button id="menuCreate" type="button">New Event</button>
     <button id="toolbarCreate" type="button">Create</button>

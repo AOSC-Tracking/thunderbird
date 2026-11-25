@@ -180,9 +180,6 @@ NS_IMETHODIMP nsImapService::SelectFolder(nsIMsgFolder* aImapMailFolder,
     rv = imapUrl->SetImapAction(nsIImapUrl::nsImapSelectFolder);
 
     nsCOMPtr<nsIMsgMailNewsUrl> mailNewsUrl = do_QueryInterface(imapUrl);
-    // if no msg window, we won't put up error messages (this is almost
-    // certainly a biff-inspired get new msgs)
-    if (!aMsgWindow) mailNewsUrl->SetSuppressErrorMsgs(true);
     mailNewsUrl->SetMsgWindow(aMsgWindow);
     mailNewsUrl->SetUpdatingFolder(true);
     rv = SetImapUrlSink(aImapMailFolder, imapUrl);
@@ -612,8 +609,6 @@ NS_IMETHODIMP nsImapService::Search(nsIMsgSearchSession* aSearchSession,
     GetFolderName(aMsgFolder, folderName);
 
     nsCOMPtr<nsIMsgMailNewsUrl> mailNewsUrl = do_QueryInterface(imapUrl);
-    if (!aMsgWindow) mailNewsUrl->SetSuppressErrorMsgs(true);
-
     urlSpec.AppendLiteral("/search>UID>");
     urlSpec.Append(hierarchyDelimiter);
     urlSpec.Append(folderName);
@@ -645,11 +640,28 @@ nsresult nsImapService::DecomposeImapURI(const nsACString& aMessageURI,
       nsParseImapMessageURI(aMessageURI, folderURI, aMsgKey, mimePart);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIMsgFolder> folder;
-  rv = GetOrCreateFolder(folderURI, aFolder);
+  rv = FindFolder(folderURI, aFolder);
   NS_ENSURE_SUCCESS(rv, rv);
+  if (*aFolder) {
+    return NS_OK;
+  }
 
-  return NS_OK;
+  // IMAP folder URIs can contain unescaped mailbox names, but a message URI
+  // that has been through nsIURI has them escaped (e.g. a space as %20).
+  // See https://bugzilla.mozilla.org/show_bug.cgi?id=1588944
+  int32_t pathStart = folderURI.FindChar('/', folderURI.Find("//") + 2);
+  if (pathStart != kNotFound) {
+    nsAutoCString unescapedPath;
+    rv = MsgUnescapeString(Substring(folderURI, pathStart), 0, unescapedPath);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = FindFolder(StringHead(folderURI, pathStart) + unescapedPath, aFolder);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (*aFolder) {
+      return NS_OK;
+    }
+  }
+
+  return GetOrCreateFolder(folderURI, aFolder);
 }
 
 NS_IMETHODIMP nsImapService::SaveMessageToDisk(const nsACString& aMessageURI,
@@ -993,8 +1005,9 @@ NS_IMETHODIMP nsImapService::StreamHeaders(const nsACString& aMessageURI,
   folder->HasMsgOffline(key, &hasMsgOffline);
   if (hasMsgOffline) {
     nsCOMPtr<nsIMsgDBHdr> hdr;
-    rv = folder->GetMessageHeader(key, getter_AddRefs(hdr));
+    rv = folder->GetMsgHdr(key, getter_AddRefs(hdr));
     NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_TRUE(hdr, NS_MSG_MESSAGE_NOT_FOUND);
     rv = folder->GetMsgInputStream(hdr, getter_AddRefs(inputStream));
     NS_ENSURE_SUCCESS(rv, rv);
     return MsgStreamMsgHeaders(inputStream, aConsumer);
@@ -1300,42 +1313,6 @@ NS_IMETHODIMP nsImapService::Expunge(nsIMsgFolder* aImapMailFolder,
 
   return FolderCommand(aImapMailFolder, aUrlListener, "/Expunge>",
                        nsIImapUrl::nsImapExpungeFolder, aMsgWindow, nullptr);
-}
-
-/* old-stle biff that doesn't download headers */
-NS_IMETHODIMP nsImapService::Biff(nsIMsgFolder* aImapMailFolder,
-                                  nsIUrlListener* aUrlListener, nsIURI** aURL,
-                                  ImapUid uidHighWater) {
-  NS_ENSURE_ARG_POINTER(aImapMailFolder);
-
-  // static const char *formatString = "biff>%c%s>%ld";
-  nsCOMPtr<nsIImapUrl> imapUrl;
-  nsAutoCString urlSpec;
-
-  char hierarchyDelimiter = GetHierarchyDelimiter(aImapMailFolder);
-  nsresult rv = CreateStartOfImapUrl(EmptyCString(), getter_AddRefs(imapUrl),
-                                     aImapMailFolder, aUrlListener, urlSpec,
-                                     hierarchyDelimiter);
-  if (NS_SUCCEEDED(rv) && imapUrl) {
-    rv = imapUrl->SetImapAction(nsIImapUrl::nsImapExpungeFolder);
-    rv = SetImapUrlSink(aImapMailFolder, imapUrl);
-
-    nsCOMPtr<nsIMsgMailNewsUrl> mailnewsurl = do_QueryInterface(imapUrl);
-    if (NS_SUCCEEDED(rv)) {
-      urlSpec.AppendLiteral("/Biff>");
-      urlSpec.Append(hierarchyDelimiter);
-
-      nsCString folderName;
-      GetFolderName(aImapMailFolder, folderName);
-      urlSpec.Append(folderName);
-      urlSpec.Append('>');
-      urlSpec.AppendInt(uidHighWater);
-      rv = mailnewsurl->SetSpecInternal(urlSpec);
-      if (NS_SUCCEEDED(rv))
-        rv = GetImapConnectionAndLoadUrl(imapUrl, nullptr, aURL);
-    }
-  }
-  return rv;
 }
 
 NS_IMETHODIMP nsImapService::DeleteFolder(nsIMsgFolder* aImapMailFolder,
@@ -1690,9 +1667,7 @@ nsresult nsImapService::OfflineAppendFromFile(
     destDB->GetNextFakeOfflineMsgKey(&fakeKey);
 
     nsCOMPtr<nsIMsgOfflineImapOperation> op;
-    nsCOMPtr<nsIMsgOfflineOpsDatabase> opsDb = do_QueryInterface(destDB, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = opsDb->GetOfflineOpForKey(fakeKey, true, getter_AddRefs(op));
+    rv = destDB->GetOfflineOpForKey(fakeKey, true, getter_AddRefs(op));
     if (NS_SUCCEEDED(rv) && op) {
       nsCString destFolderUri;
       aDstFolder->GetURI(destFolderUri);
@@ -1722,6 +1697,8 @@ nsresult nsImapService::OfflineAppendFromFile(
       nsCOMPtr<nsIMsgParseMailMsgState> msgParser =
           do_CreateInstance("@mozilla.org/messenger/messagestateparser;1", &rv);
       msgParser->SetMailDB(destDB);
+      // The file may come from outside Thunderbird.
+      msgParser->SetIgnoreMozillaHeaders(true);
 
       rv = NS_NewLocalFileInputStream(getter_AddRefs(inputStream), aFile);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -2710,8 +2687,9 @@ NS_IMETHODIMP nsImapService::MessageURIToMsgHdr(const nsACString& uri,
   nsMsgKey msgKey;
   nsresult rv = DecomposeImapURI(uri, getter_AddRefs(folder), &msgKey);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = folder->GetMessageHeader(msgKey, aRetVal);
+  rv = folder->GetMsgHdr(msgKey, aRetVal);
   NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(*aRetVal, NS_MSG_MESSAGE_NOT_FOUND);
 
   return NS_OK;
 }

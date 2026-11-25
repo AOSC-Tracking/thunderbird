@@ -462,15 +462,15 @@ NS_IMETHODIMP nsMsgMaildirStore::HasSpaceAvailable(nsIMsgFolder* aFolder,
                                                    bool* aResult) {
   NS_ENSURE_ARG_POINTER(aResult);
   NS_ENSURE_ARG_POINTER(aFolder);
+  *aResult = false;
 
   nsCOMPtr<nsIFile> pathFile;
   nsresult rv = aFolder->GetFilePath(getter_AddRefs(pathFile));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *aResult = DiskSpaceAvailableInStore(pathFile, aSpaceRequested);
-  if (!*aResult) return NS_ERROR_FILE_NO_DEVICE_SPACE;
-
-  return NS_OK;
+  rv = DiskSpaceAvailableInStore(pathFile, aSpaceRequested);
+  *aResult = NS_SUCCEEDED(rv);
+  return rv;
 }
 
 NS_IMETHODIMP nsMsgMaildirStore::IsSummaryFileValid(nsIMsgFolder* aFolder,
@@ -674,7 +674,7 @@ NS_IMETHODIMP nsMsgMaildirStore::CopyFolder(
   newMsgFolder->SetFlags(flags);
   bool changed = false;
   rv = aSrcFolder->MatchOrChangeFilterDestination(newMsgFolder, true, &changed);
-  if (changed) aSrcFolder->AlertFilterChanged(aMsgWindow);
+  if (changed) AlertFilterChanged(aSrcFolder);
 
   nsTArray<RefPtr<nsIMsgFolder>> subFolders;
   rv = aSrcFolder->GetSubFolders(subFolders);
@@ -703,7 +703,7 @@ NS_IMETHODIMP nsMsgMaildirStore::CopyFolder(
   if (aIsMoveFolder && NS_SUCCEEDED(copyStatus)) {
     if (localNewFolder) {
       nsCOMPtr<nsISupports> srcSupport(do_QueryInterface(aSrcFolder));
-      localNewFolder->OnCopyCompleted(srcSupport, true);
+      localNewFolder->OnCopyCompleted(srcSupport, NS_OK);
     }
 
     // Notify that the folder that was dragged and dropped has been created.
@@ -843,17 +843,24 @@ nsMsgMaildirStore::FinishNewMessage(nsIMsgFolder* folder,
   NS_ENSURE_ARG(outStream);
 
   auto entry = mOngoingWrites.lookup(folder->URI());
-  if (!entry) {
-    // We should have a record of the write!
-    return NS_ERROR_ILLEGAL_VALUE;
+  // The ongoing write must be the one this stream was issued for. If there is
+  // none, or another one, this write was pre-empted by a later
+  // GetNewMsgOutputStream() call on the same folder (which already closed it
+  // and deleted its file), and any entry belongs to another writer.
+  // Committing it would move the other writer's file into "cur/" and return
+  // its name as our storeToken, linking this message's header to another
+  // message's content.
+  if (!entry || entry->value().stream != outStream) {
+    MOZ_LOG_FMT(MailDirLog, mozilla::LogLevel::Warning,
+                "FinishNewMessage: write to '{}' was pre-empted",
+                folder->URI());
+    outStream->Close();
+    return NS_ERROR_ABORT;
   }
 
   // Take a copy of the entry before we remove it.
   StreamDetails details = entry->value();
   mOngoingWrites.remove(entry);
-
-  // Should be the stream we issued originally!
-  MOZ_ASSERT(outStream == details.stream);
 
   // Path to the new destination dir.
   nsCOMPtr<nsIFile> curDir;
@@ -914,17 +921,24 @@ nsMsgMaildirStore::DiscardNewMessage(nsIMsgFolder* folder,
   NS_ENSURE_ARG(outStream);
 
   auto entry = mOngoingWrites.lookup(folder->URI());
-  if (!entry) {
-    // We should have a record of the write!
-    return NS_ERROR_ILLEGAL_VALUE;
+  // The ongoing write must be the one this stream was issued for. If there is
+  // none, or another one, this write was pre-empted by a later
+  // GetNewMsgOutputStream() call on the same folder (which already closed it
+  // and deleted its file), and any entry belongs to another writer.
+  // Discarding it would delete the other writer's file. Our own write is
+  // already gone, which is all that discarding asks for (same as
+  // nsMsgBrkMBoxStore::DiscardNewMessage).
+  if (!entry || entry->value().stream != outStream) {
+    MOZ_LOG_FMT(MailDirLog, mozilla::LogLevel::Warning,
+                "DiscardNewMessage: write to '{}' was pre-empted",
+                folder->URI());
+    outStream->Close();
+    return NS_OK;
   }
 
   // Take a copy of the entry before we remove it.
   StreamDetails details = entry->value();
   mOngoingWrites.remove(entry);
-
-  // Should be the stream we issued originally!
-  MOZ_ASSERT(outStream == details.stream);
 
   outStream->Close();
 

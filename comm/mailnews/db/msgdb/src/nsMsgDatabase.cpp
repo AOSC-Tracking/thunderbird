@@ -1093,8 +1093,7 @@ nsMsgDatabase::~nsMsgDatabase() {
   m_ChangeListeners.Clear();
 }
 
-NS_IMPL_ISUPPORTS(nsMsgDatabase, nsIMsgDatabase, nsIMsgOfflineOpsDatabase,
-                  nsIDBChangeAnnouncer)
+NS_IMPL_ISUPPORTS(nsMsgDatabase, nsIMsgDatabase, nsIDBChangeAnnouncer)
 
 nsresult nsMsgDatabase::GetMDBFactory(nsIMdbFactory** aMdbFactory) {
   if (!mMdbFactory) {
@@ -1833,8 +1832,8 @@ NS_IMETHODIMP nsMsgDatabase::ContainsKey(nsMsgKey key, bool* containsKey) {
 // get a message header for the given key. Caller must release()!
 NS_IMETHODIMP nsMsgDatabase::GetMsgHdrForKey(nsMsgKey key,
                                              nsIMsgDBHdr** pmsgHdr) {
-  *pmsgHdr = nullptr;
   NS_ENSURE_ARG_POINTER(pmsgHdr);
+  *pmsgHdr = nullptr;
   NS_ENSURE_STATE(m_folder);
   NS_ENSURE_STATE(m_mdbAllMsgHeadersTable);
   NS_ENSURE_STATE(m_mdbStore);
@@ -1858,14 +1857,73 @@ NS_IMETHODIMP nsMsgDatabase::GetMsgHdrForKey(nsMsgKey key,
     nsIMdbRow* hdrRow;
     rv = m_mdbStore->GetRow(GetEnv(), &rowObjectId, &hdrRow);
     if (NS_SUCCEEDED(rv)) {
-      if (!hdrRow) {
-        rv = NS_ERROR_NULL_POINTER;
-      } else {
+      if (hdrRow) {
         rv = CreateMsgHdr(hdrRow, key, pmsgHdr);
       }
     }
   }
   return rv;
+}
+
+NS_IMETHODIMP nsMsgDatabase::GetMsgKeysForUids(nsTArray<ImapUid> const& uids,
+                                               nsTArray<nsMsgKey>& keys) {
+  // NOTE: Temporary code, while UIDs are still being used as nsMsgKeys.
+  // UIDs will be stored separately after
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
+
+  keys.ClearAndRetainStorage();
+  for (ImapUid uid : uids) {
+    nsMsgKey key = (uid == 0) ? nsMsgKey_None : static_cast<nsMsgKey>(uid);
+    keys.AppendElement(key);
+  }
+  return NS_OK;
+}
+NS_IMETHODIMP nsMsgDatabase::GetUidsForMsgKeys(nsTArray<nsMsgKey> const& keys,
+                                               nsTArray<ImapUid>& uids) {
+  // NOTE: Temporary code, while UIDs are still being used as nsMsgKeys.
+  // UIDs will be stored separately after
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
+
+  uids.ClearAndRetainStorage();
+  for (nsMsgKey key : keys) {
+    ImapUid uid = (key == nsMsgKey_None) ? 0 : static_cast<ImapUid>(key);
+    uids.AppendElement(uid);
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgDatabase::ContainsUid(ImapUid uid, bool* found) {
+  NS_ENSURE_ARG_POINTER(found);
+  *found = false;
+
+  // NOTE: Temporary code, while UIDs are still being used as nsMsgKeys.
+  // UIDs will be stored separately after
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
+
+  if (uid == 0) {
+    return NS_OK;
+  }
+  nsMsgKey key = static_cast<nsMsgKey>(uid);
+  return ContainsKey(key, found);
+}
+
+NS_IMETHODIMP nsMsgDatabase::GetMsgHdrForUid(ImapUid uid, nsIMsgDBHdr** hdr) {
+  NS_ENSURE_ARG_POINTER(hdr);
+  *hdr = nullptr;
+
+  // NOTE: Temporary code, while UIDs are still being used as nsMsgKeys.
+  // UIDs will be stored separately after
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1806770
+
+  if (uid == 0) {
+    return NS_ERROR_UNEXPECTED;
+  }
+  nsMsgKey key = static_cast<nsMsgKey>(uid);
+  MOZ_TRY(GetMsgHdrForKey(key, hdr));
+  if (!hdr) {
+    return NS_MSG_MESSAGE_NOT_FOUND;
+  }
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgDatabase::DeleteMessage(nsMsgKey key,
@@ -3800,7 +3858,7 @@ nsIMsgThread* nsMsgDatabase::GetThreadForReference(nsCString& msgID,
                                                    nsIMsgDBHdr** pMsgHdr) {
   nsMsgKey threadId;
   nsIMsgDBHdr* msgHdr = nullptr;
-  GetMsgHdrForMessageID(msgID.get(), &msgHdr);
+  GetMsgHdrForMessageID(msgID, &msgHdr);
   nsIMsgThread* thread = nullptr;
 
   if (msgHdr != nullptr) {
@@ -3981,16 +4039,19 @@ nsresult nsMsgDatabase::AddToThread(nsMsgHdr* newHdr, nsIMsgThread* thread,
   return thread->AddChild(newHdr, inReplyTo, threadInThread, this);
 }
 
-NS_IMETHODIMP nsMsgDatabase::GetMsgHdrForMessageID(const char* aMsgID,
+NS_IMETHODIMP nsMsgDatabase::GetMsgHdrForMessageID(const nsACString& aMsgID,
                                                    nsIMsgDBHdr** aHdr) {
   NS_ENSURE_ARG_POINTER(aHdr);
-  NS_ENSURE_ARG_POINTER(aMsgID);
+  *aHdr = nullptr;
+  if (aMsgID.IsEmpty()) {
+    return NS_OK;
+  }
   nsIMsgDBHdr* msgHdr = nullptr;
   nsresult rv = NS_OK;
   mdbYarn messageIdYarn;
 
-  messageIdYarn.mYarn_Buf = (void*)aMsgID;
-  messageIdYarn.mYarn_Fill = PL_strlen(aMsgID);
+  messageIdYarn.mYarn_Buf = (void*)aMsgID.BeginReading();
+  messageIdYarn.mYarn_Fill = aMsgID.Length();
   messageIdYarn.mYarn_Form = 0;
   messageIdYarn.mYarn_Size = messageIdYarn.mYarn_Fill;
 
@@ -4674,6 +4735,7 @@ nsresult nsMsgDatabase::FindExcessMessages(
     nsCOMPtr<nsIMsgDBHdr> msg;
     rv = GetMsgHdrForKey(candidate.second, getter_AddRefs(msg));
     NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_TRUE(msg, NS_MSG_MESSAGE_NOT_FOUND);
     hdrsToDelete.AppendElement(msg);
   }
 
@@ -5071,3 +5133,5 @@ nsMsgDatabase::HdrIsInCache(const nsACString& aSearchFolderUri,
   *aResult = hasOid;
   return err;
 }
+
+NS_IMETHODIMP nsMsgDatabase::DeleteFolder() { return NS_ERROR_NOT_IMPLEMENTED; }

@@ -124,6 +124,7 @@ nsParseMailMessageState::nsParseMailMessageState() {
   m_EnvDate = 0;
   m_position = 0;
   m_msgUid = 0;
+  m_ignoreMozillaHeaders = false;
   m_state = nsIMsgParseMailMsgState::ParseHeadersState;
 
   // setup handling of custom db headers, headers that are added to .msf files
@@ -280,6 +281,17 @@ NS_IMETHODIMP nsParseMailMessageState::SetMsgUid(ImapUid uid) {
   return NS_OK;
 }
 
+NS_IMETHODIMP nsParseMailMessageState::GetIgnoreMozillaHeaders(bool* ignore) {
+  NS_ENSURE_ARG_POINTER(ignore);
+  *ignore = m_ignoreMozillaHeaders;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsParseMailMessageState::SetIgnoreMozillaHeaders(bool ignore) {
+  m_ignoreMozillaHeaders = ignore;
+  return NS_OK;
+}
+
 NS_IMETHODIMP nsParseMailMessageState::FinishHeader() {
   if (m_newMsgHdr) {
     m_newMsgHdr->SetMessageSize(m_position - m_envelope_pos);
@@ -409,6 +421,12 @@ nsresult nsParseMailMessageState::ParseHeaders() {
         }
         break;
       case 'x':
+        if (m_ignoreMozillaHeaders &&
+            (headerStr.EqualsIgnoreCase(X_MOZILLA_STATUS) ||
+             headerStr.EqualsIgnoreCase(X_MOZILLA_STATUS2) ||
+             headerStr.EqualsIgnoreCase(HEADER_X_MOZILLA_KEYWORDS))) {
+          break;
+        }
         if (headerStr.EqualsIgnoreCase(X_MOZILLA_STATUS2) &&
             !m_mozstatus2.length)
           header = &m_mozstatus2;
@@ -523,7 +541,8 @@ nsresult nsParseMailMessageState::ParseHeaders() {
             receivedDate.Trim(" \t\b\r\n");
             PRTime resultTime;
             if (PR_ParseTimeString(receivedDate.get(), false, &resultTime) ==
-                PR_SUCCESS)
+                    PR_SUCCESS &&
+                PRTimeFitsInSeconds(resultTime))
               m_receivedTime = resultTime;
             else
               NS_WARNING("PR_ParseTimeString failed in ParseHeaders().");
@@ -725,7 +744,7 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
     nsresult ret = NS_OK;
 
     if (m_backupMailDB && !rawMsgId.IsEmpty())
-      ret = m_backupMailDB->GetMsgHdrForMessageID(rawMsgId.get(),
+      ret = m_backupMailDB->GetMsgHdrForMessageID(rawMsgId,
                                                   getter_AddRefs(oldHeader));
 
     // m_msgUid may have been set previously by IMAP code, in order to force
@@ -879,12 +898,15 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
           // Date:
           nsAutoCString dateStr(date->value, date->length);
           if (PR_ParseTimeString(dateStr.get(), false, &datePRTime) ==
-              PR_SUCCESS) {
+                  PR_SUCCESS &&
+              PRTimeFitsInSeconds(datePRTime)) {
             // Convert to seconds as default value for 'Received'.
             PRTime2Seconds(datePRTime, &rcvTimeSecs);
           } else {
+            datePRTime = m_EnvDate;
             NS_WARNING(
-                "PR_ParseTimeString of date failed in FinalizeHeader().");
+                "PR_ParseTimeString of date failed or out of range in "
+                "FinalizeHeader().");
           }
         }
         if (m_receivedTime) {
@@ -897,7 +919,8 @@ nsresult nsParseMailMessageState::FinalizeHeaders() {
           nsAutoCString deliveryDateStr(deliveryDate->value,
                                         deliveryDate->length);
           if (PR_ParseTimeString(deliveryDateStr.get(), false, &resultTime) ==
-              PR_SUCCESS) {
+                  PR_SUCCESS &&
+              PRTimeFitsInSeconds(resultTime)) {
             PRTime2Seconds(resultTime, &rcvTimeSecs);
             if (datePRTime == 0) datePRTime = resultTime;
           } else {
@@ -1222,8 +1245,7 @@ void nsParseNewMailState::PublishMsgHeader(nsIMsgWindow* msgWindow) {
             case nsIMsgIncomingServer::deleteDups: {
               if (NS_FAILED(HardDeleteDetachedMessage(m_downloadFolder,
                                                       m_mailDB, m_newMsgHdr))) {
-                m_rootFolder->ThrowAlertMsg("dupDeleteFolderTruncateFailed",
-                                            msgWindow);
+                NS_WARNING("Failed to delete duplicate message");
               }
             } break;
 
@@ -1234,7 +1256,7 @@ void nsParseNewMailState::PublishMsgHeader(nsIMsgWindow* msgWindow) {
                 uint32_t newFlags;
                 m_newMsgHdr->AndFlags(~nsMsgMessageFlags::New, &newFlags);
                 rv = MoveIncorporatedMessage(m_newMsgHdr, m_mailDB, trash,
-                                             nullptr, msgWindow);
+                                             nullptr);
                 if (NS_FAILED(rv)) {
                   NS_WARNING("moveDupsToTrash failed for some reason.");
                 }
@@ -1463,7 +1485,7 @@ NS_IMETHODIMP nsParseNewMailState::ApplyFilterHit(nsIMsgFilter* filter,
               msgHdr->GetFlags(&old_flags);
 
               rv = MoveIncorporatedMessage(msgHdr, m_mailDB, destIFolder,
-                                           filter, msgWindow);
+                                           filter);
               m_msgMovedByFilter = NS_SUCCEEDED(rv);
 
               if (m_msgMovedByFilter &&
@@ -1852,7 +1874,6 @@ nsresult nsParseNewMailState::EndMsgDownload() {
  * @param sourceDB    The database of the download folder (used for cleanup).
  * @param destIFolder The target local folder.
  * @param filter      (Optional) The filter that triggered this move.
- * @param msgWindow   (Optional) Window for displaying error alerts.
  *
  * @note After a successful move, the physical source file and its database
  * entry are permanently destroyed. The passed `mailHdr` pointer becomes
@@ -1861,8 +1882,7 @@ nsresult nsParseNewMailState::EndMsgDownload() {
 nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
                                                       nsIMsgDatabase* sourceDB,
                                                       nsIMsgFolder* destIFolder,
-                                                      nsIMsgFilter* filter,
-                                                      nsIMsgWindow* msgWindow) {
+                                                      nsIMsgFilter* filter) {
   NS_ENSURE_ARG_POINTER(destIFolder);
   nsresult rv = NS_OK;
 
@@ -1875,7 +1895,7 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
       filter->SetEnabled(false);
       // we need to explicitly save the filter file.
       if (m_filterList) m_filterList->SaveToDefaultFile();
-      destIFolder->ThrowAlertMsg("filterDisabled", msgWindow);
+      AlertFolderError(destIFolder, "filterDisabled"_ns);
     }
     return NS_MSG_NOT_A_MAIL_FOLDER;
   }
@@ -1887,10 +1907,8 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
 
   uint32_t messageLength;
   mailHdr->GetMessageSize(&messageLength);
-  bool destFolderTooBig = true;
-  rv = localFolder->WarnIfLocalFileTooBig(msgWindow, messageLength,
-                                          &destFolderTooBig);
-  if (NS_FAILED(rv) || destFolderTooBig) {
+  rv = localFolder->CheckSpaceAndWarn(messageLength, nullptr);
+  if (NS_FAILED(rv)) {
     return NS_MSG_ERROR_WRITING_MAIL_FOLDER;
   }
 
@@ -1901,7 +1919,7 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
   if (NS_FAILED(rv = destIFolder->AcquireSemaphore(
                     myISupports,
                     "nsParseNewMailState::MoveIncorporatedMessage"_ns))) {
-    destIFolder->ThrowAlertMsg("filterFolderDeniedLocked", msgWindow);
+    AlertFolderError(destIFolder, "filterFolderDeniedLocked"_ns);
     return rv;
   }
 
@@ -1938,11 +1956,11 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
   }
 
   if (NS_FAILED(rv)) {
-    destIFolder->ThrowAlertMsg("filterFolderHdrAddFailed", msgWindow);
+    AlertFolderError(destIFolder, "filterFolderHdrAddFailed"_ns);
   } else {
     rv = WriteMsgFromStream(inputStream, newHdr, destIFolder);
     if (NS_FAILED(rv)) {
-      destIFolder->ThrowAlertMsg("filterFolderWriteFailed", msgWindow);
+      AlertFolderError(destIFolder, "filterFolderWriteFailed"_ns);
     }
   }
 
@@ -1979,7 +1997,7 @@ nsresult nsParseNewMailState::MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
   }
 
   if (NS_FAILED(rv)) {
-    destIFolder->ThrowAlertMsg("filterFolderHdrAddFailed", msgWindow);
+    AlertFolderError(destIFolder, "filterFolderHdrAddFailed"_ns);
     // Remove the orphaned message from the destination folder.
     nsCOMPtr<nsIMsgPluggableStore> destStore;
     if (NS_SUCCEEDED(destIFolder->GetMsgStore(getter_AddRefs(destStore)))) {

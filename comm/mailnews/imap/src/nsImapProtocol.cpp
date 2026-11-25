@@ -63,9 +63,11 @@
 #include "nsITLSSocketControl.h"
 #include "nsITransportSecurityInfo.h"
 #include "nsProxyRelease.h"
+#include "nsReadableUtils.h"
 #include "nsDebug.h"
 #include "nsMsgCompressIStream.h"
 #include "nsMsgCompressOStream.h"
+#include "mozilla/Atomics.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ScopeExit.h"
@@ -107,6 +109,7 @@ extern LazyLogModule IMAP_DC;  // For imap folder discovery
 static constexpr uint32_t kSleepTimeSeconds = 60;
 static constexpr uint32_t kIdleWaitSeconds = 2;
 static constexpr uint32_t kRetryDelaySeconds = 1;
+static uint32_t gMaxLineLength = 64 * 1024 * 1024;
 static int32_t gPromoteNoopToCheckCount = 0;
 static const uint32_t kFlagChangesBeforeCheck = 10;
 static const int32_t kMaxSecondsBeforeCheck = 600;
@@ -383,6 +386,7 @@ nsresult nsImapProtocol::GlobalInitialization() {
   Preferences::GetInt("mail.imap.expunge_option", &gExpungeOption);
   Preferences::GetInt("mail.imap.expunge_threshold_number", &gExpungeThreshold);
   Preferences::GetInt("mailnews.tcptimeout", &gResponseTimeout);
+  Preferences::GetUint("mailnews.max_response_line_length", &gMaxLineLength);
   gAppendTimeout = gResponseTimeout / 5;
 
   gTCPKeepalive.enabled.store(false, std::memory_order_relaxed);
@@ -634,6 +638,7 @@ nsImapProtocol::nsImapProtocol()
   m_inputStreamBuffer = new nsMsgLineStreamBuffer(
       OUTPUT_BUFFER_SIZE, true /* allocate new lines */,
       false /* leave CRLFs on the returned string */);
+  m_inputStreamBuffer->SetMaxLineLength(gMaxLineLength);
   m_currentBiffState = nsIMsgFolder::nsMsgBiffState_Unknown;
   m_progressStringName.Truncate();
   m_stringIndex = IMAP_EMPTY_STRING_INDEX;
@@ -938,6 +943,7 @@ nsresult nsImapProtocol::SetupWithUrl(nsIURI* aURL, nsISupports* aConsumer) {
     imapServer->GetFetchByChunks(&m_fetchByChunks);
     imapServer->GetSendID(&m_sendID);
 
+    m_canonicalTrashFolderPath.Truncate();
     nsAutoCString trashFolderPath;
     if (NS_SUCCEEDED(imapServer->GetTrashFolderName(trashFolderPath))) {
       if (m_allowUTF8Accept)
@@ -2228,6 +2234,18 @@ void nsImapProtocol::ParseIMAPandCheckForNewMail(
     GetServerStateParser().ParseIMAPServerResponse(m_currentCommand.get(),
                                                    aIgnoreBadAndNOResponses);
   // **** fix me for new mail biff state *****
+
+  // After a response with another command's tag, the responses to further
+  // commands can't be trusted.
+  if (GetServerStateParser().UnexpectedTag() && !DeathSignalReceived()) {
+    Log("ParseIMAPandCheckForNewMail", nullptr,
+        "response with unexpected tag, closing connection");
+    ClearFlag(IMAP_CONNECTION_IS_OPEN);
+    TellThreadToDie();
+    if (NS_SUCCEEDED(GetConnectionStatus())) {
+      SetConnectionStatus(NS_ERROR_FAILURE);
+    }
+  }
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////
@@ -3563,17 +3581,19 @@ void nsImapProtocol::AdjustChunkSize() {
 
 // authenticated state commands
 
+// Escape a string for use in an IMAP quoted string.
+static nsCString EscapeQuotedString(const nsACString& raw) {
+  nsCString escaped(raw);
+  escaped.ReplaceSubstring("\\"_ns, "\\\\"_ns);
+  escaped.ReplaceSubstring("\""_ns, "\\\""_ns);
+  return escaped;
+}
+
 // escape any backslashes or quotes.  Backslashes are used a lot with our NT
 // server
 void nsImapProtocol::CreateEscapedMailboxName(const char* rawName,
                                               nsCString& escapedName) {
-  escapedName.Assign(rawName);
-
-  for (int32_t strIndex = 0; *rawName; strIndex++) {
-    char currentChar = *rawName++;
-    if ((currentChar == '\\') || (currentChar == '\"'))
-      escapedName.Insert('\\', strIndex++);
-  }
+  escapedName = EscapeQuotedString(nsDependentCString(rawName));
 }
 
 // SELECT a mailbox and do a folder update unless noUpdate is set to true.
@@ -5174,41 +5194,38 @@ void nsImapProtocol::DiscoverMailboxSpec(nsImapMailboxSpec* adoptedBoxSpec) {
           nsPrefix)  // if no personal namespace, there can be no Trash folder
       {
         bool onlineTrashFolderExists = false;
-        if (m_hostSessionList) {
-          if (adoptedBoxSpec->mBoxFlags & (kImapTrash | kImapXListTrash)) {
-            m_hostSessionList->SetOnlineTrashFolderExistsForHost(
-                GetImapServerKey(), true);
-            onlineTrashFolderExists = true;
-          } else {
-            m_hostSessionList->GetOnlineTrashFolderExistsForHost(
-                GetImapServerKey(), onlineTrashFolderExists);
-          }
+        if (adoptedBoxSpec->mBoxFlags & (kImapTrash | kImapXListTrash)) {
+          m_hostSessionList->SetOnlineTrashFolderExistsForHost(
+              GetImapServerKey(), true);
+          onlineTrashFolderExists = true;
+        } else {
+          m_hostSessionList->GetOnlineTrashFolderExistsForHost(
+              GetImapServerKey(), onlineTrashFolderExists);
         }
 
         // Don't set the Trash flag if not using the Trash model
-        if (GetDeleteIsMoveToTrash() && !onlineTrashFolderExists &&
-            CaseInsensitiveFindInReadable(m_trashFolderPath,
-                                          adoptedBoxSpec->mAllocatedPathName)) {
-          bool trashExists = false;
-          if (StringBeginsWith(m_trashFolderPath, "INBOX/"_ns,
-                               nsCaseInsensitiveCStringComparator)) {
-            nsAutoCString pathName(adoptedBoxSpec->mAllocatedPathName.get() +
-                                   6);
-            trashExists =
-                StringBeginsWith(
-                    adoptedBoxSpec->mAllocatedPathName, m_trashFolderPath,
-                    nsCaseInsensitiveCStringComparator) && /* "INBOX/" */
-                pathName.Equals(Substring(m_trashFolderPath, 6),
-                                nsCaseInsensitiveCStringComparator);
-          } else
+        if (GetDeleteIsMoveToTrash() && !onlineTrashFolderExists) {
+          bool trashExists = adoptedBoxSpec->mAllocatedPathName.Equals(
+              m_trashFolderPath, nsCaseInsensitiveCStringComparator);
+          if (!trashExists) {
+            if (m_canonicalTrashFolderPath.IsEmpty()) {
+              // Resolve a relative path as LIST and CREATE do, then use the
+              // same canonical form as the discovered mailbox.
+              nsAutoCString onlineTrashName;
+              m_runningUrl->AllocateServerPath(
+                  m_trashFolderPath, ns->GetDelimiter(), onlineTrashName);
+              m_runningUrl->AllocateCanonicalPath(onlineTrashName,
+                                                  ns->GetDelimiter(),
+                                                  m_canonicalTrashFolderPath);
+            }
             trashExists = adoptedBoxSpec->mAllocatedPathName.Equals(
-                m_trashFolderPath, nsCaseInsensitiveCStringComparator);
-
-          if (m_hostSessionList)
+                m_canonicalTrashFolderPath, nsCaseInsensitiveCStringComparator);
+          }
+          if (trashExists) {
             m_hostSessionList->SetOnlineTrashFolderExistsForHost(
-                GetImapServerKey(), trashExists);
-
-          if (trashExists) adoptedBoxSpec->mBoxFlags |= kImapTrash;
+                GetImapServerKey(), true);
+            adoptedBoxSpec->mBoxFlags |= kImapTrash;
+          }
         }
       }
 
@@ -5231,9 +5248,8 @@ void nsImapProtocol::DiscoverMailboxSpec(nsImapMailboxSpec* adoptedBoxSpec) {
 
           bool useSubscription = false;
 
-          if (m_hostSessionList)
-            m_hostSessionList->GetHostIsUsingSubscription(GetImapServerKey(),
-                                                          useSubscription);
+          m_hostSessionList->GetHostIsUsingSubscription(GetImapServerKey(),
+                                                        useSubscription);
 
           if ((GetMailboxDiscoveryStatus() != eContinue) &&
               (GetMailboxDiscoveryStatus() != eContinueNew) &&
@@ -6013,7 +6029,7 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
       PR_snprintf(m_dataOutputBuf, OUTPUT_BUFFER_SIZE, "%s" CRLF, base64Str);
       PR_Free(base64Str);
       PR_Free(digest);
-      rv = SendData(m_dataOutputBuf);
+      rv = SendData(m_dataOutputBuf, true /* suppress logging */);
       NS_ENSURE_SUCCESS(rv, rv);
       ParseIMAPandCheckForNewMail(command.get());
     }
@@ -6042,7 +6058,7 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
     ParseIMAPandCheckForNewMail("AUTH GSSAPI");
     if (GetServerStateParser().LastCommandSuccessful()) {
       response += CRLF;
-      rv = SendData(response.get());
+      rv = SendData(response.get(), true /* suppress logging */);
       NS_ENSURE_SUCCESS(rv, rv);
       ParseIMAPandCheckForNewMail(command.get());
       nsresult gssrv = NS_OK;
@@ -6053,7 +6069,7 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
         gssrv = DoGSSAPIStep2(challengeStr, response);
         if (NS_SUCCEEDED(gssrv)) {
           response += CRLF;
-          rv = SendData(response.get());
+          rv = SendData(response.get(), true /* suppress logging */);
         } else
           rv = SendData("*" CRLF);
 
@@ -6077,7 +6093,7 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
         "AUTH NTLM");  // this just waits for ntlm step 1
     if (GetServerStateParser().LastCommandSuccessful()) {
       cmd += CRLF;
-      rv = SendData(cmd.get());
+      rv = SendData(cmd.get(), true /* suppress logging */);
       NS_ENSURE_SUCCESS(rv, rv);
       ParseIMAPandCheckForNewMail(command.get());
       if (GetServerStateParser().LastCommandSuccessful()) {
@@ -6086,7 +6102,7 @@ nsresult nsImapProtocol::AuthLogin(const char* userName,
         rv = DoNtlmStep2(challengeStr, response);
         NS_ENSURE_SUCCESS(rv, rv);
         response += CRLF;
-        rv = SendData(response.get());
+        rv = SendData(response.get(), true /* suppress logging */);
         ParseIMAPandCheckForNewMail(command.get());
       }
     }
@@ -6405,8 +6421,10 @@ void nsImapProtocol::UploadMessageFromFile(nsIFile* file,
 
       if (imapAction == nsIImapUrl::nsImapAppendDraftFromFile ||
           imapAction == nsIImapUrl::nsImapAppendMsgFromFile) {
-        if (GetServerStateParser().GetCapabilityFlag() & kUidplusCapability) {
-          ImapUid newUid = GetServerStateParser().CurrentResponseUID();
+        bool hasUidplus =
+            GetServerStateParser().GetCapabilityFlag() & kUidplusCapability;
+        ImapUid newUid = GetServerStateParser().CurrentAppendUID();
+        if (hasUidplus && newUid) {
           if (m_imapMailFolderSink)
             m_imapMailFolderSink->SetAppendMsgUid(newUid, m_runningUrl);
 
@@ -6416,40 +6434,17 @@ void nsImapProtocol::UploadMessageFromFile(nsIFile* file,
 
           if (!GetServerStateParser().LastCommandSuccessful()) urlOk = false;
         } else if (m_imapMailFolderSink &&
-                   imapAction == nsIImapUrl::nsImapAppendDraftFromFile) {
-          // No UIDPLUS capability and just appended a message to draft folder.
+                   (hasUidplus ||
+                    imapAction == nsIImapUrl::nsImapAppendDraftFromFile)) {
+          // The server didn't return an APPENDUID, or has no UIDPLUS capability
+          // and we just appended a message to the draft folder.
           // Must search the folder using the Message-ID to find the UID of the
-          // appended message. First, go to selected state.
+          // appended message.
           nsCString messageId;
           rv = m_imapMailFolderSink->GetMessageId(m_runningUrl, messageId);
           if (NS_SUCCEEDED(rv) && !messageId.IsEmpty()) {
-            // if the appended to folder isn't selected in the connection,
-            // select it.
-            if (!FolderIsSelected(mailboxName))
-              SelectMailbox(mailboxName);
-            else
-              Noop();  // See if this makes SEARCH work on the newly appended
-                       // msg.
-
-            if (GetServerStateParser().LastCommandSuccessful()) {
-              command = "SEARCH UNDELETED HEADER Message-ID ";
-              command.Append(messageId);
-
-              // Clean up result sequence before issuing the cmd.
-              GetServerStateParser().ResetSearchResultSequence();
-
-              Search(command.get(), true, false);
-              if (GetServerStateParser().LastCommandSuccessful()) {
-                nsImapSearchResultIterator* searchResult =
-                    GetServerStateParser().CreateSearchResultIterator();
-                ImapUid uid = searchResult->GetNextMatchUid();
-                delete searchResult;
-                if (uid)
-                  m_imapMailFolderSink->SetAppendMsgUid(uid, m_runningUrl);
-              } else
-                urlOk = false;
-            } else
-              urlOk = false;
+            ImapUid uid = FindAppendedMessageUid(mailboxName, messageId);
+            if (uid) m_imapMailFolderSink->SetAppendMsgUid(uid, m_runningUrl);
           }
         }
       }
@@ -6461,6 +6456,46 @@ done:
 
   PR_Free(dataBuffer);
   if (fileInputStream) fileInputStream->Close();
+}
+
+ImapUid nsImapProtocol::FindAppendedMessageUid(const char* mailboxName,
+                                               const nsACString& messageId) {
+  if (!IsAscii(messageId) || messageId.FindCharInSet("\r\n") != kNotFound) {
+    return 0;
+  }
+
+  if (!FolderIsSelected(mailboxName)) {
+    SelectMailbox(mailboxName);
+  } else {
+    Noop();  // See if this makes SEARCH work on the newly appended msg.
+  }
+
+  ImapUid uid = 0;
+  if (GetServerStateParser().LastCommandSuccessful()) {
+    // HEADER search matches substrings, so include the angle brackets.
+    nsAutoCString command("SEARCH UNDELETED HEADER Message-ID \"<");
+    command.Append(EscapeQuotedString(messageId));
+    command.AppendLiteral(">\"");
+
+    // Clean up result sequence before issuing the cmd.
+    GetServerStateParser().ResetSearchResultSequence();
+
+    Search(command.get(), true, false);
+    if (GetServerStateParser().LastCommandSuccessful()) {
+      // If the Message-ID occurs more than once, the appended message is the
+      // one with the highest UID.
+      nsImapSearchResultIterator* searchResult =
+          GetServerStateParser().CreateSearchResultIterator();
+      while (ImapUid matchUid = searchResult->GetNextMatchUid()) {
+        uid = std::max(uid, matchUid);
+      }
+      delete searchResult;
+    }
+  }
+
+  // The message was appended, so failing to find it shouldn't fail the URL.
+  GetServerStateParser().SetCommandFailed(false);
+  return uid;
 }
 
 nsCString nsImapProtocol::OnCreateServerSourceFolderPathString() {
@@ -7469,6 +7504,7 @@ void nsImapProtocol::DiscoverAllAndSubscribedBoxes() {
 // pane.
 // DiscoverMailboxList() also gets the ACLs for each newly discovered folder
 void nsImapProtocol::DiscoverMailboxList() {
+  m_canonicalTrashFolderPath.Truncate();
   bool usingSubscription = false;
 
   m_hostSessionList->GetHostIsUsingSubscription(GetImapServerKey(),
@@ -7667,6 +7703,8 @@ void nsImapProtocol::MailboxDiscoveryFinished() {
         m_hierarchyNameState = kDiscoverTrashFolderInProgress;
         List(m_trashFolderPath.get(), true);
         m_hierarchyNameState = kNoOperationInProgress;
+        m_hostSessionList->GetOnlineTrashFolderExistsForHost(GetImapServerKey(),
+                                                             trashFolderExists);
       }
     }
 
@@ -8728,7 +8766,7 @@ bool nsImapProtocol::TryToLogon() {
         // if there's no msg window, don't forget the password
         if (!msgWindow) break;
         int32_t buttonPressed = 1;
-        rv = m_imapServerSink->PromptLoginFailed(msgWindow, &buttonPressed);
+        rv = m_imapServerSink->PromptLoginFailed(&buttonPressed);
         if (NS_FAILED(rv)) break;
         if (buttonPressed == 2)  // 'New password' button
         {
@@ -9025,15 +9063,62 @@ nsImapCacheStreamListener::OnDataAvailable(nsIRequest* request,
                                     aCount);
 }
 
-//
-// ImapOfflineMsgStreamListener
-//
-// Listener wrapper, helper for ReadFromLocalCache().
-// It knows which offline message it's streaming out, and if the operation
-// fails it'll cause the local copy to be discarded (on the grounds that it's
-// likely damaged) before letting the underlying listener proceed with it's
-// own error handling.
-// Works on the Main thread.
+// Records failures from the offline store separately from consumer failures
+// and cancellations. The stream pump can read this stream off the main thread.
+class ImapOfflineMsgInputStream final : public nsIInputStream {
+ public:
+  NS_DECL_THREADSAFE_ISUPPORTS
+
+  explicit ImapOfflineMsgInputStream(nsIInputStream* stream)
+      : mStream(stream) {}
+
+  NS_IMETHOD Close() override { return mStream->Close(); }
+
+  NS_IMETHOD Available(uint64_t* count) override {
+    return RecordReadResult(mStream->Available(count));
+  }
+
+  NS_IMETHOD StreamStatus() override {
+    return RecordReadResult(mStream->StreamStatus());
+  }
+
+  NS_IMETHOD Read(char* buf, uint32_t count, uint32_t* result) override {
+    return RecordReadResult(mStream->Read(buf, count, result));
+  }
+
+  NS_IMETHOD ReadSegments(nsWriteSegmentFun writer, void* closure,
+                          uint32_t count, uint32_t* result) override {
+    // Let the pump buffer this stream so that storage reads go through Read().
+    *result = 0;
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  NS_IMETHOD IsNonBlocking(bool* result) override {
+    return mStream->IsNonBlocking(result);
+  }
+
+  bool ReadFailed() const { return mReadFailed; }
+
+ private:
+  ~ImapOfflineMsgInputStream() = default;
+
+  nsresult RecordReadResult(nsresult rv) {
+    if (NS_FAILED(rv) && rv != NS_BASE_STREAM_CLOSED &&
+        rv != NS_BASE_STREAM_WOULD_BLOCK) {
+      mReadFailed = true;
+    }
+    return rv;
+  }
+
+  const nsCOMPtr<nsIInputStream> mStream;
+  Atomic<bool> mReadFailed{false};
+};
+
+NS_IMPL_ISUPPORTS(ImapOfflineMsgInputStream, nsIInputStream);
+
+// Listener wrapper for ReadFromLocalCache(). Discards the offline copy only
+// if reading from the store failed. Consumer errors do not imply corruption.
+// Works on the main thread.
 //
 // ***NOTE*** (BenC 2024-11-12):
 // We pass in the underlying channel to use as the request param to the
@@ -9050,15 +9135,18 @@ class ImapOfflineMsgStreamListener : public nsIStreamListener {
   ImapOfflineMsgStreamListener() = delete;
   ImapOfflineMsgStreamListener(nsIMsgFolder* folder, nsMsgKey msgKey,
                                nsIStreamListener* listener,
-                               nsIImapMockChannel* channel)
+                               nsIImapMockChannel* channel,
+                               ImapOfflineMsgInputStream* stream)
       : mFolder(folder),
         mMsgKey(msgKey),
         mAlreadyStarted(false),
         mListener(listener),
-        mChannel(channel) {
+        mChannel(channel),
+        mStream(stream) {
     MOZ_RELEASE_ASSERT(mFolder);
     MOZ_RELEASE_ASSERT(mListener);
     MOZ_RELEASE_ASSERT(mChannel);
+    MOZ_RELEASE_ASSERT(mStream);
   }
 
   NS_IMETHOD OnStartRequest(nsIRequest* request) override {
@@ -9084,9 +9172,9 @@ class ImapOfflineMsgStreamListener : public nsIStreamListener {
     mListener = nullptr;
     mChannel->Close();
     mChannel = nullptr;
-    if (NS_FAILED(status) &&
+    if (mStream->ReadFailed() &&
         Preferences::GetBool("mail.discard_offline_msg_on_failure", true)) {
-      // The streaming failed, discard the offline copy of the message.
+      // Reading from the store failed, discard the offline copy of the message.
       mFolder->DiscardOfflineMsg(mMsgKey);
     }
     return rv;
@@ -9094,14 +9182,13 @@ class ImapOfflineMsgStreamListener : public nsIStreamListener {
 
  protected:
   virtual ~ImapOfflineMsgStreamListener() {}
-  // Remember the folder and key of the offline message we're streaming out,
-  // so if anything goes wrong we can discard it on the grounds that it's
-  // damaged.
+  // Remember which offline copy to discard if reading from the store fails.
   nsCOMPtr<nsIMsgFolder> mFolder;
   nsMsgKey mMsgKey;
   bool mAlreadyStarted;
   nsCOMPtr<nsIStreamListener> mListener;  // The listener we're wrapping.
   nsCOMPtr<nsIImapMockChannel> mChannel;
+  RefPtr<ImapOfflineMsgInputStream> mStream;
 };
 
 NS_IMPL_ISUPPORTS(ImapOfflineMsgStreamListener, nsIStreamListener);
@@ -9774,8 +9861,9 @@ bool nsImapMockChannel::ReadFromLocalCache() {
     return false;
   }
   nsCOMPtr<nsIMsgDBHdr> hdr;
-  rv = folder->GetMessageHeader(msgKey, getter_AddRefs(hdr));
+  rv = folder->GetMsgHdr(msgKey, getter_AddRefs(hdr));
   NS_ENSURE_SUCCESS(rv, false);
+  NS_ENSURE_TRUE(hdr, false);
 
   // Attempt to open the local message and pump it out asynchronously.
   // If any of this fails we assume the local message is damaged.
@@ -9785,23 +9873,19 @@ bool nsImapMockChannel::ReadFromLocalCache() {
   rv = folder->GetMsgInputStream(hdr, getter_AddRefs(msgStream));
   NS_ENSURE_SUCCESS(rv, false);
 
+  RefPtr<ImapOfflineMsgInputStream> offlineStream =
+      new ImapOfflineMsgInputStream(msgStream);
+  msgStream = offlineStream;
+
   // Create a stream pump that will async read the message.
   nsCOMPtr<nsIInputStreamPump> pump;
   rv = NS_NewInputStreamPump(getter_AddRefs(pump), msgStream.forget());
   NS_ENSURE_SUCCESS(rv, false);
 
-  // Wrap the listener with another one which knows which message offline
-  // message we're reading from. If the read fails, our wrapper will discard
-  // the offline copy as damaged.
-  // We use a wrapper around the real listener because we don't know who is
-  // consuming this data (A docshell, gloda indexing, calendar, whatever), so
-  // we don't have any control over how read errors are handled. This lets
-  // us intercept errors in OnStopRequest() and respond by discarding the
-  // offline copy on the grounds that it's likely damaged.
-  // Then the underlying listener can proceed with it's own OnStopRequest()
-  // handling.
+  // Discard damaged offline copies independently of which consumer reads them.
   RefPtr<ImapOfflineMsgStreamListener> offlineMsgListener =
-      new ImapOfflineMsgStreamListener(folder, msgKey, m_channelListener, this);
+      new ImapOfflineMsgStreamListener(folder, msgKey, m_channelListener, this,
+                                       offlineStream);
 
   rv = pump->AsyncRead(offlineMsgListener);
   NS_ENSURE_SUCCESS(rv, false);

@@ -91,8 +91,6 @@ tags = ["caldav"]
 
 ["test_detection.js"]
 
-["test_detection_proxy.js"]
-
 ["test_duration.js"]
 
 ["test_email_utils.js"]
@@ -128,6 +126,8 @@ tags = ["caldav"]
 ["test_items_many_properties.js"]
 
 ["test_itip_message_sender.js"]
+
+["test_itip_refresh.js"]
 
 ["test_itip_target_calendar.js"]
 

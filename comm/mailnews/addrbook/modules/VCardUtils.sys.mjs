@@ -79,7 +79,7 @@ export var VCardUtils = {
       if (!vPropMap.has(name)) {
         vPropMap.set(name, []);
       }
-      vPropMap.get(name).push({ index, pref, value });
+      vPropMap.get(name).push({ index, pref, value, params });
     }
 
     // If no URL with type is specified assume its the Work Web Page (WebPage 1).
@@ -172,6 +172,54 @@ export var VCardUtils = {
     }
 
     return abCard;
+  },
+  /**
+   * Parse the value of a BDAY or ANNIVERSARY entry.
+   *
+   * vCard 3.0 can't express a date without a year (RFC 2426, section 3.1.5),
+   * so Apple (and others copying it) use a placeholder year and name it in an
+   * X-APPLE-OMIT-YEAR parameter, e.g. BDAY;X-APPLE-OMIT-YEAR=1604:1604-04-15.
+   * Apple's devices also treat 1604 as a placeholder without the parameter,
+   * and iCloud stores dates like that, e.g. BDAY;VALUE=DATE:1604-04-15.
+   * The year of such a date is null, as for "--04-15" in vCard 4.0.
+   *
+   * @param {string} value
+   * @param {object} [params] - The parameters of the entry.
+   * @returns {ICAL.VCardTime}
+   */
+  parseDate(value, params = {}) {
+    const date = ICAL.VCardTime.fromDateAndOrTimeString(
+      value,
+      "date-and-or-time"
+    );
+    const omitYear = +(params["x-apple-omit-year"] ?? 1604);
+    if (date.year === omitYear) {
+      date.year = null;
+    }
+    return date;
+  },
+  /**
+   * Work out the media type of base64 encoded image data from its first
+   * bytes, as needed for vCard 3.0 photos without a TYPE parameter.
+   *
+   * @param {string} data
+   * @returns {?string} The media type, e.g. "image/png", or null if it isn't
+   *   recognised.
+   */
+  imageTypeFromBase64(data) {
+    if (data.startsWith("iVBO")) {
+      return "image/png";
+    }
+    if (data.startsWith("/9j/")) {
+      return "image/jpeg";
+    }
+    if (data.startsWith("UklG")) {
+      return "image/webp";
+    }
+    if (data.startsWith("R0lG")) {
+      return "image/gif";
+    }
+    return null;
   },
   /**
    * Create a PHOTO entry for an image given as a data: URL. vCard 4.0 stores
@@ -435,9 +483,9 @@ function dateProperty(abCardPrefix, vPropName) {
 
       yield [vPropName, {}, "date", dateValue.toString()];
     },
-    *toAbCard(value) {
+    *toAbCard(value, params) {
       try {
-        const dateValue = ICAL.VCardTime.fromDateAndOrTimeString(value);
+        const dateValue = VCardUtils.parseDate(value, params);
         yield [`${abCardPrefix}Year`, String(dateValue.year ?? "")];
         yield [`${abCardPrefix}Month`, String(dateValue.month ?? "")];
         yield [`${abCardPrefix}Day`, String(dateValue.day ?? "")];
@@ -700,6 +748,10 @@ export class VCardProperties {
       console.warn(`Card data had more than one vCard ${vCard}`);
     }
     vCard = VCardUtils.translateVCard21(vCards[0]);
+    // Google joins the X-APPLE-OMIT-YEAR parameter (see VCardUtils.parseDate)
+    // to the VALUE parameter with a comma, as in
+    // BDAY;VALUE=DATE,X-APPLE-OMIT-YEAR=1604:1604-04-15.
+    vCard = vCard.replace(/(;VALUE=[a-z-]+),(X-APPLE-OMIT-YEAR=)/gi, "$1;$2");
 
     const rv = new VCardProperties();
     const [, properties] = ICAL.parse(vCard);
@@ -738,6 +790,22 @@ export class VCardProperties {
             value = value.replaceAll(/\\;/g, ";");
           }
         }
+      }
+      // vCard 3.0 marks the preferred entry with TYPE=pref (RFC 2426, sections
+      // 3.3.1 and 3.3.2). Use the vCard 4.0 PREF parameter (RFC 6350,
+      // section 5.3) instead, which is what the rest of the code expects.
+      // toVCard converts it back for vCard 3.0.
+      const types = [params.type ?? []].flat();
+      if (types.some(t => t.toLowerCase() == "pref")) {
+        const otherTypes = types.filter(t => t.toLowerCase() != "pref");
+        if (otherTypes.length > 1) {
+          params.type = otherTypes;
+        } else if (otherTypes.length == 1) {
+          params.type = otherTypes[0];
+        } else {
+          delete params.type;
+        }
+        params.pref ??= "1";
       }
       // The entry is new, so it can't be a duplicate.
       rv.#addEntry(new VCardPropertyEntry(name, params, type, value));
@@ -1000,7 +1068,8 @@ export class VCardProperties {
     for (const [name, props] of vPropMap) {
       // Store the value(s) on the abCard.
       for (const [abPropName, abPropValue] of typeMap[name].toAbCard(
-        props[0].value
+        props[0].value,
+        props[0].params
       )) {
         if (abPropValue) {
           propertyMap.set(abPropName, abPropValue);
@@ -1021,17 +1090,38 @@ export class VCardProperties {
    * @returns {string} vCard
    */
   toVCard() {
+    // vCard 3.0 has no preference levels, only TYPE=pref, so give that to the
+    // most preferred entry of each property. See fromVCard.
+    const isVCard3 = this.getFirstValue("version") == "3.0";
+    const preferred = new Map();
+    if (isVCard3) {
+      for (const e of this.entries) {
+        const pref = parseInt(e.params.pref, 10);
+        const current = preferred.get(e.name);
+        if (pref && (!current || pref < current.pref)) {
+          preferred.set(e.name, { entry: e, pref });
+        }
+      }
+    }
     const jCal = this.entries.map(e => {
+      let params = e.params;
+      if (isVCard3 && "pref" in params) {
+        params = { ...params };
+        delete params.pref;
+        if (preferred.get(e.name)?.entry == e) {
+          params.type = [params.type ?? [], "pref"].flat();
+        }
+      }
       if (Array.isArray(e.value)) {
         const design = this.designSet.property[e.name];
         if (design.multiValue == "," && !design.structuredValue) {
           // The jCal format stores multiple values as the 4th...nth items,
           // but VCardPropertyEntry stores them as an array. This applies to
           // CATEGORIES and NICKNAME types in vCard 4 and also NOTE in vCard 3.
-          return [e.name, e.params, e.type, ...e.value];
+          return [e.name, params, e.type, ...e.value];
         }
       }
-      return [e.name, e.params, e.type, e.value];
+      return [e.name, params, e.type, e.value];
     });
     return ICAL.stringify(["vcard", jCal]);
   }

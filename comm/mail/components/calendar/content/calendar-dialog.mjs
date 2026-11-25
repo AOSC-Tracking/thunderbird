@@ -7,14 +7,14 @@ import {
   PositionedDialog,
 } from "./positioned-dialog.mjs";
 import { CalendarEventDialogSourceMixin } from "./calendar-event-dialog-source-mixin.mjs";
-import "./calendar-dialog-acceptance.mjs"; // eslint-disable-line import/no-unassigned-import
-import "./calendar-dialog-subview-manager.mjs"; // eslint-disable-line import/no-unassigned-import
-import "./calendar-dialog-date-row.mjs"; // eslint-disable-line import/no-unassigned-import
-import "./calendar-dialog-description-row.mjs"; // eslint-disable-line import/no-unassigned-import
-import "./calendar-dialog-categories.mjs"; // eslint-disable-line import/no-unassigned-import
-import "./calendar-dialog-reminders-row.mjs"; // eslint-disable-line import/no-unassigned-import
-import "./calendar-dialog-attachments-list.mjs"; // eslint-disable-line import/no-unassigned-import
-import "./calendar-dialog-attendees-row.mjs"; // eslint-disable-line import/no-unassigned-import
+import "./calendar-dialog-acceptance.mjs"; // eslint-disable-line import-x/no-unassigned-import
+import "./calendar-dialog-subview-manager.mjs"; // eslint-disable-line import-x/no-unassigned-import
+import "./calendar-dialog-date-row.mjs"; // eslint-disable-line import-x/no-unassigned-import
+import "./calendar-dialog-description-row.mjs"; // eslint-disable-line import-x/no-unassigned-import
+import "./calendar-dialog-categories.mjs"; // eslint-disable-line import-x/no-unassigned-import
+import "./calendar-dialog-reminders-row.mjs"; // eslint-disable-line import-x/no-unassigned-import
+import "./calendar-dialog-attachments-list.mjs"; // eslint-disable-line import-x/no-unassigned-import
+import "./calendar-dialog-attendees-row.mjs"; // eslint-disable-line import-x/no-unassigned-import
 
 const { openLinkExternally } = ChromeUtils.importESModule(
   "resource:///modules/LinkHelper.sys.mjs"
@@ -439,6 +439,16 @@ export class CalendarDialog extends CalendarEventDialogSourceMixin(
       event.descriptionText,
       event.descriptionHTML
     );
+
+    const canEdit =
+      cal.acl.isCalendarWritable(event.calendar) &&
+      cal.acl.userCanModifyItem(event) &&
+      !(
+        event.calendar instanceof Ci.calISchedulingSupport &&
+        event.calendar.isInvitation(event)
+      ) &&
+      event.calendar.getProperty("capabilities.events.supported") !== false;
+    this.querySelector("#edit").hidden = !canEdit;
   }
 
   onCalendarEventRouteCleared() {
@@ -628,7 +638,9 @@ export class CalendarDialog extends CalendarEventDialogSourceMixin(
     );
     const event = await calendar.getItem(this.getAttribute("event-id"));
     const isRecurring =
-      this.hasAttribute("recurrence-id") && countOccurrences(event) > 1;
+      this.hasAttribute("recurrence-id") &&
+      !!event.recurrenceInfo &&
+      countOccurrences(event) != 1;
     const extResponse = { responseMode: Ci.calIItipItem.USER };
 
     const CANCEL = 0;
@@ -636,16 +648,25 @@ export class CalendarDialog extends CalendarEventDialogSourceMixin(
     const DELETE_FOLLOWING = 2;
     const DELETE_ALL = 3;
 
-    let response = CANCEL;
-
-    const returnValue = { value: CANCEL, isRecurring };
-    window.openDialog(
-      "chrome://messenger/content/calendarPrompt.xhtml",
-      "_blank",
-      "centerscreen,chrome,titlebar,modal",
-      returnValue
+    const promptPref = Services.prefs.getBoolPref(
+      "calendar.item.promptDelete",
+      true
     );
-    response = returnValue.value;
+    let response = !promptPref ? DELETE_ALL : CANCEL;
+
+    // Skip the deletion prompt if calendar.item.promptDelete is false.
+    // If the event is recurring, we still need to show the prompt.
+    if (promptPref || isRecurring) {
+      const returnValue = { value: CANCEL, isRecurring };
+      window.openDialog(
+        "chrome://messenger/content/calendarPrompt.xhtml",
+        "_blank",
+        "centerscreen,chrome,titlebar,modal",
+        returnValue
+      );
+      response = returnValue.value;
+    }
+
     this.close();
 
     switch (response) {

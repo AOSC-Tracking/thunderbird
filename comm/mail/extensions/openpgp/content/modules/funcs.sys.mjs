@@ -16,6 +16,13 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 var gTxtConverter = null;
+
+/**
+ * Deepest quote level rendered as nested blockquotes. Each level indents by
+ * roughly 16px, so deeper levels can't be read anyway, while parsing deeply
+ * nested markup gets quadratically slower.
+ */
+const MAX_CITE_LEVEL = 100;
 var inspector;
 
 export var EnigmailFuncs = {
@@ -30,18 +37,6 @@ export var EnigmailFuncs = {
     return this.parseEmails(mailAddresses, false)
       .map(addr => addr.email)
       .join(",");
-  },
-
-  /**
-   * Check if the domain of an email address contains a comment, i.e. a
-   * parenthesis.
-   *
-   * @param {string} email - The email address.
-   * @returns {boolean} true if there is a parenthesis after the "@".
-   */
-  domainHasComment(email) {
-    const at = email.search(/[a-zA-Z0-9]@/);
-    return at != -1 && /[()]/.test(email.slice(at));
   },
 
   /**
@@ -135,7 +130,10 @@ export var EnigmailFuncs = {
         lines[i] += " ";
       }
 
-      citeLevel = gTxtConverter.citeLevelTXT(lines[i], logLineStart);
+      citeLevel = Math.min(
+        gTxtConverter.citeLevelTXT(lines[i], logLineStart),
+        MAX_CITE_LEVEL
+      );
 
       if (citeLevel > oldCiteLevel) {
         preface = "</pre>";

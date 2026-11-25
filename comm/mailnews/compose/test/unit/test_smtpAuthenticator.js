@@ -35,7 +35,7 @@ registerCleanupFunction(() => {
 add_task(function testPlainToken() {
   const authenticator = createAuthenticator(kUsername, kPassword);
   Assert.equal(
-    authenticator.getPlainToken(),
+    authenticator.getPlainToken(kPassword),
     btoa(`\0${kUsernameUtf8}\0${kPasswordUtf8}`),
     "AUTH PLAIN should send the user name and password as UTF-8"
   );
@@ -51,6 +51,25 @@ add_task(function testCramMd5TokenUserName() {
     atob(token).split(" ")[0],
     kUsernameUtf8,
     "AUTH CRAM-MD5 should send the user name as UTF-8"
+  );
+});
+
+/**
+ * The decoded challenge is binary data, so challenge bytes above 0x7F must be
+ * kept as single bytes rather than UTF-8 encoded.
+ */
+add_task(function testCramMd5TokenBinaryChallenge() {
+  const authenticator = createAuthenticator(kUsername, kPassword);
+  const token = authenticator.getCramMd5Token(
+    kPassword,
+    // Decodes into a 27-byte long challenge with two 0x81 bytes. This is the
+    // challenge from the reporter in bug 2086828.
+    "PDQyNDYzNjI0MjYuMTQ4MzUyODhAgXcugW0+"
+  );
+  Assert.equal(
+    atob(token).split(" ")[1],
+    "9428b0a97c4fd56bdfe5e27a633628ba",
+    "AUTH CRAM-MD5 digest should be computed over the raw challenge bytes"
   );
 });
 

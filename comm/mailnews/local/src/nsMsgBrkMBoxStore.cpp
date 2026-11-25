@@ -286,6 +286,7 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::HasSpaceAvailable(nsIMsgFolder* aFolder,
                                                    bool* aResult) {
   NS_ENSURE_ARG_POINTER(aResult);
   NS_ENSURE_ARG_POINTER(aFolder);
+  *aResult = false;
 
   nsCOMPtr<nsIFile> pathFile;
   nsresult rv = aFolder->GetFilePath(getter_AddRefs(pathFile));
@@ -304,10 +305,9 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::HasSpaceAvailable(nsIMsgFolder* aFolder,
     if (!*aResult) return NS_ERROR_FILE_TOO_BIG;
   }
 
-  *aResult = DiskSpaceAvailableInStore(pathFile, aSpaceRequested);
-  if (!*aResult) return NS_ERROR_FILE_NO_DEVICE_SPACE;
-
-  return NS_OK;
+  rv = DiskSpaceAvailableInStore(pathFile, aSpaceRequested);
+  *aResult = NS_SUCCEEDED(rv);
+  return rv;
 }
 
 NS_IMETHODIMP nsMsgBrkMBoxStore::IsSummaryFileValid(nsIMsgFolder* aFolder,
@@ -587,7 +587,7 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::CopyFolder(
   newMsgFolder->SetFlags(flags);
   bool changed = false;
   rv = aSrcFolder->MatchOrChangeFilterDestination(newMsgFolder, true, &changed);
-  if (changed) aSrcFolder->AlertFilterChanged(aMsgWindow);
+  if (changed) AlertFilterChanged(aSrcFolder);
 
   nsTArray<RefPtr<nsIMsgFolder>> subFolders;
   rv = aSrcFolder->GetSubFolders(subFolders);
@@ -616,7 +616,7 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::CopyFolder(
   if (aIsMoveFolder && NS_SUCCEEDED(copyStatus)) {
     if (localNewFolder) {
       nsCOMPtr<nsISupports> srcSupport(do_QueryInterface(aSrcFolder));
-      localNewFolder->OnCopyCompleted(srcSupport, true);
+      localNewFolder->OnCopyCompleted(srcSupport, NS_OK);
     }
 
     // Notify the "folder" that was dragged and dropped has been created. No
@@ -787,13 +787,17 @@ nsMsgBrkMBoxStore::FinishNewMessage(nsIMsgFolder* folder,
   NS_ENSURE_ARG(outStream);
 
   auto details = mOngoingWrites.lookup(folder->URI());
-  if (!details) {
-    // We should have a record of the write!
-    return NS_ERROR_UNEXPECTED;
+  // Should be the stream we issued originally! If there is no ongoing write,
+  // or another one, this write was pre-empted (and already rolled back) by a
+  // later GetNewMsgOutputStream() call, and any entry belongs to another
+  // writer: don't report its file position as our storeToken.
+  if (!details || outStream != details->value().stream) {
+    MOZ_LOG(gMboxLog, LogLevel::Warning,
+            ("FINISH MSG (preempted) stream=0x%p folder=%s", outStream,
+             folder->URI().get()));
+    outStream->Close();
+    return NS_ERROR_ABORT;
   }
-
-  // Should be the stream we issued originally!
-  MOZ_ASSERT(outStream == details->value().stream);
 
   // We are always dealing with nsISafeOutputStream.
   // It requires an explicit commit, or the data will be discarded.

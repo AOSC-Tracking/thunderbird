@@ -361,8 +361,13 @@ interface nsIMsgFolder : nsISupports {
    *                    OnStopRunningUrl() will be called upon completion,
    *                    with a null URL.
    * @param aMsgWindow  For progress/status, can be null.
+   * @param expunge     For IMAP, expunge messages marked as deleted on the
+   *                    server before compacting the offline stores. Callers
+   *                    only reclaiming local disk space must pass false, so
+   *                    that nothing on the server is destroyed.
    */
-  void compactAll(in nsIUrlListener aListener, in nsIMsgWindow aMsgWindow);
+  void compactAll(in nsIUrlListener aListener, in nsIMsgWindow aMsgWindow,
+                  in boolean expunge);
 
   void emptyTrash(in nsIUrlListener aListener);
 
@@ -370,8 +375,40 @@ interface nsIMsgFolder : nsISupports {
    * change the name of the folder
    *
    * @param name the new name of the folder
+   *
+   * @deprecated Use renameAsync/renameWithListener instead.
    */
   void rename(in AUTF8String name, in nsIMsgWindow msgWindow);
+
+  /**
+   * Change the name of the folder. Returns a promise that resolves once the
+   * rename has completed, or rejects with an error code on failure.
+   *
+   * Expected failure values:
+   * NS_MSG_FOLDER_EXISTS
+   * NS_MSG_ERROR_INVALID_FOLDER_NAME
+   * NS_ERROR_FAILURE (IMAP, when the name contains the hierarchy delimiter)
+   * NS_ERROR_CONNECTION_REFUSED (or other network errors)
+   *
+   * @param name the new name of the folder
+   */
+  [implicit_jscontext]
+  Promise renameAsync(in AUTF8String name);
+
+  /**
+   * Change the name of the folder. Intended for use by C++ callers while
+   * renameAsync is intended for use by JavaScript callers.
+   * See renameAsync for expected statuses.
+   *
+   * The failure is always reported through the listener, never by throwing,
+   * so that callers have a single error channel to handle. The listener is
+   * never invoked before this returns.
+   *
+   * @param name the new name of the folder
+   * @param listener notified via onStopRunningUrl() once the rename has
+   *   completed, with a null URL.
+   */
+  void renameWithListener(in AUTF8String name, in nsIUrlListener listener);
 
   AUTF8String generateUniqueSubfolderName(in AUTF8String prefix,
                                           in nsIMsgFolder otherFolder);
@@ -696,7 +733,14 @@ interface nsIMsgFolder : nsISupports {
    */
   void openBackupMsgDatabase();
   nsIMsgDatabase getDBFolderInfoAndDB(out nsIDBFolderInfo folderInfo);
-  nsIMsgDBHdr GetMessageHeader(in nsMsgKey msgKey);
+
+  /**
+   * Get the header of a message in this folder.
+   *
+   * @param msgKey - The key of the message.
+   * @returns The message header, or null if there is no message with the key.
+   */
+  nsIMsgDBHdr getMsgHdr(in nsMsgKey msgKey);
 
   /**
    * Does this folder support downloading messages from server for
@@ -750,9 +794,6 @@ interface nsIMsgFolder : nsISupports {
   boolean isCommandEnabled(in ACString command);
   boolean matchOrChangeFilterDestination(in nsIMsgFolder folder,
                                          in boolean caseInsensitive);
-  boolean confirmFolderDeletionForFilter(in nsIMsgWindow msgWindow);
-  void alertFilterChanged(in nsIMsgWindow msgWindow);
-  void throwAlertMsg(in string msgName, in nsIMsgWindow msgWindow);
   AString getStringWithFolderNameFromBundle(in string msgName);
 
   /**

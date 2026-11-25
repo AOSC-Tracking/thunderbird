@@ -561,9 +561,14 @@ var messageProgressListener = {
    * @see {nsIWebProgressListener}
    */
   onStateChange(webProgress, request, stateFlags, _status) {
+    // Only the document load of the message pane itself, not loads of the
+    // same message from within the message content.
     if (
       !(request instanceof Ci.nsIMailChannel) ||
       !(stateFlags & Ci.nsIWebProgressListener.STATE_START) ||
+      !webProgress.isTopLevel ||
+      request.QueryInterface(Ci.nsIChannel).loadInfo
+        .externalContentPolicyType != Ci.nsIContentPolicy.TYPE_DOCUMENT ||
       !this._channelIsCurrent(request)
     ) {
       return;
@@ -2563,7 +2568,7 @@ const attachmentListDNDObserver = {
       const attachments = Array.from(
         document.querySelectorAll("#attachmentList .attachmentItem[selected]"),
         item => item.attachment
-      );
+      ).filter(attachment => attachment.hasFile);
       setupDataTransfer(event, attachments);
     }
     event.stopPropagation();
@@ -2573,7 +2578,10 @@ const attachmentListDNDObserver = {
 const attachmentNameDNDObserver = {
   onDragStart(event) {
     const attachmentList = document.getElementById("attachmentList");
-    setupDataTransfer(event, [attachmentList.getItemAtIndex(0).attachment]);
+    const attachment = attachmentList.getItemAtIndex(0).attachment;
+    if (attachment.hasFile) {
+      setupDataTransfer(event, [attachment]);
+    }
     event.stopPropagation();
   },
 };
@@ -3225,7 +3233,9 @@ const gMessageHeader = {
       tab: popup.documentGlobal,
       onHeaderPaneLink: true,
       linkText: messageId,
-      linkUrl: `mid:${messageId.substring(1, messageId.length - 1)}`,
+      linkUrl: MailUtils.constructMidUriSpec(
+        messageId.substring(1, messageId.length - 1)
+      ),
       pageUrl: getMessagePaneBrowser().contentDocument?.URL,
     };
     subject.wrappedJSObject = subject;
@@ -3763,7 +3773,9 @@ function convertToEventOrTask(isTask = false) {
  * Put the 'mid:' URI of the message on the clipboard.
  */
 function copyMessageLink() {
-  navigator.clipboard.writeText(`mid:${gMessage.messageId}`);
+  navigator.clipboard.writeText(
+    MailUtils.constructMidUriSpec(gMessage.messageId)
+  );
 }
 
 /**

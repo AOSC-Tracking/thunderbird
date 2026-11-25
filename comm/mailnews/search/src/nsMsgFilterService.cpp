@@ -25,6 +25,8 @@
 #include "nsNetUtil.h"
 #include "nsMsgUtils.h"
 #include "nsIMsgMailSession.h"
+#include "nsIMsgUserFeedbackListener.h"
+#include "nsIMsgIncomingServer.h"
 #include "nsIFile.h"
 #include "nsIMsgFilterCustomAction.h"
 #include "nsMsgMessageFlags.h"
@@ -56,16 +58,15 @@ LazyLogModule FILTERLOGMODULE("Filters");
     break;                                                             \
   }
 
-#define CONTINUE_IF_FAILURE(_rv, _text)                                     \
-  if (NS_FAILED(_rv)) {                                                     \
-    MOZ_LOG(FILTERLOGMODULE, LogLevel::Warning,                             \
-            ("(Post) Filter problem: %s", _text));                          \
-    m_filters->LogFilterMessage(NS_LITERAL_STRING_FROM_CSTRING(_text),      \
-                                m_curFilter);                               \
-    NS_WARNING(_text);                                                      \
-    mFinalResult = _rv;                                                     \
-    if (m_msgWindow && !ContinueExecutionPrompt()) return OnEndExecution(); \
-    continue;                                                               \
+#define CONTINUE_IF_FAILURE(_rv, _text)                                \
+  if (NS_FAILED(_rv)) {                                                \
+    MOZ_LOG(FILTERLOGMODULE, LogLevel::Warning,                        \
+            ("(Post) Filter problem: %s", _text));                     \
+    m_filters->LogFilterMessage(NS_LITERAL_STRING_FROM_CSTRING(_text), \
+                                m_curFilter);                          \
+    NS_WARNING(_text);                                                 \
+    mFinalResult = _rv;                                                \
+    continue;                                                          \
   }
 
 #define BREAK_IF_FALSE(_assertTrue, _text)                             \
@@ -79,26 +80,24 @@ LazyLogModule FILTERLOGMODULE("Filters");
     break;                                                             \
   }
 
-#define CONTINUE_IF_FALSE(_assertTrue, _text)                               \
-  if (MOZ_UNLIKELY(!(_assertTrue))) {                                       \
-    MOZ_LOG(FILTERLOGMODULE, LogLevel::Warning,                             \
-            ("(Post) Filter problem: %s", _text));                          \
-    m_filters->LogFilterMessage(NS_LITERAL_STRING_FROM_CSTRING(_text),      \
-                                m_curFilter);                               \
-    NS_WARNING(_text);                                                      \
-    mFinalResult = NS_ERROR_FAILURE;                                        \
-    if (m_msgWindow && !ContinueExecutionPrompt()) return OnEndExecution(); \
-    continue;                                                               \
+#define CONTINUE_IF_FALSE(_assertTrue, _text)                          \
+  if (MOZ_UNLIKELY(!(_assertTrue))) {                                  \
+    MOZ_LOG(FILTERLOGMODULE, LogLevel::Warning,                        \
+            ("(Post) Filter problem: %s", _text));                     \
+    m_filters->LogFilterMessage(NS_LITERAL_STRING_FROM_CSTRING(_text), \
+                                m_curFilter);                          \
+    NS_WARNING(_text);                                                 \
+    mFinalResult = NS_ERROR_FAILURE;                                   \
+    continue;                                                          \
   }
 
-#define BREAK_ACTION(_text)                                               \
-  MOZ_LOG(FILTERLOGMODULE, LogLevel::Error,                               \
-          ("(Post) Filter Error: %s", _text));                            \
-  if (loggingEnabled)                                                     \
-    m_filters->LogFilterMessage(NS_LITERAL_STRING_FROM_CSTRING(_text),    \
-                                m_curFilter);                             \
-  NS_WARNING(_text);                                                      \
-  if (m_msgWindow && !ContinueExecutionPrompt()) return OnEndExecution(); \
+#define BREAK_ACTION(_text)                                            \
+  MOZ_LOG(FILTERLOGMODULE, LogLevel::Error,                            \
+          ("(Post) Filter Error: %s", _text));                         \
+  if (loggingEnabled)                                                  \
+    m_filters->LogFilterMessage(NS_LITERAL_STRING_FROM_CSTRING(_text), \
+                                m_curFilter);                          \
+  NS_WARNING(_text);                                                   \
   break;
 
 #define BREAK_ACTION_IF_FALSE(_assertTrue, _text) \
@@ -174,16 +173,16 @@ NS_IMETHODIMP nsMsgFilterService::OpenFilterList(
     filterList->GetVersion(&version);
     if (version != kFileVersion) SaveFilterList(filterList, aFilterFile);
   } else {
-    if (rv == NS_MSG_FILTER_PARSE_ERROR && aMsgWindow) {
-      rv = BackUpFilterFile(aFilterFile, aMsgWindow);
+    if (rv == NS_MSG_FILTER_PARSE_ERROR) {
+      rv = BackUpFilterFile(aFilterFile, rootFolder);
       NS_ENSURE_SUCCESS(rv, rv);
       rv = aFilterFile->SetFileSize(0);
       NS_ENSURE_SUCCESS(rv, rv);
       return OpenFilterList(aFilterFile, rootFolder, aMsgWindow,
                             resultFilterList);
     }
-    if (rv == NS_MSG_INVALID_CUSTOM_HEADER && aMsgWindow) {
-      ThrowFilterAlertMsg("filter-invalid-custom-header"_ns, aMsgWindow);
+    if (rv == NS_MSG_INVALID_CUSTOM_HEADER) {
+      ThrowFilterAlertMsg("filter-invalid-custom-header"_ns, rootFolder);
     }
   }
 
@@ -231,8 +230,8 @@ NS_IMETHODIMP nsMsgFilterService::SaveFilterList(nsIMsgFilterList* filterList,
 }
 
 nsresult nsMsgFilterService::BackUpFilterFile(nsIFile* aFilterFile,
-                                              nsIMsgWindow* aMsgWindow) {
-  ThrowFilterAlertMsg("filter-list-backup-message"_ns, aMsgWindow);
+                                              nsIMsgFolder* rootFolder) {
+  ThrowFilterAlertMsg("filter-list-backup-message"_ns, rootFolder);
 
   nsCOMPtr<nsIFile> localParentDir;
   nsresult rv = aFilterFile->GetParent(getter_AddRefs(localParentDir));
@@ -251,7 +250,7 @@ nsresult nsMsgFilterService::BackUpFilterFile(nsIFile* aFilterFile,
 }
 
 nsresult nsMsgFilterService::ThrowFilterAlertMsg(const nsACString& fluentID,
-                                                 nsIMsgWindow* aMsgWindow) {
+                                                 nsIMsgFolder* rootFolder) {
   RefPtr<mozilla::intl::Localization> l10n =
       mozilla::intl::Localization::Create({"messenger/filterEditor.ftl"_ns},
                                           true);
@@ -259,17 +258,19 @@ nsresult nsMsgFilterService::ThrowFilterAlertMsg(const nsACString& fluentID,
   nsresult rv = LocalizeMessage(l10n, fluentID, {}, alertString);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<mozIDOMWindowProxy> domWindow;
-  nsCOMPtr<nsIWindowMediator> winMed =
-      do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  winMed->GetMostRecentWindow(nullptr, getter_AddRefs(domWindow));
+  nsAutoCString serverKey;
+  if (rootFolder) {
+    nsCOMPtr<nsIMsgIncomingServer> server;
+    if (NS_SUCCEEDED(rootFolder->GetServer(getter_AddRefs(server)))) {
+      server->GetKey(serverKey);
+    }
+  }
 
-  nsCOMPtr<nsIPromptService> dlgService(
-      do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-  return dlgService->Alert(domWindow, nullptr,
-                           NS_ConvertUTF8toUTF16(alertString).get());
+  nsCOMPtr<nsIMsgMailSession> mailSession =
+      mozilla::components::MailSession::Service();
+  NS_ENSURE_TRUE(mailSession, NS_ERROR_UNEXPECTED);
+  return mailSession->AlertUser(NS_ConvertUTF8toUTF16(alertString), serverKey,
+                                false);
 }
 
 // this class is used to run filters after the fact, i.e., after new mail has
@@ -297,7 +298,8 @@ nsresult nsMsgFilterService::ThrowFilterAlertMsg(const nsACString& fluentID,
 // action completes.
 class nsMsgFilterAfterTheFact : public nsIUrlListener,
                                 public nsIMsgSearchNotify,
-                                public nsIMsgCopyServiceListener {
+                                public nsIMsgCopyServiceListener,
+                                public nsIMsgUserFeedbackListener {
  public:
   nsMsgFilterAfterTheFact(nsIMsgWindow* aMsgWindow,
                           nsIMsgFilterList* aFilterList,
@@ -307,6 +309,7 @@ class nsMsgFilterAfterTheFact : public nsIUrlListener,
   NS_DECL_NSIURLLISTENER
   NS_DECL_NSIMSGSEARCHNOTIFY
   NS_DECL_NSIMSGCOPYSERVICELISTENER
+  NS_DECL_NSIMSGUSERFEEDBACKLISTENER
 
   nsresult AdvanceToNextFolder();  // kicks off the process
  protected:
@@ -317,13 +320,20 @@ class nsMsgFilterAfterTheFact : public nsIUrlListener,
    */
   nsresult ApplyFilter();
   nsresult OnEndExecution();  // do what we have to do to cleanup.
-  bool ContinueExecutionPrompt();
+  void LogCopyFailure(nsIMsgRuleAction* action, nsresult status,
+                      const nsACString& messageIds,
+                      uint32_t omittedMessageCount);
   nsCOMPtr<nsIMsgWindow> m_msgWindow;
   nsCOMPtr<nsIMsgFilterList> m_filters;
   nsTArray<RefPtr<nsIMsgFolder>> m_folders;
   nsCOMPtr<nsIMsgFolder> m_curFolder;
   nsCOMPtr<nsIMsgDatabase> m_curFolderDB;
   nsCOMPtr<nsIMsgFilter> m_curFilter;
+  nsCOMPtr<nsIMsgRuleAction> m_pendingCopyAction;
+  nsTArray<nsCString> m_pendingCopyLogMessages;
+  nsCString m_pendingCopyMessageIds;
+  uint32_t m_pendingCopyOmittedMessageCount = 0;
+  uint64_t m_copyCallbackCount = 0;
   uint32_t m_curFilterIndex;
   uint32_t m_curFolderIndex;
   uint32_t m_numFilters;
@@ -338,7 +348,7 @@ class nsMsgFilterAfterTheFact : public nsIUrlListener,
 };
 
 NS_IMPL_ISUPPORTS(nsMsgFilterAfterTheFact, nsIUrlListener, nsIMsgSearchNotify,
-                  nsIMsgCopyServiceListener)
+                  nsIMsgCopyServiceListener, nsIMsgUserFeedbackListener)
 
 nsMsgFilterAfterTheFact::nsMsgFilterAfterTheFact(
     nsIMsgWindow* aMsgWindow, nsIMsgFilterList* aFilterList,
@@ -373,8 +383,7 @@ nsresult nsMsgFilterAfterTheFact::OnEndExecution() {
   if (m_callback) (void)m_callback->OnStopOperation(mFinalResult);
 
   nsresult rv = mFinalResult;
-  // OnEndExecution() can be called a second time when a rule execution fails
-  // and the user is prompted whether he wants to continue.
+  // OnEndExecution() can be called a second time when a rule execution fails.
   if (mNeedsRelease) {
     NS_RELEASE_THIS();  // release ourselves.
     mNeedsRelease = false;
@@ -512,11 +521,7 @@ NS_IMETHODIMP nsMsgFilterAfterTheFact::OnStopRunningUrl(nsIURI* aUrl,
   if (NS_SUCCEEDED(aExitCode)) return RunNextFilter();
 
   mFinalResult = aExitCode;
-  // If m_msgWindow then we are in a context where the user can deal with
-  //  errors. Put up a prompt, and exit if user wants.
-  if (!ContinueExecutionPrompt()) return OnEndExecution();
-
-  // folder parse failed, so stop processing this folder.
+  // Folder parse failed, so stop processing this folder.
   return AdvanceToNextFolder();
 }
 
@@ -559,7 +564,6 @@ NS_IMETHODIMP nsMsgFilterAfterTheFact::OnSearchDone(nsresult status) {
 
   mFinalResult = status;
   if (status == NS_MSG_SEARCH_INTERRUPTED) return OnEndExecution();
-  if (m_msgWindow && !ContinueExecutionPrompt()) return OnEndExecution();
 
   // The search failed, so move on to the next filter.
   return RunNextFilter();
@@ -594,8 +598,6 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter() {
     nsCOMPtr<nsIMsgFolder> curFolder = m_curFolder;
     nsCOMPtr<nsIMsgFilter> curFilter = m_curFilter;
 
-    // We're going to log the filter actions before firing them because some
-    // actions are async.
     bool loggingEnabled = false;
     if (m_filters) (void)m_filters->GetLoggingEnabled(&loggingEnabled);
 
@@ -621,6 +623,10 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter() {
     // We start from m_nextAction to allow us to continue applying actions
     // after the return from an async copy.
     while (m_nextAction < numActions) {
+      m_pendingCopyAction = nullptr;
+      m_pendingCopyLogMessages.Clear();
+      m_pendingCopyMessageIds.Truncate();
+      m_pendingCopyOmittedMessageCount = 0;
       nsresult finalResult = NS_OK;
       nsCOMPtr<nsIMsgRuleAction> filterAction(actionList[m_nextAction]);
       ++m_nextAction;
@@ -642,7 +648,9 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter() {
                           "actionTargetFolderUri is empty");
       }
 
-      if (loggingEnabled) {
+      // Log successful copies and moves in OnStopCopy after they complete.
+      if (loggingEnabled && actionType != nsMsgFilterAction::MoveToFolder &&
+          actionType != nsMsgFilterAction::CopyToFolder) {
         for (auto msgHdr : m_searchHitHdrs) {
           (void)curFilter->LogRuleHit(filterAction, msgHdr);
         }
@@ -703,7 +711,7 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter() {
           if (parentFolder) destIFolder->GetCanFileMessages(&canFileMessages);
           if (!parentFolder || !canFileMessages) {
             curFilter->SetEnabled(false);
-            destIFolder->ThrowAlertMsg("filterDisabled", m_msgWindow);
+            AlertFolderError(destIFolder, "filterDisabled"_ns, this);
             // we need to explicitly save the filter file.
             m_filters->SaveToDefaultFile();
             // In the case of applying multiple filters
@@ -728,11 +736,42 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter() {
                                            nsMsgProcessingFlags::FilterToMove);
           }
 
+          m_pendingCopyAction = filterAction;
+          // A move can delete the source headers before OnStopCopy runs.
+          if (loggingEnabled) {
+            constexpr uint32_t kMaxLoggedMessageIds = 20;
+            uint32_t messageIndex = 0;
+            for (auto msgHdr : m_searchHitHdrs) {
+              if (messageIndex++ < kMaxLoggedMessageIds) {
+                nsCString messageId;
+                (void)msgHdr->GetMessageId(messageId);
+                if (!m_pendingCopyMessageIds.IsEmpty()) {
+                  m_pendingCopyMessageIds.AppendLiteral(", ");
+                }
+                m_pendingCopyMessageIds.Append(messageId);
+              } else {
+                ++m_pendingCopyOmittedMessageCount;
+              }
+              nsCString message;
+              if (NS_SUCCEEDED(curFilter->GetLogRuleHitMessage(
+                      filterAction, msgHdr, NS_OK, EmptyCString(), message))) {
+                m_pendingCopyLogMessages.AppendElement(std::move(message));
+              }
+            }
+          }
+          RefPtr<nsMsgFilterAfterTheFact> self(this);
+          uint64_t callbackCount = m_copyCallbackCount;
           rv = copyService->CopyMessages(
               curFolder, m_searchHitHdrs, destIFolder,
               actionType == nsMsgFilterAction::MoveToFolder, this, m_msgWindow,
               false);
-          BREAK_ACTION_IF_FAILURE(rv, "CopyMessages failed");
+          // A synchronous callback has already advanced or finished this run.
+          if (m_copyCallbackCount != callbackCount) {
+            return NS_OK;
+          }
+          if (NS_FAILED(rv)) {
+            return OnStopCopy(rv);
+          }
           MOZ_LOG(FILTERLOGMODULE, LogLevel::Debug,
                   ("(Post) Action execution continues async"));
           return NS_OK;  // OnStopCopy callback to continue;
@@ -1301,13 +1340,39 @@ NS_IMETHODIMP nsMsgFilterAfterTheFact::GetMessageId(nsACString& messageId) {
   return NS_OK;
 }
 
+NS_IMETHODIMP nsMsgFilterAfterTheFact::OnAlert(const nsAString& message,
+                                               const nsACString& serverKey,
+                                               bool silent, bool* handled) {
+  NS_ENSURE_ARG_POINTER(handled);
+  *handled = false;
+  nsCOMPtr<nsIMsgUserFeedbackListener> feedback = do_QueryInterface(m_callback);
+  return feedback ? feedback->OnAlert(message, serverKey, silent, handled)
+                  : NS_OK;
+}
+
+NS_IMETHODIMP nsMsgFilterAfterTheFact::OnCertError(
+    nsITransportSecurityInfo* securityInfo, nsIURI* uri,
+    const nsACString& serverKey) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 /* void OnStopCopy (in nsresult aStatus); */
 NS_IMETHODIMP nsMsgFilterAfterTheFact::OnStopCopy(nsresult aStatus) {
+  ++m_copyCallbackCount;
+  nsCString messageIds = std::move(m_pendingCopyMessageIds);
+  uint32_t omittedMessageCount = m_pendingCopyOmittedMessageCount;
+  m_pendingCopyOmittedMessageCount = 0;
+  nsCOMPtr<nsIMsgRuleAction> copyAction = m_pendingCopyAction.forget();
+  nsTArray<nsCString> logMessages = std::move(m_pendingCopyLogMessages);
   if (NS_SUCCEEDED(aStatus)) {
     // clang-format off
     MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
             ("(Post) Async message copy from filter action finished successfully"));
     // clang-format on
+    for (const auto& message : logMessages) {
+      (void)m_filters->LogFilterMessage(NS_ConvertUTF8toUTF16(message),
+                                        nullptr);
+    }
     return ApplyFilter();
   }
   MOZ_LOG(FILTERLOGMODULE, LogLevel::Error,
@@ -1315,42 +1380,56 @@ NS_IMETHODIMP nsMsgFilterAfterTheFact::OnStopCopy(nsresult aStatus) {
            static_cast<uint32_t>(aStatus)));
 
   mFinalResult = aStatus;
-  if (!ContinueExecutionPrompt()) return OnEndExecution();
+  bool loggingEnabled = false;
+  (void)m_filters->GetLoggingEnabled(&loggingEnabled);
+  if (loggingEnabled && copyAction && m_curFilter) {
+    LogCopyFailure(copyAction, aStatus, messageIds, omittedMessageCount);
+  }
 
   // Copy failed, so run the next filter
   return RunNextFilter();
 }
 
-bool nsMsgFilterAfterTheFact::ContinueExecutionPrompt() {
-  if (!m_curFilter) return false;
-
-  nsAutoString filterName;
-  m_curFilter->GetFilterName(filterName);
-
+void nsMsgFilterAfterTheFact::LogCopyFailure(nsIMsgRuleAction* action,
+                                             nsresult status,
+                                             const nsACString& messageIds,
+                                             uint32_t omittedMessageCount) {
+  nsMsgRuleActionType type;
+  if (NS_FAILED(action->GetType(&type))) {
+    return;
+  }
+  nsCString folderUri;
+  if (NS_FAILED(action->GetTargetFolderUri(folderUri))) {
+    return;
+  }
+  nsCString errorCode;
+  errorCode.AppendPrintf("0x%08X", static_cast<uint32_t>(status));
   RefPtr<mozilla::intl::Localization> l10n =
       mozilla::intl::Localization::Create({"messenger/filterEditor.ftl"_ns},
                                           true);
-  nsCString confirmText;
-  nsresult rv = LocalizeMessage(
-      l10n, "filter-continue-execution"_ns,
-      {{"filterName"_ns, NS_ConvertUTF16toUTF8(filterName)}}, confirmText);
-  if (NS_FAILED(rv)) return false;
-
-  nsCOMPtr<mozIDOMWindowProxy> domWindow;
-  nsCOMPtr<nsIWindowMediator> winMed =
-      do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, false);
-  winMed->GetMostRecentWindow(nullptr, getter_AddRefs(domWindow));
-
-  nsCOMPtr<nsIPromptService> dlgService(
-      do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, false);
-  bool returnVal = false;
-  dlgService->Confirm(domWindow, nullptr,
-                      NS_ConvertUTF8toUTF16(confirmText).get(), &returnVal);
-  if (!returnVal) {
-    MOZ_LOG(FILTERLOGMODULE, LogLevel::Warning,
-            ("(Post) User aborted further filter execution on prompt"));
+  auto args = dom::Optional<intl::L10nArgs>();
+  args.Construct();
+  for (const auto& [key, value] : nsTArray<std::pair<nsCString, nsCString>>{
+           {"folder"_ns, folderUri},
+           {"errorCode"_ns, errorCode},
+           {"messageIds"_ns, nsCString(messageIds)}}) {
+    auto arg = args.Value().Entries().AppendElement();
+    arg->mKey = key;
+    arg->mValue.SetValue().SetAsUTF8String().Assign(value);
   }
-  return returnVal;
+  auto countArg = args.Value().Entries().AppendElement();
+  countArg->mKey = "count";
+  countArg->mValue.SetValue().SetAsDouble() = omittedMessageCount;
+  nsCString message;
+  ErrorResult error;
+  l10n->FormatValueSync(type == nsMsgFilterAction::MoveToFolder
+                            ? "filter-move-batch-failed"_ns
+                            : "filter-copy-batch-failed"_ns,
+                        args, message, error);
+  if (error.Failed()) {
+    error.SuppressException();
+    return;
+  }
+  (void)m_filters->LogFilterMessage(NS_ConvertUTF8toUTF16(message),
+                                    m_curFilter);
 }

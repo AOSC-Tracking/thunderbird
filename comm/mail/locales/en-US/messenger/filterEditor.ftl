@@ -37,6 +37,26 @@ filter-failure-copy-failed = Copy failed
 filter-failure-action = Failed applying the filter action
 
 # Variables:
+# $folder (String) - The URI of the destination folder.
+# $errorCode (String) - The hexadecimal error code for the batch.
+filter-copy-batch-failed = Could not complete copying messages to { $folder }. Some messages may have been copied. Error: { $errorCode }. Requested message IDs: { filter-batch-message-ids }
+
+# Variables:
+# $folder (String) - The URI of the destination folder.
+# $errorCode (String) - The hexadecimal error code for the batch.
+filter-move-batch-failed = Could not complete moving messages to { $folder }. Some messages may have been copied without being removed from the source folder. Error: { $errorCode }. Requested message IDs: { filter-batch-message-ids }
+
+# Referenced by filter-copy-batch-failed and filter-move-batch-failed.
+# Variables:
+# $messageIds (String) - Up to 20 requested message IDs, separated by commas.
+# $count (Number) - The number of additional requested messages whose IDs are omitted.
+filter-batch-message-ids = { $count ->
+    [0] { $messageIds }
+    [one] { $messageIds }, and { $count } more message
+   *[other] { $messageIds }, and { $count } more messages
+}
+
+# Variables:
 # $filterName (String) - The name of the filter that was applied.
 # $author (String) - The sender of the message.
 # $subject (String) - The subject line of the message.
@@ -86,10 +106,6 @@ filter-log-message = Message from filter "{ $filterName }": { $message }
 filter-editor-must-select-target-folder = You must select a target folder.
 filter-editor-enter-valid-email-forward = Enter a valid email address to forward to.
 filter-editor-pick-template-reply = Choose a template to reply with.
-
-# Variables:
-# $filterName (String) - The name of the filter that was applied.
-filter-continue-execution = Applying filter { $filterName } failed. Would you like to continue applying filters?
 
 filter-list-backup-message =
     Your filters do not work because the msgFilterRules.dat file, which contains your filters, could not be read. A new msgFilterRules.dat file will be created and a backup of the old file, called rulesbackup.dat, will be created in the same directory.
@@ -181,6 +197,12 @@ filter-running-message =
 filter-stop-button = Stop
 
 filter-continue-button = Continue
+
+# Shown once at the end of a filter run the user started, when at least one
+# filter or action failed. The individual failures are in the filter log.
+filter-run-failed = Some filters could not be applied. Check the filter log for details.
+
+filter-run-failed-open-log-button = Open Filter Log
 
 # Variables:
 #   $count - the number items

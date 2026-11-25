@@ -232,8 +232,8 @@ class nsImapMailFolder : public nsMsgDBFolder,
 
   NS_IMETHOD Compact(nsIUrlListener* aListener,
                      nsIMsgWindow* aMsgWindow) override;
-  NS_IMETHOD CompactAll(nsIUrlListener* aListener,
-                        nsIMsgWindow* aMsgWindow) override;
+  NS_IMETHOD CompactAll(nsIUrlListener* aListener, nsIMsgWindow* aMsgWindow,
+                        bool expunge) override;
   NS_IMETHOD EmptyTrash(nsIUrlListener* aListener) override;
   NS_IMETHOD CopyDataToOutputStreamForAppend(
       nsIInputStream* aIStream, int32_t aLength,
@@ -242,6 +242,8 @@ class nsImapMailFolder : public nsMsgDBFolder,
   NS_IMETHOD DeleteStorage() override;
   NS_IMETHOD Rename(const nsACString& newName,
                     nsIMsgWindow* msgWindow) override;
+  NS_IMETHOD RenameWithListener(const nsACString& newName,
+                                nsIUrlListener* listener) override;
   NS_IMETHOD GetNoSelect(bool* aResult) override;
 
   NS_IMETHOD UpdateSummaryTotals(bool force) override;
@@ -506,6 +508,8 @@ class nsImapMailFolder : public nsMsgDBFolder,
 
   int32_t m_nextMessageByteLength;
   nsCOMPtr<nsIUrlListener> m_urlListener;
+  // Notified once a rename running on the server has finished.
+  nsCOMPtr<nsIUrlListener> m_renameListener;
   bool m_urlRunning;
 
   // undo move/copy transaction support

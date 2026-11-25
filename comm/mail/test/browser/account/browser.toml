@@ -121,6 +121,8 @@ tags = ["accounthub"]
 
 ["browser_actions.js"]
 
+["browser_advancedServerSettings.js"]
+
 ["browser_archiveOptions.js"]
 tags = ["archive"]
 
@@ -145,6 +147,8 @@ skip-if = [
 ["browser_removeAccountRelatedItems.js"]
 
 ["browser_settingsInfrastructure.js"]
+
+["browser_settingsLocalization.js"]
 
 ["browser_thundermailSetup.js"]
 tags = ["oauth"]

@@ -4,9 +4,6 @@
 
 /* globals msgWindow, nsMsgStatusFeedback */ // From mailWindow.js
 
-var { MailServices } = ChromeUtils.importESModule(
-  "resource:///modules/MailServices.sys.mjs"
-);
 var { MailUtils } = ChromeUtils.importESModule(
   "resource:///modules/MailUtils.sys.mjs"
 );
@@ -73,7 +70,7 @@ function onServerClick(aFolder) {
 
 var MySubscribeListener = {
   async OnDonePopulating() {
-    MailServices.feedback.reportStatus("", "stop-meteors");
+    gStatusFeedback.stopMeteors();
     document.getElementById("stopButton").disabled = true;
     document.getElementById("refreshButton").disabled = false;
     document.getElementById("currentListTab").disabled = false;
@@ -105,23 +102,25 @@ async function SetUpTree(forceToServer, getOnlyNew) {
     document.getElementById("refreshButton").disabled = true;
 
     const waitString = await document.l10n.formatValue("subscribe-please-wait");
-    MailServices.feedback.reportStatus(waitString, "start-meteors");
+    gStatusFeedback?.showStatusString(waitString);
+    gStatusFeedback?.startMeteors();
 
     document.getElementById("stopButton").disabled = false;
 
     gSubscribableServer.startPopulating(msgWindow, forceToServer, getOnlyNew);
   } catch (e) {
-    if (e.result == 0x80550014) {
-      // NS_MSG_ERROR_OFFLINE
+    if (e.result == Cr.NS_MSG_ERROR_OFFLINE) {
       const offlineString =
         await document.l10n.formatValue("subscribe-offline");
-      MailServices.feedback.reportStatus(offlineString, "stop-meteors");
+      gStatusFeedback?.showStatusString(offlineString);
+      gStatusFeedback?.stopMeteors();
     } else {
       console.error("Failed to populate subscribe tree", e);
       const errorString = await document.l10n.formatValue(
         "subscribe-error-populating"
       );
-      MailServices.feedback.reportStatus(errorString, "stop-meteors");
+      gStatusFeedback?.showStatusString(errorString);
+      gStatusFeedback?.stopMeteors();
     }
     Stop();
   }
@@ -147,7 +146,7 @@ function SubscribeOnLoad() {
   msgWindow = Cc["@mozilla.org/messenger/msgwindow;1"].createInstance(
     Ci.nsIMsgWindow
   );
-  gStatusFeedback = new nsMsgStatusFeedback();
+  gStatusFeedback = window.MsgStatusFeedback = new nsMsgStatusFeedback();
   window.browsingContext.docShell.allowAuth = true;
 
   // look in arguments[0] for parameters

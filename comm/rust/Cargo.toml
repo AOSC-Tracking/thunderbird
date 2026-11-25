@@ -5,7 +5,7 @@ name = "mozilla-central-workspace-hack"
 version = "0.1.0"
 license = "MPL-2.0"
 description = "Thunderbird extensions to mozilla-central-workspace-hack"
-rust-version = "1.90.0"
+rust-version = "1.95.0"
 edition = "2024"
 
 [features]
@@ -13,10 +13,10 @@ gkrust = []
 gkrust-gtest = ["gkrust"]
 
 [workspace]
-members = ['ews_xpcom', 'gkrust', 'graph_xpcom', 'gtest', 'mailnews_string_glue', 'mailnews_ui_glue', 'moz_http', 'ms_graph_tb', 'protocol_shared', 'sys_tray', 'xpcom_async_glue']
+members = ['ews_xpcom', 'gkrust', 'graph_xpcom', 'gtest', 'mailnews_string_glue', 'mailnews_ui_glue', 'moz_http', 'ms_graph_tb', 'protocol_client_service', 'protocol_shared', 'sys_tray', 'xpcom_async_glue']
 
 [workspace.package]
-rust-version = "1.90.0"
+rust-version = "1.95.0"
 
 [workspace.lints.clippy]
 # for details and motivations, see
@@ -62,7 +62,7 @@ uniffi = { version = "0.32" }
 uniffi_bindgen = { version = "0.32" }
 uniffi_pipeline = { version = "0.32" }
 rusqlite = { version = "0.37" }
-glean = { version = "=70.3.0" }
+glean = { version = "=71.0.0" }
 
 [target."cfg(windows)".dependencies.scopeguard]
 version = "1"
@@ -260,8 +260,6 @@ icu_collator_data = { path = "../../third_party/rust/icu_collator_data" }
 icu_normalizer = { path = "../../third_party/rust/icu_normalizer" }
 icu_normalizer_data = { path = "../../third_party/rust/icu_normalizer_data" }
 icu_collections = { path = "../../third_party/rust/icu_collections" }
-utf8_iter = { path = "../../third_party/rust/utf8_iter" }
-utf16_iter = { path = "../../third_party/rust/utf16_iter" }
 icu_properties = { path = "../../third_party/rust/icu_properties" }
 icu_properties_data = { path = "../../third_party/rust/icu_properties_data" }
 autocfg = { path = "../../third_party/rust/autocfg" }

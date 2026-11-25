@@ -473,7 +473,10 @@ export class CardDAVDirectory extends SQLiteDirectory {
     await this._queryServerVCardSupportLevel();
 
     const vCard = card.getProperty("_vCard", "");
-    if (this.getBoolValue("carddav.vcard3", false)) {
+    if (
+      this.getBoolValue("carddav.vcard3", false) ||
+      /^VERSION:3\.0\r?$/im.test(vCard)
+    ) {
       const vCardProperties = lazy.VCardProperties.fromVCard(vCard);
       if (!vCardProperties) {
         throw new Error(`Invalid vCard: ${vCard}`);
@@ -481,6 +484,9 @@ export class CardDAVDirectory extends SQLiteDirectory {
       if (vCardProperties.getFirstValue("version") == "4.0") {
         convertToVCard3(vCardProperties);
       }
+      convertValueTypes(vCardProperties);
+      addPlaceholderYears(vCardProperties);
+      addPhotoTypes(vCardProperties);
       // There must be an `N` property, even if empty. See RFC 2426, section
       // 3.1.2.
       if (!vCardProperties.getFirstEntry("n")) {
@@ -636,97 +642,103 @@ export class CardDAVDirectory extends SQLiteDirectory {
     log.log("Fetching all cards from the server.");
     this._syncInProgress = true;
 
-    const data = `<propfind xmlns="${PREFIX_BINDINGS.d}" ${NAMESPACE_STRING}>
-      <prop>
-        <resourcetype/>
-        <getetag/>
-        <cs:getctag/>
-      </prop>
-    </propfind>`;
+    try {
+      const data = `<propfind xmlns="${PREFIX_BINDINGS.d}" ${NAMESPACE_STRING}>
+        <prop>
+          <resourcetype/>
+          <getetag/>
+          <cs:getctag/>
+        </prop>
+      </propfind>`;
 
-    let response = await this._makeRequest("", {
-      method: "PROPFIND",
-      body: data,
-      headers: {
-        Depth: 1,
-      },
-      expectedStatuses: [207],
-    });
+      let response = await this._makeRequest("", {
+        method: "PROPFIND",
+        body: data,
+        headers: {
+          Depth: 1,
+        },
+        expectedStatuses: [207],
+      });
 
-    // A map of all existing hrefs and etags. If the etag for an href matches
-    // what we already have, we won't fetch it.
-    const currentHrefs = this._getCardsByHref();
+      // A map of all existing hrefs and etags. If the etag for an href matches
+      // what we already have, we won't fetch it.
+      const currentHrefs = this._getCardsByHref();
 
-    const hrefsToFetch = [];
-    for (const { href, properties } of this._readResponse(response.dom)) {
-      if (!properties || properties.querySelector("resourcetype collection")) {
-        continue;
-      }
-
-      const cardByHref = currentHrefs.get(href);
-      currentHrefs.delete(href);
-
-      const etag = properties.querySelector("getetag")?.textContent;
-      if (etag && cardByHref?.etag == etag) {
-        continue;
-      }
-
-      hrefsToFetch.push(href);
-    }
-
-    // Delete any existing cards we didn't see. They're not on the server so
-    // they shouldn't be on the client.
-    if (currentHrefs.size > 0) {
-      super.deleteCards(
-        Array.from(currentHrefs.values(), cardByHref =>
-          this.getCard(cardByHref.uid)
-        )
-      );
-    }
-
-    // Fetch any cards we don't already have, or that have changed.
-    while (hrefsToFetch.length) {
-      response = await this._multigetRequest(
-        hrefsToFetch.splice(0, this._multigetBatchSize)
-      );
-
-      const abCards = [];
-
+      const hrefsToFetch = [];
       for (const { href, properties } of this._readResponse(response.dom)) {
-        if (!properties) {
+        if (
+          !properties ||
+          properties.querySelector("resourcetype collection")
+        ) {
           continue;
         }
 
-        const etag = properties.querySelector("getetag")?.textContent;
-        const vCard = normalizeLineEndings(
-          properties.querySelector("address-data")?.textContent
-        );
+        const cardByHref = currentHrefs.get(href);
+        currentHrefs.delete(href);
 
-        try {
-          const abCard = lazy.VCardUtils.vCardToAbCard(vCard);
-          abCard.setProperty("_etag", etag);
-          abCard.setProperty("_href", href);
-          if (abCard.UID && this.cards.has(abCard.UID)) {
-            super.modifyCard(abCard);
-          } else {
-            abCards.push(abCard);
-          }
-        } catch (ex) {
-          log.error(`Error parsing: ${vCard}`);
-          console.error(ex);
+        const etag = properties.querySelector("getetag")?.textContent;
+        if (etag && cardByHref?.etag == etag) {
+          continue;
         }
+
+        hrefsToFetch.push(href);
       }
 
-      await this.bulkAddCardsInternal(abCards);
+      // Delete any existing cards we didn't see. They're not on the server so
+      // they shouldn't be on the client.
+      if (currentHrefs.size > 0) {
+        super.deleteCards(
+          Array.from(currentHrefs.values(), cardByHref =>
+            this.getCard(cardByHref.uid)
+          )
+        );
+      }
+
+      // Fetch any cards we don't already have, or that have changed.
+      while (hrefsToFetch.length) {
+        response = await this._multigetRequest(
+          hrefsToFetch.splice(0, this._multigetBatchSize)
+        );
+
+        const abCards = [];
+
+        for (const { href, properties } of this._readResponse(response.dom)) {
+          if (!properties) {
+            continue;
+          }
+
+          const etag = properties.querySelector("getetag")?.textContent;
+          const vCard = normalizeLineEndings(
+            properties.querySelector("address-data")?.textContent
+          );
+
+          try {
+            const abCard = lazy.VCardUtils.vCardToAbCard(vCard);
+            abCard.setProperty("_etag", etag);
+            abCard.setProperty("_href", href);
+            if (abCard.UID && this.cards.has(abCard.UID)) {
+              super.modifyCard(abCard);
+            } else {
+              abCards.push(abCard);
+            }
+          } catch (ex) {
+            log.error(`Error parsing: ${vCard}`);
+            console.error(ex);
+          }
+        }
+
+        await this.bulkAddCardsInternal(abCards);
+      }
+
+      await this._getSyncToken();
+
+      log.log("Sync with server completed successfully.");
+      Services.obs.notifyObservers(this, "addrbook-directory-synced");
+
+      this._scheduleNextSync();
+    } finally {
+      this._syncInProgress = false;
     }
-
-    await this._getSyncToken();
-
-    log.log("Sync with server completed successfully.");
-    Services.obs.notifyObservers(this, "addrbook-directory-synced");
-
-    this._scheduleNextSync();
-    this._syncInProgress = false;
   }
 
   /**
@@ -1137,6 +1149,103 @@ function convertToVCard3(vCardProperties) {
     if (newEntry) {
       vCardProperties.removeEntry(entry);
       vCardProperties.addEntry(newEntry);
+    }
+  }
+}
+
+/**
+ * Converts values with value types that vCard 3.0 doesn't have, such as those
+ * of a converted vCard 4.0, or those the contact editor creates.
+ *
+ * @param {VCardProperties} vCardProperties - A vCard 3.0, changed in place.
+ */
+function convertValueTypes(vCardProperties) {
+  for (const entry of vCardProperties.entries) {
+    if (typeof entry.value != "string") {
+      continue;
+    }
+    if (entry.type == "date-and-or-time") {
+      // vCard 3.0 dates are a date or a date-time (RFC 2426, section 3.1.5).
+      entry.type = entry.value.includes("T") ? "date-time" : "date";
+    } else if (entry.type == "timestamp") {
+      // REV is a date-time in vCard 3.0 (RFC 2426, section 3.6.4).
+      entry.type = "date-time";
+    } else if (entry.name == "tel" && entry.type == "text") {
+      // vCard 3.0 TEL is a plain phone number (RFC 2426, section 3.3.1).
+      entry.type = "phone-number";
+    } else if (entry.name == "tel" && entry.type == "uri") {
+      // Only convert simple tel: URIs, and values that aren't URIs at all,
+      // which vCard 4.0 TEL without a VALUE parameter is parsed as. Leave the
+      // other URIs as they are.
+      const match = /^tel:([^;%]+)$/i.exec(entry.value);
+      if (match) {
+        entry.type = "phone-number";
+        entry.value = match[1];
+      } else if (!/^[a-z][a-z0-9+.-]*:/i.test(entry.value)) {
+        entry.type = "phone-number";
+      }
+    } else if (entry.name == "geo" && entry.type == "uri") {
+      // vCard 3.0 GEO is latitude and longitude (RFC 2426, section 3.4.2).
+      // Only convert plain geo: URIs, so that e.g. an altitude or uncertainty
+      // isn't lost.
+      const match = /^geo:([^,;]+),([^,;]+)$/i.exec(entry.value);
+      if (match && isFinite(match[1]) && isFinite(match[2])) {
+        entry.type = "float";
+        entry.value = [+match[1], +match[2]];
+      }
+    }
+  }
+}
+
+/**
+ * Gives dates without a year a placeholder year, as iOS and DAVx5 do, since
+ * vCard 3.0 can't express them. Google keeps such dates, but drops ones like
+ * "--04-15". See VCardUtils.parseDate.
+ *
+ * @param {VCardProperties} vCardProperties - A vCard 3.0, changed in place.
+ */
+function addPlaceholderYears(vCardProperties) {
+  for (const entry of vCardProperties.entries) {
+    if (
+      !["bday", "anniversary"].includes(entry.name) ||
+      entry.type == "text" ||
+      entry.params["x-apple-omit-year"]
+    ) {
+      continue;
+    }
+    let date;
+    try {
+      date = lazy.VCardUtils.parseDate(entry.value, entry.params);
+    } catch (ex) {
+      continue;
+    }
+    if (date.year === null && date.month !== null && date.day !== null) {
+      date.year = 1604;
+      entry.params["x-apple-omit-year"] = "1604";
+      entry.type = "date";
+      entry.value = date.toString();
+    }
+  }
+}
+
+/**
+ * Gives inline photos without a TYPE parameter the type of their image. It is
+ * optional (RFC 2426, section 3.1.4), but iOS doesn't show photos without it.
+ *
+ * @param {VCardProperties} vCardProperties - A vCard 3.0, changed in place.
+ */
+function addPhotoTypes(vCardProperties) {
+  for (const entry of vCardProperties.getAllEntries("photo")) {
+    if (
+      entry.type != "binary" ||
+      entry.params.type ||
+      typeof entry.value != "string"
+    ) {
+      continue;
+    }
+    const mimeType = lazy.VCardUtils.imageTypeFromBase64(entry.value);
+    if (mimeType) {
+      entry.params.type = mimeType.substring("image/".length).toUpperCase();
     }
   }
 }

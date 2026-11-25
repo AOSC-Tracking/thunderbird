@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { countOccurrences } = ChromeUtils.importESModule(
+var { countOccurrences, getExpandedRecurrenceRule } = ChromeUtils.importESModule(
   "resource:///modules/calendar/calRecurrenceUtils.sys.mjs"
 );
 
@@ -60,6 +60,23 @@ add_task(async function countOccurrences_test() {
         "END:VEVENT",
       ],
       expected: 3,
+    },
+    {
+      input: [
+        "BEGIN:VEVENT",
+        "CREATED:20180912T090539Z",
+        "LAST-MODIFIED:20180912T090539Z",
+        "DTSTAMP:20180912T090539Z",
+        "UID:5b47fa17-f2fe-4d96-8cc2-19ce5be98020",
+        "SUMMARY:Occurring 3 times until a date, and on 2 rdates",
+        "RRULE:FREQ=DAILY;UNTIL=20180922T100000Z",
+        "RDATE;TZID=Europe/Berlin:20180921T150000",
+        "RDATE;TZID=Europe/Berlin:20180925T120000",
+        "DTSTART;TZID=Europe/Berlin:20180920T120000",
+        "DTEND;TZID=Europe/Berlin:20180920T130000",
+        "END:VEVENT",
+      ],
+      expected: 5,
     },
     {
       input: [
@@ -346,6 +363,115 @@ add_task(async function countOccurrences_test() {
       ],
       expected: 3,
     },
+    {
+      input: [
+        "BEGIN:VEVENT",
+        "CREATED:20180912T090539Z",
+        "LAST-MODIFIED:20180912T090539Z",
+        "DTSTAMP:20180912T090539Z",
+        "UID:5b47fa17-f2fe-4d96-8cc2-19ce5be98018",
+        "SUMMARY:Occurring 3 times by the first of two rules",
+        "RRULE:FREQ=DAILY;COUNT=3",
+        "RRULE:FREQ=WEEKLY;COUNT=5",
+        "DTSTART;TZID=Europe/Berlin:20180920T120000",
+        "DTEND;TZID=Europe/Berlin:20180920T130000",
+        "END:VEVENT",
+      ],
+      expected: 3,
+    },
+    {
+      input: [
+        "BEGIN:VEVENT",
+        "CREATED:20180912T090539Z",
+        "LAST-MODIFIED:20180912T090539Z",
+        "DTSTAMP:20180912T090539Z",
+        "UID:5b47fa17-f2fe-4d96-8cc2-19ce5be98019",
+        "SUMMARY:Occurring 3 times despite an EXRULE",
+        "EXRULE:FREQ=DAILY;COUNT=2",
+        "RRULE:FREQ=DAILY;COUNT=3",
+        "DTSTART;TZID=Europe/Berlin:20180920T120000",
+        "DTEND;TZID=Europe/Berlin:20180920T130000",
+        "END:VEVENT",
+      ],
+      expected: 3,
+    },
+    {
+      input: [
+        "BEGIN:VEVENT",
+        "CREATED:20180912T090539Z",
+        "LAST-MODIFIED:20180912T090539Z",
+        "DTSTAMP:20180912T090539Z",
+        "UID:5b47fa17-f2fe-4d96-8cc2-19ce5be98021",
+        "SUMMARY:Occurring on its start and 2 rdates",
+        "RDATE;TZID=Europe/Berlin:20180921T100000",
+        "RDATE;TZID=Europe/Berlin:20180922T140000",
+        "DTSTART;TZID=Europe/Berlin:20180920T120000",
+        "DTEND;TZID=Europe/Berlin:20180920T130000",
+        "END:VEVENT",
+      ],
+      expected: 3,
+    },
+    {
+      input: [
+        "BEGIN:VEVENT",
+        "CREATED:20180912T090539Z",
+        "LAST-MODIFIED:20180912T090539Z",
+        "DTSTAMP:20180912T090539Z",
+        "UID:5b47fa17-f2fe-4d96-8cc2-19ce5be98022",
+        "SUMMARY:Occurring on its start despite an EXRULE",
+        "EXRULE:FREQ=DAILY;COUNT=2",
+        "DTSTART;TZID=Europe/Berlin:20180920T120000",
+        "DTEND;TZID=Europe/Berlin:20180920T130000",
+        "END:VEVENT",
+      ],
+      expected: 1,
+    },
+    {
+      input: [
+        "BEGIN:VTODO",
+        "CREATED:20180912T090539Z",
+        "LAST-MODIFIED:20180912T090539Z",
+        "DTSTAMP:20180912T090539Z",
+        "UID:5b47fa17-f2fe-4d96-8cc2-19ce5be98023",
+        "SUMMARY:Task due once and on an rdate",
+        "RDATE;TZID=Europe/Berlin:20180921T100000",
+        "DUE;TZID=Europe/Berlin:20180920T120000",
+        "END:VTODO",
+      ],
+      expected: 2,
+    },
+    {
+      input: [
+        "BEGIN:VEVENT",
+        "CREATED:20180912T090539Z",
+        "LAST-MODIFIED:20180912T090539Z",
+        "DTSTAMP:20180912T090539Z",
+        "UID:5b47fa17-f2fe-4d96-8cc2-19ce5be98024",
+        "SUMMARY:Occurring 3 times, with an rdate on one of them",
+        "RRULE:FREQ=DAILY;COUNT=3",
+        "RDATE;TZID=Europe/Berlin:20180921T120000",
+        "DTSTART;TZID=Europe/Berlin:20180920T120000",
+        "DTEND;TZID=Europe/Berlin:20180920T130000",
+        "END:VEVENT",
+      ],
+      expected: 3,
+    },
+    {
+      input: [
+        "BEGIN:VEVENT",
+        "CREATED:20180912T090539Z",
+        "LAST-MODIFIED:20180912T090539Z",
+        "DTSTAMP:20180912T090539Z",
+        "UID:5b47fa17-f2fe-4d96-8cc2-19ce5be98025",
+        "SUMMARY:Occurring 3 times, with an exdate on none of them",
+        "RRULE:FREQ=DAILY;COUNT=3",
+        "EXDATE;TZID=Europe/Berlin:20180925T120000",
+        "DTSTART;TZID=Europe/Berlin:20180920T120000",
+        "DTEND;TZID=Europe/Berlin:20180920T130000",
+        "END:VEVENT",
+      ],
+      expected: 3,
+    },
   ];
 
   let i = 0;
@@ -366,4 +492,31 @@ add_task(async function countOccurrences_test() {
       );
     }
   }
+});
+
+add_task(function test_getExpandedRecurrenceRule() {
+  const item = createEventFromIcalString(
+    [
+      "BEGIN:VEVENT",
+      "DTSTART:20180920T100000Z",
+      "RDATE:20180925T100000Z",
+      "EXRULE:FREQ=WEEKLY",
+      "RRULE:FREQ=DAILY;COUNT=3",
+      "RRULE:FREQ=MONTHLY;COUNT=3",
+      "END:VEVENT",
+    ].join("\r\n")
+  );
+  equal(
+    getExpandedRecurrenceRule(item.recurrenceInfo).icalString,
+    "RRULE:FREQ=DAILY;COUNT=3\r\n",
+    "the first RRULE should be found past the RDATE and the EXRULE"
+  );
+
+  item.recurrenceInfo.deleteRecurrenceItemAt(3);
+  item.recurrenceInfo.deleteRecurrenceItemAt(2);
+  equal(
+    getExpandedRecurrenceRule(item.recurrenceInfo),
+    null,
+    "there should be no rule without an RRULE"
+  );
 });

@@ -17,6 +17,10 @@ const { MockExternalProtocolService } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/MockExternalProtocolService.sys.mjs"
 );
 
+const { sinon } = ChromeUtils.importESModule(
+  "resource://testing-common/Sinon.sys.mjs"
+);
+
 const tabmail = document.getElementById("tabmail");
 let calendar;
 
@@ -471,52 +475,64 @@ add_task(async function test_dialogDeleteMenuSingleEvent() {
   );
 });
 
-add_task(async function test_dialogDeleteMenuRecurringEvents() {
-  // The following day's occurrence has to be in the displayed week.
-  const testDate = new Date(todayDate);
-  if (testDate.getDay() == 6) {
-    testDate.setDate(testDate.getDate() - 1);
-  }
-  await createEvent({ calendar, repeats: true, baseDate: testDate });
-  await openAndShowEvent({ baseDate: testDate });
+add_task(async function test_dialogDeleteMenuRecurringEventsNoPromptPref() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["calendar.item.promptDelete", false]],
+  });
 
-  const dialog = document.getElementById("calendarDialog");
-  const eventId = dialog.getAttribute("event-id");
-  Assert.ok(
-    weekView.getEventBoxAt(window, nextDayColumn(testDate), 1),
-    "The following day calendar event box should exist"
-  );
-
-  const deleteAllEventsPromise = BrowserTestUtils.promiseAlertDialogOpen(
-    null,
-    "chrome://messenger/content/calendarPrompt.xhtml",
-    {
-      async callback(win) {
-        const promptDialog = win.document.querySelector("dialog");
-        const allEventsRadioOption = promptDialog.querySelector(
-          "#allEventsRadioOption"
-        );
-        const deleteButton = promptDialog.querySelector("#delete");
-        EventUtils.synthesizeMouseAtCenter(allEventsRadioOption, {}, win);
-        EventUtils.synthesizeMouseAtCenter(deleteButton, {}, win);
-      },
+  try {
+    // The following day's occurrence has to be in the displayed week.
+    const testDate = new Date(todayDate);
+    if (testDate.getDay() == 6) {
+      testDate.setDate(testDate.getDate() - 1);
     }
-  );
-  await subtestDeleteEventPrompt(deleteAllEventsPromise, testDate.getDay() + 1);
+    await createEvent({ calendar, repeats: true, baseDate: testDate });
+    await openAndShowEvent({ baseDate: testDate });
 
-  Assert.ok(
-    !weekView.getEventBoxAt(window, nextDayColumn(testDate), 1),
-    "The following day calendar event box should be removed"
-  );
+    const dialog = document.getElementById("calendarDialog");
+    const eventId = dialog.getAttribute("event-id");
+    Assert.ok(
+      weekView.getEventBoxAt(window, nextDayColumn(testDate), 1),
+      "The following day calendar event box should exist"
+    );
 
-  const event = await calendar.getItem(eventId);
-  Assert.ok(!event, "The event in the calendar should have been deleted");
+    // Even with the prompt pref set to false, we should still see the prompt.
+    const deleteAllEventsPromise = BrowserTestUtils.promiseAlertDialogOpen(
+      null,
+      "chrome://messenger/content/calendarPrompt.xhtml",
+      {
+        async callback(win) {
+          const promptDialog = win.document.querySelector("dialog");
+          const allEventsRadioOption = promptDialog.querySelector(
+            "#allEventsRadioOption"
+          );
+          const deleteButton = promptDialog.querySelector("#delete");
+          EventUtils.synthesizeMouseAtCenter(allEventsRadioOption, {}, win);
+          EventUtils.synthesizeMouseAtCenter(deleteButton, {}, win);
+        },
+      }
+    );
+    await subtestDeleteEventPrompt(
+      deleteAllEventsPromise,
+      testDate.getDay() + 1
+    );
 
-  EventUtils.synthesizeMouseAtCenter(
-    dialog.querySelector(".close-button"),
-    {},
-    window
-  );
+    Assert.ok(
+      !weekView.getEventBoxAt(window, nextDayColumn(testDate), 1),
+      "The following day calendar event box should be removed"
+    );
+
+    const event = await calendar.getItem(eventId);
+    Assert.ok(!event, "The event in the calendar should have been deleted");
+
+    EventUtils.synthesizeMouseAtCenter(
+      dialog.querySelector(".close-button"),
+      {},
+      window
+    );
+  } finally {
+    await SpecialPowers.popPrefEnv();
+  }
 });
 
 add_task(async function test_dialogDeleteMenuSingleOccurence() {
@@ -546,6 +562,104 @@ add_task(async function test_dialogDeleteMenuSingleOccurence() {
   await calendar.deleteItem(event);
 });
 
+add_task(async function test_dialogDeleteMenuSingleOccurrenceOfInfinite() {
+  const testDate = new Date();
+  await createEvent({
+    calendar,
+    repeats: true,
+    rrule: "RRULE:FREQ=DAILY",
+    baseDate: testDate,
+  });
+  await openAndShowEvent({ baseDate: testDate, offset: 1 });
+
+  const dialog = document.getElementById("calendarDialog");
+  const eventId = dialog.getAttribute("event-id");
+
+  const deletePromptPromise = BrowserTestUtils.promiseAlertDialogOpen(
+    null,
+    "chrome://messenger/content/calendarPrompt.xhtml",
+    {
+      async callback(win) {
+        const promptDialog = win.document.querySelector("dialog");
+        Assert.ok(
+          BrowserTestUtils.isVisible(
+            promptDialog.querySelector("#calendarPromptRadioOptions")
+          ),
+          "The prompt should offer to delete one or all occurrences"
+        );
+        EventUtils.synthesizeMouseAtCenter(
+          promptDialog.querySelector("#delete"),
+          {},
+          win
+        );
+      },
+    }
+  );
+
+  await subtestDeleteEventPrompt(deletePromptPromise, nextDayColumn(testDate));
+
+  const event = await calendar.getItem(eventId);
+  Assert.ok(event, "The infinite event in the calendar should still exist");
+
+  EventUtils.synthesizeMouseAtCenter(
+    dialog.querySelector(".close-button"),
+    {},
+    window
+  );
+
+  await calendar.deleteItem(event);
+});
+
+add_task(async function test_dialogDeleteMenuSingleEventNoPrompt() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["calendar.item.promptDelete", false]],
+  });
+
+  try {
+    await createEvent({ calendar });
+    const testDate = new Date();
+    await openAndShowEvent({ baseDate: testDate });
+
+    const dialog = document.getElementById("calendarDialog");
+    const eventId = dialog.getAttribute("event-id");
+    const menu = dialog.querySelector("menupopup");
+
+    const menuShownPromise = BrowserTestUtils.waitForPopupEvent(menu, "shown");
+    EventUtils.synthesizeMouseAtCenter(
+      dialog.querySelector(".menu-button"),
+      {}
+    );
+    await menuShownPromise;
+
+    Assert.ok(
+      BrowserTestUtils.isVisible(menu),
+      "The menupopup should visible after clicking menu button"
+    );
+
+    const deleteEventPromise = BrowserTestUtils.waitForEvent(
+      dialog,
+      "command",
+      true
+    );
+
+    const eventBoxRemovalPromise = BrowserTestUtils.waitForMutationCondition(
+      weekView.getColumnContainer(window, testDate.getDay() + 1),
+      { childList: true, subtree: true },
+      () => !weekView.getEventBoxAt(window, testDate.getDay() + 1, 1),
+      "Calendar event box should be removed"
+    );
+
+    menu.activateItem(menu.querySelector("#deleteEvent"));
+    await deleteEventPromise;
+    await eventBoxRemovalPromise;
+
+    const event = await calendar.getItem(eventId);
+    Assert.ok(!event, "The event in the calendar should be gone");
+  } finally {
+    await SpecialPowers.popPrefEnv();
+  }
+});
+
 add_task(async function test_closeDialogOnTabSwitch() {
   await createEvent({ calendar });
   const eventBox = await openAndShowEvent();
@@ -573,6 +687,118 @@ add_task(async function test_closeDialogOnTabSwitch() {
   );
 
   await calendar.deleteItem(eventBox.occurrence);
+});
+
+add_task(async function test_editButtonDisabledState() {
+  // Create stubs for cal.acl functions.
+  const isCalendarWritableStub = sinon.stub(cal.acl, "isCalendarWritable");
+  const userCanModifyItemStub = sinon.stub(cal.acl, "userCanModifyItem");
+
+  const originalCapability = calendar.getProperty(
+    "capabilities.events.supported"
+  );
+
+  const editButtonCases = [
+    {
+      writable: true,
+      canModify: true,
+      supported: true,
+      expectedHidden: false,
+      message: "Edit button should be visible",
+    },
+    {
+      writable: false,
+      canModify: true,
+      supported: true,
+      expectedHidden: true,
+      message: "Non writable edit button should be hidden",
+    },
+    {
+      writable: true,
+      canModify: false,
+      supported: true,
+      expectedHidden: true,
+      message: "Non modifiable edit button should be hidden",
+    },
+    {
+      writable: true,
+      canModify: true,
+      supported: false,
+      expectedHidden: true,
+      message: "Non supported edit button should be hidden",
+    },
+  ];
+
+  // Loop through each test case to test the hidden state of edit button.
+  for (const testCase of editButtonCases) {
+    isCalendarWritableStub.returns(testCase.writable);
+    userCanModifyItemStub.returns(testCase.canModify);
+
+    calendar.setProperty("capabilities.events.supported", testCase.supported);
+
+    await createEvent({ calendar });
+    const eventBox = await openAndShowEvent();
+    const dialog = document.getElementById("calendarDialog");
+    const editButton = dialog.querySelector("#edit");
+
+    const editButtonVisibilityTest = testCase.expectedHidden
+      ? BrowserTestUtils.isHidden(editButton)
+      : BrowserTestUtils.isVisible(editButton);
+
+    Assert.ok(editButtonVisibilityTest, testCase.message);
+
+    await cleanUp(dialog, eventBox);
+  }
+
+  // Clean up.
+  isCalendarWritableStub.restore();
+  userCanModifyItemStub.restore();
+
+  if (originalCapability === null) {
+    calendar.deleteProperty("capabilities.events.supported");
+  } else {
+    calendar.setProperty("capabilities.events.supported", originalCapability);
+  }
+});
+
+add_task(async function test_editButtonDisabledStateForInvitedEvent() {
+  const calendarUser = "mailto:receiver@example.com";
+  const organizerId = "mailto:sender@example.com";
+
+  // Create event user is invited to.
+  let event = await createEvent({
+    calendar,
+    attendees: [
+      {
+        id: calendarUser,
+        role: "REQ-PARTICIPANT",
+        participationStatus: "NEEDS-ACTION",
+      },
+    ],
+  });
+
+  calendar.setProperty("organizerId", calendarUser);
+
+  const updatedEvent = event.clone();
+  const organizer = new CalAttendee();
+  organizer.id = organizerId;
+  organizer.isOrganizer = true;
+  updatedEvent.organizer = organizer;
+
+  event = await calendar.modifyItem(updatedEvent, event);
+
+  const eventBox = await openAndShowEvent();
+  const dialog = document.getElementById("calendarDialog");
+  const editButton = dialog.querySelector("#edit");
+
+  Assert.ok(
+    BrowserTestUtils.isHidden(editButton),
+    "The edit button should be hidden when viewing event user is invited to"
+  );
+
+  // Clean up.
+  await cleanUp(dialog, eventBox);
+  calendar.setProperty("organizerId", "mailto:organizer@example.com");
 });
 
 /**

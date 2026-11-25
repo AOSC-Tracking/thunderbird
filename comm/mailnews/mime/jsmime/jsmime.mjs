@@ -138,10 +138,7 @@ const JsMIMEstructuredHeaders = function () {
   // There is no need to specialize the results for the header, so just pun it
   // back to parseAddressingHeader.
   function parseAddress(value) {
-    const headerparser = this;
-    return value.reduce(function (results, header) {
-      return results.concat(headerparser.parseAddressingHeader(header, true));
-    }, []);
+    return value.flatMap(header => this.parseAddressingHeader(header, true));
   }
   function writeAddress(value) {
     // Make sure the input is an array (accept a single entry)
@@ -893,7 +890,7 @@ const JsMIMEheaderparser = function () {
     }
 
     // The final (top-level) results list to append to.
-    let results = [];
+    const results = [];
     // Temporary results
     let addrlist = [];
 
@@ -986,8 +983,8 @@ const JsMIMEheaderparser = function () {
         displayName = localPart = address = lastComment = "";
         inAngle = inComment = needsSpace = afterAddress = false;
         // If we had prior email address results, commit them to the top-level.
-        if (addrlist.length > 0) {
-          results = results.concat(addrlist);
+        for (const addr of addrlist) {
+          results.push(addr);
         }
         addrlist = [];
       } else if (token === "<") {
@@ -1066,7 +1063,9 @@ const JsMIMEheaderparser = function () {
         // need to copy the results of addrlist into either a new group object or
         // the main list.
         if (groupName === "") {
-          results = results.concat(addrlist);
+          for (const addr of addrlist) {
+            results.push(addr);
+          }
         } else {
           results.push({
             name: groupName,
@@ -3671,11 +3670,7 @@ const headeremitter = JsMIMEheaderemitter();
 // "Extra" structured MIME headers.
 
 function parseNewsgroups(headers) {
-  let ng = [];
-  for (const header of headers) {
-    ng = ng.concat(header.split(/\s*,\s*/));
-  }
-  return ng;
+  return headers.flatMap(header => header.split(/\s*,\s*/));
 }
 function emitNewsgroups(groups) {
   // Don't encode the newsgroups names in RFC 2047...

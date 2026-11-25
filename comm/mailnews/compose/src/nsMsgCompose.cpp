@@ -1705,8 +1705,7 @@ nsresult nsMsgCompose::CreateMessage(const nsACString& originalMsgURI,
               msgHdr->GetStringReference(0, reference);
 
               nsCOMPtr<nsIMsgDBHdr> refHdr;
-              db->GetMsgHdrForMessageID(reference.get(),
-                                        getter_AddRefs(refHdr));
+              db->GetMsgHdrForMessageID(reference, getter_AddRefs(refHdr));
 
               if (refHdr) {
                 nsCString refSubject;
@@ -2777,8 +2776,9 @@ NS_IMETHODIMP nsMsgCompose::RememberQueuedDisposition() {
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIMsgDBHdr> msgHdr;
-    rv = folder->GetMessageHeader(msgKey, getter_AddRefs(msgHdr));
+    rv = folder->GetMsgHdr(msgKey, getter_AddRefs(msgHdr));
     NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_TRUE(msgHdr, NS_MSG_MESSAGE_NOT_FOUND);
 
     uint32_t pseudoHdrProp = 0;
     msgHdr->GetUint32Property("pseudoHdr", &pseudoHdrProp);

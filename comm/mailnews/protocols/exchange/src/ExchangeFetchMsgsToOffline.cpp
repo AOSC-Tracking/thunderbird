@@ -73,25 +73,13 @@ class MsgFetcher : public IExchangeMessageFetchListener {
     return StartNext();
   }
 
-  // IExchangeMessageFetchListener.onFetchStart implementation.
-  // (analogous to nsIStreamListener.onStart)
-  NS_IMETHOD OnFetchStart() override {
-    nsresult rv;
-    MOZ_ASSERT(!mOut);
-    nsCOMPtr<nsIMsgPluggableStore> store;
-    rv = mFolder->GetMsgStore(getter_AddRefs(store));
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = store->GetNewMsgOutputStream(mFolder, getter_AddRefs(mOut));
-    NS_ENSURE_SUCCESS(rv, rv);
-    return NS_OK;
-  }
-
   // IExchangeMessageFetchListener.onFetchedDataAvailable implementation.
   // (analogous to nsIStreamListener.onDataAvailable)
   NS_IMETHOD OnFetchedDataAvailable(nsIInputStream* inputStream) override {
+    nsresult rv = EnsureOutputStream();
+    NS_ENSURE_SUCCESS(rv, rv);
     uint64_t bytesCopied;
-    MOZ_ASSERT(mOut);
-    nsresult rv = SyncCopyStream(inputStream, mOut, bytesCopied);
+    rv = SyncCopyStream(inputStream, mOut, bytesCopied);
     NS_ENSURE_SUCCESS(rv, rv);
     mMsgSize += bytesCopied;
     return NS_OK;
@@ -119,14 +107,20 @@ class MsgFetcher : public IExchangeMessageFetchListener {
       }
     } else {
       // Update the database entry for the message to link it to the store.
-      MOZ_ASSERT(mOut);
+      // (An empty message delivers no data, so the stream may not exist yet.)
+      rv = EnsureOutputStream();
 
       nsAutoCString storeToken;
-      rv = store->FinishNewMessage(mFolder, mOut, storeToken);
+      if (NS_SUCCEEDED(rv)) {
+        rv = store->FinishNewMessage(mFolder, mOut, storeToken);
+      }
 
       nsCOMPtr<nsIMsgDBHdr> msgHdr;
       if (NS_SUCCEEDED(rv)) {
-        rv = mFolder->GetMessageHeader(msgKey, getter_AddRefs(msgHdr));
+        rv = mFolder->GetMsgHdr(msgKey, getter_AddRefs(msgHdr));
+      }
+      if (NS_SUCCEEDED(rv) && !msgHdr) {
+        rv = NS_MSG_MESSAGE_NOT_FOUND;
       }
 
       if (NS_SUCCEEDED(rv)) {
@@ -168,6 +162,19 @@ class MsgFetcher : public IExchangeMessageFetchListener {
  protected:
   virtual ~MsgFetcher() = default;
 
+  // Opens the store's output stream for the current message, if not already
+  // open. This waits for the content so that other writes to the folder can't
+  // pre-empt it while the request is in flight.
+  nsresult EnsureOutputStream() {
+    if (mOut) {
+      return NS_OK;
+    }
+    nsCOMPtr<nsIMsgPluggableStore> store;
+    nsresult rv = mFolder->GetMsgStore(getter_AddRefs(store));
+    NS_ENSURE_SUCCESS(rv, rv);
+    return store->GetNewMsgOutputStream(mFolder, getter_AddRefs(mOut));
+  }
+
   // Begin fetching the next queued message from the server.
   nsresult StartNext() {
     nsresult rv;
@@ -178,8 +185,9 @@ class MsgFetcher : public IExchangeMessageFetchListener {
     nsMsgKey msgKey = mMsgKeys.LastElement();
 
     nsCOMPtr<nsIMsgDBHdr> msgHdr;
-    rv = mFolder->GetMessageHeader(msgKey, getter_AddRefs(msgHdr));
+    rv = mFolder->GetMsgHdr(msgKey, getter_AddRefs(msgHdr));
     NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_TRUE(msgHdr, NS_MSG_MESSAGE_NOT_FOUND);
 
     nsCOMPtr<nsIMsgIncomingServer> server;
     rv = mFolder->GetServer(getter_AddRefs(server));

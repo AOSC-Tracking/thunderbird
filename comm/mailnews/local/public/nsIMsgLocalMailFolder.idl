@@ -9,6 +9,7 @@ interface nsIMsgDatabase;
 interface nsIMsgDBHdr;
 interface nsIMsgFolder;
 interface nsIMsgCopyServiceListener;
+interface nsIMsgUserFeedbackListener;
 
 [ptr] native nsLocalFolderScanState(nsLocalFolderScanState);
 
@@ -61,7 +62,12 @@ interface nsIMsgLocalMailFolder : nsISupports {
   void copyAllSubFolders(in nsIMsgFolder srcFolder, in nsIMsgWindow msgWindow,
                          in nsIMsgCopyServiceListener listener, in boolean isMove);
 
-  void onCopyCompleted(in nsISupports aSrcSupport, in boolean aMoveCopySucceeded);
+  /**
+   * Complete a copy or move and notify the copy service with its status.
+   * Callers must finalize a consistent destination summary after rollback
+   * before reporting failure.
+   */
+  void onCopyCompleted(in nsISupports srcSupport, in nsresult status);
   // Slated for removal. See Bug 1848476.
   attribute boolean checkForNewMessagesAfterParsing;
   void markMsgsOnPop3Server(in Array<nsIMsgDBHdr> aMessages, in int32_t aMark);
@@ -130,11 +136,17 @@ interface nsIMsgLocalMailFolder : nsISupports {
 
 
   /**
-   * Shows warning if there is not enough space in the message store
-   * for a message of the given size.
+   * Checks the store's mailbox-size limit and available disk space.
+   * Shows an alert if the store reports insufficient space or a query error.
+   *
+   * @param spaceRequested Number of bytes to add to the store.
+   * @param listener Optional feedback listener for the folder alert.
+   * @throws NS_ERROR_FILE_TOO_BIG if the mailbox-size limit would be exceeded.
+   * @throws NS_ERROR_FILE_NO_DEVICE_SPACE if there is insufficient disk space.
+   * @throws Other errors if the mailbox size or available space cannot be checked.
    */
-  boolean warnIfLocalFileTooBig(in nsIMsgWindow aWindow,
-                                [optional] in long long aSpaceRequested);
+  void checkSpaceAndWarn(in long long spaceRequested,
+                         [optional] in nsIMsgUserFeedbackListener listener);
 
   /**
    * Update properties on a new header from an old header, for cases where

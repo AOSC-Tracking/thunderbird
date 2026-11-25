@@ -27,6 +27,8 @@ support-files = [
 ["browser_addressBook.js"]
 
 ["browser_archive.js"]
+
+["browser_autoCompact.js"]
 tags = ["archive"]
 
 ["browser_browserRequestWindow.js"]
@@ -50,6 +52,8 @@ run-if = [
   "os != 'linux'",
   "!headless",
 ] # See bug 1806870.
+
+["browser_dragMessageFilenames.js"]
 
 ["browser_dummyRow.js"]
 

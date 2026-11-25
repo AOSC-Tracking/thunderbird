@@ -26,6 +26,7 @@
 #include "nsParseMailbox.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIMsgWindow.h"
+#include "nsIMsgUserFeedbackListener.h"
 #include "nsEmbedCID.h"
 #include "nsIPromptService.h"
 #include "nsIWindowMediator.h"
@@ -488,7 +489,7 @@ NS_IMETHODIMP nsMsgLocalMailFolder::GetDatabaseWithReparse(
             // we need to null out the db so that parsing gets kicked off again.
             mDatabase->RemoveListener(this);
             mDatabase = nullptr;
-            ThrowAlertMsg("parsingFolderFailed", aMsgWindow);
+            AlertFolderError(this, "parsingFolderFailed"_ns);
           }
           return rv;
         }
@@ -623,13 +624,10 @@ nsresult nsMsgLocalMailFolder::CreateSubfolderInternal(
   nsCOMPtr<nsIMsgPluggableStore> msgStore;
   rv = GetMsgStore(getter_AddRefs(msgStore));
   NS_ENSURE_SUCCESS(rv, rv);
+  // NS_MSG_ERROR_INVALID_FOLDER_NAME and NS_MSG_FOLDER_EXISTS (which may
+  // happen here due to localized folder name vs. name on disk) are reported
+  // to the caller, which is responsible for telling the user.
   rv = msgStore->CreateFolder(this, folderName, aNewFolder);
-  if (rv == NS_MSG_ERROR_INVALID_FOLDER_NAME) {
-    ThrowAlertMsg("folderCreationFailed", msgWindow);
-  } else if (rv == NS_MSG_FOLDER_EXISTS) {
-    // May happen here due to localized folder name vs. name on disk.
-    ThrowAlertMsg("folderExists", msgWindow);
-  }
 
   if (NS_SUCCEEDED(rv)) {
     // We need to notify explicitly the flag change because it failed when we
@@ -642,7 +640,8 @@ nsresult nsMsgLocalMailFolder::CreateSubfolderInternal(
 }
 
 NS_IMETHODIMP nsMsgLocalMailFolder::CompactAll(nsIUrlListener* aListener,
-                                               nsIMsgWindow* aMsgWindow) {
+                                               nsIMsgWindow* aMsgWindow,
+                                               bool expunge) {
   nsresult rv = NS_OK;
   nsCOMPtr<nsIMsgFolder> rootFolder;
   rv = GetRootFolder(getter_AddRefs(rootFolder));
@@ -674,12 +673,12 @@ NS_IMETHODIMP nsMsgLocalMailFolder::CompactAll(nsIUrlListener* aListener,
     }
   }
 
-  return AsyncCompactFolders(folderArray, aListener, aMsgWindow);
+  return AsyncCompactFolders(folderArray, aListener);
 }
 
 NS_IMETHODIMP nsMsgLocalMailFolder::Compact(nsIUrlListener* aListener,
                                             nsIMsgWindow* aMsgWindow) {
-  return AsyncCompactFolders({this}, aListener, aMsgWindow);
+  return AsyncCompactFolders({this}, aListener);
 }
 
 NS_IMETHODIMP nsMsgLocalMailFolder::EmptyTrash(nsIUrlListener* aListener) {
@@ -792,71 +791,6 @@ NS_IMETHODIMP nsMsgLocalMailFolder::DeleteSelf(nsIMsgWindow* msgWindow) {
   return rv;
 }
 
-nsresult nsMsgLocalMailFolder::ConfirmFolderDeletion(nsIMsgWindow* aMsgWindow,
-                                                     nsIMsgFolder* aFolder,
-                                                     bool* aResult) {
-  NS_ENSURE_ARG(aResult);
-  NS_ENSURE_ARG(aMsgWindow);
-  NS_ENSURE_ARG(aFolder);
-  if (Preferences::GetBool("mailnews.confirm.moveFoldersToTrash", true)) {
-    nsCOMPtr<nsIStringBundleService> bundleService =
-        mozilla::components::StringBundle::Service();
-    NS_ENSURE_TRUE(bundleService, NS_ERROR_UNEXPECTED);
-    nsCOMPtr<nsIStringBundle> bundle;
-    nsresult rv = bundleService->CreateBundle(
-        "chrome://messenger/locale/localMsgs.properties",
-        getter_AddRefs(bundle));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsAutoCString folderName;
-    rv = aFolder->GetName(folderName);
-    NS_ENSURE_SUCCESS(rv, rv);
-    AutoTArray<nsString, 1> formatStrings = {NS_ConvertUTF8toUTF16(folderName)};
-
-    nsAutoString deleteFolderDialogTitle;
-    rv = bundle->GetStringFromName("pop3DeleteFolderDialogTitle",
-                                   deleteFolderDialogTitle);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsAutoString deleteFolderButtonLabel;
-    rv = bundle->GetStringFromName("pop3DeleteFolderButtonLabel",
-                                   deleteFolderButtonLabel);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsAutoString confirmationStr;
-    rv = bundle->FormatStringFromName("pop3MoveFolderToTrash", formatStrings,
-                                      confirmationStr);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsCOMPtr<mozIDOMWindowProxy> domWindow;
-    nsCOMPtr<nsIWindowMediator> winMed =
-        do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    winMed->GetMostRecentWindow(nullptr, getter_AddRefs(domWindow));
-
-    nsCOMPtr<nsIPromptService> dlgService(
-        do_GetService(NS_PROMPTSERVICE_CONTRACTID, &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    int32_t buttonPressed = 0;
-    // Default the dialog to "cancel".
-    const uint32_t buttonFlags =
-        (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_0) +
-        (nsIPrompt::BUTTON_TITLE_CANCEL * nsIPrompt::BUTTON_POS_1);
-    bool dummyValue = false;
-    rv = dlgService->ConfirmEx(domWindow, deleteFolderDialogTitle.get(),
-                               confirmationStr.get(), buttonFlags,
-                               deleteFolderButtonLabel.get(), nullptr, nullptr,
-                               nullptr, &dummyValue, &buttonPressed);
-    NS_ENSURE_SUCCESS(rv, rv);
-    *aResult = !buttonPressed;  // "ok" is in position 0
-
-  } else {
-    *aResult = true;
-  }
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgLocalMailFolder::Rename(const nsACString& aNewName,
                                            nsIMsgWindow* msgWindow) {
   // Renaming to the same name is easy
@@ -875,10 +809,6 @@ NS_IMETHODIMP nsMsgLocalMailFolder::Rename(const nsACString& aNewName,
   NS_ENSURE_SUCCESS(rv, rv);
   rv = msgStore->RenameFolder(this, aNewName, getter_AddRefs(newFolder));
   if (NS_FAILED(rv)) {
-    if (msgWindow)
-      (void)ThrowAlertMsg(
-          (rv == NS_MSG_FOLDER_EXISTS) ? "folderExists" : "folderRenameFailed",
-          msgWindow);
     return rv;
   }
 
@@ -895,7 +825,7 @@ NS_IMETHODIMP nsMsgLocalMailFolder::Rename(const nsACString& aNewName,
     bool changed = false;
     MatchOrChangeFilterDestination(newFolder, true /*case-insensitive*/,
                                    &changed);
-    if (changed) AlertFilterChanged(msgWindow);
+    if (changed) AlertFilterChanged(this);
 
     if (count > 0) {
       // The store creates the new folder with our parent's AddSubfolder(),
@@ -949,7 +879,7 @@ nsresult nsMsgLocalMailFolder::RenameSubFolders(nsIMsgWindow* msgWindow,
       bool changed = false;
       msgFolder->MatchOrChangeFilterDestination(
           newFolder, true /*case-insensitive*/, &changed);
-      if (changed) msgFolder->AlertFilterChanged(msgWindow);
+      if (changed) AlertFilterChanged(msgFolder);
       static_cast<nsMsgLocalMailFolder*>(newFolder.get())
           ->RenameSubFolders(msgWindow, msgFolder);
     }
@@ -1173,7 +1103,7 @@ nsMsgLocalMailFolder::DeleteMessages(
           }
         }
       } else if (rv == NS_MSG_FOLDER_BUSY) {
-        ThrowAlertMsg("deletingMsgsFailed", msgWindow);
+        AlertFolderError(this, "deletingMsgsFailed"_ns);
       }
 
       // Let everyone know the operation has finished.
@@ -1182,12 +1112,12 @@ nsMsgLocalMailFolder::DeleteMessages(
       // NOTE: This reenabling also forces immediate recount + notification.
       EnableNotifications(allMessageCountNotifications, true);
       if (msgWindow) {
-        AutoCompact(msgWindow);
+        AutoCompact();
       }
     }
   }
 
-  if (msgWindow && !isMove && (deleteStorage || isTrashFolder)) {
+  if (!isMove && (deleteStorage || isTrashFolder)) {
     // Clear undo and redo stack.
     nsCOMPtr<nsITransactionManager> txnMgr;
     nsCOMPtr<nsIMsgTransactionService> txns =
@@ -1283,9 +1213,7 @@ nsMsgLocalMailFolder::MarkAllMessagesRead(nsIMsgWindow* aMsgWindow) {
   mDatabase->Commit(nsMsgDBCommitType::kLargeCommit);
 
   // Setup a undo-state
-  if (aMsgWindow)
-    rv = AddMarkAllReadUndoAction(aMsgWindow, thoseMarked.Elements(),
-                                  thoseMarked.Length());
+  rv = AddMarkAllReadUndoAction(thoseMarked.Elements(), thoseMarked.Length());
 
   return rv;
 }
@@ -1342,7 +1270,7 @@ NS_IMETHODIMP nsMsgLocalMailFolder::OnAnnouncerGoingAway(
 
 NS_IMETHODIMP
 nsMsgLocalMailFolder::OnCopyCompleted(nsISupports* srcSupport,
-                                      bool moveCopySucceeded) {
+                                      nsresult status) {
   if (mCopyState && mCopyState->m_notifyFolderLoaded)
     NotifyFolderEvent(kFolderLoaded);
 
@@ -1361,31 +1289,32 @@ nsMsgLocalMailFolder::OnCopyCompleted(nsISupports* srcSupport,
     AddKeywordsToMessages({&*mCopyState->m_newHdr},
                           mCopyState->m_newMsgKeywords);
   }
-  if (moveCopySucceeded && mDatabase) {
-    mDatabase->SetSummaryValid(true);
-    (void)CloseDB();
+  if (NS_SUCCEEDED(status)) {
+    FinalizeCopyDatabase();
   }
 
   delete mCopyState;
   mCopyState = nullptr;
   nsCOMPtr<nsIMsgCopyService> copyService =
       mozilla::components::Copy::Service();
-  return copyService->NotifyCompletion(
-      srcSupport, this, moveCopySucceeded ? NS_OK : NS_ERROR_FAILURE);
+  return copyService->NotifyCompletion(srcSupport, this, status);
 }
 
-bool nsMsgLocalMailFolder::CheckIfSpaceForCopy(nsIMsgWindow* msgWindow,
-                                               nsIMsgFolder* srcFolder,
-                                               nsISupports* srcSupports,
-                                               bool isMove,
-                                               int64_t totalMsgSize) {
-  bool spaceNotAvailable = true;
-  nsresult rv =
-      WarnIfLocalFileTooBig(msgWindow, totalMsgSize, &spaceNotAvailable);
-  if (NS_FAILED(rv) || spaceNotAvailable) {
+void nsMsgLocalMailFolder::FinalizeCopyDatabase() {
+  if (mDatabase) {
+    mDatabase->SetSummaryValid(true);
+    (void)CloseDB();
+  }
+}
+
+bool nsMsgLocalMailFolder::CheckIfSpaceForCopy(
+    nsIMsgUserFeedbackListener* listener, nsIMsgFolder* srcFolder,
+    nsISupports* srcSupports, bool isMove, int64_t totalMsgSize) {
+  nsresult rv = CheckSpaceAndWarn(totalMsgSize, listener);
+  if (NS_FAILED(rv)) {
     if (isMove && srcFolder)
       srcFolder->NotifyFolderEvent(kDeleteOrMoveMsgFailed);
-    OnCopyCompleted(srcSupports, false);
+    OnCopyCompleted(srcSupports, rv);
     return false;
   }
   return true;
@@ -1403,7 +1332,7 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
   if (NS_SUCCEEDED(rv) && isServer) {
     NS_ERROR("Destination is the root folder. Cannot move/copy here");
     if (isMove) srcFolder->NotifyFolderEvent(kDeleteOrMoveMsgFailed);
-    return OnCopyCompleted(srcSupport, false);
+    return OnCopyCompleted(srcSupport, NS_ERROR_FAILURE);
   }
   if (srcHdrs.IsEmpty()) {
     NS_WARNING("Cannot copy an empty message array");
@@ -1412,6 +1341,7 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
 
   // If allowUndo is true, this should be a user-initiated action.
   UpdateTimestamps(allowUndo);
+  nsCOMPtr<nsIMsgUserFeedbackListener> feedback = do_QueryInterface(listener);
   nsCString protocolType;
   rv = srcFolder->GetURI(protocolType);
   protocolType.SetLength(protocolType.FindChar(':'));
@@ -1445,12 +1375,12 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
     // messages is posted.
     if (needOfflineBodies && !hasMsgOffline) {
       if (isMove) srcFolder->NotifyFolderEvent(kDeleteOrMoveMsgFailed);
-      ThrowAlertMsg("cantMoveMsgWOBodyOffline", msgWindow);
-      return OnCopyCompleted(srcSupport, false);
+      AlertFolderError(this, "cantMoveMsgWOBodyOffline"_ns, feedback);
+      return OnCopyCompleted(srcSupport, NS_ERROR_FAILURE);
     }
   }
 
-  if (!CheckIfSpaceForCopy(msgWindow, srcFolder, srcSupport, isMove,
+  if (!CheckIfSpaceForCopy(feedback, srcFolder, srcSupport, isMove,
                            totalMsgSize))
     return NS_OK;
 
@@ -1466,7 +1396,7 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
                               getter_AddRefs(undoTxn), &storeDidCopy);
   if (storeDidCopy) {
     NS_ASSERTION(undoTxn, "if store does copy, it needs to add undo action");
-    if (msgWindow && undoTxn) {
+    if (allowUndo && undoTxn) {
       nsCOMPtr<nsITransactionManager> txnMgr;
       nsCOMPtr<nsIMsgTransactionService> txns =
           mozilla::components::Txns::Service();
@@ -1499,7 +1429,7 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
       }
     }
 
-    OnCopyCompleted(srcSupport, NS_SUCCEEDED(rv));
+    OnCopyCompleted(srcSupport, rv);
     return rv;
   }
   // If the store doesn't do the copy, we'll stream the source messages into
@@ -1524,8 +1454,8 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
                      isFolder, allowUndo);
 
   if (NS_FAILED(rv)) {
-    ThrowAlertMsg("operationFailedFolderBusy", msgWindow);
-    (void)OnCopyCompleted(srcSupport, false);
+    AlertFolderError(this, "operationFailedFolderBusy"_ns, feedback);
+    (void)OnCopyCompleted(srcSupport, rv);
     return rv;
   }
 
@@ -1571,7 +1501,7 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
     rv = CopyMessagesTo(keyArray, msgWindow, isMove);
     if (NS_FAILED(rv)) {
       NS_ERROR("copy message failed");
-      (void)OnCopyCompleted(srcSupport, false);
+      (void)OnCopyCompleted(srcSupport, rv);
     }
   } else {
     // This obtains the source messages from local/offline storage to do the
@@ -1581,7 +1511,7 @@ nsMsgLocalMailFolder::CopyMessages(nsIMsgFolder* srcFolder,
       rv = CopyMessageTo(msgSupport, msgWindow, isMove);
       if (NS_FAILED(rv)) {
         NS_ASSERTION(false, "copy message failed");
-        (void)OnCopyCompleted(srcSupport, false);
+        (void)OnCopyCompleted(srcSupport, rv);
       }
     }
   }
@@ -1642,7 +1572,7 @@ nsresult nsMsgLocalMailFolder::CopyFolderAcrossServer(
       // them explicitly.
       nsCOMPtr<nsISupports> srcSupports = do_QueryInterface(srcFolder);
       localFolder->CopyAllSubFolders(srcFolder, msgWindow, listener, moveMsgs);
-      return localFolder->OnCopyCompleted(srcSupports, true);
+      return localFolder->OnCopyCompleted(srcSupports, NS_OK);
     }
   }
   return NS_OK;  // otherwise the front-end will say Exception::CopyFolder
@@ -1703,23 +1633,9 @@ nsMsgLocalMailFolder::CopyFolderLocal(nsIMsgFolder* srcFolder,
     // do it just for the parent folder (isMoveFolder is true for parent only)
     // if we are deleting/moving a folder tree don't confirm for rss folders.
     if (isMoveFolder) {
-      // if there's a msgWindow, confirm the deletion
-      if (msgWindow) {
-        bool okToDelete = false;
-        ConfirmFolderDeletion(msgWindow, srcFolder, &okToDelete);
-        if (!okToDelete) return NS_MSG_ERROR_COPY_FOLDER_ABORTED;
-      }
       // if we are moving a favorite folder to trash, we should clear the
       // favorites flag so it gets removed from the view.
       srcFolder->ClearFlag(nsMsgFolderFlags::Favorite);
-    }
-
-    bool match = false;
-    srcFolder->MatchOrChangeFilterDestination(nullptr, false, &match);
-    if (match && msgWindow) {
-      bool confirmed = false;
-      srcFolder->ConfirmFolderDeletionForFilter(msgWindow, &confirmed);
-      if (!confirmed) return NS_MSG_ERROR_COPY_FOLDER_ABORTED;
     }
   }
 
@@ -1787,9 +1703,10 @@ nsMsgLocalMailFolder::CopyFileMessage(nsIFile* aFile, nsIMsgDBHdr* msgToReplace,
   int64_t fileSize = 0;
 
   nsCOMPtr<nsISupports> fileSupport(aFile);
+  nsCOMPtr<nsIMsgUserFeedbackListener> feedback = do_QueryInterface(listener);
 
   aFile->GetFileSize(&fileSize);
-  if (!CheckIfSpaceForCopy(msgWindow, nullptr, fileSupport, false, fileSize))
+  if (!CheckIfSpaceForCopy(feedback, nullptr, fileSupport, false, fileSize))
     return NS_OK;
 
   nsTArray<RefPtr<nsIMsgDBHdr>> messages;
@@ -1882,7 +1799,7 @@ nsMsgLocalMailFolder::CopyFileMessage(nsIFile* aFile, nsIMsgDBHdr* msgToReplace,
     // existing code already supports doing those deletes, we are just going
     // to end the copy.
     if (NS_SUCCEEDED(rv) && msgToReplace && mDatabase) {
-      rv = OnCopyCompleted(fileSupport, true);
+      rv = OnCopyCompleted(fileSupport, NS_OK);
     }
 
     if (inputStream) {
@@ -1891,7 +1808,7 @@ nsMsgLocalMailFolder::CopyFileMessage(nsIFile* aFile, nsIMsgDBHdr* msgToReplace,
   }
 
   if (NS_FAILED(rv)) {
-    (void)OnCopyCompleted(fileSupport, false);
+    (void)OnCopyCompleted(fileSupport, rv);
   }
 
   return rv;
@@ -2133,7 +2050,9 @@ NS_IMETHODIMP nsMsgLocalMailFolder::CopyData(nsIInputStream* aIStream,
 // Upon failure, sets mCopyState->m_writeFailed and returns false.
 bool nsMsgLocalMailFolder::CopyLine(mozilla::Span<const char> line) {
   if (!mCopyState->m_fileStream) {
-    ThrowAlertMsg("copyMsgWriteFailed", mCopyState->m_msgWindow);
+    nsCOMPtr<nsIMsgUserFeedbackListener> feedback =
+        do_QueryInterface(mCopyState->m_listener);
+    AlertFolderError(this, "copyMsgWriteFailed"_ns, feedback);
     mCopyState->m_writeFailed = true;
     return false;  // Stop processing!
   }
@@ -2143,7 +2062,9 @@ bool nsMsgLocalMailFolder::CopyLine(mozilla::Span<const char> line) {
   nsresult rv = mCopyState->m_fileStream->Write(line.data(), line.Length(),
                                                 &bytesWritten);
   if (NS_FAILED(rv)) {
-    ThrowAlertMsg("copyMsgWriteFailed", mCopyState->m_msgWindow);
+    nsCOMPtr<nsIMsgUserFeedbackListener> feedback =
+        do_QueryInterface(mCopyState->m_listener);
+    AlertFolderError(this, "copyMsgWriteFailed"_ns, feedback);
     mCopyState->m_writeFailed = true;
     return false;  // Stop processing!
   }
@@ -2234,11 +2155,8 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
     }
 
     if (!mCopyState->m_isMove) {
-      // passing true because the messages that have been successfully
-      // copied have their corresponding hdrs in place. The message that has
-      // failed has been truncated so the msf file and berkeley mailbox
-      // are in sync.
-      (void)OnCopyCompleted(mCopyState->m_srcSupport, true);
+      FinalizeCopyDatabase();
+      (void)OnCopyCompleted(mCopyState->m_srcSupport, NS_ERROR_FAILURE);
       // enable the dest folder
       EnableNotifications(allMessageCountNotifications, true);
     }
@@ -2370,21 +2288,17 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
           CopyPropertiesToMsgHdr(newHdr, mCopyState->m_message,
                                  mCopyState->m_isMove);
         } else {
-          // Carry over some of the enforced flags, but do not clear any of the
-          // already set flags (for example nsMsgMessageFlags::Queued or
-          // nsMsgMessageFlags::MDNReportSent).
-          uint32_t carryOver = nsMsgMessageFlags::New |
-                               nsMsgMessageFlags::Read |
-                               nsMsgMessageFlags::Marked;
+          // Flags whose value is set by the caller instead of being taken
+          // from the file's X-Mozilla-Status header, either because the
+          // caller knows better or because the file is untrusted. Other
+          // parsed flags (for example nsMsgMessageFlags::Queued or
+          // nsMsgMessageFlags::MDNReportSent) are preserved.
+          uint32_t enforcedFlags =
+              nsMsgMessageFlags::New | nsMsgMessageFlags::Read |
+              nsMsgMessageFlags::Marked | nsMsgMessageFlags::FeedMsg;
 
-          // The first half of this OR operation represents the values of the
-          // flags that are *not* part of `carryOver`, which `parseMsgState` has
-          // identified and we want to preserve. The second half represents the
-          // values of the flags defined by `carryOver` in the original message,
-          // which we want to, well, carry over onto the new header (and
-          // overwrite any value the parser has found for them).
-          newHdr->SetFlags((newFlags & ~carryOver) |
-                           ((mCopyState->m_flags) & carryOver));
+          newHdr->SetFlags((newFlags & ~enforcedFlags) |
+                           (mCopyState->m_flags & enforcedFlags));
         }
 
         // Add the new header to the database.
@@ -2460,7 +2374,7 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
       // If this is done on move of selected messages between "mailbox" folders,
       // the source messages are never deleted. So do this only on msg copy.
       if (!mCopyState->m_isMove) {
-        if (mCopyState->m_msgWindow && mCopyState->m_undoMsgTxn) {
+        if (mCopyState->m_undoMsgTxn) {
           nsCOMPtr<nsITransactionManager> txnMgr;
           nsCOMPtr<nsIMsgTransactionService> txns =
               mozilla::components::Txns::Service();
@@ -2474,7 +2388,7 @@ nsMsgLocalMailFolder::EndCopy(bool aCopySucceeded) {
 
         // enable the dest folder
         EnableNotifications(allMessageCountNotifications, true);
-        (void)OnCopyCompleted(mCopyState->m_srcSupport, true);
+        (void)OnCopyCompleted(mCopyState->m_srcSupport, NS_OK);
       }
     }
     // Send the itemAdded notification in case we didn't send the
@@ -2508,11 +2422,8 @@ nsMsgLocalMailFolder::EndMove(bool moveSucceeded) {
     NS_ENSURE_SUCCESS(rv, rv);
     srcFolder->NotifyFolderEvent(kDeleteOrMoveMsgFailed);
 
-    /* passing true because the messages that have been successfully copied have
-       their corresponding hdrs in place. The message that has failed has been
-       truncated so the msf file and berkeley mailbox are in sync*/
-
-    (void)OnCopyCompleted(mCopyState->m_srcSupport, true);
+    FinalizeCopyDatabase();
+    (void)OnCopyCompleted(mCopyState->m_srcSupport, NS_ERROR_FAILURE);
     // enable the dest folder
     EnableNotifications(allMessageCountNotifications, true);
     return NS_OK;
@@ -2542,7 +2453,7 @@ nsMsgLocalMailFolder::EndMove(bool moveSucceeded) {
     rv = srcFolder->DeleteMessages(mCopyState->m_messages,
                                    mCopyState->m_msgWindow, true, true, nullptr,
                                    mCopyState->m_allowUndo);
-    AutoCompact(mCopyState->m_msgWindow);
+    AutoCompact();
 
     // enable the dest folder
     EnableNotifications(allMessageCountNotifications, true);
@@ -2552,8 +2463,7 @@ nsMsgLocalMailFolder::EndMove(bool moveSucceeded) {
     srcFolder->NotifyFolderEvent(NS_SUCCEEDED(rv) ? kDeleteOrMoveMsgCompleted
                                                   : kDeleteOrMoveMsgFailed);
 
-    if (NS_SUCCEEDED(rv) && mCopyState->m_msgWindow &&
-        mCopyState->m_undoMsgTxn) {
+    if (NS_SUCCEEDED(rv) && mCopyState->m_undoMsgTxn) {
       nsCOMPtr<nsITransactionManager> txnMgr;
       nsCOMPtr<nsIMsgTransactionService> txns =
           mozilla::components::Txns::Service();
@@ -2564,12 +2474,8 @@ nsMsgLocalMailFolder::EndMove(bool moveSucceeded) {
         txnMgr->DoTransaction(txn);
       }
     }
-    (void)OnCopyCompleted(
-        mCopyState->m_srcSupport,
-        NS_SUCCEEDED(rv)
-            ? true
-            : false);  // clear the copy state so that the next message from a
-                       // different folder can be move
+    // Clear the copy state before moving messages from another folder.
+    (void)OnCopyCompleted(mCopyState->m_srcSupport, rv);
   }
 
   return NS_OK;
@@ -3182,7 +3088,7 @@ nsMsgLocalMailFolder::OnMessageClassified(const nsACString& aMsgURI,
         GetProcessingFlags(msgKey, &processingFlags);
         if (folder && !(processingFlags & nsMsgProcessingFlags::FilterToMove)) {
           nsCOMPtr<nsIMsgDBHdr> mailHdr;
-          rv = GetMessageHeader(msgKey, getter_AddRefs(mailHdr));
+          rv = GetMsgHdr(msgKey, getter_AddRefs(mailHdr));
           if (NS_SUCCEEDED(rv) && mailHdr) messages.AppendElement(mailHdr);
         } else {
           // We don't need the processing flag any more.
@@ -3458,27 +3364,30 @@ nsresult nsMsgLocalMailFolder::AddMessageBatch2(
 
 #endif  // MOZ_PANORAMA
 
-NS_IMETHODIMP
-nsMsgLocalMailFolder::WarnIfLocalFileTooBig(nsIMsgWindow* aWindow,
-                                            int64_t aSpaceRequested,
-                                            bool* aTooBig) {
-  NS_ENSURE_ARG_POINTER(aTooBig);
-
-  *aTooBig = true;
+NS_IMETHODIMP nsMsgLocalMailFolder::CheckSpaceAndWarn(
+    int64_t spaceRequested, nsIMsgUserFeedbackListener* listener) {
   nsCOMPtr<nsIMsgPluggableStore> msgStore;
   nsresult rv = GetMsgStore(getter_AddRefs(msgStore));
   NS_ENSURE_SUCCESS(rv, rv);
   bool spaceAvailable = false;
   // check if we have a reasonable amount of space left
-  rv = msgStore->HasSpaceAvailable(this, aSpaceRequested, &spaceAvailable);
+  rv = msgStore->HasSpaceAvailable(this, spaceRequested, &spaceAvailable);
+  // NS_OK with a false result still means insufficient space. Unsupported
+  // disk-space queries return NS_OK with a true result in the built-in stores.
   if (NS_SUCCEEDED(rv) && spaceAvailable) {
-    *aTooBig = false;
-  } else if (rv == NS_ERROR_FILE_TOO_BIG) {
-    ThrowAlertMsg("mailboxTooLarge", aWindow);
-  } else {
-    ThrowAlertMsg("outOfDiskSpace", aWindow);
+    return NS_OK;
   }
-  return NS_OK;
+  if (NS_SUCCEEDED(rv)) {
+    rv = NS_ERROR_FILE_NO_DEVICE_SPACE;
+  }
+  if (rv == NS_ERROR_FILE_TOO_BIG) {
+    AlertFolderError(this, "mailboxTooLarge"_ns, listener);
+  } else if (rv == NS_ERROR_FILE_NO_DEVICE_SPACE) {
+    AlertFolderError(this, "outOfDiskSpaceGeneric"_ns, listener);
+  } else {
+    AlertFolderError(this, rv, listener);
+  }
+  return rv;
 }
 
 NS_IMETHODIMP nsMsgLocalMailFolder::FetchMsgPreviewText(
@@ -3492,8 +3401,9 @@ NS_IMETHODIMP nsMsgLocalMailFolder::FetchMsgPreviewText(
   for (uint32_t i = 0; i < aKeysToFetch.Length(); i++) {
     nsCOMPtr<nsIMsgDBHdr> msgHdr;
     nsCString prevBody;
-    nsresult rv = GetMessageHeader(aKeysToFetch[i], getter_AddRefs(msgHdr));
+    nsresult rv = GetMsgHdr(aKeysToFetch[i], getter_AddRefs(msgHdr));
     NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_TRUE(msgHdr, NS_MSG_MESSAGE_NOT_FOUND);
     // ignore messages that already have a preview body.
     msgHdr->GetStringProperty("preview", prevBody);
     if (!prevBody.IsEmpty()) continue;

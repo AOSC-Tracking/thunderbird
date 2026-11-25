@@ -25,6 +25,9 @@ tags = ["archive"]
 
 ["test_devtools_url.js"]
 
+["test_dnsParser.js"]
+skip-if = ["os == 'win'"]
+
 ["test_emptyTrash_dbViewWrapper.js"]
 run-sequentially = true  # Avoid bustage.
 
@@ -37,6 +40,10 @@ tags = ["dataadapter"]
 skip-if = [
   "os == 'win' && msix", # MSIX has a distribution.ini and it's unwritable. Tests fail.
 ]
+
+["test_midUri.js"]
+
+["test_migrateOTREnabled.js"]
 
 ["test_migrateSearchDialog.js"]
 
@@ -55,6 +62,8 @@ skip-if = [
 ["test_state_preferenceSlice.js"]
 
 ["test_state_store.js"]
+
+["test_state_testUtils.js"]
 
 ["test_state_xulStoreSlice.js"]
 

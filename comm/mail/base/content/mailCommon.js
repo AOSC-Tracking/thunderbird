@@ -46,6 +46,67 @@ const nsMsgKey_None = 0xffffffff;
 
 var gFolder, gViewWrapper;
 
+/**
+ * Creates a listener that collects folder errors for a manual filter run.
+ * Shows the collected errors in the final failure prompt.
+ *
+ * @param {nsIMsgFolder} folder - The folder to filter.
+ * @returns {nsIMsgOperationListener} The run's completion and feedback listener.
+ */
+function filterRunListener(folder) {
+  const errors = new Set();
+  return {
+    QueryInterface: ChromeUtils.generateQI([
+      "nsIMsgOperationListener",
+      "nsIMsgUserFeedbackListener",
+    ]),
+    onAlert(message, serverKey, silent) {
+      if (silent || window.closed) {
+        return false;
+      }
+      errors.add(message);
+      return true;
+    },
+    onCertError() {
+      throw Components.Exception(
+        "Certificate errors require the mail session feedback listeners",
+        Cr.NS_ERROR_NOT_IMPLEMENTED
+      );
+    },
+    async onStopOperation(status) {
+      if (Components.isSuccessCode(status)) {
+        return;
+      }
+      const [message, openLogLabel] = await document.l10n.formatValues([
+        "apply-filters-failed",
+        "apply-filters-failed-open-log-button",
+      ]);
+      if (
+        !Services.prompt.confirmEx(
+          window.top,
+          null,
+          [message, ...errors].join("\n\n"),
+          Services.prompt.BUTTON_TITLE_IS_STRING *
+            Services.prompt.BUTTON_POS_0 +
+            Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1,
+          openLogLabel,
+          null,
+          null,
+          null,
+          {}
+        )
+      ) {
+        window.top.openDialog(
+          "chrome://messenger/content/viewLog.xhtml",
+          "FilterLog",
+          "chrome,dependent,titlebar,resizable,centerscreen",
+          { filterList: folder.getFilterList(window.top.msgWindow) }
+        );
+      }
+    },
+  };
+}
+
 var commandController = {
   _composeCommands: {
     cmd_editDraftMsg: Ci.nsIMsgCompType.Draft,
@@ -375,7 +436,8 @@ var commandController = {
       MailServices.filters.applyFiltersToFolders(
         tempFilterList,
         [gFolder],
-        top.msgWindow
+        top.msgWindow,
+        filterRunListener(gFolder)
       );
     },
     cmd_applyFiltersToSelection() {
@@ -386,7 +448,8 @@ var commandController = {
           selectedMessages,
           [],
           gFolder,
-          top.msgWindow
+          top.msgWindow,
+          filterRunListener(gFolder)
         );
       }
     },
@@ -885,6 +948,7 @@ var commandController = {
       }
       if (
         messagePaneBrowser &&
+        !messagePaneBrowser.isRemoteBrowser &&
         Services.prefs.getBoolPref("mailnews.reply_quoting_selection")
       ) {
         const actor =

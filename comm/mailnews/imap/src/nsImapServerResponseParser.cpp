@@ -64,6 +64,7 @@ nsImapServerResponseParser::nsImapServerResponseParser(
   fCurrentCommandIsSingleMessageFetch = false;
   fSavedFlagInfo = false;
   fCurrentResponseUID = 0;
+  fCurrentAppendUID = 0;
   fHighestRecordedUID = 0;
   fNumberOfTaggedResponsesExpected = 0;
   fMsgID = 0;
@@ -139,6 +140,8 @@ void nsImapServerResponseParser::InitializeState() {
   fNumberOfRecentMessages = 0;
   fReceivedHeaderOrSizeForUID = 0;
   fUntaggedResponse = false;
+  fUnexpectedTag = false;
+  fCurrentAppendUID = 0;
 }
 
 // RFC3501:  response = *(continue-req / response-data) response-done
@@ -264,6 +267,7 @@ void nsImapServerResponseParser::ParseIMAPServerResponse(
           } else {
             // Expected tag doesn't match the received tag. Not good, start
             // over.
+            fUnexpectedTag = true;
             response_fatal();
           }
           // Show an alert notification containing the server response to bad
@@ -1681,7 +1685,7 @@ void nsImapServerResponseParser::resp_text_code() {
         // fHighestRecordedUID = 0; ??? this should be wrong
         AdvanceToNextToken();
         if (ContinueParse()) {
-          fCurrentResponseUID = strtoul(fNextToken, nullptr, 10);
+          fCurrentAppendUID = strtoul(fNextToken, nullptr, 10);
           AdvanceToNextToken();
         }
       }
@@ -1733,10 +1737,12 @@ void nsImapServerResponseParser::resp_text_code() {
 // RFC3501:  response-done = response-tagged / response-fatal
 void nsImapServerResponseParser::response_done() {
   if (ContinueParse()) {
-    if (!PL_strcmp(fCurrentCommandTag, fNextToken))
+    if (!PL_strcmp(fCurrentCommandTag, fNextToken)) {
       response_tagged();
-    else
+    } else {
+      fUnexpectedTag = true;
       response_fatal();
+    }
   }
 }
 
@@ -2538,6 +2544,10 @@ ImapUid nsImapServerResponseParser::FolderUIDValidity() {
 
 ImapUid nsImapServerResponseParser::CurrentResponseUID() {
   return fCurrentResponseUID;
+}
+
+ImapUid nsImapServerResponseParser::CurrentAppendUID() {
+  return fCurrentAppendUID;
 }
 
 ImapUid nsImapServerResponseParser::HighestRecordedUID() {

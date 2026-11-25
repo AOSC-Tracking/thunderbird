@@ -5,7 +5,7 @@
 /* Tests that cards are sent as vCard 3.0 to a server which announces support
  * only for vCard 3.0 in its supported-address-data property. */
 
-const { VCardUtils } = ChromeUtils.importESModule(
+const { VCardPropertyEntry, VCardUtils } = ChromeUtils.importESModule(
   "resource:///modules/VCardUtils.sys.mjs"
 );
 
@@ -70,6 +70,7 @@ async function cleanUp(directory) {
   await clearDirectory(directory);
   CardDAVServer.reset();
   CardDAVServer.mimicYahoo = false;
+  CardDAVServer.mimicGoogle = false;
   Services.prefs.clearUserPref(PREF);
 }
 
@@ -187,6 +188,241 @@ add_task(async function testServerUnreachable() {
     CardDAVServer.supportedAddressDataRequests,
     1,
     "supported address data should be requested once the server is back"
+  );
+
+  await cleanUp(directory);
+});
+
+/**
+ * Tests that dates without a year are sent to Google with a placeholder year,
+ * and that Google's way of returning them is understood.
+ */
+add_task(async function testGoogleDateWithoutYear() {
+  CardDAVServer.mimicGoogle = true;
+  Services.prefs.setBoolPref(PREF, true);
+
+  const directory = await initDirectory();
+  directory._isGoogleCardDAV = true;
+  await directory.fetchAllFromServer();
+
+  function checkBirthday(uid) {
+    const card = directory.getCard(uid);
+    Assert.stringContains(
+      CardDAVServer.cards.get(card.getProperty("_href", "")).vCard,
+      "BDAY;VALUE=DATE,X-APPLE-OMIT-YEAR=1604:1604-04-15\r\n",
+      "birthday on the server should have the placeholder year"
+    );
+    const properties = card.vCardProperties.toPropertyMap();
+    Assert.deepEqual(
+      ["BirthYear", "BirthMonth", "BirthDay"].map(p => properties.get(p)),
+      [undefined, "4", "15"],
+      "birthday should have no year"
+    );
+  }
+
+  for (const [uid, version, bday] of [
+    ["vcard3", "3.0", "BDAY;VALUE=DATE:--04-15"],
+    ["vcard4", "4.0", "BDAY:--0415"],
+  ]) {
+    directory.addCard(
+      VCardUtils.vCardToAbCard(
+        `BEGIN:VCARD\r\nVERSION:${version}\r\nFN:${uid}\r\n${bday}\r\nUID:${uid}\r\nEND:VCARD\r\n`
+      )
+    );
+    await TestUtils.waitForCondition(
+      () => directory.getCard(uid)?.getProperty("_etag", ""),
+      `${uid} should be stored on the server`
+    );
+    checkBirthday(uid);
+  }
+
+  info("Changing another property should keep the birthday without a year.");
+  const card = directory.getCard("vcard3");
+  const oldETag = card.getProperty("_etag", "");
+  card.vCardProperties.addValue("note", "changed");
+  card.setProperty("_vCard", card.vCardProperties.toVCard());
+  directory.modifyCard(card);
+  await TestUtils.waitForCondition(
+    () => directory.getCard("vcard3").getProperty("_etag", "") != oldETag,
+    "changed card should be stored on the server"
+  );
+  checkBirthday("vcard3");
+
+  await cleanUp(directory);
+});
+
+/**
+ * Tests that only dates without a year get a placeholder year, on any vCard
+ * 3.0 server.
+ */
+add_task(async function testPlaceholderYears() {
+  CardDAVServer.supportedAddressData = VCARD3;
+
+  const directory = await initDirectory();
+  await directory.fetchAllFromServer();
+
+  for (const [uid, bday, expected] of [
+    [
+      "no-year",
+      "BDAY;VALUE=DATE:--04-15",
+      "BDAY;X-APPLE-OMIT-YEAR=1604;VALUE=DATE:1604-04-15\r\n",
+    ],
+    [
+      "full-date",
+      "BDAY;VALUE=DATE:1990-04-15",
+      "BDAY;VALUE=DATE:1990-04-15\r\n",
+    ],
+    ["month-only", "BDAY;VALUE=DATE:--04", "BDAY;VALUE=DATE:--04\r\n"],
+    [
+      "placeholder",
+      "BDAY;X-APPLE-OMIT-YEAR=1604:1604-04-15",
+      "BDAY;X-APPLE-OMIT-YEAR=1604;VALUE=DATE:1604-04-15\r\n",
+    ],
+  ]) {
+    directory.addCard(
+      VCardUtils.vCardToAbCard(
+        `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${uid}\r\n${bday}\r\nUID:${uid}\r\nEND:VCARD\r\n`
+      )
+    );
+    const vCard = await waitForCardOnServer(directory, uid);
+    Assert.stringContains(
+      vCard,
+      expected,
+      `${uid} birthday on the server should be correct`
+    );
+  }
+
+  await cleanUp(directory);
+});
+
+/**
+ * Tests that inline photos in vCard 3.0 cards get a TYPE parameter, even on a
+ * server that also supports vCard 4.0.
+ */
+add_task(async function testPhotoTypes() {
+  const directory = await initDirectory();
+  await directory.fetchAllFromServer();
+
+  for (const [uid, photo, expected] of [
+    [
+      "jpeg",
+      "PHOTO;ENCODING=B:/9j/4AAQ",
+      "PHOTO;ENCODING=B;TYPE=JPEG:/9j/4AAQ",
+    ],
+    [
+      "png",
+      "PHOTO;ENCODING=b:iVBORw0KGgo=",
+      "PHOTO;ENCODING=b;TYPE=PNG:iVBORw0KGgo=",
+    ],
+    [
+      "typed",
+      "PHOTO;ENCODING=B;TYPE=GIF:R0lGODlh",
+      "PHOTO;ENCODING=B;TYPE=GIF:R0lGODlh",
+    ],
+    ["gif", "PHOTO;ENCODING=B:R0lGODlh", "PHOTO;ENCODING=B;TYPE=GIF:R0lGODlh"],
+    ["unknown", "PHOTO;ENCODING=B:AAAA", "PHOTO;ENCODING=B:AAAA"],
+  ]) {
+    directory.addCard(
+      VCardUtils.vCardToAbCard(
+        `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${uid}\r\n${photo}\r\nUID:${uid}\r\nEND:VCARD\r\n`
+      )
+    );
+    const vCard = await waitForCardOnServer(directory, uid);
+    Assert.stringContains(
+      vCard,
+      `${expected}\r\n`,
+      `${uid} photo on the server should be correct`
+    );
+  }
+  Assert.ok(
+    !directory.getBoolValue("carddav.vcard3", false),
+    "the address book should not be vCard 3.0 only"
+  );
+
+  await cleanUp(directory);
+});
+
+/**
+ * Tests that values with vCard 4.0 only value types are converted when the
+ * card is sent as vCard 3.0.
+ */
+add_task(async function testValueTypes() {
+  CardDAVServer.supportedAddressData = VCARD3;
+
+  const directory = await initDirectory();
+  await directory.fetchAllFromServer();
+
+  directory.addCard(
+    VCardUtils.vCardToAbCard(
+      [
+        "BEGIN:VCARD",
+        "VERSION:4.0",
+        "FN:value types",
+        "BDAY:19700415",
+        "ANNIVERSARY:20000101T120000Z",
+        "REV:20220716T010301Z",
+        "TEL;VALUE=uri;TYPE=cell:tel:+1-555-555-5555",
+        "TEL;VALUE=uri;TYPE=work:tel:+1-555-555-5556;ext=123",
+        "TEL;VALUE=uri;TYPE=home:sip:jane@example.com",
+        "TEL;TYPE=pager:+1-555-555-5557",
+        "TEL;VALUE=text;TYPE=fax:+1-555-555-5558",
+        "GEO:geo:37.386,-122.08",
+        "GEO:geo:37.386,-122.08,100",
+        "GEO:geo:37.386,-122.08;u=50",
+        "UID:value-types",
+        "END:VCARD",
+        "",
+      ].join("\r\n")
+    )
+  );
+  const vCard = await waitForCardOnServer(directory, "value-types");
+  for (const expected of [
+    "VERSION:3.0",
+    "BDAY;VALUE=DATE:1970-04-15",
+    "ANNIVERSARY;VALUE=DATE-TIME:2000-01-01T12:00:00Z",
+    "REV:2022-07-16T01:03:01Z",
+    "TEL;TYPE=cell:+1-555-555-5555",
+    "TEL;TYPE=work;VALUE=URI:tel:+1-555-555-5556;ext=123",
+    "TEL;TYPE=home;VALUE=URI:sip:jane@example.com",
+    "TEL;TYPE=pager:+1-555-555-5557",
+    "TEL;TYPE=fax:+1-555-555-5558",
+    "GEO:37.386;-122.08",
+    "GEO;VALUE=URI:geo:37.386,-122.08,100",
+    "GEO;VALUE=URI:geo:37.386,-122.08;u=50",
+  ]) {
+    Assert.stringContains(
+      vCard,
+      `\r\n${expected}\r\n`,
+      `${expected.split(/[;:]/)[0]} on the server should be correct`
+    );
+  }
+
+  await cleanUp(directory);
+});
+
+/**
+ * Tests that a phone number added to a vCard 3.0 card by the contact editor,
+ * which has the text value type, is sent as a vCard 3.0 phone number, even on
+ * a server that also supports vCard 4.0.
+ */
+add_task(async function testEditorPhoneNumber() {
+  const directory = await initDirectory();
+  await directory.fetchAllFromServer();
+
+  const card = VCardUtils.vCardToAbCard(
+    "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:phone\r\nUID:phone\r\nEND:VCARD\r\n"
+  );
+  card.vCardProperties.addEntry(
+    new VCardPropertyEntry("tel", { type: "cell" }, "text", "+1-555-555-5555")
+  );
+  card.setProperty("_vCard", card.vCardProperties.toVCard());
+  directory.addCard(card);
+
+  const vCard = await waitForCardOnServer(directory, "phone");
+  Assert.stringContains(
+    vCard,
+    "\r\nTEL;TYPE=cell:+1-555-555-5555\r\n",
+    "phone number on the server should be a vCard 3.0 phone number"
   );
 
   await cleanUp(directory);

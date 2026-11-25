@@ -11,6 +11,15 @@ var { AddrBookCard } = ChromeUtils.importESModule(
 
 requestLongerTimeout(3);
 
+function clickCard(cardsList, index, event, abWindow) {
+  const cell = cardsList.getRowAtIndex(index).querySelector("td");
+  // The checker does not recognize this tree's body tab stop and
+  // aria-activedescendant as keyboard access to the clicked grid cell.
+  AccessibilityUtils.setEnv({ mustHaveAccessibleRule: false });
+  EventUtils.synthesizeMouseAtCenter(cell, event, abWindow);
+  AccessibilityUtils.resetEnv();
+}
+
 async function inEditingMode() {
   const abWindow = getAddressBookWindow();
   const abDocument = abWindow.document;
@@ -524,11 +533,11 @@ async function setVCardInputValues(changes) {
           valueField = field.emailEl;
           typeField = field.vCardType.selectEl;
 
+          // With one email, the default-email choice is hidden.
           if (
-            (field.checkboxEl.checked && changeEntry && !changeEntry.pref) ||
-            (!field.checkboxEl.checked &&
-              changeEntry &&
-              changeEntry.pref == "1")
+            BrowserTestUtils.isVisible(field.checkboxEl) &&
+            changeEntry &&
+            field.checkboxEl.checked != (changeEntry.pref == "1")
           ) {
             field.checkboxEl.scrollIntoView({
               block: "nearest",
@@ -692,26 +701,14 @@ async function editContactAtIndex(index, options) {
 
   if (options.useActivate) {
     if (options.useMouse) {
-      EventUtils.synthesizeMouseAtCenter(
-        cardsList.getRowAtIndex(index),
-        { clickCount: 1 },
-        abWindow
-      );
-      EventUtils.synthesizeMouseAtCenter(
-        cardsList.getRowAtIndex(index),
-        { clickCount: 2 },
-        abWindow
-      );
+      clickCard(cardsList, index, { clickCount: 1 }, abWindow);
+      clickCard(cardsList, index, { clickCount: 2 }, abWindow);
     } else {
       EventUtils.synthesizeKey("KEY_Enter", {}, abWindow);
     }
   } else {
     if (options.useMouse) {
-      EventUtils.synthesizeMouseAtCenter(
-        cardsList.getRowAtIndex(index),
-        {},
-        abWindow
-      );
+      clickCard(cardsList, index, {}, abWindow);
     }
 
     await TestUtils.waitForCondition(() =>
@@ -820,7 +817,7 @@ add_task(async function test_basic_edit() {
   // Select a card in the list. Check the display in view mode.
 
   Assert.equal(cardsList.view.rowCount, 1);
-  EventUtils.synthesizeMouseAtCenter(cardsList.getRowAtIndex(0), {}, abWindow);
+  clickCard(cardsList, 0, {}, abWindow);
   await TestUtils.waitForCondition(() =>
     BrowserTestUtils.isVisible(detailsPane)
   );
@@ -894,6 +891,8 @@ add_task(async function test_basic_edit() {
 
   // Check that clicking outside the form doesn't steal focus.
 
+  // These clicks hit the edit-mode backdrop, not an interactive control.
+  AccessibilityUtils.setEnv({ mustHaveAccessibleRule: false });
   EventUtils.synthesizeMouseAtCenter(booksList, {}, abWindow);
   Assert.equal(
     abDocument.activeElement,
@@ -901,6 +900,7 @@ add_task(async function test_basic_edit() {
     "focus should be on the body element"
   );
   EventUtils.synthesizeMouseAtCenter(cardsList, {}, abWindow);
+  AccessibilityUtils.resetEnv();
   Assert.equal(
     abDocument.activeElement,
     abDocument.body,
@@ -1239,7 +1239,7 @@ add_task(async function test_generate_display_name() {
   });
 
   // Reload the card and check the values.
-  EventUtils.synthesizeMouseAtCenter(cardsList.getRowAtIndex(0), {}, abWindow);
+  clickCard(cardsList, 0, {}, abWindow);
   EventUtils.synthesizeMouseAtCenter(editButton, {}, abWindow);
   await inEditingMode();
   checkInputValues({
@@ -1384,7 +1384,7 @@ add_task(async function test_delete_button() {
 
   await openDirectory(list);
   Assert.equal(cardsList.view.rowCount, 1);
-  EventUtils.synthesizeMouseAtCenter(cardsList.getRowAtIndex(0), {}, abWindow);
+  clickCard(cardsList, 0, {}, abWindow);
   await TestUtils.waitForCondition(() =>
     BrowserTestUtils.isVisible(detailsPane)
   );
@@ -1940,6 +1940,14 @@ add_task(async function test_email_fields() {
 
   await checkDefaultEmailChoice(true, 1);
 
+  // Space must change the default email, just as a pointer click does.
+  const emailFields = abDocument.querySelectorAll("#vcard-email tr");
+  for (const index of [0, 1]) {
+    emailFields[index].checkboxEl.focus();
+    EventUtils.synthesizeKey(" ", {}, abWindow);
+    await checkDefaultEmailChoice(true, index);
+  }
+
   EventUtils.synthesizeMouseAtCenter(saveEditButton, {}, abWindow);
   await notInEditingMode(editButton);
 
@@ -1995,6 +2003,14 @@ add_task(async function test_email_fields() {
 
   await checkDefaultEmailChoice(false, 0);
 
+  abDocument.getElementById("vcard-add-email").focus();
+  EventUtils.synthesizeKey(" ", {}, abWindow);
+  Assert.equal(
+    abDocument.querySelectorAll("#vcard-email tr").length,
+    2,
+    "Space activates the add-email button"
+  );
+
   await setVCardInputValues({
     email: [
       { value: "home.contact2@invalid", type: "home", pref: "1" },
@@ -2025,7 +2041,8 @@ add_task(async function test_email_fields() {
 
   await checkDefaultEmailChoice(true, 3);
 
-  EventUtils.synthesizeMouseAtCenter(saveEditButton, {}, abWindow);
+  saveEditButton.focus();
+  EventUtils.synthesizeKey(" ", {}, abWindow);
   await notInEditingMode(editButton);
 
   checkVCardValues(book.childCards[0], {
@@ -2097,7 +2114,8 @@ add_task(async function test_email_fields() {
   await checkDefaultEmailChoice(true, 3);
 
   const promptPromise = BrowserTestUtils.promiseAlertDialog("extra1");
-  EventUtils.synthesizeMouseAtCenter(cancelEditButton, {}, abWindow);
+  cancelEditButton.focus();
+  EventUtils.synthesizeKey(" ", {}, abWindow);
   await promptPromise;
   await notInEditingMode(cardsList.table.body);
 
@@ -3100,6 +3118,155 @@ add_task(async function test_special_date_field() {
 });
 
 /**
+ * Tests that a vCard 3.0 date without a year, using Apple's placeholder year,
+ * is shown without a year, and that the placeholder is kept when saving.
+ */
+add_task(async function testAppleOmitYear() {
+  const book = createAddressBook("Omit Year");
+  book.addCard(
+    VCardUtils.vCardToAbCard(formatVCard`
+      BEGIN:VCARD
+      VERSION:3.0
+      FN:no year
+      N:year;no;;;
+      BDAY;X-APPLE-OMIT-YEAR=1604:1604-04-15
+      END:VCARD
+    `)
+  );
+
+  const abWindow = await openAddressBookWindow();
+  const abDocument = abWindow.document;
+  const editButton = abDocument.getElementById("editButton");
+  const saveEditButton = abDocument.getElementById("saveEditButton");
+  const otherInfoSection = abDocument.getElementById("otherInfo");
+
+  function checkBirthday(expectedText, expectedValue, expectedOmitYear) {
+    Assert.equal(
+      otherInfoSection.querySelector("li .entry-value").textContent,
+      expectedText,
+      "birthday should be shown correctly"
+    );
+    const bday = book.childCards[0].vCardProperties.getFirstEntry("bday");
+    Assert.equal(bday.value, expectedValue, "birthday should be saved");
+    Assert.equal(
+      bday.params["x-apple-omit-year"],
+      expectedOmitYear,
+      "X-APPLE-OMIT-YEAR should be correct"
+    );
+  }
+
+  await openDirectory(book);
+  await editContactAtIndex(0, {});
+  checkVCardInputValues({ specialDate: [{ value: ["", 4, 15] }] });
+
+  EventUtils.synthesizeMouseAtCenter(saveEditButton, {}, abWindow);
+  await notInEditingMode(editButton);
+  checkBirthday("April 15", "1604-04-15", "1604");
+
+  await editContactAtIndex(0, {});
+  await setVCardInputValues({
+    specialDate: [{ value: [1990, 4, 15], key: "bday" }],
+  });
+  EventUtils.synthesizeMouseAtCenter(saveEditButton, {}, abWindow);
+  await notInEditingMode(editButton);
+  checkBirthday("April 15, 1990", "1990-04-15", undefined);
+
+  await closeAddressBookWindow();
+  await promiseDirectoryRemoved(book.URI);
+});
+
+/**
+ * Tests that a vCard 3.0 date with Apple's placeholder year 1604 but no
+ * X-APPLE-OMIT-YEAR parameter, as iCloud stores them, is shown without a year,
+ * and is kept as it is when saving.
+ */
+add_task(async function testApplePlaceholderYearWithoutParameter() {
+  const book = createAddressBook("Placeholder Year");
+  book.addCard(
+    VCardUtils.vCardToAbCard(formatVCard`
+      BEGIN:VCARD
+      VERSION:3.0
+      FN:no year
+      N:year;no;;;
+      BDAY;VALUE=DATE:1604-01-15
+      END:VCARD
+    `)
+  );
+
+  const abWindow = await openAddressBookWindow();
+  const abDocument = abWindow.document;
+  const editButton = abDocument.getElementById("editButton");
+  const saveEditButton = abDocument.getElementById("saveEditButton");
+  const otherInfoSection = abDocument.getElementById("otherInfo");
+
+  await openDirectory(book);
+  await editContactAtIndex(0, {});
+  checkVCardInputValues({ specialDate: [{ value: ["", 1, 15] }] });
+
+  EventUtils.synthesizeMouseAtCenter(saveEditButton, {}, abWindow);
+  await notInEditingMode(editButton);
+  Assert.equal(
+    otherInfoSection.querySelector("li .entry-value").textContent,
+    "January 15",
+    "birthday should be shown without a year"
+  );
+  const bday = book.childCards[0].vCardProperties.getFirstEntry("bday");
+  Assert.equal(bday.value, "1604-01-15", "the placeholder year should be kept");
+  Assert.equal(
+    bday.params["x-apple-omit-year"],
+    undefined,
+    "no X-APPLE-OMIT-YEAR should be added"
+  );
+
+  await closeAddressBookWindow();
+  await promiseDirectoryRemoved(book.URI);
+});
+
+/**
+ * Tests that the preferred phone number of a vCard 3.0 contact, marked with
+ * TYPE=pref, is kept when the contact is edited.
+ */
+add_task(async function testTypePref() {
+  const book = createAddressBook("Type Pref");
+  book.addCard(
+    VCardUtils.vCardToAbCard(formatVCard`
+      BEGIN:VCARD
+      VERSION:3.0
+      FN:Jane Doe
+      N:Doe;Jane;;;
+      TEL;TYPE=home:867-5308
+      TEL;TYPE=cell,pref:867-5309
+      END:VCARD
+    `)
+  );
+
+  const abWindow = await openAddressBookWindow();
+  const abDocument = abWindow.document;
+  const editButton = abDocument.getElementById("editButton");
+  const saveEditButton = abDocument.getElementById("saveEditButton");
+
+  await openDirectory(book);
+  await editContactAtIndex(0, {});
+  EventUtils.synthesizeMouseAtCenter(saveEditButton, {}, abWindow);
+  await notInEditingMode(editButton);
+
+  const vCard = book.childCards[0].getProperty("_vCard", "");
+  Assert.stringContains(
+    vCard,
+    "TEL;TYPE=home:867-5308\r\n",
+    "the other phone number should not be preferred"
+  );
+  Assert.stringContains(
+    vCard,
+    "TEL;TYPE=cell,pref:867-5309\r\n",
+    "the preferred phone number should be kept"
+  );
+
+  await closeAddressBookWindow();
+  await promiseDirectoryRemoved(book.URI);
+});
+
+/**
  * Tests that custom properties (Custom1 etc.) are editable.
  */
 add_task(async function testCustomProperties() {
@@ -3129,11 +3296,7 @@ add_task(async function testCustomProperties() {
   const saveEditButton = abDocument.getElementById("saveEditButton");
 
   const index = cardsList.view.getIndexForUID(card.UID);
-  EventUtils.synthesizeMouseAtCenter(
-    cardsList.getRowAtIndex(index),
-    {},
-    abWindow
-  );
+  clickCard(cardsList, index, {}, abWindow);
   await TestUtils.waitForCondition(() =>
     BrowserTestUtils.isVisible(detailsPane)
   );

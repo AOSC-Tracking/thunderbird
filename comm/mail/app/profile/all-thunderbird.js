@@ -648,11 +648,21 @@ pref("breakpad.reportURL", "https://crash-stats.mozilla.com/report/index/");
 // OS Integrated Search and Indexing
 #ifdef XP_WIN
 pref("mail.winsearch.enable", false);
+#ifdef MOZ_ENTERPRISE
+// We skip first run on enterprise, so assume it was done.
+pref("mail.winsearch.firstRunDone", true);
+#else
 pref("mail.winsearch.firstRunDone", false);
+#endif
 #else
 #ifdef XP_MACOSX
 pref("mail.spotlight.enable", false);
+#ifdef MOZ_ENTERPRISE
+// We skip first run on enterprise, so assume it was done.
+pref("mail.spotlight.firstRunDone", true);
+#else
 pref("mail.spotlight.firstRunDone", false);
+#endif
 #endif
 #endif
 
@@ -907,8 +917,9 @@ pref("mail.chat.play_sound", true);
 pref("mail.chat.play_sound.type", 0);
 // if sound is user specified, this needs to be a file url
 pref("mail.chat.play_sound.url", "");
-// Enable/Disable support for OTR chat encryption.
-pref("chat.otr.enable", true);
+// Enable/Disable support for OTR chat encryption. Profiles that have
+// established OTR sessions are switched to true by MailMigrator.
+pref("chat.otr.enable", false);
 // Default values for chat account prefs.
 pref("chat.otr.default.requireEncryption", false);
 pref("chat.otr.default.verifyNudge", true);

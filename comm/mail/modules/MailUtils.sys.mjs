@@ -516,7 +516,7 @@ export var MailUtils = {
         Ci.nsIMsgCompType.Draft,
         Ci.nsIMsgCompFormat.Default,
         null,
-        headers.get("from"),
+        null,
         msgWindow
       );
     } else if (
@@ -852,8 +852,10 @@ export var MailUtils = {
    * @param {string} msgId - The message id string without the brackets.
    * @param {nsIMsgIncomingServer} [startServer] - The server to check first.
    * @param {DOMWindow} [window] - The message window to load the message into.
+   * @param {boolean} [silent=false] - Suppress the message-not-found alert.
+   * @returns {boolean} Whether the message was found and opened.
    */
-  openMessageForMessageId(msgId, startServer, window) {
+  openMessageForMessageId(msgId, startServer, window, silent = false) {
     window?.setCursor("wait");
     const msgHdr = this.getMsgHdrForMsgId(msgId, startServer);
     window?.setCursor("auto");
@@ -872,7 +874,10 @@ export var MailUtils = {
       } else {
         this.displayMessage(msgHdr);
       }
-      return;
+      return true;
+    }
+    if (silent) {
+      return false;
     }
     const bundle = Services.strings.createBundle(
       "chrome://messenger/locale/messenger.properties"
@@ -884,6 +889,40 @@ export var MailUtils = {
         `<${msgId}>`,
       ])
     );
+    return false;
+  },
+
+  /**
+   * Open a message identified by a 'mid:' URI. Prefer the decoded Message-ID,
+   * then try the original suffix for compatibility with legacy raw links.
+   * Use the original suffix if percent-decoding fails or produces a NUL.
+   *
+   * @param {string} uri - The 'mid:' URI to open.
+   * @throws {Error} If the URI does not use the 'mid:' scheme.
+   */
+  openMidUri(uri) {
+    if (URL.parse(uri)?.protocol != "mid:") {
+      throw new Error("Expected a mid: URI");
+    }
+    const rawId = uri.slice(uri.indexOf(":") + 1);
+    let decodedId;
+    try {
+      decodedId = decodeURIComponent(rawId);
+    } catch (ex) {
+      if (!(ex instanceof URIError)) {
+        throw ex;
+      }
+      decodedId = rawId;
+    }
+
+    if (
+      decodedId != rawId &&
+      !decodedId.includes("\0") &&
+      this.openMessageForMessageId(decodedId, null, null, true)
+    ) {
+      return;
+    }
+    this.openMessageForMessageId(rawId);
   },
 
   /**
@@ -993,10 +1032,7 @@ export var MailUtils = {
         return;
       }
 
-      let msgHdr = null;
-      try {
-        msgHdr = folder.GetMessageHeader(articleNumber);
-      } catch (e) {}
+      const msgHdr = folder.getMsgHdr(articleNumber);
       if (msgHdr) {
         this.displayMessage(msgHdr);
         return;
@@ -1089,6 +1125,19 @@ export var MailUtils = {
       },
     };
     messageService.saveMessageToDisk(uri, tempFile, urlListener, true, null);
+  },
+
+  /**
+   * Construct a 'mid:' URI spec for a plain Message-ID.
+   *
+   * @param {string} messageId - The Message-ID without brackets.
+   * @returns {string} The 'mid:' URI spec, or an empty string for no ID.
+   */
+  constructMidUriSpec(messageId) {
+    if (!messageId) {
+      return "";
+    }
+    return `mid:${encodeURIComponent(messageId).replaceAll("%40", "@")}`;
   },
 
   /**
@@ -1552,4 +1601,151 @@ export var MailUtils = {
       fractionDigits
     ).format(size);
   },
+
+  /**
+   * Apply portable filename rules, including Windows device names, trailing
+   * dots, and readable substitutions for unsupported characters.
+   *
+   * Replace spaces with underscores when the
+   * `mail.save_msg_filename_underscores_for_space` preference is enabled.
+   *
+   * @param {string} filename - Unsanitized leaf name.
+   * @returns {string} The sanitized name, without applying length limits.
+   */
+  sanitizeFileName(filename) {
+    let sanitized = filename
+      // eslint-disable-next-line no-control-regex
+      .replace(/[%"<>\x00-\x1f:/\\|?*]/g, character => {
+        return { '"': "'", "<": "(", ">": ")" }[character] ?? "_";
+      })
+      .trim()
+      .replace(/[. ]+$/g, "");
+    if (hasReservedFilenameStem(sanitized)) {
+      sanitized = "_" + sanitized;
+    }
+    return Services.prefs.getBoolPref(
+      "mail.save_msg_filename_underscores_for_space"
+    )
+      ? sanitized.replaceAll(" ", "_")
+      : sanitized;
+  },
+
+  /**
+   * Generate the unsanitized base of an EML filename from a message header.
+   * The compact form contains only the subject and is suitable for drag and
+   * drop. The extended form also contains the author and date and is suitable
+   * for Save As.
+   *
+   * @param {nsIMsgDBHdr} msgHdr - The message header.
+   * @param {object} [options]
+   * @param {string} [options.fallbackName] - Subject to use when the message
+   *   has no subject. Defaults to the localized filename base for the compact
+   *   form and an empty string for the extended form.
+   * @param {boolean} [options.includeAuthorAndDate=false] - Whether to append
+   *   the author and date to the subject.
+   * @returns {string} An unsanitized filename without an extension.
+   */
+  getEmlFilenameBase(
+    msgHdr,
+    { fallbackName, includeAuthorAndDate = false } = {}
+  ) {
+    let subject = msgHdr.mime2DecodedSubject || (fallbackName ?? "");
+    if (!subject && !includeAuthorAndDate && fallbackName == null) {
+      const filename = lazy.l10n.formatValueSync(
+        "messenger-default-save-message-file-name"
+      );
+      subject = filename.endsWith(".eml") ? filename.slice(0, -4) : filename;
+    }
+    if (msgHdr.flags & Ci.nsMsgMessageFlags.HasRe) {
+      subject = "Re: " + subject;
+    }
+
+    if (!includeAuthorAndDate) {
+      return subject;
+    }
+
+    const dateString = new Date(msgHdr.date / 1000)
+      .toTemporalInstant()
+      .toZonedDateTimeISO(Temporal.Now.timeZoneId())
+      .toPlainDateTime()
+      .toString({ smallestUnit: "minute" })
+      .replace("T", " ")
+      .replace(":", "");
+
+    return subject + " - " + msgHdr.mime2DecodedAuthor + " - " + dateString;
+  },
+
+  /**
+   * Sanitize and shorten filenames, preserving their final extension and
+   * adding counters on case-insensitive batch collisions.
+   *
+   * @param {string[]} filenames - Unsanitized filenames, including extensions.
+   * @returns {string[]} One unique name per filename. Treats a leading dot as
+   *   part of the base name rather than an extension separator.
+   */
+  generateUniqueFilenames(filenames) {
+    const occupied = new Set();
+    const nextCounters = new Map();
+
+    function shorten(base, ending) {
+      const tailCount = Math.max(0, 22 - [...ending].length);
+      return (
+        base.replace(
+          new RegExp(`^(.{60}).{4,}(.{${tailCount}})$`, "su"),
+          (_match, prefix, tail) => {
+            // Shortening must not turn a safe base into a device name like CON...
+            if (hasReservedFilenameStem(prefix)) {
+              prefix = prefix.trimEnd().slice(0, -1);
+            }
+            return prefix + "..." + tail;
+          }
+        ) + ending
+      );
+    }
+
+    return filenames.map(name => {
+      const filename = this.sanitizeFileName(name) || "_";
+      const dot = filename.lastIndexOf(".");
+      const base = dot > 0 ? filename.slice(0, dot) : filename;
+      const extension = dot > 0 ? filename.slice(dot) : "";
+      const unnumbered = shorten(base, extension);
+      if (!occupied.has(unnumbered.toLowerCase())) {
+        occupied.add(unnumbered.toLowerCase());
+        return unnumbered;
+      }
+
+      // Names with the same shortened base share counters. Each digit width
+      // needs its own base because longer counters can shorten it further.
+      for (let digits = 1; ; digits++) {
+        const first = Math.max(2, 10 ** (digits - 1));
+        const last = 10 ** digits - 1;
+        const ending = `-${first}${extension}`;
+        const shortenedBase = shorten(base, ending).slice(0, -ending.length);
+        const counterKey = JSON.stringify([
+          shortenedBase.toLowerCase(),
+          extension.toLowerCase(),
+          digits,
+        ]);
+        for (
+          let number = nextCounters.get(counterKey) ?? first;
+          number <= last;
+          number++
+        ) {
+          const candidate = `${shortenedBase}-${number}${extension}`;
+          const key = candidate.toLowerCase();
+          nextCounters.set(counterKey, number + 1);
+          if (!occupied.has(key)) {
+            occupied.add(key);
+            return candidate;
+          }
+        }
+      }
+    });
+  },
 };
+
+function hasReservedFilenameStem(name) {
+  return /^ *(?:CON|CONIN\$|CONOUT\$|PRN|AUX|NUL|(?:COM|LPT)[1-9¹²³]) *$/i.test(
+    name.split(".", 1)[0]
+  );
+}

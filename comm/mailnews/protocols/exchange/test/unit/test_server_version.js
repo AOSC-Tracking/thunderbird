@@ -42,18 +42,10 @@ async function send_request_and_wait_for_response() {
     };
 
     // Build an EWS client and send the request.
-    const client = Cc["@mozilla.org/messenger/ews-client;1"].createInstance(
-      Ci.IExchangeClient
-    );
-    client.initialize(
+    const client = MailServices.protocolClient.createTestClient(
+      "ews",
       incomingServer.getStringValue("ews_url"),
-      incomingServer,
-      false,
-      "",
-      "",
-      "",
-      "",
-      ""
+      incomingServer
     );
 
     client.checkConnectivity(listener);
@@ -65,6 +57,7 @@ add_setup(() => {
 
   registerCleanupFunction(() => {
     Services.prefs.clearUserPref(EWS_SERVER_VERSION_PREF);
+    MailServices.protocolClient.shutdownTestClients();
   });
 });
 

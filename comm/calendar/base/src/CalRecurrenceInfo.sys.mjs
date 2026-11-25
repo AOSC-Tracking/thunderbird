@@ -52,7 +52,17 @@ CalRecurrenceInfo.prototype = {
   mBaseItem: null,
   mEndDate: null,
   mRecurrenceItems: null,
+  /**
+   * The positive items of mRecurrenceItems that are expanded, built by
+   * ensureSortedRecurrenceRules(). Set to null whenever mRecurrenceItems
+   * changes, rather than updated, so that they are rebuilt with only the first
+   * MAX_RULES rules by position.
+   */
   mPositiveRules: null,
+  /**
+   * The negative items of mRecurrenceItems that are expanded, the EXDATEs, as
+   * EXRULEs are not supported. Built and reset together with mPositiveRules.
+   */
   mNegativeRules: null,
   mExceptionMap: null,
 
@@ -73,12 +83,31 @@ CalRecurrenceInfo.prototype = {
     if (!this.mPositiveRules || !this.mNegativeRules) {
       this.mPositiveRules = [];
       this.mNegativeRules = [];
+      let ruleCount = 0;
+
+      // The most recurrence rules of an item that are expanded. RFC 5545 says
+      // an item should have only one, and each extra rule would multiply the
+      // work done for every query, so the rest are ignored.
+      const MAX_RULES = 1;
+
       for (const ritem of this.mRecurrenceItems) {
+        if (
+          (ritem instanceof lazy.CalRecurrenceRule || ritem instanceof Ci.calIRecurrenceRule) &&
+          (ritem.isNegative || ++ruleCount > MAX_RULES)
+        ) {
+          continue;
+        }
         if (ritem.isNegative) {
           this.mNegativeRules.push(ritem);
         } else {
           this.mPositiveRules.push(ritem);
         }
+      }
+      if (ruleCount > MAX_RULES) {
+        lazy.log.warn(
+          `Item "${this.mBaseItem?.title}" has ${ruleCount} recurrence rules, ` +
+            `only the first is used.`
+        );
       }
     }
   },
@@ -149,13 +178,9 @@ CalRecurrenceInfo.prototype = {
 
   get isFinite() {
     this.ensureBaseItem();
+    this.ensureSortedRecurrenceRules();
 
-    for (const ritem of this.mRecurrenceItems) {
-      if (!ritem.isFinite) {
-        return false;
-      }
-    }
-    return true;
+    return this.mPositiveRules.every(ritem => ritem.isFinite);
   },
 
   /**
@@ -215,15 +240,11 @@ CalRecurrenceInfo.prototype = {
   appendRecurrenceItem(aItem) {
     this.ensureBaseItem();
     this.ensureMutable();
-    this.ensureSortedRecurrenceRules();
 
     aItem = aItem?.wrappedJSObject || aItem;
     this.mRecurrenceItems.push(aItem);
-    if (aItem.isNegative) {
-      this.mNegativeRules.push(aItem);
-    } else {
-      this.mPositiveRules.push(aItem);
-    }
+    this.mPositiveRules = null;
+    this.mNegativeRules = null;
   },
 
   deleteRecurrenceItemAt(aIndex) {
@@ -234,11 +255,8 @@ CalRecurrenceInfo.prototype = {
       throw Components.Exception("", Cr.NS_ERROR_INVALID_ARG);
     }
 
-    if (this.mRecurrenceItems[aIndex].isNegative) {
-      this.mNegativeRules = null;
-    } else {
-      this.mPositiveRules = null;
-    }
+    this.mPositiveRules = null;
+    this.mNegativeRules = null;
 
     this.mRecurrenceItems.splice(aIndex, 1);
   },
@@ -256,18 +274,14 @@ CalRecurrenceInfo.prototype = {
   insertRecurrenceItemAt(aItem, aIndex) {
     this.ensureBaseItem();
     this.ensureMutable();
-    this.ensureSortedRecurrenceRules();
 
     if (aIndex < 0 || aIndex > this.mRecurrenceItems.length) {
       throw Components.Exception("", Cr.NS_ERROR_INVALID_ARG);
     }
 
     aItem = aItem?.wrappedJSObject || aItem;
-    if (aItem.isNegative) {
-      this.mNegativeRules.push(aItem);
-    } else {
-      this.mPositiveRules.push(aItem);
-    }
+    this.mPositiveRules = null;
+    this.mNegativeRules = null;
 
     this.mRecurrenceItems.splice(aIndex, 0, aItem);
   },
@@ -297,28 +311,14 @@ CalRecurrenceInfo.prototype = {
     // Go through all negative rules to create a map of occurrences that
     // should be skipped when going through occurrences.
     for (const ritem of this.mNegativeRules) {
-      // TODO Infinite rules (i.e EXRULE) are not taken into account,
-      // because its very performance hungry and could potentially
-      // lead to a deadlock (i.e RRULE is canceled out by an EXRULE).
-      // This is ok for now, since EXRULE is deprecated anyway.
-      if (ritem.isFinite) {
-        // Get all occurrences starting at our recurrence start date.
-        // This is fine, since there will never be an EXDATE that
-        // occurs before the event started and its illegal to EXDATE an
-        // RDATE.
-        const rdates = ritem.getOccurrences(startDate, startDate, null, 0);
-        // Map all negative dates.
-        for (const rdate of rdates) {
-          negMap[getRidKey(rdate)] = true;
-        }
-      } else {
-        lazy.log.warn(
-          "Item '" +
-            this.mBaseItem.title +
-            "'" +
-            (this.mBaseItem.calendar ? " (" + this.mBaseItem.calendar.name + ")" : "") +
-            " has an infinite negative rule (EXRULE)"
-        );
+      // Get all occurrences starting at our recurrence start date.
+      // This is fine, since there will never be an EXDATE that
+      // occurs before the event started and its illegal to EXDATE an
+      // RDATE.
+      const rdates = ritem.getOccurrences(startDate, startDate, null, 0);
+      // Map all negative dates.
+      for (const rdate of rdates) {
+        negMap[getRidKey(rdate)] = true;
       }
     }
 
@@ -373,7 +373,8 @@ CalRecurrenceInfo.prototype = {
         const nextKey = getRidKey(nextOccurrences[i]);
         const isInExceptionMap =
           nextKey && (this.mExceptionMap[nextKey.substring(0, 8)] || this.mExceptionMap[nextKey]);
-        const isInNegMap = nextKey && (negMap[nextKey.substring(0, 8)] || negMap[nextKey]);
+        const isInNegMap =
+          nextKey && (negMap[nextOccurrences[i].icalString.substring(0, 8)] || negMap[nextKey]);
         if (nextKey && (isInNegMap || isInExceptionMap)) {
           // If the found recurrence id points to either an exception
           // (will handle later) or an EXDATE, then nextOccurrences[i]
@@ -402,7 +403,24 @@ CalRecurrenceInfo.prototype = {
       // We counted how many positive rules found out that their next
       // candidate is invalid. If all rules produce invalid next
       // occurrences, a second round is needed.
-    } while (invalidOccurrences == this.mPositiveRules.length);
+    } while (this.mPositiveRules.length && invalidOccurrences == this.mPositiveRules.length);
+
+    // The start of the item is always an occurrence, also when no rule gives
+    // it, unless it is an exception (handled below) or an EXDATE.
+    if (
+      startDate &&
+      startDate.compare(aTime) > 0 &&
+      (!minOccRid || minOccRid.compare(startDate) > 0)
+    ) {
+      const startKey = getRidKey(startDate);
+      if (
+        !this.mExceptionMap[startKey] &&
+        !negMap[startKey] &&
+        !negMap[startDate.icalString.substring(0, 8)]
+      ) {
+        minOccRid = startDate;
+      }
+    }
 
     // Since we need to compare occurrences by date, save the rid found
     // above also as a date. This works out because above we skipped
@@ -543,40 +561,30 @@ CalRecurrenceInfo.prototype = {
 
     dates.sort((a, b) => a.rstart.compare(b.rstart));
 
-    // Apply negative rules
+    // Apply negative rules. What they remove is collected first, so that the
+    // occurrences are filtered once rather than once for every removed date.
+    const removedKeys = new Set();
+    const removedDays = new Set();
     for (const ritem of this.mNegativeRules) {
-      const cur_dates = ritem.getOccurrences(startDate, searchStart, rangeEnd, maxCount);
-      if (cur_dates.length == 0) {
-        continue;
-      }
-
       // XXX: i'm pretty sure negative dates can't really have exceptions
       // (like, you can't make a date "real" by defining an RECURRENCE-ID which
       // is an EXDATE, and then giving it a real DTSTART) -- so we don't
       // check exceptions here
-      for (const dateToRemove of cur_dates) {
-        const dateToRemoveKey = getRidKey(dateToRemove);
+      for (const dateToRemove of ritem.getOccurrences(startDate, searchStart, rangeEnd, maxCount)) {
         if (dateToRemove.isDate) {
           // As decided in bug 734245, an EXDATE of type DATE shall also match a DTSTART of type DATE-TIME
-          const toRemove = [];
-          for (const occurenceKey in occurrenceMap) {
-            if (occurrenceMap[occurenceKey] && occurenceKey.substring(0, 8) == dateToRemoveKey) {
-              dates = dates.filter(date => date.id.compare(dateToRemove) != 0);
-              toRemove.push(occurenceKey);
-            }
-          }
-          for (let i = 0; i < toRemove.length; i++) {
-            delete occurrenceMap[toRemove[i]];
-          }
-        } else if (occurrenceMap[dateToRemoveKey]) {
-          // TODO PERF Theoretically we could use occurrence map
-          // to construct the array of occurrences. Right now I'm
-          // just using the occurrence map to skip the filter
-          // action if the occurrence isn't there anyway.
-          dates = dates.filter(date => date.id.compare(dateToRemove) != 0);
-          delete occurrenceMap[dateToRemoveKey];
+          removedDays.add(dateToRemove.icalString);
+        } else {
+          removedKeys.add(getRidKey(dateToRemove));
         }
       }
+    }
+    if (removedKeys.size || removedDays.size) {
+      dates = dates.filter(
+        ({ id }) =>
+          !(removedKeys.size && removedKeys.has(getRidKey(id))) &&
+          !(removedDays.size && removedDays.has(id.icalString.substring(0, 8)))
+      );
     }
 
     // The list was already sorted above, chop anything over aMaxCount, if
@@ -644,7 +652,6 @@ CalRecurrenceInfo.prototype = {
   restoreOccurrenceAt(recurrenceId) {
     this.ensureBaseItem();
     this.ensureMutable();
-    this.ensureSortedRecurrenceRules();
 
     for (let i = 0; i < this.mRecurrenceItems.length; i++) {
       const rdate = this.mRecurrenceItems[i];

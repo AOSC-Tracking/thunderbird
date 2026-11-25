@@ -225,6 +225,7 @@ NS_IMETHODIMP nsMailboxService::StreamHeaders(const nsACString& aMessageURI,
   nsCOMPtr<nsIMsgDBHdr> msgHdr;
   rv = db->GetMsgHdrForKey(msgKey, getter_AddRefs(msgHdr));
   NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(msgHdr, NS_MSG_MESSAGE_NOT_FOUND);
   nsCOMPtr<nsIInputStream> inputStream;
   rv = folder->GetMsgInputStream(msgHdr, getter_AddRefs(inputStream));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -542,7 +543,10 @@ nsMailboxService::MessageURIToMsgHdr(const nsACString& uri,
   nsresult rv = DecomposeMailboxURI(uri, getter_AddRefs(folder), &msgKey);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return folder->GetMessageHeader(msgKey, _retval);
+  rv = folder->GetMsgHdr(msgKey, _retval);
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(*_retval, NS_MSG_MESSAGE_NOT_FOUND);
+  return NS_OK;
 }
 
 nsresult nsMailboxService::CreatePop3URI(const nsACString& aSpec,
@@ -584,7 +588,7 @@ nsresult nsMailboxService::CreatePop3URI(const nsACString& aSpec,
   nsCOMPtr<nsIMsgDBHdr> msgHdr;
 
   if (specMsgKey != nsMsgKey_None && localFolder) {
-    folder->GetMessageHeader(specMsgKey, getter_AddRefs(msgHdr));
+    folder->GetMsgHdr(specMsgKey, getter_AddRefs(msgHdr));
     if (msgHdr) {
       rv = localFolder->GetFolderScanState(&folderScanState);
       NS_ENSURE_SUCCESS(rv, rv);

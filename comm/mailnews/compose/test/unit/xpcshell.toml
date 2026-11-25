@@ -88,11 +88,15 @@ requesttimeoutfactor = 2
 
 ["test_smtp8bitMime.js"]
 
+["test_smtpAuthCramMd5.js"]
+
 ["test_smtpAuthGssapi.js"]
 
 ["test_smtpAuthMethods.js"]
 
 ["test_smtpAuthNtlm.js"]
+
+["test_smtpAuthPasswordCancelled.js"]
 
 ["test_smtpAuthenticator.js"]
 
@@ -117,6 +121,8 @@ requesttimeoutfactor = 2
 ["test_smtpQuitClose.js"]
 
 ["test_smtpServer.js"]
+
+["test_smtpStartTLS.js"]
 
 ["test_smtpURL.js"]
 

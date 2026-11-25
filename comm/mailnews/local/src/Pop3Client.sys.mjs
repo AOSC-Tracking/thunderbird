@@ -1090,11 +1090,23 @@ export class Pop3Client {
       this._actionError("pop3UsernameFailure", [], res.statusText);
       return;
     }
+    let token;
+    try {
+      token = this._authenticator.getCramMd5Token(
+        this._password,
+        res.statusText
+      );
+    } catch (e) {
+      // A "*" line cancels the exchange, see rfc5034#section-4. The server
+      // rejects it, which fails the login the usual way.
+      this._logger.error(
+        `Invalid CRAM-MD5 challenge "${res.statusText}", cancelling`,
+        e
+      );
+      token = "*";
+    }
     this._nextAction = this._actionAuthResponse;
-    await this._send(
-      this._authenticator.getCramMd5Token(this._password, res.statusText),
-      true
-    );
+    await this._send(token, true);
   };
 
   /**
@@ -1381,18 +1393,7 @@ export class Pop3Client {
           const localFolder = this._sink.folder.QueryInterface(
             Ci.nsIMsgLocalMailFolder
           );
-          if (
-            localFolder.warnIfLocalFileTooBig(
-              this._msgWindow,
-              this._totalDownloadSize
-            )
-          ) {
-            throw new Error(
-              `Too big! ${localFolder.filePath.diskSpaceAvailable / 2 ** 20} MiB of disk space available; ` +
-                `${this._totalDownloadSize / 2 ** 20} MiB requested; ` +
-                `folder size is ${localFolder.filePath.fileSize / 2 ** 20} MiB`
-            );
-          }
+          localFolder.checkSpaceAndWarn(this._totalDownloadSize);
         } catch (e) {
           this._logger.error(e);
           this._actionDone(Cr.NS_ERROR_FAILURE);

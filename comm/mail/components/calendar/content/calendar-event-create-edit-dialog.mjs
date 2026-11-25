@@ -12,6 +12,7 @@ import {
   resetForCreate,
   resetFromSource,
   selectCalendarEventDraftState,
+  setSectionValidity,
   updateSection,
 } from "./state/calendarEventDraftSlice.mjs";
 import {
@@ -20,8 +21,12 @@ import {
   startCreateSession,
   startEditSession,
 } from "./state/calendarEventCreateEditSessionSlice.mjs";
-import "./calendar-dialog-row.mjs"; // eslint-disable-line import/no-unassigned-import
-import "./calendar-dialog-toggleable-row.mjs"; // eslint-disable-line import/no-unassigned-import
+import {
+  selectTitleViewModel,
+  selectCanSave,
+} from "./state/calendar-event-create-edit-selectors.mjs";
+import "./calendar-dialog-row.mjs"; // eslint-disable-line import-x/no-unassigned-import
+import "./calendar-dialog-toggleable-row.mjs"; // eslint-disable-line import-x/no-unassigned-import
 
 /**
  * The dialog that creates and edits calendar events.
@@ -137,6 +142,10 @@ export class CalendarEventCreateEditDialog extends CalendarEventDialogSourceMixi
           ),
         draftState: state =>
           selectCalendarEventDraftState(state, this.calendarEventSessionKey),
+        saveButtonState: state =>
+          selectCanSave(state, this.calendarEventSessionKey),
+        titleViewModel: state =>
+          selectTitleViewModel(state, this.calendarEventSessionKey),
       },
       ...args
     );
@@ -167,9 +176,14 @@ export class CalendarEventCreateEditDialog extends CalendarEventDialogSourceMixi
       this.setAttribute("is", "calendar-event-create-edit-dialog");
 
       this.addEventListener("click", this);
+      this.addEventListener("input", this);
+      this.addEventListener("focusout", this);
+      this.addEventListener("mouseover", this);
+      this.addEventListener("mouseout", this);
       this.addEventListener("command", this);
       this.#menu.addEventListener("popupshown", this);
       this.#menu.addEventListener("popuphidden", this);
+      this.querySelector("#save").disabled = !this.#canSave;
 
       window.MozXULElement?.insertFTLIfNeeded("messenger/calendarDialog.ftl");
       document.l10n.setAttributes(this, "calendar-event-create-edit-dialog");
@@ -185,6 +199,7 @@ export class CalendarEventCreateEditDialog extends CalendarEventDialogSourceMixi
   #clickHandlers = {
     ".close-button": () => this.close(),
     "#calendarEventCreateEditDialogMenuButton": () => this.#openMenu(),
+    "#save": () => this.#save(),
   };
 
   handleEvent(event) {
@@ -217,7 +232,68 @@ export class CalendarEventCreateEditDialog extends CalendarEventDialogSourceMixi
         this.#menuButton.setAttribute("aria-expanded", "false");
         this.#menuButton.focus();
         break;
+      case "input":
+        if (event.target.matches(".event-title-input")) {
+          this.#updateTitleTooltip(event.target);
+          this.updateDraftSection("title", { title: event.target.value });
+          this.#setTitleValidity(event.target);
+        }
+        break;
+      case "focusout":
+        if (event.target.matches(".event-title-input")) {
+          this.#setTitleValidity(event.target);
+        }
+        break;
+      case "mouseover":
+      case "mouseout":
+        if (event.target.matches(".event-title-input")) {
+          this.#updateTitleTooltip(event.target);
+        }
+        break;
     }
+  }
+
+  /**
+   * Updates title validity for empty text, or when the user has edited a
+   * 'too long' title and it's still too long. `input.validity.tooLong` remains
+   * false when `input.value` is loaded. This correctly keeps an unchanged
+   * loaded title over 180 characters valid.
+   *
+   * @param {HTMLInputElement} input - The title input.
+   */
+  #setTitleValidity(input) {
+    let validity;
+
+    if (!input.value.trim()) {
+      validity = {
+        valid: false,
+        messageId: "calendar-event-title-required",
+      };
+    } else if (input.validity.tooLong) {
+      validity = {
+        valid: false,
+        messageId: "calendar-event-title-too-long",
+      };
+    } else {
+      validity = { valid: true };
+    }
+
+    this.dispatch(
+      setSectionValidity({
+        section: "title",
+        sessionKey: this.calendarEventSessionKey,
+        validity,
+      })
+    );
+  }
+
+  /**
+   * Set the title tooltip when the input text is clipped; otherwise clear it.
+   *
+   * @param {HTMLInputElement} input - The title input.
+   */
+  #updateTitleTooltip(input) {
+    input.title = input.scrollWidth > input.clientWidth ? input.value : "";
   }
 
   /**
@@ -329,6 +405,51 @@ export class CalendarEventCreateEditDialog extends CalendarEventDialogSourceMixi
       this.#updateDraftViewModel();
     } else if (fieldName == "sourceSession") {
       this.#sourceSession = newValue;
+    } else if (fieldName == "saveButtonState") {
+      this.#canSave = newValue;
+      const saveButton = this.querySelector("#save");
+
+      if (saveButton) {
+        saveButton.disabled = !this.#canSave;
+      }
+    } else if (fieldName == "titleViewModel") {
+      this.#renderTitle(newValue);
+    }
+  }
+
+  /**
+   * Updates the event title input, adding required message when applicable.
+   *
+   * @param {CalendarEventTitleViewModel} titleViewModel - The title data.
+   */
+  #renderTitle({ value, validity }) {
+    const input = this.querySelector(".event-title-input");
+    if (!input) {
+      return;
+    }
+
+    if (input.value != value) {
+      input.value = value;
+    }
+    this.#updateTitleTooltip(input);
+
+    document.l10n.setAttributes(
+      input,
+      this.#mode == "edit"
+        ? "calendar-event-title-input-untitled"
+        : "calendar-event-title-input-new"
+    );
+
+    input.ariaInvalid = validity?.valid === false ? "true" : null;
+
+    const required = this.querySelector(".event-title-required");
+    required.hidden = !validity?.messageId;
+
+    if (validity?.messageId) {
+      document.l10n.setAttributes(required, validity.messageId);
+      input.setAttribute("aria-errormessage", required.id);
+    } else {
+      input.removeAttribute("aria-errormessage");
     }
   }
 
@@ -341,12 +462,6 @@ export class CalendarEventCreateEditDialog extends CalendarEventDialogSourceMixi
     this.#draft = draft ? structuredClone(draft) : null;
     this.#dirtySections = [...(this.#draftState?.dirtySections ?? [])];
     this.#isDirty = !!this.#dirtySections.length;
-    this.#canSave =
-      this.#draft !== null &&
-      this.#createEditSession?.operation.status != "pending" &&
-      Object.values(this.#draftState?.validation ?? {}).every(
-        validity => validity.valid
-      );
     this.#mode = this.#createEditSession?.mode ?? null;
     if (this.#menuButton) {
       this.#menuButton.hidden = !(
@@ -463,6 +578,13 @@ export class CalendarEventCreateEditDialog extends CalendarEventDialogSourceMixi
         sessionKey: this.calendarEventSessionKey,
       })
     );
+  }
+
+  /**
+   * Save the current draft of the create/edit dialog.
+   */
+  #save() {
+    // TODO: Implement save functionality.
   }
 }
 

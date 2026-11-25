@@ -307,17 +307,17 @@ FeedParser.prototype = {
       // Handle <enclosures> and <media:content>, which may be in a
       // <media:group> (if present).
       tags = this.childrenByTagNameNS(itemNode, nsURI, "enclosure");
-      const encUrls = [];
+      const encUrls = new Set();
       if (tags) {
         for (const tag of tags) {
           const url = this.validLink(tag.getAttribute("url"));
-          if (url && !encUrls.includes(url)) {
+          if (url && !encUrls.has(url)) {
             const type = this.removeUnprintableASCII(tag.getAttribute("type"));
             const length = this.removeUnprintableASCII(
               tag.getAttribute("length")
             );
             item.enclosures.push(new lazy.FeedEnclosure(url, type, length));
-            encUrls.push(url);
+            encUrls.add(url);
           }
         }
       }
@@ -326,13 +326,13 @@ FeedParser.prototype = {
       if (tags) {
         for (const tag of tags) {
           const url = this.validLink(tag.getAttribute("url"));
-          if (url && !encUrls.includes(url)) {
+          if (url && !encUrls.has(url)) {
             const type = this.removeUnprintableASCII(tag.getAttribute("type"));
             const fileSize = this.removeUnprintableASCII(
               tag.getAttribute("fileSize")
             );
             item.enclosures.push(new lazy.FeedEnclosure(url, type, fileSize));
-            encUrls.push(url);
+            encUrls.add(url);
           }
         }
       }
@@ -363,11 +363,13 @@ FeedParser.prototype = {
       // Support <category> and autotagging.
       tags = this.childrenByTagNameNS(itemNode, nsURI, "category");
       if (tags) {
+        const terms = new Set();
         for (const tag of tags) {
           let term = this.getNodeValue(tag);
           term = term ? this.xmlUnescape(term.replace(/,/g, ";")) : null;
-          if (term && !item.keywords.includes(term)) {
+          if (term && !terms.has(term)) {
             item.keywords.push(term);
+            terms.add(term);
           }
         }
       }
@@ -1024,7 +1026,7 @@ FeedParser.prototype = {
         lazy.FeedUtils.ATOM_IETF_NS,
         "link"
       );
-      const encUrls = [];
+      const encUrls = new Set();
       if (tags) {
         for (const tag of tags) {
           let url =
@@ -1032,7 +1034,7 @@ FeedParser.prototype = {
               ? (tag.getAttribute("href") || "").trim()
               : null;
           url = this.validLink(url);
-          if (url && !encUrls.includes(url)) {
+          if (url && !encUrls.has(url)) {
             const type = this.removeUnprintableASCII(tag.getAttribute("type"));
             const length = this.removeUnprintableASCII(
               tag.getAttribute("length")
@@ -1043,7 +1045,7 @@ FeedParser.prototype = {
             item.enclosures.push(
               new lazy.FeedEnclosure(url, type, length, title)
             );
-            encUrls.push(url);
+            encUrls.add(url);
           }
         }
       }
@@ -1091,11 +1093,13 @@ FeedParser.prototype = {
         "category"
       );
       if (tags) {
+        const terms = new Set();
         for (const tag of tags) {
           let term = this.removeUnprintableASCII(tag.getAttribute("term"));
           term = term ? this.xmlUnescape(term.replace(/,/g, ";")).trim() : null;
-          if (term && !item.keywords.includes(term)) {
+          if (term && !terms.has(term)) {
             item.keywords.push(term);
+            terms.add(term);
           }
         }
       }

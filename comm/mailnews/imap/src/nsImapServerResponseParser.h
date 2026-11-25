@@ -37,6 +37,9 @@ class nsImapServerResponseParser : public nsImapGenericParser {
   bool CommandFailed();
   void SetCommandFailed(bool failed);
   bool UntaggedResponse();
+  // Whether the last response ended with a tag that isn't the command's, so
+  // the responses are no longer in step with the commands.
+  bool UnexpectedTag() { return fUnexpectedTag; }
 
   enum eIMAPstate { kNonAuthenticated, kAuthenticated, kFolderSelected };
 
@@ -61,6 +64,8 @@ class nsImapServerResponseParser : public nsImapGenericParser {
   int32_t NumberOfRecentMessages();
   ImapUid FolderUIDValidity();
   ImapUid CurrentResponseUID();
+  // UID from the APPENDUID response code of the last command, or 0.
+  ImapUid CurrentAppendUID();
   ImapUid HighestRecordedUID();
   void ResetHighestRecordedUID();
   bool IsNumericString(const char* string);
@@ -195,6 +200,7 @@ class nsImapServerResponseParser : public nsImapGenericParser {
  private:
   bool fCurrentCommandFailed;
   bool fUntaggedResponse;
+  bool fUnexpectedTag = false;
   bool fReportingErrors;
 
   bool fCurrentFolderReadOnly;
@@ -218,6 +224,7 @@ class nsImapServerResponseParser : public nsImapGenericParser {
   int32_t fNumberOfExistingMessages;
   int32_t fNumberOfRecentMessages;
   ImapUid fCurrentResponseUID;
+  ImapUid fCurrentAppendUID;
   ImapUid fHighestRecordedUID;
   // used to handle server that sends msg size after headers
   ImapUid fReceivedHeaderOrSizeForUID;

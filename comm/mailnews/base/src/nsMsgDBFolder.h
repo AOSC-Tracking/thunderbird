@@ -112,7 +112,7 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   nsresult GetBackupSummaryFile(nsIFile** result, const nsACString& newName);
   nsresult GetMsgPreviewTextFromStream(nsIMsgDBHdr* msgHdr,
                                        nsIInputStream* stream);
-  MOZ_CAN_RUN_SCRIPT nsresult HandleAutoCompactEvent(nsIMsgWindow* aMsgWindow);
+  MOZ_CAN_RUN_SCRIPT nsresult HandleAutoCompactEvent();
 
  protected:
   virtual ~nsMsgDBFolder();
@@ -134,8 +134,6 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   nsresult ThrowConfirmationPrompt(nsIMsgWindow* msgWindow,
                                    const nsAString& confirmString,
                                    bool* confirmed);
-  nsresult GetWarnFilterChanged(bool* aVal);
-  nsresult SetWarnFilterChanged(bool aVal);
   nsresult CreateCollationKey(const nsCString& aSource, uint8_t** aKey,
                               uint32_t* aLength);
 
@@ -188,15 +186,15 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   nsresult StartNewOfflineMessage();
   nsresult EndNewOfflineMessage(nsresult status);
 
-  nsresult AutoCompact(nsIMsgWindow* aWindow);
+  nsresult AutoCompact();
   // this is a helper routine that ignores whether nsMsgMessageFlags::Offline is
   // set for the folder
   nsresult MsgFitsDownloadCriteria(nsMsgKey msgKey, bool* result);
   nsresult GetPromptPurgeThreshold(bool* aPrompt);
   nsresult GetPurgeThreshold(int32_t* aThreshold);
   nsresult ApplyRetentionSettings(bool deleteViaFolder);
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult AddMarkAllReadUndoAction(
-      nsIMsgWindow* msgWindow, nsMsgKey* thoseMarked, uint32_t numMarked);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult
+  AddMarkAllReadUndoAction(nsMsgKey* thoseMarked, uint32_t numMarked);
 
   nsresult PerformBiffNotifications(
       void);  // if there are new, non spam messages, do biff

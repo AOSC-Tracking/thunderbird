@@ -139,7 +139,7 @@ class load_libresolv {
       ctypes.unsigned_char.ptr
     );
 
-    this.QUERYBUF_SIZE = 1024;
+    this.QUERYBUF_SIZE = 65535;
     this.NS_MAXCDNAME = 255;
     this.NS_HFIXEDSZ = 12;
     this.NS_QFIXEDSZ = 4;
@@ -205,6 +205,9 @@ class load_libresolv {
    */
   _mapAnswer(aTypeID, aAnswer, aIdx, aLength, aDataLength) {
     if (aTypeID == NS_T_SRV) {
+      if (aDataLength < 7) {
+        throw new Error(`Invalid SRV record data length ${aDataLength}.`);
+      }
       const prio = this._safe_get16(aIdx, aAnswer, aLength);
       const weight = this._safe_get16(aIdx + 2, aAnswer, aLength);
       const port = this._safe_get16(aIdx + 4, aAnswer, aLength);
@@ -212,12 +215,15 @@ class load_libresolv {
       const hostbuf = ctypes.char.array(this.NS_MAXCDNAME)();
       const hostlen = this.dn_expand(
         aAnswer.addressOfElement(0),
-        aAnswer.addressOfElement(aLength),
+        aAnswer.addressOfElement(aLength - 1).increment(),
         aAnswer.addressOfElement(aIdx + 6),
         hostbuf,
         this.NS_MAXCDNAME
       );
-      const host = hostlen > -1 ? hostbuf.readString() : null;
+      if (hostlen < 0) {
+        throw new Error("Invalid SRV record target name.");
+      }
+      const host = hostbuf.readString();
       return new SRVRecord(prio, weight, host, port);
     }
     if (aTypeID == NS_T_TXT) {
@@ -244,17 +250,23 @@ class load_libresolv {
       return new TXTRecord(strings);
     }
     if (aTypeID == NS_T_MX) {
+      if (aDataLength < 3) {
+        throw new Error(`Invalid MX record data length ${aDataLength}.`);
+      }
       const prio = this._safe_get16(aIdx, aAnswer, aLength);
 
       const hostbuf = ctypes.char.array(this.NS_MAXCDNAME)();
       const hostlen = this.dn_expand(
         aAnswer.addressOfElement(0),
-        aAnswer.addressOfElement(aLength),
+        aAnswer.addressOfElement(aLength - 1).increment(),
         aAnswer.addressOfElement(aIdx + 2),
         hostbuf,
         this.NS_MAXCDNAME
       );
-      const host = hostlen > -1 ? hostbuf.readString() : null;
+      if (hostlen < 0) {
+        throw new Error("Invalid MX record target name.");
+      }
+      const host = hostbuf.readString();
       return new MXRecord(prio, host);
     }
     return null;
@@ -271,7 +283,7 @@ class load_libresolv {
   lookup(aName, aTypeID) {
     const qname = ctypes.char.array()(aName);
     const answer = ctypes.unsigned_char.array(this.QUERYBUF_SIZE)();
-    const length = this.res_search(
+    let length = this.res_search(
       qname,
       this.NS_C_IN,
       aTypeID,
@@ -283,6 +295,8 @@ class load_libresolv {
     if (length < 0) {
       return [];
     }
+    // A truncated response reports the full length, which can exceed the buffer.
+    length = Math.min(length, this.QUERYBUF_SIZE);
 
     const results = [];
     let idx = this.NS_HFIXEDSZ;
@@ -293,7 +307,7 @@ class load_libresolv {
     for (let qdidx = 0; qdidx < qdcount && idx < length; qdidx++) {
       const nextNameOffset = this.dn_skipname(
         answer.addressOfElement(idx),
-        answer.addressOfElement(length)
+        answer.addressOfElement(length - 1).increment()
       );
       if (nextNameOffset < 0 || idx + nextNameOffset >= length) {
         return [];
@@ -304,7 +318,7 @@ class load_libresolv {
     for (let anidx = 0; anidx < ancount && idx < length; anidx++) {
       const nextNameOffset = this.dn_skipname(
         answer.addressOfElement(idx),
-        answer.addressOfElement(length)
+        answer.addressOfElement(length - 1).increment()
       );
       if (nextNameOffset < 0) {
         return [];
@@ -567,3 +581,5 @@ worker.close = function () {
   self.close();
 };
 self.addEventListener("message", msg => worker.handleMessage(msg));
+
+export { load_libresolv };

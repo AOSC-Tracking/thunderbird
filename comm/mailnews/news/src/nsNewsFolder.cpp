@@ -1031,6 +1031,7 @@ NS_IMETHODIMP nsMsgNewsFolder::RemoveMessage(nsMsgKey key) {
   nsCOMPtr<nsIMsgDBHdr> msgHdr;
   rv = mDatabase->GetMsgHdrForKey(key, getter_AddRefs(msgHdr));
   NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(msgHdr, NS_MSG_MESSAGE_NOT_FOUND);
   notifier->NotifyMsgsDeleted({msgHdr.get()});
 
   return mDatabase->DeleteMessage(key, nullptr, false);
@@ -1107,9 +1108,9 @@ NS_IMETHODIMP nsMsgNewsFolder::NotifyArticleDownloaded(uint32_t articleNumber,
   if (!m_downloadMessageForOfflineUse) {
     return NS_OK;
   }
-  nsresult rv =
-      GetMessageHeader(articleNumber, getter_AddRefs(m_offlineHeader));
+  nsresult rv = GetMsgHdr(articleNumber, getter_AddRefs(m_offlineHeader));
   NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(m_offlineHeader, NS_MSG_MESSAGE_NOT_FOUND);
   StartNewOfflineMessage();  // Sets up m_tempMessageStream et al.
   if (m_tempMessageStream) {
     m_numOfflineMsgLines += data.CountChar('\n');
@@ -1163,6 +1164,7 @@ NS_IMETHODIMP nsMsgNewsFolder::GetMessageIdForKey(nsMsgKey key,
   nsCOMPtr<nsIMsgDBHdr> hdr;
   rv = mDatabase->GetMsgHdrForKey(key, getter_AddRefs(hdr));
   NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(hdr, NS_MSG_MESSAGE_NOT_FOUND);
   return hdr->GetMessageId(result);
 }
 

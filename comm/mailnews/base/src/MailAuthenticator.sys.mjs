@@ -109,6 +109,23 @@ class MailAuthenticator {
   }
 
   /**
+   * Get the PLAIN auth token for a connection.
+   *
+   * @param {string} password - The server password.
+   * @returns {string}
+   */
+  getPlainToken(password) {
+    // According to rfc4616#section-2, username and password should be UTF-8
+    // BinaryString before base64 encoded.
+    return btoa(
+      "\0" +
+        this.getByteStringUsername() +
+        "\0" +
+        MailStringUtils.stringToByteString(password)
+    );
+  }
+
+  /**
    * Get the CRAM-MD5 auth token for a connection.
    *
    * @param {string} password - The password, used as HMAC-MD5 secret.
@@ -119,7 +136,7 @@ class MailAuthenticator {
     // Hash the challenge.
     const signature = MailCryptoUtils.hmacMd5(
       new TextEncoder().encode(password),
-      new TextEncoder().encode(atob(challenge))
+      MailStringUtils.byteStringToUint8Array(atob(challenge))
     );
     // Get the hex form of the signature.
     const hex = [...signature]
@@ -310,28 +327,6 @@ export class SmtpAuthenticator extends MailAuthenticator {
     return this._server.getPasswordWithUI(promptString, promptTitle);
   }
 
-  /**
-   * Get the ByteString form of the current password.
-   *
-   * @returns {string}
-   */
-  getByteStringPassword() {
-    return MailStringUtils.stringToByteString(this.getPassword());
-  }
-
-  /**
-   * Get the PLAIN auth token for a connection.
-   *
-   * @returns {string}
-   */
-  getPlainToken() {
-    // According to rfc4616#section-2, username and password should be UTF-8
-    // BinaryString before base64 encoded.
-    return btoa(
-      "\0" + this.getByteStringUsername() + "\0" + this.getByteStringPassword()
-    );
-  }
-
   getOAuthModule() {
     const oauth2Module = new OAuth2Module();
     if (!oauth2Module.initFromOutgoing(this._server)) {
@@ -391,23 +386,6 @@ class IncomingServerAuthenticator extends MailAuthenticator {
 
   forgetPassword() {
     this._server.forgetPassword();
-  }
-
-  /**
-   * Get the PLAIN auth token for a connection.
-   *
-   * @param {string} password - The server password.
-   * @returns {string}
-   */
-  getPlainToken(password) {
-    // According to rfc4616#section-2, username and password should be UTF-8
-    // BinaryString before base64 encoded.
-    return btoa(
-      "\0" +
-        this.getByteStringUsername() +
-        "\0" +
-        MailStringUtils.stringToByteString(password)
-    );
   }
 
   async getOAuthToken() {

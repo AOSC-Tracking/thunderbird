@@ -1,5 +1,7 @@
 [DEFAULT]
 
+["test_appendWithoutAppendUid.js"]
+
 ["test_autosync_date_constraints.js"]
 
 ["test_autosync_stops.js"]
@@ -63,6 +65,8 @@ tags = ["foldernames"]
 
 ["test_imapClientid.js"]
 
+["test_imapCompress.js"]
+
 ["test_imapContentLength.js"]
 
 ["test_imapCopyTimeout.js"]
@@ -95,7 +99,11 @@ tags = ["foldernames"]
 
 ["test_imapIDNoParenGroup.js"]
 
+["test_imapLongLine.js"]
+
 ["test_imapMailboxNameRoundTrip.js"]
+
+["test_imapMessageUriEscaped.js"]
 
 ["test_imapMove.js"]
 
@@ -117,6 +125,8 @@ tags = ["foldernames"]
 
 ["test_imapNtlmNoChallenge.js"]
 
+["test_imapOutOfStepResponse.js"]
+
 ["test_imapPasswordFailure.js"]
 
 ["test_imapPreAuthUntaggedIgnored.js"]
@@ -137,11 +147,17 @@ tags = ["foldernames"]
 
 ["test_imapStoreMsgOffline.js"]
 
+["test_imapTrashDiscovery.js"]
+
 ["test_imapTruncatedOfflineBody.js"]
 
 ["test_imapUndo.js"]
 
 ["test_imapUnsolicitedXDuringIdle.js"]
+
+["test_imapUrlFolderPath.js"]
+
+["test_imapUrlMessageIds.js"]
 
 ["test_imapVirtualFolderReuse.js"]
 
@@ -175,6 +191,8 @@ run-if = [
 ["test_nsImapOfflineDownloader.js"]
 
 ["test_offlineCopy.js"]
+
+["test_offlineCopyFailure.js"]
 
 ["test_offlineDraftDataloss.js"]
 

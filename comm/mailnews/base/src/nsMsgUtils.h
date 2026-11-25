@@ -14,6 +14,7 @@
 
 class nsIPrefBranch;
 class nsIMsgFolder;
+class nsIMsgUserFeedbackListener;
 class nsIMsgMessageService;
 class nsIUrlListener;
 class nsIOutputStream;
@@ -133,6 +134,24 @@ nsresult CreateRootFolderAndCache(const nsACString& folderName,
 /// the server root folder.
 nsresult FolderPathInServer(nsIMsgFolder* folder, nsACString& path);
 
+/// Tell the user about a folder-level failure.
+///
+/// `msgName` names a string in messenger.properties, which is formatted with
+/// the folder's identity and the brand name. If supplied, `listener` can
+/// handle the alert for this operation.
+/// Alerts are also passed to nsIMsgMailSession.alertUser(), silently if
+/// handled.
+nsresult AlertFolderError(nsIMsgFolder* folder, const nsACString& msgName,
+                          nsIMsgUserFeedbackListener* listener = nullptr);
+
+/// Report a filesystem failure with the folder identity and error category.
+nsresult AlertFolderError(nsIMsgFolder* folder, nsresult status,
+                          nsIMsgUserFeedbackListener* listener = nullptr);
+
+/// Tell the user that filters pointing at this folder have been updated to
+/// follow it.
+nsresult AlertFilterChanged(nsIMsgFolder* folder);
+
 nsresult NS_GetPersistentFile(const char* relPrefName, const char* absPrefName,
                               const char* dirServiceProp,  // Can be NULL
                               bool& gotRelPref, nsIFile** aFile,
@@ -168,6 +187,9 @@ nsresult IsRSSArticle(nsIURI* aMsgURI, bool* aIsRSSArticle);
 void PRTime2Seconds(PRTime prTime, uint32_t* seconds);
 void PRTime2Seconds(PRTime prTime, int32_t* seconds);
 void Seconds2PRTime(uint32_t seconds, PRTime* prTime);
+// Whether a PRTime fits in the unsigned 32-bit seconds the message database
+// stores dates as.
+bool PRTimeFitsInSeconds(PRTime prTime);
 
 // Appends the correct summary file extension onto the supplied fileLocation
 // and returns it in summaryLocation.
